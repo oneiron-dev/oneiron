@@ -571,6 +571,8 @@ class Oneiron:
         @property
         def gate(self) -> "Oneiron._VaultGateVerbs": ...
         @property
+        def learning(self) -> "Oneiron._VaultLearningVerbs": ...
+        @property
         def settings(self) -> "Oneiron._VaultSettingsVerbs": ...
         @property
         def secrets(self) -> "Oneiron._VaultSecretsVerbs": ...
@@ -1136,6 +1138,11 @@ class Oneiron:
             """The owner reads the calibrated checker verdict role from the vault model manifest."""
         def set(self, spec: Facade.GateCheckerSet) -> Facade.GateCheckerReceipt:
             """The owner sets the calibrated checker model, slot, confidence floor and shadow or enforce mode without changing other model bindings."""
+    class _VaultLearningVerbs:
+        def read(self, spec: Facade.LearningReadRequest) -> Facade.LearningCellView:
+            """The owner reads a measured learning cell, its explicit prior, derived UNTESTED mark, projector heads and anchored evidence; borrowed provenance stays separate from own runs."""
+        def projection(self, spec: Facade.LearningProjectionRequest) -> Facade.LearningProjectionView:
+            """The owner observes the stored projection receipt for an anchored attempt outcome; an absent receipt means projection has not committed, never a successful empty projection."""
     class _VaultSettingsVerbs:
         @property
         def learning(self) -> "Oneiron._VaultSettingsLearningVerbs": ...

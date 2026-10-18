@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 524 code-mode rows (503 host rows, 21 run rows), 1870 declarations.
-// Replies: 460 fully typed, 60 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 526 code-mode rows (505 host rows, 21 run rows), 1900 declarations.
+// Replies: 462 fully typed, 60 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 91; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -929,6 +929,37 @@ declare namespace Sdk {
   type GateCheckerView = { binding?: VerdictBinding | null };
   type GateCheckerSet = { binding: VerdictBinding };
   type GateCheckerReceipt = { binding: VerdictBinding; receipt_ref: string };
+  type MeasuredLearningPredicate = "learning.reliability" | "learning.edit_cost" | "learning.retest_noise" | "learning.setting";
+  type CellTypeRef = { node_id: string; tree_version: number };
+  type LearningCellKey = { subject: string; predicate: MeasuredLearningPredicate; executor?: string | null; typeRef?: CellTypeRef | null; axis?: string | null; consent_scope?: string | null; setting_key?: string | null };
+  type LearningReadRequest = { cell: LearningCellKey; project_ref?: string | null };
+  type LearningBetaValue = { alpha: number; beta: number };
+  type LearningMeanValue = { mean: number; spread: number };
+  type MeasuredLearningValue = { form: "beta"; value: LearningBetaValue } | { form: "mean"; value: LearningMeanValue } | { form: "counts"; value: Record<string, number> };
+  type PriorOrigin = "shipped" | "provenance" | "carried" | "parent" | "model" | "seed";
+  type LearningPriorValue = LearningBetaValue | LearningMeanValue | Record<string, number>;
+  type LearningPriorView = { origin: PriorOrigin; value: LearningPriorValue; weight_runs: number; from?: string | null };
+  type EstimateLabels = { by_judge?: Record<string, number>; converted?: number; on_judge_model?: number; outcome_counts?: Record<string, number> | null };
+  type EstimateWindow = { half_life: number };
+  type MeasuredLearningEstimate = MeasuredLearningValue & { runs: number; prior: LearningPriorView; untested: boolean; of: string; labels: EstimateLabels; window: EstimateWindow; ver: string };
+  type LearningHeadView = { claim_ref: string; at: number; evidence_receipts: string[]; supersedes: string[] };
+  type Anchor = { kind: "held_out" } | { kind: "owner_verdict" } | { kind: "world_outcome" } | { kind: "audit"; rate: number } | { kind: "retest" } | { kind: "fitting_check" };
+  type Observation = { kind: "success"; v: boolean } | { kind: "magnitude"; v: number } | { kind: "category"; v: string };
+  type ContributionCheck = { receipt: string; contributed: boolean };
+  type SkillContribution = { skill: EntityId; check: ContributionCheck };
+  type UsedProvenanceEdge = { derived: EntityId; source: EntityId; check?: ContributionCheck | null };
+  type CreditOptions = { enabled: boolean; depth_cap?: number | null; check_every_hop: boolean };
+  type PackAttributionFields = { typeRef: CellTypeRef; executor: string; judge: string; pattern: EntityId; team_shape: string[]; decider: EntityId; project?: EntityId | null; output?: EntityId | null; contributions: SkillContribution[]; used_edges: UsedProvenanceEdge[]; credit: CreditOptions };
+  type PackLearningContext = { attempt_receipt: string; outcome_receipt: string; attribution: PackAttributionFields };
+  type EvidenceRow = { at: number; anchor: Anchor; observation: Observation; weight: number; judge?: string | null; on_judge_model?: boolean; outcome_label?: string | null; pack_attribution?: PackLearningContext | null; goal_revision?: string | null };
+  type LearningEvidenceView = { receipt: string; evidence: EvidenceRow };
+  type LearningProvenanceView = { cell: LearningCellKey; heads: LearningHeadView[]; evidence: LearningEvidenceView[] };
+  type MeasuredLearningView = { estimate: MeasuredLearningEstimate; own: boolean; borrowed_from?: LearningCellKey | null; attributed_outcome_receipts: string[]; provenance: LearningProvenanceView; prior_provenance?: LearningProvenanceView | null };
+  type LearningCellView = { cell: LearningCellKey; view: MeasuredLearningView };
+  type LearningProjectionRequest = { attempt_receipt: string; outcome_receipt: string; axis: string };
+  type LateCreditShare = { subject: EntityId; origin_skill?: EntityId | null; chain: UsedProvenanceEdge[]; decay: number; weight: number };
+  type LateCreditReceipt = { receipt_id: string; attempt_receipt: string; outcome_receipt: string; anchor: Anchor; succeeded: boolean; axis: string; at: number; goal_revision?: string | null; attribution: PackAttributionFields; direct_subjects: EntityId[]; shares: LateCreditShare[] };
+  type LearningProjectionView = { receipt?: LateCreditReceipt | null };
   type LearningSettingsRequest = { key?: string | null };
   type LearningSettingSpecView = { key: string; min: number; max: number; seed: number; value: number };
   type LearningSettingMode = "seed" | "pin";
@@ -1165,7 +1196,6 @@ declare namespace Sdk {
   type CritiqueTriage = { verdict: CritiqueVerdict; scores: CritiqueTriageScores; acted_on_artifact_ids: string[]; hard_veto_artifact_ids: string[]; out_of_scope_artifact_ids: string[]; findings: MergedFinding[]; auto_resolved: boolean };
   type CritiqueProvenance = { critic_ref: string; critic_class: number; model_id: string; model_revision?: string | null };
   type LearningPredicate = "reliability" | "edit_cost" | "retest_noise" | "setting";
-  type CellTypeRef = { node_id: string; tree_version: number };
   type LearningCell = { predicate: LearningPredicate; subject: EntityId; executor?: string | null; type_ref?: CellTypeRef | null; axis?: string | null; consent_scope?: string | null; setting_key?: string | null };
   type CriticPrediction = { what: string; by_when: number; how_checked: OutcomeBinding };
   type CritiqueArtifact = { schema_version: number; artifact_id: string; run_id: string; branch_job: AttemptId; candidate_ref: string; lens_id: string; domain: string; provenance: CritiqueProvenance; calibration: LearningCell; prediction?: CriticPrediction | null; verdict: CritiqueVerdict; severity: CritiqueSeverity; hard_check_passed?: boolean | null; evidence_refs: string[]; suggested_edit?: string | null; out_of_scope?: boolean; created_at: number };
@@ -1443,8 +1473,8 @@ declare namespace Sdk {
   type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; effect_class?: string | null; press: string; screenshot?: string | null; screenshot_evidence?: ReceiptEvidence | null };
   type LibraryCard = { workflow: string; site: string; subgoal: string; params: string[]; runs: number; failures: number };
   type PartialTree = { reason: string; visited: number; pending: number; walk_ms: number };
-  type Observation = { seq: number; url: string; title: string; full: boolean; rows: Row[]; removed?: string[]; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean; partial?: PartialTree | null };
-  type ObservationPage = Observation & { next?: string | null };
+  type Observation2 = { seq: number; url: string; title: string; full: boolean; rows: Row[]; removed?: string[]; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean; partial?: PartialTree | null };
+  type ObservationPage = Observation2 & { next?: string | null };
   type ObserveInput = { since?: number | null; cursor?: string | null };
   type FindInput = { role?: string | null; name?: string | null; cursor?: string | null };
   type FindOutput = { rows: Row[]; next?: string | null; partial?: PartialTree | null };
@@ -1468,7 +1498,7 @@ declare namespace Sdk {
   type BatchStep = { step: "open"; url: string } | { step: "click"; ref: string } | { step: "type"; ref: string; text: string; clear?: boolean } | { step: "select"; ref: string; option: string } | { step: "wait_for"; targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null } | { step: "expect"; ref?: string | null; role?: string | null; name?: string | null; value?: string | null; absent?: boolean } | { step: "screenshot"; trigger: ScreenshotTrigger } | { step: "key"; key: string; modifiers?: string[]; ref?: string | null } | { step: "hotkey"; keys: string[] } | { step: "scroll"; direction: ScrollDirection; amount?: number | null; ref?: string | null } | (DecideStep & { step: "decide" });
   type BatchInput = { subgoal?: string | null; steps: BatchStep[]; until_ms?: number | null; no_model?: boolean };
   type SubgoalStatus = "done" | "NEEDS_AGENT" | "NEEDS_YOU";
-  type BatchOutput = { status: SubgoalStatus; completed: number; failed_step?: number | null; error?: string | null; observation?: Observation | null; receipts?: EffectReceipt[]; decisions?: unknown[]; until_ms?: number | null; next?: string | null };
+  type BatchOutput = { status: SubgoalStatus; completed: number; failed_step?: number | null; error?: string | null; observation?: Observation2 | null; receipts?: EffectReceipt[]; decisions?: unknown[]; until_ms?: number | null; next?: string | null };
   type LibraryFindInput = { site?: string | null; subgoal?: string | null };
   type LibraryFindOutput = { site: string; workflows: LibraryCard[] };
   type ProposeInput = { subgoal: string; params?: string[]; steps: BatchStep[]; postcondition: ExpectInput[]; args?: Record<string, string> };
@@ -2678,6 +2708,12 @@ declare const vault: Sdk.VaultHost & {
     put(input: Sdk.KeyValuePut): Promise<Sdk.KeyValuePutReceipt | StoredResult>;
     /** Exact prefix and equality search over the caller's keys, ordered by namespace then key. */
     search(input: Sdk.KeyValueSearch): Promise<Sdk.KeyValueItem[] | StoredResult>;
+  };
+  learning: {
+    /** The owner observes the stored projection receipt for an anchored attempt outcome; an absent receipt means projection has not committed, never a successful empty projection. */
+    projection(input: Sdk.LearningProjectionRequest): Promise<Sdk.LearningProjectionView | StoredResult>;
+    /** The owner reads a measured learning cell, its explicit prior, derived UNTESTED mark, projector heads and anchored evidence; borrowed provenance stays separate from own runs. */
+    read(input: Sdk.LearningReadRequest): Promise<Sdk.LearningCellView | StoredResult>;
   };
   legal_holds: {
     /** The owner's one confirm that lifts or narrows the customer holds on the named records and erases them. */

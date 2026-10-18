@@ -847,6 +847,12 @@ export class Oneiron {
         set: (input: Facade.GateCheckerSet): Facade.GateCheckerReceipt => this.#call(() => this.#client.vaultGateCheckerSet(input) as Facade.GateCheckerReceipt),
       },
     },
+    learning: {
+      /** The owner reads a measured learning cell, its explicit prior, derived UNTESTED mark, projector heads and anchored evidence; borrowed provenance stays separate from own runs. */
+      read: (input: Facade.LearningReadRequest): Facade.LearningCellView => this.#call(() => this.#client.vaultLearningRead(input) as Facade.LearningCellView),
+      /** The owner observes the stored projection receipt for an anchored attempt outcome; an absent receipt means projection has not committed, never a successful empty projection. */
+      projection: (input: Facade.LearningProjectionRequest): Facade.LearningProjectionView => this.#call(() => this.#client.vaultLearningProjection(input) as Facade.LearningProjectionView),
+    },
     settings: {
       /** The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type. */
       learning: Object.assign((input: Facade.LearningSettingsRequest): Facade.LearningSettingsView => this.#call(() => this.#client.vaultSettingsLearning(input) as Facade.LearningSettingsView), {

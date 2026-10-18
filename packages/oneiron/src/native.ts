@@ -236,6 +236,8 @@ vaultGatePolicyPut(input: unknown): unknown
 vaultGatePolicyPropose(input: unknown): unknown
 vaultGateCheckerGet(input: unknown): unknown
 vaultGateCheckerSet(input: unknown): unknown
+vaultLearningRead(input: unknown): unknown
+vaultLearningProjection(input: unknown): unknown
 vaultSettingsLearning(input: unknown): unknown
 vaultSettingsLearningPut(input: unknown): unknown
 vaultSettingsLearningClear(input: unknown): unknown
