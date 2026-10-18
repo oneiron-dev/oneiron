@@ -19,6 +19,10 @@ header = """
  * Intentionally absent: start_sync and stop_sync are not exported while sync
  * remains disabled pre-launch.
  *
+ * Bound handles (OF-063): oneiron_vault_bind opens a handle over the same
+ * open vault whose writes run as the app's principal, inside the off-record
+ * session it names, if any. Every other handle writes as the host.
+ *
  * Embedded engine (OF-237): oneiron_engine_start runs the full server in this
  * process with the app's OneironAppHost callbacks; oneiron_engine_request
  * sends it one buffered HTTP/1.1 request, oneiron_engine_vault shares its
@@ -61,6 +65,7 @@ include = [
   "oneiron_scored_entity_array_free",
   "oneiron_subtree_entry_array_free",
   "oneiron_vault_open",
+  "oneiron_vault_bind",
   "oneiron_vault_free",
   "oneiron_vault_health_json",
   "oneiron_vault_put_entity",
