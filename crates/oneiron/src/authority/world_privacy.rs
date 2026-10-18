@@ -612,15 +612,15 @@ pub(super) fn live_edits_by(
 /// its own (FIX 4535). A settings edit judges only its own world's edits, as
 /// a grant travel choice judges only its grant's, and neither changes a
 /// machine's standing, which the caller compares whole.
-pub(super) fn worlds_unmoved_past<'a>(
+pub(super) fn worlds_unmoved_past<E: std::borrow::Borrow<AuthorityLogEntry>>(
     fold: &AuthorityFold,
     base: &AuthorityFold,
-    rows: impl IntoIterator<Item = (AuthorityEntryHash, &'a AuthorityLogEntry)>,
+    rows: impl IntoIterator<Item = (AuthorityEntryHash, E)>,
 ) -> bool {
     let mut edited = BTreeSet::new();
     let mut own = BTreeSet::new();
     for (hash, entry) in rows {
-        if let AuthorityOp::WorldPrivacy(edit) = &entry.op {
+        if let AuthorityOp::WorldPrivacy(edit) = &entry.borrow().op {
             edited.insert(edit.world);
             own.insert(hash);
         }
