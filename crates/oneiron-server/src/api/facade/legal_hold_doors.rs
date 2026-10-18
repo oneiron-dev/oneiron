@@ -139,7 +139,12 @@ pub(crate) async fn vault_legal_holds_list(
         auth,
         "vault.legal_holds.list",
         |server, owner| sdk::read_legal_holds(server.vault(), owner),
-        |holds| holds.iter().flat_map(|hold| hold_targets(&hold.targets)).collect(),
+        |holds| {
+            holds
+                .iter()
+                .flat_map(|hold| hold_targets(&hold.targets))
+                .collect()
+        },
     )
     .await
 }
@@ -156,7 +161,12 @@ pub(crate) async fn vault_legal_holds_log(
         auth,
         "vault.legal_holds.log",
         |server, owner| sdk::read_legal_hold_log(server.vault(), owner),
-        |events| events.iter().flat_map(|event| hold_targets(&event.targets)).collect(),
+        |events| {
+            events
+                .iter()
+                .flat_map(|event| hold_targets(&event.targets))
+                .collect()
+        },
     )
     .await
 }

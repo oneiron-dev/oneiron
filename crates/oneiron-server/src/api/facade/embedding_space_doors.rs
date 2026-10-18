@@ -217,7 +217,13 @@ pub(crate) async fn vault_embedding_spaces_probes_list(
         auth,
         "vault.embedding_spaces.probes.list",
         |server, owner| sdk::read_embedding_space_probes(server.vault(), owner),
-        |probes| probes.probes.iter().flat_map(|probe| probe_rows(&probe.probe)).collect(),
+        |probes| {
+            probes
+                .probes
+                .iter()
+                .flat_map(|probe| probe_rows(&probe.probe))
+                .collect()
+        },
     )
     .await
 }

@@ -43,7 +43,9 @@ pub(crate) async fn vault_secrets_lift_history(
     })
     .await
     .unwrap_or_else(|_| Err(internal(VERB)));
-    let rows = answer.as_ref().map_or_else(|_| Vec::new(), proposal_records);
+    let rows = answer
+        .as_ref()
+        .map_or_else(|_| Vec::new(), proposal_records);
     (answer, rows)
 }
 

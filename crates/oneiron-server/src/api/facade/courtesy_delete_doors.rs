@@ -86,9 +86,7 @@ pub(crate) async fn vault_courtesy_delete_sent(
         server,
         auth,
         VERB,
-        |server, _owner| {
-            cooperative_deletion::sent(server).map_err(|error| refusal(VERB, error))
-        },
+        |server, _owner| cooperative_deletion::sent(server).map_err(|error| refusal(VERB, error)),
         |_| Vec::new(),
     )
     .await
@@ -126,7 +124,8 @@ pub(crate) async fn vault_courtesy_delete_answer(
         auth,
         VERB,
         move |server, owner| {
-            cooperative_deletion::answer(server, owner, &input).map_err(|error| refusal(VERB, error))
+            cooperative_deletion::answer(server, owner, &input)
+                .map_err(|error| refusal(VERB, error))
         },
         |ask| incoming_rows(ask).collect(),
     )

@@ -888,6 +888,10 @@ pub(super) fn internal(verb: &str) -> MemoryError {
 /// its typed error, with the rows read before it.
 pub(crate) type Listed<T> = (MemoryResult<T>, Vec<EntityId>);
 
+/// [`Listed`] for a door one of whose paths lists none: `None` beside that
+/// path's answer ([`ListedRows`]).
+pub(crate) type MaybeListed<T> = (MemoryResult<T>, Option<Vec<EntityId>>);
+
 /// The rows a listing door answers beside its result, as every served door
 /// releases it by them: a list, or `None` for a call one of whose paths
 /// lists none, never an empty list standing in for it.

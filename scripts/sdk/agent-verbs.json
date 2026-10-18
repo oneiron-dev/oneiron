@@ -1226,6 +1226,7 @@
       "output": "crate::federation::PendingAuthorityAct",
       "call": "crate::task_verb::sdk::propose_shared_delete(memory.vault(), &memory.embedded_owner(\"vault.shared.propose_delete\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1237,6 +1238,7 @@
       "output": "crate::federation::PendingAuthorityAct",
       "call": "crate::task_verb::sdk::propose_shared_transfer(memory.vault(), &memory.embedded_owner(\"vault.shared.propose_transfer\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1248,6 +1250,7 @@
       "output": "crate::federation::PendingAuthorityAct",
       "call": "crate::task_verb::sdk::propose_shared_remove_owner(memory.vault(), &memory.embedded_owner(\"vault.shared.propose_remove_owner\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1271,6 +1274,7 @@
       "output": "crate::federation::SharedActExecutionReceipt",
       "call": "crate::task_verb::sdk::read_shared_receipt(memory.vault(), &memory.embedded_owner(\"vault.shared.receipt\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1282,6 +1286,7 @@
       "output": "Vec<crate::federation::SharedActOutcome>",
       "call": "crate::task_verb::sdk::read_shared_outcomes(memory.vault(), &memory.embedded_owner(\"vault.shared.outcomes\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1293,6 +1298,7 @@
       "output": "Option<crate::federation::SharedVaultDeletion>",
       "call": "crate::task_verb::sdk::read_shared_deletion(memory.vault())?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "mcp_fields": {},
       "admission": {"unrestricted_record_scope": true},
@@ -1305,6 +1311,7 @@
       "output": "crate::task_verb::sdk::SharedMemberInvited",
       "call": "crate::task_verb::sdk::add_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.add\")?, None, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1316,6 +1323,7 @@
       "output": "crate::task_verb::sdk::InvitationSlip",
       "call": "crate::task_verb::sdk::mint_invitation_slip_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1327,6 +1335,7 @@
       "output": "crate::federation::SharedActExecutionReceipt",
       "call": "crate::task_verb::sdk::change_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.change\")?, None, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1338,6 +1347,7 @@
       "output": "crate::federation::SharedActExecutionReceipt",
       "call": "crate::task_verb::sdk::remove_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.remove\")?, None, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1349,6 +1359,7 @@
       "output": "crate::federation::SharedActExecutionReceipt",
       "call": "crate::task_verb::sdk::leave_shared_vault_as(memory.vault(), &memory.embedded_owner(\"vault.members.leave\")?, None, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1360,6 +1371,7 @@
       "output": "Vec<crate::federation::SharedInvitation>",
       "call": "crate::task_verb::sdk::read_shared_invitations(memory.vault(), &memory.embedded_owner(\"vault.members.invitations\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1371,6 +1383,7 @@
       "output": "crate::federation::SharedActExecutionReceipt",
       "call": "crate::task_verb::sdk::accept_shared_invitation_as(memory.vault(), &memory.embedded_owner(\"vault.members.accept\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1382,6 +1395,7 @@
       "output": "crate::federation::SharedActExecutionReceipt",
       "call": "crate::task_verb::sdk::decline_shared_invitation_as(memory.vault(), &memory.embedded_owner(\"vault.members.decline\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1393,6 +1407,7 @@
       "output": "crate::federation::SharedActExecutionReceipt",
       "call": "crate::task_verb::sdk::withdraw_shared_invitation_as(memory.vault(), &memory.embedded_owner(\"vault.members.withdraw_invitation\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1404,6 +1419,7 @@
       "output": "crate::federation::PendingAuthorityAct",
       "call": "crate::task_verb::sdk::object_to_shared_act(memory.vault(), &memory.embedded_owner(\"vault.shared.object\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1415,6 +1431,7 @@
       "output": "crate::federation::PendingAuthorityAct",
       "call": "crate::task_verb::sdk::withdraw_shared_act_objection(memory.vault(), &memory.embedded_owner(\"vault.shared.withdraw_objection\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1426,6 +1443,7 @@
       "output": "Vec<crate::federation::PendingActStarted>",
       "call": "crate::task_verb::sdk::read_shared_act_started(memory.vault(), &memory.embedded_owner(\"vault.shared.started\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1437,6 +1455,7 @@
       "output": "Vec<crate::federation::PendingActMatured>",
       "call": "crate::task_verb::sdk::read_shared_act_matured(memory.vault(), &memory.embedded_owner(\"vault.shared.matured\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1448,6 +1467,7 @@
       "output": "crate::federation::SharedEraseAsk",
       "call": "crate::task_verb::sdk::ask_shared_erase_as(memory.vault(), &memory.embedded_owner(\"vault.shared.erase_ask\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1459,6 +1479,7 @@
       "output": "Vec<crate::federation::SharedEraseAsk>",
       "call": "crate::task_verb::sdk::read_shared_erase_asks(memory.vault(), &memory.embedded_owner(\"vault.shared.erase_asks\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1470,6 +1491,7 @@
       "output": "crate::federation::SharedEraseAsk",
       "call": "crate::task_verb::sdk::close_shared_erase_ask_as(memory.vault(), &memory.embedded_owner(\"vault.shared.close_erase_ask\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1480,6 +1502,7 @@
       "output": "crate::receipt::GuestRevokeResponse",
       "call": "crate::task_verb::sdk::revoke_guest_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1491,6 +1514,7 @@
       "output": "crate::task_verb::sdk::GuestSlipMinted",
       "call": "crate::task_verb::sdk::mint_guest_slip_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1720,6 +1744,7 @@
       "output": "Vec<crate::authority::AuthorityHandoffAlarm>",
       "call": "crate::task_verb::sdk::read_handoff_alarms(memory.vault(), &memory.embedded_owner(\"vault.authority.handoff_alarms\")?)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "mcp_fields": {},
       "admission": {"unrestricted_record_scope": true},
@@ -1732,6 +1757,7 @@
       "output": "crate::authority::AuthorityHandoffAlarm",
       "call": "crate::task_verb::sdk::acknowledge_handoff_alarm(memory.vault(), &memory.embedded_owner(\"vault.authority.handoff_alarms.acknowledge\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
