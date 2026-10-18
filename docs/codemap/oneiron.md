@@ -902,7 +902,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_document/storage/lift.rs` | src | s | 4 crate-vis | — | Code documents the historical lift sweep reads again (OF-067, Engine ruling G2 = b) |
 | `src/code_document/tests.rs` | test | m | — | — | — |
 | `src/code_document/types.rs` | src | s | 8 struct · 1 enum · 3 fn · 1 crate-vis | CodeDocumentFrontier, CodeEditReceipt, CodeFileEdit, CodeOpAttribution, CodeOpProvenance, CodeRangeChange, CodeSpanAnchor, CodeSpanBlame +1 | File edit verbs, cursor spans, operation receipts and tested frontiers |
-| `src/code_document/verbs.rs` | src | s | 10 struct · 2 fn · 3 crate-vis | CodeBlameView, CodeChangeView, CodeDiffRequest, CodeDiffView, CodeOperationView, CodeSpanView, CodeStateRequest, CodeStateView +2 | The code views' agent verbs (OF-323): `vault.code.diff`, a semantic diff between two tested states of one… |
+| `src/code_document/verbs.rs` | src | m | 10 struct · 2 fn · 6 crate-vis | CodeBlameView, CodeChangeView, CodeDiffRequest, CodeDiffView, CodeOperationView, CodeSpanView, CodeStateRequest, CodeStateView +2 | The code views' agent verbs (OF-323): `vault.code.diff`, a semantic diff between two tested states of one… |
 | `src/code_memory.rs` | src | s | 1 re-export · 2 crate-vis | — | — |
 | `src/code_memory/implementation.rs` | src | s | — | — | ARCH-0050 R6 L2 memory-over-code attachment mechanics (ONE-1608) |
 | `src/code_memory/parts/lifecycle-and-tests.rs` | src | m | 1 crate-vis | — | — |
@@ -2443,7 +2443,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/merge_queue_doors/operations.rs` | src | s | 6 fn | — | — |
 | `src/memory/merge_queue_doors/types.rs` | src | s | 9 struct | MergeQueueBatchRequest, MergeQueueBatchView, MergeQueueEnqueueRequest, MergeQueueObservation, MergeQueueObserveRequest, MergeQueuePathView, MergeQueuePointersView, MergeQueueRepoRequest +1 | — |
 | `src/memory/message_result.rs` | src | s | 1 fn · 2 crate-vis | — | The result a MESSAGE carries, read by the bound actor (FIX 365): its card, or a `slice`, `search`, `query`… |
-| `src/memory/mod.rs` | src | s | 9 mod · 43 re-export · 15 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
+| `src/memory/mod.rs` | src | s | 10 mod · 43 re-export · 15 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
 | `src/memory/note_tombstone.rs` | src | s | 3 fn | — | The owner's NOTE tombstone doors (OF-073, FIX 2419): the tombstones the monthly NOTE review proposed, and… |
 | `src/memory/notes.rs` | src | s | 3 fn | — | Agent-facing NOTE verbs; actor identity is bound to the memory facade |
 | `src/memory/origin_doors/mod.rs` | src | s | 1 re-export | — | Typed origin and checkout doors (DOOR-139): tested-tree export, the origin authority epoch, publication… |
@@ -2471,6 +2471,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/recall/stale.rs` | src | s | 1 struct · 1 crate-vis | MemoryStaleStamp | Typed stale-federation metadata returned only for admitted recall items |
 | `src/memory/report.rs` | src | s | 4 fn | — | A report files evidence, not authority |
 | `src/memory/result_attachment.rs` | src | s | 2 struct · 3 fn · 1 const · 4 crate-vis | MessageResultAttachment, MessageResultSource | The typed result a MESSAGE carries in place of an answer too large to say (FIX 365): a bounded preview of… |
+| `src/memory/result_doors/mod.rs` | src | s | 3 fn · 1 re-export | — | Retained result doors |
+| `src/memory/result_doors/types.rs` | src | s | 18 struct · 6 enum | ResultBodyKind, ResultBodyStatus, ResultByteSelection, ResultCard, ResultEffectRecord, ResultLineCursor, ResultLineSelection, ResultOccurrenceManifest +16 | Typed projections of retained result manifests and the existing reader |
 | `src/memory/room_turn.rs` | src | s | 1 struct · 14 fn · 3 crate-vis | RoomTurnHandle | A room turn (ARCH-0067 §8): one actor's reads inside one room's Scope |
 | `src/memory/scoped_export.rs` | src | s | 6 struct · 5 enum · 2 fn | ChannelCeiling, CredentialCeiling, ExportChannel, RecordPosition, RecordSelector, ScopeAxisInput, ScopeSensitivityBand, ScopeSensitivityInput +3 | Scoped exports carry the caller's verified ceiling, never a caller-authored grant |
 | `src/memory/search_hybrid.rs` | src | s | 5 struct · 2 fn | HybridPprQuery, HybridRankReplay, HybridSearchHit, HybridSearchRequest, HybridTemporalQuery | Five-channel search through the caller's ordinary scoped retrieval lane |
@@ -2486,7 +2488,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/structural/puts.rs` | src | m | 5 fn | — | Generic structural puts, habit check-ins, and blob artifact verbs |
 | `src/memory/structural/types.rs` | src | s | 9 struct | AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, EntityRefReceipt, EntityView, HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput +1 | Read-facing views and per-verb inputs for structural puts |
 | `src/memory/subscriptions.rs` | src | s | 1 struct · 1 trait · 2 fn | MemorySubscriptionOwner, ScopedView | Transport-neutral subscription verbs |
-| `src/memory/support.rs` | src | L | 2 struct · 32 fn · 1 type · 47 crate-vis | HostWriteOrigin, Memory | Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and… |
+| `src/memory/support.rs` | src | L | 2 struct · 33 fn · 1 type · 47 crate-vis | HostWriteOrigin, Memory | Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and… |
 | `src/memory/tests/asset_hydrate.rs` | test | s | — | — | OF-329, hydrate's half (ONE-2331): a reader that declares no image input hydrates an image ASSET and is… |
 | `src/memory/tests/asset_resolve.rs` | test | s | — | — | OF-328 / OF-329 acceptance: a generated image lands as ASSET plus a precomputed ASSET_TEXT, and the resolver… |
 | `src/memory/tests/authority_revocation.rs` | test | XL | — | — | Owner bindings, rooting, revocation, revocation-vs-delete races, rotation, and sidecars |
@@ -3705,7 +3707,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/federation_burst/tests.rs` | test | s | 1 crate-vis | — | — |
 | `src/sync/home_proof.rs` | src | s | 1 fn · 1 const · 2 crate-vis | — | OF-534 G6/G7: the home names itself to the device that dials it |
 | `src/sync/ingest/birth_watch.rs` | src | s | 3 crate-vis | — | The rows a federated import watches for their births |
-| `src/sync/ingest/delivery.rs` | src | s | 1 fn · 5 crate-vis | — | Which records a federation pact delivered here, and at which consent epoch (FIX 321) |
+| `src/sync/ingest/delivery.rs` | src | m | 1 fn · 6 crate-vis | — | Which records a federation pact delivered here, and at which consent epoch (FIX 321) |
 | `src/sync/ingest/entity.rs` | src | m | 11 crate-vis | — | The entity-ingest ladder: one admission for every replicated entities-map value |
 | `src/sync/ingest/mod.rs` | src | s | 7 crate-vis | — | One ingest entry per replicated container: every entities-map value and every tombstone takes the same… |
 | `src/sync/ingest/order.rs` | src | s | 2 crate-vis | — | The order one pass or delta visits AUTHORITY_LOG rows in |
@@ -3860,7 +3862,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/board_task.rs` | src | s | 2 crate-vis | — | One committed TASK as the board STREAM publisher reads it |
 | `src/task_verb/brief.rs` | src | m | 14 struct · 2 enum · 4 fn · 12 crate-vis | BriefConstraints, BriefContext, BriefIntent, BriefStamp, Care, ComposerStamp, Criterion, DoneMeans +8 | The queue task brief (OF-220): the typed why-carrier one TASK holds |
 | `src/task_verb/catalog_fragment_revision.rs` | src | s | 1 const | — | — |
-| `src/task_verb/comm_widen.rs` | src | m | 8 crate-vis | — | FIX 1380 phase 2: a comm refusal raises the one widen ask to the parent |
+| `src/task_verb/comm_widen.rs` | src | m | 9 crate-vis | — | FIX 1380 phase 2: a comm refusal raises the one widen ask to the parent |
 | `src/task_verb/consts.rs` | src | s | 1 const · 18 crate-vis | — | Module-level constants shared across the task-verb files |
 | `src/task_verb/consult_fanout_admission.rs` | src | m | 12 fn · 5 crate-vis | — | Meter, state and admit consult fan-outs before any TASK exists |
 | `src/task_verb/consult_fanout_facade.rs` | src | s | 1 fn | — | — |
@@ -3915,7 +3917,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/run_verb_catalog.rs` | src | s | 1 enum · 4 fn · 1 const | RunVerb | — |
 | `src/task_verb/runner_done.rs` | src | s | 2 struct · 2 fn · 1 crate-vis | RunnerDoneAnswer, RunnerDoneQuestion | A runner's "Done means met?", answered before it settles (OF-533) |
 | `src/task_verb/scheduling.rs` | src | s | 4 crate-vis | — | Live TASK dependency and symbol readiness at every attempt-claim door |
-| `src/task_verb/sdk.rs` | src | L | 36 struct · 1 enum · 12 fn · 44 re-export | BoardRefreshRequest, BoardSubscriptionRequest, CompanionSharingRequest, CompanionSharingSetRequest, DescribeRequest, EmptyRequest, InboxListRequest, InboxMarkRequest +29 | Shared typed agent-verb inputs and generated transport dispatch |
+| `src/task_verb/sdk.rs` | src | L | 36 struct · 1 enum · 13 fn · 44 re-export | BoardRefreshRequest, BoardSubscriptionRequest, CompanionSharingRequest, CompanionSharingSetRequest, DescribeRequest, EmptyRequest, InboxListRequest, InboxMarkRequest +29 | Shared typed agent-verb inputs and generated transport dispatch |
 | `src/task_verb/sdk_agents.rs` | src | m | 7 struct · 3 enum · 3 fn · 1 crate-vis | AgentCeilingInput, AgentDefinitionCreateRequest, AgentDefinitionLifecycle, AgentDefinitionRequest, AgentDefinitionSpec, AgentDefinitionUpdateRequest, AgentDefinitionView, AgentMcpInput +2 | Typed custom AGENT_DEF authoring |
 | `src/task_verb/sdk_authority_history.rs` | src | s | 2 struct · 2 fn | AuthorityHistoryImported, SignedAuthorityHistory | Byte-preserving signed authority history transfer for the vault owner |
 | `src/task_verb/sdk_calendar.rs` | src | s | 3 struct | BookingPageTokenRequest, BookingPageTokenResponse, CalendarFreebusyRequest | Typed booking-page discovery and calendar occupancy inputs |
@@ -3933,7 +3935,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/sdk_explain.rs` | src | s | 6 struct | ExplainGateNotice, ExplainGateReply, ExplainGateRequest, ExplainMemoryReply, ExplainMemoryRequest, ExplainScoreEvidence | The wire shapes of `vault.explain.memory` and `vault.explain.gate` (OF-278): why a memory appeared in the… |
 | `src/task_verb/sdk_fanout_launch.rs` | src | s | 5 struct · 1 enum · 7 fn | FanoutAckRequest, FanoutLaunchHold, FanoutLaunchRequest, FanoutLaunchRuling, FanoutLaunchView, FanoutResumeRequest | The fan-out launch doors (OF-393): `vault.fanout.launch` reads one held or launched fan-out… |
 | `src/task_verb/sdk_federation.rs` | src | s | 19 struct · 1 enum · 1 fn · 1 crate-vis | AcceptConnect, AcceptRescopeConnect, ConnectAccepted, ConnectDelivery, ConnectDisconnected, ConnectExportRequest, ConnectGrant, ConnectIdentity +12 | Typed Connect, reciprocal re-scope, disconnect and foreign-world delivery |
-| `src/task_verb/sdk_generated.rs` | src | XL | 573 fn · 4 const | — | — |
+| `src/task_verb/sdk_generated.rs` | src | XL | 579 fn · 4 const | — | — |
 | `src/task_verb/sdk_guest_revoke.rs` | src | s | 1 struct · 2 fn | GuestRevokeRequest | The input and answer of the owner's guest revoke row (OF-232): `vault.guests.revoke`, a host door |
 | `src/task_verb/sdk_host.rs` | src | L | 27 struct · 6 enum · 25 fn · 4 const | AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiPart, AiVerdict, AiVerdictRequest, AiVerdictReversibility +25 | The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put`… |
 | `src/task_verb/sdk_hub.rs` | src | m | 20 struct · 2 enum · 17 fn | HubConsentOutcome, HubConsentReceipt, HubHookBindRequest, HubHookBindingRow, HubHookQualificationReceipt, HubHookQualifyRequest, HubHookReplay, HubImportRequest +14 | Typed owner doors over configured hubs, foreign publishers and pinned imports |
@@ -3990,8 +3992,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/wave_port.rs` | src | L | 2 struct · 1 enum · 9 fn · 2 crate-vis | VaultWaveTaskPort, WaveDispatchGeneration, WaveDispatchPage | Vault-backed, atomic wave plan application through the ordinary TASK doors |
 | `src/task_verb/wire_decode.rs` | src | L | 20 crate-vis | — | Read side of the hand-rolled rmpv wire format for typed TASK bodies |
 | `src/task_verb/wire_encode.rs` | src | m | 8 crate-vis | — | Write side of the hand-rolled rmpv wire format for typed TASK bodies |
+| `src/team/doors.rs` | src | s | 8 struct · 2 fn · 1 const | TaskTypeNodeSpec, TaskTypeNodeView, TaskTypeTreePin, TaskTypeTreePinReceipt, TaskTypeTreeRead, TaskTypeTreeReadReply, TaskTypeTreeView, TypeStamp | The owner's task-type tree doors (DOOR-111, OF-541): store an authored tree on an open team-shape fork, and… |
 | `src/team/market.rs` | src | m | 6 struct · 3 enum · 8 fn · 1 const | LedgerEntry, LedgerKind, Market, MarketMode, MarketResult, Participant, RefereeKind, SignedReferee +1 | The MARKET pattern's ledger (ARCH-0079 #market, OF-540) |
-| `src/team/mod.rs` | src | s | 9 mod · 9 re-export · 1 crate-vis | — | Coordination patterns as skills, and the team receipt contract (OF-540, ARCH-0079) |
+| `src/team/mod.rs` | src | s | 10 mod · 10 re-export · 1 crate-vis | — | Coordination patterns as skills, and the team receipt contract (OF-540, ARCH-0079) |
 | `src/team/observations.rs` | src | s | 1 struct · 1 fn | TeamRunObservations | OF-540: what the host measured of a team run, for its receipt |
 | `src/team/owner_outcome.rs` | src | s | 1 struct · 1 enum · 3 fn · 1 crate-vis | DeliverableReview, TeamDeliverableBinding | OF-540: the owner's verdict on a team's deliverable settles the team |
 | `src/team/pattern.rs` | src | s | 1 struct · 2 enum · 7 fn · 3 const · 1 crate-vis | PatternSkill, TeamAxis, TeamPattern | Coordination patterns as skills (ARCH-0079 #coordination-patterns) |

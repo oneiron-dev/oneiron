@@ -117,6 +117,13 @@ side_tables! {
     /// the world the record sits in (16 raw bytes; empty for base reality). Key: hex64 (pact id)
     /// ":" hex16 (epoch) ":" hex32 (record id).
     FEDERATION_DELIVERED_RECORD: SyncState b"feddelivered:" Raw;
+    /// A row one federation pact's import brings, recorded before the import lands it, so the
+    /// write that lands it after a crash (forward rematerialization) records it in
+    /// `FEDERATION_DELIVERED_RECORD` (FIX 3498). It goes when its row lands or other bytes land
+    /// there, and never expires. Local to this vault: never replicated or exported. Value: the
+    /// pact id, its epoch and when it was recorded (u64 big-endian seconds each), then the blake3
+    /// digest of the row's bytes. Key: hex32 (record id) ":" hex64 (pact id).
+    FEDERATION_DELIVERY_INTENT: SyncState b"fedintent:" Raw;
     /// A federated `FacetOf` stamp sent ahead of its source row, held out of the window document
     /// until the same sender's birth of the row has applied here. Local to this vault: never
     /// replicated or exported. Value: when it was held (u64 big-endian), the grant it was held

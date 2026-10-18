@@ -1167,6 +1167,16 @@ export class Oneiron {
         recover: (input: Facade.MergeQueueRepoRequest): Facade.MergeQueuePointersView => this.#call(() => this.#client.vaultCodeMergeQueueRecover(input) as Facade.MergeQueuePointersView),
       },
     },
+    results: {
+      /** The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run. */
+      status: (input: Facade.ResultRunRequest): Facade.ResultRunStatus => this.#call(() => this.#client.vaultResultsStatus(input) as Facade.ResultRunStatus),
+      /** The owner reopens retained result status after restart; it never resumes the producer or replays an effect to regenerate output. */
+      recover: (input: Facade.ResultRunRequest): Facade.ResultRunStatus => this.#call(() => this.#client.vaultResultsRecover(input) as Facade.ResultRunStatus),
+      /** The owner reads one exact retained result occurrence card under its current taint and source-row fence, never by content authority alone. */
+      read: (input: Facade.ResultOccurrenceRequest): Facade.ResultReadView => this.#call(() => this.#client.vaultResultsRead(input) as Facade.ResultReadView),
+      /** The owner reads a typed byte or line range of one exact result occurrence, with bounded continuations and current taint withholding. */
+      slice: (input: Facade.ResultSliceRequest): Facade.ResultSliceView => this.#call(() => this.#client.vaultResultsSlice(input) as Facade.ResultSliceView),
+    },
     agents: {
       /** The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched. */
       create: (input: Facade.AgentDefinitionCreateRequest): Facade.AgentDefinitionView => this.#call(() => this.#client.vaultAgentsCreate(input) as Facade.AgentDefinitionView),
@@ -1188,6 +1198,12 @@ export class Oneiron {
       dispatch: (input: Facade.WorkflowDispatchRequest): Facade.WorkflowRunView => this.#call(() => this.#client.vaultWorkflowsDispatch(input) as Facade.WorkflowRunView),
       /** The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result. */
       status: (input: Facade.WorkflowRunRequest): Facade.WorkflowRunView => this.#call(() => this.#client.vaultWorkflowsStatus(input) as Facade.WorkflowRunView),
+    },
+    task_types: {
+      /** The owner stores an authored task-type tree on an open team-shape fork, as a candidate; the receipt says whether it is in force. */
+      pin: (input: Facade.TaskTypeTreePin): Facade.TaskTypeTreePinReceipt => this.#call(() => this.#client.vaultTaskTypesPin(input) as Facade.TaskTypeTreePinReceipt),
+      /** The owner reads the task-type tree in force, or one kept tree version, for the vault or a project. */
+      get: (input: Facade.TaskTypeTreeRead): Facade.TaskTypeTreeReadReply => this.#call(() => this.#client.vaultTaskTypesGet(input) as Facade.TaskTypeTreeReadReply),
     },
     workspace: {
       /** The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted. */

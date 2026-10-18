@@ -119,6 +119,8 @@ pub(crate) use super::policy_doors::*;
 pub(crate) use super::origin_doors::*;
 // The owner's code snapshot doors (DOOR-118), likewise.
 pub(crate) use super::codebase_doors::*;
+// The owner's task-type tree doors (DOOR-111), likewise.
+pub(crate) use super::coordination_doors::*;
 // The generic connector call's door (ONE-2510), likewise.
 pub(crate) use super::connector_call_doors::*;
 pub(crate) use super::connector_pack_doors::*;
@@ -127,6 +129,7 @@ pub(crate) use super::secret_use_doors::*;
 // The message reaction door (OF-181), likewise.
 pub(crate) use super::reaction_doors::*;
 pub(crate) use super::reply_doors::*;
+pub(crate) use super::result_doors::*;
 // The core write doors (OF-181), likewise.
 pub(crate) use super::core_write_doors::*;
 // The critic review door (OF-352), likewise.
@@ -1142,6 +1145,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.workflows.get"
         | "vault.workflows.dispatch"
         | "vault.workflows.status"
+        | "vault.task_types.pin"
+        | "vault.task_types.get"
         | "vault.workspace.roster"
         | "vault.booking.page_token"
         | "vault.channel_identities.provision"
@@ -1208,6 +1213,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.symbols.release"
         | "vault.code.proposal_submit"
         | "vault.code.oplog"
+        | "vault.results.status"
+        | "vault.results.recover"
+        | "vault.results.read"
+        | "vault.results.slice"
         | "vault.code.model_heal_count"
         | "vault.code.export"
         | "vault.code.origin.authority.get"

@@ -2532,6 +2532,36 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_results_status(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.results.status", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_results_recover(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.results.recover", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_results_read(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.results.read", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_results_slice(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.results.slice", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_code_repo_diff(&self, request_json: String) -> napi::Result<String> {
         let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
             facade_error(oneiron::memory::MemoryError {
@@ -2774,6 +2804,24 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.workflows.status", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_task_types_pin(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.task_types.pin", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_task_types_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.task_types.get", input)
             .map_err(facade_error)
     }
     #[napi]

@@ -17,6 +17,8 @@ mod resume;
 mod served;
 mod state;
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -24,6 +26,7 @@ use crate::claim::ScopedReadActorKey;
 pub use crate::error::VerbHookStop;
 use crate::memory::MemoryResult;
 use crate::skill_hub::pack_catalog::HookActorClass;
+use crate::work_line::TaskWorkTurn;
 use crate::{EdgeActorClass, EntityId, Result, Vault};
 
 pub use ask::HOOK_RESULT_NOT_RETAINED;
@@ -238,14 +241,16 @@ impl Vault {
         args: Value,
         check: VerbArgsCheck<'_>,
     ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
-        chain::pre(self, call, args, check, None)
+        chain::pre(self, call, args, check, None, None)
     }
 
     /// [`Self::pre_verb_hooks`] for a call settlement can run again without
     /// its caller: an ask saves `resume`, and once the drain ran the call a
     /// retry presenting the same target gets [`VerbHookStop::Completed`] or
     /// [`VerbHookStop::CompletedWithError`]. `None` is a call only its
-    /// caller's retry resumes.
+    /// caller's retry resumes. `turn` is the task-work turn the calling
+    /// operation already holds, if any: a hook's ask, and a retry's read of
+    /// it, run on that turn and never wait in the line for another.
     ///
     /// # Errors
     ///
@@ -256,8 +261,9 @@ impl Vault {
         args: Value,
         check: VerbArgsCheck<'_>,
         resume: Option<VerbResume>,
+        turn: Option<Arc<TaskWorkTurn>>,
     ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
-        chain::pre(self, call, args, check, resume.as_ref())
+        chain::pre(self, call, args, check, resume.as_ref(), turn)
     }
 
     /// [`Self::pre_verb_hooks`] for a credential caller's call its host can
@@ -265,7 +271,8 @@ impl Vault {
     /// reference and pins its witness in the ask's own write, so settlement
     /// resumes the call through the host's check, and a retry presenting the
     /// same reference reads what it returned. With no check installed, or
-    /// `None`, only the caller's retry resumes it.
+    /// `None`, only the caller's retry resumes it. A hook's ask runs on
+    /// `turn`, the task-work turn the calling operation holds, if any.
     ///
     /// # Errors
     ///
@@ -276,6 +283,7 @@ impl Vault {
         args: Value,
         check: VerbArgsCheck<'_>,
         credential: Option<VerbAskCredential>,
+        turn: Option<Arc<TaskWorkTurn>>,
     ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
         let credential = credential.filter(|_| self.verb_hook_state.credential_check().is_some());
         let resume = credential
@@ -285,7 +293,7 @@ impl Vault {
             });
         let _witness =
             credential::WitnessScope::enter(credential.map(VerbAskCredential::into_witness));
-        self.pre_verb_hooks_resumable(call, args, check, resume)
+        self.pre_verb_hooks_resumable(call, args, check, resume, turn)
     }
 
     /// Runs the post chain over the verb's `result`: the caller's view after
