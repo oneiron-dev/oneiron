@@ -15,8 +15,8 @@
 //! The app's keychain answers the secrets the config does not name. Its
 //! timer is armed for the Dreamer's next wake and wakes the engine back
 //! through [`EmbeddedHost::wake_handle`]. [`EmbeddedHost::stop_handle`] stops
-//! serving: connections drain, then every worker stops. No process signal is
-//! watched here.
+//! serving: connections drain, every socket upgraded on them ends, then every
+//! worker stops. No process signal is watched here.
 //!
 //! [`EmbeddedEngine`] is the whole of it for a binding: from a path and the
 //! app's host it opens the vault the way `oneiron serve` does
@@ -36,6 +36,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use axum::Router;
 use axum::body::Body;
 use axum::extract::ConnectInfo;
+use axum::http::Extensions;
 use hyper::body::Incoming;
 use hyper_util::rt::{TokioIo, TokioTimer};
 use hyper_util::service::TowerToHyperService;
@@ -43,6 +44,7 @@ use oneiron_vault_contract::host::{Host, HostLimits};
 use oneiron_vault_contract::host_adapters::{AppHost, EmbeddedHost};
 use tokio::io::DuplexStream;
 use tokio::sync::{mpsc, watch};
+use tokio::task::JoinSet;
 
 pub use self::engine::{
     BlockingConnection, BlockingEngine, ENGINE_RECEIVE_CHUNK_BYTES, EmbeddedConnection,
@@ -78,8 +80,9 @@ const RELAY_REFUSAL: &str =
 ///
 /// Ready is reported once every worker runs. When the app backgrounds it
 /// fires `host.stop_handle()` with `notify_one` and awaits this, which
-/// returns once connections have drained and every worker has stopped. The
-/// app's timer stays armed for the next wake.
+/// returns once connections have drained, every socket upgraded on them has
+/// ended and every worker has stopped. The app's timer stays armed for the
+/// next wake.
 ///
 /// Run it on a multi-thread Tokio runtime, outside a `LocalSet`, as
 /// [`crate::build_app`] says.
@@ -164,12 +167,31 @@ async fn serve_prepared<A: AppHost>(
         crate::device_sync::DeviceSyncHost::start(&mesh_server, &config, mesh.as_ref()).await;
     host.ready()?;
     let (stopping, mut stopped) = (started.stopping, started.stopped);
-    let api = serve_channel(connections, app, header_read_timeout, stopped.clone());
+    // Each socket upgraded on the app's channels holds a place in this drain
+    // from before its upgrade registers until it ends, which it does on the
+    // stop. Each channel's HTTP connections are tasks of its set here.
+    let upgrades = UpgradeLifetime::new(stopped.clone());
+    let (mut api_http, mut artifact_http) = (JoinSet::new(), JoinSet::new());
+    let api = serve_channel(
+        connections,
+        app,
+        header_read_timeout,
+        upgrades.clone(),
+        &mut api_http,
+    );
     let artifact_app = started.artifact_app;
-    let artifact_stop = stopped.clone();
+    let artifact_upgrades = upgrades.clone();
+    let artifact_connections = &mut artifact_http;
     let artifact = async move {
         if let Some(artifacts) = artifacts {
-            serve_channel(artifacts, artifact_app, header_read_timeout, artifact_stop).await;
+            serve_channel(
+                artifacts,
+                artifact_app,
+                header_read_timeout,
+                artifact_upgrades,
+                artifact_connections,
+            )
+            .await;
         }
     };
     let stop = host.stop_handle();
@@ -191,6 +213,14 @@ async fn serve_prepared<A: AppHost>(
         }
         () = forward_wakes(&mut host, next_wake, &ai) => {}
     }
+    // Every connection closed, or the grace ran out and the race dropped the
+    // channels with some still open. Those are aborted and reaped here, so an
+    // upgrade one never finished releases its place in the drain. Each
+    // upgraded socket saw the stop and ends at its next await. Its drain is
+    // awaited here, outside the grace race: no worker stops under a socket.
+    api_http.shutdown().await;
+    artifact_http.shutdown().await;
+    upgrades.drained().await;
     if let Some(device_sync) = device_sync {
         device_sync.stop().await;
     }
@@ -226,36 +256,111 @@ fn apply_host_limits(config: &mut ServeConfig, host: HostLimits) {
         .min(host.memory_bytes / HOST_SCAN_BLOB_SHARE);
 }
 
+/// What a socket upgraded on an embedded engine's channel lives under
+/// (OF-237): the engine's stop watch, and the drain serving awaits before any
+/// worker stops. [`serve_channel`] puts it on every request it serves; a
+/// server that is not embedded puts none, and its sockets run as they always
+/// have.
+#[derive(Clone)]
+struct UpgradeLifetime {
+    stopped: watch::Receiver<bool>,
+    /// Each receiver subscribed to it is one upgrade's place in the drain.
+    drain: watch::Sender<()>,
+}
+
+impl UpgradeLifetime {
+    fn new(stopped: watch::Receiver<bool>) -> Self {
+        Self {
+            stopped,
+            drain: watch::Sender::new(()),
+        }
+    }
+
+    /// Returns once every place taken in the drain has been released.
+    async fn drained(&self) {
+        self.drain.closed().await;
+    }
+}
+
+/// One upgrade's place in its embedded engine's drain, and that engine's stop
+/// watch. Dropped, with the callback that owns it or with an upgrade that
+/// never completed, it releases the place.
+pub(crate) struct UpgradeHold {
+    stopped: watch::Receiver<bool>,
+    place: watch::Receiver<()>,
+}
+
+impl UpgradeHold {
+    /// The hold an embedded engine's channel asks of an upgrade on the
+    /// request whose `extensions` these are, taken before the upgrade
+    /// registers, so the drain waits for it from the start. `None` for a
+    /// request no embedded channel carried.
+    pub(crate) fn take(extensions: &Extensions) -> Option<Self> {
+        extensions.get::<UpgradeLifetime>().map(|lifetime| Self {
+            stopped: lifetime.stopped.clone(),
+            place: lifetime.drain.subscribe(),
+        })
+    }
+
+    /// Runs `socket`, an upgrade's whole callback, under `hold`: on the
+    /// engine's stop the callback is dropped wherever it waits, the hello and
+    /// blocked sends included, and with it the socket and every call it runs.
+    /// Without a hold `socket` runs as it is.
+    pub(crate) async fn run(hold: Option<Self>, socket: impl Future<Output = ()>) {
+        let Some(Self { mut stopped, place }) = hold else {
+            return socket.await;
+        };
+        tokio::select! {
+            biased;
+            () = stop_turned(&mut stopped) => {}
+            () = socket => {}
+        }
+        drop(place);
+    }
+}
+
+/// Returns once `stopped` turns, or once its sender is gone, which is a
+/// server that has stopped.
+async fn stop_turned(stopped: &mut watch::Receiver<bool>) {
+    let _ = stopped.wait_for(|stop| *stop).await;
+}
+
 /// Serves `app` over each stream the app hands in, as the mesh serves its
-/// streams: one HTTP/1.1 connection per stream, upgrades included. Once
-/// `stopped` turns it takes no more streams, ends each open connection
-/// gracefully and returns when all have closed.
+/// streams: one HTTP/1.1 connection per stream, upgrades included, each a
+/// task of `http`. Every request carries `upgrades`, so a socket it upgrades
+/// to ends on the stop and is waited for before any worker stops. Once the
+/// stop watch turns it takes no more streams, ends each open connection
+/// gracefully and returns when all have closed. Dropped before then, at the
+/// drain grace, it leaves the open ones in `http` for its caller to abort.
 async fn serve_channel(
     mut connections: mpsc::Receiver<DuplexStream>,
     app: Router,
     header_read_timeout: Duration,
-    mut stopped: watch::Receiver<bool>,
+    upgrades: UpgradeLifetime,
+    http: &mut JoinSet<()>,
 ) {
-    let (open, open_watch) = watch::channel(());
+    let mut stopped = upgrades.stopped.clone();
     loop {
         let stream = tokio::select! {
             stream = connections.recv() => match stream {
                 Some(stream) => stream,
                 None => break,
             },
-            _ = stopped.wait_for(|stop| *stop) => break,
+            () = stop_turned(&mut stopped) => break,
+            // A connection is reaped as it ends, so the set holds open ones.
+            Some(_) = http.join_next(), if !http.is_empty() => continue,
         };
         let routes = TowerToHyperService::new(app.clone());
+        let lifetime = upgrades.clone();
         let service = hyper::service::service_fn(move |request: hyper::Request<Incoming>| {
             let mut request = request.map(Body::new);
-            request
-                .extensions_mut()
-                .insert(ConnectInfo(IN_PROCESS_PEER));
+            let extensions = request.extensions_mut();
+            extensions.insert(ConnectInfo(IN_PROCESS_PEER));
+            extensions.insert(lifetime.clone());
             hyper::service::Service::call(&routes, request)
         });
         let mut stop = stopped.clone();
-        let held = open_watch.clone();
-        tokio::spawn(async move {
+        http.spawn(async move {
             let mut builder = hyper::server::conn::http1::Builder::new();
             builder
                 .timer(TokioTimer::new())
@@ -269,18 +374,16 @@ async fn serve_channel(
             // this server's.
             let stopping = tokio::select! {
                 _ = connection.as_mut() => false,
-                _ = stop.wait_for(|stopping| *stopping) => true,
+                () = stop_turned(&mut stop) => true,
             };
             if stopping {
                 connection.as_mut().graceful_shutdown();
                 let _ = connection.as_mut().await;
             }
-            drop(held);
         });
     }
     drop(connections);
-    drop(open_watch);
-    open.closed().await;
+    while http.join_next().await.is_some() {}
 }
 
 /// Arms the app's timer for the Dreamer's next wake as it changes, and hands
