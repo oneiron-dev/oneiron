@@ -49809,7 +49809,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 46,
+      "re-export": 47,
       "struct": 36
      }
     },
@@ -50133,7 +50133,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 599
+      "fn": 607
      }
     },
     {
@@ -50651,6 +50651,39 @@
      "surface": {
       "fn": 4,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SkillCapabilityView",
+      "SkillCodeAutoInstallRequest",
+      "SkillConvertReceipt",
+      "SkillConvertRequest",
+      "SkillForkLineage",
+      "SkillHashRuleRequest",
+      "SkillLibraryCall",
+      "SkillLibraryDependency",
+      "SkillLibraryFile",
+      "SkillLibraryForkRequest",
+      "SkillLibraryLifecycle",
+      "SkillLibraryListRequest",
+      "SkillLibraryPage",
+      "SkillLibraryRestoreReceipt",
+      "SkillLibraryRestoreRequest",
+      "SkillLibraryScan",
+      "SkillLibraryView",
+      "SkillRestoreAdmission",
+      "SkillSourceEvidence",
+      "SkillStaleView"
+     ],
+     "path": "src/task_verb/sdk_skills.rs",
+     "purpose": "Owner-bound library doors over the existing conversion, lifecycle and admission engines",
+     "surface": {
+      "enum": 3,
+      "fn": 10,
+      "struct": 17
      }
     },
     {
@@ -57047,7 +57080,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 158,
+     "files": 159,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -57217,7 +57250,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3486,
+   "source_files": 3487,
    "test_files": 902
   },
   "oneiron-android": {
@@ -65684,7 +65717,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 549
+      "fn": 557
      }
     },
     {
@@ -66733,7 +66766,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 550
+      "fn": 558
      }
     },
     {
@@ -69946,7 +69979,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 106
+      "crate-vis": 107
      }
     },
     {
@@ -69956,7 +69989,7 @@
      "path": "src/api/facade/hub_doors.rs",
      "purpose": "Owner-proof facade doors for configured hubs and pinned foreign imports",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -70217,6 +70250,16 @@
      "purpose": "The host doors of the shared-act policy rows (DOOR-129), beside `shared_act_doors`: a live Owner reads every…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/skill_doors.rs",
+     "purpose": "Selected-message conversion and the owner's skill library, through the same facade and MCP doors",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -77496,7 +77539,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 365,
+     "files": 366,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -77911,7 +77954,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 695,
+   "source_files": 696,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -79794,19 +79837,39 @@
       "SignedAuthorityHistory",
       "SigningStatus",
       "SkillAuthoringReceipt",
+      "SkillCapabilityView",
+      "SkillCodeAutoInstallRequest",
       "SkillContribution",
+      "SkillConvertReceipt",
+      "SkillConvertRequest",
+      "SkillForkLineage",
       "SkillForkRequest",
+      "SkillHashRuleRequest",
       "SkillHubConfigured",
       "SkillHubKind",
       "SkillHubPutRequest",
       "SkillHubRecord",
       "SkillHubRequest",
       "SkillHubTrustTier",
+      "SkillLibraryCall",
+      "SkillLibraryDependency",
+      "SkillLibraryFile",
+      "SkillLibraryForkRequest",
+      "SkillLibraryLifecycle",
+      "SkillLibraryListRequest",
+      "SkillLibraryPage",
+      "SkillLibraryRestoreReceipt",
+      "SkillLibraryRestoreRequest",
+      "SkillLibraryScan",
+      "SkillLibraryView",
       "SkillPublisherAdmission",
       "SkillPublisherRequest",
+      "SkillRestoreAdmission",
       "SkillRevisionView",
       "SkillSaveRequest",
+      "SkillSourceEvidence",
       "SkillSourceFile",
+      "SkillStaleView",
       "SlateDataClass",
       "SlateDisposition",
       "SlateDraftRow",
@@ -80124,8 +80187,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 527,
-      "struct": 1488
+      "enum": 530,
+      "struct": 1505
      }
     },
     {
