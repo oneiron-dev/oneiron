@@ -5672,9 +5672,9 @@
       "SignatureRaster"
      ],
      "path": "src/blob_artifact/esign/render.rs",
-     "purpose": "Lossless bounded PDF preparation and shared field presentation",
+     "purpose": "Lossless PDF preparation and shared field presentation",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 3,
       "re-export": 1,
@@ -5716,7 +5716,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/blob_artifact/esign/render/preflight.rs",
-     "purpose": "Budgeted xref framing and lossless object-stream expansion before rewriting",
+     "purpose": "Exact xref framing and lossless object-stream expansion before rewriting",
      "surface": {
       "crate-vis": 1
      }
@@ -5767,7 +5767,7 @@
      "path": "src/blob_artifact/esign/render/streams.rs",
      "purpose": "Exact, budgeted decoding for PDF content and structural streams",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -5908,7 +5908,7 @@
      "path": "src/blob_artifact/esign/template/layout.rs",
      "purpose": "Deterministic paginated HTML flow; fixed PDF standard fonts and no host state",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
