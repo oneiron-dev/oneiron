@@ -419,6 +419,21 @@ impl OneironClient {
                 "vault.authority.history.import" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::AuthorityHistoryImported,
                 >(client, verb, &input),
+                "vault.slim.policy" => remote_agent_verb_output::<
+                    oneiron::slim::public::SlimIdlePolicy,
+                >(client, verb, &input),
+                "vault.slim.state" => remote_agent_verb_output::<
+                    oneiron::slim::public::SlimStateSnapshot,
+                >(client, verb, &input),
+                "vault.slim.resume_step" => remote_agent_verb_output::<
+                    oneiron::slim::public::SavedResumeStep,
+                >(client, verb, &input),
+                "vault.slim.drop_heavy" => remote_agent_verb_output::<
+                    oneiron::slim::public::SlimDropReceipt,
+                >(client, verb, &input),
+                "vault.slim.resume" => remote_agent_verb_output::<
+                    oneiron::slim::public::SlimResumeReceipt,
+                >(client, verb, &input),
                 "vault.mesh.path_receipts" => remote_agent_verb_output::<
                     Vec<oneiron::sync::mesh_path::MeshPathReceipt>,
                 >(client, verb, &input),
@@ -1647,6 +1662,41 @@ impl OneironClient {
                 >(client, verb, &input),
                 "connector.outbound.schedule" => remote_agent_verb_output::<
                     oneiron::memory::OutboundIntentReceipt,
+                >(client, verb, &input),
+                "vault.summaries.create" => remote_agent_verb_output::<
+                    oneiron::scope_summary::SummaryQueued,
+                >(client, verb, &input),
+                "vault.summaries.read" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<
+                        Option<oneiron::scope_summary::SummaryReadView>,
+                    >,
+                >(client, verb, &input),
+                "vault.summaries.status" => remote_agent_verb_output::<
+                    oneiron::scope_summary::ScopeSummaryStatus,
+                >(client, verb, &input),
+                "vault.summaries.keep" => remote_agent_verb_output::<
+                    oneiron::scope_summary::SummaryKeepResult,
+                >(client, verb, &input),
+                "vault.summaries.edit" => remote_agent_verb_output::<
+                    oneiron::scope_summary::SummaryProposalView,
+                >(client, verb, &input),
+                "vault.summaries.patch" => remote_agent_verb_output::<
+                    oneiron::scope_summary::SummaryMutationResult,
+                >(client, verb, &input),
+                "vault.summaries.regenerate" => remote_agent_verb_output::<
+                    oneiron::scope_summary::SummaryMutationResult,
+                >(client, verb, &input),
+                "vault.summaries.proposals.read" => remote_agent_verb_output::<
+                    oneiron::scope_summary::SummaryProposalView,
+                >(client, verb, &input),
+                "vault.summaries.proposals.merge" => remote_agent_verb_output::<
+                    oneiron::scope_summary::SummaryProposalView,
+                >(client, verb, &input),
+                "vault.summaries.proposals.switch" => remote_agent_verb_output::<
+                    oneiron::scope_summary::SummaryProposalView,
+                >(client, verb, &input),
+                "vault.summaries.proposals.reject" => remote_agent_verb_output::<
+                    oneiron::scope_summary::SummaryProposalView,
                 >(client, verb, &input),
                 "vault.notes.create" => {
                     remote_agent_verb_output::<oneiron::memory::EntityRefReceipt>(
@@ -3338,6 +3388,66 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.authority.history.import", value)
+    }
+    pub fn vault_slim_policy(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::slim::public::SlimIdlePolicy, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.slim.policy", value)
+    }
+    pub fn vault_slim_state(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::slim::public::SlimStateSnapshot, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.slim.state", value)
+    }
+    pub fn vault_slim_resume_step(
+        &self,
+        input: &oneiron::slim::public::SlimResumeStepRequest,
+    ) -> Result<oneiron::slim::public::SavedResumeStep, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.slim.resume_step", value)
+    }
+    pub fn vault_slim_drop_heavy(
+        &self,
+        input: &oneiron::slim::public::SlimDropRequest,
+    ) -> Result<oneiron::slim::public::SlimDropReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.slim.drop_heavy", value)
+    }
+    pub fn vault_slim_resume(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::slim::public::SlimResumeReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.slim.resume", value)
     }
     pub fn vault_mesh_path_receipts(
         &self,
@@ -8267,6 +8377,141 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("connector.outbound.schedule", value)
+    }
+    pub fn vault_summaries_create(
+        &self,
+        input: &oneiron::scope_summary::SummaryCreateRequest,
+    ) -> Result<oneiron::scope_summary::SummaryQueued, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.summaries.create", value)
+    }
+    pub fn vault_summaries_read(
+        &self,
+        input: &oneiron::scope_summary::SummaryReadRequest,
+    ) -> Result<
+        oneiron::claim::ScopedReadResult<Option<oneiron::scope_summary::SummaryReadView>>,
+        MemoryError,
+    > {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.summaries.read", value)
+    }
+    pub fn vault_summaries_status(
+        &self,
+        input: &oneiron::scope_summary::SummaryStatusRequest,
+    ) -> Result<oneiron::scope_summary::ScopeSummaryStatus, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.summaries.status", value)
+    }
+    pub fn vault_summaries_keep(
+        &self,
+        input: &oneiron::scope_summary::SummaryKeepRequest,
+    ) -> Result<oneiron::scope_summary::SummaryKeepResult, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.summaries.keep", value)
+    }
+    pub fn vault_summaries_edit(
+        &self,
+        input: &oneiron::scope_summary::SummaryEditRequest,
+    ) -> Result<oneiron::scope_summary::SummaryProposalView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.summaries.edit", value)
+    }
+    pub fn vault_summaries_patch(
+        &self,
+        input: &oneiron::scope_summary::SummaryPatchRequest,
+    ) -> Result<oneiron::scope_summary::SummaryMutationResult, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.summaries.patch", value)
+    }
+    pub fn vault_summaries_regenerate(
+        &self,
+        input: &oneiron::scope_summary::SummaryRegenerateRequest,
+    ) -> Result<oneiron::scope_summary::SummaryMutationResult, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.summaries.regenerate", value)
+    }
+    pub fn vault_summaries_proposals_read(
+        &self,
+        input: &oneiron::scope_summary::SummaryProposalRequest,
+    ) -> Result<oneiron::scope_summary::SummaryProposalView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.summaries.proposals.read", value)
+    }
+    pub fn vault_summaries_proposals_merge(
+        &self,
+        input: &oneiron::scope_summary::SummaryProposalRequest,
+    ) -> Result<oneiron::scope_summary::SummaryProposalView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.summaries.proposals.merge", value)
+    }
+    pub fn vault_summaries_proposals_switch(
+        &self,
+        input: &oneiron::scope_summary::SummaryProposalRequest,
+    ) -> Result<oneiron::scope_summary::SummaryProposalView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.summaries.proposals.switch", value)
+    }
+    pub fn vault_summaries_proposals_reject(
+        &self,
+        input: &oneiron::scope_summary::SummaryProposalRequest,
+    ) -> Result<oneiron::scope_summary::SummaryProposalView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.summaries.proposals.reject", value)
     }
     pub fn vault_notes_create(
         &self,

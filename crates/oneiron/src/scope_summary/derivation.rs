@@ -15,7 +15,7 @@ const PROJECTION: SideTable<[u8; 32], Projection, Named> =
 
 /// An exact input version, including the document frontier and the full
 /// witnessed-text pin (child set, authors, revisions and stream finality).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SummarySourceVersion {
     pub id: String,
@@ -29,7 +29,7 @@ pub struct SummarySourceVersion {
 
 /// Retained birth envelope: input content, instruction/model parameters,
 /// request trigger, exact source versions and the prior artifact, if any.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SummaryDerivation {
     pub request: Vec<u8>,
@@ -47,7 +47,7 @@ pub struct SummaryDerivation {
 }
 
 /// The summary's own document metadata. `keep` is read before every generation.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ScopeSummaryMetadata {
     pub purpose: SummaryPurpose,

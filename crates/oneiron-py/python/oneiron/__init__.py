@@ -615,6 +615,9 @@ class Oneiron:
         def authority(self) -> "Oneiron._VaultAuthorityVerbs":
             return Oneiron._VaultAuthorityVerbs(self._client)
         @property
+        def slim(self) -> "Oneiron._VaultSlimVerbs":
+            return Oneiron._VaultSlimVerbs(self._client)
+        @property
         def mesh(self) -> "Oneiron._VaultMeshVerbs":
             return Oneiron._VaultMeshVerbs(self._client)
         @property
@@ -815,6 +818,9 @@ class Oneiron:
         @property
         def delivery_window(self) -> "Oneiron._VaultDeliveryWindowVerbs":
             return Oneiron._VaultDeliveryWindowVerbs(self._client)
+        @property
+        def summaries(self) -> "Oneiron._VaultSummariesVerbs":
+            return Oneiron._VaultSummariesVerbs(self._client)
         @property
         def notes(self) -> "Oneiron._VaultNotesVerbs":
             return Oneiron._VaultNotesVerbs(self._client)
@@ -1319,6 +1325,24 @@ class Oneiron:
         def acknowledge(self, spec):
             """The owner acknowledges one saved handoff fork alarm."""
             return json.loads(_translate(lambda: self._client.vault_authority_handoff_alarms_acknowledge(json.dumps(spec))))
+    class _VaultSlimVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def policy(self, spec):
+            """Reads the serving host idle policy: the long outbound wait, no exit on idle and lazy heap rebuild."""
+            return json.loads(_translate(lambda: self._client.vault_slim_policy(json.dumps(spec))))
+        def state(self, spec):
+            """Observes FULL or SLIM atomically with this process id and the retained journaled resume pointer, without waking the vault."""
+            return json.loads(_translate(lambda: self._client.vault_slim_state(json.dumps(spec))))
+        def resume_step(self, spec):
+            """Reads a saved model checkpoint or outbound intent by its retained identity, including after FULL or restart, without reissuing it."""
+            return json.loads(_translate(lambda: self._client.vault_slim_resume_step(json.dumps(spec))))
+        def drop_heavy(self, spec):
+            """Drops rebuildable heap in process and returns the completed engine transition, drop counts or typed refusal; one journaled outbound step is required."""
+            return json.loads(_translate(lambda: self._client.vault_slim_drop_heavy(json.dumps(spec))))
+        def resume(self, spec):
+            """Resumes logical FULL in the same process and returns its completion receipt; indexes rebuild lazily and no saved outbound step is reissued."""
+            return json.loads(_translate(lambda: self._client.vault_slim_resume(json.dumps(spec))))
     class _VaultMeshVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2867,6 +2891,48 @@ class Oneiron:
         def retract(self, spec):
             """The owner retracts a delivery-window policy through the existing claim lifecycle door."""
             return json.loads(_translate(lambda: self._client.vault_delivery_window_policy_retract(json.dumps(spec))))
+    class _VaultSummariesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def create(self, request):
+            """Declares a readable source scope; only the configured Dreamer writes and source-links the SUMMARY birth."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_create(json.dumps(request))))
+        def read(self, request):
+            """Reads SUMMARY text, keep, derivation, covers and stable edit anchors in one caller-scoped snapshot."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_read(json.dumps(request))))
+        def status(self, request):
+            """Reads the calling principal's own summary declaration and its retained completion or failure."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_status(json.dumps(request))))
+        def keep(self, request):
+            """Edits the SUMMARY keep memo at the exact frontier read, under the caller's owner proof or entity-bound text grant."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_keep(json.dumps(request))))
+        def edit(self, request):
+            """Applies attributed anchored SUMMARY edits through existing grants; ungranted edits remain a typed review proposal."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_edit(json.dumps(request))))
+        def patch(self, request):
+            """Applies generated anchored SUMMARY operations after a keep fence and source admission; durable receipts name the sources read."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_patch(json.dumps(request))))
+        def regenerate(self, request):
+            """Retains generated SUMMARY text as a source-linked rewrite fork after reading keep; no head moves without explicit switch."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_regenerate(json.dumps(request))))
+        @property
+        def proposals(self) -> "Oneiron._VaultSummariesProposalsVerbs":
+            return Oneiron._VaultSummariesProposalsVerbs(self._client)
+    class _VaultSummariesProposalsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def read(self, request):
+            """Reads a SUMMARY proposal's fork provenance, retained text and durable receipts only when every member is readable."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_proposals_read(json.dumps(request))))
+        def merge(self, request):
+            """Merges the complete SUMMARY proposal under existing entity grants, preserving concurrent head edits and durable receipts."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_proposals_merge(json.dumps(request))))
+        def switch(self, request):
+            """Explicitly switches the complete SUMMARY proposal under existing entity grants; a stale causal base refuses the entire set."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_proposals_switch(json.dumps(request))))
+        def reject(self, request):
+            """Rejects the complete SUMMARY proposal under existing entity grants, dropping pending fork text without moving live heads."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_proposals_reject(json.dumps(request))))
     class _VaultNotesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

@@ -17,7 +17,6 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use super::doors::world_recovery_state_in;
-use super::root_doors::this_machine_only;
 use super::{
     ActivatedRoot, KitConfirmation, RecoveryRoot, RecoveryRootId, RecoveryRootSeed, RootRestore,
     VaultKeyStatus, VaultKeyWrapInfo, WorldRecoveryState, refused,
@@ -136,7 +135,7 @@ fn kit_key(id: KitId) -> String {
 /// A kit refusal as the engine's: the kit's fixed reason, never piece bytes.
 fn kit_refused(error: KitError) -> Error {
     refused(match error {
-        KitError::PrivacyModeRequired => "privacy backup requires owner-held keys",
+        KitError::InvalidCustodyConfig => "the vault's key custody configuration is invalid",
         KitError::EntropyUnavailable => "backup entropy unavailable",
         KitError::SameMachineTwice => "two kit pieces would live on one machine",
         KitError::PassphraseTwice => "a kit holds at most one passphrase piece",
@@ -290,7 +289,6 @@ impl Vault {
         passphrase: Option<&KitPassphrase>,
         carry: &BTreeSet<EntityId>,
     ) -> Result<ConfirmedWorldKit> {
-        this_machine_only(origin)?;
         let kit = pieces
             .first()
             .map(|piece| piece.kit_id())
@@ -359,7 +357,6 @@ impl Vault {
         passphrase: Option<&KitPassphrase>,
         confirm: Option<KitConfirmation>,
     ) -> Result<WorldKitRestore> {
-        this_machine_only(origin)?;
         let kit = pieces
             .first()
             .map(|piece| piece.kit_id())

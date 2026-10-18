@@ -611,6 +611,31 @@ export_facade! {
     let output = client.vault_authority_history_import(&input)?;
     crate::codec::lift_record("vault.authority.history.import", &output)
 };
+"vault.slim.policy" => fn vault_slim_policy(&self) -> SlimIdlePolicy = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.slim.policy")?;
+    let output = client.vault_slim_policy(&input)?;
+    crate::codec::lift_record("vault.slim.policy", &output)
+};
+"vault.slim.state" => fn vault_slim_state(&self) -> SlimStateSnapshot = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.slim.state")?;
+    let output = client.vault_slim_state(&input)?;
+    crate::codec::lift_record("vault.slim.state", &output)
+};
+"vault.slim.resume_step" => fn vault_slim_resume_step(&self, input: SlimResumeStepRequest) -> SavedResumeStep = |client| {
+    let input: oneiron::slim::public::SlimResumeStepRequest = crate::codec::lower_record("vault.slim.resume_step", input)?;
+    let output = client.vault_slim_resume_step(&input)?;
+    crate::codec::lift_record("vault.slim.resume_step", &output)
+};
+"vault.slim.drop_heavy" => fn vault_slim_drop_heavy(&self, input: SlimDropRequest) -> SlimDropReceipt = |client| {
+    let input: oneiron::slim::public::SlimDropRequest = crate::codec::lower_record("vault.slim.drop_heavy", input)?;
+    let output = client.vault_slim_drop_heavy(&input)?;
+    crate::codec::lift_record("vault.slim.drop_heavy", &output)
+};
+"vault.slim.resume" => fn vault_slim_resume(&self) -> SlimResumeReceipt = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.slim.resume")?;
+    let output = client.vault_slim_resume(&input)?;
+    crate::codec::lift_record("vault.slim.resume", &output)
+};
 "vault.mesh.path_receipts" => fn vault_mesh_path_receipts(&self, input: MeshPathReceiptsRequest) -> Vec<MeshPathReceipt> = |client| {
     let input: oneiron::task_verb::sdk::MeshPathReceiptsRequest = crate::codec::lower_record("vault.mesh.path_receipts", input)?;
     let output = client.vault_mesh_path_receipts(&input)?;
@@ -2625,6 +2650,61 @@ export_facade! {
     let input: oneiron::task_verb::sdk::OutboundScheduleRequest = draft.lower()?;
     let output = client.connector_outbound_schedule(&input)?;
     Lift::lift(output)
+};
+"vault.summaries.create" => fn vault_summaries_create(&self, input: SummaryCreateRequest) -> SummaryQueued = |client| {
+    let input: oneiron::scope_summary::SummaryCreateRequest = crate::codec::lower_record("vault.summaries.create", input)?;
+    let output = client.vault_summaries_create(&input)?;
+    crate::codec::lift_record("vault.summaries.create", &output)
+};
+"vault.summaries.read" => fn vault_summaries_read(&self, input: SummaryReadRequest) -> ScopedReadResultOptionalSummaryReadView = |client| {
+    let input: oneiron::scope_summary::SummaryReadRequest = crate::codec::lower_record("vault.summaries.read", input)?;
+    let output = client.vault_summaries_read(&input)?;
+    crate::codec::lift_record("vault.summaries.read", &output)
+};
+"vault.summaries.status" => fn vault_summaries_status(&self, input: SummaryStatusRequest) -> ScopeSummaryStatus = |client| {
+    let input: oneiron::scope_summary::SummaryStatusRequest = crate::codec::lower_record("vault.summaries.status", input)?;
+    let output = client.vault_summaries_status(&input)?;
+    crate::codec::lift_record("vault.summaries.status", &output)
+};
+"vault.summaries.keep" => fn vault_summaries_keep(&self, input: SummaryKeepRequest) -> SummaryKeepResult = |client| {
+    let input: oneiron::scope_summary::SummaryKeepRequest = crate::codec::lower_record("vault.summaries.keep", input)?;
+    let output = client.vault_summaries_keep(&input)?;
+    crate::codec::lift_record("vault.summaries.keep", &output)
+};
+"vault.summaries.edit" => fn vault_summaries_edit(&self, input: SummaryEditRequest) -> SummaryProposalView = |client| {
+    let input: oneiron::scope_summary::SummaryEditRequest = crate::codec::lower_record("vault.summaries.edit", input)?;
+    let output = client.vault_summaries_edit(&input)?;
+    crate::codec::lift_record("vault.summaries.edit", &output)
+};
+"vault.summaries.patch" => fn vault_summaries_patch(&self, input: SummaryPatchRequest) -> SummaryMutationResult = |client| {
+    let input: oneiron::scope_summary::SummaryPatchRequest = crate::codec::lower_record("vault.summaries.patch", input)?;
+    let output = client.vault_summaries_patch(&input)?;
+    crate::codec::lift_record("vault.summaries.patch", &output)
+};
+"vault.summaries.regenerate" => fn vault_summaries_regenerate(&self, input: SummaryRegenerateRequest) -> SummaryMutationResult = |client| {
+    let input: oneiron::scope_summary::SummaryRegenerateRequest = crate::codec::lower_record("vault.summaries.regenerate", input)?;
+    let output = client.vault_summaries_regenerate(&input)?;
+    crate::codec::lift_record("vault.summaries.regenerate", &output)
+};
+"vault.summaries.proposals.read" => fn vault_summaries_proposals_read(&self, input: SummaryProposalRequest) -> SummaryProposalView = |client| {
+    let input: oneiron::scope_summary::SummaryProposalRequest = crate::codec::lower_record("vault.summaries.proposals.read", input)?;
+    let output = client.vault_summaries_proposals_read(&input)?;
+    crate::codec::lift_record("vault.summaries.proposals.read", &output)
+};
+"vault.summaries.proposals.merge" => fn vault_summaries_proposals_merge(&self, input: SummaryProposalRequest) -> SummaryProposalView = |client| {
+    let input: oneiron::scope_summary::SummaryProposalRequest = crate::codec::lower_record("vault.summaries.proposals.merge", input)?;
+    let output = client.vault_summaries_proposals_merge(&input)?;
+    crate::codec::lift_record("vault.summaries.proposals.merge", &output)
+};
+"vault.summaries.proposals.switch" => fn vault_summaries_proposals_switch(&self, input: SummaryProposalRequest) -> SummaryProposalView = |client| {
+    let input: oneiron::scope_summary::SummaryProposalRequest = crate::codec::lower_record("vault.summaries.proposals.switch", input)?;
+    let output = client.vault_summaries_proposals_switch(&input)?;
+    crate::codec::lift_record("vault.summaries.proposals.switch", &output)
+};
+"vault.summaries.proposals.reject" => fn vault_summaries_proposals_reject(&self, input: SummaryProposalRequest) -> SummaryProposalView = |client| {
+    let input: oneiron::scope_summary::SummaryProposalRequest = crate::codec::lower_record("vault.summaries.proposals.reject", input)?;
+    let output = client.vault_summaries_proposals_reject(&input)?;
+    crate::codec::lift_record("vault.summaries.proposals.reject", &output)
 };
 "vault.notes.create" => fn vault_notes_create(&self, input: CreateNoteRequest) -> EntityRefReceipt = |client| {
     let input: oneiron::task_verb::sdk::CreateNoteRequest = crate::codec::lower_record("vault.notes.create", input)?;

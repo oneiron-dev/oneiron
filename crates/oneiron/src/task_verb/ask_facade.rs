@@ -183,9 +183,11 @@ impl Memory<'_> {
             AskThen::Typed(effect) => self.ask_launch_project_in(txn, input, effect.as_ref())?,
             AskThen::Now(_) => self.ask_launch_project_in(txn, input, None)?,
         };
-        // A comm widen ask (proved above) asks the approver itself, so it
-        // never waits on a launch approval.
+        // A comm widen ask (proved above) asks the approver itself, and a
+        // code consent ask (proved above) is the engine's question to the
+        // owner, so neither waits on a launch approval.
         if !super::comm_widen::is_comm_widen_ask_intent(&input.intent_key)
+            && !super::code_consent_word::is_code_consent_ask_intent(&input.intent_key)
             && super::fanout_launch::ask_launch_needs_approval(
                 self.vault(),
                 txn,
@@ -329,6 +331,10 @@ impl Memory<'_> {
             )?
         } else if super::comm_widen::is_comm_widen_ask_intent(&input.intent_key) {
             super::comm_widen::reserved_ask_in(self, txn, input)?
+        } else if super::code_consent_word::is_code_consent_ask_intent(&input.intent_key) {
+            // DOOR-079 1a: only the held call's caller asks, and only the
+            // question its code consent wait reserved.
+            super::code_consent_word::reserved_ask_in(self, txn, input)?
         } else {
             super::rate_limit::task_actor_ceiling(
                 self.vault(),
