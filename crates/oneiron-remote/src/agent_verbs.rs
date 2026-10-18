@@ -1101,6 +1101,15 @@ impl OneironClient {
                 "vault.voices.packs.put" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::VoiceBankPackReceipt,
                 >(client, verb, &input),
+                "vault.voices.render_consent" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::VoiceRenderConsentReceipt,
+                >(client, verb, &input),
+                "vault.voices.targets.provision" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::VoiceTargetReceipt,
+                >(client, verb, &input),
+                "vault.voices.targets.evict" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::VoiceTargetEvictReceipt,
+                >(client, verb, &input),
                 "vault.voices.inspect" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::VoiceBankInspection,
                 >(client, verb, &input),
@@ -5798,6 +5807,42 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.voices.packs.put", value)
+    }
+    pub fn vault_voices_render_consent(
+        &self,
+        input: &oneiron::task_verb::sdk::VoiceRenderConsentRequest,
+    ) -> Result<oneiron::task_verb::sdk::VoiceRenderConsentReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.voices.render_consent", value)
+    }
+    pub fn vault_voices_targets_provision(
+        &self,
+        input: &oneiron::task_verb::sdk::VoiceTargetProvisionRequest,
+    ) -> Result<oneiron::task_verb::sdk::VoiceTargetReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.voices.targets.provision", value)
+    }
+    pub fn vault_voices_targets_evict(
+        &self,
+        input: &oneiron::task_verb::sdk::VoiceTargetEvictRequest,
+    ) -> Result<oneiron::task_verb::sdk::VoiceTargetEvictReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.voices.targets.evict", value)
     }
     pub fn vault_voices_inspect(
         &self,

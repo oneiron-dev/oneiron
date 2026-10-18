@@ -1920,11 +1920,20 @@ class Oneiron:
     class _VaultVoicesVerbs:
         @property
         def packs(self) -> "Oneiron._VaultVoicesPacksVerbs": ...
+        def render_consent(self, spec: Facade.VoiceRenderConsentRequest) -> Facade.VoiceRenderConsentReceipt:
+            """The owner records their render decision on their own voice: a grant names the farthest locality its refs may reach; a withdrawal drops each target clone, deleted at its vendor best effort, and keeps the packs."""
+        @property
+        def targets(self) -> "Oneiron._VaultVoicesTargetsVerbs": ...
         def inspect(self, spec: Facade.VoiceBankInspectRequest) -> Facade.VoiceBankInspection:
             """The owner inspects their own voice as the bank holds it for one configured hosted target: identity, pack metadata without audio or transcripts, the current render decision and the target's current clone."""
     class _VaultVoicesPacksVerbs:
         def put(self, spec: Facade.VoiceBankPackPutRequest) -> Facade.VoiceBankPackReceipt:
             """The owner banks one immutable reference pack of their own voice: the first captured or designed pack makes its identity, a captured pack cites their current render grant, and a retry of the same pack is a no-op."""
+    class _VaultVoicesTargetsVerbs:
+        def provision(self, spec: Facade.VoiceTargetProvisionRequest) -> Facade.VoiceTargetReceipt:
+            """The owner's own voice cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality before any provider call."""
+        def evict(self, spec: Facade.VoiceTargetEvictRequest) -> Facade.VoiceTargetEvictReceipt:
+            """The owner drops a target's clone of their own voice, deleted at its vendor best effort. The identity and its packs stay."""
     class _VaultGraphVerbs:
         def ask(self, spec: Facade.GraphAskRequest) -> Facade.GraphAskOutcome: ...
     class _VaultQuestionsVerbs:

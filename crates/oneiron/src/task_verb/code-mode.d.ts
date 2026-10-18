@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 536 code-mode rows (515 host rows, 21 run rows), 1915 declarations.
-// Replies: 472 fully typed, 60 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 539 code-mode rows (518 host rows, 21 run rows), 1923 declarations.
+// Replies: 475 fully typed, 60 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 91; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1403,12 +1403,20 @@ declare namespace Sdk {
   type VoiceBankClipInput = { register: string; media_type: string; audio: string; transcript: string };
   type VoiceBankPackPutRequest = { voice_id: string; pack_id: string; origin: VoiceRefOrigin; clips: VoiceBankClipInput[] };
   type VoiceBankPackReceipt = { voice_id: string; pack_id: string };
+  type VoiceConsentBasis = { ConversationalNotice: { notice: string } } | { VerbalOnRecording: { recording_ref: string; start_ms: number; end_ms: number; words: string } } | { SettingsToggle: { surface_ref: string } };
+  type VoiceConsentState = "granted" | "withdrawn";
+  type VoiceRenderConsentRequest = { voice_id: string; event_id: string; occurred_at: number; reach: ModelLocality; basis: VoiceConsentBasis; state: VoiceConsentState };
+  type VoiceVendorDeleteStatus = "deleted" | "no_clone_wire" | "delete_failed" | "absent";
+  type VoiceVendorEviction = { target: string; vendor_voice_id: string; vendor: VoiceVendorDeleteStatus };
+  type VoiceRenderConsentReceipt = { voice_id: string; state: VoiceConsentState; reach: ModelLocality; revision: string; evicted: VoiceVendorEviction[] };
+  type VoiceTargetProvisionRequest = { voice_id: string; target: string; include_generated?: boolean; language?: string | null };
+  type VoiceTargetReceipt = { voice_id: string; target: string; vendor_voice_id: string; cloned_at: number; revision: string };
+  type VoiceTargetEvictRequest = { voice_id: string; target: string };
+  type VoiceTargetEvictReceipt = { voice_id: string; target: string; evicted: boolean; vendor: VoiceVendorDeleteStatus };
   type VoiceBankInspectRequest = { voice_id: string; target: string; include_generated?: boolean };
   type VoiceIdentityView = { version: number; id: string; owner: string; pack_ids: string[] };
   type VoiceClipSummary = { register: string; media_type: string; audio_bytes: number };
   type VoicePackSummary = { version: number; id: string; origin: VoiceRefOrigin; clips: VoiceClipSummary[] };
-  type VoiceConsentBasis = { ConversationalNotice: { notice: string } } | { VerbalOnRecording: { recording_ref: string; start_ms: number; end_ms: number; words: string } } | { SettingsToggle: { surface_ref: string } };
-  type VoiceConsentState = "granted" | "withdrawn";
   type VoiceRenderConsentView = { event_id: string; subject: string; recorded_by: string; occurred_at: number; reach: ModelLocality; basis: VoiceConsentBasis; state: VoiceConsentState; revision: string };
   type VoiceTargetCloneView = { vendor_voice_id: string; source_packs: string[]; ref_digest: string; cloned_at: number; revision: string };
   type VoiceTargetInspection = { target: string; locality: ModelLocality; include_generated: boolean; current?: VoiceTargetCloneView | null };
@@ -3227,6 +3235,14 @@ declare const vault: Sdk.VaultHost & {
     packs: {
       /** The owner banks one immutable reference pack of their own voice: the first captured or designed pack makes its identity, a captured pack cites their current render grant, and a retry of the same pack is a no-op. */
       put(input: Sdk.VoiceBankPackPutRequest): Promise<Sdk.VoiceBankPackReceipt | StoredResult>;
+    };
+    /** The owner records their render decision on their own voice: a grant names the farthest locality its refs may reach; a withdrawal drops each target clone, deleted at its vendor best effort, and keeps the packs. */
+    render_consent(input: Sdk.VoiceRenderConsentRequest): Promise<Sdk.VoiceRenderConsentReceipt | StoredResult>;
+    targets: {
+      /** The owner drops a target's clone of their own voice, deleted at its vendor best effort. The identity and its packs stay. */
+      evict(input: Sdk.VoiceTargetEvictRequest): Promise<Sdk.VoiceTargetEvictReceipt | StoredResult>;
+      /** The owner's own voice cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality before any provider call. */
+      provision(input: Sdk.VoiceTargetProvisionRequest): Promise<Sdk.VoiceTargetReceipt | StoredResult>;
     };
   };
   weave: {

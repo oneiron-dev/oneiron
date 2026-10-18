@@ -352,6 +352,9 @@ both bindings and their export-census tests in one change.
 - `ai.image`
 - `ai.speech`
 - `vault.voices.packs.put`
+- `vault.voices.render_consent`
+- `vault.voices.targets.provision`
+- `vault.voices.targets.evict`
 - `vault.voices.inspect`
 - `ai.transcribe`
 - `ai.embed`

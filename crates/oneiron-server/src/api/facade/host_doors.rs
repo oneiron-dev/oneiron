@@ -1193,6 +1193,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.shared.policy.get"
         | "vault.shared.policy.change"
         | "vault.voices.packs.put"
+        | "vault.voices.render_consent"
+        | "vault.voices.targets.provision"
+        | "vault.voices.targets.evict"
         | "vault.voices.inspect" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"
         | "vault.shared.propose_transfer"

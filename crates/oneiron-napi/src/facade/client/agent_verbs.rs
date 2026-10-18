@@ -3200,6 +3200,33 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_voices_render_consent(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.voices.render_consent", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_voices_targets_provision(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.voices.targets.provision", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_voices_targets_evict(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.voices.targets.evict", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_voices_inspect(
         &self,
         input: serde_json::Value,

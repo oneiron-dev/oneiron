@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 479 facade rows, 1751 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 9; generated in and out: 443.
+// UniFFI census: 482 facade rows, 1759 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 9; generated in and out: 446.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -21191,6 +21191,158 @@ pub struct VoiceBankPackReceipt {
     pub pack_id: String,
 }
 
+/// `oneiron::voice_identity::types::VoiceConsentBasis`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum VoiceConsentBasis {
+    #[serde(rename = "ConversationalNotice")]
+    ConversationalNotice {
+        #[serde(rename = "notice")]
+        notice: String,
+    },
+    #[serde(rename = "VerbalOnRecording")]
+    VerbalOnRecording {
+        #[serde(rename = "recording_ref")]
+        recording_ref: String,
+        #[serde(rename = "start_ms")]
+        start_ms: u64,
+        #[serde(rename = "end_ms")]
+        end_ms: u64,
+        #[serde(rename = "words")]
+        words: String,
+    },
+    #[serde(rename = "SettingsToggle")]
+    SettingsToggle {
+        #[serde(rename = "surface_ref")]
+        surface_ref: String,
+    },
+}
+
+/// `oneiron::voice_identity::types::VoiceConsentState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum VoiceConsentState {
+    #[serde(rename = "granted")]
+    Granted,
+    #[serde(rename = "withdrawn")]
+    Withdrawn,
+}
+
+/// `oneiron::task_verb::sdk_voice_bank::VoiceRenderConsentRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct VoiceRenderConsentRequest {
+    #[serde(rename = "voice_id")]
+    pub voice_id: String,
+    #[serde(rename = "event_id")]
+    pub event_id: String,
+    #[serde(rename = "occurred_at")]
+    pub occurred_at: u64,
+    #[serde(rename = "reach")]
+    pub reach: ModelLocality,
+    #[serde(rename = "basis")]
+    pub basis: VoiceConsentBasis,
+    #[serde(rename = "state")]
+    pub state: VoiceConsentState,
+}
+
+/// `oneiron::task_verb::sdk_voice_bank::VoiceVendorDeleteStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum VoiceVendorDeleteStatus {
+    #[serde(rename = "deleted")]
+    Deleted,
+    #[serde(rename = "no_clone_wire")]
+    NoCloneWire,
+    #[serde(rename = "delete_failed")]
+    DeleteFailed,
+    #[serde(rename = "absent")]
+    Absent,
+}
+
+/// `oneiron::task_verb::sdk_voice_bank::VoiceVendorEviction`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct VoiceVendorEviction {
+    #[serde(rename = "target")]
+    pub target: String,
+    #[serde(rename = "vendor_voice_id")]
+    pub vendor_voice_id: String,
+    #[serde(rename = "vendor")]
+    pub vendor: VoiceVendorDeleteStatus,
+}
+
+/// `oneiron::task_verb::sdk_voice_bank::VoiceRenderConsentReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct VoiceRenderConsentReceipt {
+    #[serde(rename = "voice_id")]
+    pub voice_id: String,
+    #[serde(rename = "state")]
+    pub state: VoiceConsentState,
+    #[serde(rename = "reach")]
+    pub reach: ModelLocality,
+    #[serde(rename = "revision")]
+    pub revision: String,
+    #[serde(rename = "evicted")]
+    pub evicted: Vec<VoiceVendorEviction>,
+}
+
+/// `oneiron::task_verb::sdk_voice_bank::VoiceTargetProvisionRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct VoiceTargetProvisionRequest {
+    #[serde(rename = "voice_id")]
+    pub voice_id: String,
+    #[serde(rename = "target")]
+    pub target: String,
+    #[serde(
+        rename = "include_generated",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub include_generated: Option<bool>,
+    #[serde(rename = "language", default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_voice_bank::VoiceTargetReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct VoiceTargetReceipt {
+    #[serde(rename = "voice_id")]
+    pub voice_id: String,
+    #[serde(rename = "target")]
+    pub target: String,
+    #[serde(rename = "vendor_voice_id")]
+    pub vendor_voice_id: String,
+    #[serde(rename = "cloned_at")]
+    pub cloned_at: u64,
+    #[serde(rename = "revision")]
+    pub revision: String,
+}
+
+/// `oneiron::task_verb::sdk_voice_bank::VoiceTargetEvictRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct VoiceTargetEvictRequest {
+    #[serde(rename = "voice_id")]
+    pub voice_id: String,
+    #[serde(rename = "target")]
+    pub target: String,
+}
+
+/// `oneiron::task_verb::sdk_voice_bank::VoiceTargetEvictReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct VoiceTargetEvictReceipt {
+    #[serde(rename = "voice_id")]
+    pub voice_id: String,
+    #[serde(rename = "target")]
+    pub target: String,
+    #[serde(rename = "evicted")]
+    pub evicted: bool,
+    #[serde(rename = "vendor")]
+    pub vendor: VoiceVendorDeleteStatus,
+}
+
 /// `oneiron::task_verb::sdk_voice_bank::VoiceBankInspectRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -21245,41 +21397,6 @@ pub struct VoicePackSummary {
     pub origin: VoiceRefOrigin,
     #[serde(rename = "clips")]
     pub clips: Vec<VoiceClipSummary>,
-}
-
-/// `oneiron::voice_identity::types::VoiceConsentBasis`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum VoiceConsentBasis {
-    #[serde(rename = "ConversationalNotice")]
-    ConversationalNotice {
-        #[serde(rename = "notice")]
-        notice: String,
-    },
-    #[serde(rename = "VerbalOnRecording")]
-    VerbalOnRecording {
-        #[serde(rename = "recording_ref")]
-        recording_ref: String,
-        #[serde(rename = "start_ms")]
-        start_ms: u64,
-        #[serde(rename = "end_ms")]
-        end_ms: u64,
-        #[serde(rename = "words")]
-        words: String,
-    },
-    #[serde(rename = "SettingsToggle")]
-    SettingsToggle {
-        #[serde(rename = "surface_ref")]
-        surface_ref: String,
-    },
-}
-
-/// `oneiron::voice_identity::types::VoiceConsentState`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum VoiceConsentState {
-    #[serde(rename = "granted")]
-    Granted,
-    #[serde(rename = "withdrawn")]
-    Withdrawn,
 }
 
 /// `oneiron::voice_identity::ref_bank::owner_acts::VoiceRenderConsentView`.

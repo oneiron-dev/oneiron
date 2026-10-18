@@ -27,6 +27,13 @@ mod waves;
 pub(crate) use media::{VoiceRefusal, bind_voice};
 // Every `ai.options` door lists through one projection (FIX 2942).
 pub(crate) use options::{caller_options, run_options};
+// The owner's `vault.voices.*` doors run the bank's provisioning and vendor
+// deletions as these routes do (DOOR-143); the OpenAPI document reads their
+// bodies.
+pub(crate) use voices::{
+    ConsentBody, PackBody, ProvisionBody, VoiceBankRefusal, evict_answer, provision_clone,
+    render_consent_answer,
+};
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()

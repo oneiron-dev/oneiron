@@ -376,6 +376,9 @@ aiOptions(input: unknown): unknown
 aiImage(input: unknown): unknown
 aiSpeech(input: unknown): unknown
 vaultVoicesPacksPut(input: unknown): unknown
+vaultVoicesRenderConsent(input: unknown): unknown
+vaultVoicesTargetsProvision(input: unknown): unknown
+vaultVoicesTargetsEvict(input: unknown): unknown
 vaultVoicesInspect(input: unknown): unknown
 aiTranscribe(input: unknown): unknown
 aiEmbed(input: unknown): unknown

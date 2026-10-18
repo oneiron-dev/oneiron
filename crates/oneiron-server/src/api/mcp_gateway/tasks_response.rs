@@ -1294,6 +1294,9 @@ fn mcp_agent_verb_input(
         "ai.image" => a.spec.clone().ok_or_else(invalid),
         "ai.speech" => a.spec.clone().ok_or_else(invalid),
         "vault.voices.packs.put" => a.spec.clone().ok_or_else(invalid),
+        "vault.voices.render_consent" => a.spec.clone().ok_or_else(invalid),
+        "vault.voices.targets.provision" => a.spec.clone().ok_or_else(invalid),
+        "vault.voices.targets.evict" => a.spec.clone().ok_or_else(invalid),
         "vault.voices.inspect" => a.spec.clone().ok_or_else(invalid),
         "ai.transcribe" => a.spec.clone().ok_or_else(invalid),
         "ai.embed" => a.spec.clone().ok_or_else(invalid),
@@ -2565,6 +2568,15 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.voices.packs.put" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.voices.render_consent" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.voices.targets.provision" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.voices.targets.evict" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.voices.inspect" => {
@@ -8356,6 +8368,63 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
                 crate::api::facade::host_doors::vault_voices_packs_put(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.voices.render_consent" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.voices.render_consent", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::VoiceRenderConsentRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_voices_render_consent(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.voices.targets.provision" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.voices.targets.provision", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::VoiceTargetProvisionRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_voices_targets_provision(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.voices.targets.evict" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.voices.targets.evict", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::VoiceTargetEvictRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_voices_targets_evict(server, auth, input)
+                    .await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)

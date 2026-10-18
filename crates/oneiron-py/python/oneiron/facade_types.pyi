@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 479 facade rows, 1826 declarations.
-Inputs: 430 of 479 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 426 of 479 fully typed, 53 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 482 facade rows, 1834 declarations.
+Inputs: 433 of 482 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 429 of 482 fully typed, 53 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 86; unread shapes: 0.
 """
 
@@ -6879,6 +6879,60 @@ class VoiceBankPackPutRequest(TypedDict):
 class VoiceBankPackReceipt(TypedDict):
     voice_id: str
     pack_id: str
+class VoiceConsentBasisConversationalNoticeBody(TypedDict):
+    notice: str
+class VoiceConsentBasisConversationalNotice(TypedDict):
+    ConversationalNotice: VoiceConsentBasisConversationalNoticeBody
+class VoiceConsentBasisVerbalOnRecordingBody(TypedDict):
+    recording_ref: str
+    start_ms: int
+    end_ms: int
+    words: str
+class VoiceConsentBasisVerbalOnRecording(TypedDict):
+    VerbalOnRecording: VoiceConsentBasisVerbalOnRecordingBody
+class VoiceConsentBasisSettingsToggleBody(TypedDict):
+    surface_ref: str
+class VoiceConsentBasisSettingsToggle(TypedDict):
+    SettingsToggle: VoiceConsentBasisSettingsToggleBody
+VoiceConsentBasis = VoiceConsentBasisConversationalNotice | VoiceConsentBasisVerbalOnRecording | VoiceConsentBasisSettingsToggle
+VoiceConsentState = Literal["granted", "withdrawn"]
+class VoiceRenderConsentRequest(TypedDict):
+    voice_id: str
+    event_id: str
+    occurred_at: int
+    reach: ModelLocality
+    basis: VoiceConsentBasis
+    state: VoiceConsentState
+VoiceVendorDeleteStatus = Literal["deleted", "no_clone_wire", "delete_failed", "absent"]
+class VoiceVendorEviction(TypedDict):
+    target: str
+    vendor_voice_id: str
+    vendor: VoiceVendorDeleteStatus
+class VoiceRenderConsentReceipt(TypedDict):
+    voice_id: str
+    state: VoiceConsentState
+    reach: ModelLocality
+    revision: str
+    evicted: list[VoiceVendorEviction]
+class VoiceTargetProvisionRequest(TypedDict):
+    voice_id: str
+    target: str
+    include_generated: NotRequired[bool]
+    language: NotRequired[str | None]
+class VoiceTargetReceipt(TypedDict):
+    voice_id: str
+    target: str
+    vendor_voice_id: str
+    cloned_at: int
+    revision: str
+class VoiceTargetEvictRequest(TypedDict):
+    voice_id: str
+    target: str
+class VoiceTargetEvictReceipt(TypedDict):
+    voice_id: str
+    target: str
+    evicted: bool
+    vendor: VoiceVendorDeleteStatus
 class VoiceBankInspectRequest(TypedDict):
     voice_id: str
     target: str
@@ -6897,23 +6951,6 @@ class VoicePackSummary(TypedDict):
     id: str
     origin: VoiceRefOrigin
     clips: list[VoiceClipSummary]
-class VoiceConsentBasisConversationalNoticeBody(TypedDict):
-    notice: str
-class VoiceConsentBasisConversationalNotice(TypedDict):
-    ConversationalNotice: VoiceConsentBasisConversationalNoticeBody
-class VoiceConsentBasisVerbalOnRecordingBody(TypedDict):
-    recording_ref: str
-    start_ms: int
-    end_ms: int
-    words: str
-class VoiceConsentBasisVerbalOnRecording(TypedDict):
-    VerbalOnRecording: VoiceConsentBasisVerbalOnRecordingBody
-class VoiceConsentBasisSettingsToggleBody(TypedDict):
-    surface_ref: str
-class VoiceConsentBasisSettingsToggle(TypedDict):
-    SettingsToggle: VoiceConsentBasisSettingsToggleBody
-VoiceConsentBasis = VoiceConsentBasisConversationalNotice | VoiceConsentBasisVerbalOnRecording | VoiceConsentBasisSettingsToggle
-VoiceConsentState = Literal["granted", "withdrawn"]
 class VoiceRenderConsentView(TypedDict):
     event_id: str
     subject: str
