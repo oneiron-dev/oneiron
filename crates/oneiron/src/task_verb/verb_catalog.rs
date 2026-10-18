@@ -210,6 +210,7 @@ pub enum AgentVerb {
     VaultProjectsRosterWrite,
     VaultProjectsGoalIntake,
     VaultRoomsJoin,
+    VaultRoomsInvite,
     VaultRoomsConsent,
     VaultRoomsOffer,
     VaultRoomsOfferAnswer,
@@ -565,6 +566,7 @@ impl AgentVerb {
         Self::VaultProjectsRosterWrite,
         Self::VaultProjectsGoalIntake,
         Self::VaultRoomsJoin,
+        Self::VaultRoomsInvite,
         Self::VaultRoomsConsent,
         Self::VaultRoomsOffer,
         Self::VaultRoomsOfferAnswer,
@@ -927,6 +929,7 @@ impl AgentVerb {
             Self::VaultProjectsRosterWrite => "vault.projects.roster.write",
             Self::VaultProjectsGoalIntake => "vault.projects.goal.intake",
             Self::VaultRoomsJoin => "vault.rooms.join",
+            Self::VaultRoomsInvite => "vault.rooms.invite",
             Self::VaultRoomsConsent => "vault.rooms.consent",
             Self::VaultRoomsOffer => "vault.rooms.offer",
             Self::VaultRoomsOfferAnswer => "vault.rooms.offer.answer",
@@ -1281,6 +1284,7 @@ impl AgentVerb {
                 | Self::VaultProjectsRosterWrite
                 | Self::VaultProjectsGoalIntake
                 | Self::VaultRoomsJoin
+                | Self::VaultRoomsInvite
                 | Self::VaultRoomsConsent
                 | Self::VaultRoomsOffer
                 | Self::VaultRoomsOfferAnswer
@@ -1643,6 +1647,7 @@ impl AgentVerb {
                 | Self::VaultProjectsRosterWrite
                 | Self::VaultProjectsGoalIntake
                 | Self::VaultRoomsJoin
+                | Self::VaultRoomsInvite
                 | Self::VaultRoomsConsent
                 | Self::VaultRoomsOffer
                 | Self::VaultRoomsOfferAnswer
@@ -2031,6 +2036,7 @@ impl AgentVerb {
                 | Self::VaultProjectsRosterWrite
                 | Self::VaultProjectsGoalIntake
                 | Self::VaultRoomsJoin
+                | Self::VaultRoomsInvite
                 | Self::VaultRoomsConsent
                 | Self::VaultRoomsOffer
                 | Self::VaultRoomsOfferAnswer
@@ -2302,6 +2308,7 @@ impl AgentVerb {
                 | Self::VaultProjectsConfirm
                 | Self::VaultProjectsRosterWrite
                 | Self::VaultRoomsJoin
+                | Self::VaultRoomsInvite
                 | Self::VaultRoomsConsent
                 | Self::VaultRoomsOffer
                 | Self::VaultRoomsOfferAnswer
@@ -2627,6 +2634,7 @@ impl AgentVerb {
             Self::VaultProjectsRosterWrite => &["spec"],
             Self::VaultProjectsGoalIntake => &["spec"],
             Self::VaultRoomsJoin => &["spec", "room_ref"],
+            Self::VaultRoomsInvite => &["spec", "room_ref"],
             Self::VaultRoomsConsent => &["spec"],
             Self::VaultRoomsOffer => &["spec", "room_ref"],
             Self::VaultRoomsOfferAnswer => &["spec"],
@@ -2983,6 +2991,7 @@ impl AgentVerb {
             Self::VaultProjectsRosterWrite => &["spec"],
             Self::VaultProjectsGoalIntake => &["spec"],
             Self::VaultRoomsJoin => &["spec", "room_ref"],
+            Self::VaultRoomsInvite => &["spec", "room_ref"],
             Self::VaultRoomsConsent => &["spec"],
             Self::VaultRoomsOffer => &["spec", "room_ref"],
             Self::VaultRoomsOfferAnswer => &["spec"],
@@ -3707,6 +3716,9 @@ impl AgentVerb {
             }
             Self::VaultRoomsJoin => {
                 "Files and decides a request to take part in a room or one of its threads."
+            }
+            Self::VaultRoomsInvite => {
+                "The vault's owner invites a person into an ordinary room: files her join with the owner's admission yes, which holds until she answers yes through vault.rooms.consent."
             }
             Self::VaultRoomsConsent => {
                 "One party's answer to a join that waits on it, after which the join is decided again."
