@@ -9,40 +9,45 @@ use oneiron::task_verb::sdk::{
 };
 
 use super::FacadeApiError;
-use super::host_doors::internal;
+use super::host_doors::{Listed, internal, refused};
 use crate::api::booking::{
-    booking_page_token, credential_transport_context, resolve_booking_page,
+    booking_page_token, credential_transport_context, resolve_booking_page_listing,
     resolve_public_booking_page, run_public_constraint_turn,
 };
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
 /// The same owner proof as every owner door; a token grants no new authority.
+/// It lists the rows the token was resolved from (`host_door_lists`): the
+/// page and each live `booking.event_type` claim that makes it bookable,
+/// kept from the resolver's own reads ([`resolve_booking_page_listing`]).
 pub(crate) async fn vault_booking_page_token(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: BookingPageTokenRequest,
-) -> MemoryResult<BookingPageTokenResponse> {
+) -> Listed<BookingPageTokenResponse> {
     const VERB: &str = "vault.booking.page_token";
-    let _owner = crate::api::owner_routes::owner(auth, server).map_err(|_| {
-        MemoryError::new(
+    if crate::api::owner_routes::owner(auth, server).is_err() {
+        return refused(MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             format!("{VERB} is the vault owner's"),
             &["Present the owner's own verified, unattenuated credential."],
-        )
-    })?;
+        ));
+    }
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || {
-        let page_ref = EntityId::from_hex(input.page_ref.trim())
-            .map_err(|_| MemoryError::bad_request("invalid booking page_ref"))?;
+        let Ok(page_ref) = EntityId::from_hex(input.page_ref.trim()) else {
+            return refused(MemoryError::bad_request("invalid booking page_ref"));
+        };
         let page_token = booking_page_token(page_ref);
         // Discovery addresses only pages the existing booking executor resolves.
-        resolve_booking_page(&server, &page_token)
-            .map_err(|error| FacadeApiError::from(error).into_memory_error())?;
-        Ok(BookingPageTokenResponse { page_token })
+        match resolve_booking_page_listing(&server, &page_token) {
+            Ok((_, rows)) => (Ok(BookingPageTokenResponse { page_token }), rows),
+            Err(error) => refused(FacadeApiError::from(error).into_memory_error()),
+        }
     })
     .await
-    .map_err(|_| internal(VERB))?
+    .unwrap_or_else(|_| refused(internal(VERB)))
 }
 
 /// The same live publication, admission, parser and oracle as the public front.

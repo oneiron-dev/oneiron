@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 757 code-mode rows (735 host rows, 22 run rows), 2626 declarations.
-// Replies: 673 fully typed, 80 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 758 code-mode rows (736 host rows, 22 run rows), 2631 declarations.
+// Replies: 674 fully typed, 80 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 97; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -935,6 +935,11 @@ declare namespace Sdk {
   type ResidencePruneRequest = { machine: EntityId; before: number };
   type ResidencePruned = { dropped: number };
   type ResidencePruneAnswer = (ResidencePruned & { state: "applied" }) | (ResidenceQueued & { state: "queued" });
+  type ResidenceDirectivesRequest = { machine?: EntityId | null; directive?: EntityId | null };
+  type ResidenceActView = { kind: "sync_all" } | { kind: "sync_opened" } | { kind: "open"; window: string; item: EntityId } | { kind: "index" } | { kind: "prune"; before: number };
+  type ResidenceResultStatusName = "applied" | "refused";
+  type ResidenceResultView = { finished_at: number; status: ResidenceResultStatusName; count: number; reason?: string | null };
+  type ResidenceDirectiveView = { directive: EntityId; machine: EntityId; issued_at: number; act: ResidenceActView; entry: string; result?: ResidenceResultView | null };
   type OffRecordEnterMode = "off_record" | "anonymous";
   type OffRecordBackendClass = "local" | "remote_provider";
   type OffRecordStartRequest = { session_ref: string; mode: OffRecordEnterMode; backend: OffRecordBackendClass };
@@ -4079,6 +4084,8 @@ declare const vault: Sdk.VaultHost & {
     weave(input: Sdk.ResearchWeaveWire): Promise<Sdk.ExperimentNode | StoredResult>;
   };
   residence: {
+    /** The owner reads the residence directives this replica holds and each machine's result as received here; a null result means not received here, not that the machine is idle. */
+    directives(input: Sdk.ResidenceDirectivesRequest): Promise<Sdk.ResidenceDirectiveView[] | StoredResult>;
     /** The thin index one of the owner's machines holds, window by window: what exists, never a body. A machine this host does not reach answers state queued, naming the directive. */
     index(input: Sdk.ResidenceMachineRequest): Promise<Sdk.ResidenceIndexAnswer | StoredResult>;
     /** Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive. */

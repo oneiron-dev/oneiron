@@ -1,6 +1,7 @@
 //! Owner setup of sealed cohorts through the eval-authoring mechanism.
 use serde::{Deserialize, Serialize};
 
+use crate::EntityId;
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MemoryError, MemoryResult};
@@ -45,4 +46,16 @@ pub fn eval_cohorts_setup_as_owner(
         input,
         vault.now_recorded_at(),
     )?)
+}
+
+/// [`eval_cohorts_setup_as_owner`], beside the rows its cut audits read text
+/// from ([`Vault::setup_eval_cohorts_listing`]): a complete list, empty for a
+/// setup that audits no text.
+pub fn eval_cohorts_setup_as_owner_listing(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: EvalCohortSetup,
+) -> (MemoryResult<EvalAuthoringReport>, Vec<EntityId>) {
+    let (answer, rows) = vault.setup_eval_cohorts_listing(owner, input, vault.now_recorded_at());
+    (answer.map_err(MemoryError::from), rows)
 }

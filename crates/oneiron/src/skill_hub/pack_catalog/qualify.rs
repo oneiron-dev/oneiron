@@ -353,6 +353,163 @@ impl Vault {
             replays,
         })
     }
+
+    /// [`Self::qualify_pack_hooks`], beside the rows its answer is read from
+    /// (`vault.packs.hooks.qualify`'s list): the pack's source row, which
+    /// holds each hook body, and for each hook what its listing replay
+    /// ([`Self::hooks_replay_binding_listing`]) lists, the binding it would
+    /// get, its body's source, each entry's fact row and every row a
+    /// replayed read served. `None` once a replay's list is: an entry whose
+    /// body asked a verdict, whose evidence the replay does not list. The
+    /// Candidate, its author and its install are side rows.
+    ///
+    /// # Errors
+    /// As [`Self::qualify_pack_hooks`].
+    pub fn qualify_pack_hooks_listing(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        runtime: &dyn crate::runtime_hooks::HookBodyRuntime,
+        source_id: crate::EntityId,
+    ) -> Result<(PackHookQualification, Option<Vec<crate::EntityId>>)> {
+        use super::admission::{PACK_CANDIDATE, PackCommit};
+        use super::{
+            HookAuthor, HookPhase, PackCandidateReason, PackHookBinding, PackInstallDisposition,
+        };
+        let source = self
+            .get_pack_source(&source_id)?
+            .ok_or_else(|| invalid("pack source missing"))?;
+        let candidate = self
+            .candidate_pack(&source)?
+            .ok_or_else(|| invalid("the pack is not a Candidate"))?;
+        if candidate.candidate_reason != Some(PackCandidateReason::CodeAutoInstallOff)
+            || source.hooks().is_empty()
+            || source.manifest().kind == PackKind::Connector
+            || matches!(source.manifest().adapter, Some(PackAdapter::Script(_)))
+        {
+            return Err(invalid(
+                "only a hook pack waiting on its code qualifies by replay",
+            ));
+        }
+        let (owner_id, author) = {
+            let txn = self.store.env.read_txn()?;
+            (
+                owner.revalidate_in_txn(self, &txn)?,
+                self.hook_author_in_txn(&txn, &candidate)?,
+            )
+        };
+        let pack = source.manifest().name.as_str();
+        let mut replays = Vec::new();
+        let mut passed = true;
+        let mut rows = Some(vec![source_id]);
+        for hook in source.hooks() {
+            if hook.selector.phase != HookPhase::Fact {
+                return Err(invalid("a verb hook has no replay to qualify it yet"));
+            }
+            let (id, row) = PackHookBinding::for_hook(
+                pack,
+                source_id,
+                owner_id,
+                HookAuthor::Owner,
+                hook,
+                true,
+            )?;
+            let (entries, listed) =
+                self.hooks_replay_binding_listing(runtime, None, id, &row, None, usize::MAX)?;
+            rows = rows.zip(listed).map(|(mut rows, listed)| {
+                rows.extend(listed);
+                rows
+            });
+            passed &= entries.iter().all(|entry| {
+                !matches!(
+                    &entry.result,
+                    crate::runtime_hooks::HookReplayResult::Ran { outcome, .. }
+                        if outcome == "failed" || outcome == "refused"
+                )
+            });
+            replays.push(PackHookReplay {
+                hook: hook.name.clone(),
+                entries,
+            });
+        }
+        let rows = rows.map(|mut rows| {
+            rows.sort_unstable();
+            rows.dedup();
+            rows
+        });
+        if !passed {
+            return Ok((
+                PackHookQualification {
+                    disposition: PackInstallDisposition::Candidate(Box::new(candidate)),
+                    replays,
+                },
+                rows,
+            ));
+        }
+        let hub = crate::skill_hub::HubRef::new(
+            crate::EntityId::from_hex(&candidate.hub_id)?,
+            candidate.hub_ref.clone(),
+            super::hub_pin(&candidate.pin_type, &candidate.pin_value)?,
+        )?;
+        let publisher = match &author {
+            HookAuthor::ForeignActor {
+                identity,
+                hub,
+                grant,
+                ..
+            } => Some(crate::skill_hub::ForeignSkillPublisher {
+                identity: identity.clone(),
+                hub: *hub,
+                grant_ref: grant.clone(),
+            }),
+            HookAuthor::Owner => None,
+        };
+        let disposition = self.with_write_txn_grouped(|txn| {
+            if PACK_CANDIDATE
+                .get(&self.store, txn, &candidate.content_hash)?
+                .as_ref()
+                != Some(&candidate)
+            {
+                return Err(invalid("the Candidate changed during its test"));
+            }
+            if let Some(publisher) = &publisher {
+                self.check_publisher_in_txn(txn, publisher)?;
+            }
+            if let Some(reason) =
+                self.screen_pack_in_txn(txn, &source, &[], &candidate.publisher)?
+            {
+                return Ok(PackInstallDisposition::Blocked { reason });
+            }
+            let disposition = self.commit_pack_install_in_txn(
+                txn,
+                &source,
+                &PackCommit {
+                    source_id,
+                    hub: &hub,
+                    publisher: &candidate.publisher,
+                    foreign: publisher.as_ref(),
+                    verdict: PackFitVerdict {
+                        fits: true,
+                        rules_hit: false,
+                        code_auto_install: true,
+                    },
+                    permissions: &candidate.permissions,
+                    qualification: None,
+                    world: None,
+                },
+            )?;
+            if let PackInstallDisposition::Installed(receipt) = &disposition {
+                self.follow_pack_hook_update_in_txn(txn, owner, receipt, source_id, &source)?;
+            }
+            Ok(disposition)
+        })?;
+        Ok((
+            PackHookQualification {
+                disposition,
+                replays,
+            },
+            rows,
+        ))
+    }
 }
 
 pub(super) fn validate_qualification(

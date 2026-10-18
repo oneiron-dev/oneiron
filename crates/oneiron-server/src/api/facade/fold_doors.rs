@@ -36,17 +36,22 @@ fn run_error(refusal: LiveRunRefusal) -> MemoryError {
     MemoryError::new(refusal.code(), refusal.message(), &[refusal.suggestion()])
 }
 
+/// `self.run.attach`: binds the caller's credential to its leased run and
+/// answers the opaque handle (`host_door_lists`). The attachment reads the
+/// credential and its lease and serves no history text, so its list is
+/// complete and empty; the fold and history doors list what they serve.
 pub(crate) async fn self_run_attach(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     _caller: (EntityId, EdgeActorClass),
     _invocation: Option<InvocationId>,
     input: RunAttachRequest,
-) -> MemoryResult<RunAttached> {
-    let live_run = attach_run_as(server, auth, &input.run, input.rebind)
+) -> Listed<RunAttached> {
+    let answer = attach_run_as(server, auth, &input.run, input.rebind)
         .await
-        .map_err(facade_error)?;
-    Ok(RunAttached { live_run })
+        .map(|live_run| RunAttached { live_run })
+        .map_err(facade_error);
+    (answer, Vec::new())
 }
 
 /// A fixed typed fold verb, not a public generic action escape hatch. The

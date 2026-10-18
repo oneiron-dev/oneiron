@@ -6,13 +6,20 @@
 //! embedded handle reaches none. A machine the host reaches no connection
 //! for gets the row as the owner's residence directive, and each answer
 //! then says so (`state: "queued"`, FIX 3570) instead of what the machine
-//! did. The engine types have no wire form, so the inputs and answers are
-//! spelled here.
+//! did. The owner reads those directives back, with each machine's result as
+//! this replica received it (`vault.residence.directives`, FIX 4346). The
+//! engine types have no wire form, so the inputs and answers are spelled
+//! here.
 
 use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
+use crate::Vault;
+use crate::authority::{ResidenceAct, ResidenceResult, ResidenceResultStatus};
+use crate::consent::AuthenticatedOwner;
+use crate::entity_id::bytes_to_hex_lower;
 use crate::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult};
+use crate::sync::residence::ResidenceDirectiveState;
 use crate::sync::{OpenedItem, ResidenceIndexWindow, ResidenceModeChange, SyncResidenceMode};
 
 /// `opened` (items fetched on demand) or `all` (full window replication).
@@ -263,6 +270,194 @@ impl From<Vec<ResidenceIndexWindow>> for ResidenceIndex {
 pub struct ResidencePruned {
     /// Opened-item caches dropped.
     pub dropped: usize,
+}
+
+/// `vault.residence.directives`'s input: exactly one of `machine` (every
+/// directive this replica holds for that machine, oldest first) or
+/// `directive` (that one directive). Both, or neither, is invalid input.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ResidenceDirectivesRequest {
+    /// The owner's machine, by its machine id (32 hex).
+    #[serde(default)]
+    pub machine: Option<EntityId>,
+    /// One residence directive, by its id (32 hex).
+    #[serde(default)]
+    pub directive: Option<EntityId>,
+}
+
+impl ResidenceDirectivesRequest {
+    /// The one selector the read takes: a machine, or a directive.
+    ///
+    /// # Errors
+    ///
+    /// Neither or both of `machine` and `directive`.
+    pub fn validate(&self) -> MemoryResult<()> {
+        if self.machine.is_some() == self.directive.is_some() {
+            return Err(MemoryError::bad_request(
+                "vault.residence.directives names exactly one of machine or directive",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// What a residence directive asks its machine to do. `kind` says which; an
+/// open names its window and item, a prune its cutoff.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ResidenceActView {
+    /// Sync every window the machine may read.
+    SyncAll,
+    /// Sync what the machine opened.
+    SyncOpened,
+    /// Open one item of one window on the machine.
+    Open {
+        /// The item's month window, `YYYY-MM`.
+        window: String,
+        /// The item, 32 hex.
+        item: EntityId,
+    },
+    /// Read the machine's thin index.
+    Index,
+    /// Drop the opened-item caches last touched before `before`
+    /// (recorded-clock unix seconds).
+    Prune { before: u64 },
+}
+
+impl From<&ResidenceAct> for ResidenceActView {
+    fn from(act: &ResidenceAct) -> Self {
+        match act {
+            ResidenceAct::SyncAll => Self::SyncAll,
+            ResidenceAct::SyncOpened => Self::SyncOpened,
+            ResidenceAct::Open { window, item } => Self::Open {
+                window: window.clone(),
+                item: *item,
+            },
+            ResidenceAct::Index => Self::Index,
+            ResidenceAct::Prune { before } => Self::Prune { before: *before },
+        }
+    }
+}
+
+/// What the machine did with a directive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ResidenceResultStatusName {
+    /// The machine applied it.
+    Applied,
+    /// It does not apply on the machine; `reason` says why. It is never
+    /// retried.
+    Refused,
+}
+
+impl From<ResidenceResultStatus> for ResidenceResultStatusName {
+    fn from(status: ResidenceResultStatus) -> Self {
+        match status {
+            ResidenceResultStatus::Applied => Self::Applied,
+            ResidenceResultStatus::Refused => Self::Refused,
+        }
+    }
+}
+
+/// The machine's result for one directive, as this replica received it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ResidenceResultView {
+    /// Vault-clock seconds on the machine when it finished.
+    pub finished_at: u64,
+    pub status: ResidenceResultStatusName,
+    /// What the act touched: windows the home granted again (sync opened),
+    /// read caches dropped (sync all, prune), windows in the thin index
+    /// (index), the one item opened (open).
+    pub count: u64,
+    /// Why a refused directive does not apply; absent once applied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+impl From<&ResidenceResult> for ResidenceResultView {
+    fn from(result: &ResidenceResult) -> Self {
+        Self {
+            finished_at: result.finished_at,
+            status: result.status.into(),
+            count: result.count,
+            reason: result.reason.clone(),
+        }
+    }
+}
+
+/// One residence directive this replica holds, and its machine's result as
+/// received here. Control metadata only: no item, index or window body.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ResidenceDirectiveView {
+    /// The directive, 32 hex.
+    pub directive: EntityId,
+    /// The machine it names, 32 hex.
+    pub machine: EntityId,
+    /// Vault-clock seconds when the owner issued it.
+    pub issued_at: u64,
+    pub act: ResidenceActView,
+    /// The directive's signed authority entry hash, 64 hex.
+    pub entry: String,
+    /// The machine's result, once it reached this replica. `null` means it
+    /// has not been received here, not that the machine is idle or never ran
+    /// it.
+    pub result: Option<ResidenceResultView>,
+}
+
+impl From<&ResidenceDirectiveState> for ResidenceDirectiveView {
+    fn from(state: &ResidenceDirectiveState) -> Self {
+        Self {
+            directive: state.directive.id,
+            machine: state.directive.machine,
+            issued_at: state.directive.issued_at,
+            act: (&state.directive.act).into(),
+            entry: bytes_to_hex_lower(&state.entry),
+            result: state.result.as_ref().map(ResidenceResultView::from),
+        }
+    }
+}
+
+/// `vault.residence.directives` as the vault owner: the residence directives
+/// this replica holds and each machine's result as received here. The read
+/// revalidates the owner in its own read transaction; it reaches no machine
+/// and queues nothing. A directive id this replica does not hold answers an
+/// empty list. A `null` result means not received here, never that the
+/// machine is idle.
+///
+/// # Errors
+///
+/// Neither or both of `machine` and `directive`; an owner who no longer
+/// stands; storage errors.
+pub fn residence_directives_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: &ResidenceDirectivesRequest,
+) -> MemoryResult<Vec<ResidenceDirectiveView>> {
+    input.validate()?;
+    let states = match input.directive {
+        Some(directive) => vault
+            .residence_directive_as(owner, directive)?
+            .into_iter()
+            .collect(),
+        None => vault.residence_directives_as(owner, input.machine)?,
+    };
+    Ok(states.iter().map(ResidenceDirectiveView::from).collect())
+}
+
+/// `vault.residence.directives` on an embedded handle, as the vault's own
+/// owner ([`Memory::embedded_owner`]): the same read as
+/// [`residence_directives_as_owner`], which needs no machine's connection.
+///
+/// # Errors
+///
+/// A caller who is not the vault's owner; as [`residence_directives_as_owner`].
+pub fn residence_directives(
+    memory: &Memory<'_>,
+    input: &ResidenceDirectivesRequest,
+) -> MemoryResult<Vec<ResidenceDirectiveView>> {
+    let owner = memory.embedded_owner("vault.residence.directives")?;
+    residence_directives_as_owner(memory.vault(), &owner, input)
 }
 
 /// A residence row on an embedded handle: refused, as no machine's sync

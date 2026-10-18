@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::consent::{AuthenticatedOwner, ConsentReceipt};
 use crate::memory::{Memory, MemoryResult};
-use crate::skill_hub::pack_catalog::{PackHookBinding, PackInstallReceipt};
+use crate::skill_hub::pack_catalog::{PackHookBinding, PackHookQualification, PackInstallReceipt};
 use crate::skill_hub::{
     HubAdmissionReceipt, HubImportReceipt, HubRef, HubSyncDisposition, HubSyncPolicy, SkillHubKind,
     SkillHubRecord, SkillHubTrustTier, TrackedHubRef,
@@ -407,7 +407,29 @@ pub fn hub_hooks_qualify_as_owner(
     input: &HubHookQualifyRequest,
 ) -> MemoryResult<HubHookQualificationReceipt> {
     let qualified = vault.qualify_pack_hooks(owner, runtime, input.source)?;
-    Ok(HubHookQualificationReceipt {
+    Ok(qualification_receipt(qualified))
+}
+
+/// [`hub_hooks_qualify_as_owner`], beside the rows its answer is read from
+/// ([`Vault::qualify_pack_hooks_listing`]): the pack source and every row
+/// each hook's listing replay lists, `None` when a replay's evidence is not
+/// listed, never an empty list standing in for it.
+///
+/// # Errors
+/// As [`hub_hooks_qualify_as_owner`].
+pub fn hub_hooks_qualify_as_owner_listing(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    runtime: &dyn crate::runtime_hooks::HookBodyRuntime,
+    input: &HubHookQualifyRequest,
+) -> MemoryResult<(HubHookQualificationReceipt, Option<Vec<EntityId>>)> {
+    let (qualified, rows) = vault.qualify_pack_hooks_listing(owner, runtime, input.source)?;
+    Ok((qualification_receipt(qualified), rows))
+}
+
+/// A hook pack's test as its wire receipt.
+fn qualification_receipt(qualified: PackHookQualification) -> HubHookQualificationReceipt {
+    HubHookQualificationReceipt {
         put: qualified.disposition.into(),
         replays: qualified
             .replays
@@ -421,7 +443,7 @@ pub fn hub_hooks_qualify_as_owner(
                     .collect(),
             })
             .collect(),
-    })
+    }
 }
 
 pub fn hub_hooks_qualify_embedded(

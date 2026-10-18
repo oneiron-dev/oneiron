@@ -79,7 +79,9 @@ pub(crate) use self::instructions::{
 };
 use self::lifecycle::{booking_oracle, run_booking_verb};
 use self::offerability::unoffered_slot_answer;
-pub(crate) use self::page_token::{booking_page_token, resolve_booking_page};
+pub(crate) use self::page_token::{
+    booking_page_token, resolve_booking_page, resolve_booking_page_listing,
+};
 pub(super) use self::public::public_booking_router;
 pub(crate) use self::public::resolve_public_booking_page;
 #[cfg(test)]

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 716 facade rows, 2570 declarations.
-Inputs: 664 of 716 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 641 of 716 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 717 facade rows, 2575 declarations.
+Inputs: 665 of 717 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 642 of 717 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 95; unread shapes: 0.
 """
 
@@ -4603,6 +4603,36 @@ class ResidencePruneAnswerApplied(ResidencePruned):
 class ResidencePruneAnswerQueued(ResidenceQueued):
     state: Literal["queued"]
 ResidencePruneAnswer = ResidencePruneAnswerApplied | ResidencePruneAnswerQueued
+class ResidenceDirectivesRequest(TypedDict):
+    machine: NotRequired[EntityId | None]
+    directive: NotRequired[EntityId | None]
+class ResidenceActViewSyncAll(TypedDict):
+    kind: Literal["sync_all"]
+class ResidenceActViewSyncOpened(TypedDict):
+    kind: Literal["sync_opened"]
+class ResidenceActViewOpen(TypedDict):
+    kind: Literal["open"]
+    window: str
+    item: EntityId
+class ResidenceActViewIndex(TypedDict):
+    kind: Literal["index"]
+class ResidenceActViewPrune(TypedDict):
+    kind: Literal["prune"]
+    before: int
+ResidenceActView = ResidenceActViewSyncAll | ResidenceActViewSyncOpened | ResidenceActViewOpen | ResidenceActViewIndex | ResidenceActViewPrune
+ResidenceResultStatusName = Literal["applied", "refused"]
+class ResidenceResultView(TypedDict):
+    finished_at: int
+    status: ResidenceResultStatusName
+    count: int
+    reason: NotRequired[str | None]
+class ResidenceDirectiveView(TypedDict):
+    directive: EntityId
+    machine: EntityId
+    issued_at: int
+    act: ResidenceActView
+    entry: str
+    result: NotRequired[ResidenceResultView | None]
 OffRecordEnterMode = Literal["off_record", "anonymous"]
 OffRecordBackendClass = Literal["local", "remote_provider"]
 class OffRecordStartRequest(TypedDict):
