@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 694 facade rows, 2519 declarations.
-Inputs: 642 of 694 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 619 of 694 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 703 facade rows, 2534 declarations.
+Inputs: 651 of 703 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 628 of 703 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 95; unread shapes: 0.
 """
 
@@ -2115,23 +2115,42 @@ class Scope(TypedDict):
     audience: NotRequired[ScopeAxis[ScopeId]]
     verbs: NotRequired[ScopeAxis[str]]
     sensitivity: NotRequired[SensitivityCeiling]
-class SlipCaveat(TypedDict):
-    scope: NotRequired[Scope | None]
+class CredentialCeiling(TypedDict):
+    kind: Literal["ceiling"]
+    scope: Scope
+TypeByteFamily = Literal["Conversation", "People", "World", "Content", "AgentsAndSurfacing", "CoreOverflow", "AuthorityPolicyCustody", "AuditObservability", "OutboundCommunicationConsent", "RegistriesDerived", "Productivity", "Code", "Documents", "Companion", "PackOverflow"]
+class SelectorRangeFamily(TypedDict):
+    Family: TypeByteFamily
+SelectorRange = Literal["Semantic", "Core", "Maintenance"] | SelectorRangeFamily
+class FederationDirectionScope(TypedDict):
+    worlds: ScopeAxis[ScopeId]
+    facets: ScopeAxis[ScopeId]
+    bands: ScopeAxis[SelectorRange]
+class CredentialPactCeiling(TypedDict):
+    grant_ref: ScopeId
+    ceiling: FederationDirectionScope
+class CredentialCaveat(TypedDict):
+    scope: NotRequired[CredentialCeiling | None]
     expires_at: NotRequired[int | None]
     ttl_secs: NotRequired[int | None]
-    single_use: bool
+    single_use: NotRequired[bool]
     records: NotRequired[list[str] | None]
     channels: NotRequired[list[str] | None]
-    pact: NotRequired[tuple[ScopeId, list[int]] | None]
+    pact: NotRequired[CredentialPactCeiling | None]
 class CredentialAttenuationRequest(TypedDict):
     holder_seed: list[int]
-    caveat: SlipCaveat
+    caveat: CredentialCaveat
     next_binding_key: NotRequired[list[int] | None]
 class CredentialAttenuated(TypedDict):
     token: str
     binding_key: list[int]
-class CredentialCeiling(TypedDict):
-    kind: Literal["ceiling"]
+class RecordPositionRequest(TypedDict):
+    record_ref: str
+class ScopedReadResult(TypedDict, Generic[T]):
+    value: T
+    narrowing: ScopedReadReceipt
+class RecordPosition(TypedDict):
+    kind: Literal["position"]
     scope: Scope
 class RecordSelector(TypedDict):
     worlds: NotRequired[RecallWorlds | None]
@@ -2166,9 +2185,6 @@ class ExportChannel(TypedDict):
 class ScopedExportRequest(TypedDict):
     selector: RecordSelector
     channel: ExportChannel
-class RecordPosition(TypedDict):
-    kind: Literal["position"]
-    scope: Scope
 MadeByInputRole = Literal["input", "prompt"]
 class MadeByInput(TypedDict):
     row: str
@@ -4156,14 +4172,6 @@ class ConnectGrant(TypedDict):
     guest_actor: str
     resolved_scope: Scope
     expires_at: NotRequired[int | None]
-TypeByteFamily = Literal["Conversation", "People", "World", "Content", "AgentsAndSurfacing", "CoreOverflow", "AuthorityPolicyCustody", "AuditObservability", "OutboundCommunicationConsent", "RegistriesDerived", "Productivity", "Code", "Documents", "Companion", "PackOverflow"]
-class SelectorRangeFamily(TypedDict):
-    Family: TypeByteFamily
-SelectorRange = Literal["Semantic", "Core", "Maintenance"] | SelectorRangeFamily
-class FederationDirectionScope(TypedDict):
-    worlds: ScopeAxis[ScopeId]
-    facets: ScopeAxis[ScopeId]
-    bands: ScopeAxis[SelectorRange]
 class OfferConnect(TypedDict):
     peer_vault: str
     grant: str
@@ -6483,9 +6491,6 @@ class LensDefaultRequest(TypedDict):
     dossiers: NotRequired[list[LensDossierSource]]
     threads: NotRequired[list[str]]
     as_of: NotRequired[int | None]
-class ScopedReadResult(TypedDict, Generic[T]):
-    value: T
-    narrowing: ScopedReadReceipt
 class DisclosureOfferRequest(TypedDict):
     contact: str
     scope: Scope
@@ -10345,6 +10350,71 @@ class BookingPageTokenRequest(TypedDict):
     page_ref: str
 class BookingPageTokenResponse(TypedDict):
     page_token: str
+CalendarInviteSurfaceMethod = Literal["REQUEST", "CANCEL"]
+class CalendarInviteSurfaceInput(TypedDict):
+    method: CalendarInviteSurfaceMethod
+    uid: str
+    sequence: int
+    ics_blob_ref: str
+    recipient: str
+    mention: NotRequired[MentionProvenance | None]
+class OutboundIntentReceipt(TypedDict):
+    intent_ref: str
+    outcome: str
+    gate_outcome: NotRequired[str | None]
+    gate_decision_ref: NotRequired[str | None]
+    gate_reason_codes: list[str]
+    deduped: bool
+class CalendarConnectorSeatConfig(TypedDict):
+    seat_ref: str
+    secret_ref: str
+    system: str
+    calendar_ref: str
+    cadence_jitter_min_seconds: int
+    cadence_jitter_max_seconds: int
+class CalendarConnectorConfigureRequest(TypedDict):
+    config: CalendarConnectorSeatConfig
+    endpoint: str
+class CalendarConnectorKillSwitchState(TypedDict):
+    killed_at: int
+    verbs_revoked: bool
+    polling_stopped: bool
+    reason_ref: str
+class CalendarConnectorSeatState(TypedDict):
+    config: CalendarConnectorSeatConfig
+    cursor: NotRequired[str | None]
+    kill_switch: NotRequired[CalendarConnectorKillSwitchState | None]
+class CalendarSyncOutcomeReenqueuedBody(TypedDict):
+    next_cursor: NotRequired[str | None]
+    next_not_before: int
+    applied: int
+    acknowledged: int
+    source_absences: int
+    status_cancellations: int
+class CalendarSyncOutcomeReenqueued(TypedDict):
+    Reenqueued: CalendarSyncOutcomeReenqueuedBody
+CalendarSyncOutcome = Literal["Killed"] | CalendarSyncOutcomeReenqueued
+class CalendarConnectorRegistration(TypedDict):
+    endpoint: str
+    seat: CalendarConnectorSeatState
+    last_sync: NotRequired[CalendarSyncOutcome | None]
+class CalendarConnectorRequest(TypedDict):
+    seat_ref: str
+class CalendarConnectorWriteRequest(TypedDict):
+    seat_ref: str
+    event_ref: str
+class RemoteWriteReceipt(TypedDict):
+    href: str
+    etag: NotRequired[str | None]
+    uid: str
+    sequence: int
+    content_hash: list[int]
+class CalendarConnectorKillRequest(TypedDict):
+    seat_ref: str
+    reason_ref: str
+class CalendarImipTransportConfig(TypedDict):
+    endpoint: str
+    secret_ref: str
 class CalendarRangeDto(TypedDict):
     start: int
     end: int
@@ -12163,13 +12233,6 @@ class OutboundScheduleRequest(TypedDict):
     job_ref: NotRequired[str | None]
     occurred_at: NotRequired[int | None]
     mention: NotRequired[MentionProvenance | None]
-class OutboundIntentReceipt(TypedDict):
-    intent_ref: str
-    outcome: str
-    gate_outcome: NotRequired[str | None]
-    gate_decision_ref: NotRequired[str | None]
-    gate_reason_codes: list[str]
-    deduped: bool
 class SummaryPathBranch(TypedDict):
     branch: str
 class SummaryPathBranchSpanBody(TypedDict):

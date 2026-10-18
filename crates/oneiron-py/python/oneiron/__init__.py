@@ -329,6 +329,9 @@ class Oneiron:
     @property
     def connector(self) -> "Oneiron._ConnectorVerbs":
         return Oneiron._ConnectorVerbs(self._client)
+    @property
+    def calendar(self) -> "Oneiron._CalendarVerbs":
+        return Oneiron._CalendarVerbs(self._client)
     class _FeedbackVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -901,6 +904,9 @@ class Oneiron:
     class _VaultScopeVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def position(self, spec):
+            """Reads a positively stamped record position through the caller credential and existing read gate, with its narrowing receipt."""
+            return json.loads(_translate(lambda: self._client.vault_scope_position(json.dumps(spec))))
         def ceiling(self, spec=None):
             """Reads the caller credential ceiling as a typed ceiling, never as a record position."""
             return json.loads(_translate(lambda: self._client.vault_scope_ceiling(json.dumps({} if spec is None else spec))))
@@ -3678,5 +3684,44 @@ class Oneiron:
         def schedule(self, spec):
             """Schedules one send through a granted outbound connector, gated and held for delivery."""
             return json.loads(_translate(lambda: self._client.connector_outbound_schedule(json.dumps(spec))))
+    class _CalendarVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def invite(self, spec):
+            """Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe."""
+            return json.loads(_translate(lambda: self._client.calendar_invite(json.dumps(spec))))
+        @property
+        def connector(self) -> "Oneiron._CalendarConnectorVerbs":
+            return Oneiron._CalendarConnectorVerbs(self._client)
+        @property
+        def imip(self) -> "Oneiron._CalendarImipVerbs":
+            return Oneiron._CalendarImipVerbs(self._client)
+    class _CalendarConnectorVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def configure(self, spec):
+            """Installs one CalDAV seat under owner proof, with a custody reference, discovery endpoint and nonzero bounded poll cadence."""
+            return json.loads(_translate(lambda: self._client.calendar_connector_configure(json.dumps(spec))))
+        def get(self, spec):
+            """Reads a configured CalDAV seat, its real provider cursor, kill switch and last sync observation under owner proof."""
+            return json.loads(_translate(lambda: self._client.calendar_connector_get(json.dumps(spec))))
+        def pull(self, spec):
+            """Pulls the configured CalDAV seat through the existing import gate and echo law, returning the real cursor and sync counters under owner proof."""
+            return json.loads(_translate(lambda: self._client.calendar_connector_pull(json.dumps(spec))))
+        def write(self, spec):
+            """Writes a readable EVENT to the owner-installed CalDAV seat through the durable conditional-write outbox, never a blind overwrite."""
+            return json.loads(_translate(lambda: self._client.calendar_connector_write(json.dumps(spec))))
+        def kill(self, spec):
+            """Kills a CalDAV seat under owner proof, revoking its advertised verbs and stopping further polling and writes without erasing calendar evidence."""
+            return json.loads(_translate(lambda: self._client.calendar_connector_kill(json.dumps(spec))))
+    class _CalendarImipVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def configure(self, spec):
+            """Installs the host iMIP mail submission endpoint and custody name under owner proof; this configuration grants no invite consent or sending identity."""
+            return json.loads(_translate(lambda: self._client.calendar_imip_configure(json.dumps(spec))))
+        def get(self, spec=None):
+            """Reads the installed host iMIP submission endpoint and custody name under owner proof, never its credential value."""
+            return json.loads(_translate(lambda: self._client.calendar_imip_get(json.dumps({} if spec is None else spec))))
 
 # END GENERATED FACADE VERBS

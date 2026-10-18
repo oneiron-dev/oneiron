@@ -15,11 +15,13 @@
 //! Key, custody and root acts are the owner's own: every work kind refuses
 //! an agent's act until a Grant line names it (Engine 10-19 02:2x).
 //!
-//! The first kind is a world's key work ([`OwnerWorkBody::WorldKey`]). Each
-//! later kind (bundle publication, custody control, a root request) adds one
-//! [`OwnerWorkBody`] variant with its [`OwnerWorkKind`], the
-//! [`OwnerActKind`] its act carries and the wire map it states under `work`;
-//! the request and result envelopes stay as they are.
+//! The first kind is a world's key work ([`OwnerWorkBody::WorldKey`]): ensure
+//! the world's key after a settings edit, or re-assert the executor's own
+//! keys of it after a pin change ([`WorldKeyMode`]). Each later kind (bundle
+//! publication, custody control, a root request) adds one [`OwnerWorkBody`]
+//! variant with its [`OwnerWorkKind`], the [`OwnerActKind`] its act carries
+//! and the wire map it states under `work`; the request and result envelopes
+//! stay as they are.
 
 use rmpv::Value;
 
@@ -32,7 +34,7 @@ pub const OP_KIND_OWNER_WORK_REQUEST: &str = "owner_work_request";
 pub const OP_KIND_OWNER_WORK_RESULT: &str = "owner_work_result";
 const REQUEST_KEYS: [&str; 5] = [OP_KEY_KIND, "carrier", OP_KEY_ACT, "executor", "work"];
 const RESULT_KEYS: [&str; 4] = [OP_KEY_KIND, "request", "executor", "outcome"];
-const WORLD_KEY_WORK_KEYS: [&str; 1] = [OP_KEY_KIND];
+const WORLD_KEY_WORK_KEYS: [&str; 2] = [OP_KEY_KIND, "mode"];
 const OUTCOME_KEYS: [&str; 2] = [OP_KEY_KIND, "reason"];
 
 /// What kind of work a request asks for: the `kind` of its `work` map.
@@ -73,6 +75,43 @@ impl OwnerWorkKind {
     }
 }
 
+/// How a world's key work runs: the `mode` of its `work` map.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum WorldKeyMode {
+    /// Mint the world's first key, or wrap its current key to every reader
+    /// its settings allow: what a settings edit leaves a holder.
+    Ensure,
+    /// Re-wrap the keys the executor wrapped itself, from its own records
+    /// and under the current settings and pin, keeping each key id, and only
+    /// then ensure: what the owner's re-assertion of a world after a pin
+    /// change leaves a holder.
+    Reassert,
+}
+
+impl WorldKeyMode {
+    /// The wire tag.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ensure => "ensure",
+            Self::Reassert => "reassert",
+        }
+    }
+
+    /// The mode a wire tag names; `None` for any other text.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "ensure" => Some(Self::Ensure),
+            "reassert" => Some(Self::Reassert),
+            _ => None,
+        }
+    }
+}
+
 /// The work one request asks for. Closed: each kind is one variant, with the
 /// fields its own wire map states.
 #[derive(
@@ -83,14 +122,14 @@ pub enum OwnerWorkBody {
     /// The key work a world settings edit left to a holder. The act's target
     /// is the world, and its `seen` is the world's `PolicyRevision` right
     /// after the edit: the revision the key work is for.
-    WorldKey,
+    WorldKey { mode: WorldKeyMode },
 }
 
 impl OwnerWorkBody {
     #[must_use]
     pub fn kind(&self) -> OwnerWorkKind {
         match self {
-            Self::WorldKey => OwnerWorkKind::WorldKey,
+            Self::WorldKey { .. } => OwnerWorkKind::WorldKey,
         }
     }
 }
@@ -244,13 +283,17 @@ impl OwnerWorkResult {
     }
 }
 
-/// Canonical field order: kind, carrier, act, executor, work.
+/// Canonical field order: kind, carrier, act, executor, work; a world key
+/// work map is kind, then mode.
 pub(super) fn owner_work_request_value(request: &OwnerWorkRequest) -> Value {
     let work = match request.work {
-        OwnerWorkBody::WorldKey => Value::Map(vec![(
-            Value::from(OP_KEY_KIND),
-            Value::from(OwnerWorkKind::WorldKey.as_str()),
-        )]),
+        OwnerWorkBody::WorldKey { mode } => Value::Map(vec![
+            (
+                Value::from(OP_KEY_KIND),
+                Value::from(OwnerWorkKind::WorldKey.as_str()),
+            ),
+            (Value::from("mode"), Value::from(mode.as_str())),
+        ]),
     };
     Value::Map(vec![
         (
@@ -285,7 +328,12 @@ pub(super) fn decode_owner_work_request(entries: &[(Value, Value)]) -> Result<Au
     let work = match kind {
         OwnerWorkKind::WorldKey => {
             validate_keys(work, &WORLD_KEY_WORK_KEYS)?;
-            OwnerWorkBody::WorldKey
+            OwnerWorkBody::WorldKey {
+                mode: required(work, "mode")?
+                    .as_str()
+                    .and_then(WorldKeyMode::from_name)
+                    .ok_or_else(invalid_authority)?,
+            }
         }
     };
     let request = OwnerWorkRequest {

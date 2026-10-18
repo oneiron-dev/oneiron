@@ -106,6 +106,7 @@ vaultRetrievalExport(input: unknown): unknown
 vaultRetrievalReplay(input: unknown): unknown
 vaultExport(input: unknown): unknown
 selfCredentialAttenuate(input: unknown): unknown
+vaultScopePosition(input: unknown): unknown
 vaultScopeCeiling(input: unknown): unknown
 vaultExportScoped(input: unknown): unknown
 vaultReceipts(limit: number | undefined, kinds: string[] | undefined): FacadeReceipt[]
@@ -567,6 +568,14 @@ vaultClaimsRetract(input: unknown): unknown
 vaultForget(input: unknown): unknown
 vaultBookingConstraintTurn(input: unknown): unknown
 vaultBookingPageToken(input: unknown): unknown
+calendarInvite(input: unknown): unknown
+calendarConnectorConfigure(input: unknown): unknown
+calendarConnectorGet(input: unknown): unknown
+calendarConnectorPull(input: unknown): unknown
+calendarConnectorWrite(input: unknown): unknown
+calendarConnectorKill(input: unknown): unknown
+calendarImipConfigure(input: unknown): unknown
+calendarImipGet(input: unknown): unknown
 vaultCalendarCreate(input: unknown): unknown
 vaultCalendarIcsImport(input: unknown): unknown
 vaultCalendarOccurrences(input: unknown): unknown

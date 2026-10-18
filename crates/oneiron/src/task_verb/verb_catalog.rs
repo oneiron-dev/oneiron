@@ -80,6 +80,7 @@ pub enum AgentVerb {
     VaultRetrievalReplay,
     VaultExport,
     SelfCredentialAttenuate,
+    VaultScopePosition,
     VaultScopeCeiling,
     VaultExportScoped,
     VaultReceipts,
@@ -566,6 +567,14 @@ pub enum AgentVerb {
     VaultForget,
     VaultBookingConstraintTurn,
     VaultBookingPageToken,
+    CalendarInvite,
+    CalendarConnectorConfigure,
+    CalendarConnectorGet,
+    CalendarConnectorPull,
+    CalendarConnectorWrite,
+    CalendarConnectorKill,
+    CalendarImipConfigure,
+    CalendarImipGet,
     VaultCalendarCreate,
     VaultCalendarIcsImport,
     VaultCalendarOccurrences,
@@ -805,6 +814,7 @@ impl AgentVerb {
         Self::VaultRetrievalReplay,
         Self::VaultExport,
         Self::SelfCredentialAttenuate,
+        Self::VaultScopePosition,
         Self::VaultScopeCeiling,
         Self::VaultExportScoped,
         Self::VaultReceipts,
@@ -1291,6 +1301,14 @@ impl AgentVerb {
         Self::VaultForget,
         Self::VaultBookingConstraintTurn,
         Self::VaultBookingPageToken,
+        Self::CalendarInvite,
+        Self::CalendarConnectorConfigure,
+        Self::CalendarConnectorGet,
+        Self::CalendarConnectorPull,
+        Self::CalendarConnectorWrite,
+        Self::CalendarConnectorKill,
+        Self::CalendarImipConfigure,
+        Self::CalendarImipGet,
         Self::VaultCalendarCreate,
         Self::VaultCalendarIcsImport,
         Self::VaultCalendarOccurrences,
@@ -1533,6 +1551,7 @@ impl AgentVerb {
             Self::VaultRetrievalReplay => "vault.retrieval.replay",
             Self::VaultExport => "vault.export",
             Self::SelfCredentialAttenuate => "self.credential.attenuate",
+            Self::VaultScopePosition => "vault.scope.position",
             Self::VaultScopeCeiling => "vault.scope.ceiling",
             Self::VaultExportScoped => "vault.export.scoped",
             Self::VaultReceipts => "vault.receipts",
@@ -2031,6 +2050,14 @@ impl AgentVerb {
             Self::VaultForget => "vault.forget",
             Self::VaultBookingConstraintTurn => "vault.booking.constraint_turn",
             Self::VaultBookingPageToken => "vault.booking.page_token",
+            Self::CalendarInvite => "calendar.invite",
+            Self::CalendarConnectorConfigure => "calendar.connector.configure",
+            Self::CalendarConnectorGet => "calendar.connector.get",
+            Self::CalendarConnectorPull => "calendar.connector.pull",
+            Self::CalendarConnectorWrite => "calendar.connector.write",
+            Self::CalendarConnectorKill => "calendar.connector.kill",
+            Self::CalendarImipConfigure => "calendar.imip.configure",
+            Self::CalendarImipGet => "calendar.imip.get",
             Self::VaultCalendarCreate => "vault.calendar.create",
             Self::VaultCalendarIcsImport => "vault.calendar.ics.import",
             Self::VaultCalendarOccurrences => "vault.calendar.occurrences",
@@ -2273,6 +2300,7 @@ impl AgentVerb {
                 | Self::VaultRetrievalReplay
                 | Self::VaultExport
                 | Self::SelfCredentialAttenuate
+                | Self::VaultScopePosition
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
                 | Self::VaultReceipts
@@ -2734,6 +2762,14 @@ impl AgentVerb {
                 | Self::VaultForget
                 | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
+                | Self::CalendarInvite
+                | Self::CalendarConnectorConfigure
+                | Self::CalendarConnectorGet
+                | Self::CalendarConnectorPull
+                | Self::CalendarConnectorWrite
+                | Self::CalendarConnectorKill
+                | Self::CalendarImipConfigure
+                | Self::CalendarImipGet
                 | Self::VaultCalendarCreate
                 | Self::VaultCalendarIcsImport
                 | Self::VaultCalendarOccurrences
@@ -3020,6 +3056,7 @@ impl AgentVerb {
                 | Self::VaultRetrievalReplay
                 | Self::VaultExport
                 | Self::SelfCredentialAttenuate
+                | Self::VaultScopePosition
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
                 | Self::VaultReceipts
@@ -3481,6 +3518,14 @@ impl AgentVerb {
                 | Self::VaultForget
                 | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
+                | Self::CalendarInvite
+                | Self::CalendarConnectorConfigure
+                | Self::CalendarConnectorGet
+                | Self::CalendarConnectorPull
+                | Self::CalendarConnectorWrite
+                | Self::CalendarConnectorKill
+                | Self::CalendarImipConfigure
+                | Self::CalendarImipGet
                 | Self::VaultCalendarCreate
                 | Self::VaultCalendarIcsImport
                 | Self::VaultCalendarOccurrences
@@ -3730,6 +3775,7 @@ impl AgentVerb {
                 | Self::VaultRecall
                 | Self::VaultAffectAnnotationsPut
                 | Self::SelfCredentialAttenuate
+                | Self::VaultScopePosition
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
                 | Self::VaultCommit
@@ -4312,6 +4358,14 @@ impl AgentVerb {
                 | Self::VaultForget
                 | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
+                | Self::CalendarInvite
+                | Self::CalendarConnectorConfigure
+                | Self::CalendarConnectorGet
+                | Self::CalendarConnectorPull
+                | Self::CalendarConnectorWrite
+                | Self::CalendarConnectorKill
+                | Self::CalendarImipConfigure
+                | Self::CalendarImipGet
                 | Self::VaultCalendarCreate
                 | Self::VaultCalendarIcsImport
                 | Self::VaultCalendarInstancesMove
@@ -4791,6 +4845,12 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::CalendarInvite
+                | Self::CalendarConnectorConfigure
+                | Self::CalendarConnectorPull
+                | Self::CalendarConnectorWrite
+                | Self::CalendarConnectorKill
+                | Self::CalendarImipConfigure
                 | Self::VaultCalendarCreate
                 | Self::VaultCalendarIcsImport
                 | Self::VaultCalendarInstancesMove
@@ -5001,6 +5061,7 @@ impl AgentVerb {
             Self::VaultRetrievalReplay => &["spec"],
             Self::VaultExport => &["spec"],
             Self::SelfCredentialAttenuate => &["spec"],
+            Self::VaultScopePosition => &["spec"],
             Self::VaultScopeCeiling => &["spec"],
             Self::VaultExportScoped => &["spec"],
             Self::VaultReceipts => &["spec"],
@@ -5487,6 +5548,14 @@ impl AgentVerb {
             Self::VaultForget => &["spec"],
             Self::VaultBookingConstraintTurn => &["spec"],
             Self::VaultBookingPageToken => &["spec"],
+            Self::CalendarInvite => &["spec"],
+            Self::CalendarConnectorConfigure => &["spec"],
+            Self::CalendarConnectorGet => &["spec"],
+            Self::CalendarConnectorPull => &["spec"],
+            Self::CalendarConnectorWrite => &["spec"],
+            Self::CalendarConnectorKill => &["spec"],
+            Self::CalendarImipConfigure => &["spec"],
+            Self::CalendarImipGet => &["spec"],
             Self::VaultCalendarCreate => &["spec"],
             Self::VaultCalendarIcsImport => &["spec"],
             Self::VaultCalendarOccurrences => &["spec"],
@@ -5727,6 +5796,7 @@ impl AgentVerb {
             Self::VaultRetrievalReplay => &["spec"],
             Self::VaultExport => &["spec"],
             Self::SelfCredentialAttenuate => &["spec"],
+            Self::VaultScopePosition => &["spec"],
             Self::VaultScopeCeiling => &["spec"],
             Self::VaultExportScoped => &["spec"],
             Self::VaultReceipts => &["spec"],
@@ -6213,6 +6283,14 @@ impl AgentVerb {
             Self::VaultForget => &["spec"],
             Self::VaultBookingConstraintTurn => &["spec"],
             Self::VaultBookingPageToken => &["spec"],
+            Self::CalendarInvite => &["spec"],
+            Self::CalendarConnectorConfigure => &["spec"],
+            Self::CalendarConnectorGet => &["spec"],
+            Self::CalendarConnectorPull => &["spec"],
+            Self::CalendarConnectorWrite => &["spec"],
+            Self::CalendarConnectorKill => &["spec"],
+            Self::CalendarImipConfigure => &["spec"],
+            Self::CalendarImipGet => &["spec"],
             Self::VaultCalendarCreate => &["spec"],
             Self::VaultCalendarIcsImport => &["spec"],
             Self::VaultCalendarOccurrences => &["spec"],
@@ -6599,6 +6677,9 @@ impl AgentVerb {
             }
             Self::SelfCredentialAttenuate => {
                 "Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted."
+            }
+            Self::VaultScopePosition => {
+                "Reads a positively stamped record position through the caller credential and existing read gate, with its narrowing receipt."
             }
             Self::VaultScopeCeiling => {
                 "Reads the caller credential ceiling as a typed ceiling, never as a record position."
@@ -7979,6 +8060,30 @@ impl AgentVerb {
             }
             Self::VaultBookingPageToken => {
                 "The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority."
+            }
+            Self::CalendarInvite => {
+                "Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe."
+            }
+            Self::CalendarConnectorConfigure => {
+                "Installs one CalDAV seat under owner proof, with a custody reference, discovery endpoint and nonzero bounded poll cadence."
+            }
+            Self::CalendarConnectorGet => {
+                "Reads a configured CalDAV seat, its real provider cursor, kill switch and last sync observation under owner proof."
+            }
+            Self::CalendarConnectorPull => {
+                "Pulls the configured CalDAV seat through the existing import gate and echo law, returning the real cursor and sync counters under owner proof."
+            }
+            Self::CalendarConnectorWrite => {
+                "Writes a readable EVENT to the owner-installed CalDAV seat through the durable conditional-write outbox, never a blind overwrite."
+            }
+            Self::CalendarConnectorKill => {
+                "Kills a CalDAV seat under owner proof, revoking its advertised verbs and stopping further polling and writes without erasing calendar evidence."
+            }
+            Self::CalendarImipConfigure => {
+                "Installs the host iMIP mail submission endpoint and custody name under owner proof; this configuration grants no invite consent or sending identity."
+            }
+            Self::CalendarImipGet => {
+                "Reads the installed host iMIP submission endpoint and custody name under owner proof, never its credential value."
             }
             Self::VaultCalendarCreate => {
                 "Creates a native or evidence-linked dreamer EVENT as the caller, with atomic projector-recorded origin and engine-stamped recorded time."

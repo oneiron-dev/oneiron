@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use oneiron::Vault;
 use oneiron::consent::lifecycle::{
-    self, ApproveOnceRequest, ConsentActReceipt, CreateStandingGrantRequest,
-    DenyConsentRequest, RevokeGrantRequest,
+    self, ApproveOnceRequest, ConsentActReceipt, CreateStandingGrantRequest, DenyConsentRequest,
+    RevokeGrantRequest,
 };
 use oneiron::consent::{AuthenticatedOwner, ConsentRegistry, ConsentRegistryQuery};
 use oneiron::memory::MemoryResult;

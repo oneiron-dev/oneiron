@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use super::super::{LlmResponse, ModelId};
 use super::codec::decode_hash_hex;
 use super::step_claim::{
-    DecodedStepClaim, decode_step_claim_value, load_step_response_in_txn,
-    step_index_lookup_in_txn, terminal_step_identity,
+    DecodedStepClaim, decode_step_claim_value, load_step_response_in_txn, step_index_lookup_in_txn,
+    terminal_step_identity,
 };
 use super::types::{DurableStepError, ENVELOPE_PROVENANCE_RUN_KEY};
 use crate::attempt_queue::AttemptId;

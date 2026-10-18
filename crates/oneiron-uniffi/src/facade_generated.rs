@@ -381,6 +381,11 @@ export_facade! {
     let output = client.self_credential_attenuate(&input)?;
     crate::codec::lift_record("self.credential.attenuate", &output)
 };
+"vault.scope.position" => fn vault_scope_position(&self, input: RecordPositionRequest) -> ScopedReadResultOptionalRecordPosition = |client| {
+    let input: oneiron::memory::RecordPositionRequest = crate::codec::lower_record("vault.scope.position", input)?;
+    let output = client.vault_scope_position(&input)?;
+    crate::codec::lift_record("vault.scope.position", &output)
+};
 "vault.scope.ceiling" => fn vault_scope_ceiling(&self) -> CredentialCeiling = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.scope.ceiling")?;
     let output = client.vault_scope_ceiling(&input)?;
@@ -2685,6 +2690,46 @@ export_facade! {
     let input: oneiron::task_verb::sdk::BookingPageTokenRequest = crate::codec::lower_record("vault.booking.page_token", input)?;
     let output = client.vault_booking_page_token(&input)?;
     crate::codec::lift_record("vault.booking.page_token", &output)
+};
+"calendar.invite" => fn calendar_invite(&self, input: CalendarInviteSurfaceInput) -> OutboundIntentReceipt = |client| {
+    let input: oneiron::memory::CalendarInviteSurfaceInput = crate::codec::lower_record("calendar.invite", input)?;
+    let output = client.calendar_invite(&input)?;
+    Lift::lift(output)
+};
+"calendar.connector.configure" => fn calendar_connector_configure(&self, input: CalendarConnectorConfigureRequest) -> CalendarConnectorRegistration = |client| {
+    let input: oneiron::calendar::connectors::door::CalendarConnectorConfigureRequest = crate::codec::lower_record("calendar.connector.configure", input)?;
+    let output = client.calendar_connector_configure(&input)?;
+    crate::codec::lift_record("calendar.connector.configure", &output)
+};
+"calendar.connector.get" => fn calendar_connector_get(&self, input: CalendarConnectorRequest) -> Option<CalendarConnectorRegistration> = |client| {
+    let input: oneiron::calendar::connectors::door::CalendarConnectorRequest = crate::codec::lower_record("calendar.connector.get", input)?;
+    let output = client.calendar_connector_get(&input)?;
+    crate::codec::lift_record("calendar.connector.get", &output)
+};
+"calendar.connector.pull" => fn calendar_connector_pull(&self, input: CalendarConnectorRequest) -> CalendarSyncOutcome = |client| {
+    let input: oneiron::calendar::connectors::door::CalendarConnectorRequest = crate::codec::lower_record("calendar.connector.pull", input)?;
+    let output = client.calendar_connector_pull(&input)?;
+    crate::codec::lift_record("calendar.connector.pull", &output)
+};
+"calendar.connector.write" => fn calendar_connector_write(&self, input: CalendarConnectorWriteRequest) -> RemoteWriteReceipt = |client| {
+    let input: oneiron::calendar::connectors::door::CalendarConnectorWriteRequest = crate::codec::lower_record("calendar.connector.write", input)?;
+    let output = client.calendar_connector_write(&input)?;
+    crate::codec::lift_record("calendar.connector.write", &output)
+};
+"calendar.connector.kill" => fn calendar_connector_kill(&self, input: CalendarConnectorKillRequest) -> CalendarConnectorRegistration = |client| {
+    let input: oneiron::calendar::connectors::door::CalendarConnectorKillRequest = crate::codec::lower_record("calendar.connector.kill", input)?;
+    let output = client.calendar_connector_kill(&input)?;
+    crate::codec::lift_record("calendar.connector.kill", &output)
+};
+"calendar.imip.configure" => fn calendar_imip_configure(&self, input: CalendarImipTransportConfig) -> CalendarImipTransportConfig = |client| {
+    let input: oneiron::calendar::connectors::door::CalendarImipTransportConfig = crate::codec::lower_record("calendar.imip.configure", input)?;
+    let output = client.calendar_imip_configure(&input)?;
+    crate::codec::lift_record("calendar.imip.configure", &output)
+};
+"calendar.imip.get" => fn calendar_imip_get(&self) -> Option<CalendarImipTransportConfig> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("calendar.imip.get")?;
+    let output = client.calendar_imip_get(&input)?;
+    crate::codec::lift_record("calendar.imip.get", &output)
 };
 "vault.calendar.create" => fn vault_calendar_create(&self, input: CalendarEventCreateRequest) -> CalendarEventCreated = |client| {
     let input: oneiron::calendar::door::CalendarEventCreateRequest = crate::codec::lower_record("vault.calendar.create", input)?;

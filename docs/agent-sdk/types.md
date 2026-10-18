@@ -822,6 +822,8 @@ class Oneiron:
     def ai(self) -> "Oneiron._AiVerbs": ...
     @property
     def connector(self) -> "Oneiron._ConnectorVerbs": ...
+    @property
+    def calendar(self) -> "Oneiron._CalendarVerbs": ...
     class _FeedbackVerbs:
         def preview(self, spec: Facade.FeedbackPreviewRequest) -> Facade.FeedbackSubjectPreview:
             """The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval."""
@@ -1167,6 +1169,8 @@ class Oneiron:
         def scoped(self, spec: Facade.ScopedExportRequest) -> Facade.ScopedExport:
             """Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding."""
     class _VaultScopeVerbs:
+        def position(self, spec: Facade.RecordPositionRequest) -> Facade.ScopedReadResult[Facade.RecordPosition | None]:
+            """Reads a positively stamped record position through the caller credential and existing read gate, with its narrowing receipt."""
         def ceiling(self, spec: Facade.EmptyRequest | None = None) -> Facade.CredentialCeiling:
             """Reads the caller credential ceiling as a typed ceiling, never as a record position."""
     class _VaultReceiptsVerbs:
@@ -2438,6 +2442,12 @@ class Oneiron:
         def reject(self, request: Facade.SummaryProposalRequest) -> Facade.SummaryProposalView:
             """Rejects the complete SUMMARY proposal under existing entity grants, dropping pending fork text without moving live heads."""
     class _VaultNotesVerbs:
+        def bless_brief_kind(self, input: Facade.EmptyRequest) -> Facade.BriefKindStamp:
+            """A verified person stamps the brief kind policy seed; it grants no sharing or extraction authority."""
+        def author_brief(self, input: Facade.AuthorBriefRequest) -> Facade.EntityRefReceipt:
+            """Authors markdown with supporting claim citations, capturing source NOTE pins and rechecking their live read authority in the brief write transaction."""
+        def follow_citation(self, spec: Facade.BriefCitationFollowRequest) -> Facade.ScopedReadResult[Facade.SharedBriefCitation | None]:
+            """Follows returned share and claim references under the caller live read scope; revocation stops resolution and hidden citations disclose no quote or lifecycle."""
         def create(self, input: Facade.CreateNoteRequest) -> Facade.EntityRefReceipt:
             """Creates a NOTE of a registered kind, its first authored text as its birth."""
         def author_take(self, input: Facade.AuthorTakeRequest) -> Facade.EntityRefReceipt:
@@ -2761,6 +2771,29 @@ class Oneiron:
     class _ConnectorOutboundVerbs:
         def schedule(self, spec: Facade.OutboundScheduleRequest) -> Facade.OutboundIntentReceipt:
             """Schedules one send through a granted outbound connector, gated and held for delivery."""
+    class _CalendarVerbs:
+        def invite(self, spec: Facade.CalendarInviteSurfaceInput) -> Facade.OutboundIntentReceipt:
+            """Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe."""
+        @property
+        def connector(self) -> "Oneiron._CalendarConnectorVerbs": ...
+        @property
+        def imip(self) -> "Oneiron._CalendarImipVerbs": ...
+    class _CalendarConnectorVerbs:
+        def configure(self, spec: Facade.CalendarConnectorConfigureRequest) -> Facade.CalendarConnectorRegistration:
+            """Installs one CalDAV seat under owner proof, with a custody reference, discovery endpoint and nonzero bounded poll cadence."""
+        def get(self, spec: Facade.CalendarConnectorRequest) -> Facade.CalendarConnectorRegistration | None:
+            """Reads a configured CalDAV seat, its real provider cursor, kill switch and last sync observation under owner proof."""
+        def pull(self, spec: Facade.CalendarConnectorRequest) -> Facade.CalendarSyncOutcome:
+            """Pulls the configured CalDAV seat through the existing import gate and echo law, returning the real cursor and sync counters under owner proof."""
+        def write(self, spec: Facade.CalendarConnectorWriteRequest) -> Facade.RemoteWriteReceipt:
+            """Writes a readable EVENT to the owner-installed CalDAV seat through the durable conditional-write outbox, never a blind overwrite."""
+        def kill(self, spec: Facade.CalendarConnectorKillRequest) -> Facade.CalendarConnectorRegistration:
+            """Kills a CalDAV seat under owner proof, revoking its advertised verbs and stopping further polling and writes without erasing calendar evidence."""
+    class _CalendarImipVerbs:
+        def configure(self, spec: Facade.CalendarImipTransportConfig) -> Facade.CalendarImipTransportConfig:
+            """Installs the host iMIP mail submission endpoint and custody name under owner proof; this configuration grants no invite consent or sending identity."""
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.CalendarImipTransportConfig | None:
+            """Reads the installed host iMIP submission endpoint and custody name under owner proof, never its credential value."""
 
 # END GENERATED FACADE VERBS
 ```
