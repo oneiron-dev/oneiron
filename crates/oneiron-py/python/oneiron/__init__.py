@@ -336,6 +336,9 @@ class Oneiron:
         def memory(self) -> "Oneiron._SelfMemoryVerbs":
             return Oneiron._SelfMemoryVerbs(self._client)
         @property
+        def standing(self) -> "Oneiron._SelfStandingVerbs":
+            return Oneiron._SelfStandingVerbs(self._client)
+        @property
         def identity(self) -> "Oneiron._SelfIdentityVerbs":
             return Oneiron._SelfIdentityVerbs(self._client)
         @property
@@ -431,6 +434,18 @@ class Oneiron:
         def query(self, spec):
             """Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log."""
             return json.loads(_translate(lambda: self._client.self_memory_diary_query(json.dumps(spec))))
+    class _SelfStandingVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """This agent's configured standing block in one world: its handle, name and token floor."""
+            return json.loads(_translate(lambda: self._client.self_standing_get(json.dumps(spec))))
+        def list(self, spec=None):
+            """Every standing block configured for this agent, one per world, in world order."""
+            return json.loads(_translate(lambda: self._client.self_standing_list(json.dumps({} if spec is None else spec))))
+        def edit(self, spec):
+            """This agent proposes one persona field's new text for its standing block, as a Generated claim its gate settles; compiled text is never edited."""
+            return json.loads(_translate(lambda: self._client.self_standing_edit(json.dumps(spec))))
     class _SelfIdentityVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -747,6 +762,9 @@ class Oneiron:
         @property
         def agents(self) -> "Oneiron._VaultAgentsVerbs":
             return Oneiron._VaultAgentsVerbs(self._client)
+        @property
+        def standing_blocks(self) -> "Oneiron._VaultStandingBlocksVerbs":
+            return Oneiron._VaultStandingBlocksVerbs(self._client)
         @property
         def workflows(self) -> "Oneiron._VaultWorkflowsVerbs":
             return Oneiron._VaultWorkflowsVerbs(self._client)
@@ -2491,17 +2509,44 @@ class Oneiron:
             """The owner edits the expected definition version and optional refusal dial through the existing immutable-field and ceiling gates; refusal decisions read the live dial."""
             return json.loads(_translate(lambda: self._client.vault_agents_update(json.dumps(spec))))
         @property
+        def dreaming(self) -> "Oneiron._VaultAgentsDreamingVerbs":
+            return Oneiron._VaultAgentsDreamingVerbs(self._client)
+        @property
         def spawn(self) -> "Oneiron._VaultAgentsSpawnVerbs":
             return Oneiron._VaultAgentsSpawnVerbs(self._client)
         def export_pack(self, request: dict[str, Any]) -> dict[str, Any]:
             """The agent's travelling AgentPack folder (files base64) and what stayed home."""
             return json.loads(_translate(lambda: self._client.vault_agents_export_pack(json.dumps(request, allow_nan=False))))
+    class _VaultAgentsDreamingVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """The owner reads one agent's dreaming choice: its stored mode, the mode in force and its own dreaming model slot."""
+            return json.loads(_translate(lambda: self._client.vault_agents_dreaming_get(json.dumps(spec))))
+        def set(self, spec):
+            """The owner sets one agent's dreaming choice on the revision read: its own model, the vault weaver's, or off; sharing a model never shares its diary."""
+            return json.loads(_translate(lambda: self._client.vault_agents_dreaming_set(json.dumps(spec))))
     class _VaultAgentsSpawnVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def get(self, spec):
             """The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning."""
             return json.loads(_translate(lambda: self._client.vault_agents_spawn_get(json.dumps(spec))))
+    class _VaultStandingBlocksVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def configure(self, spec):
+            """The owner configures one agent's standing block in one world with its name and token floor; reopening the same pair answers the stored handle."""
+            return json.loads(_translate(lambda: self._client.vault_standing_blocks_configure(json.dumps(spec))))
+        def reconfigure(self, spec):
+            """The owner gives a configured standing block a new name and token floor; an unconfigured pair is refused, never implicitly opened."""
+            return json.loads(_translate(lambda: self._client.vault_standing_blocks_reconfigure(json.dumps(spec))))
+        def get(self, spec):
+            """The owner reads one agent's configured standing block in one world: its handle, name and token floor."""
+            return json.loads(_translate(lambda: self._client.vault_standing_blocks_get(json.dumps(spec))))
+        def list(self, spec):
+            """The owner lists every standing block configured for one agent, one per world, in world order."""
+            return json.loads(_translate(lambda: self._client.vault_standing_blocks_list(json.dumps(spec))))
     class _VaultWorkflowsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

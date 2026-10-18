@@ -137,6 +137,46 @@
       "section": false
     },
     {
+      "name": "self.standing.get",
+      "description": "This agent's configured standing block in one world: its handle, name and token floor.",
+      "input": "crate::task_verb::sdk::OwnStandingBlockRequest",
+      "output": "crate::task_verb::sdk::StandingBlockView",
+      "call": "crate::task_verb::sdk::read_own_standing_block(memory, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "self.standing.list",
+      "description": "Every standing block configured for this agent, one per world, in world order.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::task_verb::sdk::StandingBlockView>",
+      "call": "crate::task_verb::sdk::list_own_standing_blocks(memory)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "self.standing.edit",
+      "description": "This agent proposes one persona field's new text for its standing block, as a Generated claim its gate settles; compiled text is never edited.",
+      "input": "crate::task_verb::sdk::StandingBlockEditRequest",
+      "output": "crate::task_verb::sdk::StandingBlockEditReceipt",
+      "call": "crate::task_verb::sdk::edit_own_standing_block(memory, input)?",
+      "scope": "Write",
+      "proposes": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "self.identity.answer",
       "description": "A vault owner's tap on an identity choice card: who a person named in their conversations is.",
       "input": "crate::dreamer_runner::maintenance::identity::IdentityAnswerRequest",
@@ -5624,6 +5664,96 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.agents.dreaming.get",
+      "description": "The owner reads one agent's dreaming choice: its stored mode, the mode in force and its own dreaming model slot.",
+      "input": "crate::task_verb::sdk::AgentDreamingRequest",
+      "output": "crate::task_verb::sdk::AgentDreamingView",
+      "call": "crate::task_verb::sdk::read_agent_dreaming_as(memory.vault(), &memory.embedded_owner(\"vault.agents.dreaming.get\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.agents.dreaming.set",
+      "description": "The owner sets one agent's dreaming choice on the revision read: its own model, the vault weaver's, or off; sharing a model never shares its diary.",
+      "input": "crate::task_verb::sdk::AgentDreamingSetRequest",
+      "output": "crate::task_verb::sdk::AgentDreamingView",
+      "call": "crate::task_verb::sdk::set_agent_dreaming_as(memory.vault(), &memory.embedded_owner(\"vault.agents.dreaming.set\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.standing_blocks.configure",
+      "description": "The owner configures one agent's standing block in one world with its name and token floor; reopening the same pair answers the stored handle.",
+      "input": "crate::task_verb::sdk::StandingBlockConfigureRequest",
+      "output": "crate::task_verb::sdk::StandingBlockView",
+      "call": "crate::task_verb::sdk::configure_standing_block_as(memory.vault(), &memory.embedded_owner(\"vault.standing_blocks.configure\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.standing_blocks.reconfigure",
+      "description": "The owner gives a configured standing block a new name and token floor; an unconfigured pair is refused, never implicitly opened.",
+      "input": "crate::task_verb::sdk::StandingBlockConfigureRequest",
+      "output": "crate::task_verb::sdk::StandingBlockView",
+      "call": "crate::task_verb::sdk::reconfigure_standing_block_as(memory.vault(), &memory.embedded_owner(\"vault.standing_blocks.reconfigure\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.standing_blocks.get",
+      "description": "The owner reads one agent's configured standing block in one world: its handle, name and token floor.",
+      "input": "crate::task_verb::sdk::StandingBlockRequest",
+      "output": "crate::task_verb::sdk::StandingBlockView",
+      "call": "crate::task_verb::sdk::read_standing_block_as(memory.vault(), &memory.embedded_owner(\"vault.standing_blocks.get\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.standing_blocks.list",
+      "description": "The owner lists every standing block configured for one agent, one per world, in world order.",
+      "input": "crate::task_verb::sdk::StandingBlocksRequest",
+      "output": "Vec<crate::task_verb::sdk::StandingBlockView>",
+      "call": "crate::task_verb::sdk::list_standing_blocks_as(memory.vault(), &memory.embedded_owner(\"vault.standing_blocks.list\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
       },

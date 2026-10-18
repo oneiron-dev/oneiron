@@ -37,6 +37,9 @@ selfFocusScratchpadSeal(input: unknown): unknown
 selfMemoryDiary(input: unknown): unknown
 selfMemoryDiaryReads(input: unknown): unknown
 selfMemoryDiaryReview(input: unknown): unknown
+selfStandingGet(input: unknown): unknown
+selfStandingList(input: unknown): unknown
+selfStandingEdit(input: unknown): unknown
 selfIdentityAnswer(input: unknown): unknown
 selfIdentitySettle(input: unknown): unknown
 selfInboxList(input: unknown): unknown
@@ -389,6 +392,12 @@ vaultArtifactsExport(requestJson: string): string
 vaultAgentsCreate(input: unknown): unknown
 vaultAgentsGet(input: unknown): unknown
 vaultAgentsUpdate(input: unknown): unknown
+vaultAgentsDreamingGet(input: unknown): unknown
+vaultAgentsDreamingSet(input: unknown): unknown
+vaultStandingBlocksConfigure(input: unknown): unknown
+vaultStandingBlocksReconfigure(input: unknown): unknown
+vaultStandingBlocksGet(input: unknown): unknown
+vaultStandingBlocksList(input: unknown): unknown
 vaultWorkflowsSave(input: unknown): unknown
 vaultWorkflowsGet(input: unknown): unknown
 vaultWorkflowsUpdate(input: unknown): unknown

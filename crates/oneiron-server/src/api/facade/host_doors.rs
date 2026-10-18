@@ -159,6 +159,8 @@ pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
 pub(crate) use super::claim_settle_doors::*;
 pub(crate) use super::consolidation_doors::*;
+// The owner's standing-block and dreaming-choice doors (DOOR-134), likewise.
+pub(crate) use super::standing_doors::*;
 // The owner's symbol lease, proposal submit and oplog doors (DOOR-137), likewise.
 pub(crate) use super::code_doors::*;
 // The owner's per-model code-run heal count door (DOOR-093), likewise.
@@ -1179,6 +1181,12 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.agents.create"
         | "vault.agents.update"
         | "vault.agents.get"
+        | "vault.agents.dreaming.get"
+        | "vault.agents.dreaming.set"
+        | "vault.standing_blocks.configure"
+        | "vault.standing_blocks.reconfigure"
+        | "vault.standing_blocks.get"
+        | "vault.standing_blocks.list"
         | "vault.workflows.save"
         | "vault.workflows.update"
         | "vault.workflows.get"

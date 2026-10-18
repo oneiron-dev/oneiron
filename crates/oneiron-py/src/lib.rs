@@ -349,6 +349,27 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn self_standing_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.standing.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.standing.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_standing_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.standing.list")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.standing.list", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_standing_edit(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.standing.edit")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.standing.edit", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn self_identity_answer(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "self.identity.answer")?;
         let output = py
@@ -3415,6 +3436,62 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.agents.update")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.agents.update", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_agents_dreaming_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.agents.dreaming.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.agents.dreaming.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_agents_dreaming_set(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.agents.dreaming.set")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.agents.dreaming.set", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_standing_blocks_configure(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.standing_blocks.configure")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.standing_blocks.configure", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_standing_blocks_reconfigure(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.standing_blocks.reconfigure")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.standing_blocks.reconfigure", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_standing_blocks_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.standing_blocks.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.standing_blocks.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_standing_blocks_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.standing_blocks.list")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.standing_blocks.list", input))
             .map_err(raise)?;
         encode(&output)
     }

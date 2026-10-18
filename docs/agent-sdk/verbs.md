@@ -13,6 +13,9 @@ both bindings and their export-census tests in one change.
 - `self.memory.diary`
 - `self.memory.diary.reads`
 - `self.memory.diary.review`
+- `self.standing.get`
+- `self.standing.list`
+- `self.standing.edit`
 - `self.identity.answer`
 - `self.identity.settle`
 - `self.inbox.list`
@@ -365,6 +368,12 @@ both bindings and their export-census tests in one change.
 - `vault.agents.create`
 - `vault.agents.get`
 - `vault.agents.update`
+- `vault.agents.dreaming.get`
+- `vault.agents.dreaming.set`
+- `vault.standing_blocks.configure`
+- `vault.standing_blocks.reconfigure`
+- `vault.standing_blocks.get`
+- `vault.standing_blocks.list`
 - `vault.workflows.save`
 - `vault.workflows.get`
 - `vault.workflows.update`
