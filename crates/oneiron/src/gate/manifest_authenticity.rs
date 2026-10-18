@@ -330,7 +330,9 @@ impl Vault {
         now: u64,
     ) -> Result<()> {
         if crate::ports::EntityStoreRead::port_entity_present(&self.store, txn, &id)? {
-            return Err(Error::InvalidConfig("a policy proposal requires a fresh id".into()));
+            return Err(Error::InvalidConfig(
+                "a policy proposal requires a fresh id".into(),
+            ));
         }
         self.write_policy_manifest_in_txn(txn, id, data, now)?;
         let key = HexId(id);

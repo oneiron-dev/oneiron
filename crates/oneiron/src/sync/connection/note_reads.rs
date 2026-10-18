@@ -12,7 +12,10 @@ impl super::SyncConnection {
     /// contacting its home or opening any other item.
     pub fn item_is_local(&self, item: EntityId) -> Result<bool, TransportError> {
         Ok(self.thin_item(item)?.is_some()
-            || self.manager.vault().entity_exists(&item)
+            || self
+                .manager
+                .vault()
+                .entity_exists(&item)
                 .map_err(|error| TransportError::Storage(error.to_string()))?)
     }
 
@@ -28,7 +31,13 @@ impl super::SyncConnection {
         spans: &[NoteReadSpan],
     ) -> MemoryResult<Option<NoteReadView>> {
         crate::note::opened_note_view(
-            self.manager.vault(), opened, actor, proof, locality, reason, spans,
+            self.manager.vault(),
+            opened,
+            actor,
+            proof,
+            locality,
+            reason,
+            spans,
         )
     }
 }

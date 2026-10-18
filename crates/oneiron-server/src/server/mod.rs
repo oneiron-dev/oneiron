@@ -37,13 +37,13 @@ pub(crate) use self::desktop_seats::{DesktopSeat, DesktopSeats};
 pub(crate) use self::desktop_seats::{RunSeats, Seat, SeatGuest};
 pub(crate) use self::housekeeping::{HousekeepingAdmission, admit_every_pass};
 pub(crate) use self::lifecycle::LifecycleScheduler;
-pub(crate) use self::note_editors::NoteEditors;
 pub(crate) use self::live_runs::{
     HeldLiveRun, LiveRunCaller, LiveRunRefusal, LiveRuns, ResolvedLiveRun,
 };
 pub use self::media_door::MediaDoor;
 pub(crate) use self::media_door::{MediaRefusal, admit_media};
 pub(crate) use self::media_embedding::MediaEmbedRefusal;
+pub(crate) use self::note_editors::NoteEditors;
 #[cfg(unix)]
 pub(crate) use self::organs::organ_dir;
 pub use self::oversight::OversightStartError;

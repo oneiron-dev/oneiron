@@ -17,8 +17,17 @@ use super::manifest_authenticity::{manifest_is_quarantined, manifest_is_trusted}
 use super::{POLICY_SCHEMA_VERSION, resolve_policy_manifest};
 
 const FIELDS: &[&str] = &[
-    "schema_version", "pack_id", "pack_version", "min_engine_version", "defaults",
-    "rules", "actor_ceilings", "source_trust", "signature", "signatures", "auto_checker",
+    "schema_version",
+    "pack_id",
+    "pack_version",
+    "min_engine_version",
+    "defaults",
+    "rules",
+    "actor_ceilings",
+    "source_trust",
+    "signature",
+    "signatures",
+    "auto_checker",
 ];
 
 fn invalid(message: &str) -> Error {
@@ -46,7 +55,9 @@ fn body_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<Opt
     if super::project_depth::is_project_depth_id(&id)
         || super::project_depth::is_project_depth_contribution(&body)
     {
-        return Err(invalid("a signed project-depth contribution is not an ordinary manifest"));
+        return Err(invalid(
+            "a signed project-depth contribution is not an ordinary manifest",
+        ));
     }
     Ok(Some(body))
 }
@@ -73,8 +84,8 @@ fn view_in_txn(
 
 fn decode_fields(body: &[u8]) -> Result<Vec<(rmpv::Value, rmpv::Value)>> {
     let mut cursor = std::io::Cursor::new(body);
-    let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| invalid("malformed policy manifest"))?;
+    let value =
+        rmpv::decode::read_value(&mut cursor).map_err(|_| invalid("malformed policy manifest"))?;
     match value {
         rmpv::Value::Map(fields) if cursor.position() == body.len() as u64 => Ok(fields),
         _ => Err(invalid("malformed policy manifest")),
@@ -93,8 +104,8 @@ fn encode_manifest(manifest: &PolicyManifest, existing: Option<&[u8]>) -> Result
     // as values; a JSON round trip would change those policy tables.
     let mut fields = existing.map(decode_fields).transpose()?.unwrap_or_default();
     fields.retain(|(key, _)| !key.as_str().is_some_and(|key| FIELDS.contains(&key)));
-    let replacement = rmp_serde::to_vec_named(manifest)
-        .map_err(|_| invalid("policy manifest encoding"))?;
+    let replacement =
+        rmp_serde::to_vec_named(manifest).map_err(|_| invalid("policy manifest encoding"))?;
     fields.extend(decode_fields(&replacement)?);
     let data = encode_fields(fields)?;
     let decoded = super::decode::decode_policy_manifest(&data)
@@ -103,7 +114,9 @@ fn encode_manifest(manifest: &PolicyManifest, existing: Option<&[u8]>) -> Result
         || decoded.engine_version_floor
         || decoded.source_trust.malformed_manifest_seen
     {
-        return Err(invalid("unsupported policy schema, engine version or malformed source trust"));
+        return Err(invalid(
+            "unsupported policy schema, engine version or malformed source trust",
+        ));
     }
     Ok(data)
 }
@@ -134,7 +147,9 @@ fn record(
         read_frontier_hash: resolve_policy_manifest(&vault.store, txn)?.read_frontier_hash()?,
         redacted_at: None,
     };
-    vault.store.append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
+    vault
+        .store
+        .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
     Ok(receipt.decision_id.to_hex())
 }
 
@@ -149,8 +164,12 @@ pub fn policy_manifests_as_owner(
     let ids = match &input.manifest_ref {
         Some(reference) => vec![id(reference)?],
         None => crate::ports::EntityStoreRead::port_entity_ids_by_type(
-            &vault.store, &txn, ENTITY_TYPE_POLICY_MANIFEST, None,
-        )?.collect::<Result<Vec<_>>>()?,
+            &vault.store,
+            &txn,
+            ENTITY_TYPE_POLICY_MANIFEST,
+            None,
+        )?
+        .collect::<Result<Vec<_>>>()?,
     };
     let mut manifests = Vec::new();
     for id in ids {
@@ -221,11 +240,13 @@ pub fn propose_policy_manifest(
                 actor_ref: Some(actor.entity_ref().to_hex()),
                 delegation_grant_ref: None,
             },
-            source: Some(if memory.writes_generated() || memory.actor_class() != EdgeActorClass::Human {
-                crate::claim::ClaimSource::Generated
-            } else {
-                crate::claim::ClaimSource::UserStated
-            }),
+            source: Some(
+                if memory.writes_generated() || memory.actor_class() != EdgeActorClass::Human {
+                    crate::claim::ClaimSource::Generated
+                } else {
+                    crate::claim::ClaimSource::UserStated
+                },
+            ),
             content_kind: GateContentKind::PolicyManifest,
             sensitivity_band: None,
             criticality: super::PolicyCriticality::Critical,
@@ -235,24 +256,51 @@ pub fn propose_policy_manifest(
                 ..GateProvenanceHandles::default()
             },
             external_effect: None,
-            agent_definition_ceiling: super::agent_definition_ceiling_for_actor(&vault.store, txn, actor),
+            agent_definition_ceiling: super::agent_definition_ceiling_for_actor(
+                &vault.store,
+                txn,
+                actor,
+            ),
             foreign_agent_ceiling: None,
             consent: None,
         });
         if decision.outcome() == GateOutcome::Deny {
-            return Err(MemoryError::new(crate::memory::MEMORY_CODE_FORBIDDEN,
-                "the caller's Gate refused this policy proposal", &[]));
+            return Err(MemoryError::new(
+                crate::memory::MEMORY_CODE_FORBIDDEN,
+                "the caller's Gate refused this policy proposal",
+                &[],
+            ));
         }
         let id = vault.store.clock.entity_id()?;
-        vault.write_policy_manifest_proposal_in_txn(txn, id, data.clone(), crate::unix_seconds_now())?;
+        vault.write_policy_manifest_proposal_in_txn(
+            txn,
+            id,
+            data.clone(),
+            crate::unix_seconds_now(),
+        )?;
         let body = body_in_txn(vault, txn, id)?.ok_or(Error::EntityNotFound)?;
-        let receipt_ref = record(vault, txn, actor, id, &body, (decision.outcome().as_str(),
-            decision.reason_codes().iter().map(|reason| reason.as_str().to_owned()).collect()))?;
+        let receipt_ref = record(
+            vault,
+            txn,
+            actor,
+            id,
+            &body,
+            (
+                decision.outcome().as_str(),
+                decision
+                    .reason_codes()
+                    .iter()
+                    .map(|reason| reason.as_str().to_owned())
+                    .collect(),
+            ),
+        )?;
         Ok(PolicyManifestReceipt {
             manifest: view_in_txn(vault, txn, id, &body)?,
             approval: PolicyCeiling::Proposed,
             receipt_ref,
-            read_frontier_hash: hex(&resolve_policy_manifest(&vault.store, txn)?.read_frontier_hash()?),
+            read_frontier_hash: hex(
+                &resolve_policy_manifest(&vault.store, txn)?.read_frontier_hash()?
+            ),
         })
     })
 }
@@ -262,7 +310,8 @@ pub fn gate_checker_as_owner(vault: &Vault, owner: &AuthenticatedOwner) -> Resul
     let txn = vault.store.env.read_txn()?;
     owner.revalidate_in_txn(vault, &txn)?;
     Ok(GateCheckerView {
-        binding: crate::llm::manifest::read_manifest(&vault.store, &txn)?.and_then(|row| row.verdict),
+        binding: crate::llm::manifest::read_manifest(&vault.store, &txn)?
+            .and_then(|row| row.verdict),
     })
 }
 
@@ -275,14 +324,25 @@ pub fn set_gate_checker_as_owner(
 ) -> Result<GateCheckerReceipt> {
     vault.with_write_txn_grouped(|txn| {
         let actor = owner.revalidate_in_txn(vault, txn)?;
-        let mut manifest = crate::llm::manifest::read_manifest(&vault.store, txn)?
-            .ok_or_else(|| invalid("configure the vault's model manifest before binding its checker role"))?;
+        let mut manifest =
+            crate::llm::manifest::read_manifest(&vault.store, txn)?.ok_or_else(|| {
+                invalid("configure the vault's model manifest before binding its checker role")
+            })?;
         manifest.verdict = Some(input.binding.clone());
         vault.write_model_manifest_in_txn(txn, &manifest, None, None)?;
-        let data = rmp_serde::to_vec_named(&input.binding).map_err(|_| invalid("checker binding encoding"))?;
-        let receipt_ref = record(vault, txn, crate::WriteActor::new(actor, EdgeActorClass::Human),
-            super::default_policy_manifest_id()?, &data,
-            ("allow", vec!["gate.allow.owner_checker_role".to_owned()]))?;
-        Ok(GateCheckerReceipt { binding: input.binding.clone(), receipt_ref })
+        let data = rmp_serde::to_vec_named(&input.binding)
+            .map_err(|_| invalid("checker binding encoding"))?;
+        let receipt_ref = record(
+            vault,
+            txn,
+            crate::WriteActor::new(actor, EdgeActorClass::Human),
+            super::default_policy_manifest_id()?,
+            &data,
+            ("allow", vec!["gate.allow.owner_checker_role".to_owned()]),
+        )?;
+        Ok(GateCheckerReceipt {
+            binding: input.binding.clone(),
+            receipt_ref,
+        })
     })
 }
