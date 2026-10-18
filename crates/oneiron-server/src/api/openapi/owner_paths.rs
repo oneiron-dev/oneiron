@@ -20,13 +20,13 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         method: "get",
         path: "/authority/handoff-alarms",
         summary: "Every saved alarm in the shape and order vault.authority.handoff_alarms answers (OF-158): unix seconds, oldest raised first, then by signer.",
-        row: None,
+        row: Some("vault.authority.handoff_alarms"),
     },
     OwnerRoute {
         method: "post",
         path: "/authority/handoff-alarms/acknowledge",
         summary: "The owner has seen one alarm.",
-        row: None,
+        row: Some("vault.authority.handoff_alarms.acknowledge"),
     },
     OwnerRoute {
         method: "get",
