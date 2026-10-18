@@ -136,6 +136,14 @@ credential names (`grant_ref`): the home provisions it when a live owner pairs, 
 enrol` does. A credential that names no grant leaves residence
 reads off. The log says so once at start, and the home refuses those reads.
 
+A search the machine cannot answer alone asks the home. An owner-grade caller is the machine's
+paired owner, so the home answers it within the machine's own grant. For a narrower caller, the
+machine forwards that caller's own holder proof: its slip and the `x-oneiron-binding` fields it
+sent, unchanged. The machine adds its install key's signature over the proof and the request.
+The home checks both, then answers within the caller's own reach and the machine's grant. If the
+home refuses, or cannot be reached, the caller gets no home hits; the machine never answers for it
+from its own scan. The `/api` search door still admits only owner-grade callers.
+
 ## The owner's other models
 
 While the connection is synced over the mesh, the machine asks each of the owner's other nodes whose MACHINE
