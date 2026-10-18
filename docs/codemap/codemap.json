@@ -22586,7 +22586,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "FailureLadder"
@@ -30945,8 +30945,8 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 45,
-      "fn": 31,
+      "crate-vis": 47,
+      "fn": 32,
       "struct": 2,
       "type": 1
      }
@@ -47066,7 +47066,7 @@
      "purpose": "Per-revision, per-person bearer ingress for generic ask options (no page UI)",
      "surface": {
       "crate-vis": 6,
-      "fn": 6,
+      "fn": 7,
       "struct": 2
      }
     },
@@ -47657,7 +47657,7 @@
      "path": "src/task_verb/highway_runner.rs",
      "purpose": "Engine runners on the task highway (OF-220)",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -53910,7 +53910,7 @@
     "failure_ladder": {
      "files": 16,
      "impl_vault": true,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "ONE-1887 failure ladder: classify → bounded retry → healer slot → surface"
     },
