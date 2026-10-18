@@ -118,6 +118,29 @@ pub fn measure_skill_edit_goal_axes(
     bandit: &dyn GoalAxisBandit,
     pulls_per_axis: u32,
 ) -> Result<GoalAxisReport> {
+    measure_with_owner(vault, proposal, scorer, bandit, pulls_per_axis, None)
+}
+
+pub(crate) fn measure_skill_edit_goal_axes_as_owner(
+    vault: &Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    proposal: &EntityId,
+    scorer: &dyn HeldOutReplayNotes,
+    bandit: &dyn GoalAxisBandit,
+    pulls_per_axis: u32,
+) -> Result<GoalAxisReport> {
+    owner.revalidate(vault)?;
+    measure_with_owner(vault, proposal, scorer, bandit, pulls_per_axis, Some(owner))
+}
+
+fn measure_with_owner(
+    vault: &Vault,
+    proposal: &EntityId,
+    scorer: &dyn HeldOutReplayNotes,
+    bandit: &dyn GoalAxisBandit,
+    pulls_per_axis: u32,
+    owner: Option<&crate::consent::AuthenticatedOwner>,
+) -> Result<GoalAxisReport> {
     let staged = vault
         .get_skill_record(proposal)?
         .ok_or(Error::EntityNotFound)?;
@@ -136,6 +159,9 @@ pub fn measure_skill_edit_goal_axes(
     };
     let report = measure_goal_axes(vault, target, &current, &staged, &plan, scorer, bandit)?;
     vault.with_write_txn_grouped(|txn| {
+        if let Some(owner) = owner {
+            owner.revalidate_in_txn(vault, txn)?;
+        }
         let staged_now = vault.read_skill_record_in_txn(&*txn, proposal)?;
         let current_now = vault.read_skill_record_in_txn(&*txn, &target)?;
         let proposal_digest = skill_body_binding_digest(&staged_now)?;

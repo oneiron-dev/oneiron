@@ -22,16 +22,19 @@ BROWSER_ROWS = [row for row in MANIFEST['verbs'] if row.get('context') == 'brows
 for row in HOST_ROWS:
     host = row['host']
     if (row.get('context') not in ('run', 'browser') or not {'input', 'description'} <= set(host)
-            or set(host) - {'input', 'description', 'host_door_caller', 'host_door_session', 'openapi'}
-            or any(not isinstance(host[key], bool) for key in ('host_door_caller', 'host_door_session', 'openapi') if key in host)):
-        raise ValueError(f'{row["name"]}: a host projection names the public input and description, with optional caller, session and OpenAPI flags')
+            or set(host) - {'input', 'description', 'host_door_caller', 'host_door_session', 'host_door_lists', 'openapi'}
+            or any(not isinstance(host[key], bool) for key in ('host_door_caller', 'host_door_session', 'host_door_lists', 'openapi') if key in host)):
+        raise ValueError(f'{row["name"]}: a host projection names the public input and description, with optional caller, session, lists and OpenAPI flags')
 ROWS = [row for row in MANIFEST['verbs'] if 'call' in row and row not in HOST_BROWSER_ROWS] + [
     {'name': row['name'], 'input': row['host']['input'], 'output': row['output'],
      'description': row['host']['description'], 'scope': row['scope'],
      'call': f'crate::task_verb::sdk::host_only(memory, "{row["name"]}", &input)?',
      'host_door': True, 'host_door_session': row['host'].get('host_door_session', True),
      'host_door_caller': row['host'].get('host_door_caller', False),
-     'host_door_lists': row.get('context') == 'browser',
+     # A browser door lists its rows; a run projection lists when its host
+     # object says so (FIX 4709), its door then answering `Listed` or
+     # `MaybeListed` as an explicit host row does.
+     'host_door_lists': row.get('context') == 'browser' or row['host'].get('host_door_lists', False),
      'openapi': row['host'].get('openapi', False),
      'admission': {'unrestricted_record_scope': True}, 'section': False}
     for row in HOST_ROWS
