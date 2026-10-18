@@ -25440,7 +25440,7 @@
      "purpose": "Actor-scoped, receipt-backed proposal observation; crossing only asks a question",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 6,
       "fn": 3,
       "struct": 3
      }
@@ -32276,6 +32276,31 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/hook_regen_doors/mod.rs",
+     "purpose": "Typed hook regeneration doors (DOOR-077): `vault.hooks.regen.due` lists the vault's own hook bindings whose…",
+     "surface": {
+      "fn": 3,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HookRegenAdoptRequest",
+      "HookRegenBindingRequest",
+      "HookRegenView"
+     ],
+     "path": "src/memory/hook_regen_doors/types.rs",
+     "purpose": "—",
+     "surface": {
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/inspection.rs",
      "purpose": "`vault.inspection.resolve` (OF-235): the bound actor reopens an inspection link through its own read lane",
      "surface": {
@@ -32433,7 +32458,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 13,
+      "mod": 14,
       "re-export": 46
      }
     },
@@ -36673,7 +36698,7 @@
      "purpose": "Node-local OF-520 own-rate windows",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -41361,7 +41386,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 2,
-      "fn": 7,
+      "fn": 9,
       "struct": 6,
       "trait": 1
      }
@@ -49834,7 +49859,7 @@
      "path": "src/task_verb/ask_facade.rs",
      "purpose": "Async scope-authority asks over existing consult TASKs",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "fn": 7
      }
     },
@@ -50437,7 +50462,7 @@
      "path": "src/task_verb/fanout_launch.rs",
      "purpose": "Durable fan-out launches: a wave cut held for the owner's launch approval under the vault's approval mode…",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "enum": 1,
       "fn": 5,
       "struct": 1
@@ -50573,7 +50598,7 @@
      "path": "src/task_verb/lifecycle_receipt.rs",
      "purpose": "The durable `TaskLifecycle` receipt (OF-220, ARCH-0079): what one mutating highway call did, what it asked…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -50607,10 +50632,10 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 38,
+      "crate-vis": 39,
       "fn": 1,
       "mod": 3,
-      "re-export": 25
+      "re-export": 26
      }
     },
     {
@@ -50773,7 +50798,7 @@
      "path": "src/task_verb/report_journal.rs",
      "purpose": "The per-attempt report journal (OF-220)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -51353,7 +51378,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 739
+      "fn": 742
      }
     },
     {
@@ -52128,6 +52153,20 @@
      "path": "src/task_verb/symbol_lease_tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TaskActor"
+     ],
+     "path": "src/task_verb/task_actor.rs",
+     "purpose": "Who a task row names, and the erase that forgets it (FIX 3520): a fan-out launch's launcher, an ask wait's…",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 2
+     }
     },
     {
      "bucket": "s",
@@ -58031,7 +58070,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 181,
+     "files": 183,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58542,7 +58581,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 172,
+     "files": 173,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -58712,7 +58751,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3582,
+   "source_files": 3585,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67243,7 +67282,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 703
+      "fn": 706
      }
     },
     {
@@ -68292,7 +68331,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 704
+      "fn": 707
      }
     },
     {
@@ -71639,13 +71678,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/hook_regen_doors.rs",
+     "purpose": "Credential-bound host projections of the typed hook regeneration doors (DOOR-077): the due list, one…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 126
+      "crate-vis": 127
      }
     },
     {
@@ -79404,7 +79453,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 388,
+     "files": 389,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -79833,7 +79882,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 729,
+   "source_files": 730,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -80973,8 +81022,17 @@
       "HolderKind",
       "HookActorClass",
       "HookAuthor",
+      "HookContractStamp",
+      "HookGoldenDiff",
       "HookOutcomeKind",
       "HookPhase",
+      "HookRegenAdoptRequest",
+      "HookRegenBindingRequest",
+      "HookRegenFailure",
+      "HookRegenFailurePhase",
+      "HookRegenOutcome",
+      "HookRegenRecord",
+      "HookRegenView",
       "HookRenderClass",
       "HookReplayCase",
       "HookReplayCompare",
@@ -82523,8 +82581,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 631,
-      "struct": 1861
+      "enum": 633,
+      "struct": 1868
      }
     },
     {

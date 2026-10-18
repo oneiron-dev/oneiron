@@ -62,7 +62,8 @@ mod highway_types;
 mod lifecycle_facade;
 mod lifecycle_receipt;
 pub(crate) use lifecycle_receipt::{
-    erase_in_txn as erase_lifecycle_receipts_in_txn, task_lifecycle_receipts,
+    erase_in_txn as erase_lifecycle_receipts_in_txn, erase_lifecycle_actor_in_txn,
+    task_lifecycle_receipts,
 };
 mod linear_store;
 mod mirror_edit;
@@ -79,7 +80,9 @@ mod rate_limit;
 mod reconciliation;
 mod refusal;
 mod report_journal;
-pub(crate) use report_journal::erase_in_txn as erase_report_journal_in_txn;
+pub(crate) use report_journal::{
+    erase_in_txn as erase_report_journal_in_txn, erase_report_actor_in_txn,
+};
 mod room_thread;
 mod route_receipts;
 pub mod run_doors;
@@ -87,6 +90,9 @@ mod runner_done;
 mod scheduling;
 mod subproject;
 mod symbol_lease;
+mod task_actor;
+pub use task_actor::TaskActor;
+pub(crate) use task_actor::{erase_launch_actor_in_txn, erase_wait_actor_in_txn};
 mod task_continuation;
 mod terminal_state;
 mod training_offer_ask;

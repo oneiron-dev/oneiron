@@ -26,6 +26,7 @@ use crate::side_table::{self, Named, SideTable};
 
 use super::brief::hex32;
 use super::highway_types::{TaskCallReceipt, TaskReport, TaskVia};
+use super::task_actor::{TaskActor, names_no_actor};
 
 /// Domain of a journaled request's digest.
 const REQUEST_DIGEST_DOMAIN: &[u8] = b"oneiron.tasks.report.request.v1";
@@ -46,7 +47,7 @@ const REPORTS: SideTable<ReportKey, ReportEntry, Named> =
 pub(super) struct ReportIdentity {
     attempt: AttemptId,
     attempt_count: u32,
-    actor: EntityId,
+    actor: TaskActor,
     task_ref: EntityId,
     report_key: String,
     #[serde(with = "hex32")]
@@ -88,7 +89,7 @@ pub(super) fn identity(
     Ok(Some(ReportIdentity {
         attempt,
         attempt_count,
-        actor,
+        actor: TaskActor::Actor(actor),
         task_ref: report.task_ref,
         report_key: qualified_key.to_owned(),
         request_digest: digest(REQUEST_DIGEST_DOMAIN, &(actor, qualified_key, report))?,
@@ -159,6 +160,43 @@ pub(crate) fn erase_in_txn(
         if entry.identity.task_ref == *id {
             REPORTS.delete(store, txn, &key)?;
         }
+    }
+    Ok(())
+}
+
+/// Erasing `actor` from the journal (FIX 3520): each entry it reported keeps
+/// its key, try, TASK, report key, digest and receipt, times and outcome
+/// included, and names no one, in its identity and in the lifecycle its
+/// receipt carries. It stays under the key its reporter's digest named; no
+/// live reporter's identity is an erased one, so it answers no replay again.
+/// One-way, in the erase's own transaction. An id whose entity is no actor
+/// scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or an entry that cannot be read.
+pub(crate) fn erase_report_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> crate::Result<()> {
+    if names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let mut entries = Vec::new();
+    for (key, mut entry) in REPORTS.scan(&vault.store, wtxn)? {
+        let reported = entry.identity.actor.forget(*actor);
+        let stamped = entry
+            .receipt
+            .lifecycle
+            .as_mut()
+            .is_some_and(|lifecycle| lifecycle.actor.forget(*actor));
+        if reported || stamped {
+            entries.push((key, entry));
+        }
+    }
+    for (key, entry) in entries {
+        REPORTS.put(&vault.store, wtxn, &key, &entry)?;
     }
     Ok(())
 }
