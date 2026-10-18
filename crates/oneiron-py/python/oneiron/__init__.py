@@ -2090,8 +2090,23 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         @property
+        def bands(self) -> "Oneiron._VaultDecisionsBandsVerbs":
+            return Oneiron._VaultDecisionsBandsVerbs(self._client)
+        @property
         def asks(self) -> "Oneiron._VaultDecisionsAsksVerbs":
             return Oneiron._VaultDecisionsAsksVerbs(self._client)
+    class _VaultDecisionsBandsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def read(self, spec):
+            """The owner reads a question version's effective band on the running host; an unlearned row stays shadow at the supplied seed and version zero."""
+            return json.loads(_translate(lambda: self._client.vault_decisions_bands_read(json.dumps(spec))))
+        def learn(self, spec):
+            """The owner declares a question version's learned band in shadow mode on the running host, advancing its band version for that reversibility."""
+            return json.loads(_translate(lambda: self._client.vault_decisions_bands_learn(json.dumps(spec))))
+        def enforce(self, spec):
+            """The owner enforces an already learned question-version and reversibility band on the running host without widening any decision dial or authority."""
+            return json.loads(_translate(lambda: self._client.vault_decisions_bands_enforce(json.dumps(spec))))
     class _VaultDecisionsAsksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

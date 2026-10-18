@@ -1564,7 +1564,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/anchored_annotation/verbs.rs",
@@ -29186,7 +29186,10 @@
      "kind": "src",
      "notable": [
       "BandMode",
+      "DecisionBandEnforceRequest",
+      "DecisionBandLearnRequest",
       "DecisionBandPolicy",
+      "DecisionBandReadRequest",
       "LearnedBand",
       "PersonThreshold",
       "Reversibility",
@@ -29198,7 +29201,7 @@
       "const": 1,
       "enum": 2,
       "fn": 10,
-      "struct": 4
+      "struct": 7
      }
     },
     {
@@ -49307,7 +49310,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 481
+      "fn": 484
      }
     },
     {
@@ -64516,7 +64519,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 431
+      "fn": 434
      }
     },
     {
@@ -65564,7 +65567,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 432
+      "fn": 435
      }
     },
     {
@@ -68584,6 +68587,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/decision_band_doors.rs",
+     "purpose": "The owner's live decision-band policy through the typed verb table",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/decision_role_asks.rs",
      "purpose": "OF-516: a role holder's door to the ladder's person asks (Q3 by role)",
      "surface": {
@@ -68667,7 +68680,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 84
+      "crate-vis": 85
      }
     },
     {
@@ -76002,7 +76015,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 339,
+     "files": 340,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -76417,7 +76430,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 663,
+   "source_files": 664,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -76729,6 +76742,7 @@
       "AuthorityHandoffAlarm",
       "AuthorityHandoffAlarmAck",
       "AuthorityHistoryImported",
+      "BandMode",
       "BlindCampaignJudgeInput",
       "BlockChange",
       "BodyBlockKind",
@@ -76991,6 +77005,9 @@
       "DecisionAskAnswerRequest",
       "DecisionAskClimbRequest",
       "DecisionBand",
+      "DecisionBandEnforceRequest",
+      "DecisionBandLearnRequest",
+      "DecisionBandReadRequest",
       "DecisionClass",
       "DecisionDial",
       "DecisionQuestion",
@@ -77292,6 +77309,7 @@
       "LaunchStatement",
       "LeaderSplitInput",
       "LeaderSplitOutput",
+      "LearnedBand",
       "LearningCell",
       "LearningChoiceValue",
       "LearningPredicate",
@@ -78187,8 +78205,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 435,
-      "struct": 1138
+      "enum": 436,
+      "struct": 1142
      }
     },
     {

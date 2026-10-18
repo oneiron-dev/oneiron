@@ -1148,6 +1148,8 @@ class Oneiron:
         def __call__(self, limit: int = 100, kinds: list[str] | None = None) -> list[FacadeReceipt]: ...
         def get(self, spec: Facade.CallReceiptRequest) -> Facade.CallReceipt | None:
             """One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none."""
+        def context(self, spec: Facade.CallReceiptRequest) -> Facade.ContextEmitReceipt | None:
+            """Read the frozen context of one actual reply emit, as its actor or the live vault owner; never rebuild the assembly."""
     class _VaultImagesVerbs:
         def view(self, request: Facade.ImageViewRequest) -> Facade.PulledImage: ...
     class _VaultExplainVerbs:
@@ -1813,7 +1815,16 @@ class Oneiron:
             """Refreshes the caller's standing question by hand, now, over every unit its current version covers, on the host's ladder as the standing pump answers it."""
     class _VaultDecisionsVerbs:
         @property
+        def bands(self) -> "Oneiron._VaultDecisionsBandsVerbs": ...
+        @property
         def asks(self) -> "Oneiron._VaultDecisionsAsksVerbs": ...
+    class _VaultDecisionsBandsVerbs:
+        def read(self, spec: Facade.DecisionBandReadRequest) -> Facade.LearnedBand:
+            """The owner reads a question version's effective band on the running host; an unlearned row stays shadow at the supplied seed and version zero."""
+        def learn(self, spec: Facade.DecisionBandLearnRequest) -> Facade.LearnedBand:
+            """The owner declares a question version's learned band in shadow mode on the running host, advancing its band version for that reversibility."""
+        def enforce(self, spec: Facade.DecisionBandEnforceRequest) -> Facade.LearnedBand:
+            """The owner enforces an already learned question-version and reversibility band on the running host without widening any decision dial or authority."""
     class _VaultDecisionsAsksVerbs:
         def answer(self, spec: Facade.DecisionAskAnswerRequest) -> Facade.DecisionAsk: ...
         def climb(self, spec: Facade.DecisionAskClimbRequest) -> Facade.ResolvedRole | None: ...
@@ -1983,6 +1994,8 @@ class Oneiron:
         def describe(self, spec: Facade.RevealDescribeRequest) -> Facade.RevealHandleCard:
             """What a secret handle names, where it was found and what a reveal of it would do now; never the value."""
     class _AiVerbs:
+        def reply(self, spec: Facade.AiReplyRequest) -> Facade.AiReply:
+            """Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs."""
         def options(self, spec: Facade.AiOptionsRequest) -> Facade.AiOptions:
             """The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."""
         def image(self, spec: Facade.AiCallRequest) -> Facade.AiAnswer:

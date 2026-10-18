@@ -309,6 +309,8 @@ both bindings and their export-census tests in one change.
 - `self.skills.save`
 - `self.skills.fork`
 - `self.skills.callables`
+- `ai.reply`
+- `vault.receipts.context`
 - `ai.options`
 - `ai.image`
 - `ai.speech`
@@ -326,6 +328,9 @@ both bindings and their export-census tests in one change.
 - `vault.questions.read`
 - `vault.questions.answers`
 - `vault.questions.refresh`
+- `vault.decisions.bands.read`
+- `vault.decisions.bands.learn`
+- `vault.decisions.bands.enforce`
 - `vault.decisions.asks.answer`
 - `vault.decisions.asks.climb`
 - `self.decisions.asks`

@@ -25,7 +25,9 @@ fn invalid() -> Error {
 
 /// The four DEC-0006 capability settings. Declaration order is strictness,
 /// so `Ord` reads "tighter": always allow < auto < always ask < never allow.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum SlateDisposition {
     /// Bypasses the per-call ask inside the bound; never the catastrophe floor.
@@ -162,7 +164,11 @@ impl SlateManifest {
     /// in.
     pub fn new(tools: Vec<SlateToolManifest>, declared: bool) -> Self {
         let elicitation = SlateElicitationManifest::of(&tools, declared);
-        Self { tools, elicitation, pack_source: None }
+        Self {
+            tools,
+            elicitation,
+            pack_source: None,
+        }
     }
 }
 

@@ -352,6 +352,9 @@ vaultQuestionsBackfill(input: unknown): unknown
 vaultQuestionsRead(input: unknown): unknown
 vaultQuestionsAnswers(input: unknown): unknown
 vaultQuestionsRefresh(input: unknown): unknown
+vaultDecisionsBandsRead(input: unknown): unknown
+vaultDecisionsBandsLearn(input: unknown): unknown
+vaultDecisionsBandsEnforce(input: unknown): unknown
 vaultDecisionsAsksAnswer(input: unknown): unknown
 vaultDecisionsAsksClimb(input: unknown): unknown
 selfDecisionsAsks(input: unknown): unknown
