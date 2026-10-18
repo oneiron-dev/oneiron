@@ -95,6 +95,24 @@ fn tail_closure(
     (closed, open, missing)
 }
 
+/// Adds `manifest` to `manifests` (ascending by archive id): an archive
+/// already named gains its custodians, once each; a new one is inserted in
+/// order.
+fn merge_archive_manifest(
+    manifests: &mut Vec<AuthorityArchiveManifest>,
+    manifest: AuthorityArchiveManifest,
+) {
+    match manifests.binary_search_by(|named| named.archive.cmp(&manifest.archive)) {
+        Ok(at) => {
+            let custodians = &mut manifests[at].custodians;
+            custodians.extend(manifest.custodians);
+            custodians.sort_unstable();
+            custodians.dedup();
+        }
+        Err(at) => manifests.insert(at, manifest),
+    }
+}
+
 impl Vault {
     /// The next checkpoint v2 image of a vault that adopted `adopted`, from
     /// one read snapshot: the adopted image's coverage and the ancestor-closed
@@ -181,9 +199,22 @@ impl Vault {
                 fold,
                 stale_approvals,
             } => (*fold, stale_approvals),
-            // Every covered row is held here: the held log builds it whole.
+            // Every covered row is held here: the held log builds it whole,
+            // and the adopted image's archive inventory carries on wherever
+            // the new image covers its rows (FIX 3203).
             AdoptedImageFold::NeedHistory(request) if request.missing.is_empty() => {
-                return self.build_authority_checkpoint_v2_in_txn(txn);
+                let mut held = self.build_authority_checkpoint_v2_in_txn(txn)?;
+                for inherited in &image.archive_manifests {
+                    if inherited
+                        .rows
+                        .iter()
+                        .all(|hash| held.rows.contains_key(hash))
+                    {
+                        merge_archive_manifest(&mut held.archive_manifests, inherited.clone());
+                    }
+                }
+                held.encode()?;
+                return Ok(held);
             }
             AdoptedImageFold::NeedHistory(request) => {
                 return Err(super::readonly_fold::history_required(&request));
@@ -228,17 +259,7 @@ impl Vault {
         )?;
         let mut archive_manifests = image.archive_manifests.clone();
         if let Some(local) = local {
-            match archive_manifests
-                .binary_search_by(|manifest| manifest.archive.cmp(&local.archive))
-            {
-                Ok(at) => {
-                    let custodians = &mut archive_manifests[at].custodians;
-                    custodians.extend(local.custodians);
-                    custodians.sort_unstable();
-                    custodians.dedup();
-                }
-                Err(at) => archive_manifests.insert(at, local),
-            }
+            merge_archive_manifest(&mut archive_manifests, local);
         }
         once.install = InstallBound::default();
         once.pinned_root = None;
