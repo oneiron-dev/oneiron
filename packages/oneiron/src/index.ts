@@ -1248,6 +1248,14 @@ export class Oneiron {
       deactivate: (input: Facade.LensDeactivateRequest): Facade.LensActivationReceipt => this.#call(() => this.#client.vaultLensesDeactivate(input) as Facade.LensActivationReceipt),
       /** One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees. */
       list: (input: Facade.LensListRequest): Facade.LensListPage => this.#call(() => this.#client.vaultLensesList(input) as Facade.LensListPage),
+      /** Selects a rendered atom or Unicode-scalar span under the caller's live key and holds its read handle on that card. */
+      select: (input: Facade.LensSelectRequest): Facade.LensSelection => this.#call(() => this.#client.vaultLensesSelect(input) as Facade.LensSelection),
+      /** Re-proves a host-issued selection on the caller's held card and reads its source with its pinned cursor span. */
+      resolve: (input: Facade.LensSelectionResolveRequest): Facade.LensSelectionResolved => this.#call(() => this.#client.vaultLensesResolve(input) as Facade.LensSelectionResolved),
+      result_set: {
+        /** Re-proves the ticked rows or rendered predicate and their selected handles, then dispatches the declared result-set action through the caller's existing gate. */
+        action: (input: Facade.LensResultSetActionRequest): Facade.LensResultSetActionResult => this.#call(() => this.#client.vaultLensesResultSetAction(input) as Facade.LensResultSetActionResult),
+      },
       /** Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server. */
       default: (input: Facade.LensDefaultRequest): Facade.ScopedReadResult<Facade.LensFrameCard> => this.#call(() => this.#client.vaultLensesDefault(input) as Facade.ScopedReadResult<Facade.LensFrameCard>),
     },

@@ -3,9 +3,9 @@
 //! locator data; the lane's fresh point read is the whole admission.
 
 use super::{Memory, MemoryError, MemoryResult};
-use crate::claim::{ClaimReadStatus, ScopedReadResult};
+use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadResult};
 use crate::lens::{
-    InspectionResolveRequest, InspectionResolved, decode_inspection_handle,
+    InspectionResolveRequest, InspectionResolved, InspectionState, decode_inspection_handle,
     encode_inspection_handle,
 };
 use crate::vault::ReadMode;
@@ -21,10 +21,19 @@ impl Memory<'_> {
         let state = decode_inspection_handle(&request.handle)
             .map_err(|_| MemoryError::bad_request("handle is not an inspection handle"))?;
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        self.inspection_resolve_state(&lane, state)
+    }
+
+    /// The same inspection projection with the caller's existing read status.
+    pub(crate) fn inspection_resolve_state(
+        &self,
+        lane: &ScopedRead<'_>,
+        state: InspectionState,
+    ) -> MemoryResult<InspectionResolved> {
         let ScopedReadResult { value, receipt } =
             self.vault
-                .inspect_state_projected(&lane, &state, |txn, row| match row {
-                    Some(row) => self.entity_view_of_in_txn(&lane, txn, row, ReadMode::Live),
+                .inspect_state_projected(lane, &state, |txn, row| match row {
+                    Some(row) => self.entity_view_of_in_txn(lane, txn, row, ReadMode::Live),
                     None => Ok(None),
                 })?;
         Ok(InspectionResolved {

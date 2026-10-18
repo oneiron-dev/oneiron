@@ -60,7 +60,7 @@ pub struct GeneratedUiResultSetAtom {
 /// Client-authored selection payload. It rides on the `self.ui`-hosted action event
 /// and names *which rendered rows were ticked* and nothing else: `AllWithinFilter`
 /// carries no fields at all, so the predicate can only come from the rendered atom.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 pub enum GeneratedUiResultSetSelection {
     Explicit {
@@ -72,7 +72,7 @@ pub enum GeneratedUiResultSetSelection {
 
 /// A `self.ui`-hosted action event plus the result-set selection it carries. Selection
 /// is not approval: this is still only *what was touched*.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GeneratedUiResultSetActionEvent {
     pub action: GeneratedUiActionEvent,

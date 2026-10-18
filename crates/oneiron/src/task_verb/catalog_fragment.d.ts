@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 848 code-mode rows (825 host rows, 23 run rows), 2866 declarations.
-// Replies: 760 fully typed, 84 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 851 code-mode rows (828 host rows, 23 run rows), 2879 declarations.
+// Replies: 761 fully typed, 86 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 101; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 102; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -1531,6 +1531,19 @@ declare namespace Sdk {
   type LensProposalState = "proposed" | "active";
   type LensListRow = { lens_ref: string; pack_name: string; skill_id: string; pack_content_hash: string; compiled_hash: string; kit_version: number; apps_contract_version: number; proposed_by: string; proposed_at: number; state: LensProposalState; mounted: boolean; compiled?: GeneratedLens | null };
   type LensListPage = { rows: LensListRow[]; next_after?: string | null };
+  type LensSelectionRange = { start: number; end: number; version?: number[] | null };
+  type LensSelectRequest = { cardId: string; atomId: string; handle: string; span?: LensSelectionRange | null };
+  type LensReadReach = "claim_set" | "entity_set" | "timeline" | "query_result";
+  type LensSelectedSpan = { start: number; end: number; version: number[]; startCursor: number[]; endCursor: number[] };
+  type LensSelection = { selectionRef: string; cardId: string; atomId: string; reach: LensReadReach; targetKind: LensBackingTargetKind; shortRef: string; span?: LensSelectedSpan | null };
+  type LensSelectionResolveRequest = { cardId: string; selectionRef: string };
+  type LensSelectionResolved = { selection: LensSelection; source: InspectionResolved };
+  type GeneratedUiStatePatch = { op: "add"; path: string; value: SelfUiStateValue } | { op: "replace"; path: string; value: SelfUiStateValue } | { op: "remove"; path: string };
+  type GeneratedUiActionEvent = { cardId: string; elementId: string; actionId: string; patch?: GeneratedUiStatePatch[]; occurredAt: number };
+  type GeneratedUiResultSetSelection = { mode: "explicit"; row_ids: string[] } | { mode: "all_within_filter" };
+  type GeneratedUiResultSetActionEvent = { action: GeneratedUiActionEvent; selection: GeneratedUiResultSetSelection };
+  type LensResultSetActionRequest = { event: GeneratedUiResultSetActionEvent; selected: string[]; idempotencyKey: string };
+  type LensResultSetActionResult = { outcome: unknown; readReceipt: ScopedReadReceipt };
   type LensDossierSource = { entity_ref: string; title: string };
   type LensDefaultRequest = { title: string; ledger?: string[]; dossiers?: LensDossierSource[]; threads?: string[]; as_of?: number | null };
   type DisclosureOfferRequest = { contact: string; scope: Scope; purpose: string; channel: string; beneficiary: string; ask?: string | null; owner_ref: string; expires_at: number };
@@ -4152,6 +4165,14 @@ declare const vault: Sdk.VaultHost & {
     list(input: Sdk.LensListRequest): Promise<Sdk.LensListPage | StoredResult>;
     /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it. */
     propose(input: Sdk.LensProposeRequest): Promise<Sdk.LensProposalReceipt | StoredResult>;
+    /** Re-proves a host-issued selection on the caller's held card and reads its source with its pinned cursor span. */
+    resolve(input: Sdk.LensSelectionResolveRequest): Promise<Sdk.LensSelectionResolved | StoredResult>;
+    result_set: {
+      /** Re-proves the ticked rows or rendered predicate and their selected handles, then dispatches the declared result-set action through the caller's existing gate. */
+      action(input: Sdk.LensResultSetActionRequest): Promise<Sdk.LensResultSetActionResult | StoredResult>;
+    };
+    /** Selects a rendered atom or Unicode-scalar span under the caller's live key and holds its read handle on that card. */
+    select(input: Sdk.LensSelectRequest): Promise<Sdk.LensSelection | StoredResult>;
   };
   members: {
     /** The invitee accepts their own invitation and joins the shared vault at its role. */

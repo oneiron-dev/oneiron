@@ -64,6 +64,12 @@ pub use record_ref::{
     RECORD_REF_LABEL_MAX_CHARS, RECORD_REF_MAX_BYTES, RECORD_REF_SNIPPET_MAX_CHARS, RecordLinks,
     RecordLinksRequest, RecordRef, RecordRefPreview, ResolveRecordRefRequest,
 };
+mod selection;
+pub use selection::{
+    LensResultSetActionRequest, LensResultSetActionResult, LensSelectRequest,
+    LensSelectedSpan, LensSelection, LensSelectionRange, LensSelectionResolveRequest,
+    LensSelectionResolved,
+};
 mod self_ui;
 mod validate;
 mod wire_ids;

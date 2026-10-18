@@ -179,12 +179,23 @@ impl LensRenderFrame {
         render: &GeneratedUiRender,
         event: &GeneratedUiResultSetActionEvent,
     ) -> Result<GeneratedUiResultSetWritePlan> {
+        self.validate_result_set_action_with_state(scoped_read, render, &render.state, event)
+    }
+
+    /// The same selection proof against the host-held current state.
+    pub fn validate_result_set_action_with_state(
+        &self,
+        scoped_read: &ScopedRead<'_>,
+        render: &GeneratedUiRender,
+        state: &GeneratedUiStateSnapshot,
+        event: &GeneratedUiResultSetActionEvent,
+    ) -> Result<GeneratedUiResultSetWritePlan> {
         // (1) The landed action gate: emitter is the frame's principal, never event JSON.
         let validated = self.validate_action_event(
             scoped_read,
             self.principal(),
             render,
-            &render.state,
+            state,
             &event.action,
         )?;
 
@@ -308,8 +319,19 @@ impl LensRenderFrame {
         render: &GeneratedUiRender,
         event: &GeneratedUiResultSetActionEvent,
     ) -> Result<LensHostMediatedWrite> {
+        self.dispatch_result_set_action_with_state(scoped_read, render, &render.state, event)
+    }
+
+    /// Dispatch proof using the same current state the host serializes events on.
+    pub fn dispatch_result_set_action_with_state(
+        &self,
+        scoped_read: &ScopedRead<'_>,
+        render: &GeneratedUiRender,
+        state: &GeneratedUiStateSnapshot,
+        event: &GeneratedUiResultSetActionEvent,
+    ) -> Result<LensHostMediatedWrite> {
         // (6) Re-validate from scratch, then re-resolve every handle the plan holds.
-        let plan = self.validate_result_set_action(scoped_read, render, event)?;
+        let plan = self.validate_result_set_action_with_state(scoped_read, render, state, event)?;
         self.ensure_scoped_read_actor(scoped_read)?;
         self.ensure_render_is_ours(render)?;
         if plan.emitter != self.principal {
@@ -407,7 +429,7 @@ impl LensRenderFrame {
     }
 
     /// Build the approved action a result-set write carries: the engine-authored action
-    /// id as command, the declaration's frame-validated literal args, and one backing
+    /// declaration's command, its frame-validated literal args, and one backing
     /// ref per freshly re-resolved target. Client data contributes no argument.
     fn approve_result_set_write(
         render: &GeneratedUiRender,
@@ -437,7 +459,7 @@ impl LensRenderFrame {
         args.extend(resolved.into_iter().map(LensApprovedActionArg::BackingRef));
         validate_lens_collection_len("result set approved action args", args.len())?;
         Ok(LensApprovedAction {
-            command: declaration.action_id.clone(),
+            command: declaration.action.command.clone(),
             args,
         })
     }
