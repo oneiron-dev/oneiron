@@ -1024,8 +1024,8 @@
      "path": "src/agent_dispatch/planner_live/intent/child.rs",
      "purpose": "The leased child's planned spawn (DOOR-111 S4c-1): a leased agent's `self.agents.spawn` with an ask…",
      "surface": {
-      "crate-vis": 4,
-      "fn": 1
+      "crate-vis": 2,
+      "fn": 3
      }
     },
     {
@@ -12276,7 +12276,7 @@
      "path": "src/code_run/dispatcher/leader.rs",
      "purpose": "Host entry points for the CEO starter on a leased, task-bound leader",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 9,
       "struct": 2
      }
@@ -23436,7 +23436,7 @@
      "path": "src/entity_doc/doc_actor.rs",
      "purpose": "Whose act an entity-document row records, and the erase that forgets it (FIX 3520)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 2
      }
@@ -29181,7 +29181,7 @@
      "purpose": "Write phase of the render frame: action validation and result-set dispatch",
      "surface": {
       "enum": 3,
-      "fn": 12,
+      "fn": 14,
       "struct": 3
      }
     },
@@ -29254,7 +29254,7 @@
      "purpose": "Closed generated-lens atom vocabulary",
      "surface": {
       "crate-vis": 1,
-      "re-export": 19
+      "re-export": 20
      }
     },
     {
@@ -29340,6 +29340,26 @@
       "const": 1,
       "fn": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LensResultSetActionRequest",
+      "LensResultSetActionResult",
+      "LensSelectRequest",
+      "LensSelectedSpan",
+      "LensSelection",
+      "LensSelectionRange",
+      "LensSelectionResolveRequest",
+      "LensSelectionResolved"
+     ],
+     "path": "src/lens/selection.rs",
+     "purpose": "Frame-bound selection doors",
+     "surface": {
+      "fn": 4,
+      "struct": 8
      }
     },
     {
@@ -32592,6 +32612,7 @@
      "path": "src/memory/inspection.rs",
      "purpose": "`vault.inspection.resolve` (OF-235): the bound actor reopens an inspection link through its own read lane",
      "surface": {
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -44522,7 +44543,7 @@
      "path": "src/skill/pack_load.rs",
      "purpose": "Attempt-bound pack reads stamp their actual revision in the same transaction",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 7,
       "struct": 1
      }
@@ -46091,6 +46112,7 @@
       "crate-vis": 13,
       "enum": 4,
       "fn": 7,
+      "mod": 1,
       "re-export": 4,
       "struct": 4
      }
@@ -46187,6 +46209,32 @@
       "enum": 1,
       "fn": 1,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EvalAuthorNowRequest",
+      "EvalAuthoringRef",
+      "EvalAuthoringResult",
+      "EvalBlockedLabelsRequest",
+      "EvalCaseLineage",
+      "EvalCasesRequest",
+      "EvalCohortOpenRequest",
+      "EvalCohortRef",
+      "EvalCohortView",
+      "EvalExposureLedger",
+      "EvalFamilyAssignRequest",
+      "EvalFamilyView",
+      "EvalLabelPickRequest",
+      "EvalSeatRequest"
+     ],
+     "path": "src/skill_optimize/eval_set/doors.rs",
+     "purpose": "Owner-bound eval authoring and ledger doors",
+     "surface": {
+      "fn": 12,
+      "struct": 14
      }
     },
     {
@@ -46502,7 +46550,7 @@
      "surface": {
       "crate-vis": 13,
       "mod": 2,
-      "re-export": 17
+      "re-export": 18
      }
     },
     {
@@ -52021,7 +52069,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 831
+      "fn": 846
      }
     },
     {
@@ -53357,8 +53405,11 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "FrozenPackFile",
+      "FrozenPatternPack",
       "LeasedSpawnRequest",
       "PlannedIntentView",
+      "PlannedLeaderLaunch",
       "PlannedSpawnHost",
       "PlannedSpawnRequest",
       "SpawnPhase"
@@ -53366,8 +53417,10 @@
      "path": "src/team/spawn_intent.rs",
      "purpose": "The owner's planned spawn under an intent key (DOOR-111): what the owner asks, what the host serves the ask…",
      "surface": {
+      "crate-vis": 2,
       "enum": 1,
-      "struct": 4
+      "fn": 7,
+      "struct": 7
      }
     },
     {
@@ -58728,7 +58781,7 @@
      "purpose": "The owner's doors over learning-setting rows (ARCH-0003 #learning-settings): list, put and clear a seed or a…"
     },
     "lens": {
-     "files": 51,
+     "files": 52,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59218,7 +59271,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 42,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -59479,7 +59532,7 @@
    },
    "over_bar": 197,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3630,
+   "source_files": 3632,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68012,7 +68065,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 800
+      "fn": 815
      }
     },
     {
@@ -69061,7 +69114,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 801
+      "fn": 816
      }
     },
     {
@@ -71948,13 +72001,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/action_routes.rs",
      "purpose": "OF-181: the app's one action layer over HTTP, for both its callers",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -72381,6 +72434,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/eval_doors.rs",
+     "purpose": "Typed eval doors under the caller's own verified owner credential",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/extraction_doors.rs",
      "purpose": "Owner-only extraction doors over the caller's own credential read lane",
      "surface": {
@@ -72494,7 +72557,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 136
+      "crate-vis": 138
      }
     },
     {
@@ -72525,6 +72588,16 @@
      "purpose": "The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`…",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/lens_selection_doors.rs",
+     "purpose": "Frame-bound selections and result-set actions on the caller's held card",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -77107,7 +77180,7 @@
      "path": "src/lens_frames.rs",
      "purpose": "OF-181: the lens frames this server holds for the cards it rendered",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -79232,7 +79305,7 @@
      "path": "src/server/core.rs",
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 18,
       "re-export": 1,
       "struct": 1
@@ -79245,7 +79318,7 @@
      "path": "src/server/core/pattern_workflow.rs",
      "purpose": "The house pattern runner (DOOR-111 S4b): the start a planned team's pattern skill writes, run on the house…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 6,
       "fn": 1
      }
     },
@@ -79491,6 +79564,16 @@
      "purpose": "The agent run pump (OF-533): runs each agent-def dispatch bound to its own leased attempt, so a run's…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/resident_pump/pattern_launch.rs",
+     "purpose": "A leased agent's own pattern runs, and its planned leader's frozen pack (DOOR-111 S4c-4, S4c-5)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -80334,7 +80417,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 400,
+     "files": 402,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -80691,7 +80774,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 40,
+     "files": 41,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -80761,9 +80844,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 55,
+   "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 745,
+   "source_files": 748,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -81140,7 +81223,10 @@
       "AttemptResumePoint",
       "AttemptState",
       "AttemptView",
+      "AuditCase",
+      "AuditCoverage",
       "AuditDraw",
+      "AuditMethodPin",
       "AuthorBriefRequest",
       "AuthorTakeRequest",
       "AuthorTakeTarget",
@@ -81461,6 +81547,7 @@
       "CodeWaitSettlementView",
       "CodeWaitState",
       "CodeWaitTarget",
+      "CohortRetirement",
       "CohortSummary",
       "ColdAuthorityAuditRow",
       "CollectionAtom",
@@ -81631,6 +81718,7 @@
       "CourtesyDeleteIncoming",
       "CourtesyDeleteSendRequest",
       "CourtesyDeleteSent",
+      "CoverageGap",
       "CraftCandidateAnswer",
       "CraftCandidateView",
       "CraftCandidatesRequest",
@@ -81833,19 +81921,37 @@
       "EstimateLabels",
       "EstimateWindow",
       "EvalAuthoringInventory",
+      "EvalAuthoringRef",
       "EvalAuthoringReport",
+      "EvalAuthoringResult",
       "EvalAuthoringSkip",
+      "EvalBlockedLabelsRequest",
       "EvalCandidate",
       "EvalCase",
+      "EvalCaseDraft",
+      "EvalCaseLineage",
+      "EvalCasesRequest",
+      "EvalCohort",
+      "EvalCohortOpenRequest",
+      "EvalCohortRef",
       "EvalCohortSetup",
+      "EvalCohortView",
+      "EvalCutAudit",
+      "EvalCutAuthor",
       "EvalExposure",
       "EvalExposureCounts",
       "EvalExposureKind",
+      "EvalExposureLedger",
+      "EvalFamilyAssignRequest",
+      "EvalFamilyView",
       "EvalInventoryWire",
       "EvalLabel",
+      "EvalLabelAsk",
       "EvalLabelKind",
+      "EvalLabelPickRequest",
       "EvalRelease",
       "EvalSeat",
+      "EvalSeatRequest",
       "EvalSourceGroup",
       "EvidenceBasis",
       "EvidenceFloors",
@@ -81953,6 +82059,7 @@
       "GeneratedClaimInput",
       "GeneratedLens",
       "GeneratedUiActionDeclaration",
+      "GeneratedUiActionEvent",
       "GeneratedUiActionTier",
       "GeneratedUiArchiveReason",
       "GeneratedUiCard",
@@ -81961,9 +82068,12 @@
       "GeneratedUiCatalog",
       "GeneratedUiNode",
       "GeneratedUiRender",
+      "GeneratedUiResultSetActionEvent",
       "GeneratedUiResultSetAtom",
       "GeneratedUiResultSetRow",
       "GeneratedUiResultSetSelectAll",
+      "GeneratedUiResultSetSelection",
+      "GeneratedUiStatePatch",
       "GeometryProps",
       "GoalPreference",
       "GraduationAnswer",
@@ -82199,6 +82309,15 @@
       "LensProposalReceipt",
       "LensProposalState",
       "LensProposeRequest",
+      "LensReadReach",
+      "LensResultSetActionRequest",
+      "LensResultSetActionResult",
+      "LensSelectRequest",
+      "LensSelectedSpan",
+      "LensSelection",
+      "LensSelectionRange",
+      "LensSelectionResolveRequest",
+      "LensSelectionResolved",
       "LensSlot",
       "LensSlotDecision",
       "LensStatus",
@@ -82359,6 +82478,7 @@
       "MutationIntent",
       "NarrowConnect",
       "NativeOutputRequest",
+      "NearCopyFlag",
       "NeighborhoodGraphAtom",
       "NoShowRecoveryRule",
       "NodeKind",
@@ -83326,6 +83446,7 @@
       "SlimStateSnapshot",
       "SlimStateView",
       "SmartArtNode",
+      "SourceFamily",
       "SourceTrust",
       "SourceTrustRow",
       "SpaceMove",
@@ -83722,8 +83843,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 687,
-      "struct": 2074
+      "enum": 691,
+      "struct": 2108
      }
     },
     {

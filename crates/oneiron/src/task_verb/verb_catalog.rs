@@ -278,6 +278,18 @@ pub enum AgentVerb {
     VaultResearchArchiveCoverage,
     VaultEvalsInventory,
     VaultEvalsCohortsSetup,
+    VaultEvalsAuthorNow,
+    VaultEvalsAuthoringResult,
+    VaultEvalsFamilies,
+    VaultEvalsFamiliesAssign,
+    VaultEvalsCases,
+    VaultEvalsCasesRecord,
+    VaultEvalsCohorts,
+    VaultEvalsCohortsOpen,
+    VaultEvalsExposure,
+    VaultEvalsSufficiency,
+    VaultEvalsLabelsBlocked,
+    VaultEvalsLabelsPick,
     VaultCoachTrainingOffers,
     VaultCoachTrainingOffersGet,
     VaultCoachTrainingOffersTrigger,
@@ -383,6 +395,9 @@ pub enum AgentVerb {
     VaultLensesActivate,
     VaultLensesDeactivate,
     VaultLensesList,
+    VaultLensesSelect,
+    VaultLensesResolve,
+    VaultLensesResultSetAction,
     VaultLensesDefault,
     VaultDisclosureOffer,
     Reveal,
@@ -1105,6 +1120,18 @@ impl AgentVerb {
         Self::VaultResearchArchiveCoverage,
         Self::VaultEvalsInventory,
         Self::VaultEvalsCohortsSetup,
+        Self::VaultEvalsAuthorNow,
+        Self::VaultEvalsAuthoringResult,
+        Self::VaultEvalsFamilies,
+        Self::VaultEvalsFamiliesAssign,
+        Self::VaultEvalsCases,
+        Self::VaultEvalsCasesRecord,
+        Self::VaultEvalsCohorts,
+        Self::VaultEvalsCohortsOpen,
+        Self::VaultEvalsExposure,
+        Self::VaultEvalsSufficiency,
+        Self::VaultEvalsLabelsBlocked,
+        Self::VaultEvalsLabelsPick,
         Self::VaultCoachTrainingOffers,
         Self::VaultCoachTrainingOffersGet,
         Self::VaultCoachTrainingOffersTrigger,
@@ -1210,6 +1237,9 @@ impl AgentVerb {
         Self::VaultLensesActivate,
         Self::VaultLensesDeactivate,
         Self::VaultLensesList,
+        Self::VaultLensesSelect,
+        Self::VaultLensesResolve,
+        Self::VaultLensesResultSetAction,
         Self::VaultLensesDefault,
         Self::VaultDisclosureOffer,
         Self::Reveal,
@@ -1939,6 +1969,18 @@ impl AgentVerb {
             Self::VaultResearchArchiveCoverage => "vault.research.archive.coverage",
             Self::VaultEvalsInventory => "vault.evals.inventory",
             Self::VaultEvalsCohortsSetup => "vault.evals.cohorts.setup",
+            Self::VaultEvalsAuthorNow => "vault.evals.author_now",
+            Self::VaultEvalsAuthoringResult => "vault.evals.authoring.result",
+            Self::VaultEvalsFamilies => "vault.evals.families",
+            Self::VaultEvalsFamiliesAssign => "vault.evals.families.assign",
+            Self::VaultEvalsCases => "vault.evals.cases",
+            Self::VaultEvalsCasesRecord => "vault.evals.cases.record",
+            Self::VaultEvalsCohorts => "vault.evals.cohorts",
+            Self::VaultEvalsCohortsOpen => "vault.evals.cohorts.open",
+            Self::VaultEvalsExposure => "vault.evals.exposure",
+            Self::VaultEvalsSufficiency => "vault.evals.sufficiency",
+            Self::VaultEvalsLabelsBlocked => "vault.evals.labels.blocked",
+            Self::VaultEvalsLabelsPick => "vault.evals.labels.pick",
             Self::VaultCoachTrainingOffers => "vault.coach.training_offers",
             Self::VaultCoachTrainingOffersGet => "vault.coach.training_offers.get",
             Self::VaultCoachTrainingOffersTrigger => "vault.coach.training_offers.trigger",
@@ -2054,6 +2096,9 @@ impl AgentVerb {
             Self::VaultLensesActivate => "vault.lenses.activate",
             Self::VaultLensesDeactivate => "vault.lenses.deactivate",
             Self::VaultLensesList => "vault.lenses.list",
+            Self::VaultLensesSelect => "vault.lenses.select",
+            Self::VaultLensesResolve => "vault.lenses.resolve",
+            Self::VaultLensesResultSetAction => "vault.lenses.result_set.action",
             Self::VaultLensesDefault => "vault.lenses.default",
             Self::VaultDisclosureOffer => "vault.disclosure.offer",
             Self::Reveal => "reveal",
@@ -2783,6 +2828,18 @@ impl AgentVerb {
                 | Self::VaultResearchArchiveCoverage
                 | Self::VaultEvalsInventory
                 | Self::VaultEvalsCohortsSetup
+                | Self::VaultEvalsAuthorNow
+                | Self::VaultEvalsAuthoringResult
+                | Self::VaultEvalsFamilies
+                | Self::VaultEvalsFamiliesAssign
+                | Self::VaultEvalsCases
+                | Self::VaultEvalsCasesRecord
+                | Self::VaultEvalsCohorts
+                | Self::VaultEvalsCohortsOpen
+                | Self::VaultEvalsExposure
+                | Self::VaultEvalsSufficiency
+                | Self::VaultEvalsLabelsBlocked
+                | Self::VaultEvalsLabelsPick
                 | Self::VaultCoachTrainingOffers
                 | Self::VaultCoachTrainingOffersGet
                 | Self::VaultCoachTrainingOffersTrigger
@@ -2888,6 +2945,9 @@ impl AgentVerb {
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
                 | Self::VaultLensesList
+                | Self::VaultLensesSelect
+                | Self::VaultLensesResolve
+                | Self::VaultLensesResultSetAction
                 | Self::VaultLensesDefault
                 | Self::VaultDisclosureOffer
                 | Self::Reveal
@@ -3637,6 +3697,18 @@ impl AgentVerb {
                 | Self::VaultResearchArchiveCoverage
                 | Self::VaultEvalsInventory
                 | Self::VaultEvalsCohortsSetup
+                | Self::VaultEvalsAuthorNow
+                | Self::VaultEvalsAuthoringResult
+                | Self::VaultEvalsFamilies
+                | Self::VaultEvalsFamiliesAssign
+                | Self::VaultEvalsCases
+                | Self::VaultEvalsCasesRecord
+                | Self::VaultEvalsCohorts
+                | Self::VaultEvalsCohortsOpen
+                | Self::VaultEvalsExposure
+                | Self::VaultEvalsSufficiency
+                | Self::VaultEvalsLabelsBlocked
+                | Self::VaultEvalsLabelsPick
                 | Self::VaultCoachTrainingOffers
                 | Self::VaultCoachTrainingOffersGet
                 | Self::VaultCoachTrainingOffersTrigger
@@ -3742,6 +3814,9 @@ impl AgentVerb {
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
                 | Self::VaultLensesList
+                | Self::VaultLensesSelect
+                | Self::VaultLensesResolve
+                | Self::VaultLensesResultSetAction
                 | Self::VaultLensesDefault
                 | Self::VaultDisclosureOffer
                 | Self::Reveal
@@ -4211,6 +4286,10 @@ impl AgentVerb {
                 | Self::VaultTrustedContactsList
                 | Self::VaultTrustedContactsConcernAsks
                 | Self::VaultResidenceDirectives
+                | Self::VaultEvalsFamilies
+                | Self::VaultEvalsCases
+                | Self::VaultEvalsCohorts
+                | Self::VaultEvalsLabelsBlocked
                 | Self::VaultCoachTrainingOffers
                 | Self::VaultCoachTrainingOffersCandidates
                 | Self::VaultAuthorityHandoffAlarms
@@ -4563,6 +4642,18 @@ impl AgentVerb {
                 | Self::VaultResearchArchiveCoverage
                 | Self::VaultEvalsInventory
                 | Self::VaultEvalsCohortsSetup
+                | Self::VaultEvalsAuthorNow
+                | Self::VaultEvalsAuthoringResult
+                | Self::VaultEvalsFamilies
+                | Self::VaultEvalsFamiliesAssign
+                | Self::VaultEvalsCases
+                | Self::VaultEvalsCasesRecord
+                | Self::VaultEvalsCohorts
+                | Self::VaultEvalsCohortsOpen
+                | Self::VaultEvalsExposure
+                | Self::VaultEvalsSufficiency
+                | Self::VaultEvalsLabelsBlocked
+                | Self::VaultEvalsLabelsPick
                 | Self::VaultCoachTrainingOffers
                 | Self::VaultCoachTrainingOffersGet
                 | Self::VaultCoachTrainingOffersTrigger
@@ -4668,6 +4759,9 @@ impl AgentVerb {
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
                 | Self::VaultLensesList
+                | Self::VaultLensesSelect
+                | Self::VaultLensesResolve
+                | Self::VaultLensesResultSetAction
                 | Self::VaultLensesDefault
                 | Self::VaultDisclosureOffer
                 | Self::Reveal
@@ -5252,6 +5346,11 @@ impl AgentVerb {
                 | Self::VaultResearchArchiveRepropose
                 | Self::VaultResearchArchiveCoverage
                 | Self::VaultEvalsCohortsSetup
+                | Self::VaultEvalsAuthorNow
+                | Self::VaultEvalsFamiliesAssign
+                | Self::VaultEvalsCasesRecord
+                | Self::VaultEvalsCohortsOpen
+                | Self::VaultEvalsLabelsPick
                 | Self::VaultCoachTrainingOffersTrigger
                 | Self::VaultCoachTrainingOffersAnswer
                 | Self::VaultCoachTrainingOffersUndo
@@ -5326,6 +5425,7 @@ impl AgentVerb {
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
+                | Self::VaultLensesResultSetAction
                 | Self::VaultDisclosureOffer
                 | Self::Reveal
                 | Self::SelfUse
@@ -5895,6 +5995,18 @@ impl AgentVerb {
             Self::VaultResearchArchiveCoverage => &["spec"],
             Self::VaultEvalsInventory => &["spec"],
             Self::VaultEvalsCohortsSetup => &["spec"],
+            Self::VaultEvalsAuthorNow => &["spec"],
+            Self::VaultEvalsAuthoringResult => &["spec"],
+            Self::VaultEvalsFamilies => &["spec"],
+            Self::VaultEvalsFamiliesAssign => &["spec"],
+            Self::VaultEvalsCases => &["spec"],
+            Self::VaultEvalsCasesRecord => &["spec"],
+            Self::VaultEvalsCohorts => &["spec"],
+            Self::VaultEvalsCohortsOpen => &["spec"],
+            Self::VaultEvalsExposure => &["spec"],
+            Self::VaultEvalsSufficiency => &["spec"],
+            Self::VaultEvalsLabelsBlocked => &["spec"],
+            Self::VaultEvalsLabelsPick => &["spec"],
             Self::VaultCoachTrainingOffers => &["spec"],
             Self::VaultCoachTrainingOffersGet => &["spec"],
             Self::VaultCoachTrainingOffersTrigger => &["spec"],
@@ -6000,6 +6112,9 @@ impl AgentVerb {
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],
             Self::VaultLensesList => &["spec"],
+            Self::VaultLensesSelect => &["spec"],
+            Self::VaultLensesResolve => &["spec"],
+            Self::VaultLensesResultSetAction => &["spec"],
             Self::VaultLensesDefault => &["spec"],
             Self::VaultDisclosureOffer => &["spec"],
             Self::Reveal => &["spec"],
@@ -6723,6 +6838,18 @@ impl AgentVerb {
             Self::VaultResearchArchiveCoverage => &["spec"],
             Self::VaultEvalsInventory => &["spec"],
             Self::VaultEvalsCohortsSetup => &["spec"],
+            Self::VaultEvalsAuthorNow => &["spec"],
+            Self::VaultEvalsAuthoringResult => &["spec"],
+            Self::VaultEvalsFamilies => &["spec"],
+            Self::VaultEvalsFamiliesAssign => &["spec"],
+            Self::VaultEvalsCases => &["spec"],
+            Self::VaultEvalsCasesRecord => &["spec"],
+            Self::VaultEvalsCohorts => &["spec"],
+            Self::VaultEvalsCohortsOpen => &["spec"],
+            Self::VaultEvalsExposure => &["spec"],
+            Self::VaultEvalsSufficiency => &["spec"],
+            Self::VaultEvalsLabelsBlocked => &["spec"],
+            Self::VaultEvalsLabelsPick => &["spec"],
             Self::VaultCoachTrainingOffers => &["spec"],
             Self::VaultCoachTrainingOffersGet => &["spec"],
             Self::VaultCoachTrainingOffersTrigger => &["spec"],
@@ -6828,6 +6955,9 @@ impl AgentVerb {
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],
             Self::VaultLensesList => &["spec"],
+            Self::VaultLensesSelect => &["spec"],
+            Self::VaultLensesResolve => &["spec"],
+            Self::VaultLensesResultSetAction => &["spec"],
             Self::VaultLensesDefault => &["spec"],
             Self::VaultDisclosureOffer => &["spec"],
             Self::Reveal => &["spec"],
@@ -7462,7 +7592,7 @@ impl AgentVerb {
                 "Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance."
             }
             Self::VaultRecall => {
-                "Recalls a memory pack for a query at an effort level: ranked items with provenance, scope honesty and retrieval accounting."
+                "Recalls ranked memories under the caller scope; explicitly selected retained foreign worlds carry stale_since, age_secs, reason and pact_epoch metadata."
             }
             Self::VaultRetrievalAgingGet => {
                 "The owner reads class-level exponential aging profiles and the trusted manifest hash; confidence never ages."
@@ -8082,6 +8212,42 @@ impl AgentVerb {
             Self::VaultEvalsCohortsSetup => {
                 "The owner sets up sealed cohorts from a pinned real inventory through the existing family, case and audited cut doors. Reports refused decisions; never serves sealed content or fabricates labels or skill provenance."
             }
+            Self::VaultEvalsAuthorNow => {
+                "Queue the production Coach eval-authoring pass, coalescing with nightly work; the caller supplies no plan, skill provenance or lease."
+            }
+            Self::VaultEvalsAuthoringResult => {
+                "Read the eval-authoring host attempt's actual state and terminal error; a completed pass may author nothing."
+            }
+            Self::VaultEvalsFamilies => {
+                "Read a seat's family purposes, source roots, derivative lineage and dates, including retirement and training eligibility, without sealed labels."
+            }
+            Self::VaultEvalsFamiliesAssign => {
+                "Assign source roots their fixed eval family and purpose before deriving cases; conflicting families, purposes or seats refuse."
+            }
+            Self::VaultEvalsCases => {
+                "Read development or judge-audit eval cases; sealed confirmation refuses and retired cohorts read as development, never training."
+            }
+            Self::VaultEvalsCasesRecord => {
+                "Record a receipt, repair, paraphrase, summary, translation, synthetic or rubric case through the shared family-inheritance guard; no labels are invented."
+            }
+            Self::VaultEvalsCohorts => {
+                "Read date-cut cohorts, the fixed reference, retirement decisions, exposure counts and near-copy audits; similarity flags review only."
+            }
+            Self::VaultEvalsCohortsOpen => {
+                "Count a candidate, query or promotion serving before releasing its sealed cohort in the same owner-validated transaction; retired cohorts refuse."
+            }
+            Self::VaultEvalsExposure => {
+                "Read a cohort's individual exposure ledger and independent candidate, query and promotion counts; unknown cohorts refuse."
+            }
+            Self::VaultEvalsSufficiency => {
+                "Compute the existing sufficiency card from explicit family-grouped measurements; unknown never approves, creates a label ask or deploys."
+            }
+            Self::VaultEvalsLabelsBlocked => {
+                "Read only unanswered eval-label asks for this owner, optionally by seat or blocked decision, with scoped cases and quoted human minutes; create no standing label session."
+            }
+            Self::VaultEvalsLabelsPick => {
+                "Record either option of the responsible owner's existing eval-label ask once; the same pick repeats safely and a conflicting second pick refuses."
+            }
             Self::VaultCoachTrainingOffers => {
                 "Read Coach offer snapshots, their exact owner answers and later promise checks; optionally select a seat or only pending offers."
             }
@@ -8386,6 +8552,15 @@ impl AgentVerb {
             }
             Self::VaultLensesList => {
                 "One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."
+            }
+            Self::VaultLensesSelect => {
+                "Selects a rendered atom or Unicode-scalar span under the caller's live key and holds its read handle on that card."
+            }
+            Self::VaultLensesResolve => {
+                "Re-proves a host-issued selection on the caller's held card and reads its source with its pinned cursor span."
+            }
+            Self::VaultLensesResultSetAction => {
+                "Re-proves the ticked rows or rendered predicate and their selected handles, then dispatches the declared result-set action through the caller's existing gate."
             }
             Self::VaultLensesDefault => {
                 "Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server."

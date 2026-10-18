@@ -160,7 +160,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/esign/presentation.rs` | src | s | 9 crate-vis | — | Stateless field editor and capability-scoped ceremony presentation adapters |
 | `src/api/esign/seal_worker.rs` | src | m | 3 crate-vis | — | The seal task's worker (OF-415, ARCH-0064 section 7): every tick it seals the documents whose signing… |
 | `src/api/facade.rs` | src | XL | 34 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
-| `src/api/facade/action_routes.rs` | src | m | 14 crate-vis | — | OF-181: the app's one action layer over HTTP, for both its callers |
+| `src/api/facade/action_routes.rs` | src | L | 15 crate-vis | — | OF-181: the app's one action layer over HTTP, for both its callers |
 | `src/api/facade/admission_doors.rs` | src | s | 2 crate-vis | — | Admission observations wrap the original generated typed dispatch, not a generic submit endpoint |
 | `src/api/facade/affect_doors.rs` | src | s | 10 crate-vis | — | Retrieval-prior setup and VAD consolidation on the caller's own owner proof |
 | `src/api/facade/agent_definition_doors.rs` | src | s | 11 crate-vis | — | Custom definitions, saved workflows and workspace onboarding, with the caller's own proof |
@@ -203,6 +203,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/decision_role_asks.rs` | src | s | 1 crate-vis | — | OF-516: a role holder's door to the ladder's person asks (Q3 by role) |
 | `src/api/facade/dispatch.rs` | src | XL | 1 crate-vis | — | The facade's one admission and typed call per verb-table row (OF-489) |
 | `src/api/facade/embedding_space_doors.rs` | src | s | 13 crate-vis | — | The host doors of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*` |
+| `src/api/facade/eval_doors.rs` | src | s | 12 crate-vis | — | Typed eval doors under the caller's own verified owner credential |
 | `src/api/facade/extraction_doors.rs` | src | s | 2 crate-vis | — | Owner-only extraction doors over the caller's own credential read lane |
 | `src/api/facade/fanout_doors.rs` | src | s | 3 crate-vis | — | The host doors of the owner's fan-out rulings (OF-393): `vault.fanout.resume` on a held launch and… |
 | `src/api/facade/federation_connect_doors.rs` | src | s | 10 crate-vis | — | The typed owner federation doors share the existing owner HTTP operations |
@@ -214,10 +215,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/graph_ask_doors.rs` | src | m | 11 crate-vis | — | OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the… |
 | `src/api/facade/guest_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's guest revoke row (OF-232): `vault.guests.revoke` |
 | `src/api/facade/hook_regen_doors.rs` | src | s | 3 crate-vis | — | Credential-bound host projections of the typed hook regeneration doors (DOOR-077): the due list, one… |
-| `src/api/facade/host_doors.rs` | src | XL | 136 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | XL | 138 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/hub_doors.rs` | src | m | 17 crate-vis | — | Owner-proof facade doors for configured hubs and pinned foreign imports |
 | `src/api/facade/learning_doors.rs` | src | s | 2 crate-vis | — | Read-only measured-learning doors under the vault owner's existing proof |
 | `src/api/facade/legal_hold_doors.rs` | src | s | 8 crate-vis | — | The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`… |
+| `src/api/facade/lens_selection_doors.rs` | src | s | 3 crate-vis | — | Frame-bound selections and result-set actions on the caller's held card |
 | `src/api/facade/linear_doors.rs` | src | s | 1 crate-vis | — | The host door of `vault.tasks.linear.mapping.edit` (OF-427 C6) |
 | `src/api/facade/live_run_doors.rs` | src | s | 7 crate-vis | — | Public coordination doors over the caller's own live-run attachment |
 | `src/api/facade/live_voice_doors.rs` | src | s | 8 crate-vis | — | Typed public live media doors |
@@ -651,7 +653,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/idempotency/tests.rs` | test | m | — | — | — |
 | `src/import_audience.rs` | src | m | 1 crate-vis | — | The import audience sweep (OF-492) |
 | `src/ladder_poll.rs` | src | s | 1 crate-vis | — | Polling an engine future whose decisions run on the host's ladder |
-| `src/lens_frames.rs` | src | m | 12 crate-vis | — | OF-181: the lens frames this server holds for the cards it rendered |
+| `src/lens_frames.rs` | src | m | 14 crate-vis | — | OF-181: the lens frames this server holds for the cards it rendered |
 | `src/lib.rs` | src | s | 3 fn · 24 mod · 1 re-export | — | Oneiron CRDT sync server library |
 | `src/linear_host.rs` | src | m | 4 crate-vis | — | Opt-in scheduled Linear mirror over an authenticated host-owned bridge |
 | `src/linear_host/direct.rs` | src | s | 2 crate-vis | — | The server's direct Linear GraphQL mirror, using the production adapter |
@@ -833,8 +835,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/connector_events.rs` | src | s | 1 crate-vis | — | The served surface-event drain (OF-218): the one thing that hands each queued inbound event to its actor's… |
 | `src/server/connector_sends.rs` | src | s | 1 crate-vis | — | The served connector-send drain (OF-187): the one consumer of the `bridge.outbound.schedule` queue that… |
 | `src/server/cooperative_deletion.rs` | src | s | 1 crate-vis | — | Delivers queued courtesy deletion asks and answers (OF-273) |
-| `src/server/core.rs` | src | L | 1 struct · 18 fn · 1 re-export · 17 crate-vis | SyncServer | Core server state: the `SyncServer` struct, construction, and shared helpers |
-| `src/server/core/pattern_workflow.rs` | src | m | 1 fn · 1 crate-vis | — | The house pattern runner (DOOR-111 S4b): the start a planned team's pattern skill writes, run on the house… |
+| `src/server/core.rs` | src | L | 1 struct · 18 fn · 1 re-export · 18 crate-vis | SyncServer | Core server state: the `SyncServer` struct, construction, and shared helpers |
+| `src/server/core/pattern_workflow.rs` | src | m | 1 fn · 6 crate-vis | — | The house pattern runner (DOOR-111 S4b): the start a planned team's pattern skill writes, run on the house… |
 | `src/server/desktop_seats.rs` | src | m | 16 crate-vis | — | The run guests live on this host (CUA-001), so the owner's door can reach the same guest a run's door… |
 | `src/server/embedding.rs` | src | m | 7 crate-vis | — | The embedding worker: the one thing that drives the engine's reconciler |
 | `src/server/housekeeping.rs` | src | m | 13 crate-vis | — | The host's half of the engine's housekeeping |
@@ -858,6 +860,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/recall.rs` | src | m | 5 crate-vis | — | The recall verb as every server transport runs it |
 | `src/server/recall_rerank.rs` | src | s | 6 crate-vis | — | The reranker recall at high, xhigh and max runs on: the `reranker` role's seat from `[models]` (ARCH-0036)… |
 | `src/server/resident_pump.rs` | src | L | 3 crate-vis | — | The agent run pump (OF-533): runs each agent-def dispatch bound to its own leased attempt, so a run's… |
+| `src/server/resident_pump/pattern_launch.rs` | src | m | 2 crate-vis | — | A leased agent's own pattern runs, and its planned leader's frozen pack (DOOR-111 S4c-4, S4c-5) |
 | `src/server/run_host_door.rs` | src | m | 4 crate-vis | — | A pumped agent run's host door (OF-533): every host row of the SDK verb table, served for the run's own… |
 | `src/server/slip_transport_tests.rs` | test | s | — | — | Slip-only transport admission with a historical receipt-key registry row |
 | `src/server/space_move.rs` | src | m | 5 crate-vis | — | The server's half of a kind slot version move (OF-370; ARCH-0004 `#swap-check-ruling`… |
