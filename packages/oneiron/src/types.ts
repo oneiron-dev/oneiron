@@ -35,6 +35,8 @@ export type WitnessMessage = {
   isVisible?: boolean
   /** Position within the turn; unique across the call. */
   order: number
+  /** This message's quote: a span of one MESSAGE in the same room, cited by this message. */
+  quote?: QuoteSpan
 }
 
 /** One conversational turn to witness. */
@@ -46,8 +48,6 @@ export type WitnessTurn = {
   messages: WitnessMessage[]
   /** Unix seconds; omitted is stamped at the call boundary. */
   occurredAt?: number
-  /** A quote on a project room's thread reply: a span of one MESSAGE in the room. */
-  quote?: QuoteSpan
   /** A new project room thread root's audience (32-hex ids); fixed once set. */
   threadAudience?: string[]
 }

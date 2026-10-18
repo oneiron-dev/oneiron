@@ -101,24 +101,19 @@ pub(super) fn validate_existing_witness_turn(
     Ok(Some(raw))
 }
 
-/// A stored TURN's quote is a birth fact (OF-460): an exact retry carries
-/// the same quote, proven again in this write, and a turn stored without one
-/// takes none. `stored` is the verified TURN's body.
+/// A stored TURN's reply topology is a birth fact (OF-460): the room guard
+/// fixes one only for a TURN its write mints, and each message's quote is
+/// checked against that message's own kept one there (FIX 2028), so a stored
+/// TURN takes none here.
 pub(super) fn validate_existing_witness_quote(
-    vault: &crate::Vault,
-    txn: &heed::RoTxn<'_>,
-    stored: &[u8],
     incoming: Option<&crate::conversation_dag::QuotedReply>,
 ) -> MemoryResult<()> {
-    let Some(quoted) = incoming else {
-        if crate::conversation_dag::carries_quote(stored)? {
-            return Err(MemoryError::bad_request(
-                "the witnessed turn carries a quote; a retry carries the same one",
-            ));
-        }
-        return Ok(());
-    };
-    Ok(quoted.require_stored_in_txn(vault, txn, stored)?)
+    if incoming.is_some() {
+        return Err(MemoryError::bad_request(
+            "the witnessed turn's reply is fixed when it is minted",
+        ));
+    }
+    Ok(())
 }
 
 /// Checks whether a deterministic MESSAGE already exists. Its canonical body

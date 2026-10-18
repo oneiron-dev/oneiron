@@ -93,8 +93,8 @@ impl Vault {
         }
         // An EdgeRef subject is read in this txn as the entity subject is
         // below: holding the `Vault` is owner authority, so the raw door reads
-        // through the owner's key. The reserved door keeps its own allowance:
-        // provenance lands an edge and its claim in one txn.
+        // through the live Owners' keys. The reserved door keeps its own
+        // allowance: provenance lands an edge and its claim in one txn.
         if let ClaimSubject::Edge { .. } = body.subject
             && !self.owner_reads_edge_subject_in(wtxn, &body.subject)?
         {
@@ -103,19 +103,30 @@ impl Vault {
         self.put_claim_in_txn_with_reserved(wtxn, id, body, occurred, learned_at, false)
     }
 
-    /// Whether the vault owner may read `subject`'s exact live edge and both
-    /// its endpoints in `txn`. A vault with no live owner admits none.
+    /// Whether any live Owner of the vault may read `subject`'s exact live
+    /// edge and both its endpoints in `txn` (OF-063, 1222): the union of
+    /// every live Owner's scoped reader, so no Owner's place in the roster
+    /// decides. A vault with no live Owner admits none. A reader that fails
+    /// answers only when no other Owner admits.
     fn owner_reads_edge_subject_in(
         &self,
         txn: &heed::RoTxn<'_>,
         subject: &ClaimSubject,
     ) -> Result<bool> {
-        let owners = crate::policy_model::owners_in_txn(self, txn)?;
-        let Some(owner) = owners.first() else {
-            return Ok(false);
-        };
-        self.scoped_read(ScopedReadActorKey::vault_owner(*owner))
-            .claim_edge_subject_admitted_in_txn(txn, subject)
+        let mut failed = None;
+        for owner in crate::policy_model::owners_in_txn(self, txn)? {
+            match self
+                .scoped_read(ScopedReadActorKey::vault_owner(owner))
+                .claim_edge_subject_admitted_in_txn(txn, subject)
+            {
+                Ok(true) => return Ok(true),
+                Ok(false) => {}
+                Err(error) => {
+                    failed.get_or_insert(error);
+                }
+            }
+        }
+        failed.map_or(Ok(false), Err)
     }
 
     /// Crate-private transaction-composable door for ENGINE-OWNED Claims:

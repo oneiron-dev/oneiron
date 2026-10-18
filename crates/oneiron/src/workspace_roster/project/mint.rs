@@ -187,7 +187,6 @@ impl Vault {
         let header = WitnessTurn {
             conversation_ref: room.to_hex(),
             turn_ref: Some(header_turn.to_hex()),
-            quote: None,
             thread_audience: None,
             messages: vec![WitnessMessage {
                 id: Some(header_message.to_hex()),
@@ -201,6 +200,7 @@ impl Vault {
                 })),
                 is_visible: true,
                 order: 0,
+                quote: None,
             }],
             occurred_at: tap.occurred_at,
             assertions: Default::default(),

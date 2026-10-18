@@ -255,7 +255,6 @@ impl Memory<'_> {
         let receipt = self.witness(&WitnessTurn {
             conversation_ref: room.to_hex(),
             turn_ref: None,
-            quote: None,
             thread_audience: None,
             messages: vec![WitnessMessage {
                 id: None,
@@ -265,6 +264,7 @@ impl Memory<'_> {
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                quote: None,
             }],
             occurred_at: now_ms / 1_000,
             assertions: Default::default(),

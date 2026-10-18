@@ -161,7 +161,6 @@ impl OffRecordSession<'_> {
         let turn = crate::memory::WitnessTurn {
             conversation_ref: container.to_hex(),
             turn_ref: None,
-            quote: None,
             thread_audience: None,
             messages: vec![crate::memory::WitnessMessage {
                 // HOST-derived when present (ONE-1686): the executor names the
@@ -174,6 +173,7 @@ impl OffRecordSession<'_> {
                 metadata: None,
                 is_visible: kind.is_visible(),
                 order,
+                quote: None,
             }],
             occurred_at,
             assertions: Default::default(),

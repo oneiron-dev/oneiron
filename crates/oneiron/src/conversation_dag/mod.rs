@@ -50,8 +50,8 @@ pub(crate) use policy::{
     require_append_references_in_txn,
 };
 pub(crate) use quote::{
-    ProvenRoomQuote, QuotedReply, carries_quote, pin_body_quotes_at_message_birth_in_txn,
-    require_quote_landing_in_txn,
+    ProvenRoomQuote, QuotedReply, pin_body_quotes_at_message_birth_in_txn,
+    require_quote_landing_in_txn, witness_reply_field_count, witness_turn_quotes,
 };
 pub use quote::{QuoteAnchor, RoomQuote};
 pub use quote_strips::{

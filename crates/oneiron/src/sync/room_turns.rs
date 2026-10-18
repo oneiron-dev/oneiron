@@ -53,7 +53,8 @@ fn decode(bytes: &[u8]) -> Result<RoomTurn> {
 }
 
 /// Admits one insert into a window's `room_turns` map: a whole turn row of a
-/// base window, filed under its own turn's id, naming its room by id.
+/// base window, filed under its own turn's id, naming its room by id, each
+/// of its quotes kept against a message it names (FIX 2028).
 pub(crate) fn admit_room_turn_carrier(
     key: Option<&WindowKey>,
     map_key: &str,
@@ -72,6 +73,13 @@ pub(crate) fn admit_room_turn_carrier(
     }
     if EntityId::from_hex(&turn.room_id)?.to_hex() != turn.room_id {
         return Err(refused("names no room"));
+    }
+    if turn
+        .quotes
+        .keys()
+        .any(|citer| !turn.message_ids.contains(citer))
+    {
+        return Err(refused("quotes for a message it does not name"));
     }
     Ok(())
 }
@@ -94,10 +102,11 @@ pub(crate) fn admit_room_turn_map(key: Option<&WindowKey>, map: &LoroMap) -> Res
 }
 
 /// Writes into `doc` the turn row this vault holds for TURN `id`, unless the
-/// window's row already carries every message and bound task of it and its
-/// conversion. A row the window holds is extended, never replaced, so another
-/// machine's binding is not lost and two machines settle on one row. Returns
-/// whether it wrote; the caller commits.
+/// window's row already carries every message, message quote and bound task
+/// of it and its conversion. A row the window holds is extended, never
+/// replaced, so another machine's binding is not lost and two machines settle
+/// on one row; a window row keeping another quote for one of its messages is
+/// refused (FIX 2028). Returns whether it wrote; the caller commits.
 pub(crate) fn mirror_room_turn(vault: &Vault, doc: &LoroDoc, id: &EntityId) -> Result<bool> {
     let held = {
         let rtxn = vault.store.env.read_txn()?;
@@ -121,6 +130,16 @@ pub(crate) fn mirror_room_turn(vault: &Vault, doc: &LoroDoc, id: &EntityId) -> R
                 if !carried.task_ids.contains(&task) {
                     carried.task_ids.push(task);
                     grew = true;
+                }
+            }
+            for (citer, quote) in turn.quotes {
+                match carried.quotes.get(&citer) {
+                    Some(kept) if *kept != quote => return Err(refused("conflicting quote")),
+                    Some(_) => {}
+                    None => {
+                        carried.quotes.insert(citer, quote);
+                        grew = true;
+                    }
                 }
             }
             if carried.converted_project.is_none() && turn.converted_project.is_some() {

@@ -280,10 +280,11 @@ impl Memory<'_> {
 
     /// [`Self::admitted_turns`] for the room's reader, or, with `thread`,
     /// for a reader of that one thread (OF-529): its own gate and a lane
-    /// bound to that thread, never the room's. A trunk turn's quote (OF-460)
-    /// is kept only when the lane admits its target TURN and MESSAGE, or the
-    /// one it does not is no longer live: an erased target reads as redacted,
-    /// never as a hidden live row.
+    /// bound to that thread, never the room's. A message's quote (OF-460,
+    /// FIX 2028) is kept only beside its citing MESSAGE the lane admits, and
+    /// only when the lane admits its target TURN and MESSAGE, or the one it
+    /// does not is no longer live: an erased target reads as redacted, never
+    /// as a hidden live row.
     fn admitted_turn_group_at(
         &self,
         mut turns: Vec<RoomTurn>,
@@ -328,7 +329,7 @@ impl Memory<'_> {
             .chain(
                 turns
                     .iter()
-                    .filter_map(|turn| turn.quote.as_ref())
+                    .flat_map(|turn| turn.quotes.values())
                     .flat_map(|quote| [quote.target_turn, quote.anchor.message()]),
             )
             .collect();
@@ -358,7 +359,7 @@ impl Memory<'_> {
         let mut withheld = BTreeSet::new();
         {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-            for quote in turns.iter().filter_map(|turn| turn.quote.as_ref()) {
+            for quote in turns.iter().flat_map(|turn| turn.quotes.values()) {
                 for id in [quote.target_turn, quote.anchor.message()] {
                     if !admitted.contains(&id)
                         && crate::vault::live_entity_row_in_txn(&self.vault().store, &txn, &id)?
@@ -381,8 +382,11 @@ impl Memory<'_> {
                 turn.message_ids.retain(readable);
                 turn.task_ids.retain(readable);
                 turn.converted_project = turn.converted_project.filter(readable);
-                turn.quote = turn.quote.filter(|quote| {
-                    !withheld.contains(&quote.target_turn)
+                // A quote shows only beside its readable citing MESSAGE.
+                let citers = &turn.message_ids;
+                turn.quotes.retain(|citer, quote| {
+                    citers.contains(citer)
+                        && !withheld.contains(&quote.target_turn)
                         && !withheld.contains(&quote.anchor.message())
                 });
                 turn
