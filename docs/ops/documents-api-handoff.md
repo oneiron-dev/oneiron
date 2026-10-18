@@ -64,9 +64,16 @@ let manifest = done.manifest(); // name, media type, size and BLAKE3 of each out
 | `deck.read` | `deck` | `limits` | `deck`: editability, id marks, slides, shapes (id, kind, slide-space position, extent, text, fingerprint), ambiguities | none | `Package::open`, `DeckView::read` |
 | `deck.transaction` | `deck`, `assets[].input` | `transaction` (deck transaction schema 1), `assets` (artifact, version, media, origin, provenance, rights), `limits` | `deck_transaction`: the report (candidate hash, part diff, step effects, marks, handoff hash) | `deck` | `run_transaction` |
 | `deck.create` | `brief.input`, `template`, `fonts`, `assets.*.input` | `brief` (version, optional kept hash), `assets` keyed by brief asset id, `names`, `limits` | `deck_ask` (pages no layout could hold) or `deck_created` (hash, slides, write set, omitted, fit-unverified units) | `deck` | `compile_with_fonts`, `emit` |
+| `pptx.comments` | `deck` | `edits` (author, thread and comment GUIDs, time, and an add with its slide or shape target, a reply, or a resolve), optional `slide_creation_ids`, `seed`, `limits` (comments) | `pptx_comments`: touched parts, the slide creation IDs minted, each new thread's anchor | `deck` | `pptx_comments::comment_patch` |
+| `pptx.comments.inspect` | `deck` | `limits` (comments) | `pptx_comments_inspected`: slides (number, part, id, creation ID, fingerprint, shapes with creation GUID, fingerprint and slide-space position), signature parts, threads with an unknown anchor | none | `pptx_comments::inspect_pptx`, `unknown_anchor_threads` |
 
 A deck step targets a shape by its slide part, its `p:cNvPr` id and its content fingerprint. All
 three come from `deck.read`. A transaction's `base` is the BLAKE3 hash of the deck input.
+
+A comment targets a slide by its number and p14 creation ID, and a shape by its `a16:creationId`
+GUID and fingerprint, all from `pptx.comments.inspect`. Only the comment, author, slide extension,
+relationship and content-type parts it declares may change; any other part diff refuses. A
+comment's text is written whole: the contract bounds no comment's length.
 
 ## Media types
 
@@ -88,6 +95,12 @@ DOCX ops take `{max_entries, max_part_bytes, max_total_bytes}`, checked across e
 any XML parser runs. XLSX and PPTX ops take
 `{archive_bytes, entries, part_bytes, expanded_bytes, xml_depth, xml_nodes}`, checked before
 decompression and again after it. A package over a ceiling refuses as `invalid_document`.
+The PPTX comment ops take one `{max_archive_bytes, max_entries, max_part_bytes,
+max_expanded_bytes, max_author_name_bytes, max_xml_bytes, max_xml_attributes,
+max_xml_namespaces, max_xml_depth, max_xml_nodes}`: the package's ceilings, then each XML part's.
+How many edits one call carries is not bounded here. The vault measures a comment proposal's
+edits against its `[limits] pptx_comment_patches` row (10,000), asks past it, and serves the
+proposal whole.
 
 For reference, the vault ships these values:
 
@@ -133,14 +146,18 @@ where work moves to another runtime, and that runtime (the session image) is the
 - **`xlsx.recalc`**: the same `clock` and `seed` recalculate the same values.
 - **`deck.create`**: `brief.kept_hash` binds the deck to the kept brief. If the brief's bytes no
   longer hash to it, the call refuses as `stale`.
+- **`pptx.comments`**: a commented slide without a p14 creation ID gets one drawn from `seed`, and
+  the reply lists it. Passing those back as `slide_creation_ids` replays the same bytes; a mint the
+  edits do not need, or one they need and the list lacks, refuses as `bad_request`.
 
 ## Not on schema 1
 
 - **Live office bodies:** the shared Loro bodies, forks, landing and export projection (OF-505,
   OF-510). They are vault state, not a stateless file op.
-- **PPTX modern comments and slide review:** they live in the core crate
-  (`crates/oneiron/src/edit_roundtrip/pptx`, `slides_review.rs`), and review runs on the engine's
-  decision ladder.
+- **Slide review and managed comment threads:** review runs on the engine's decision ladder
+  (`crates/oneiron/src/edit_roundtrip/slides_review.rs`), and the annotation threads a comment
+  proposal settles into are vault state (`crates/oneiron/src/anchored_annotation`). The comment
+  writer and inspector themselves are the `pptx.comments` ops.
 - **Generated-image deck assets:** their adapter receipts stay engine-side.
 - **The Office oracle:** live Word, Excel and PowerPoint runs are Phase 2.
 
