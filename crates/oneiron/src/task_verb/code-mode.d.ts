@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 466 code-mode rows (445 host rows, 21 run rows), 1675 declarations.
-// Replies: 410 fully typed, 52 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 473 code-mode rows (452 host rows, 21 run rows), 1708 declarations.
+// Replies: 412 fully typed, 57 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 80; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 82; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -528,6 +528,39 @@ declare namespace Sdk {
   type HubHookQualificationReceipt = { put: PackPutReceipt; replays: HubHookReplay[] };
   type PackFileInput = { path: string; text: string };
   type PackPutRequest = { files: PackFileInput[] };
+  type SlatePackSource = { source_ref: string; content_hash: string };
+  type SlateDataClass = "public" | "personal" | "secret" | "header";
+  type SlateToolManifest = { name: string; data_class: SlateDataClass; header_parameters: string[]; resolved_input_schema?: unknown | null; trigger?: string | null; destroys: boolean; spends: boolean; sends_outward: boolean; legacy_ask: boolean; read_only?: boolean; idempotent?: boolean };
+  type SlateElicitationManifest = { legacy_ask_tools: string[] };
+  type SlateManifest = { pack_source?: SlatePackSource | null; tools: SlateToolManifest[]; elicitation?: SlateElicitationManifest | null };
+  type ConnectorPackPrepareRequest = { connector: string; source: SlatePackSource; summary: string; secret_ref?: string | null; protocol_revision: string; manifest: SlateManifest };
+  type ConnectorPackBasis = { connector: string; source: SlatePackSource; key_ref: string; slate_ref: string; slate_revision: number; manifest_hash: string; grant_hash: string; advisory_hash: string; protocol_revision: string };
+  type SlateDisposition = "always_allow" | "auto" | "always_ask" | "never_allow";
+  type SlateDraftRow = { tool: string; disposition: SlateDisposition; data_class: SlateDataClass; rationale: string };
+  type SlateOwnerOverride = { disposition: SlateDisposition };
+  type SlateHolderNarrow = { disposition: SlateDisposition; actor: string; at: number };
+  type SlateRow = { draft: SlateDraftRow; owner_override?: SlateOwnerOverride | null; holder_narrow?: SlateHolderNarrow | null };
+  type ConnectorPackAdvisory = { contentHash: string; provider: string; scannedAt: number; verdict: string; riskLevel: string; completeness: string; governance: string; scannedAtDeclared?: number | null };
+  type ConnectorPackView = { basis: ConnectorPackBasis; status: string; consent_required: boolean; stamped: boolean; manifest: SlateManifest; rows: SlateRow[]; qualification?: ConnectorQualificationReceipt | null; pack?: PackInstallReceipt | null; advisories: ConnectorPackAdvisory[] };
+  type ConnectorPackGetRequest = { connector: string };
+  type ProbeRequest = { id: string; name: string; arguments: unknown };
+  type QualificationCase = { call: ProbeRequest; in_scope: boolean; allowed_predicates: string[] };
+  type QualificationInjectionSurface = "FetchedContent" | "ToolResult" | "ForeignAsk";
+  type QualificationInjection = { surface: QualificationInjectionSurface; baseline: QualificationCase; injected: QualificationCase };
+  type QualificationLimits = { tokens: number; latency_ms: number; budget_units: number };
+  type QualificationPlan = { reads: QualificationCase[]; unanswerable: QualificationCase; injections: QualificationInjection[]; scope_escape: QualificationCase[]; write?: QualificationCase | null; timeout_retry?: QualificationCase | null; handled_result_types: string[]; limits: QualificationLimits };
+  type ConnectorQualificationKit = { plan: QualificationPlan; sources?: Record<string, string>; claims?: Record<string, string[]>; effect_state_uri: string };
+  type ConnectorPackQualifyRequest = { basis: ConnectorPackBasis; kit: ConnectorQualificationKit; runtime?: PackRuntimeRecipe | null };
+  type ConnectorPackAcceptRequest = { basis: ConnectorPackBasis; rows?: Record<string, SlateDisposition>; facets?: string[] | null; all_manual?: boolean };
+  type ConnectorPackUpdateRequest = { prior: ConnectorPackBasis; source: SlatePackSource; protocol_revision: string; manifest: SlateManifest };
+  type ConnectorPackDelta = { prior: ConnectorPackBasis; current: ConnectorPackView; changed: boolean; reask: string[]; carried: string[]; dropped: string[] };
+  type ConnectorPackGrantsGetRequest = { basis: ConnectorPackBasis; actor?: string | null };
+  type DataClass = "public" | "personal" | "secret" | "unclassified";
+  type ConnectorConsentRowView = { tool: string; data_class: SlateDataClass; setting: SlateDisposition; header_parameters: string[]; destroys: boolean; grant_id?: string | null; grant_ceiling?: DataClass | null };
+  type ConnectorConsentView = { connector: string; actor: string; status: string; protocol_revision?: string | null; ready: boolean; rows: ConnectorConsentRowView[]; elicitation?: SlateDisposition | null };
+  type ConnectorPackGrants = { basis: ConnectorPackBasis; endpoint?: string | null; authority: ConnectorConsentView };
+  type ConnectorPackGrantRow = { tool: string; ceiling: DataClass; headers?: boolean };
+  type ConnectorPackGrantsPutRequest = { basis: ConnectorPackBasis; endpoint: string; actor?: string | null; rows: ConnectorPackGrantRow[] };
   type PackRemoveRequest = { pack: string };
   type ChannelSubscriptionRequest = { agent: string; channel: string };
   type ChannelMessageSubscription = { subscription: string; connector_key: string; connector: string; agent: string; existing: boolean };
@@ -2495,6 +2528,24 @@ declare const vault: Sdk.VaultHost & {
     set_overrides(input: Sdk.SetNoteOverridesRequest): Promise<Sdk.NoteDefaultsView | StoredResult>;
   };
   packs: {
+    connector: {
+      /** Stamps the exact connector pack manifest and grant rows once, or revokes a row; qualification stays independent. */
+      accept(input: Sdk.ConnectorPackAcceptRequest): Promise<Sdk.ConnectorPackView | StoredResult>;
+      /** Reads a connector pack source, resolved manifest, advisory evidence, qualification and owner-stampable capability rows. */
+      get(input: Sdk.ConnectorPackGetRequest): Promise<Sdk.ConnectorPackView | StoredResult>;
+      grants: {
+        /** Reads current per-capability authority for one actor on the reviewed connector pack source. */
+        get(input: Sdk.ConnectorPackGrantsGetRequest): Promise<Sdk.ConnectorPackGrants | StoredResult>;
+        /** Grants declared connector pack rows to one actor through the existing owner consent gate and installed endpoint. */
+        put(input: Sdk.ConnectorPackGrantsPutRequest): Promise<Sdk.ConnectorPackGrants | StoredResult>;
+      };
+      /** Prepares an immutable connector pack admission, comparing the resolved declaration with the installed transport and drafting an ungranted slate. */
+      prepare(input: Sdk.ConnectorPackPrepareRequest): Promise<Sdk.ConnectorPackView | StoredResult>;
+      /** Runs the real connector probes bound to the exact pack source and protocol; qualification grants nothing without the owner slate and actor grant. */
+      qualify(input: Sdk.ConnectorPackQualifyRequest): Promise<Sdk.ConnectorPackView | StoredResult>;
+      /** Holds a connector pack at its new immutable source and protocol, carrying narrow rows and re-asking only for expanded capabilities. */
+      update(input: Sdk.ConnectorPackUpdateRequest): Promise<Sdk.ConnectorPackDelta | StoredResult>;
+    };
     /** Reads an installed pack and its exact source, pin, publisher and requested powers as the owner. */
     get(input: Sdk.HubPackRequest): Promise<Sdk.PackInstallReceipt | null | StoredResult>;
     hooks: {

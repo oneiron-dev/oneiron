@@ -111,7 +111,7 @@ pub(crate) use self::txn::rebuild_checkpoint_connector_index;
 pub use slate::{
     ConnectorGrantSlate, ELICITATION_ROW_KEY, SlateCapability, SlateDataClass, SlateDisposition,
     SlateDraftRow, SlateElicitationManifest, SlateFacetNarrow, SlateHolderNarrow, SlateManifest,
-    SlateOwnerOverride, SlateRow, SlateToolManifest,
+    SlateOwnerOverride, SlatePackSource, SlateRow, SlateToolManifest,
 };
 pub use slate_draft::{
     ConnectorSlateDelta, ConnectorSlateDrafter, ConnectorSlateRedraft, SlatePastRulings,

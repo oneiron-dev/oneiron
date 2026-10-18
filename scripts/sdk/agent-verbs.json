@@ -1529,6 +1529,104 @@
       "section": false
     },
     {
+      "name": "vault.packs.connector.prepare",
+      "description": "Prepares an immutable connector pack admission, comparing the resolved declaration with the installed transport and drafting an ungranted slate.",
+      "input": "ConnectorPackPrepareRequest",
+      "output": "crate::task_verb::sdk::ConnectorPackView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.packs.connector.prepare\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.connector.get",
+      "description": "Reads a connector pack source, resolved manifest, advisory evidence, qualification and owner-stampable capability rows.",
+      "input": "ConnectorPackGetRequest",
+      "output": "crate::task_verb::sdk::ConnectorPackView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.packs.connector.get\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.connector.qualify",
+      "description": "Runs the real connector probes bound to the exact pack source and protocol; qualification grants nothing without the owner slate and actor grant.",
+      "input": "ConnectorPackQualifyRequest",
+      "output": "crate::task_verb::sdk::ConnectorPackView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.packs.connector.qualify\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.connector.accept",
+      "description": "Stamps the exact connector pack manifest and grant rows once, or revokes a row; qualification stays independent.",
+      "input": "ConnectorPackAcceptRequest",
+      "output": "crate::task_verb::sdk::ConnectorPackView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.packs.connector.accept\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.connector.update",
+      "description": "Holds a connector pack at its new immutable source and protocol, carrying narrow rows and re-asking only for expanded capabilities.",
+      "input": "ConnectorPackUpdateRequest",
+      "output": "crate::task_verb::sdk::ConnectorPackDelta",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.packs.connector.update\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.connector.grants.get",
+      "description": "Reads current per-capability authority for one actor on the reviewed connector pack source.",
+      "input": "ConnectorPackGrantsGetRequest",
+      "output": "crate::task_verb::sdk::ConnectorPackGrants",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.packs.connector.grants.get\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.connector.grants.put",
+      "description": "Grants declared connector pack rows to one actor through the existing owner consent gate and installed endpoint.",
+      "input": "ConnectorPackGrantsPutRequest",
+      "output": "crate::task_verb::sdk::ConnectorPackGrants",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.packs.connector.grants.put\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.packs.remove",
       "description": "The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate.",
       "input": "PackRemoveRequest",

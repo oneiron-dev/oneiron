@@ -778,6 +778,69 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_packs_connector_prepare(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.connector.prepare", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_connector_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.connector.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_connector_qualify(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.connector.qualify", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_connector_accept(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.connector.accept", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_connector_update(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.connector.update", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_connector_grants_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.connector.grants.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_connector_grants_put(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.connector.grants.put", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_packs_remove(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.packs.remove", input)

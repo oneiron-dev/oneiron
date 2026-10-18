@@ -524,6 +524,24 @@ export class Oneiron {
       },
       /** The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks. */
       put: (input: Facade.PackPutRequest): Facade.PackPutReceipt => this.#call(() => this.#client.vaultPacksPut(input) as Facade.PackPutReceipt),
+      connector: {
+        /** Prepares an immutable connector pack admission, comparing the resolved declaration with the installed transport and drafting an ungranted slate. */
+        prepare: (input: Facade.ConnectorPackPrepareRequest): Facade.ConnectorPackView => this.#call(() => this.#client.vaultPacksConnectorPrepare(input) as Facade.ConnectorPackView),
+        /** Reads a connector pack source, resolved manifest, advisory evidence, qualification and owner-stampable capability rows. */
+        get: (input: Facade.ConnectorPackGetRequest): Facade.ConnectorPackView => this.#call(() => this.#client.vaultPacksConnectorGet(input) as Facade.ConnectorPackView),
+        /** Runs the real connector probes bound to the exact pack source and protocol; qualification grants nothing without the owner slate and actor grant. */
+        qualify: (input: Facade.ConnectorPackQualifyRequest): Facade.ConnectorPackView => this.#call(() => this.#client.vaultPacksConnectorQualify(input) as Facade.ConnectorPackView),
+        /** Stamps the exact connector pack manifest and grant rows once, or revokes a row; qualification stays independent. */
+        accept: (input: Facade.ConnectorPackAcceptRequest): Facade.ConnectorPackView => this.#call(() => this.#client.vaultPacksConnectorAccept(input) as Facade.ConnectorPackView),
+        /** Holds a connector pack at its new immutable source and protocol, carrying narrow rows and re-asking only for expanded capabilities. */
+        update: (input: Facade.ConnectorPackUpdateRequest): Facade.ConnectorPackDelta => this.#call(() => this.#client.vaultPacksConnectorUpdate(input) as Facade.ConnectorPackDelta),
+        grants: {
+          /** Reads current per-capability authority for one actor on the reviewed connector pack source. */
+          get: (input: Facade.ConnectorPackGrantsGetRequest): Facade.ConnectorPackGrants => this.#call(() => this.#client.vaultPacksConnectorGrantsGet(input) as Facade.ConnectorPackGrants),
+          /** Grants declared connector pack rows to one actor through the existing owner consent gate and installed endpoint. */
+          put: (input: Facade.ConnectorPackGrantsPutRequest): Facade.ConnectorPackGrants => this.#call(() => this.#client.vaultPacksConnectorGrantsPut(input) as Facade.ConnectorPackGrants),
+        },
+      },
       /** The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate. */
       remove: (input: Facade.PackRemoveRequest): Facade.PackInstallReceipt => this.#call(() => this.#client.vaultPacksRemove(input) as Facade.PackInstallReceipt),
       setup: {

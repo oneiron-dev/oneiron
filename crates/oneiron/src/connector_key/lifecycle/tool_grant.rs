@@ -19,7 +19,7 @@
 
 use std::collections::BTreeSet;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
@@ -100,7 +100,7 @@ pub struct ConnectorToolGrant {
 }
 
 /// One tool row as the owner sees it before consenting.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConnectorConsentRowView {
     pub tool: String,
     pub data_class: SlateDataClass,
@@ -113,11 +113,11 @@ pub struct ConnectorConsentRowView {
 }
 
 /// One catalog connector's consent view for one actor.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConnectorConsentView {
     pub connector: String,
     pub actor: String,
-    pub status: &'static str,
+    pub status: String,
     pub protocol_revision: Option<String>,
     /// Active, qualified and owner-stamped: a consent can be written now.
     pub ready: bool,
@@ -316,7 +316,7 @@ impl Vault {
         Ok(Some(ConnectorConsentView {
             connector: record.connector,
             actor: principal_ref,
-            status: record.status.as_str(),
+            status: record.status.as_str().to_owned(),
             protocol_revision: record.protocol_revision,
             ready,
             rows,

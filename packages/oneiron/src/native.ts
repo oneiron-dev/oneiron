@@ -116,6 +116,13 @@ vaultPacksHooksBind(input: unknown): unknown
 vaultPacksHooksList(input: unknown): unknown
 vaultPacksHooksQualify(input: unknown): unknown
 vaultPacksPut(input: unknown): unknown
+vaultPacksConnectorPrepare(input: unknown): unknown
+vaultPacksConnectorGet(input: unknown): unknown
+vaultPacksConnectorQualify(input: unknown): unknown
+vaultPacksConnectorAccept(input: unknown): unknown
+vaultPacksConnectorUpdate(input: unknown): unknown
+vaultPacksConnectorGrantsGet(input: unknown): unknown
+vaultPacksConnectorGrantsPut(input: unknown): unknown
 vaultPacksRemove(input: unknown): unknown
 vaultConnectorsSubscriptionsPut(input: unknown): unknown
 vaultConnectorsSubscriptionsList(input: unknown): unknown

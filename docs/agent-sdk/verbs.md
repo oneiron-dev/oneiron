@@ -92,6 +92,13 @@ both bindings and their export-census tests in one change.
 - `vault.packs.hooks.list`
 - `vault.packs.hooks.qualify`
 - `vault.packs.put`
+- `vault.packs.connector.prepare`
+- `vault.packs.connector.get`
+- `vault.packs.connector.qualify`
+- `vault.packs.connector.accept`
+- `vault.packs.connector.update`
+- `vault.packs.connector.grants.get`
+- `vault.packs.connector.grants.put`
 - `vault.packs.remove`
 - `vault.connectors.subscriptions.put`
 - `vault.connectors.subscriptions.list`

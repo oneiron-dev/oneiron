@@ -25,7 +25,7 @@ fn invalid() -> Error {
 
 /// The four DEC-0006 capability settings. Declaration order is strictness,
 /// so `Ord` reads "tighter": always allow < auto < always ask < never allow.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SlateDisposition {
     /// Bypasses the per-call ask inside the bound; never the catastrophe floor.
@@ -59,7 +59,7 @@ impl SlateDisposition {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SlateDataClass {
     Public,
@@ -120,7 +120,7 @@ impl<'a> SlateCapability<'a> {
 /// every connector it admits, and the call host decides per revision
 /// whether to declare it on the wire. A tool's legacy ask form folds into
 /// this one declaration and never makes a second permission.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SlateElicitationManifest {
     /// The tools whose legacy ask form this row also covers.
@@ -139,11 +139,20 @@ impl SlateElicitationManifest {
     }
 }
 
-/// A slate's whole typed declaration: its tools and its one elicitation
-/// declaration, both inside the manifest hash.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Immutable pack identity included in the slate's manifest hash.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SlatePackSource {
+    pub source_ref: String,
+    pub content_hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SlateManifest {
+    /// Immutable pack identity, inside the manifest hash and owner stamp.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pack_source: Option<SlatePackSource>,
     pub tools: Vec<SlateToolManifest>,
     pub elicitation: Option<SlateElicitationManifest>,
 }
@@ -153,11 +162,11 @@ impl SlateManifest {
     /// in.
     pub fn new(tools: Vec<SlateToolManifest>, declared: bool) -> Self {
         let elicitation = SlateElicitationManifest::of(&tools, declared);
-        Self { tools, elicitation }
+        Self { tools, elicitation, pack_source: None }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SlateToolManifest {
     pub name: String,
@@ -413,6 +422,10 @@ impl ConnectorGrantSlate {
 }
 
 fn validate(manifest: &SlateManifest, rows: &[SlateDraftRow]) -> Result<()> {
+    if let Some(source) = &manifest.pack_source {
+        EntityId::from_hex(&source.source_ref)?;
+        crate::skill::SkillContentHash::parse_hex(&source.content_hash)?;
+    }
     let declared = &manifest.tools;
     let row_count = declared.len() + usize::from(manifest.elicitation.is_some());
     if declared.is_empty() || rows.len() != row_count || declared.len() > 4096 {

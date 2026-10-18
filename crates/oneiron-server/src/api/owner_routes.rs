@@ -42,7 +42,7 @@ mod budget_hold_routes;
 mod commitment_routes;
 mod concern_routes;
 mod conflict_routes;
-mod connector_admission_routes;
+pub(crate) mod connector_admission_routes;
 mod connector_consent_routes;
 mod connector_subscription_routes;
 pub(super) mod cooperative_deletion_routes;
