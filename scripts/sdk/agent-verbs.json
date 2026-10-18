@@ -10371,6 +10371,55 @@
       "mcp_scope": "filtered"
     },
     {
+      "name": "vault.search.vector.config",
+      "description": "Reads this vault open's persisted dimensions and optional MRL fast_dims prefix; graph shape is configured before open, never changed by a search.",
+      "input": "EmptyRequest",
+      "output": "crate::claim::ScopedReadResult<crate::memory::VectorSearchConfig>",
+      "call": "memory.vector_search_config()?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_fields": {},
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "vault.search.vector",
+      "description": "Searches full or MRL-prefix query vectors under the caller read ceiling; ordinary reads refine full queries, explicit voice_hot reads skip refinement at the reduced voice limit, with revision pins and dimensional evidence.",
+      "input": "crate::memory::VectorSearchRequest",
+      "output": "crate::claim::ScopedReadResult<crate::memory::VectorSearchResult>",
+      "call": "memory.query_vector(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true,
+        "validate": "input.validate()?;"
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "vault.vectors.put",
+      "description": "Supplies one full-width vector for a readable record as the authenticated owner; the existing write gate checks model, transform, width, revision staging and graph updates atomically.",
+      "input": "crate::memory::VectorPutRequest",
+      "output": "crate::memory::VectorPutReceipt",
+      "call": "memory.put_vector_as_owner(&memory.embedded_owner(\"vault.vectors.put\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.search.hybrid",
       "description": "Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence.",
       "input": "crate::memory::HybridSearchRequest",

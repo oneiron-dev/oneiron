@@ -582,6 +582,8 @@ class Oneiron:
         def refs(self) -> "Oneiron._VaultRefsVerbs": ...
         @property
         def search(self) -> "Oneiron._VaultSearchVerbs": ...
+        @property
+        def vectors(self) -> "Oneiron._VaultVectorsVerbs": ...
         def neighbors(self, input: Facade.NeighborsRequest) -> Facade.ScopedReadResult[list[Facade.NeighborHit]]:
             """The weighted-edge neighbourhood of one entity, filtered by edge kind and minimum weight."""
         @property
@@ -2039,12 +2041,22 @@ class Oneiron:
         def links(self, spec: Facade.RecordLinksRequest) -> Facade.RecordLinks:
             """A text, the texts a read surface returned, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read."""
     class _VaultSearchVerbs:
+        @property
+        def vector(self) -> "Oneiron._VaultSearchVectorVerbs": ...
         def hybrid(self, input: Facade.HybridSearchRequest) -> Facade.ScopedReadResult[list[Facade.HybridSearchHit]]:
             """Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence."""
         def temporal(self, input: Facade.TemporalSearchRequest) -> Facade.ScopedReadResult[Facade.TemporalSearchResult]:
             """Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds."""
         def bm25(self, input: Facade.QueryBm25Request) -> Facade.ScopedReadResult[list[Facade.LexicalHit]]:
             """BM25 text search over the engine index; surfaceable claims only."""
+    class _VaultSearchVectorVerbs:
+        def __call__(self, input: Facade.VectorSearchRequest) -> Facade.ScopedReadResult[Facade.VectorSearchResult]:
+            """Searches full or MRL-prefix query vectors under the caller read ceiling; ordinary reads refine full queries, explicit voice_hot reads skip refinement at the reduced voice limit, with revision pins and dimensional evidence."""
+        def config(self, spec: Facade.EmptyRequest | None = None) -> Facade.ScopedReadResult[Facade.VectorSearchConfig]:
+            """Reads this vault open's persisted dimensions and optional MRL fast_dims prefix; graph shape is configured before open, never changed by a search."""
+    class _VaultVectorsVerbs:
+        def put(self, spec: Facade.VectorPutRequest) -> Facade.VectorPutReceipt:
+            """Supplies one full-width vector for a readable record as the authenticated owner; the existing write gate checks model, transform, width, revision staging and graph updates atomically."""
     class _VaultStructuralVerbs:
         def put(self, input: Facade.StructuralPutInput) -> Facade.EntityRefReceipt:
             """Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit."""

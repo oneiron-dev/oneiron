@@ -1933,6 +1933,17 @@ impl OneironClient {
                 "vault.refs.links" => {
                     remote_agent_verb_output::<oneiron::lens::RecordLinks>(client, verb, &input)
                 }
+                "vault.search.vector.config" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<oneiron::memory::VectorSearchConfig>,
+                >(client, verb, &input),
+                "vault.search.vector" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<oneiron::memory::VectorSearchResult>,
+                >(client, verb, &input),
+                "vault.vectors.put" => {
+                    remote_agent_verb_output::<oneiron::memory::VectorPutReceipt>(
+                        client, verb, &input,
+                    )
+                }
                 "vault.search.hybrid" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<Vec<oneiron::memory::HybridSearchHit>>,
                 >(client, verb, &input),
@@ -9994,6 +10005,45 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.refs.links", value)
+    }
+    pub fn vault_search_vector_config(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<oneiron::memory::VectorSearchConfig>, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.search.vector.config", value)
+    }
+    pub fn vault_search_vector(
+        &self,
+        input: &oneiron::memory::VectorSearchRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<oneiron::memory::VectorSearchResult>, MemoryError>
+    {
+        input.validate()?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.search.vector", value)
+    }
+    pub fn vault_vectors_put(
+        &self,
+        input: &oneiron::memory::VectorPutRequest,
+    ) -> Result<oneiron::memory::VectorPutReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.vectors.put", value)
     }
     pub fn vault_search_hybrid(
         &self,

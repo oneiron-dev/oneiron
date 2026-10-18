@@ -88,6 +88,7 @@ mod room_turn;
 mod scoped_export;
 mod search_hybrid;
 mod search_temporal;
+mod search_vector;
 mod session_writes;
 mod shape_doors;
 mod signal_extraction;
@@ -227,6 +228,10 @@ pub use search_hybrid::{
 };
 pub use search_temporal::{
     TemporalSearchHit, TemporalSearchRange, TemporalSearchRequest, TemporalSearchResult,
+};
+pub use search_vector::{
+    VectorPutReceipt, VectorPutRequest, VectorSearchConfig, VectorSearchHit,
+    VectorSearchLane, VectorSearchRequest, VectorSearchResult,
 };
 pub use skill_authoring::SkillAuthoringReceipt;
 pub(crate) use skill_authoring::{skill_author_in_txn, skill_author_proof_is_live_in_txn};

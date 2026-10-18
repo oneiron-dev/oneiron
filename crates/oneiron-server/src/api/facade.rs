@@ -97,6 +97,7 @@ mod research_doors;
 mod residence_doors;
 mod result_doors;
 mod retrieval_doors;
+mod vector_doors;
 pub(super) mod role_picks;
 mod run_read_doors;
 mod seal_doors;

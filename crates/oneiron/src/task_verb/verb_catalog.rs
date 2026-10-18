@@ -640,6 +640,9 @@ pub enum AgentVerb {
     VaultGet,
     VaultRefsResolve,
     VaultRefsLinks,
+    VaultSearchVectorConfig,
+    VaultSearchVector,
+    VaultVectorsPut,
     VaultSearchHybrid,
     VaultSearchTemporal,
     VaultSearchBm25,
@@ -1435,6 +1438,9 @@ impl AgentVerb {
         Self::VaultGet,
         Self::VaultRefsResolve,
         Self::VaultRefsLinks,
+        Self::VaultSearchVectorConfig,
+        Self::VaultSearchVector,
+        Self::VaultVectorsPut,
         Self::VaultSearchHybrid,
         Self::VaultSearchTemporal,
         Self::VaultSearchBm25,
@@ -2251,6 +2257,9 @@ impl AgentVerb {
             Self::VaultGet => "vault.get",
             Self::VaultRefsResolve => "vault.refs.resolve",
             Self::VaultRefsLinks => "vault.refs.links",
+            Self::VaultSearchVectorConfig => "vault.search.vector.config",
+            Self::VaultSearchVector => "vault.search.vector",
+            Self::VaultVectorsPut => "vault.vectors.put",
             Self::VaultSearchHybrid => "vault.search.hybrid",
             Self::VaultSearchTemporal => "vault.search.temporal",
             Self::VaultSearchBm25 => "vault.search.bm25",
@@ -3029,6 +3038,9 @@ impl AgentVerb {
                 | Self::VaultGet
                 | Self::VaultRefsResolve
                 | Self::VaultRefsLinks
+                | Self::VaultSearchVectorConfig
+                | Self::VaultSearchVector
+                | Self::VaultVectorsPut
                 | Self::VaultSearchHybrid
                 | Self::VaultSearchTemporal
                 | Self::VaultSearchBm25
@@ -3851,6 +3863,9 @@ impl AgentVerb {
                 | Self::VaultGet
                 | Self::VaultRefsResolve
                 | Self::VaultRefsLinks
+                | Self::VaultSearchVectorConfig
+                | Self::VaultSearchVector
+                | Self::VaultVectorsPut
                 | Self::VaultSearchHybrid
                 | Self::VaultSearchTemporal
                 | Self::VaultSearchBm25
@@ -4123,6 +4138,8 @@ impl AgentVerb {
                 | Self::VaultGet
                 | Self::VaultRefsResolve
                 | Self::VaultRefsLinks
+                | Self::VaultSearchVectorConfig
+                | Self::VaultSearchVector
                 | Self::VaultSearchHybrid
                 | Self::VaultSearchTemporal
                 | Self::VaultSearchBm25
@@ -4748,6 +4765,7 @@ impl AgentVerb {
                 | Self::VaultClaimsDemote
                 | Self::VaultDelete
                 | Self::VaultWritesPending
+                | Self::VaultVectorsPut
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
                 | Self::VaultProductivityCreate
@@ -5273,6 +5291,7 @@ impl AgentVerb {
                 | Self::VaultCalendarTranscriptIngest
                 | Self::VaultClaimsDemote
                 | Self::VaultDelete
+                | Self::VaultVectorsPut
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
                 | Self::VaultProductivityCreate
@@ -6044,6 +6063,9 @@ impl AgentVerb {
             Self::VaultGet => &["spec"],
             Self::VaultRefsResolve => &["spec"],
             Self::VaultRefsLinks => &["spec"],
+            Self::VaultSearchVectorConfig => &[],
+            Self::VaultSearchVector => &["spec"],
+            Self::VaultVectorsPut => &["spec"],
             Self::VaultSearchHybrid => &["spec"],
             Self::VaultSearchTemporal => &["spec"],
             Self::VaultSearchBm25 => &["spec"],
@@ -6840,6 +6862,9 @@ impl AgentVerb {
             Self::VaultGet => &["spec"],
             Self::VaultRefsResolve => &["spec"],
             Self::VaultRefsLinks => &["spec"],
+            Self::VaultSearchVectorConfig => &[],
+            Self::VaultSearchVector => &["spec"],
+            Self::VaultVectorsPut => &["spec"],
             Self::VaultSearchHybrid => &["spec"],
             Self::VaultSearchTemporal => &["spec"],
             Self::VaultSearchBm25 => &["spec"],
@@ -8822,6 +8847,15 @@ impl AgentVerb {
             }
             Self::VaultRefsLinks => {
                 "A text, the texts a read surface returned, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read."
+            }
+            Self::VaultSearchVectorConfig => {
+                "Reads this vault open's persisted dimensions and optional MRL fast_dims prefix; graph shape is configured before open, never changed by a search."
+            }
+            Self::VaultSearchVector => {
+                "Searches full or MRL-prefix query vectors under the caller read ceiling; ordinary reads refine full queries, explicit voice_hot reads skip refinement at the reduced voice limit, with revision pins and dimensional evidence."
+            }
+            Self::VaultVectorsPut => {
+                "Supplies one full-width vector for a readable record as the authenticated owner; the existing write gate checks model, transform, width, revision staging and graph updates atomically."
             }
             Self::VaultSearchHybrid => {
                 "Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence."

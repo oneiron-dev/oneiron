@@ -3081,6 +3081,21 @@ export_facade! {
     let output = client.vault_refs_links(&input)?;
     crate::codec::lift_record("vault.refs.links", &output)
 };
+"vault.search.vector.config" => fn vault_search_vector_config(&self) -> ScopedReadResultVectorSearchConfig = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.search.vector.config")?;
+    let output = client.vault_search_vector_config(&input)?;
+    crate::codec::lift_record("vault.search.vector.config", &output)
+};
+"vault.search.vector" => fn vault_search_vector(&self, input: VectorSearchRequest) -> ScopedReadResultVectorSearchResult = |client| {
+    let input: oneiron::memory::VectorSearchRequest = crate::codec::lower_record("vault.search.vector", input)?;
+    let output = client.vault_search_vector(&input)?;
+    crate::codec::lift_record("vault.search.vector", &output)
+};
+"vault.vectors.put" => fn vault_vectors_put(&self, input: VectorPutRequest) -> VectorPutReceipt = |client| {
+    let input: oneiron::memory::VectorPutRequest = crate::codec::lower_record("vault.vectors.put", input)?;
+    let output = client.vault_vectors_put(&input)?;
+    crate::codec::lift_record("vault.vectors.put", &output)
+};
 "vault.search.hybrid" => fn vault_search_hybrid(&self, input: HybridSearchRequest) -> ScopedReadResultHybridSearchHitList = |client| {
     let input: oneiron::memory::HybridSearchRequest = crate::codec::lower_record("vault.search.hybrid", input)?;
     let output = client.vault_search_hybrid(&input)?;

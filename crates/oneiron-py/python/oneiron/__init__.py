@@ -640,6 +640,9 @@ class Oneiron:
         @property
         def search(self) -> "Oneiron._VaultSearchVerbs":
             return Oneiron._VaultSearchVerbs(self._client)
+        @property
+        def vectors(self) -> "Oneiron._VaultVectorsVerbs":
+            return Oneiron._VaultVectorsVerbs(self._client)
         def neighbors(self, input: dict[str, Any]) -> Any:
             """The weighted-edge neighbourhood of one entity, filtered by edge kind and minimum weight."""
             return json.loads(_translate(lambda: self._client.vault_neighbors(json.dumps(input, allow_nan=False))))
@@ -3172,6 +3175,9 @@ class Oneiron:
     class _VaultSearchVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        @property
+        def vector(self) -> "Oneiron._VaultSearchVectorVerbs":
+            return Oneiron._VaultSearchVectorVerbs(self._client)
         def hybrid(self, input: dict[str, Any]) -> Any:
             """Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence."""
             return json.loads(_translate(lambda: self._client.vault_search_hybrid(json.dumps(input, allow_nan=False))))
@@ -3181,6 +3187,21 @@ class Oneiron:
         def bm25(self, input: dict[str, Any]) -> Any:
             """BM25 text search over the engine index; surfaceable claims only."""
             return json.loads(_translate(lambda: self._client.vault_search_bm25(json.dumps(input, allow_nan=False))))
+    class _VaultSearchVectorVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, input: dict[str, Any]) -> Any:
+            """Searches full or MRL-prefix query vectors under the caller read ceiling; ordinary reads refine full queries, explicit voice_hot reads skip refinement at the reduced voice limit, with revision pins and dimensional evidence."""
+            return json.loads(_translate(lambda: self._client.vault_search_vector(json.dumps(input, allow_nan=False))))
+        def config(self, spec=None):
+            """Reads this vault open's persisted dimensions and optional MRL fast_dims prefix; graph shape is configured before open, never changed by a search."""
+            return json.loads(_translate(lambda: self._client.vault_search_vector_config(json.dumps({} if spec is None else spec))))
+    class _VaultVectorsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def put(self, spec):
+            """Supplies one full-width vector for a readable record as the authenticated owner; the existing write gate checks model, transform, width, revision staging and graph updates atomically."""
+            return json.loads(_translate(lambda: self._client.vault_vectors_put(json.dumps(spec))))
     class _VaultStructuralVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

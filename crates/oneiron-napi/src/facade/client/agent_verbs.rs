@@ -5408,6 +5408,27 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_search_vector_config(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.search.vector.config", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_search_vector(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.search.vector", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_vectors_put(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.vectors.put", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_search_hybrid(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.search.hybrid", input)

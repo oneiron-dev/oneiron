@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 769 facade rows, 2702 declarations.
-Inputs: 717 of 769 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 689 of 769 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 772 facade rows, 2710 declarations.
+Inputs: 720 of 772 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 692 of 772 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 99; unread shapes: 0.
 """
 
@@ -11266,6 +11266,36 @@ class RecordLinks(TypedDict):
     texts: list[LinkedText]
     narrowing: NotRequired[ScopedReadReceipt | None]
     next_after: NotRequired[str | None]
+class VectorSearchConfig(TypedDict):
+    dimensions: int
+    fast_dims: NotRequired[int | None]
+VectorSearchLane = Literal["ordinary", "voice_hot"]
+class VectorSearchRequest(TypedDict):
+    query_vector: list[float]
+    limit: int
+    lane: NotRequired[VectorSearchLane]
+class VectorSearchHit(TypedDict):
+    entity_ref: str
+    source_revision_ref: NotRequired[str | None]
+    score: float
+class VectorRefinement(TypedDict):
+    stored_dimensions: int
+    candidate_dimensions: int
+    query_dimensions: int
+    score_dimensions: int
+    full_dimension_rescore: bool
+class VectorSearchResult(TypedDict):
+    hits: list[VectorSearchHit]
+    lane: VectorSearchLane
+    effective_limit: int
+    limit_clamped: bool
+    refinement: NotRequired[VectorRefinement | None]
+class VectorPutRequest(TypedDict):
+    entity_ref: str
+    vector: list[float]
+class VectorPutReceipt(TypedDict):
+    entity_ref: str
+    dimensions: int
 class HybridPprQuery(TypedDict):
     seeds: list[str]
     depth: int
