@@ -251,6 +251,8 @@ pub(crate) fn stamp_put(
 }
 /// A TURN/MESSAGE body never proposes an audience: only
 /// `stamp_leader_project` settles a non-default one, at the record's birth.
+/// A BLOB_ARTIFACT's likewise: only `stamp_blob_project` settles one, in
+/// the transaction that binds the blob to its project.
 /// A SUMMARY body never proposes a world or facet: only `settle_epoch_birth`
 /// settles them. An ASSET body never proposes a sensitivity either: a raise
 /// (a secret-bearing ASSET marked Restricted, OF-560) leaves its stamp at a
@@ -265,7 +267,9 @@ fn settled_at_birth(kind: u8, prior: &Scope, proposed: &Scope) -> bool {
                     ..prior.clone()
                 } == *proposed
         }
-        crate::registry::ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_MESSAGE => {
+        crate::registry::ENTITY_TYPE_TURN
+        | crate::registry::ENTITY_TYPE_MESSAGE
+        | crate::registry::ENTITY_TYPE_BLOB_ARTIFACT => {
             Scope {
                 audience: proposed.audience.clone(),
                 ..prior.clone()
@@ -464,6 +468,56 @@ pub(crate) fn stamp_leader_project(
         kind,
         crate::registry::ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_MESSAGE
     ) {
+        return Err(Error::InvalidEntityType(kind));
+    }
+    let facet = crate::claim::substrate_facet_id(id)?;
+    let birth = default_stamp(kind, facet);
+    let mut scope = birth.clone();
+    scope.audience = singleton(ScopeId(project));
+    if let Some(prior) = SCOPE_RECORD.get(store, txn, &id)? {
+        if prior.version != 2
+            || prior.kind != kind
+            || prior.birth_facet != *facet.as_bytes()
+            || (prior.scope != birth && prior.scope != scope)
+        {
+            return Err(Error::InvalidClaimBody("record scope restamp refused"));
+        }
+        if prior.scope == scope {
+            return Ok(());
+        }
+    }
+    bump_scope_revision(store, txn)?;
+    SCOPE_RECORD.put(
+        store,
+        txn,
+        &id,
+        &Stamp {
+            version: 2,
+            kind,
+            birth_facet: *facet.as_bytes(),
+            scope,
+        },
+    )?;
+    Ok(())
+}
+/// Settles a BLOB_ARTIFACT's audience to `project` in the transaction that
+/// binds it to that project: a signing document drafted for a project, and
+/// the sealed copies and signature images it makes (OF-415). Like
+/// [`stamp_leader_project`], it only moves the record's own default birth
+/// stamp, or confirms the project stamp it already carries; any other prior
+/// position is refused.
+pub(crate) fn stamp_blob_project(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    project: EntityId,
+) -> Result<()> {
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?
+        .ok_or(Error::EntityNotFound)?;
+    let header =
+        EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("blob scope header"))?;
+    let kind = header.entity_type;
+    if kind != crate::registry::ENTITY_TYPE_BLOB_ARTIFACT {
         return Err(Error::InvalidEntityType(kind));
     }
     let facet = crate::claim::substrate_facet_id(id)?;

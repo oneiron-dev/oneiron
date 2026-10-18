@@ -821,7 +821,7 @@ impl OneironClient {
                 "connector.call_status" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ConnectorCallStatus,
                 >(client, verb, &input),
-                "vault.commit" => remote_agent_verb_output::<Vec<oneiron::memory::CommitReceipt>>(
+                "vault.commit" => remote_agent_verb_output::<Vec<oneiron::memory::CommitOutcome>>(
                     client, verb, &input,
                 ),
                 "vault.remember" => {
@@ -874,6 +874,9 @@ impl OneironClient {
                 }
                 "vault.artifacts.create" => remote_agent_verb_output::<
                     Option<oneiron::blob_artifact::ArtifactView>,
+                >(client, verb, &input),
+                "vault.esign.create" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::esign::EsignDraftView,
                 >(client, verb, &input),
                 "vault.conversations.create" => remote_agent_verb_output::<
                     oneiron::core_write::CoreEntityWriteReceipt,
@@ -963,7 +966,7 @@ impl OneironClient {
                     Option<oneiron::memory::DreamerAttemptView>,
                 >(client, verb, &input),
                 "vault.claims.seed" => remote_agent_verb_output::<
-                    Vec<oneiron::memory::CommitReceipt>,
+                    Vec<oneiron::memory::CommitOutcome>,
                 >(client, verb, &input),
                 "connector.outbound.schedule" => remote_agent_verb_output::<
                     oneiron::memory::OutboundIntentReceipt,
@@ -4178,7 +4181,7 @@ impl OneironClient {
     pub fn vault_commit(
         &self,
         input: &oneiron::task_verb::sdk::CommitRequest,
-    ) -> Result<Vec<oneiron::memory::CommitReceipt>, MemoryError> {
+    ) -> Result<Vec<oneiron::memory::CommitOutcome>, MemoryError> {
         oneiron::memory::caps::check_batch_len("claims", input.claims.len())?;
         for claim in &input.claims {
             oneiron::memory::caps::check_claim_input(claim)?;
@@ -4412,6 +4415,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.artifacts.create", value)
+    }
+    pub fn vault_esign_create(
+        &self,
+        input: &oneiron::blob_artifact::esign::EsignCreateRequest,
+    ) -> Result<oneiron::blob_artifact::esign::EsignDraftView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.esign.create", value)
     }
     pub fn vault_conversations_create(
         &self,
@@ -4789,7 +4804,7 @@ impl OneironClient {
     pub fn vault_claims_seed(
         &self,
         input: &oneiron::task_verb::sdk::CommitRequest,
-    ) -> Result<Vec<oneiron::memory::CommitReceipt>, MemoryError> {
+    ) -> Result<Vec<oneiron::memory::CommitOutcome>, MemoryError> {
         oneiron::memory::caps::check_batch_len("claims", input.claims.len())?;
         for claim in &input.claims {
             oneiron::memory::caps::check_claim_input(claim)?;

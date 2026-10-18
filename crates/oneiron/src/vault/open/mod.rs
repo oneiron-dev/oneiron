@@ -575,6 +575,11 @@ impl Vault {
             launch_usd_prices: Default::default(),
             message_streams: Default::default(),
             live_rows: Default::default(),
+            task_work: crate::work_line::WorkLine::new(
+                None,
+                crate::work_line::TASK_WORK_BOUND,
+                crate::work_line::TASK_WORK_WAIT,
+            ),
             world_keys: Default::default(),
             voice_ref_guard: Default::default(),
             trusted_contact_send_order: Default::default(),
@@ -591,6 +596,7 @@ impl Vault {
             lfs_read_room: Default::default(),
             result_body_pins: Default::default(),
             verb_hook_state: Default::default(),
+            skill_invocations: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
             slow_retrieval_stage: Default::default(),
         };

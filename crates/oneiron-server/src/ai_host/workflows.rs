@@ -114,7 +114,6 @@ impl WorkflowPump {
     /// provider takes its seat decisions: from the next pass on, each queued
     /// question runs on it. Until then the questions wait queued. `false`
     /// when one is installed already.
-    #[allow(dead_code)] // No in-tree host builds the project question's ladder yet.
     pub(super) fn with_project_detection(&self, detection: ProjectDetection) -> bool {
         self.detection.set(detection).is_ok()
     }

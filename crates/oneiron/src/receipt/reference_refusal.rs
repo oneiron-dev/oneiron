@@ -18,6 +18,14 @@
 //! matching OF-538's call receipts; ARCH-0052): a call inside one is refused
 //! or unlinked as anywhere else, but no reference-refusal record is written,
 //! since such a session keeps nothing ([`receipt_reference_refusals`]).
+//!
+//! The record carries one typed reason ([`RefusalReason`], Engine 10-18):
+//! `INVENTED_REFERENCE` for a ref that does not resolve (in a typed slot, or
+//! an answer's citation its pack does not carry), and `GATE_REFUSED` for a
+//! claim element the gate or its door refused. A refused element of a
+//! per-element batch is receipted by [`receipt_refusal`] once its own write
+//! has rolled back, so the receipt survives the rollback, and its id is
+//! answered with the typed refusal.
 
 use std::collections::BTreeMap;
 
@@ -25,11 +33,10 @@ use super::{ReceiptKind, ReceiptRecord};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::memory::RefusalReason;
 
 const OUTCOME_REFUSED: &str = "refused";
 const OUTCOME_UNLINKED: &str = "unlinked";
-/// The one reason every reference refusal carries: the typed facade code.
-const REASON: &str = crate::memory::MEMORY_CODE_INVENTED_REFERENCE;
 const FIELD_ACTOR_CLASS: &str = "actor_class";
 const FIELD_ROW: &str = "row";
 const FIELD_FIELD: &str = "field";
@@ -89,10 +96,11 @@ const fn actor_class_name(class: crate::EdgeActorClass) -> &'static str {
     }
 }
 
-/// The receipt the record at `id` carries: `refused`, at `at`.
+/// The receipt the record at `id` carries: `refused`, at `at`, for `reason`.
 pub(super) fn reference_refusal_receipt(
     id: &EntityId,
     facts: &ReferenceRefusalFacts,
+    reason: RefusalReason,
     at: u64,
 ) -> ReceiptRecord {
     let fields = BTreeMap::from([
@@ -112,13 +120,13 @@ pub(super) fn reference_refusal_receipt(
         outcome: facts.outcome.as_str().to_owned(),
         job_ref: None,
         trigger_ref: None,
-        policy_trace: vec![REASON.to_owned()],
+        policy_trace: vec![reason.as_str().to_owned()],
         fields,
     }
 }
 
 /// Whether `receipt` is the reference-refusal record `id` carries: its own
-/// id, a hex actor, the outcome `refused`, the one reason, and exactly the
+/// id, a hex actor, the outcome `refused`, one typed reason, and exactly the
 /// refusal facts, each in its bounded shape, so no carrier can smuggle an
 /// attempt's content into the audit family.
 pub(super) fn binds(id: &EntityId, receipt: &ReceiptRecord) -> bool {
@@ -132,7 +140,7 @@ pub(super) fn binds(id: &EntityId, receipt: &ReceiptRecord) -> bool {
         && receipt.on_behalf_of.is_none()
         && receipt.job_ref.is_none()
         && receipt.trigger_ref.is_none()
-        && matches!(receipt.policy_trace.as_slice(), [reason] if reason == REASON)
+        && matches!(receipt.policy_trace.as_slice(), [reason] if RefusalReason::parse(reason).is_some())
         && matches!(field(FIELD_ACTOR_CLASS), Some("human" | "agent" | "system"))
         && field(FIELD_ROW).is_some_and(|row| {
             !row.is_empty()
@@ -189,8 +197,40 @@ fn record_reference_refusals(vault: &Vault, refusals: &[ReferenceRefusalFacts]) 
             .collect::<Result<Vec<_>>>()?;
         let at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         for (id, facts) in ids.into_iter().zip(refusals) {
-            super::record::put_reference_refusal_in_txn(vault, txn, id, facts, at)?;
+            super::record::put_reference_refusal_in_txn(
+                vault,
+                txn,
+                id,
+                facts,
+                RefusalReason::InventedReference,
+                at,
+            )?;
         }
         Ok(())
     })
+}
+
+/// Receipts one refusal, `memory`'s writer's, as its own reference-refusal
+/// record under `reason`, on a grouped write of its own (Engine 10-18). The
+/// caller runs it once the refused write has rolled back, so the receipt
+/// stands outside that write and survives it. Answers the receipt's id
+/// (`reference_refusal:<hex>`), or `None` when the host bound the call to an
+/// anonymous off-record session, which keeps no record (#1968).
+pub(crate) fn receipt_refusal(
+    memory: &crate::memory::Memory<'_>,
+    facts: &ReferenceRefusalFacts,
+    reason: RefusalReason,
+) -> Result<Option<String>> {
+    if memory.keeps_no_record() {
+        return Ok(None);
+    }
+    let vault = memory.vault();
+    let id = vault.store.write_in_group(|txn| {
+        // The id first: the floor `recorded_at_in_txn` persists covers it.
+        let id = vault.store.clock.entity_id()?;
+        let at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+        super::record::put_reference_refusal_in_txn(vault, txn, id, facts, reason, at)?;
+        Ok(id)
+    })?;
+    Ok(Some(receipt_id(&id)))
 }
