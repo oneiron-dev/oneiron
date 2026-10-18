@@ -4,7 +4,10 @@
 //! as a Choice of only me, one of the owner's projects, or everyone the source shared it
 //! with. The owner's answer becomes a standing `disclosure.import_audience` rule
 //! ([`Vault::settle_import_audience`]) that applies to LATER imports only: the batch
-//! that raised the ask stays private. A claim with no `topic_key` joins no cluster.
+//! that raised the ask stays private. A later import's claims are born into the
+//! chosen audience when promotion signs them
+//! (`federation::record_scope::stamp_import_audience_birth`). A claim with no
+//! `topic_key` joins no cluster.
 //!
 //! This module keeps each cluster's operational state and the options the owner picks
 //! from. The ladder runs in the host, never inside a write transaction here.
