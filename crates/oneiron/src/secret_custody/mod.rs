@@ -104,8 +104,8 @@ pub use self::found_keys::{
     NOTIFICATION_PRODUCER_FOUND_KEY,
 };
 pub(crate) use self::found_keys::{
-    FoundNote, KeptValues, found_key_actions_in_txn, note_found_keys_in_txn,
-    raise_found_key_notices_in_txn, settle_found_key_in_txn,
+    FoundNote, KeptValues, erase_found_key_actor_in_txn, found_key_actions_in_txn,
+    note_found_keys_in_txn, raise_found_key_notices_in_txn, settle_found_key_in_txn,
 };
 pub use self::known_values::KNOWN_VALUE_MIN_BYTES;
 pub(crate) use self::known_values::{KnownSweep, KnownValues};
@@ -118,14 +118,15 @@ pub use self::owner_door::{
     ManifestSource, OwnerSecretRegistration, RequestedBinding, SecretRegistered,
 };
 pub use self::reveal::{
-    HandleReveal, NO_PROJECT_SELECTOR, OwnerSecretReveal, REVEAL_ASK_TTL_SECS,
-    REVEAL_LEASE_TTL_SECS, REVEAL_TEXT_MAX_BYTES, RevealTarget, SECRET_REVEAL_REASON_ASKED,
-    SECRET_REVEAL_REASON_OWNER, SecretHandleCard, SecretProvenance, SecretRevealAnswer,
-    SecretRevealAnswered, SecretRevealAsk, SecretRevealDecision, SecretRevealReceipt,
-    SecretRevealState, UNKNOWN_PROVIDER_DISCLOSURE,
+    ACTOR_ERASE_REVEAL_ASK, HandleReveal, NO_PROJECT_SELECTOR, OwnerSecretReveal,
+    REVEAL_ASK_TTL_SECS, REVEAL_LEASE_TTL_SECS, REVEAL_TEXT_MAX_BYTES, RevealAskErase,
+    RevealTarget, SECRET_REVEAL_REASON_ASKED, SECRET_REVEAL_REASON_OWNER, SecretHandleCard,
+    SecretProvenance, SecretRevealAnswer, SecretRevealAnswered, SecretRevealAsk,
+    SecretRevealDecision, SecretRevealReceipt, SecretRevealState, UNKNOWN_PROVIDER_DISCLOSURE,
 };
 pub(crate) use self::reveal::{
-    RevealAsker, RevealAuthority, parse_secret_handle, reveal_value_in_txn,
+    RevealAsker, RevealAuthority, erase_reveal_actor_in_txn, parse_secret_handle,
+    reveal_value_in_txn,
 };
 pub(crate) use self::transition::{
     CustodyApplied, CustodyTransition, apply_custody_transition_in_txn, custody_transitions,

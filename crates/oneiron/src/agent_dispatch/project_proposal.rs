@@ -110,7 +110,11 @@ impl AgentDispatcher<'_> {
             receipt: decision.receipt,
             house: drafter,
         };
-        settle_project_detection(self.vault, claimed, lease_owner, Some(&verdict))?;
+        // A source whose person was erased while the question ran keeps no
+        // answer, and no drafter is sent for it (FIX 3520).
+        if !settle_project_detection(self.vault, claimed, lease_owner, Some(&verdict))? {
+            return Ok(ProjectDetectionRun::Unread);
+        }
         match (answer, drafter) {
             (ProjectDetectionAnswer::AskedPerson, _) => Ok(ProjectDetectionRun::AskedPerson),
             (ProjectDetectionAnswer::Yes, None) => Ok(ProjectDetectionRun::NoHouseAgent),
