@@ -53,6 +53,10 @@ pub const COACH_TRADEOFF_ESCALATION_FACET: &str = "coach.tradeoff_escalation";
 /// Training offers (OF-577), drafted on the host from the offer skill's draft
 /// and recorded through [`Vault::run_coach_training_offer`].
 pub const COACH_TRAINING_OFFER_FACET: &str = "coach.training_offer";
+/// Eval authoring (OF-578, ARCH-0053): each seat's test set kept from the
+/// vault's own history by the eval-authoring skill, and applied through
+/// [`Vault::run_coach_eval_authoring`].
+pub const COACH_EVAL_AUTHORING_FACET: &str = "coach.eval_authoring";
 /// One offer's promise check, queued for the host on the offer's check date.
 /// The host reads the receipts since and records what they showed through
 /// [`Vault::run_coach_offer_check`]. Input: `{offer: <32 hex>}`.
@@ -96,6 +100,11 @@ pub const COACH_SEAL_CHECKS_FACET: &str = "coach.seal_checks";
 /// `attribution_unclear_floor` fitter reads model answers (see
 /// [`super::attribution_audits`]).
 pub const COACH_ATTRIBUTION_AUDITS_FACET: &str = "coach.attribution_audits";
+/// Judge-label re-checks (ARCH-0042 judge re-pin, OF-420): after an edit of
+/// the judge's rubric, each pick it stamped pending is put to the Coach's
+/// model; one that no longer fits, or that the model cannot judge, waits for
+/// its person's re-grade (see [`super::judge_label_rechecks`]).
+pub const COACH_JUDGE_LABEL_RECHECKS_FACET: &str = "coach.judge_label_rechecks";
 /// Type-tree upkeep (ARCH-0079 #task-type, OF-541): the vault tree recounted
 /// from its receipts, split and merged on anchored decisions, its new types
 /// named on the host, and a changed tree put in force (see
@@ -117,16 +126,18 @@ pub const COACH_ROOM_NUDGE_PREDICATE: &str = "coach.room_upkeep.nudge";
 /// Producer name of a pending training offer's inbox NOTIFICATION.
 pub const TRAINING_OFFER_NOTIFICATION_PRODUCER: &str = "coach.training_offer";
 
-const HOST_FACETS: [&str; 9] = [
+const HOST_FACETS: [&str; 11] = [
     COACH_SKILL_DISTILL_FACET,
     COACH_SKILL_DISCOVERY_FACET,
     COACH_PERSON_THRESHOLD_FACET,
     COACH_TRAINING_OFFER_FACET,
+    COACH_EVAL_AUTHORING_FACET,
     COACH_JUDGE_SWAP_FACET,
     COACH_TRADEOFF_ROUTE_FACET,
     COACH_SEAL_CHECKS_FACET,
     COACH_TYPE_TREE_UPKEEP_FACET,
     COACH_ATTRIBUTION_AUDITS_FACET,
+    COACH_JUDGE_LABEL_RECHECKS_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
 const MAINTENANCE_FACETS: [&str; 10] = [
@@ -448,9 +459,35 @@ impl Vault {
             let owners = crate::policy_model::owners_in_txn(self, &*txn)?;
             notify_offer_in_txn(self, txn, &owners, &offer)
         })?;
+        crate::task_verb::issue_training_offer_asks(self, now);
         // The digest deadline re-reads: a pending offer arms it.
         self.store.notify_proactivity_changes();
         Ok(offer)
+    }
+
+    /// Applies the eval-authoring skill's plan as the Coach, under a leased
+    /// `coach.eval_authoring` attempt: `skill` is the revision the attempt
+    /// loaded, and `inventory` what the plan was made from.
+    /// # Errors
+    /// An attempt that is not this facet's Coach attempt, a plan the
+    /// inventory refuses, or storage errors.
+    pub fn run_coach_eval_authoring(
+        &self,
+        attempt: &DreamerAdmittedAttempt,
+        plan: crate::skill_optimize::EvalAuthoringPlan,
+        inventory: &crate::skill_optimize::EvalAuthoringInventory,
+        skill: (EntityId, String),
+        now: u64,
+    ) -> Result<crate::skill_optimize::EvalAuthoringReport> {
+        self.require_coach_attempt(attempt, COACH_EVAL_AUTHORING_FACET)?;
+        crate::skill_optimize::apply_eval_authoring_plan(
+            self,
+            attempt.status.attempt.id,
+            skill,
+            plan,
+            inventory,
+            now,
+        )
     }
 
     /// Advances the autoresearch host continuations as the Coach, under a
@@ -651,7 +688,9 @@ pub(super) fn run_training_offers(vault: &Vault, now: u64) -> Result<()> {
             )?;
         }
         Ok(())
-    })
+    })?;
+    crate::task_verb::issue_training_offer_asks(vault, now);
+    Ok(())
 }
 
 /// The autoresearch tick: one selection round for each bound campaign the

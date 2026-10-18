@@ -371,6 +371,13 @@ impl Vault {
                 door,
             });
         }
+        let senders: Vec<EntityId> = live
+            .reach
+            .senders
+            .iter()
+            .map(|sender| sender.entity)
+            .collect();
+        let sends = self.classify_shape_manifests(&mut items, &senders)?;
         let summary = ShapePlanSummary::of(&items);
         let named: BTreeSet<ShapeTarget> = seed.rows.iter().map(ShapeRow::target).collect();
         let undeclared = live
@@ -382,7 +389,9 @@ impl Vault {
         // The whole set, before and with every item in place, each joined
         // from scratch; only the finished sets are compared.
         let mut unresolved = Vec::new();
-        let after = live.reach.with_plan(&items, &mut unresolved);
+        let after = live
+            .reach
+            .with_plan(&items, sends.as_ref(), &mut unresolved);
         let reach = ShapePlanReach::of(
             reach_projection(&live.reach).visible(visible)?,
             reach_projection(&after).visible(visible)?,

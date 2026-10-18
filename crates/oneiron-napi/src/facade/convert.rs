@@ -107,6 +107,7 @@ pub(super) fn witness_turn_to_engine(turn: &NapiWitnessTurn) -> BoundaryResult<W
             metadata: message.metadata.clone(),
             is_visible: message.is_visible.unwrap_or(true),
             order: message.order,
+            quote: message.quote.as_ref().map(quote_to_engine).transpose()?,
         });
     }
     let thread_audience = turn
@@ -121,11 +122,9 @@ pub(super) fn witness_turn_to_engine(turn: &NapiWitnessTurn) -> BoundaryResult<W
                 .collect::<BoundaryResult<std::collections::BTreeSet<_>>>()
         })
         .transpose()?;
-    let quote = turn.quote.as_ref().map(quote_to_engine).transpose()?;
     Ok(WitnessTurn {
         conversation_ref: turn.conversation_ref.clone(),
         turn_ref: turn.turn_ref.clone(),
-        quote,
         thread_audience,
         messages,
         occurred_at: ts_to_engine(turn.occurred_at, "occurred_at")?,
@@ -502,8 +501,9 @@ pub(super) fn memory_pack_from_engine(
 }
 
 /// Lowers the boundary media query onto the engine's wire type; an unknown
-/// kind is the caller's `BAD_REQUEST`.
-pub(super) fn recall_media_to_engine(
+/// kind is the caller's `BAD_REQUEST`. The legacy `NapiVault` context pack
+/// lowers its `media` here too, so both carry the one served shape.
+pub(crate) fn recall_media_to_engine(
     media: super::dtos::NapiRecallMedia,
 ) -> Result<oneiron::code_run::vault_read::ContextPackMediaQuery, oneiron::memory::MemoryError> {
     use oneiron::code_run::vault_read::MediaQueryKind;

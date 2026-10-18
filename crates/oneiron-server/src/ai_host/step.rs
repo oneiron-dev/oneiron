@@ -6,8 +6,8 @@
 //! with no context is asked its definition's own `desc`. No text is invented
 //! here; the output's raw bytes become the step's durable result.
 //!
-//! A step whose task fits one objective is also asked for its confession
-//! (OF-544, ARCH-0079): after a DONE line, one fenced block naming that
+//! A step whose task names an objective is also asked for its confession
+//! (OF-544, ARCH-0079): after a DONE line, one fenced block naming each
 //! objective, whether it was met, and any flaw or doubt. A step that gives
 //! none, or one that does not parse, records none.
 use std::collections::{BTreeMap, HashMap};
@@ -19,6 +19,7 @@ use oneiron::agent_dispatch::{AgentDispatchStatus, AgentDispatcher, agent_dispat
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use oneiron::compaction::output::restore_output;
 use oneiron::context_projection::ResolvedContextProjection;
+use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confession};
 use oneiron::self_heal::audit::ObjectiveConfession;
 use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, Error, LlmMessage,
@@ -31,10 +32,6 @@ use crate::models::ModelRuntime;
 
 /// The purpose a workflow step's calls are metered and routed under.
 const STEP_PURPOSE: &str = "workflow_step";
-/// The longest objective a confession names, in bytes: the seal's bound.
-const OBJECTIVE_MAX_BYTES: usize = 256;
-/// The fence that opens a step's confession block, after its DONE line.
-const CONFESSION_FENCE: &str = "```oneiron-confession";
 
 pub(super) struct StepRunner {
     /// Steps run on the generative role, admitted against the vault's live
@@ -69,11 +66,10 @@ pub(super) struct StepOutput {
 }
 
 /// The objectives a step is asked to confess against: the caller's, verbatim,
-/// when the dispatch carries them; else the one its task names,
-/// whitespace folded, when it fits a seal objective. The spawn's planned need
-/// comes first, then the step's briefing, then the definition's `desc` when
-/// that is what the step was asked. A task too long for one objective asks
-/// no confession: an objective is never cut or made up.
+/// when the dispatch carries them; else the one its task names, whitespace
+/// folded and whole. The spawn's planned need comes first, then the step's
+/// briefing, then the definition's `desc` when that is what the step was
+/// asked. An objective is never cut or made up.
 fn step_objectives(step: &AgentDispatchStatus, request: Option<&str>) -> Vec<String> {
     if let Some(objectives) = &step.input.objectives {
         return objectives.clone();
@@ -86,44 +82,8 @@ fn step_objectives(step: &AgentDispatchStatus, request: Option<&str>) -> Vec<Str
         .chain(request)
         .map(|text| text.split_whitespace().collect::<Vec<_>>().join(" "))
         .find(|text| !text.is_empty())
-        .filter(|text| text.len() <= OBJECTIVE_MAX_BYTES)
         .into_iter()
         .collect()
-}
-
-/// The ask for a confession against `objectives`, after the step's task.
-fn confession_ask(objectives: &[String]) -> String {
-    let listed = serde_json::to_string(objectives).unwrap_or_default();
-    format!(
-        "Objectives assigned to this attempt: {listed}\n\
-         When your result is complete, end it with a line that is exactly DONE, then one \
-         block fenced ```oneiron-confession holding \
-         {{\"objectives\":[{{\"objective\":\"<the assigned objective, copied exactly>\",\
-         \"met\":<true or false>,\"flaw\":<null or what is wrong>,\
-         \"uncertainty\":<null or what you are unsure of>}}]}} with one row per assigned \
-         objective, in order. Say plainly what you did not meet, any flaw and any doubt: a \
-         confession never costs the score. Nothing follows the closing fence."
-    )
-}
-
-/// The confession `output` ends with, when it is a DONE line, then one
-/// ```oneiron-confession block whose rows name exactly `objectives`, in
-/// order. Anything else is no confession.
-fn parse_confession(output: &[u8], objectives: &[String]) -> Option<Vec<ObjectiveConfession>> {
-    #[derive(serde::Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Block {
-        objectives: Vec<ObjectiveConfession>,
-    }
-    let text = std::str::from_utf8(output).ok()?.trim_end();
-    let (head, block) = text.strip_suffix("```")?.rsplit_once(CONFESSION_FENCE)?;
-    let head = head.trim_end();
-    if head != "DONE" && !head.ends_with("\nDONE") {
-        return None;
-    }
-    let rows = serde_json::from_str::<Block>(block.trim()).ok()?.objectives;
-    let named = rows.iter().map(|row| &row.objective);
-    (rows.len() == objectives.len() && named.eq(objectives)).then_some(rows)
 }
 
 /// Why a step did not produce its output, and whether a later try of the
@@ -398,7 +358,17 @@ impl StepRunner {
         // settled. An answer pays its tokens, or the reservation when it
         // reports none; a rung that went out and failed pays its reservation.
         let run = self.models.funded_run(run_id, guard, payer);
+        // The admitted request is the step's replay capsule (FIX 3028),
+        // finalized with the rung that answers it. A capture that fails
+        // leaves none and never fails the step.
+        oneiron::code_run::capture_workflow_step(
+            vault,
+            attempt.id,
+            attempt.attempt_count,
+            &request,
+        );
         let generated = runtime.block_on(call.ladder.generate_served(&run, request, None));
+        oneiron::code_run::finalize_step_captures(vault);
         // What this try spent goes on the lease whatever the call answered;
         // the replayed tries recorded their own.
         if let Some(scope) = &lease {

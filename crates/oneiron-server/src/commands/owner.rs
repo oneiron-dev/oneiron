@@ -7,7 +7,7 @@
 //! door the embedded export uses; a running `serve` answers the same actions
 //! at `/v1/owner/*`. Output is JSON on stdout.
 
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, Write};
 use std::path::Path;
 
 use oneiron::claim::CallerLocality;
@@ -482,7 +482,7 @@ pub fn whoami(args: WhoamiArgs) -> anyhow::Result<()> {
 struct Exported<'a> {
     file: &'a Path,
     format: String,
-    bytes: usize,
+    bytes: u64,
 }
 
 pub fn export(args: ExportArgs) -> anyhow::Result<()> {
@@ -498,28 +498,44 @@ pub fn export(args: ExportArgs) -> anyhow::Result<()> {
     memory
         .admit_export(None)
         .map_err(|error| anyhow::anyhow!("export failed: {error}"))?;
-    let export = oneiron::task_verb::verb_hook_boundary::typed_row(
-        &memory,
-        "vault.export",
-        oneiron::memory::ExportOptions {
-            format: Some(args.format),
-            include_secrets: Some(args.include_secrets),
-        },
-        |input| memory.export(&input),
-    )
-    .map_err(|error| anyhow::anyhow!("export failed: {error}"))?;
+    let options = oneiron::memory::ExportOptions {
+        format: Some(args.format),
+        include_secrets: Some(args.include_secrets),
+    };
+    // The archive is written to a file as it is built (FIX 2766), never held
+    // whole: to `--out`, or to a spool under the vault's own staging
+    // directory that is then copied to stdout. The verb hooks see the
+    // export's receipt, not its bytes.
+    let run = |file: &mut std::fs::File| {
+        oneiron::task_verb::verb_hook_boundary::typed_row(
+            &memory,
+            "vault.export",
+            options.clone(),
+            |input| memory.export_to(&input, &mut *file),
+        )
+    };
     let Some(out) = args.out else {
-        io::stdout().lock().write_all(&export.archive)?;
+        let mut spool = vault
+            .archive_spool_file()
+            .map_err(|error| anyhow::anyhow!("export failed: {error}"))?;
+        run(&mut spool).map_err(|error| anyhow::anyhow!("export failed: {error}"))?;
+        spool.seek(io::SeekFrom::Start(0))?;
+        io::copy(&mut spool, &mut io::stdout().lock())?;
         return Ok(());
     };
+    let mut exported = None;
     write_new_file(&out, |file| {
-        file.write_all(&export.archive)?;
-        file.sync_all()
+        let receipt =
+            run(file).map_err(|error| io::Error::other(format!("export failed: {error}")))?;
+        file.sync_all()?;
+        exported = Some(receipt);
+        Ok(())
     })?;
+    let exported = exported.ok_or_else(|| anyhow::anyhow!("export failed: no receipt"))?;
     emit(&Exported {
         file: &out,
-        format: export.format,
-        bytes: export.archive.len(),
+        format: exported.format,
+        bytes: exported.bytes,
     })
 }
 
@@ -846,12 +862,14 @@ const EMBEDDING_SETUP_IMPORTED: &str = "setup imported; vectors pending recomput
 
 /// Re-imports a whole-vault archive through the vault's import doors.
 fn import_archive(args: crate::cli::ImportArchiveArgs) -> anyhow::Result<()> {
-    let bytes = std::fs::read(&args.path)
+    // The archive is read member by member from its file (FIX 2766), never
+    // whole.
+    let file = std::fs::File::open(&args.path)
         .map_err(|error| anyhow::anyhow!("read {}: {error}", args.path.display()))?;
     let config = resolve_serve_config(&args.serve)?;
     let vault = open_stopped_vault(&config, "stop `serve` to import an archive")?;
     let receipt = vault
-        .import_whole_vault_archive(&bytes)
+        .import_whole_vault_archive_from(io::BufReader::new(file))
         .map_err(|error| anyhow::anyhow!("archive import failed: {error}"))?;
     let setup = receipt.embedding_setup;
     let status = setup
@@ -954,20 +972,56 @@ fn hold_host_root(config: &ServeConfig, vault: &oneiron::Vault) -> anyhow::Resul
 
 /// The saved fork alarms a held root handoff left, and the owner's
 /// acknowledgement of one; `serve` answers the same at
-/// `/v1/owner/authority/handoff-alarms`.
+/// `/v1/owner/authority/handoff-alarms`. Each operation runs its
+/// `vault.authority.handoff_alarms` row's verb hooks once around the engine
+/// door, as the route does (OF-580). The list still takes no owner proof
+/// (Engine 10-18): its hooks run as the local host actor where this vault
+/// holds one, and without one the read runs unhooked and logs a warning.
 pub fn handoff_alarms(command: HandoffAlarmsCommand) -> anyhow::Result<()> {
-    let serve = match &command {
-        HandoffAlarmsCommand::List(args) => &args.serve,
-        HandoffAlarmsCommand::Acknowledge(args) => &args.serve,
+    use oneiron::task_verb::sdk;
+
+    let (serve, route) = match &command {
+        HandoffAlarmsCommand::List(args) => (&args.serve, "GET /v1/owner/authority/handoff-alarms"),
+        HandoffAlarmsCommand::Acknowledge(args) => (
+            &args.serve,
+            "POST /v1/owner/authority/handoff-alarms/acknowledge --data -",
+        ),
     };
     let config = resolve_serve_config(serve)?;
-    let vault = open_vault(&config, "GET /v1/owner/authority/handoff-alarms")?;
-    match command {
-        HandoffAlarmsCommand::List(_) => emit(&vault.authority_handoff_alarms()?),
+    let vault = open_vault(&config, route)?;
+    let answer = match command {
+        HandoffAlarmsCommand::List(_) => match local_host_actor(&vault)? {
+            Some(actor) => hooked_row(
+                &vault,
+                actor,
+                "vault.authority.handoff_alarms",
+                sdk::EmptyRequest {},
+                |_| Ok(vault.authority_handoff_alarms()?),
+            )?,
+            None => {
+                tracing::warn!(
+                    verb = "vault.authority.handoff_alarms",
+                    "this vault holds no local host actor, so the row's verb hooks did not run for this read"
+                );
+                serde_json::to_value(vault.authority_handoff_alarms()?)?
+            }
+        },
         HandoffAlarmsCommand::Acknowledge(args) => {
-            emit(&vault.acknowledge_authority_handoff_alarm(&local_owner(&vault)?, &args.signer)?)
+            let owner = local_owner(&vault)?;
+            hooked_row(
+                &vault,
+                owner_actor(&vault)?,
+                "vault.authority.handoff_alarms.acknowledge",
+                sdk::HandoffAlarmRequest {
+                    signer: args.signer,
+                },
+                |request: sdk::HandoffAlarmRequest| {
+                    Ok(vault.acknowledge_authority_handoff_alarm(&owner, &request.signer)?)
+                },
+            )?
         }
-    }
+    };
+    emit(&answer)
 }
 
 /// The owner's learned-setting rows on a stopped vault; `serve` answers the
@@ -1383,6 +1437,17 @@ fn owner_actor(vault: &oneiron::Vault) -> anyhow::Result<oneiron::EntityId> {
     vault
         .ensure_embedded_owner_actor()
         .map_err(|error| anyhow::anyhow!("vault owner unavailable: {error}"))
+}
+
+/// The CLI's local host actor, for a read that takes no owner proof: the
+/// actor a host's own call runs as (`verb_hook_boundary::host_actor`, the
+/// vault's embedded owner), when this vault holds it. Unlike `owner_actor`
+/// it creates nothing.
+fn local_host_actor(vault: &oneiron::Vault) -> anyhow::Result<Option<oneiron::EntityId>> {
+    let Ok(actor) = oneiron::task_verb::verb_hook_boundary::host_actor() else {
+        return Ok(None);
+    };
+    Ok(vault.entity_exists(&actor)?.then_some(actor))
 }
 
 /// The engine's input kind for a command-line kind.

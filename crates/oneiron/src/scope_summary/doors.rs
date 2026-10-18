@@ -19,7 +19,7 @@ use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::memory::{Memory, MemoryError};
-use crate::provenance::birth::{MAX_BIRTH_INPUTS, RowBirth};
+use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_SUMMARY,
@@ -308,18 +308,14 @@ pub(super) fn mint_in_txn(
             &encoded,
         )
         .text(&id, &[("text", text)]);
-    for covered in body.covers.iter().take(256) {
+    for covered in &body.covers {
         batch = batch.edge(&id, EdgeKind::DerivedFrom, covered, 1.0);
     }
     let _permit = super::producer::admit(&vault.store, id, &encoded);
     batch.apply(txn)?;
     // Rule A: the summary is concluded from every record and MESSAGE its words
-    // came from, the first MAX_BIRTH_INPUTS of them. A re-entered attempt
-    // keeps its first birth.
-    let inputs: Vec<EntityId> = word_sources(&body)
-        .copied()
-        .take(MAX_BIRTH_INPUTS)
-        .collect();
+    // came from. A re-entered attempt keeps its first birth.
+    let inputs: Vec<EntityId> = word_sources(&body).copied().collect();
     if let Some(birth) = RowBirth::written(
         actor,
         MadeByClass::Concluded,
@@ -796,7 +792,7 @@ impl Vault {
         settle_header(&requester, outcome)
     }
 
-    /// Reads the complete body truth list, not just the first 256 edges.
+    /// Reads the complete body truth list, not the DerivedFrom edges.
     pub fn scope_summary_covers(&self, summary: &EntityId) -> Result<Vec<EntityId>> {
         let txn = self.store.env.read_txn()?;
         Ok(summary_in_txn(self, &txn, summary)?.covers)

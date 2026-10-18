@@ -165,10 +165,15 @@ pub use self::dials::{
     set_skill_optimize_min_outcomes, skill_optimize_min_outcomes,
 };
 pub use self::eval_set::{
-    DerivationKind, EvalCase, EvalCaseDraft, EvalCohort, EvalExposure, EvalExposureCounts,
-    EvalExposureKind, EvalLabel, EvalLabelAsk, EvalLabelKind, EvalRelease, EvalSeat, FamilyPurpose,
-    SourceFamily, SufficiencyCard, SufficiencyInput, SufficiencyVerdict, UnknownReason,
-    WaitingDecision, sufficiency_card,
+    AuditCase, AuditCoverage, AuditMethodPin, CandidateLabel, CaseDecision, CohortRetirement,
+    CohortSummary, CoverageGap, CutDecision, DerivationKind, EvalAuthoringInventory,
+    EvalAuthoringPlan, EvalAuthoringReport, EvalAuthoringSkip, EvalCandidate, EvalCase,
+    EvalCaseDraft, EvalCohort, EvalCohortDecision, EvalCutAudit, EvalCutAuditDraft, EvalExposure,
+    EvalExposureCounts, EvalExposureKind, EvalLabel, EvalLabelAsk, EvalLabelKind, EvalRelease,
+    EvalSeat, EvalSourceGroup, FamilyDecision, FamilyPurpose, NearCopyFlag, PurposeCounts,
+    SeatInventory, SourceFamily, SufficiencyCard, SufficiencyInput, SufficiencyVerdict,
+    UncutFamily, UnknownReason, WaitingDecision, apply_eval_authoring_plan,
+    eval_authoring_inventory, sufficiency_card,
 };
 pub use self::goal_axes::{
     AxisArm, AxisScores, ConfidenceInterval, GoalAxisBandit, GoalAxisBandits, GoalAxisPlan,
@@ -191,19 +196,23 @@ pub(crate) use self::judge_swap::{
     judge_retest_flips, retest_flip_ask, run_judge_swap, swap_case_ask, swap_case_retest_picked,
 };
 pub use self::labels::{
-    JudgeAsk, JudgeAskReason, JudgeLabel, ask_judge_disagreement, ask_judge_uncertainty,
-    judge_digest_minutes, judge_label_anchor, record_judge_pick, set_judge_digest_minutes,
+    JudgeAsk, JudgeAskReason, JudgeLabel, JudgeLabelChecker, JudgeLabelFit, JudgeLabelRecheck,
+    JudgeLabelRecheckReport, JudgeLabelRecheckRequest, JudgeLabelRegrade, JudgeRegrade,
+    JudgeRubric, ask_judge_disagreement, ask_judge_uncertainty, judge_digest_minutes,
+    judge_label_anchor, judge_rubric, record_judge_label_regrade, record_judge_pick,
+    set_judge_digest_minutes,
 };
 pub(crate) use self::labels::{
-    judge_ask_room, take_digest_asks_in_txn, take_digest_eval_asks_in_txn,
+    judge_ask_room, recheck_judge_labels, take_digest_asks_in_txn, take_digest_eval_asks_in_txn,
 };
 pub use self::offer::{
     ComputeDestination, OFFER_SKILL_AXIS, OfferAnswer, OfferAnswerRecord, OfferCandidate,
     OfferCheck, OfferCheckInput, OfferCost, OfferEvidence, OfferIntent, OfferModelPin, OfferOption,
-    SeatWorkload, TrainingOffer, TrainingOfferDraft, offer_skill_cell, pending_training_offers,
-    record_offer_check, record_training_offer, settle_training_offer, training_offer,
-    training_offer_checks, training_offer_skill_id, training_offers,
+    SeatWorkload, TrainingOffer, TrainingOfferDraft, eval_authoring_skill_id, offer_skill_cell,
+    pending_training_offers, record_offer_check, record_training_offer, settle_training_offer,
+    training_offer, training_offer_checks, training_offer_skill_id, training_offers,
 };
+pub(crate) use self::offer::{pending_training_offer_in_txn, settle_training_offer_in_txn};
 pub use self::offer_switch::{
     OfferSwitchReceipt, OfferSwitchUndo, model_role_seat, seat_model_role, training_offer_switch,
     undo_training_offer_switch,

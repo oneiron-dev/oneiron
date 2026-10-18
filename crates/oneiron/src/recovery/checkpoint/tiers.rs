@@ -133,6 +133,12 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 b"models:offer-cooldown:",
                 // So do the Responses chains its providers keep (OF-602).
                 b"models:responses-chain:",
+                // The home's kit door nonces and its unfinished bundle
+                // uploads: a restore drops the uploads, and their machines
+                // start over (FIX 922).
+                b"rb:n:",
+                b"rb:s:",
+                b"rb:u:",
             ]
             .iter()
             .any(|p| key.starts_with(p))

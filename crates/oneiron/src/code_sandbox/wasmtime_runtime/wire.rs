@@ -591,6 +591,7 @@ const GUEST_FAILURE_CODES: &[&str] = &[
     "skills_call_lease_lost",
     "skills_call_no_runtime",
     "skills_call_no_executor",
+    "skills_call_stack_floor",
     "team_unbound",
     "team_off_record",
     "team_start_invalid_agent",
@@ -821,7 +822,7 @@ pub(super) fn output(bridge: &mut Bridge<'_>, target: StreamTarget, frame: Vec<u
     let len = frame.len() as u64;
     let cancel = bridge.cancel;
     if !admitted(cancel, || bridge.host.write_output(target.stream(), &frame))? {
-        bridge.held.take(target, frame, bridge.held_limit)?;
+        bridge.held.take(target, frame)?;
     }
     Ok(len)
 }

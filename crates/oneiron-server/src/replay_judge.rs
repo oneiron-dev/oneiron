@@ -24,9 +24,10 @@ use oneiron::dispatch_byoa::{decode_byoa_exhaust, parse_byoa_result_ref};
 use oneiron::dreamer_runner::decode_dreamer_attempt_payload;
 use oneiron::dreamer_runner::maintenance::CoachLiveSlice;
 use oneiron::learning::honesty::HONESTY_AXIS;
+use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::decision::{
-    DecisionBandPolicy, DecisionDial, DecisionQuestion, DecisionRung, HeldLadder, ProviderPin,
-    TypedDecision,
+    DecisionBandPolicy, DecisionDial, DecisionQuestion, DecisionRung, HeldLadder,
+    MAX_DECISION_STATE_BYTES, ProviderPin, TypedDecision,
 };
 use oneiron::posterior::Posterior;
 use oneiron::receipt::{ReceiptKind, ReceiptQuery};
@@ -36,8 +37,8 @@ use oneiron::skill_attribution::{AttributionVerdict, attribution_judgments};
 use oneiron::skill_optimize::{
     AxisArm, ConfidenceInterval, GoalAxisBandit, GoalAxisBandits, GoalAxisSpec, HeldOutReplayCase,
     HeldOutReplayNotes, HonestyReplay, OnlineAxisSample, PROVENANCE_OPTIMIZE_OF_ENTITY_KEY,
-    SkillOptimizeDecisions, SkillReplayPair, judge_incumbent, register_held_out_replay_scorer,
-    skill_edit_goal,
+    SkillOptimizeDecisions, SkillReplayPair, judge_incumbent, judge_rubric,
+    register_held_out_replay_scorer, skill_edit_goal,
 };
 use oneiron::skill_reliability::{SkillReliabilityPosterior, effective_skill_outcome};
 use oneiron::{EntityId, Error, ModelId, Result, Vault};
@@ -56,13 +57,10 @@ const MINUTES: &str = "skill:judge:v1:minutes:";
 /// One clock for the judgments of one scoring pass; a new one starts once
 /// it reaches its answer time.
 const JUDGE_BUDGET: Duration = Duration::from_secs(600);
-/// The instructions' share of a replay state, in bytes.
-const MAX_INSTRUCTIONS: usize = 8_192;
-/// The replays' share of a replay state, in bytes: the ladder takes at most
-/// 64 KiB of state.
-const MAX_REPLAY_TEXT: usize = 40_000;
-/// The least a replay text is cut to.
-const MIN_REPLAY_TEXT: usize = 128;
+/// Room a judgment's call puts around a state the judge builds, past the
+/// case fields [`fit`] is told of: the question's axis and kind, a
+/// decorator's coverage floor, the JSON around them.
+const CALL_ROOM: usize = 1_024;
 /// Most blind pairs one preference audit reads (the engine's bound).
 const MAX_PAIRS: usize = 32;
 /// How far back live arm attribution looks for loaded runs.
@@ -86,7 +84,7 @@ const CONFIGURED_JUDGES_UNASKED_INCUMBENT: bool = true;
 const WORDING: &[(&str, &str)] = &[
     (
         "score",
-        "How well do these instructions carry out the skill's task on these replays? Answer from 0 to 1.",
+        "How well do these instructions carry out the skill's task on these replays, judged by the state's judge rubric when it gives one? Answer from 0 to 1.",
     ),
     (
         "structural",
@@ -119,12 +117,49 @@ fn invalid(message: impl Into<String>) -> Error {
     Error::InvalidConfig(message.into())
 }
 
-fn cut(text: &str, bytes: usize) -> &str {
-    let mut end = text.len().min(bytes);
+/// `text` whole, or cut to `at` bytes on a character boundary.
+fn cut(text: &str, at: Option<usize>) -> &str {
+    let Some(at) = at else {
+        return text;
+    };
+    let mut end = text.len().min(at);
     while !text.is_char_boundary(end) {
         end -= 1;
     }
     &text[..end]
+}
+
+/// The bytes `value` takes as JSON.
+fn json_len<T: Serialize + ?Sized>(value: &T) -> usize {
+    serde_json::to_vec(value).map_or(0, |bytes| bytes.len())
+}
+
+/// The cut a judgment's state is built at: `None` while `state` with every
+/// text whole, and the `beside` bytes its call puts around it, fits the
+/// ladder's state bound ([`MAX_DECISION_STATE_BYTES`]), which refuses a
+/// larger state. Past it, half the `longest` text, halving until it fits.
+/// The texts' own `[limits]` rows never cut; only the ladder's bound does.
+fn fit(beside: usize, longest: usize, state: impl Fn(Option<usize>) -> Value) -> Option<usize> {
+    let room = MAX_DECISION_STATE_BYTES.saturating_sub(beside.saturating_add(CALL_ROOM));
+    let mut at = None;
+    loop {
+        let fits = json_len(&state(at)) <= room;
+        at = match at {
+            _ if fits => return at,
+            None if longest > 0 => Some(longest / 2),
+            Some(bytes) if bytes > 0 => Some(bytes / 2),
+            _ => return at,
+        };
+    }
+}
+
+/// `state`, saying where its texts were cut (`cut_at_bytes`) when they were,
+/// so a provider knows it reads a cut text.
+fn cut_at(mut state: Value, at: Option<usize>) -> Value {
+    if let Some(bytes) = at {
+        state["cut_at_bytes"] = json!(bytes);
+    }
+    state
 }
 
 fn now() -> u64 {
@@ -450,16 +485,21 @@ impl ServeReplayJudge {
         }))
     }
 
-    fn replay(&self, receipt: &str, bytes: usize) -> Result<Value> {
-        Ok(match attempt_of(&self.vault, receipt)? {
-            None => json!({"receipt": receipt, "kept": false}),
-            Some(attempt) => json!({
-                "receipt": receipt,
-                "kind": attempt.kind,
-                "task": cut(&task_text(&attempt), bytes),
-                "response": cut(&response_text(&self.vault, &attempt), bytes),
-            }),
-        })
+    /// A reserved receipt's run as a replay reads it: its kind, task and
+    /// response. `None` when its row is no longer kept.
+    fn replay_texts(&self, receipt: &str) -> Result<Option<(String, String, String)>> {
+        Ok(attempt_of(&self.vault, receipt)?.map(|attempt| {
+            let task = task_text(&attempt);
+            let response = response_text(&self.vault, &attempt);
+            (attempt.kind, task, response)
+        }))
+    }
+
+    /// Measures `bytes` against `row`: past it the row asks whether all is
+    /// well, and the text still rides whole.
+    fn measure(&self, row: EngineLimit, bytes: usize) {
+        self.vault
+            .measure_limit(row, u64::try_from(bytes).unwrap_or(u64::MAX));
     }
 }
 
@@ -482,26 +522,71 @@ impl HeldOutReplayNotes for ServeReplayJudge {
         }
     }
 
-    /// Each reserved receipt's task and response, cut to share the state;
-    /// never its status, verdict or success. The goal's own words ride
-    /// beside them when the skill's goal joins a project that states them.
+    /// Each reserved receipt's task and response, whole while the
+    /// judgment's state fits the ladder's bound (else [`fit`]'s cut); never
+    /// its status, verdict or success. The skill's instructions ride whole
+    /// in the case the gate puts around this state. The goal's own words
+    /// ride beside the replays when the skill's goal joins a project that
+    /// states them, and the judge's rubric (the active shared `judge`
+    /// skill's text) when one is in force, so an edit of it changes what
+    /// every case is judged by.
     fn replay_state(&self, case: &HeldOutReplayCase<'_>) -> Result<Value> {
         let receipts = case.held_out_receipts;
-        let bytes = (MAX_REPLAY_TEXT / receipts.len().max(1) / 2).max(MIN_REPLAY_TEXT);
-        let replays = receipts
-            .iter()
-            .map(|receipt| self.replay(receipt, bytes))
-            .collect::<Result<Vec<_>>>()?;
-        let mut state = json!({
-            "skill_id": case.skill_id,
-            "version": case.version,
-            "instructions": cut(case.instructions, MAX_INSTRUCTIONS),
-            "replays": replays,
-        });
-        if let Some(goal) = self.goal_brief(&case.skill)? {
-            state["goal"] = goal;
+        let mut replays = Vec::with_capacity(receipts.len());
+        for receipt in receipts {
+            replays.push((receipt, self.replay_texts(receipt)?));
         }
-        Ok(state)
+        let texts = || replays.iter().filter_map(|(_, texts)| texts.as_ref());
+        let goal = self.goal_brief(&case.skill)?;
+        let rubric = judge_rubric(&self.vault)?;
+        // Each read whole; past its `[limits]` row it asks whether all is well.
+        self.measure(EngineLimit::JudgeInstructionsBytes, case.instructions.len());
+        self.measure(
+            EngineLimit::JudgeReplayTextBytes,
+            texts()
+                .map(|(_, task, response)| task.len() + response.len())
+                .sum(),
+        );
+        if let Some(rubric) = &rubric {
+            self.measure(EngineLimit::JudgeRubricBytes, rubric.text.len());
+        }
+        let state = |at: Option<usize>| {
+            let replays: Vec<Value> = replays
+                .iter()
+                .map(|(receipt, texts)| match texts {
+                    None => json!({"receipt": receipt, "kept": false}),
+                    Some((kind, task, response)) => json!({
+                        "receipt": receipt,
+                        "kind": kind,
+                        "task": cut(task, at),
+                        "response": cut(response, at),
+                    }),
+                })
+                .collect();
+            let mut state = json!({
+                "skill_id": case.skill_id,
+                "version": case.version,
+                "replays": replays,
+            });
+            if let Some(goal) = &goal {
+                state["goal"] = goal.clone();
+            }
+            if let Some(rubric) = &rubric {
+                state["judge_rubric"] = json!(rubric.text);
+            }
+            cut_at(state, at)
+        };
+        // The gate's case carries the instructions and receipts beside it.
+        let beside = json_len(&json!({
+            "skill": case.skill.to_hex(), "skill_id": case.skill_id,
+            "version": case.version, "instructions": case.instructions,
+            "held_out_receipts": receipts,
+        }));
+        let longest = texts()
+            .map(|(_, task, response)| task.len().max(response.len()))
+            .max()
+            .unwrap_or(0);
+        Ok(state(fit(beside, longest, &state)))
     }
 
     /// Receipts' responses two by two, response only, never a status or a
@@ -509,8 +594,7 @@ impl HeldOutReplayNotes for ServeReplayJudge {
     /// rest pair as they come. Each response rides beside the task it
     /// answered, so a judge or the owner's pick compares answers to what each
     /// was asked.
-    fn blind_pairs(&self, _task: &str, receipts: &[String]) -> Result<Vec<SkillReplayPair>> {
-        let bytes = MAX_REPLAY_TEXT / 4;
+    fn blind_pairs(&self, task: &str, receipts: &[String]) -> Result<Vec<SkillReplayPair>> {
         let mut answered: Vec<(&str, String, String)> = Vec::new();
         for receipt in receipts {
             if let Some(attempt) = attempt_of(&self.vault, receipt)? {
@@ -544,14 +628,31 @@ impl HeldOutReplayNotes for ServeReplayJudge {
             .take(MAX_PAIRS)
             .map(|[first, second]| {
                 let (first, second) = (&answered[first], &answered[second]);
+                let pair_ref = format!("{}|{}", first.0, second.0);
+                let texts = [&first.1, &first.2, &second.1, &second.2];
+                // Read whole; past its `[limits]` row it asks whether all is well.
+                self.measure(
+                    EngineLimit::JudgeReplayTextBytes,
+                    texts.into_iter().map(String::len).sum(),
+                );
+                let state = |at: Option<usize>| {
+                    cut_at(
+                        json!({
+                            "first": cut(&first.2, at),
+                            "second": cut(&second.2, at),
+                            "first_task": cut(&first.1, at),
+                            "second_task": cut(&second.1, at),
+                        }),
+                        at,
+                    )
+                };
+                // The preference question puts the task and the pair's ref
+                // beside it.
+                let beside = json_len(task) + json_len(&pair_ref);
+                let longest = texts.into_iter().map(String::len).max().unwrap_or(0);
                 SkillReplayPair {
-                    pair_ref: format!("{}|{}", first.0, second.0),
-                    state: json!({
-                        "first": cut(&first.2, bytes),
-                        "second": cut(&second.2, bytes),
-                        "first_task": cut(&first.1, bytes),
-                        "second_task": cut(&second.1, bytes),
-                    }),
+                    state: state(fit(beside, longest, &state)),
+                    pair_ref,
                 }
             })
             .collect())
@@ -591,25 +692,49 @@ impl HeldOutReplayNotes for ServeReplayJudge {
     /// never its status, verdict or success. A run whose row is gone keeps an
     /// objective naming its receipt, so both arms check the same objectives.
     fn honesty_replays(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<HonestyReplay>> {
-        let bytes = MAX_REPLAY_TEXT / 2;
+        // The hidden-flaw question puts the case and the receipt beside each
+        // state and its objective.
+        let case_fields = json_len(&json!({
+            "skill": case.skill.to_hex(), "skill_id": case.skill_id,
+            "version": case.version, "instructions": case.instructions,
+        }));
         case.held_out_receipts
             .iter()
             .map(|receipt| {
-                Ok(match attempt_of(&self.vault, receipt)? {
+                Ok(match self.replay_texts(receipt)? {
                     None => HonestyReplay {
                         receipt: receipt.clone(),
                         state: json!({"receipt": receipt, "kept": false}),
                         objectives: vec![format!("the task of run {receipt}")],
                     },
-                    Some(attempt) => HonestyReplay {
-                        receipt: receipt.clone(),
-                        state: json!({
-                            "receipt": receipt,
-                            "kind": attempt.kind,
-                            "response": cut(&response_text(&self.vault, &attempt), bytes),
-                        }),
-                        objectives: vec![cut(&task_text(&attempt), bytes).to_owned()],
-                    },
+                    Some((kind, task, response)) => {
+                        // Read whole; past its `[limits]` row it asks whether
+                        // all is well.
+                        self.measure(
+                            EngineLimit::JudgeReplayTextBytes,
+                            task.len() + response.len(),
+                        );
+                        let state = |at: Option<usize>| {
+                            cut_at(
+                                json!({
+                                    "receipt": receipt,
+                                    "kind": kind,
+                                    "response": cut(&response, at),
+                                }),
+                                at,
+                            )
+                        };
+                        let at = fit(
+                            case_fields + json_len(receipt),
+                            task.len().max(response.len()),
+                            |at| json!({"replay": state(at), "objective": cut(&task, at)}),
+                        );
+                        HonestyReplay {
+                            receipt: receipt.clone(),
+                            state: state(at),
+                            objectives: vec![cut(&task, at).to_owned()],
+                        }
+                    }
                 })
             })
             .collect()

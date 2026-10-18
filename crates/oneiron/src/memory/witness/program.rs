@@ -24,8 +24,8 @@ use crate::claim::{ClaimReadStatus, ScopedRead};
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::gate::{
-    WitnessMessageAuthorization, WitnessMessageEnvelope, check_witness_message_ceiling,
-    resolve_policy_manifest,
+    WitnessMessageAuthorization, WitnessMessageEnvelope, check_witness_message_ceiling_with_permit,
+    coach_offer_question_permit_in_txn, resolve_policy_manifest,
 };
 use crate::off_record::OffRecordSession;
 use crate::ports::{EntityRecord, EntityStoreRead};
@@ -398,9 +398,11 @@ impl Memory<'_> {
             }
         };
 
-        // A quote rides a room turn that lands at base and is no import
-        // (OF-460, FIX 2027); the room guard proves it there.
-        if turn.quote.is_some() && !matches!(landing, Landing::Base { imported: None, .. }) {
+        // A quote rides a message of a room turn that lands at base and is
+        // no import (OF-460, FIX 2027, FIX 2028); the room guard proves each
+        // there, cited by its message.
+        let quoting = turn.messages.iter().any(|m| m.quote.is_some());
+        if quoting && !matches!(landing, Landing::Base { imported: None, .. }) {
             return Err(MemoryError::bad_request(
                 "a quote lands only on a non-imported room turn at base",
             ));
@@ -452,7 +454,7 @@ impl Memory<'_> {
         };
         // FIX 2027: a quote's selection is read under the speaker's own key,
         // taken here, before the writer opens: no read snapshot nests in it.
-        let quote_key = turn.quote.map(|_| self.read_key()).transpose()?;
+        let quote_key = quoting.then(|| self.read_key()).transpose()?;
         before_txn();
 
         let landed = self.with_witness_write_txn_as(callback, admit, room_speech, |wtxn| {
@@ -803,10 +805,11 @@ impl Memory<'_> {
     /// The in-transaction half both landings share: the ONE-1686 door on every
     /// envelope, then the create-or-verify checks against `dbs` (base for a
     /// base landing, the composed room view for an overlay one). A minted TURN
-    /// carries `person_author` as its immutable byline, `quoted`, a room
-    /// thread reply's proven quote, in its first body (OF-460), and `thread`,
-    /// its thread binding (FIX 2951). `assertions` reads the reply's cited
-    /// and created records first, when it names any (OF-063).
+    /// carries `person_author` as its immutable byline, `quoted`, the reply
+    /// topology the room guard fixed for its quoted messages, in its first
+    /// body (OF-460, FIX 2028), and `thread`, its thread binding (FIX 2951).
+    /// `assertions` reads the reply's cited and created records first, when
+    /// it names any (OF-063).
     #[expect(
         clippy::too_many_arguments,
         reason = "the shared admission joins both landings' in-transaction inputs"
@@ -843,13 +846,27 @@ impl Memory<'_> {
         let write_actor = WriteActor::new(self.actor, self.actor_class);
         let mut authorized = Vec::with_capacity(plan.messages.len());
         for planned in &plan.messages {
-            authorized.push(check_witness_message_ceiling(
+            // The Coach's own question about a pending training offer may
+            // carry its scoped reach to the System-author floor (OF-577);
+            // every other message carries none.
+            let permit = coach_offer_question_permit_in_txn(
+                self.vault,
+                wtxn,
+                write_actor,
+                plan.conversation_id,
+                plan.turn_id,
+                planned.id,
+                &planned.envelope,
+                &policy,
+            )?;
+            authorized.push(check_witness_message_ceiling_with_permit(
                 &self.vault.store,
                 wtxn,
                 write_actor,
                 &planned.envelope,
                 &planned.body,
                 &policy,
+                permit.as_ref(),
             )?);
         }
 
@@ -897,7 +914,7 @@ impl Memory<'_> {
         }
         let turn = match existing_turn {
             Some(record) => {
-                validate_existing_witness_quote(self.vault, wtxn, &record.body, quoted)?;
+                validate_existing_witness_quote(quoted)?;
                 let existing_message_ids = plan
                     .messages
                     .iter()

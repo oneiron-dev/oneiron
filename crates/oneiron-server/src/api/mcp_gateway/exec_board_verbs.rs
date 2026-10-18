@@ -89,10 +89,13 @@ pub(crate) async fn execute_mcp_execute_code(
         outcome.status,
         oneiron::engine_executor::EngineExecutorStatus::Complete
     );
-    // A run that ended ends its desktop; any other entry leaves it parked
-    // for the run's next entry (CUA-001).
+    // A run that ended ends its desktop and closes the live lens cards it
+    // created, named by its run id's hex (OF-181, FIX 2612); any other entry
+    // leaves them parked for the run's next entry (CUA-001).
     if terminal {
         server.desktop_seats.end_run(run_id);
+        server.browser_seats.end_run(run_id);
+        server.lens_frames.close_run(&run_id.to_hex());
     }
     // Non-continuable: the step log is a run's own, not a re-enumerable
     // producer set, so a non-terminal page here states

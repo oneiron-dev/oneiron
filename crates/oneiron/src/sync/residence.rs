@@ -8,7 +8,9 @@ mod admission;
 mod authority_tail;
 mod bundle;
 mod bundle_payload;
+mod directives;
 mod discover;
+mod kit_fetch;
 mod policy;
 mod prune;
 pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
@@ -19,19 +21,30 @@ pub use authority_tail::{
     import_authority_page,
 };
 pub use bundle::{
-    SEALED_BUNDLE_PUT_PART_MAX, SEALED_BUNDLE_READ_PART_MAX, SealedBundleEntry, SealedBundleObject,
-    SealedBundleStage, commit_sealed_bundle, replace_sealed_bundle_pads, sealed_bundle_generations,
-    sealed_bundle_part, sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex,
-    sealed_generation_hex, stage_sealed_bundle_part,
+    SEALED_BUNDLE_PUT_PART_MAX, SEALED_BUNDLE_READ_PART_MAX, SealedBundleEntry,
+    SealedBundleKitRoot, SealedBundleObject, SealedBundleStage, commit_sealed_bundle,
+    replace_sealed_bundle_pads, sealed_bundle_generations, sealed_bundle_part,
+    sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex, sealed_generation_hex,
+    stage_sealed_bundle_part,
 };
 pub use bundle_payload::SealedBundleTake;
 pub use bundle_payload::SealedKitRestore;
+pub use directives::ResidenceDirectiveState;
+pub(crate) use directives::{
+    finish_residence_directive_in_txn, pending_residence_directives, residence_refusal_reason,
+};
 pub use discover::discover_local_window_keys;
+pub use kit_fetch::{
+    KIT_BUNDLE_FETCH_MAX_AGE_SECS, KIT_BUNDLE_FETCH_NONCE_BYTES, KIT_BUNDLE_FETCH_PATH,
+    KitBundleFetch, kit_sealed_bundle_part,
+};
+pub(crate) use policy::set_device_sync_preference_in_txn;
 pub use policy::{
     DeviceSyncPreference, effective_residence_mode, load_device_sync_preference,
     local_is_elected_home, resolve_residence_mode, set_device_sync_preference, synced_as_replica,
 };
 pub(crate) use prune::demote_resident_window;
+pub(crate) use prune::prune_thin_items_in_txn;
 pub(crate) use prune::record_item_touch_in_txn;
 pub use prune::{WindowDemotion, prune_thin_items, record_item_touch};
 
@@ -84,6 +97,24 @@ pub fn home_search_candidates(
         results.push((hit.id, hit.score, residence_window_for_blob(&raw)?));
     }
     Ok(results)
+}
+
+/// The forwarded `residence.search` a device signs and its home verifies
+/// (FIX 2907): the query, the limit as a big-endian `u64` and the device
+/// selector's wire bytes, in that order. Both ends build it here, from the
+/// values the request carries, so the two never sign different bytes.
+pub fn with_forwarded_search<R>(
+    query: &str,
+    limit: usize,
+    selector_wire: &[u8],
+    with: impl FnOnce(&crate::authority::ForwardedRequest<'_>) -> R,
+) -> R {
+    let limit = (limit as u64).to_be_bytes();
+    let fields: [&[u8]; 3] = [query.as_bytes(), &limit, selector_wire];
+    with(&crate::authority::ForwardedRequest {
+        method: "residence.search",
+        fields: &fields,
+    })
 }
 
 /// The canonical window that holds one entity: a CLAIM that names a world

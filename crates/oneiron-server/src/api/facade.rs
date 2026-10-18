@@ -766,6 +766,12 @@ pub(super) fn owner_authorship(
     auth: &CoreAuth,
     server: &SyncServer,
 ) -> Result<Option<oneiron::consent::AuthenticatedOwner>, ApiError> {
+    // A managed vault's owner, whom its supervisor attested for this one
+    // request (`ManagedOwnerAction`): no slip to bind, so the proof holds
+    // only while the person is the vault's live recorded owner.
+    if let Some(holder) = auth.managed_owner() {
+        return super::owner_routes::managed_owner_proof(server, holder);
+    }
     let Some((principal, actor)) = auth
         .principal_ref()
         .and_then(|principal| Some((principal, oneiron::EntityId::from_hex(principal).ok()?)))

@@ -36,9 +36,9 @@ use crate::error::{Error, Result};
 use crate::llm::decision::catalogue::CONFLICT_SETTLE;
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial, DecisionLadder,
-    DecisionRung, MAX_DECISION_STATE_BYTES, Reversibility,
+    DecisionRung, Reversibility, cut_text, fit_state,
 };
-use crate::provenance::birth::{MAX_BIRTH_INPUTS, RowBirth};
+use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::write_envelope::{WriteActor, WriteEnvelope};
@@ -465,12 +465,11 @@ pub(crate) fn apply_settlement_in_txn(
         Value::Map(resolution),
     );
     let resolved = EntityId::now();
-    // Rule A: the answer is concluded from the marker it settles and the
-    // members it weighed, the first MAX_BIRTH_INPUTS of them.
+    // Rule A: the answer is concluded from the marker it settles and every
+    // member it weighed.
     let birth = {
         let inputs: Vec<EntityId> = std::iter::once(conflict.marker)
             .chain(conflict.members.iter().copied())
-            .take(MAX_BIRTH_INPUTS)
             .collect();
         RowBirth::written(
             envelope.actor(),
@@ -653,6 +652,8 @@ pub(super) fn restore_member_in_txn(
 }
 
 /// Whether a standing claim other than `kept` supersedes `loser` as well.
+/// Every superseder is read: past the scan's threshold row it raises one
+/// check and reads on (rule 5).
 fn superseded_elsewhere_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -660,27 +661,30 @@ fn superseded_elsewhere_in_txn(
     loser: EntityId,
 ) -> Result<bool> {
     use crate::ports::{EdgeDirection, EdgeStoreRead};
-    let mut seen = 0usize;
-    for peer in vault.port_edge_peers(
-        txn,
-        &loser,
-        EdgeDirection::In,
-        crate::edge::EdgeKind::Supersedes,
-    )? {
-        if seen >= crate::vault::MAX_EDGE_QUERY_RESULTS {
-            return Err(Error::IndexOverflow("superseding claims"));
-        }
-        seen += 1;
+    use crate::scan_check::{EngineScan, ScanCount};
+    let kind = crate::edge::EdgeKind::Supersedes;
+    let scope = [
+        &[EdgeDirection::In as u8][..],
+        loser.as_bytes(),
+        &[kind as u8][..],
+    ]
+    .concat();
+    let mut count = ScanCount::start(&vault.store, txn, EngineScan::EdgePeerRows, &scope)?;
+    let mut standing = false;
+    for peer in vault.port_edge_peers(txn, &loser, EdgeDirection::In, kind)? {
+        count.row();
         let peer = peer?;
         if peer != kept
             && vault
                 .get_claim_in_txn(txn, &peer)?
                 .is_some_and(|body| body.lifecycle == ClaimLifecycleStatus::Active)
         {
-            return Ok(true);
+            standing = true;
+            break;
         }
     }
-    Ok(false)
+    count.finish(vault);
+    Ok(standing)
 }
 
 /// Stands a Dreamer-born MACHINE member `loser` again as the Dreamer's fresh
@@ -696,7 +700,7 @@ fn restore_dreamer_member_in_txn(
     surface: &RevertSurface,
     now: u64,
 ) -> Result<Option<EntityId>> {
-    use crate::ports::{EdgeDirection, EdgeStoreRead};
+    use crate::ports::EdgeStoreRead;
     let dreamer = crate::dreamer_runner::authority::dreamer_actor_id()?;
     let Some(body) = vault.get_claim_in_txn(txn, &loser)? else {
         return Ok(None);
@@ -707,25 +711,10 @@ fn restore_dreamer_member_in_txn(
     {
         return Ok(None);
     }
-    let mut linked = false;
-    let mut seen = 0usize;
-    for entry in vault.port_edges(
-        &*txn,
-        &kept,
-        EdgeDirection::Out,
-        Some(crate::edge::EdgeKind::Supersedes),
-        None,
-    )? {
-        if seen >= crate::vault::MAX_EDGE_QUERY_RESULTS {
-            return Err(Error::IndexOverflow("superseded claims"));
-        }
-        seen += 1;
-        if entry?.target == loser {
-            linked = true;
-            break;
-        }
-    }
-    if !linked {
+    if vault
+        .port_edge_get(&*txn, &kept, crate::edge::EdgeKind::Supersedes, &loser)?
+        .is_none()
+    {
         return Ok(None);
     }
     let candidate = super::persistence::on_axes_of(
@@ -806,7 +795,8 @@ const KEEP_PREFIX: &str = "keep:";
 /// the principal the answer is for, the dial and learned bands, the host's
 /// wording of the question, and the call's clock. A provider sees the marker
 /// and its members as evidence ids; the contested predicates and each member's
-/// predicate, value, source, approval and window are its bounded state.
+/// predicate, value, source, approval and window are its state. Past the
+/// ladder's bound, each member rides by id with a preview of its value.
 pub struct ConflictSettleDecisions<'a> {
     pub ladder: DecisionLadder<'a>,
     pub principal: EntityId,
@@ -818,9 +808,11 @@ pub struct ConflictSettleDecisions<'a> {
 
 impl ConflictSettleDecisions<'_> {
     /// Rules on one open conflict: `None` when the ladder abstains, escalates
-    /// or answers outside the vocabulary, or the conflict's state is past the
-    /// ladder's bound. Only a standing member can be kept. The question is
-    /// keyed by the contested predicates, so each learns its own bands.
+    /// or answers outside the vocabulary. Past the ladder's state bound, every
+    /// member is still asked about, by id with its value's text cut to fit; a
+    /// conflict whose ids alone pass the bound is the ladder's refusal. Only a
+    /// standing member can be kept. The question is keyed by the contested
+    /// predicates, so each learns its own bands.
     pub fn rule(
         &self,
         vault: &Vault,
@@ -828,6 +820,7 @@ impl ConflictSettleDecisions<'_> {
     ) -> Result<Option<ConflictSettlement>> {
         let txn = vault.store.env.read_txn()?;
         let mut members = Vec::new();
+        let mut values = Vec::new();
         let mut keepable = Vec::new();
         for id in &conflict.members {
             let Some(body) = vault.get_claim_in_txn(&txn, id)? else {
@@ -837,11 +830,13 @@ impl ConflictSettleDecisions<'_> {
             if standing && keepable.len() < MAX_KEEP_OPTIONS {
                 keepable.push(*id);
             }
+            let value = rmpv_to_json(&body.value);
+            values.push((id.to_hex(), value.to_string()));
             members.push(json!({
                 "id": id.to_hex(),
                 "keep_option": standing.then(|| format!("{KEEP_PREFIX}{}", id.to_hex())),
                 "predicate": body.predicate,
-                "value": rmpv_to_json(&body.value),
+                "value": value,
                 "source": body.source.map(|source| source.as_str()),
                 "approval": body.approval.as_str(),
                 "confidence": body.confidence,
@@ -850,13 +845,27 @@ impl ConflictSettleDecisions<'_> {
             }));
         }
         drop(txn);
-        let state = json!({
+        // Whole, each member rides with its claim's fields; past the bound, by
+        // id with its value's canonical text cut to fit, never one left out.
+        let whole = json!({
             "predicates": conflict.predicates,
             "members": members,
         });
-        if serde_json::to_vec(&state).map_or(true, |bytes| bytes.len() > MAX_DECISION_STATE_BYTES) {
-            return Ok(None);
-        }
+        let longest = values.iter().map(|(_, text)| text.len()).max().unwrap_or(0);
+        let state = fit_state(longest, |cut| {
+            if cut.is_none() {
+                return whole.clone();
+            }
+            let members: Vec<_> = values
+                .iter()
+                .map(|(id, text)| json!({"id": id, "value": cut_text(text, cut)}))
+                .collect();
+            json!({
+                "predicates": conflict.predicates,
+                "members": members,
+                "cut_at_bytes": cut,
+            })
+        });
         let mut options: Vec<String> = [HOLD_BOTH, DISMISS, ESCALATE]
             .iter()
             .map(|label| (*label).to_owned())

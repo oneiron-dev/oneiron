@@ -20,6 +20,7 @@ use oneiron::sync::residence::{
 use oneiron::sync::residence_operation_budgets::ResidenceOperationBudgets;
 use oneiron::sync::schema::read_window_list;
 use oneiron::sync::{SyncSelector, WindowKey, decode_sync_selector};
+use oneiron::world_keys::RecoveryRootId;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -94,6 +95,53 @@ struct SearchRequest {
     query: String,
     limit: usize,
     selector: String,
+    /// A caller's own holder proof its device forwards (FIX 2907), with
+    /// `machine_proof`: the search is that caller's, not the device's.
+    #[serde(default)]
+    forwarded: Option<oneiron::authority::ForwardedCallerProof>,
+    /// The device's install-key proof over the request and `forwarded`.
+    #[serde(default)]
+    machine_proof: Option<oneiron::authority::ForwardingMachineProof>,
+}
+
+impl SearchRequest {
+    /// The forwarded caller, verified for this request (FIX 2907): `None`
+    /// for the device's own search. Either proof alone, or a caller the
+    /// verifier refuses, looks missing; the home never answers it as the
+    /// device instead.
+    fn forwarded_caller(
+        &self,
+        server: &SyncServer,
+        peer: PeerMachine,
+        selector: &SyncSelector,
+    ) -> Result<Option<oneiron::authority::VerifiedForwardedCaller>, AppError> {
+        let (caller, machine) = match (&self.forwarded, &self.machine_proof) {
+            (None, None) => return Ok(None),
+            (Some(caller), Some(machine)) => (caller, machine),
+            _ => return Err(AppError::invalid_params()),
+        };
+        let selector_wire = base64::engine::general_purpose::STANDARD
+            .decode(&self.selector)
+            .map_err(|_| AppError::invalid_params())?;
+        let member = selector.member_ref.to_hex();
+        let device = oneiron::authority::ForwardingDevice {
+            member_ref: &member,
+            grant: selector.grant_id,
+            connection: peer,
+        };
+        oneiron::sync::residence::with_forwarded_search(
+            &self.query,
+            self.limit,
+            &selector_wire,
+            |request| {
+                server
+                    .vault
+                    .verify_forwarded_caller(caller, machine, request, &device)
+            },
+        )
+        .map(Some)
+        .map_err(|_| AppError::not_found("item", None))
+    }
 }
 
 /// One part of an upload of the vault's sealed bundle or its pad object
@@ -111,13 +159,16 @@ struct BundlePutRequest {
 }
 
 /// The end of an upload: the home commits the generation whole while its
-/// newest is still `parent`.
+/// newest is still `parent`. `root` is the recovery root the machine pins, in
+/// hex, whose kit the home then serves the generation to.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct BundleCommitRequest {
     generation: String,
     #[serde(default)]
     parent: Option<String>,
+    #[serde(default)]
+    root: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -708,13 +759,29 @@ fn search(
         return Err(AppError::invalid_params());
     }
     let selector = bound_selector(server, auth, &input.selector)?;
-    let admission = admitted(server, auth, peer, &selector)?;
+    // A forwarded caller reads under its own credential, and the device's
+    // selector stays the second ceiling every hit passes.
+    let forwarded = input.forwarded_caller(server, peer, &selector)?;
+    let admission = match &forwarded {
+        Some(caller) => ResidenceAdmission::load(
+            &server.vault,
+            caller.caller(),
+            peer,
+            crate::handler::selector_grant_scope(),
+            &selector,
+        )
+        .map_err(|_| AppError::not_found("item", None))?,
+        None => admitted(server, auth, peer, &selector)?,
+    };
     let grant_before = server
         .vault
         .get_raw(&selector.grant_id)
         .map_err(|_| AppError::internal_server_error("grant unavailable"))?
         .ok_or_else(|| AppError::not_found("grant", None))?;
-    let proof = auth.verified_slip().ok_or_else(AppError::unauthorized)?;
+    let proof = match &forwarded {
+        Some(caller) => caller.caller(),
+        None => auth.verified_slip().ok_or_else(AppError::unauthorized)?,
+    };
     let candidates = home_search_candidates(&server.vault, proof, &input.query, input.limit)
         .map_err(|_| AppError::internal_server_error("scoped search unavailable"))?;
     let current_windows: std::collections::HashSet<_> =
@@ -764,9 +831,13 @@ fn search(
             }
         }
     }
-    // The app credential, grant and selector are rechecked after the search:
-    // a revoked or replaced grant never returns a cached answer.
-    bound_selector(server, auth, &input.selector)?;
+    // The app credential, grant and selector are rechecked after the search,
+    // and a forwarded caller too: a revoked or replaced grant never returns a
+    // cached answer.
+    let selector = bound_selector(server, auth, &input.selector)?;
+    if forwarded.is_some() {
+        input.forwarded_caller(server, peer, &selector)?;
+    }
     if server
         .vault
         .get_raw(&selector.grant_id)
@@ -840,7 +911,8 @@ fn bundle_put(
 
 /// Commits the generation the machine staged whole as the vault's newest,
 /// while the newest is still the parent it names (FIX 922): one generation per
-/// slot. A refused machine, parent or upload looks missing.
+/// slot. The root it names is kept for the kit door. A refused machine,
+/// parent, root or upload looks missing.
 fn bundle_commit(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -852,7 +924,13 @@ fn bundle_commit(
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
     let generation = bundle_generation(&input.generation)?;
     let parent = input.parent.as_deref().map(bundle_generation).transpose()?;
-    let entry = commit_sealed_bundle(&server.vault, peer, generation, parent)
+    let root = match input.root.as_deref() {
+        Some(root) => Some(RecoveryRootId(
+            sealed_digest_from_hex(root).ok_or_else(AppError::invalid_params)?,
+        )),
+        None => None,
+    };
+    let entry = commit_sealed_bundle(&server.vault, peer, generation, parent, root)
         .map_err(|_| AppError::not_found("sealed bundle", None))?;
     Ok((bundle_entry(&entry), Some(Vec::new())))
 }
