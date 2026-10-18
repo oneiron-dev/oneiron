@@ -266,6 +266,9 @@ impl LimitsConfig {
             judge_rubric_bytes,
             judge_instructions_bytes,
             judge_replay_text_bytes,
+            contribution_judge_task_bytes,
+            contribution_judge_answer_bytes,
+            callable_nest_depth,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -336,6 +339,15 @@ impl LimitsConfig {
                 judge_instructions_bytes,
             ),
             (EngineLimit::JudgeReplayTextBytes, judge_replay_text_bytes),
+            (
+                EngineLimit::ContributionJudgeTaskBytes,
+                contribution_judge_task_bytes,
+            ),
+            (
+                EngineLimit::ContributionJudgeAnswerBytes,
+                contribution_judge_answer_bytes,
+            ),
+            (EngineLimit::CallableNestDepth, callable_nest_depth),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
@@ -473,4 +485,7 @@ pub(super) struct LimitsConfigOverride {
     pub(super) judge_rubric_bytes: Option<u64>,
     pub(super) judge_instructions_bytes: Option<u64>,
     pub(super) judge_replay_text_bytes: Option<u64>,
+    pub(super) contribution_judge_task_bytes: Option<u64>,
+    pub(super) contribution_judge_answer_bytes: Option<u64>,
+    pub(super) callable_nest_depth: Option<u64>,
 }
