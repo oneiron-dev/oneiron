@@ -50329,7 +50329,7 @@
      "purpose": "The reach line (ARCH-0070 `shape:reach-line`, OSH p3): what each actor can send, read as a set join over…",
      "surface": {
       "const": 3,
-      "crate-vis": 9,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 1,
       "struct": 3
