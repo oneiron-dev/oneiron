@@ -60,6 +60,8 @@ pub(crate) use super::shared_act_doors::*;
 pub(crate) use super::shared_member_doors::*;
 // The shared-act policy doors (DOOR-129) too.
 pub(crate) use super::shared_policy_doors::*;
+// The trusted-contact doors (DOOR-140, OF-527) too.
+pub(crate) use super::trusted_contact_doors::*;
 // The owner's legal-hold doors (OF-470) too.
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
@@ -130,6 +132,8 @@ pub(crate) use super::research_doors::*;
 pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
 pub(crate) use super::claim_settle_doors::*;
+// The owner's symbol lease, proposal submit and oplog doors (DOOR-137), likewise.
+pub(crate) use super::code_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
 pub(crate) use super::ui_action_routes::vault_lenses_default;
 // The explain receipts' doors (OF-278), beside their HTTP routes, likewise.
@@ -1157,6 +1161,11 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.research.create_child"
         | "vault.evals.inventory"
         | "vault.evals.cohorts.setup"
+        | "vault.code.symbols.declare"
+        | "vault.code.symbols.renew"
+        | "vault.code.symbols.release"
+        | "vault.code.proposal_submit"
+        | "vault.code.oplog"
         | "vault.code.export"
         | "vault.code.origin.authority.get"
         | "vault.code.origin.authority.set"
@@ -1174,6 +1183,11 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.off_record.notes.create"
         | "vault.off_record.claims.upsert"
         | "self.off_record.execute"
+        | "vault.trusted_contacts.name"
+        | "vault.trusted_contacts.dial.set"
+        | "vault.trusted_contacts.tier.set"
+        | "vault.trusted_contacts.concern.asks"
+        | "vault.trusted_contacts.concern.authorize"
         | "vault.shared.policy.get"
         | "vault.shared.policy.change" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"
@@ -1202,6 +1216,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.records.erase_confirm"
         | "vault.workspace.establish"
         | "vault.workspace.members.onboard"
+        | "vault.trusted_contacts.list"
+        | "vault.trusted_contacts.consent"
+        | "vault.trusted_contacts.revoke"
         | "vault.shared.policy.propose"
         | "vault.shared.policy.answer" => {
             super::shared_act_doors::person(server, auth, verb).map(drop)

@@ -618,6 +618,9 @@ class Oneiron:
         def federation(self) -> "Oneiron._VaultFederationVerbs":
             return Oneiron._VaultFederationVerbs(self._client)
         @property
+        def trusted_contacts(self) -> "Oneiron._VaultTrustedContactsVerbs":
+            return Oneiron._VaultTrustedContactsVerbs(self._client)
+        @property
         def guests(self) -> "Oneiron._VaultGuestsVerbs":
             return Oneiron._VaultGuestsVerbs(self._client)
         @property
@@ -1355,6 +1358,51 @@ class Oneiron:
         def accept(self, spec):
             """The owner accepts the peer host signed re-scope and receives the matching signed counter-half."""
             return json.loads(_translate(lambda: self._client.vault_federation_connect_rescope_accept(json.dumps(spec))))
+    class _VaultTrustedContactsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def name(self, spec):
+            """The vault owner names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again."""
+            return json.loads(_translate(lambda: self._client.vault_trusted_contacts_name(json.dumps(spec))))
+        def list(self, spec):
+            """A live person lists every trusted-contact relation they are a side of: those they named and those naming them, under their own credential."""
+            return json.loads(_translate(lambda: self._client.vault_trusted_contacts_list(json.dumps(spec))))
+        def consent(self, spec):
+            """The named contact, a live person under their own credential, accepts the naming version they were shown and attests they are an adult; the relation is live only after this."""
+            return json.loads(_translate(lambda: self._client.vault_trusted_contacts_consent(json.dumps(spec))))
+        def revoke(self, spec):
+            """Either side of a trusted-contact relation ends it under their own credential; no notice staged from it is sent after this returns, and its open asks close."""
+            return json.loads(_translate(lambda: self._client.vault_trusted_contacts_revoke(json.dumps(spec))))
+        @property
+        def dial(self) -> "Oneiron._VaultTrustedContactsDialVerbs":
+            return Oneiron._VaultTrustedContactsDialVerbs(self._client)
+        @property
+        def tier(self) -> "Oneiron._VaultTrustedContactsTierVerbs":
+            return Oneiron._VaultTrustedContactsTierVerbs(self._client)
+        @property
+        def concern(self) -> "Oneiron._VaultTrustedContactsConcernVerbs":
+            return Oneiron._VaultTrustedContactsConcernVerbs(self._client)
+    class _VaultTrustedContactsDialVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """The vault owner changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands."""
+            return json.loads(_translate(lambda: self._client.vault_trusted_contacts_dial_set(json.dumps(spec))))
+    class _VaultTrustedContactsTierVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """The vault owner names the trusted-contact tier (concern or imminent) of one RouteToHelp policy row; a row never named is a concern."""
+            return json.loads(_translate(lambda: self._client.vault_trusted_contacts_tier_set(json.dumps(spec))))
+    class _VaultTrustedContactsConcernVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def asks(self, spec):
+            """The vault owner reads their open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled."""
+            return json.loads(_translate(lambda: self._client.vault_trusted_contacts_concern_asks(json.dumps(spec))))
+        def authorize(self, spec):
+            """The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing."""
+            return json.loads(_translate(lambda: self._client.vault_trusted_contacts_concern_authorize(json.dumps(spec))))
     class _VaultGuestsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1898,6 +1946,15 @@ class Oneiron:
         def proposal_view(self, request: dict[str, Any]) -> dict[str, Any] | None:
             """One repo proposal's semantic change from its base, under the provenance it was proposed with."""
             return json.loads(_translate(lambda: self._client.vault_code_proposal_view(json.dumps(request, allow_nan=False))))
+        @property
+        def symbols(self) -> "Oneiron._VaultCodeSymbolsVerbs":
+            return Oneiron._VaultCodeSymbolsVerbs(self._client)
+        def proposal_submit(self, spec):
+            """Stage one file change of a repository as a Proposed proposal with its retained base, under the review lens catalog the owner sends. Owner only. The engine mints the proposal id; nothing is approved, queued or landed."""
+            return json.loads(_translate(lambda: self._client.vault_code_proposal_submit(json.dumps(spec))))
+        def oplog(self, spec):
+            """Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal."""
+            return json.loads(_translate(lambda: self._client.vault_code_oplog(json.dumps(spec))))
         def repo_diff(self, request: dict[str, Any]) -> dict[str, Any] | None:
             """Every file changed between two trees of a repository, unit by unit, with the operations that wrote each."""
             return json.loads(_translate(lambda: self._client.vault_code_repo_diff(json.dumps(request, allow_nan=False))))
@@ -1913,9 +1970,21 @@ class Oneiron:
         @property
         def snapshots(self) -> "Oneiron._VaultCodeSnapshotsVerbs":
             return Oneiron._VaultCodeSnapshotsVerbs(self._client)
-        @property
-        def symbols(self) -> "Oneiron._VaultCodeSymbolsVerbs":
-            return Oneiron._VaultCodeSymbolsVerbs(self._client)
+    class _VaultCodeSymbolsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def declare(self, spec):
+            """Declare the current repository symbols a task will touch, held by the caller until host time plus ttl_seconds. Owner only. An overlap waits behind the tasks it names, never refused; it grants no write, approval or landing."""
+            return json.loads(_translate(lambda: self._client.vault_code_symbols_declare(json.dumps(spec))))
+        def renew(self, spec):
+            """Renew the live symbol declaration the caller holds for one task by its declared lifetime. Owner only."""
+            return json.loads(_translate(lambda: self._client.vault_code_symbols_renew(json.dumps(spec))))
+        def release(self, spec):
+            """Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing."""
+            return json.loads(_translate(lambda: self._client.vault_code_symbols_release(json.dumps(spec))))
+        def definitions(self, spec):
+            """Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language."""
+            return json.loads(_translate(lambda: self._client.vault_code_symbols_definitions(json.dumps(spec))))
     class _VaultCodeOriginVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1952,12 +2021,6 @@ class Oneiron:
         def read(self, spec):
             """Read one UTF-8 file and its SHA-256 from the frozen blobs of a pinned code snapshot, never from the folder on disk. Owner only."""
             return json.loads(_translate(lambda: self._client.vault_code_snapshots_read(json.dumps(spec))))
-    class _VaultCodeSymbolsVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def definitions(self, spec):
-            """Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language."""
-            return json.loads(_translate(lambda: self._client.vault_code_symbols_definitions(json.dumps(spec))))
     class _VaultAgentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2309,6 +2372,9 @@ class Oneiron:
     class _VaultSearchVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def hybrid(self, input: dict[str, Any]) -> Any:
+            """Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence."""
+            return json.loads(_translate(lambda: self._client.vault_search_hybrid(json.dumps(input, allow_nan=False))))
         def bm25(self, input: dict[str, Any]) -> Any:
             """BM25 text search over the engine index; surfaceable claims only."""
             return json.loads(_translate(lambda: self._client.vault_search_bm25(json.dumps(input, allow_nan=False))))

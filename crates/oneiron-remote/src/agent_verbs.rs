@@ -482,6 +482,32 @@ impl OneironClient {
                 "vault.federation.connect.rejoin" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ConnectRejoined,
                 >(client, verb, &input),
+                "vault.trusted_contacts.name" => remote_agent_verb_output::<
+                    oneiron::counterparty_contact::TrustedContact,
+                >(client, verb, &input),
+                "vault.trusted_contacts.list" => remote_agent_verb_output::<
+                    Vec<oneiron::counterparty_contact::TrustedContact>,
+                >(client, verb, &input),
+                "vault.trusted_contacts.consent" => remote_agent_verb_output::<
+                    oneiron::counterparty_contact::TrustedContact,
+                >(client, verb, &input),
+                "vault.trusted_contacts.revoke" => remote_agent_verb_output::<
+                    oneiron::counterparty_contact::TrustedContact,
+                >(client, verb, &input),
+                "vault.trusted_contacts.dial.set" => remote_agent_verb_output::<
+                    oneiron::counterparty_contact::TrustedContact,
+                >(client, verb, &input),
+                "vault.trusted_contacts.tier.set" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::TrustedContactTierSet,
+                >(client, verb, &input),
+                "vault.trusted_contacts.concern.asks" => remote_agent_verb_output::<
+                    Vec<oneiron::counterparty_contact::TrustedContactAsk>,
+                >(client, verb, &input),
+                "vault.trusted_contacts.concern.authorize" => {
+                    remote_agent_verb_output::<oneiron::task_verb::sdk::TrustedContactAuthorization>(
+                        client, verb, &input,
+                    )
+                }
                 "vault.guests.revoke" => remote_agent_verb_output::<
                     oneiron::receipt::GuestRevokeResponse,
                 >(client, verb, &input),
@@ -802,6 +828,21 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.code.proposal_view" => remote_agent_verb_output::<
                     Option<oneiron::code_document::CodeProposalView>,
+                >(client, verb, &input),
+                "vault.code.symbols.declare" => remote_agent_verb_output::<
+                    oneiron::memory::code_doors::CodeSymbolsDeclared,
+                >(client, verb, &input),
+                "vault.code.symbols.renew" => remote_agent_verb_output::<
+                    oneiron::memory::code_doors::CodeSymbolLeaseView,
+                >(client, verb, &input),
+                "vault.code.symbols.release" => remote_agent_verb_output::<
+                    oneiron::memory::code_doors::CodeSymbolsReleased,
+                >(client, verb, &input),
+                "vault.code.proposal_submit" => remote_agent_verb_output::<
+                    oneiron::memory::code_doors::CodeProposalSubmitted,
+                >(client, verb, &input),
+                "vault.code.oplog" => remote_agent_verb_output::<
+                    oneiron::memory::code_doors::CodeMutationLog,
                 >(client, verb, &input),
                 "vault.code.repo_diff" => remote_agent_verb_output::<
                     Option<oneiron::code_document::CodeRepoDiffView>,
@@ -1197,6 +1238,9 @@ impl OneironClient {
                 "vault.refs.links" => {
                     remote_agent_verb_output::<oneiron::lens::RecordLinks>(client, verb, &input)
                 }
+                "vault.search.hybrid" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<Vec<oneiron::memory::HybridSearchHit>>,
+                >(client, verb, &input),
                 "vault.search.bm25" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<Vec<oneiron::memory::LexicalHit>>,
                 >(client, verb, &input),
@@ -3290,6 +3334,102 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.federation.connect.rejoin", value)
     }
+    pub fn vault_trusted_contacts_name(
+        &self,
+        input: &oneiron::task_verb::sdk::TrustedContactNameRequest,
+    ) -> Result<oneiron::counterparty_contact::TrustedContact, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.trusted_contacts.name", value)
+    }
+    pub fn vault_trusted_contacts_list(
+        &self,
+        input: &oneiron::task_verb::sdk::TrustedContactsRequest,
+    ) -> Result<Vec<oneiron::counterparty_contact::TrustedContact>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.trusted_contacts.list", value)
+    }
+    pub fn vault_trusted_contacts_consent(
+        &self,
+        input: &oneiron::task_verb::sdk::TrustedContactConsentRequest,
+    ) -> Result<oneiron::counterparty_contact::TrustedContact, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.trusted_contacts.consent", value)
+    }
+    pub fn vault_trusted_contacts_revoke(
+        &self,
+        input: &oneiron::task_verb::sdk::TrustedContactRevokeRequest,
+    ) -> Result<oneiron::counterparty_contact::TrustedContact, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.trusted_contacts.revoke", value)
+    }
+    pub fn vault_trusted_contacts_dial_set(
+        &self,
+        input: &oneiron::task_verb::sdk::TrustedContactDialRequest,
+    ) -> Result<oneiron::counterparty_contact::TrustedContact, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.trusted_contacts.dial.set", value)
+    }
+    pub fn vault_trusted_contacts_tier_set(
+        &self,
+        input: &oneiron::task_verb::sdk::TrustedContactTierRequest,
+    ) -> Result<oneiron::task_verb::sdk::TrustedContactTierSet, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.trusted_contacts.tier.set", value)
+    }
+    pub fn vault_trusted_contacts_concern_asks(
+        &self,
+        input: &oneiron::task_verb::sdk::TrustedContactAsksRequest,
+    ) -> Result<Vec<oneiron::counterparty_contact::TrustedContactAsk>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.trusted_contacts.concern.asks", value)
+    }
+    pub fn vault_trusted_contacts_concern_authorize(
+        &self,
+        input: &oneiron::task_verb::sdk::TrustedContactAuthorizeRequest,
+    ) -> Result<oneiron::task_verb::sdk::TrustedContactAuthorization, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.trusted_contacts.concern.authorize", value)
+    }
     pub fn vault_guests_revoke(
         &self,
         input: &oneiron::task_verb::sdk::GuestRevokeRequest,
@@ -4557,6 +4697,66 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.code.proposal_view", value)
+    }
+    pub fn vault_code_symbols_declare(
+        &self,
+        input: &oneiron::memory::code_doors::CodeSymbolsDeclareRequest,
+    ) -> Result<oneiron::memory::code_doors::CodeSymbolsDeclared, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.symbols.declare", value)
+    }
+    pub fn vault_code_symbols_renew(
+        &self,
+        input: &oneiron::memory::code_doors::CodeSymbolsTaskRequest,
+    ) -> Result<oneiron::memory::code_doors::CodeSymbolLeaseView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.symbols.renew", value)
+    }
+    pub fn vault_code_symbols_release(
+        &self,
+        input: &oneiron::memory::code_doors::CodeSymbolsTaskRequest,
+    ) -> Result<oneiron::memory::code_doors::CodeSymbolsReleased, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.symbols.release", value)
+    }
+    pub fn vault_code_proposal_submit(
+        &self,
+        input: &oneiron::memory::code_doors::CodeProposalSubmitRequest,
+    ) -> Result<oneiron::memory::code_doors::CodeProposalSubmitted, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.proposal_submit", value)
+    }
+    pub fn vault_code_oplog(
+        &self,
+        input: &oneiron::memory::code_doors::CodeRepoRequest,
+    ) -> Result<oneiron::memory::code_doors::CodeMutationLog, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.oplog", value)
     }
     /// Every file changed between two trees of a repository, unit by unit, with the operations that wrote each.
     pub fn vault_code_repo_diff(
@@ -6159,6 +6359,20 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.refs.links", value)
+    }
+    pub fn vault_search_hybrid(
+        &self,
+        input: &oneiron::memory::HybridSearchRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<Vec<oneiron::memory::HybridSearchHit>>, MemoryError>
+    {
+        input.validate()?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.search.hybrid", value)
     }
     pub fn vault_search_bm25(
         &self,

@@ -61,6 +61,7 @@ mod history_coverage;
 mod history_fetch;
 mod history_repair;
 mod history_transfer;
+mod host_action;
 mod host_actor;
 mod host_re_root;
 mod import_order;
@@ -178,6 +179,7 @@ pub use history_fetch::{
 };
 pub use history_repair::AuthorityRepairOutcome;
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
+pub use host_action::HostActionAuthority;
 pub use host_re_root::{HostReRoot, RetiredSlip};
 pub use ingest_observation::*;
 pub use invocation_slip::InvocationSlipBinding;
@@ -222,6 +224,7 @@ pub(crate) use claim_write::{
 };
 pub(crate) use first_seen_clock::*;
 pub(crate) use handoff_equivocation::{HandoffEquivocations, door_refuses_retired_standing};
+pub(crate) use host_action::{HostActionGuard, host_action_refused};
 #[cfg(any(test, feature = "sync"))]
 pub(crate) use import_order::authority_stage_order;
 #[cfg(test)]

@@ -173,6 +173,14 @@ vaultFederationConnectRescopeAccept(input: unknown): unknown
 vaultFederationConnectDisconnect(input: unknown): unknown
 vaultFederationConnectExport(input: unknown): unknown
 vaultFederationConnectRejoin(input: unknown): unknown
+vaultTrustedContactsName(input: unknown): unknown
+vaultTrustedContactsList(input: unknown): unknown
+vaultTrustedContactsConsent(input: unknown): unknown
+vaultTrustedContactsRevoke(input: unknown): unknown
+vaultTrustedContactsDialSet(input: unknown): unknown
+vaultTrustedContactsTierSet(input: unknown): unknown
+vaultTrustedContactsConcernAsks(input: unknown): unknown
+vaultTrustedContactsConcernAuthorize(input: unknown): unknown
 vaultGuestsRevoke(input: unknown): unknown
 vaultGuestsMintSlip(input: unknown): unknown
 vaultResidenceMode(input: unknown): unknown
@@ -278,6 +286,11 @@ vaultArtifactsThreadsState(input: unknown): unknown
 vaultCodeDiff(requestJson: string): string
 vaultCodeBlame(requestJson: string): string
 vaultCodeProposalView(requestJson: string): string
+vaultCodeSymbolsDeclare(input: unknown): unknown
+vaultCodeSymbolsRenew(input: unknown): unknown
+vaultCodeSymbolsRelease(input: unknown): unknown
+vaultCodeProposalSubmit(input: unknown): unknown
+vaultCodeOplog(input: unknown): unknown
 vaultCodeRepoDiff(requestJson: string): string
 vaultCodeExport(input: unknown): unknown
 vaultCodeOriginAuthorityGet(input: unknown): unknown
@@ -408,6 +421,7 @@ vaultHydrate(input: unknown): unknown
 vaultGet(input: unknown): unknown
 vaultRefsResolve(input: unknown): unknown
 vaultRefsLinks(input: unknown): unknown
+vaultSearchHybrid(input: unknown): unknown
 vaultSearchBm25(input: unknown): unknown
 vaultNeighbors(input: unknown): unknown
 vaultStructuralPut(input: unknown): unknown
