@@ -1068,6 +1068,14 @@ export class Oneiron {
     hooks: {
       /** The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands. */
       replay: (input: Facade.HooksReplayRequest): Facade.HookReplayRow[] => this.#call(() => this.#client.vaultHooksReplay(input) as Facade.HookReplayRow[]),
+      regen: {
+        /** List, as the authenticated owner, the hook bindings of the vault's own packs whose verb table or sandbox contract changed since their last good body passed, with no regen waiting. Runs no regen. */
+        due: (input: Facade.EmptyRequest = {}): Facade.EntityId[] => this.#call(() => this.#client.vaultHooksRegenDue(input) as Facade.EntityId[]),
+        /** Read one hook binding's regen record as the authenticated owner: its last good body hash, contract stamp, intent and pending decision, with the candidate_hash an adoption names. Null for a binding bound under no record. Changes nothing. */
+        get: (input: Facade.HookRegenBindingRequest): Facade.HookRegenView | null => this.#call(() => this.#client.vaultHooksRegenGet(input) as Facade.HookRegenView | null),
+        /** Adopt, as the authenticated owner and as their stamp, the regen candidate pending on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. Answers the pack put receipt; only an installed put advances the record. */
+        adopt: (input: Facade.HookRegenAdoptRequest): Facade.PackPutReceipt => this.#call(() => this.#client.vaultHooksRegenAdopt(input) as Facade.PackPutReceipt),
+      },
     },
     artifacts: {
       /** Computes the exact publication approval digest for the existing owner approve-once door; it grants nothing. */

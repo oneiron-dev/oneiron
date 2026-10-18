@@ -334,6 +334,9 @@ both bindings and their export-census tests in one change.
 - `vault.shares.revoke`
 - `vault.shares.view`
 - `vault.hooks.replay`
+- `vault.hooks.regen.due`
+- `vault.hooks.regen.get`
+- `vault.hooks.regen.adopt`
 - `vault.artifacts.publish_approval`
 - `vault.artifacts.publish`
 - `vault.artifacts.repoint`

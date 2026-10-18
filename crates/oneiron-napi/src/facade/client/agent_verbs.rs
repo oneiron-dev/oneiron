@@ -2837,6 +2837,33 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_hooks_regen_due(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.hooks.regen.due", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_hooks_regen_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.hooks.regen.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_hooks_regen_adopt(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.hooks.regen.adopt", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_artifacts_publish_approval(
         &self,
         input: serde_json::Value,
