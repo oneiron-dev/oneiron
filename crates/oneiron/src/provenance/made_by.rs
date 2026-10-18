@@ -6,7 +6,7 @@ use crate::entity_id::EntityId;
 use serde::{Deserialize, Serialize};
 
 /// How a row was made. This is not a scope key or a relevance multiplier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MadeByClass {
     Stated,
@@ -14,7 +14,7 @@ pub enum MadeByClass {
 }
 
 /// Caller-selected provenance slice. Unknown provenance never matches a slice.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MadeByPredicate {
     Stated,
@@ -67,26 +67,28 @@ impl ClaimBody {
 }
 
 /// Role of an input row in the derivation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MadeByInputRole {
     Input,
     Prompt,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MadeByInput {
     #[serde(with = "super::entity_ref_wire")]
+    #[schemars(with = "String")]
     pub row: EntityId,
     pub role: MadeByInputRole,
 }
 
 /// The process identity and replay-key parameters; the actor is not the model.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MadeByProcess {
     #[serde(with = "super::entity_ref_wire")]
+    #[schemars(with = "String")]
     pub actor: EntityId,
     pub class: MadeByClass,
     pub identity: String,
@@ -104,17 +106,17 @@ impl MadeByProcess {
 
 /// The initiating task, ask, run or skill, not a free-text label
 /// (ARCH-0078 born-from: "the task, the run or the skill that caused it").
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MadeByTrigger {
     /// The initiating TASK row.
-    Task(#[serde(with = "super::entity_ref_wire")] EntityId),
+    Task(#[serde(with = "super::entity_ref_wire")] #[schemars(with = "String")] EntityId),
     /// The TURN row that carries the initiating ask.
-    Ask(#[serde(with = "super::entity_ref_wire")] EntityId),
+    Ask(#[serde(with = "super::entity_ref_wire")] #[schemars(with = "String")] EntityId),
     /// The code-mode run, by the id of its durable replay record.
-    Run(#[serde(with = "super::entity_ref_wire")] EntityId),
+    Run(#[serde(with = "super::entity_ref_wire")] #[schemars(with = "String")] EntityId),
     /// The SKILL row whose execution caused the birth.
-    Skill(#[serde(with = "super::entity_ref_wire")] EntityId),
+    Skill(#[serde(with = "super::entity_ref_wire")] #[schemars(with = "String")] EntityId),
 }
 
 impl MadeByTrigger {
@@ -128,7 +130,7 @@ impl MadeByTrigger {
 }
 
 /// One commit's derivation envelope. Document and operation span live on its receipt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MadeBy {
     pub inputs: Vec<MadeByInput>,

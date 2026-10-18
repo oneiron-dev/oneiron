@@ -488,9 +488,12 @@ class Oneiron:
             it raises ``BAD_REQUEST``.
             """
             return json.loads(_translate(lambda: self._client.vault_recall(query, effort, json.dumps(scope) if scope is not None else None, limit, format, as_of, deadline_ms, json.dumps(media) if media is not None else None, json.dumps(query_affect) if query_affect is not None else None)))
-        def export(self, format: str | None = None) -> dict[str, Any]:
-            """Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`)."""
-            return json.loads(_translate(lambda: self._client.vault_export(json.dumps({"format": format}))))
+        @property
+        def export(self) -> "Oneiron._VaultExportVerbs":
+            return Oneiron._VaultExportVerbs(self._client)
+        @property
+        def scope(self) -> "Oneiron._VaultScopeVerbs":
+            return Oneiron._VaultScopeVerbs(self._client)
         @property
         def receipts(self) -> "Oneiron._VaultReceiptsVerbs":
             return Oneiron._VaultReceiptsVerbs(self._client)
@@ -701,9 +704,9 @@ class Oneiron:
     class _VaultClaimsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
-        def upsert(self, claim: dict[str, Any]) -> dict[str, Any]:
-            """Upserts one claim. The consent gate, not this call, decides approval."""
-            return json.loads(_translate(lambda: self._client.vault_claims_upsert(json.dumps(claim))))
+        def upsert(self, spec):
+            """Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance."""
+            return json.loads(_translate(lambda: self._client.vault_claims_upsert(json.dumps(spec))))
         def retract(self, input: dict[str, Any]) -> Any:
             """Retracts one active claim: a deliberate withdrawal that preserves the record."""
             return json.loads(_translate(lambda: self._client.vault_claims_retract(json.dumps(input, allow_nan=False))))
@@ -719,6 +722,21 @@ class Oneiron:
         def seed(self, input: dict[str, Any]) -> Any:
             """Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt."""
             return json.loads(_translate(lambda: self._client.vault_claims_seed(json.dumps(input, allow_nan=False))))
+    class _VaultExportVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, format: str | None = None) -> dict[str, Any]:
+            """Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`)."""
+            return json.loads(_translate(lambda: self._client.vault_export(json.dumps({"format": format}))))
+        def scoped(self, spec):
+            """Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding."""
+            return json.loads(_translate(lambda: self._client.vault_export_scoped(json.dumps(spec))))
+    class _VaultScopeVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def ceiling(self, spec=None):
+            """Reads the caller credential ceiling as a typed ceiling, never as a record position."""
+            return json.loads(_translate(lambda: self._client.vault_scope_ceiling(json.dumps({} if spec is None else spec))))
     class _VaultReceiptsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

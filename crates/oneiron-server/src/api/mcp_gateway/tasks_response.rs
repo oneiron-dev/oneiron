@@ -865,6 +865,8 @@ fn mcp_agent_verb_input(
         "vault.claims.upsert" => a.spec.clone().ok_or_else(invalid),
         "vault.recall" => a.spec.clone().ok_or_else(invalid),
         "vault.export" => a.spec.clone().ok_or_else(invalid),
+        "vault.scope.ceiling" => a.spec.clone().ok_or_else(invalid),
+        "vault.export.scoped" => a.spec.clone().ok_or_else(invalid),
         "vault.receipts" => a.spec.clone().ok_or_else(invalid),
         "vault.images.view" => a.spec.clone().ok_or_else(invalid),
         "vault.receipts.get" => a.spec.clone().ok_or_else(invalid),
@@ -1447,6 +1449,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.export" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.scope.ceiling" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.export.scoped" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.receipts" => {
@@ -2928,7 +2936,7 @@ async fn execute_agent_verb_row(
             mcp_agent_verb_output(output, source)
         }
         "vault.claims.upsert" => {
-            let input: oneiron::memory::ClaimInput =
+            let input: oneiron::memory::ScopedClaimInput =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_claims_upsert(&memory, input)
                 .map_err(mcp_facade_error)?;
@@ -3005,6 +3013,22 @@ async fn execute_agent_verb_row(
                 memory.export_with_verified_owner(&input, proof)
             }
             .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.scope.ceiling" => {
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_scope_ceiling(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.export.scoped" => {
+            let input: oneiron::memory::ScopedExportRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_export_scoped(&memory, input)
+                .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -6007,7 +6031,7 @@ async fn execute_agent_verb_row(
             mcp_agent_verb_output(output, source)
         }
         "vault.commit" => {
-            let input: oneiron::task_verb::sdk::CommitRequest =
+            let input: oneiron::memory::ScopedCommitRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output =
                 oneiron::task_verb::sdk::vault_commit(&memory, input).map_err(mcp_facade_error)?;
@@ -6469,7 +6493,7 @@ async fn execute_agent_verb_row(
             mcp_agent_verb_output(output, source)
         }
         "vault.claims.seed" => {
-            let input: oneiron::task_verb::sdk::CommitRequest =
+            let input: oneiron::memory::ScopedCommitRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_claims_seed(&memory, input)
                 .map_err(mcp_facade_error)?;

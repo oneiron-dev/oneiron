@@ -41,6 +41,8 @@ pub enum AgentVerb {
     VaultClaimsUpsert,
     VaultRecall,
     VaultExport,
+    VaultScopeCeiling,
+    VaultExportScoped,
     VaultReceipts,
     VaultImagesView,
     VaultReceiptsGet,
@@ -407,6 +409,8 @@ impl AgentVerb {
         Self::VaultClaimsUpsert,
         Self::VaultRecall,
         Self::VaultExport,
+        Self::VaultScopeCeiling,
+        Self::VaultExportScoped,
         Self::VaultReceipts,
         Self::VaultImagesView,
         Self::VaultReceiptsGet,
@@ -776,6 +780,8 @@ impl AgentVerb {
             Self::VaultClaimsUpsert => "vault.claims.upsert",
             Self::VaultRecall => "vault.recall",
             Self::VaultExport => "vault.export",
+            Self::VaultScopeCeiling => "vault.scope.ceiling",
+            Self::VaultExportScoped => "vault.export.scoped",
             Self::VaultReceipts => "vault.receipts",
             Self::VaultImagesView => "vault.images.view",
             Self::VaultReceiptsGet => "vault.receipts.get",
@@ -1145,6 +1151,8 @@ impl AgentVerb {
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
                 | Self::VaultExport
+                | Self::VaultScopeCeiling
+                | Self::VaultExportScoped
                 | Self::VaultReceipts
                 | Self::VaultImagesView
                 | Self::VaultReceiptsGet
@@ -1518,6 +1526,8 @@ impl AgentVerb {
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
                 | Self::VaultExport
+                | Self::VaultScopeCeiling
+                | Self::VaultExportScoped
                 | Self::VaultReceipts
                 | Self::VaultImagesView
                 | Self::VaultReceiptsGet
@@ -1875,6 +1885,11 @@ impl AgentVerb {
                 | Self::SelfInboxList
                 | Self::SelfInboxMark
                 | Self::Describe
+                | Self::VaultClaimsUpsert
+                | Self::VaultRecall
+                | Self::VaultScopeCeiling
+                | Self::VaultExportScoped
+                | Self::VaultCommit
                 | Self::VaultClaimsList
                 | Self::VaultClaimsHistory
                 | Self::VaultHydrate
@@ -1883,6 +1898,7 @@ impl AgentVerb {
                 | Self::VaultRefsLinks
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
+                | Self::VaultClaimsSeed
         )
     }
     pub const fn requires_unscoped(self) -> bool {
@@ -1914,8 +1930,6 @@ impl AgentVerb {
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
                 | Self::VaultWitness
-                | Self::VaultClaimsUpsert
-                | Self::VaultRecall
                 | Self::VaultExport
                 | Self::VaultReceipts
                 | Self::VaultImagesView
@@ -2178,7 +2192,6 @@ impl AgentVerb {
                 | Self::SelfDesktopWindows
                 | Self::SelfDesktopWindow
                 | Self::SelfDesktopHandover
-                | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
@@ -2223,7 +2236,6 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
-                | Self::VaultClaimsSeed
                 | Self::ConnectorOutboundSchedule
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
@@ -2531,6 +2543,8 @@ impl AgentVerb {
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
             Self::VaultExport => &["spec"],
+            Self::VaultScopeCeiling => &["spec"],
+            Self::VaultExportScoped => &["spec"],
             Self::VaultReceipts => &["spec"],
             Self::VaultImagesView => &["spec"],
             Self::VaultReceiptsGet => &["spec"],
@@ -2898,6 +2912,8 @@ impl AgentVerb {
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
             Self::VaultExport => &["spec"],
+            Self::VaultScopeCeiling => &["spec"],
+            Self::VaultExportScoped => &["spec"],
             Self::VaultReceipts => &["spec"],
             Self::VaultImagesView => &["spec"],
             Self::VaultReceiptsGet => &["spec"],
@@ -3326,13 +3342,19 @@ impl AgentVerb {
                 "Witnesses one conversational turn: its conversation, turn and gated messages, edges and text index, in one atomic batch."
             }
             Self::VaultClaimsUpsert => {
-                "Commits one claim through the gate, superseding the prior active claim on the same subject, scope and predicate."
+                "Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance."
             }
             Self::VaultRecall => {
                 "Recalls a memory pack for a query at an effort level: ranked items with provenance, scope honesty and retrieval accounting."
             }
             Self::VaultExport => {
                 "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only."
+            }
+            Self::VaultScopeCeiling => {
+                "Reads the caller credential ceiling as a typed ceiling, never as a record position."
+            }
+            Self::VaultExportScoped => {
+                "Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding."
             }
             Self::VaultReceipts => {
                 "Governance receipts newest first: the gate decision ledger, or the receipts of the named kinds."

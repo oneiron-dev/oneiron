@@ -238,13 +238,10 @@ impl NativeClient {
         Ok(witness_receipt_from_engine(output))
     }
     #[napi]
-    pub fn vault_claims_upsert(&self, claim: NapiClaimInput) -> napi::Result<NapiCommitReceipt> {
-        let claim = claim_input_to_engine(&claim).map_err(facade_error)?;
-        let output = self
-            .inner
-            .vault_claims_upsert(&claim)
-            .map_err(facade_error)?;
-        Ok(commit_receipt_from_engine(output))
+    pub fn vault_claims_upsert(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.claims.upsert", input)
+            .map_err(facade_error)
     }
     #[napi]
     pub fn vault_recall(
@@ -301,6 +298,18 @@ impl NativeClient {
     pub fn vault_export(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.export", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_scope_ceiling(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.scope.ceiling", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_export_scoped(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.export.scoped", input)
             .map_err(facade_error)
     }
     #[napi]
