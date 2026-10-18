@@ -918,6 +918,14 @@ export class Oneiron {
         setup: (input: Facade.EvalCohortSetup): Facade.EvalAuthoringReport => this.#call(() => this.#client.vaultEvalsCohortsSetup(input) as Facade.EvalAuthoringReport),
       },
     },
+    cleanup: {
+      /** The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing. */
+      run: (input: Facade.CleanupRunRequest): Facade.CleanupRunView => this.#call(() => this.#client.vaultCleanupRun(input) as Facade.CleanupRunView),
+    },
+    entities: {
+      /** The owner resolves an evidence-backed mention through the existing waterfall, restoring its selected archived record in place and never minting a duplicate. */
+      mention: (input: Facade.EntityMentionRequest): Facade.EntityResolutionWaterfallDecision => this.#call(() => this.#client.vaultEntitiesMention(input) as Facade.EntityResolutionWaterfallDecision),
+    },
     legal_holds: {
       /** The owner places a customer legal hold on the named records or gate partitions. */
       place: (input: Facade.LegalHoldPlaceRequest): Facade.LegalHold => this.#call(() => this.#client.vaultLegalHoldsPlace(input) as Facade.LegalHold),
@@ -1083,6 +1091,34 @@ export class Oneiron {
       replay: (input: Facade.HooksReplayRequest): Facade.HookReplayRow[] => this.#call(() => this.#client.vaultHooksReplay(input) as Facade.HookReplayRow[]),
     },
     artifacts: {
+      /** Computes the exact publication approval digest for the existing owner approve-once door; it grants nothing. */
+      publish_approval: (input: Facade.ArtifactPublishRequest): Facade.ArtifactPublishApproval => this.#call(() => this.#client.vaultArtifactsPublishApproval(input) as Facade.ArtifactPublishApproval),
+      /** Publishes one immutable code fork or numbered blob export with an explicit audience through the existing Gate, returning its pointer and durable receipt ref. */
+      publish: (input: Facade.ArtifactPublishRequest): Facade.ArtifactPublishView => this.#call(() => this.#client.vaultArtifactsPublish(input) as Facade.ArtifactPublishView),
+      /** Repoints one artifact channel to an exact immutable export through the publication Gate; use a new publish id, and earlier receipts survive. */
+      repoint: (input: Facade.ArtifactPublishRequest): Facade.ArtifactPublishView => this.#call(() => this.#client.vaultArtifactsRepoint(input) as Facade.ArtifactPublishView),
+      /** Reads the current artifact channel pin and audience under the owner credential; null when absent or withheld. */
+      pointer: (input: Facade.ArtifactPointerRequest): Facade.ArtifactPointer | null => this.#call(() => this.#client.vaultArtifactsPointer(input) as Facade.ArtifactPointer | null),
+      /** Removes one artifact channel pointer without deleting its immutable export or earlier publication receipts. */
+      unpublish: (input: Facade.ArtifactPointerRequest): Facade.ArtifactUnpublished => this.#call(() => this.#client.vaultArtifactsUnpublish(input) as Facade.ArtifactUnpublished),
+      /** Mints a serving-only link token and its digest tier; publication still requires a separate exact Gate authorization. */
+      link_token: (input: Facade.EmptyRequest): Facade.ArtifactLinkToken => this.#call(() => this.#client.vaultArtifactsLinkToken(input) as Facade.ArtifactLinkToken),
+      live_preview: {
+        /** Opens a draft-labelled, owner-private live preview only for the exact process, port and lease already declared by the trusted session runtime. */
+        register: (input: Facade.ArtifactPreviewRegisterRequest): Facade.ArtifactPreviewView => this.#call(() => this.#client.vaultArtifactsLivePreviewRegister(input) as Facade.ArtifactPreviewView),
+        /** Reads a live draft endpoint and a caller-specific preview URL as the owner or a named invitee; uninvited callers are refused. */
+        read: (input: Facade.ArtifactPreviewRequest): Facade.ArtifactPreviewView | null => this.#call(() => this.#client.vaultArtifactsLivePreviewRead(input) as Facade.ArtifactPreviewView | null),
+        /** Closes one owner-private preview lease, invalidating its old URLs, streams and upgrades without changing any published artifact pin. */
+        close: (input: Facade.ArtifactPreviewRequest): Facade.ArtifactPreviewClosed => this.#call(() => this.#client.vaultArtifactsLivePreviewClose(input) as Facade.ArtifactPreviewClosed),
+        /** Invites one named principal to a private live preview under the lease owner proof; no public audience is created. */
+        invite: (input: Facade.ArtifactPreviewInviteRequest): Facade.ArtifactPreviewInvitation => this.#call(() => this.#client.vaultArtifactsLivePreviewInvite(input) as Facade.ArtifactPreviewInvitation),
+        /** Revokes one private preview invitation and its personal credentials, including active streams. */
+        revoke_invite: (input: Facade.ArtifactPreviewInviteRequest): Facade.ArtifactPreviewInvitation => this.#call(() => this.#client.vaultArtifactsLivePreviewRevokeInvite(input) as Facade.ArtifactPreviewInvitation),
+        /** Mints a revocable sharing URL for one private live preview, replacing any earlier sharing URL; no artifact is published. */
+        share: (input: Facade.ArtifactPreviewRequest): Facade.ArtifactPreviewShare => this.#call(() => this.#client.vaultArtifactsLivePreviewShare(input) as Facade.ArtifactPreviewShare),
+        /** Revokes the private preview sharing URL and streams that used it while preserving separate owner and invitee credentials. */
+        revoke_share: (input: Facade.ArtifactPreviewRequest): Facade.ArtifactPreviewShare => this.#call(() => this.#client.vaultArtifactsLivePreviewRevokeShare(input) as Facade.ArtifactPreviewShare),
+      },
       /** One artifact's kind, head and versions, each with its made_by and born-from. */
       view: (request: Facade.ArtifactRefRequest): Facade.ArtifactView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsView(keyedJson(request))) as Facade.ArtifactView | null; return result === null ? null : result }),
       /** Inspects real DOCX blocks, XLSX cells and PPTX shapes in one version; other kinds explicitly report no annotation unit adapter. */

@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 649 code-mode rows (628 host rows, 21 run rows), 2336 declarations.
-// Replies: 570 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 664 code-mode rows (643 host rows, 21 run rows), 2368 declarations.
+// Replies: 585 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 95; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -987,6 +987,16 @@ declare namespace Sdk {
   type AuthorityHandoffAlarmAck = { by: string; at: number };
   type AuthorityHandoffAlarm = { signer: string; refused: string; handoffs: string[]; raised_at: number; acknowledged?: AuthorityHandoffAlarmAck | null; seen: string[] };
   type HandoffAlarmRequest = { signer: string };
+  type CleanupRunRequest = Record<string, never>;
+  type CleanupPosture = "propose_first" | "auto_with_digest";
+  type CleanupKind = "claimless_extraction_person" | "empty_summary" | "completed_task" | "completed_attempt" | "retained_note";
+  type CleanupCandidate = { entity: EntityId; kind: CleanupKind };
+  type CleanupRunView = { attempt: string; posture: CleanupPosture; candidates: CleanupCandidate[]; proposal?: EntityId | null; archived: EntityId[]; digest?: EntityId | null };
+  type EntityResolutionCandidate = { subject: EntityId; confidence_claim_ref: EntityId };
+  type EntityMentionRequest = { candidates: EntityResolutionCandidate[]; high_collision_mention?: boolean };
+  type ScoredEntityResolutionCandidate = { candidate: EntityResolutionCandidate; effective_confidence: number };
+  type EntityResolutionRoute = "hard_link" | "soft_link" | "soft_link_low" | "provisional_entity";
+  type EntityResolutionWaterfallDecision = { ranked: ScoredEntityResolutionCandidate[]; claims_suppressed: number; selected?: EntityId | null; selected_effective_confidence?: number | null; route: EntityResolutionRoute; requires_async_verification: boolean };
   type LegalHoldTarget = { record: EntityId } | { gate_partition: EntityId | null };
   type LegalHoldPlaceRequest = { targets: LegalHoldTarget[]; matter_ref?: string | null };
   type LegalHoldKind = "customer" | "host_order";
@@ -1257,6 +1267,28 @@ declare namespace Sdk {
   type BornWith = Record<string, string>;
   type SharedBriefView = { share_ref: string; html: string; citations: SharedBriefCitation[]; born_with: BornWith };
   type HooksReplayRequest = { binding: string; since?: string | null; limit?: number | null };
+  type ArtifactPointerChannel = "published" | "preview";
+  type CodebaseForkHash = number[];
+  type ArtifactExportRef = { ForkHash: CodebaseForkHash } | { BlobVersion: { artifact_id: EntityId; version: number } };
+  type ArtifactLinkCapability = number[];
+  type ArtifactServeTier = "Private" | "Public" | { LinkToken: ArtifactLinkCapability } | { WorldMembers: number };
+  type ArtifactPublishRequest = { artifact: string; channel: ArtifactPointerChannel; export: ArtifactExportRef; serve_tier: ArtifactServeTier; publish_id: EntityId; occurred_at: number };
+  type ArtifactPublishApproval = { effect_digest: string };
+  type ArtifactPublishVerbStatus = "proposed" | "published";
+  type ArtifactPointer = { artifact: string; channel: ArtifactPointerChannel; export: ArtifactExportRef; stale_taint_override: boolean; serve_tier: ArtifactServeTier };
+  type ArtifactPublishView = { status: ArtifactPublishVerbStatus; pointer?: ArtifactPointer | null; receipt_ref?: string | null; gate_decision_ref: string };
+  type ArtifactPointerRequest = { artifact: string; channel: ArtifactPointerChannel };
+  type ArtifactUnpublished = { removed: boolean };
+  type ArtifactLinkToken = { serve_tier: ArtifactServeTier; token: string };
+  type ArtifactPreviewPort = { process_ref: string; port: number };
+  type ArtifactPreviewRegisterRequest = { session_ref: string; lease_ref: string; expires_at: number; preview: ArtifactPreviewPort };
+  type ArtifactPreviewStage = "draft";
+  type ArtifactPreviewView = { session_ref: string; lease_ref: string; local_url: string; stage: ArtifactPreviewStage; private: boolean; expires_at: number; access_url: string };
+  type ArtifactPreviewRequest = { session_ref: string; lease_ref: string };
+  type ArtifactPreviewClosed = { closed: boolean };
+  type ArtifactPreviewInviteRequest = { session_ref: string; lease_ref: string; principal_ref: EntityId };
+  type ArtifactPreviewInvitation = { principal_ref: EntityId; invited: boolean };
+  type ArtifactPreviewShare = { access_url?: string | null };
   type ArtifactRefRequest = { artifact_ref: string };
   type ArtifactKind = "document" | "sheet" | "deck" | "code" | "canvas" | "image" | "file";
   type BornFromSource = { trigger: MadeByTrigger } | { agent_run: string };
@@ -2754,18 +2786,44 @@ declare const vault: Sdk.VaultHost & {
     inspect_deck(input: Sdk.DeckInspectRequest): Promise<Sdk.DeckInspectionView | StoredResult>;
     /** Settles one waiting artifact proposal into a version. */
     keep(input: Sdk.ProposalSettleRequest): Promise<Sdk.KeptProposal | StoredResult>;
+    /** Mints a serving-only link token and its digest tier; publication still requires a separate exact Gate authorization. */
+    link_token(input: Sdk.EmptyRequest): Promise<Sdk.ArtifactLinkToken | StoredResult>;
+    live_preview: {
+      /** Closes one owner-private preview lease, invalidating its old URLs, streams and upgrades without changing any published artifact pin. */
+      close(input: Sdk.ArtifactPreviewRequest): Promise<Sdk.ArtifactPreviewClosed | StoredResult>;
+      /** Invites one named principal to a private live preview under the lease owner proof; no public audience is created. */
+      invite(input: Sdk.ArtifactPreviewInviteRequest): Promise<Sdk.ArtifactPreviewInvitation | StoredResult>;
+      /** Reads a live draft endpoint and a caller-specific preview URL as the owner or a named invitee; uninvited callers are refused. */
+      read(input: Sdk.ArtifactPreviewRequest): Promise<Sdk.ArtifactPreviewView | null | StoredResult>;
+      /** Opens a draft-labelled, owner-private live preview only for the exact process, port and lease already declared by the trusted session runtime. */
+      register(input: Sdk.ArtifactPreviewRegisterRequest): Promise<Sdk.ArtifactPreviewView | StoredResult>;
+      /** Revokes one private preview invitation and its personal credentials, including active streams. */
+      revoke_invite(input: Sdk.ArtifactPreviewInviteRequest): Promise<Sdk.ArtifactPreviewInvitation | StoredResult>;
+      /** Revokes the private preview sharing URL and streams that used it while preserving separate owner and invitee credentials. */
+      revoke_share(input: Sdk.ArtifactPreviewRequest): Promise<Sdk.ArtifactPreviewShare | StoredResult>;
+      /** Mints a revocable sharing URL for one private live preview, replacing any earlier sharing URL; no artifact is published. */
+      share(input: Sdk.ArtifactPreviewRequest): Promise<Sdk.ArtifactPreviewShare | StoredResult>;
+    };
+    /** Reads the current artifact channel pin and audience under the owner credential; null when absent or withheld. */
+    pointer(input: Sdk.ArtifactPointerRequest): Promise<Sdk.ArtifactPointer | null | StoredResult>;
     /** The proposals waiting beside one artifact. */
     proposals(input: Sdk.ArtifactRefRequest): Promise<Sdk.PendingProposalView[] | StoredResult>;
     /** Runs one native deck transaction over an artifact's head and holds the proposal for Keep. */
     propose_deck(input: Sdk.DeckProposeRequest): Promise<Sdk.DeckProposeOutcome | StoredResult>;
     /** Offers one native organ result to an artifact as its next version, held for Keep. */
     propose_output(input: Sdk.NativeOutputRequest): Promise<Sdk.PendingProposalView | StoredResult>;
+    /** Publishes one immutable code fork or numbered blob export with an explicit audience through the existing Gate, returning its pointer and durable receipt ref. */
+    publish(input: Sdk.ArtifactPublishRequest): Promise<Sdk.ArtifactPublishView | StoredResult>;
+    /** Computes the exact publication approval digest for the existing owner approve-once door; it grants nothing. */
+    publish_approval(input: Sdk.ArtifactPublishRequest): Promise<Sdk.ArtifactPublishApproval | StoredResult>;
     /** Registers one blob artifact; its bytes ride vault.artifacts.append. */
     put(input: Sdk.BlobArtifactInput): Promise<Sdk.EntityRefReceipt | StoredResult>;
     /** Reads one version of a blob artifact's bytes. */
     read(input: Sdk.ReadBlobVersionRequest): Promise<Sdk.BlobContent | null | StoredResult>;
     /** Lets one held organ call go, by its run ref, under the consent a Discard needs. */
     release_wait(input: Sdk.ProposalSettleRequest): Promise<Sdk.ReleasedWait | StoredResult>;
+    /** Repoints one artifact channel to an exact immutable export through the publication Gate; use a new publish id, and earlier receipts survive. */
+    repoint(input: Sdk.ArtifactPublishRequest): Promise<Sdk.ArtifactPublishView | StoredResult>;
     /** Reviews an artifact's head slides through the host's decision ladder and holds the result as a proposal for Keep or Discard. */
     review_slides(input: Sdk.SlideReviewSubmit): Promise<Sdk.SlideReviewOutcome | StoredResult>;
     threads: {
@@ -2786,6 +2844,8 @@ declare const vault: Sdk.VaultHost & {
     undo(input: Sdk.ProposalSettleRequest): Promise<Sdk.UndoneKeep | StoredResult>;
     /** Inspects real DOCX blocks, XLSX cells and PPTX shapes in one version; other kinds explicitly report no annotation unit adapter. */
     units(input: Sdk.ArtifactUnitsRequest): Promise<Sdk.ArtifactUnitsView | StoredResult>;
+    /** Removes one artifact channel pointer without deleting its immutable export or earlier publication receipts. */
+    unpublish(input: Sdk.ArtifactPointerRequest): Promise<Sdk.ArtifactUnpublished | StoredResult>;
     /** One artifact: its kind, name, type, head and every version with its made_by and born-from. */
     view(input: Sdk.ArtifactRefRequest): Promise<Sdk.ArtifactView | null | StoredResult>;
     /** The organ calls held beside one artifact until one of the owner's nodes can run them, each with why it waits. */
@@ -2919,6 +2979,10 @@ declare const vault: Sdk.VaultHost & {
     vet(input: Sdk.ClaimSettleRequest): Promise<Sdk.ClaimSettlement | StoredResult>;
     /** Reviews an exact generated-origin Auto claim or proposal before owner vetting, returning the content-bound review handle. */
     vetting(input: Sdk.ClaimProposalReviewRequest): Promise<Sdk.ClaimProposalReview | StoredResult>;
+  };
+  cleanup: {
+    /** The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing. */
+    run(input: Sdk.CleanupRunRequest): Promise<Sdk.CleanupRunView | StoredResult>;
   };
   code: {
     /** Every unit of one tested state of a code file, with the runs of text each operation wrote, and who made each operation and why. */
@@ -3127,6 +3191,10 @@ declare const vault: Sdk.VaultHost & {
     };
     /** Drops a declared space that no slot binds and no open move names, with its vector rows. */
     retire(input: Sdk.EmbeddingSpaceRequest): Promise<Sdk.EmbeddingSpacesView | StoredResult>;
+  };
+  entities: {
+    /** The owner resolves an evidence-backed mention through the existing waterfall, restoring its selected archived record in place and never minting a duplicate. */
+    mention(input: Sdk.EntityMentionRequest): Promise<Sdk.EntityResolutionWaterfallDecision | StoredResult>;
   };
   esign: {
     /** Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act. */

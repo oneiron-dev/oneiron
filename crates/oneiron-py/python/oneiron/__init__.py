@@ -682,6 +682,12 @@ class Oneiron:
         def evals(self) -> "Oneiron._VaultEvalsVerbs":
             return Oneiron._VaultEvalsVerbs(self._client)
         @property
+        def cleanup(self) -> "Oneiron._VaultCleanupVerbs":
+            return Oneiron._VaultCleanupVerbs(self._client)
+        @property
+        def entities(self) -> "Oneiron._VaultEntitiesVerbs":
+            return Oneiron._VaultEntitiesVerbs(self._client)
+        @property
         def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs":
             return Oneiron._VaultLegalHoldsVerbs(self._client)
         @property
@@ -1778,6 +1784,18 @@ class Oneiron:
         def setup(self, spec):
             """The owner sets up sealed cohorts from a pinned real inventory through the existing family, case and audited cut doors. Reports refused decisions; never serves sealed content or fabricates labels or skill provenance."""
             return json.loads(_translate(lambda: self._client.vault_evals_cohorts_setup(json.dumps(spec))))
+    class _VaultCleanupVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def run(self, spec):
+            """The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."""
+            return json.loads(_translate(lambda: self._client.vault_cleanup_run(json.dumps(spec))))
+    class _VaultEntitiesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def mention(self, spec):
+            """The owner resolves an evidence-backed mention through the existing waterfall, restoring its selected archived record in place and never minting a duplicate."""
+            return json.loads(_translate(lambda: self._client.vault_entities_mention(json.dumps(spec))))
     class _VaultLegalHoldsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2064,6 +2082,27 @@ class Oneiron:
     class _VaultArtifactsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def publish_approval(self, spec):
+            """Computes the exact publication approval digest for the existing owner approve-once door; it grants nothing."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_publish_approval(json.dumps(spec))))
+        def publish(self, spec):
+            """Publishes one immutable code fork or numbered blob export with an explicit audience through the existing Gate, returning its pointer and durable receipt ref."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_publish(json.dumps(spec))))
+        def repoint(self, spec):
+            """Repoints one artifact channel to an exact immutable export through the publication Gate; use a new publish id, and earlier receipts survive."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_repoint(json.dumps(spec))))
+        def pointer(self, spec):
+            """Reads the current artifact channel pin and audience under the owner credential; null when absent or withheld."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_pointer(json.dumps(spec))))
+        def unpublish(self, spec):
+            """Removes one artifact channel pointer without deleting its immutable export or earlier publication receipts."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_unpublish(json.dumps(spec))))
+        def link_token(self, spec):
+            """Mints a serving-only link token and its digest tier; publication still requires a separate exact Gate authorization."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_link_token(json.dumps(spec))))
+        @property
+        def live_preview(self) -> "Oneiron._VaultArtifactsLivePreviewVerbs":
+            return Oneiron._VaultArtifactsLivePreviewVerbs(self._client)
         def view(self, request: dict[str, Any]) -> dict[str, Any] | None:
             """One artifact's kind, head and versions, each with its made_by and born-from."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_view(json.dumps(request, allow_nan=False))))
@@ -2130,6 +2169,30 @@ class Oneiron:
         def read(self, input: dict[str, Any]) -> Any:
             """Reads one version of a blob artifact's bytes."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_read(json.dumps(input, allow_nan=False))))
+    class _VaultArtifactsLivePreviewVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def register(self, spec):
+            """Opens a draft-labelled, owner-private live preview only for the exact process, port and lease already declared by the trusted session runtime."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_live_preview_register(json.dumps(spec))))
+        def read(self, spec):
+            """Reads a live draft endpoint and a caller-specific preview URL as the owner or a named invitee; uninvited callers are refused."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_live_preview_read(json.dumps(spec))))
+        def close(self, spec):
+            """Closes one owner-private preview lease, invalidating its old URLs, streams and upgrades without changing any published artifact pin."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_live_preview_close(json.dumps(spec))))
+        def invite(self, spec):
+            """Invites one named principal to a private live preview under the lease owner proof; no public audience is created."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_live_preview_invite(json.dumps(spec))))
+        def revoke_invite(self, spec):
+            """Revokes one private preview invitation and its personal credentials, including active streams."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_live_preview_revoke_invite(json.dumps(spec))))
+        def share(self, spec):
+            """Mints a revocable sharing URL for one private live preview, replacing any earlier sharing URL; no artifact is published."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_live_preview_share(json.dumps(spec))))
+        def revoke_share(self, spec):
+            """Revokes the private preview sharing URL and streams that used it while preserving separate owner and invitee credentials."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_live_preview_revoke_share(json.dumps(spec))))
     class _VaultArtifactsAnchorsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

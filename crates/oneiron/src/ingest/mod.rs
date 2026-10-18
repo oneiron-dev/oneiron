@@ -61,8 +61,9 @@ pub use self::registry::{
     MEETING_TRANSCRIPT_SOURCE_ID,
 };
 pub use self::resolution::{
-    EntityResolutionCandidate, EntityResolutionRoute, EntityResolutionWaterfallDecision,
-    ScoredEntityResolutionCandidate, evaluate_entity_resolution_waterfall,
+    EntityMentionRequest, EntityResolutionCandidate, EntityResolutionRoute,
+    EntityResolutionWaterfallDecision, ScoredEntityResolutionCandidate,
+    evaluate_entity_resolution_waterfall, mention_as_owner,
 };
 pub use self::transcripts::{JsonlTranscriptSource, MeetingTranscriptSource};
 pub use self::types::{

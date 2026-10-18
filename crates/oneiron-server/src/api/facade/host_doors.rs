@@ -49,6 +49,7 @@ use crate::models::RungVoices;
 use crate::server::SyncServer;
 
 // The signed authority history doors, under the audit door's owner proof.
+pub(crate) use super::artifact_hosting_doors::*;
 pub(crate) use super::authority_history_doors::*;
 pub(crate) use super::booking_doors::*;
 pub(crate) use super::calendar_doors::*;
@@ -73,6 +74,7 @@ pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
 pub(crate) use super::live_voice_doors::*;
 pub(crate) use super::model_step_doors::*;
+pub(crate) use super::cleanup_doors::*;
 pub(crate) use super::skill_execution_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
@@ -1118,6 +1120,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.packs.setup.verify"
         | "vault.authority.handoff_alarms"
         | "vault.authority.handoff_alarms.acknowledge"
+        | "vault.cleanup.run"
+        | "vault.entities.mention"
         | "vault.legal_holds.place"
         | "vault.legal_holds.widen"
         | "vault.legal_holds.list"
@@ -1263,6 +1267,18 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.origin.authority.set"
         | "vault.code.origin.publications"
         | "vault.code.checkout.bind"
+        | "vault.artifacts.publish_approval"
+        | "vault.artifacts.publish"
+        | "vault.artifacts.repoint"
+        | "vault.artifacts.pointer"
+        | "vault.artifacts.unpublish"
+        | "vault.artifacts.link_token"
+        | "vault.artifacts.live_preview.register"
+        | "vault.artifacts.live_preview.close"
+        | "vault.artifacts.live_preview.invite"
+        | "vault.artifacts.live_preview.revoke_invite"
+        | "vault.artifacts.live_preview.share"
+        | "vault.artifacts.live_preview.revoke_share"
         | "vault.code.snapshots.ingest"
         | "vault.code.snapshots.get"
         | "vault.code.snapshots.read"
