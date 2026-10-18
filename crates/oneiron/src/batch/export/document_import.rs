@@ -10,8 +10,7 @@ use serde::Deserialize;
 
 use super::archive_index::{
     ArchiveIndex, EntityAt, FLAG_EXPRESSION, FLAG_PACK_BODY, FLAG_PROVENANCE, IndexedArchive,
-    QUEUE_EXPRESSION, QUEUE_PROVENANCE, QUEUE_ROW, Section, Tag, id_at, id_list, ids_of,
-    ready_key,
+    QUEUE_EXPRESSION, QUEUE_PROVENANCE, QUEUE_ROW, Section, Tag, id_at, id_list, ids_of, ready_key,
 };
 use super::{
     ArchiveFiles, ArchiveRecordKind, ExportDerivationEnvelope, ExportEdge, ExportEntity,
@@ -126,8 +125,8 @@ impl Vault {
         if actor.is_none() && archive.expressions {
             return Err(actor_required());
         }
-        let authority = self
-            .classify_vault_import_manifest(&archive.manifest.storage.to_json_pretty()?, None)?;
+        let authority =
+            self.classify_vault_import_manifest(&archive.manifest.storage.to_json_pretty()?, None)?;
         // Classification is advisory provenance, not an admission capability.
         // Even a forged same-chain manifest cannot enable replay or Auto here.
         for entry in &archive.manifest.import_omissions {
@@ -244,12 +243,8 @@ impl Vault {
                 let id = id_at(&key, 1)?;
                 let (inserted, unchanged) = match key[0] {
                     QUEUE_PROVENANCE => {
-                        let (inserted, unchanged) = super::provenance_import::restore(
-                            id,
-                            self,
-                            &mut wtxn,
-                            &mut archive,
-                        )?;
+                        let (inserted, unchanged) =
+                            super::provenance_import::restore(id, self, &mut wtxn, &mut archive)?;
                         (inserted.into_iter().collect::<Vec<_>>(), unchanged)
                     }
                     QUEUE_EXPRESSION => {
@@ -379,11 +374,9 @@ fn mark_ready_rows<R: Read + Seek>(archive: &mut IndexedArchive<'_, R>) -> Resul
             blocked |= archive.index.contains(Tag::Waiting, reference.as_bytes())?;
         }
         if !blocked {
-            archive.index.put(
-                Tag::Ready,
-                &ready_key(QUEUE_ROW, &id_at(&id, 0)?),
-                &[],
-            )?;
+            archive
+                .index
+                .put(Tag::Ready, &ready_key(QUEUE_ROW, &id_at(&id, 0)?), &[])?;
             any = true;
         }
         at = Some(id);

@@ -234,14 +234,11 @@ impl<'e> ArchiveIndex<'e> {
         tag: Tag,
     ) -> Result<impl Iterator<Item = Result<(&[u8], &[u8])>> + '_> {
         let prefix = [tag as u8];
-        Ok(self
-            .db
-            .prefix_iter(self.txn()?, &prefix[..])?
-            .map(|entry| {
-                entry
-                    .map(|(key, value)| (&key[1..], value))
-                    .map_err(Error::from)
-            }))
+        Ok(self.db.prefix_iter(self.txn()?, &prefix[..])?.map(|entry| {
+            entry
+                .map(|(key, value)| (&key[1..], value))
+                .map_err(Error::from)
+        }))
     }
 
     /// How many entries `tag` holds.
@@ -552,11 +549,9 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
         &self,
         after: Option<&EntityId>,
     ) -> Result<Option<(EntityId, EntityAt)>> {
-        let Some((key, value)) = self.index.next(
-            Tag::Entity,
-            &[],
-            after.map(|id| id.as_bytes().as_slice()),
-        )?
+        let Some((key, value)) =
+            self.index
+                .next(Tag::Entity, &[], after.map(|id| id.as_bytes().as_slice()))?
         else {
             return Ok(None);
         };
@@ -623,8 +618,5 @@ pub(crate) fn id_list(ids: &[EntityId]) -> Vec<u8> {
 
 /// The ids of an [`id_list`].
 pub(crate) fn ids_of(bytes: &[u8]) -> Result<Vec<EntityId>> {
-    bytes
-        .chunks(ENTITY_ID_LEN)
-        .map(|id| id_at(id, 0))
-        .collect()
+    bytes.chunks(ENTITY_ID_LEN).map(|id| id_at(id, 0)).collect()
 }

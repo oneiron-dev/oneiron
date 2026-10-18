@@ -375,10 +375,11 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
         let mut spaces = self.spool.rows(ArchiveRecordKind::EmbeddingSpace);
         while let Some((_, space)) = spaces.next_parsed::<PortableEmbeddingSpace>(&self.spool)? {
             space.declaration().validate()?;
-            if !self
-                .index
-                .insert(Tag::Space, blake3::hash(space.id.as_bytes()).as_bytes(), &[])?
-            {
+            if !self.index.insert(
+                Tag::Space,
+                blake3::hash(space.id.as_bytes()).as_bytes(),
+                &[],
+            )? {
                 return Err(invalid("duplicate embedding space"));
             }
             any = true;

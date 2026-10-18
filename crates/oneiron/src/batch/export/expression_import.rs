@@ -108,9 +108,13 @@ pub(super) fn index_expressions<R: Read + Seek>(archive: &mut IndexedArchive<'_,
         for (new, old, at) in history.supersessions() {
             let mut pair = new.as_bytes().to_vec();
             pair.extend_from_slice(old.as_bytes());
-            archive.index.put(Tag::Supersedes, &pair, &at.to_be_bytes())?;
+            archive
+                .index
+                .put(Tag::Supersedes, &pair, &at.to_be_bytes())?;
         }
-        archive.index.put(Tag::HistoryPending, first.as_bytes(), &group)?;
+        archive
+            .index
+            .put(Tag::HistoryPending, first.as_bytes(), &group)?;
         // The next group starts past every key under this one: its closing
         // NUL raised by one.
         let mut past = group;
@@ -128,8 +132,12 @@ pub(super) fn index_expressions<R: Read + Seek>(archive: &mut IndexedArchive<'_,
         }
         let source = parse_id(&edge.source)?;
         let target = parse_id(&edge.target)?;
-        if !archive.entity_at(&source)?.is_some_and(|at| at.has(FLAG_EXPRESSION))
-            && !archive.entity_at(&target)?.is_some_and(|at| at.has(FLAG_EXPRESSION))
+        if !archive
+            .entity_at(&source)?
+            .is_some_and(|at| at.has(FLAG_EXPRESSION))
+            && !archive
+                .entity_at(&target)?
+                .is_some_and(|at| at.has(FLAG_EXPRESSION))
         {
             continue;
         }
@@ -160,11 +168,19 @@ pub(super) fn index_expressions<R: Read + Seek>(archive: &mut IndexedArchive<'_,
 pub(super) fn mark_ready<R: Read + Seek>(archive: &mut IndexedArchive<'_, R>) -> Result<bool> {
     let mut any = false;
     let mut at: Option<Vec<u8>> = None;
-    while let Some((first, group)) = archive.index.next(Tag::HistoryPending, &[], at.as_deref())? {
-        if !archive.index.contains(Tag::Waiting, &group[..ENTITY_ID_LEN])? {
-            archive
-                .index
-                .put(Tag::Ready, &ready_key(QUEUE_EXPRESSION, &id_at(&first, 0)?), &[])?;
+    while let Some((first, group)) = archive
+        .index
+        .next(Tag::HistoryPending, &[], at.as_deref())?
+    {
+        if !archive
+            .index
+            .contains(Tag::Waiting, &group[..ENTITY_ID_LEN])?
+        {
+            archive.index.put(
+                Tag::Ready,
+                &ready_key(QUEUE_EXPRESSION, &id_at(&first, 0)?),
+                &[],
+            )?;
             any = true;
         }
         at = Some(first);

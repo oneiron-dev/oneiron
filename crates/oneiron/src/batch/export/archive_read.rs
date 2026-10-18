@@ -20,9 +20,9 @@ use super::archive_index::{ArchiveIndex, ArchiveSpool, IndexedArchive, Section};
 use super::{
     ArchiveRecordKind, ArchiveSecretCustody, ExportAgentBundle, ExportDerivationEnvelope,
     ExportEdge, ExportEntity, ExportEpochFloor, ExportLedger, ExportPack, ExportResultBody,
-    ExportRun, ExportRunResults, ExportSkillBundle, PortableEmbeddingSpace, VAULT_ARCHIVE_FILES_DIR,
-    VAULT_ARCHIVE_MANIFEST_PATH, VAULT_ARCHIVE_RECORDS_DIR, WholeVaultDocument,
-    WholeVaultDocumentManifest, archive_file_path,
+    ExportRun, ExportRunResults, ExportSkillBundle, PortableEmbeddingSpace,
+    VAULT_ARCHIVE_FILES_DIR, VAULT_ARCHIVE_MANIFEST_PATH, VAULT_ARCHIVE_RECORDS_DIR,
+    WholeVaultDocument, WholeVaultDocumentManifest, archive_file_path,
 };
 use crate::Vault;
 use crate::error::{Error, Result};
@@ -187,7 +187,14 @@ pub(crate) fn read_vault_archive_indexed<'e, R: Read + Seek>(
             if row.is_empty() {
                 continue;
             }
-            check_row(records.kind, &records.path, row, &files, &mut cited, &mut slots)?;
+            check_row(
+                records.kind,
+                &records.path,
+                row,
+                &files,
+                &mut cited,
+                &mut slots,
+            )?;
             spool.push(row)?;
             count += 1;
         }

@@ -1,19 +1,18 @@
 //! Build portable facets after every native body has passed credential nulling.
 use super::{ExportBody, export_source_tree};
 use crate::agent_def::KnowledgeFormat;
-use crate::batch::export::{
-    AgentBundleOmission, ExportAgentBundle, ExportEntity, WholeVaultDocument,
-};
+use crate::batch::export::{AgentBundleOmission, ExportAgentBundle, ExportEntity};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use std::collections::BTreeMap;
 
 /// Each AGENT_DEF's portable facets, with its selected knowledge in
 /// `knowledge`: an export writes the current form, and an import re-derives
-/// an archive in the form its engine wrote.
+/// an archive in the form its engine wrote. The import recomputes each
+/// agent's facets alone instead (FIX 3678, [`agent_bundle`]).
+#[cfg(test)]
 pub(crate) fn populate_agent_bundles(
-    document: &mut WholeVaultDocument,
+    document: &mut crate::batch::export::WholeVaultDocument,
     bindings: &BTreeMap<EntityId, String>,
     knowledge: KnowledgeFormat,
 ) -> Result<()> {
@@ -22,7 +21,7 @@ pub(crate) fn populate_agent_bundles(
         .evidence_ledger
         .entities
         .iter()
-        .filter(|row| row.entity_type == ENTITY_TYPE_AGENT_DEF)
+        .filter(|row| row.entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF)
         .collect();
     document.agent_packs = agent_bundles(&agents, &skills, &document.claims, bindings, knowledge)?;
     Ok(())

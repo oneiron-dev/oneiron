@@ -63,7 +63,10 @@ pub(super) fn restore_models<R: Read + Seek>(
         let bytes = row.body.to_bytes()?;
         let (name, version) = crate::provenance::decode_model_entity_body(&bytes)?;
         let local = vault.ensure_model_substrate_in_txn(txn, &name, &version, row.learned_at)?;
-        if archive.index.insert(Tag::LocalModel, local.as_bytes(), &[])? {
+        if archive
+            .index
+            .insert(Tag::LocalModel, local.as_bytes(), &[])?
+        {
             inserted += 1;
         } else {
             unchanged += 1;
@@ -106,7 +109,11 @@ pub(super) fn index_mapped_edges<R: Read + Seek>(
     let mut edges = archive.spool.rows(ArchiveRecordKind::Edge);
     while let Some((loc, edge)) = edges.next_parsed::<ExportEdge>(&archive.spool)? {
         let edge = mapped_edge(&edge, &archive.index)?;
-        let key = edge_key(&parse_id(&edge.source)?, edge.kind, &parse_id(&edge.target)?);
+        let key = edge_key(
+            &parse_id(&edge.source)?,
+            edge.kind,
+            &parse_id(&edge.target)?,
+        );
         archive.index.insert(Tag::MappedEdge, &key, &loc.encode())?;
     }
     Ok(())
@@ -175,7 +182,9 @@ pub(super) fn index_provenance<R: Read + Seek>(archive: &mut IndexedArchive<'_, 
         let edge = key[..EDGE_KEY_LEN].to_vec();
         if cohort.as_deref() != Some(edge.as_slice()) {
             let first = id_at(&key, EDGE_KEY_LEN + 8)?;
-            archive.index.put(Tag::CohortPending, first.as_bytes(), &edge)?;
+            archive
+                .index
+                .put(Tag::CohortPending, first.as_bytes(), &edge)?;
             cohort = Some(edge);
         }
         after = Some(key);

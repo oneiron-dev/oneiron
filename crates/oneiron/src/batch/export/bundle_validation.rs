@@ -48,7 +48,10 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
         while let Some((loc, _)) = agents.next(&self.spool)? {
             let bundle: ExportAgentBundle = self.hydrated(ArchiveRecordKind::AgentPack, loc)?;
             let id = document_import::parse_id(&bundle.entity_id)?;
-            if !self.index.insert(Tag::Agent, id.as_bytes(), &loc.encode())? {
+            if !self
+                .index
+                .insert(Tag::Agent, id.as_bytes(), &loc.encode())?
+            {
                 return Err(invalid("duplicate agent source bundle"));
             }
             if let Some(hash) = &bundle.fork_hash {
@@ -207,10 +210,12 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
                 }
             }
             if at.section == Section::Ledger && row.entity_type == ENTITY_TYPE_AGENT_DEF {
-                let loc = self
-                    .index
-                    .get(Tag::Agent, id.as_bytes())?
-                    .ok_or(Error::InvariantViolation("archive index lost an agent bundle"))?;
+                let loc =
+                    self.index
+                        .get(Tag::Agent, id.as_bytes())?
+                        .ok_or(Error::InvariantViolation(
+                            "archive index lost an agent bundle",
+                        ))?;
                 let bundle: AgentOmissionShape = self.spool.parse(Loc::decode(&loc)?)?;
                 for reason in agent_omissions(
                     &row.id,
@@ -378,8 +383,7 @@ pub(super) fn entity_omission(row: &ExportEntity) -> Result<Option<EntityOmissio
         || super::provenance_import::is_provenance(row)
     {
         None
-    } else if crate::registry::zone_of(row.entity_type)
-        != crate::registry::TypeByteZone::PackHandle
+    } else if crate::registry::zone_of(row.entity_type) != crate::registry::TypeByteZone::PackHandle
         && crate::registry::validate_public_entity_type(row.entity_type).is_err()
     {
         Some(ImportRefusalReason::OwningEntityAdapterRequired)

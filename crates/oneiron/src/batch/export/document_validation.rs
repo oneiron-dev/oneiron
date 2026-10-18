@@ -219,9 +219,10 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
             envelopes += 1;
             match parse_id(&envelope.id) {
                 Ok(id) => {
-                    disagrees |= !self
-                        .index
-                        .insert(Tag::Derivation, id.as_bytes(), &loc.encode())?;
+                    disagrees |=
+                        !self
+                            .index
+                            .insert(Tag::Derivation, id.as_bytes(), &loc.encode())?;
                 }
                 Err(_) => disagrees = true,
             }
@@ -233,7 +234,10 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
                 continue;
             };
             expected += 1;
-            match self.index.get(Tag::Derivation, parse_id(&row.id)?.as_bytes())? {
+            match self
+                .index
+                .get(Tag::Derivation, parse_id(&row.id)?.as_bytes())?
+            {
                 Some(loc) => {
                     let envelope: ExportDerivationEnvelope =
                         self.spool.parse(Loc::decode(&loc)?)?;
