@@ -232,6 +232,21 @@ impl OneironClient {
                 "vault.budgets.settlements" => remote_agent_verb_output::<
                     oneiron::agent_dispatch::budget_doors::RunSettlementsView,
                 >(client, verb, &input),
+                "vault.budgets.rsi.configure" => remote_agent_verb_output::<
+                    oneiron::llm::rsi_doors::RsiLineView,
+                >(client, verb, &input),
+                "vault.budgets.rsi" => remote_agent_verb_output::<
+                    oneiron::llm::rsi_doors::RsiLineView,
+                >(client, verb, &input),
+                "vault.budgets.rsi.top_up" => remote_agent_verb_output::<
+                    oneiron::llm::rsi_doors::RsiLineView,
+                >(client, verb, &input),
+                "vault.budgets.rsi.hold" => remote_agent_verb_output::<
+                    oneiron::llm::rsi_doors::RsiLineView,
+                >(client, verb, &input),
+                "vault.budgets.rsi.hold.resume" => remote_agent_verb_output::<
+                    oneiron::llm::rsi_doors::RsiLineView,
+                >(client, verb, &input),
                 "vault.fanout.resume" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::FanoutLaunchView,
                 >(client, verb, &input),
@@ -1151,6 +1166,12 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.research.refund_work" => remote_agent_verb_output::<
                     oneiron::autoreason_campaign::research::ResearchReservation,
+                >(client, verb, &input),
+                "vault.research.reserve_exploration" => {
+                    remote_agent_verb_output::<oneiron::entity_id::EntityId>(client, verb, &input)
+                }
+                "vault.research.budget" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ResearchBudgetView,
                 >(client, verb, &input),
                 "vault.research.record_benchmark" => remote_agent_verb_output::<
                     oneiron::autoreason_campaign::research::SelectionBenchmark,
@@ -2368,6 +2389,21 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.esign.void" => remote_agent_verb_output::<
                     oneiron::blob_artifact::esign::EsignDispatchView,
+                >(client, verb, &input),
+                "vault.esign.signing.act" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::esign::SigningOutcome,
+                >(client, verb, &input),
+                "vault.esign.signing.pdf" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::esign::EsignSigningPdfView,
+                >(client, verb, &input),
+                "vault.esign.signing.image" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::esign::EsignSigningImageView,
+                >(client, verb, &input),
+                "vault.esign.signing.signature" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::esign::EsignSigningSignatureView,
+                >(client, verb, &input),
+                "vault.esign.seal.get" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::esign::EsignSealView,
                 >(client, verb, &input),
                 "vault.conversations.create" => remote_agent_verb_output::<
                     oneiron::core_write::CoreEntityWriteReceipt,
@@ -3656,6 +3692,66 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.budgets.settlements", value)
+    }
+    pub fn vault_budgets_rsi_configure(
+        &self,
+        input: &oneiron::llm::RsiBudgetConfig,
+    ) -> Result<oneiron::llm::rsi_doors::RsiLineView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.budgets.rsi.configure", value)
+    }
+    pub fn vault_budgets_rsi(
+        &self,
+        input: &oneiron::llm::rsi_doors::RsiLineRequest,
+    ) -> Result<oneiron::llm::rsi_doors::RsiLineView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.budgets.rsi", value)
+    }
+    pub fn vault_budgets_rsi_top_up(
+        &self,
+        input: &oneiron::llm::RsiTopUp,
+    ) -> Result<oneiron::llm::rsi_doors::RsiLineView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.budgets.rsi.top_up", value)
+    }
+    pub fn vault_budgets_rsi_hold(
+        &self,
+        input: &oneiron::llm::rsi_doors::RsiLineRequest,
+    ) -> Result<oneiron::llm::rsi_doors::RsiLineView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.budgets.rsi.hold", value)
+    }
+    pub fn vault_budgets_rsi_hold_resume(
+        &self,
+        input: &oneiron::llm::rsi_doors::RsiLineRequest,
+    ) -> Result<oneiron::llm::rsi_doors::RsiLineView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.budgets.rsi.hold.resume", value)
     }
     pub fn vault_fanout_resume(
         &self,
@@ -7331,6 +7427,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.research.refund_work", value)
+    }
+    pub fn vault_research_reserve_exploration(
+        &self,
+        input: &oneiron::task_verb::sdk::ResearchExplorationWire,
+    ) -> Result<oneiron::entity_id::EntityId, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.research.reserve_exploration", value)
+    }
+    pub fn vault_research_budget(
+        &self,
+        input: &oneiron::task_verb::sdk::ResearchArchiveWire,
+    ) -> Result<oneiron::task_verb::sdk::ResearchBudgetView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.research.budget", value)
     }
     pub fn vault_research_record_benchmark(
         &self,
@@ -12196,6 +12316,66 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.esign.void", value)
+    }
+    pub fn vault_esign_signing_act(
+        &self,
+        input: &oneiron::blob_artifact::esign::EsignSigningRequest,
+    ) -> Result<oneiron::blob_artifact::esign::SigningOutcome, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.esign.signing.act", value)
+    }
+    pub fn vault_esign_signing_pdf(
+        &self,
+        input: &oneiron::blob_artifact::esign::EsignSigningPdfRequest,
+    ) -> Result<oneiron::blob_artifact::esign::EsignSigningPdfView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.esign.signing.pdf", value)
+    }
+    pub fn vault_esign_signing_image(
+        &self,
+        input: &oneiron::blob_artifact::esign::EsignSigningImageRequest,
+    ) -> Result<oneiron::blob_artifact::esign::EsignSigningImageView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.esign.signing.image", value)
+    }
+    pub fn vault_esign_signing_signature(
+        &self,
+        input: &oneiron::blob_artifact::esign::EsignSigningSignatureRequest,
+    ) -> Result<oneiron::blob_artifact::esign::EsignSigningSignatureView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.esign.signing.signature", value)
+    }
+    pub fn vault_esign_seal_get(
+        &self,
+        input: &oneiron::blob_artifact::esign::EsignSealGetRequest,
+    ) -> Result<oneiron::blob_artifact::esign::EsignSealView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.esign.seal.get", value)
     }
     pub fn vault_conversations_create(
         &self,

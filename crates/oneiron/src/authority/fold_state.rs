@@ -165,6 +165,9 @@ pub struct AuthorityFold {
     /// Well-signed travel choices from a machine no signing chain calls the
     /// owner's: valid entries without effect.
     pub(crate) refused_grant_travel: BTreeSet<AuthorityEntryHash>,
+    /// The owner's checkpoint root policy choices and the one in force here
+    /// (mesh PR2c).
+    pub(crate) checkpoint_policy: super::checkpoint_choice::FoldedCheckpointPolicy,
     /// Every owner work request and its one result, as this install counts
     /// them.
     pub(super) owner_work: super::owner_work::FoldedOwnerWork,
@@ -242,6 +245,15 @@ pub fn actor_binding_is_active(
 }
 
 impl AuthorityFold {
+    /// Whether anything this fold projects rests on how this install counts
+    /// machines: an edited world, a chosen grant or a checkpoint policy
+    /// choice. With none, staleness and holds change nothing a caller reads.
+    pub(super) fn rests_on_counting(&self) -> bool {
+        !self.worlds.is_empty()
+            || !self.grant_travel.is_empty()
+            || !self.checkpoint_policy.live.is_empty()
+    }
+
     /// True when [`Self::vault_id`] is `None` because the log carries MORE THAN
     /// ONE independently rooted vault, not because it carries no root at all.
     ///
@@ -333,6 +345,9 @@ pub(super) struct FoldState {
     /// Each grant's signed travel choices, merged as the worlds' edits are.
     pub(super) grant_travel: BTreeMap<EntityId, super::grant_travel::GrantFrontier>,
     pub(super) refused_grant_travel: BTreeSet<AuthorityEntryHash>,
+    /// The vault's checkpoint policy choices, merged as the worlds' edits
+    /// are (mesh PR2c).
+    pub(super) checkpoint_policy: super::checkpoint_choice::CheckpointChoiceState,
     /// Every owner work request and result, merged by union.
     pub(super) owner_work: super::owner_work::OwnerWorkState,
     /// Each world key's counted records, merged by union.
@@ -574,6 +589,10 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     merged
         .refused_grant_travel
         .extend(right.refused_grant_travel.iter().copied());
+    super::checkpoint_choice::merge_checkpoint_choices(
+        &mut merged.checkpoint_policy,
+        &right.checkpoint_policy,
+    );
     super::owner_work::merge_owner_work(&mut merged.owner_work, &right.owner_work);
     super::world_key_fold::merge_world_keys(&mut merged.world_keys, &right.world_keys);
     merged
