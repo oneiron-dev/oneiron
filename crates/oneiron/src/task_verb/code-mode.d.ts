@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 431 code-mode rows (410 host rows, 21 run rows), 1548 declarations.
-// Replies: 377 fully typed, 50 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 433 code-mode rows (412 host rows, 21 run rows), 1567 declarations.
+// Replies: 379 fully typed, 50 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 79; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 80; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -254,17 +254,21 @@ declare namespace Sdk {
   type WitnessMessage = { id?: string | null; author: WitnessAuthor; message_type: string; content: string; metadata?: unknown | null; is_visible: boolean; order: number; quote?: QuoteSpan | null };
   type WitnessAssertions = { cited: RecordRef[]; created: RecordRef[] };
   type WitnessTurn = { conversation_ref: string; turn_ref?: string | null; thread_audience?: EntityId[] | null; messages: WitnessMessage[]; occurred_at: number; assertions?: WitnessAssertions };
-  type ClaimInput = { id?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; source: string; world_ref?: string | null; relationship_ref?: string | null; scope?: unknown | null; valid_from?: number | null; valid_to?: number | null; occurred_at?: number | null; learned_at?: number | null; salience?: number | null };
+  type AllRelationships = "all";
+  type ClaimRelationships = AllRelationships | string[];
+  type ClaimScope = { world_id: string; scope_facet_id: string; scope_relationship_id: ClaimRelationships; scope_project_id: string };
+  type ScopedClaimInput = { id?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; source: string; scope: ClaimScope; sensitivity?: number | null; evidence_turn_refs?: string[]; valid_from?: number | null; valid_to?: number | null; occurred_at?: number | null; learned_at?: number | null; salience?: number | null };
   type CommitReceipt = { claim_short_id: string; approval: string; superseded_short_id?: string | null; receipt_ref: string; claim?: RecordRef | null; superseded?: RecordRef | null };
   type RecallEffort = "light" | "medium" | "high" | "xhigh" | "max" | "call";
-  type RecallScope = { world_ref?: string | null; facet?: string | null; kinds?: string[] | null };
+  type RecallWorlds = { kind: "all" } | { kind: "base" } | { kind: "world"; world_ref: string; include_base: boolean } | { kind: "worlds"; world_refs: string[]; include_base: boolean };
+  type RecallScope = { world_ref?: string | null; worlds?: RecallWorlds | null; project_refs?: string[]; facet?: string | null; kinds?: string[] | null };
   type MediaQueryKind = "text" | "image" | "audio";
   type ContextPackMediaQuery = { space: string; mime: string; bytes_b64: string; kinds?: MediaQueryKind[] };
   type QueryAffect = { valence: number; arousal: number; dominance: number };
   type RecallRequest = { query: string; effort?: RecallEffort | null; scope?: RecallScope | null; limit?: number | null; format?: string | null; as_of?: number | null; deadline_ms?: number | null; media?: ContextPackMediaQuery | null; query_affect?: QueryAffect | null };
   type MemoryProvenance = { source: string; source_revision_ids: string[]; evidence_turn_ids: string[] };
   type CitedMessage = { short_id: string; value_text: string; record?: RecordRef | null };
-  type MemoryItem = { short_id: string; source_revision_ref?: string | null; kind: string; predicate?: string | null; value_text: string; confidence: number; hedge_bucket: string; provenance: MemoryProvenance; world?: string | null; facet?: string | null; salience?: number | null; reactions?: string[]; cited_messages?: CitedMessage[]; conversation_id?: string | null; record?: RecordRef | null };
+  type MemoryItem = { short_id: string; source_revision_ref?: string | null; kind: string; predicate?: string | null; value_text: string; confidence: number; hedge_bucket: string; provenance: MemoryProvenance; world?: string | null; facet?: string | null; project_ref?: string | null; salience?: number | null; reactions?: string[]; cited_messages?: CitedMessage[]; conversation_id?: string | null; record?: RecordRef | null };
   type ScopeHonesty = { out_of_scope_worlds: string[]; census_capped?: boolean };
   type RetrievalQuality = "full" | "degraded" | "passthrough";
   type RetrievalDegradation = "ppr_cache_miss" | "embedding_timeout" | "bm25_stale" | "temporal_signal_skipped";
@@ -279,6 +283,31 @@ declare namespace Sdk {
   type MemoryPack = { items: MemoryItem[]; scope_honesty: ScopeHonesty; retrieval_meta: RetrievalMeta; pack_version: number; rendered?: string | null; narrowing: ScopedReadReceipt };
   type ExportOptions = { format?: string | null; include_secrets?: boolean | null };
   type MemoryExport = { format: string; archive: string; digest: string };
+  type ScopeAxis<T> = { kind: "bottom" } | { kind: "all" } | { kind: "some"; values: T[] };
+  type ScopeId = string;
+  type Sensitivity = "public" | "private" | "sensitive" | "restricted";
+  type SensitivityCeiling = { kind: "bottom" } | { kind: "at_most"; value: Sensitivity };
+  type Scope = { worlds?: ScopeAxis<ScopeId>; facets?: ScopeAxis<ScopeId>; bands?: ScopeAxis<number>; audience?: ScopeAxis<ScopeId>; verbs?: ScopeAxis<string>; sensitivity?: SensitivityCeiling };
+  type CredentialCeiling = { kind: "ceiling"; scope: Scope };
+  type RecordSelector = { worlds?: RecallWorlds | null; facet_refs?: string[]; kinds?: string[]; project_refs?: string[] };
+  type ScopeAxisInput<T> = { kind: "bottom" } | { kind: "all" } | { kind: "some"; values: T[] };
+  type ScopeSensitivityBand = "public" | "private" | "sensitive" | "restricted";
+  type ScopeSensitivityInput = { kind: "bottom" } | { kind: "at_most"; value: ScopeSensitivityBand };
+  type ChannelCeiling = { worlds?: ScopeAxisInput<string>; facets?: ScopeAxisInput<string>; bands?: ScopeAxisInput<number>; audience?: ScopeAxisInput<string>; verbs?: ScopeAxisInput<string>; sensitivity?: ScopeSensitivityInput };
+  type ExportChannel = { channel_ref: string; scope: ChannelCeiling };
+  type ScopedExportRequest = { selector: RecordSelector; channel: ExportChannel };
+  type RecordPosition = { kind: "position"; scope: Scope };
+  type MadeByInputRole = "input" | "prompt";
+  type MadeByInput = { row: string; role: MadeByInputRole };
+  type MadeByClass = "stated" | "concluded";
+  type MadeByProcess = { actor: string; class: MadeByClass; identity: string; version: string; params_hash: string };
+  type MadeByTrigger = { task: string } | { ask: string } | { run: string } | { skill: string };
+  type MadeBy = { inputs: MadeByInput[]; process: MadeByProcess; at: number; trigger?: MadeByTrigger | null };
+  type WithheldRole = "input" | "prompt" | "trigger";
+  type WithheldRef = { handle: string; role: WithheldRole };
+  type RowBirth = { made_by: MadeBy; content_hash: string; withheld?: WithheldRef[] };
+  type ScopedExportRecord = { record: RecordRef; position: RecordPosition; bytes: number[]; birth?: RowBirth | null };
+  type ScopedExport = { selector: RecordSelector; credential: CredentialCeiling; channel: ExportChannel; applied: Scope; records: ScopedExportRecord[] };
   type VaultReceiptsRequest = { limit?: number | null; kinds?: string[] };
   type MemoryReceipt = { receipt_ref: string; kind: string; outcome: string; created_at: number; reason_codes: string[]; actor_class: string; actor_ref?: string | null; content_kind: string; claim_ref?: string | null; claim?: RecordRef | null; fields?: Record<string, string> };
   type PixelRegion = { x: number; y: number; width: number; height: number };
@@ -317,7 +346,7 @@ declare namespace Sdk {
   type WeaveSectionKind = "changes" | "projects" | "open_asks" | "links" | "conflicts" | "exceptions" | "admissions" | "budgets" | "sieve_score" | "digest";
   type WeaveSectionInput = { kind: WeaveSectionKind; predicates?: string[]; edge_kinds?: string[] };
   type WeaveReportRequest = { sections: WeaveSectionInput[] };
-  type ClaimView = { claim_ref: string; short_ref?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; approval: string; lifecycle: string; source?: string | null; world_ref?: string | null; scope?: unknown | null; valid_from?: number | null; valid_to?: number | null; salience?: number | null; stale: boolean; claim?: RecordRef | null };
+  type ClaimView = { claim_ref: string; short_ref?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; approval: string; lifecycle: string; source?: string | null; world_ref?: string | null; scope?: unknown | null; claim_scope: ClaimScope; made_by?: MadeBy | null; valid_from?: number | null; valid_to?: number | null; salience?: number | null; stale: boolean; claim?: RecordRef | null };
   type WeaveItemView = { item: "claim"; claim: ClaimView } | { item: "project"; project_ref: string; goal_ref?: string | null } | { item: "budget"; project_ref: string; budget_ref: string } | { item: "link"; source_ref: string; kind: string; target_ref: string } | { item: "dream_progress"; resident_ref: string; dreamed_at: number; entries: number } | { item: "agent_health"; card_ref: string; card: AgentHealthCard };
   type WeaveSectionView = { kind: WeaveSectionKind; items: WeaveItemView[] };
   type WeaveReportView = { sections: WeaveSectionView[]; narrowing: ScopedReadReceipt };
@@ -500,7 +529,7 @@ declare namespace Sdk {
   type LensBackingTargetKind = "entity" | "claim";
   type InspectionState = { target_ref: EntityId; target_kind: LensBackingTargetKind };
   type InspectionHandle = string;
-  type EntityView = { id_hex: string; short_ref?: string | null; kind: string; occurred_start: number; occurred_end: number; learned_at: number; body?: unknown | null };
+  type EntityView = { id_hex: string; short_ref?: string | null; kind: string; occurred_start: number; occurred_end: number; learned_at: number; body?: unknown | null; made_by?: MadeBy | null };
   type InspectionResolved = { state: InspectionState; handle: InspectionHandle; item?: EntityView | null; narrowing: ScopedReadReceipt };
   type SharedVaultRequest = { vault_id: string };
   type FederationGrantRole = "owner" | "admin" | "member" | "viewer" | "auditor" | "delegate" | "guest";
@@ -810,11 +839,6 @@ declare namespace Sdk {
   type LensDossierSource = { entity_ref: string; title: string };
   type LensDefaultRequest = { title: string; ledger?: string[]; dossiers?: LensDossierSource[]; threads?: string[]; as_of?: number | null };
   type ScopedReadResult<T> = { value: T; narrowing: ScopedReadReceipt };
-  type ScopeAxis<T> = { kind: "bottom" } | { kind: "all" } | { kind: "some"; values: T[] };
-  type ScopeId = string;
-  type Sensitivity = "public" | "private" | "sensitive" | "restricted";
-  type SensitivityCeiling = { kind: "bottom" } | { kind: "at_most"; value: Sensitivity };
-  type Scope = { worlds?: ScopeAxis<ScopeId>; facets?: ScopeAxis<ScopeId>; bands?: ScopeAxis<number>; audience?: ScopeAxis<ScopeId>; verbs?: ScopeAxis<string>; sensitivity?: SensitivityCeiling };
   type DisclosureOfferRequest = { contact: string; scope: Scope; purpose: string; channel: string; beneficiary: string; ask?: string | null; owner_ref: string; expires_at: number };
   type DisclosureOffered = { proposal_ref: string; owner_ref: string; created_at: number; expires_at: number };
   type RevealRequest = { handle: string; why: string };
@@ -844,12 +868,6 @@ declare namespace Sdk {
   type HooksReplayRequest = { binding: string; since?: string | null; limit?: number | null };
   type ArtifactRefRequest = { artifact_ref: string };
   type ArtifactKind = "document" | "sheet" | "deck" | "code" | "canvas" | "image" | "file";
-  type MadeByInputRole = "input" | "prompt";
-  type MadeByInput = { row: string; role: MadeByInputRole };
-  type MadeByClass = "stated" | "concluded";
-  type MadeByProcess = { actor: string; class: MadeByClass; identity: string; version: string; params_hash: string };
-  type MadeByTrigger = { task: string } | { ask: string } | { run: string } | { skill: string };
-  type MadeBy = { inputs: MadeByInput[]; process: MadeByProcess; at: number; trigger?: MadeByTrigger | null };
   type BornFromSource = { trigger: MadeByTrigger } | { agent_run: string };
   type ArtifactVersionView = { version: number; content_hash: string; parent_version?: number | null; fork_of_version?: number | null; provenance: string; run_ref?: string | null; created_at: number; export_name: string; export_media_type: string; made_by: MadeBy; born_from: BornFromSource[] };
   type ArtifactView = { artifact_id: EntityId; kind: ArtifactKind; name: string; media_type: string; head?: number | null; versions: ArtifactVersionView[] };
@@ -1223,10 +1241,11 @@ declare namespace Sdk {
   type DesktopWindow = { window: string; app: string; title: string; current: boolean; front: boolean };
   type WindowsOutput = { windows: DesktopWindow[] };
   type WindowInput = { window: string };
-  type CommitRequest = { claims: ClaimInput[] };
+  type ScopedCommitRequest = { claims: ScopedClaimInput[] };
   type RefusalReason = "INVENTED_REFERENCE" | "GATE_REFUSED";
   type RecordRefusal = { reason: RefusalReason; code: string; message: string; suggestions: string[]; field: string };
   type CommitOutcome = (CommitReceipt & { outcome: "landed" }) | { outcome: "refused"; refusal: RecordRefusal; receipt_ref?: string | null };
+  type ClaimInput = { id?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; source: string; world_ref?: string | null; relationship_ref?: string | null; scope?: unknown | null; valid_from?: number | null; valid_to?: number | null; occurred_at?: number | null; learned_at?: number | null; salience?: number | null };
   type ClaimRefRequest = { claim_ref: string };
   type ForgetPredicateRequest = { subject_ref: string; predicate: string };
   type ForgetRequest = ClaimRefRequest | ForgetPredicateRequest;
@@ -1971,10 +1990,10 @@ declare const vault: Sdk.VaultHost & {
     /** Retracts one active claim: a deliberate withdrawal that preserves the record. */
     retract(input: Sdk.ClaimRefRequest): Promise<Sdk.CommitReceipt | StoredResult>;
     /** Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt. */
-    seed(input: Sdk.CommitRequest): Promise<Sdk.CommitOutcome[] | StoredResult>;
+    seed(input: Sdk.ScopedCommitRequest): Promise<Sdk.CommitOutcome[] | StoredResult>;
     supersede(input: Sdk.MemorySupersedeInput): Promise<Sdk.MemoryWriteOutput | StoredResult>;
-    /** Commits one claim through the gate, superseding the prior active claim on the same subject, scope and predicate. */
-    upsert(input: Sdk.ClaimInput): Promise<Sdk.CommitReceipt | StoredResult>;
+    /** Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance. */
+    upsert(input: Sdk.ScopedClaimInput): Promise<Sdk.CommitReceipt | StoredResult>;
   };
   code: {
     /** Every unit of one tested state of a code file, with the runs of text each operation wrote, and who made each operation and why. */
@@ -1987,7 +2006,7 @@ declare const vault: Sdk.VaultHost & {
     repo_diff(input: Sdk.CodeRepoDiffRequest): Promise<Sdk.CodeRepoDiffView | null | StoredResult>;
   };
   /** Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted. */
-  commit(input: Sdk.CommitRequest): Promise<Sdk.CommitOutcome[] | StoredResult>;
+  commit(input: Sdk.ScopedCommitRequest): Promise<Sdk.CommitOutcome[] | StoredResult>;
   companions: {
     sharing: {
       /** One contact's clearance in a companion's source vault, for the principal who controls that vault. */
@@ -2129,7 +2148,10 @@ declare const vault: Sdk.VaultHost & {
     memory(input: Sdk.ExplainMemoryRequest): Promise<Sdk.ExplainMemoryReply | null | StoredResult>;
   };
   /** Exports the whole vault as one re-importable archive, or an OKF bundle; owner only. */
-  export(input: Sdk.ExportOptions): Promise<Sdk.MemoryExport | StoredResult>;
+  export: ((input: Sdk.ExportOptions) => Promise<Sdk.MemoryExport | StoredResult>) & {
+    /** Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding. */
+    scoped(input: Sdk.ScopedExportRequest): Promise<Sdk.ScopedExport | StoredResult>;
+  };
   fanout: {
     /** The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied. */
     ack(input: Sdk.FanoutAckRequest): Promise<Sdk.FanoutLaunchView | StoredResult>;
@@ -2460,6 +2482,10 @@ declare const vault: Sdk.VaultHost & {
     speak(input: Sdk.WitnessTurn): Promise<Sdk.WitnessReceipt | StoredResult>;
     /** One trunk turn of a room, with the completed TASK result headers that hang under it. */
     trunk(input: Sdk.RoomTurnRequest): Promise<Sdk.RoomTrunk | StoredResult>;
+  };
+  scope: {
+    /** Reads the caller credential ceiling as a typed ceiling, never as a record position. */
+    ceiling(input: Sdk.EmptyRequest): Promise<Sdk.CredentialCeiling | StoredResult>;
   };
   search: ((input: Sdk.MemorySearchInput) => Promise<Sdk.MemorySearchOutput | StoredResult>) & {
     /** BM25 text search over the engine index; surfaceable claims only. */

@@ -908,7 +908,10 @@ class Oneiron:
         @property
         def claims(self) -> "Oneiron._VaultClaimsVerbs": ...
         def recall(self, query: str, *, effort: Effort = 'medium', scope: RecallScope | None = None, limit: int = 10, format: PackFormat | None = None, as_of: int | None = None, deadline_ms: int | None = None, media: RecallMedia | None = None, query_affect: QueryAffect | None = None) -> MemoryPack: ...
-        def export(self, format: PackFormat | None = None) -> dict[str, Any]: ...
+        @property
+        def export(self) -> "Oneiron._VaultExportVerbs": ...
+        @property
+        def scope(self) -> "Oneiron._VaultScopeVerbs": ...
         @property
         def receipts(self) -> "Oneiron._VaultReceiptsVerbs": ...
         @property
@@ -997,7 +1000,7 @@ class Oneiron:
         def questions(self) -> "Oneiron._VaultQuestionsVerbs": ...
         @property
         def decisions(self) -> "Oneiron._VaultDecisionsVerbs": ...
-        def commit(self, input: Facade.CommitRequest) -> list[Facade.CommitOutcome]:
+        def commit(self, input: Facade.ScopedCommitRequest) -> list[Facade.CommitOutcome]:
             """Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted."""
         def remember(self, input: Facade.ClaimInput) -> Facade.CommitReceipt:
             """Commits one claim through the gate, the same as vault.claims.upsert."""
@@ -1055,7 +1058,8 @@ class Oneiron:
         def ack(self, spec: Facade.FanoutAckRequest) -> Facade.FanoutLaunchView:
             """The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied."""
     class _VaultClaimsVerbs:
-        def upsert(self, claim: ClaimInput) -> CommitReceipt: ...
+        def upsert(self, spec: Facade.ScopedClaimInput) -> Facade.CommitReceipt:
+            """Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance."""
         def retract(self, input: Facade.ClaimRefRequest) -> Facade.CommitReceipt:
             """Retracts one active claim: a deliberate withdrawal that preserves the record."""
         def list(self, input: Facade.ClaimListFilter) -> Facade.ScopedReadResult[list[Facade.ClaimView]]:
@@ -1064,8 +1068,15 @@ class Oneiron:
             """The supersession timeline of one claim, oldest first, with the read's narrowing receipt."""
         def admit(self, input: Facade.AdmitImportedClaimInput) -> Facade.CommitReceipt:
             """Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides."""
-        def seed(self, input: Facade.CommitRequest) -> list[Facade.CommitOutcome]:
+        def seed(self, input: Facade.ScopedCommitRequest) -> list[Facade.CommitOutcome]:
             """Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt."""
+    class _VaultExportVerbs:
+        def __call__(self, format: PackFormat | None = None) -> dict[str, Any]: ...
+        def scoped(self, spec: Facade.ScopedExportRequest) -> Facade.ScopedExport:
+            """Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding."""
+    class _VaultScopeVerbs:
+        def ceiling(self, spec: Facade.EmptyRequest | None = None) -> Facade.CredentialCeiling:
+            """Reads the caller credential ceiling as a typed ceiling, never as a record position."""
     class _VaultReceiptsVerbs:
         def __call__(self, limit: int = 100, kinds: list[str] | None = None) -> list[FacadeReceipt]: ...
         def get(self, spec: Facade.CallReceiptRequest) -> Facade.CallReceipt | None:

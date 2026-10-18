@@ -156,6 +156,12 @@ impl OneironClient {
                 "vault.export" => {
                     remote_agent_verb_output::<oneiron::memory::MemoryExport>(client, verb, &input)
                 }
+                "vault.scope.ceiling" => remote_agent_verb_output::<
+                    oneiron::memory::CredentialCeiling,
+                >(client, verb, &input),
+                "vault.export.scoped" => {
+                    remote_agent_verb_output::<oneiron::memory::ScopedExport>(client, verb, &input)
+                }
                 "vault.receipts" => {
                     remote_agent_verb_output::<Vec<oneiron::memory::MemoryReceipt>>(
                         client, verb, &input,
@@ -1630,13 +1636,11 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.witness", value)
     }
-    /// Upserts one claim through the gated claim-candidate path.
     pub fn vault_claims_upsert(
         &self,
-        claim: &oneiron::memory::ClaimInput,
+        input: &oneiron::memory::ScopedClaimInput,
     ) -> Result<oneiron::memory::CommitReceipt, MemoryError> {
-        oneiron::memory::caps::check_claim_input(claim)?;
-        let value = serde_json::to_value(claim).map_err(|_| {
+        let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
                 &["Send the documented typed SDK input."],
@@ -1715,6 +1719,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.export", value)
+    }
+    pub fn vault_scope_ceiling(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::memory::CredentialCeiling, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.scope.ceiling", value)
+    }
+    pub fn vault_export_scoped(
+        &self,
+        input: &oneiron::memory::ScopedExportRequest,
+    ) -> Result<oneiron::memory::ScopedExport, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.export.scoped", value)
     }
     /// Lists governance receipts, newest first: the gate decision ledger, or
     /// the receipts of the named kinds.
@@ -4738,12 +4766,9 @@ impl OneironClient {
     }
     pub fn vault_commit(
         &self,
-        input: &oneiron::task_verb::sdk::CommitRequest,
+        input: &oneiron::memory::ScopedCommitRequest,
     ) -> Result<Vec<oneiron::memory::CommitOutcome>, MemoryError> {
         oneiron::memory::caps::check_batch_len("claims", input.claims.len())?;
-        for claim in &input.claims {
-            oneiron::memory::caps::check_claim_input(claim)?;
-        }
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -5421,12 +5446,9 @@ impl OneironClient {
     }
     pub fn vault_claims_seed(
         &self,
-        input: &oneiron::task_verb::sdk::CommitRequest,
+        input: &oneiron::memory::ScopedCommitRequest,
     ) -> Result<Vec<oneiron::memory::CommitOutcome>, MemoryError> {
         oneiron::memory::caps::check_batch_len("claims", input.claims.len())?;
-        for claim in &input.claims {
-            oneiron::memory::caps::check_claim_input(claim)?;
-        }
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",

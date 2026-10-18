@@ -189,7 +189,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             (
                 "vault.claims.upsert",
-                crate::code_run::vault_read::request_schema::<crate::memory::ClaimInput>(),
+                crate::code_run::vault_read::request_schema::<crate::memory::ScopedClaimInput>(),
             ),
             (
                 "vault.recall",
@@ -198,6 +198,14 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.export",
                 crate::code_run::vault_read::request_schema::<crate::memory::ExportOptions>(),
+            ),
+            (
+                "vault.scope.ceiling",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.export.scoped",
+                crate::code_run::vault_read::request_schema::<crate::memory::ScopedExportRequest>(),
             ),
             (
                 "vault.receipts",
@@ -1651,7 +1659,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             (
                 "vault.commit",
-                crate::code_run::vault_read::request_schema::<CommitRequest>(),
+                crate::code_run::vault_read::request_schema::<crate::memory::ScopedCommitRequest>(),
             ),
             (
                 "vault.remember",
@@ -1922,7 +1930,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             (
                 "vault.claims.seed",
-                crate::code_run::vault_read::request_schema::<CommitRequest>(),
+                crate::code_run::vault_read::request_schema::<crate::memory::ScopedCommitRequest>(),
             ),
             (
                 "vault.channel_identities.provision",
@@ -2500,6 +2508,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.export" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.scope.ceiling" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.export.scoped" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -4936,8 +4958,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             crate::memory::caps::check_witness_turn(&input)?;
         }
         "vault.claims.upsert" => {
-            let input: crate::memory::ClaimInput = decode(value.clone())?;
-            crate::memory::caps::check_claim_input(&input)?;
+            let _input: crate::memory::ScopedClaimInput = decode(value.clone())?;
         }
         "vault.recall" => {
             let input: RecallRequest = decode(value.clone())?;
@@ -4952,6 +4973,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.export" => {
             let _input: crate::memory::ExportOptions = decode(value.clone())?;
+        }
+        "vault.scope.ceiling" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.export.scoped" => {
+            let _input: crate::memory::ScopedExportRequest = decode(value.clone())?;
         }
         "vault.receipts" => {
             let input: crate::task_verb::sdk::VaultReceiptsRequest = decode(value.clone())?;
@@ -5850,11 +5877,8 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: oneiron_browser::HandoverInput = decode(value.clone())?;
         }
         "vault.commit" => {
-            let input: CommitRequest = decode(value.clone())?;
+            let input: crate::memory::ScopedCommitRequest = decode(value.clone())?;
             crate::memory::caps::check_batch_len("claims", input.claims.len())?;
-            for claim in &input.claims {
-                crate::memory::caps::check_claim_input(claim)?;
-            }
         }
         "vault.remember" => {
             let input: crate::memory::ClaimInput = decode(value.clone())?;
@@ -6031,11 +6055,8 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: ConsolidationStatusRequest = decode(value.clone())?;
         }
         "vault.claims.seed" => {
-            let input: CommitRequest = decode(value.clone())?;
+            let input: crate::memory::ScopedCommitRequest = decode(value.clone())?;
             crate::memory::caps::check_batch_len("claims", input.claims.len())?;
-            for claim in &input.claims {
-                crate::memory::caps::check_claim_input(claim)?;
-            }
         }
         "vault.channel_identities.provision" => {
             let _input: crate::memory::channel_doors::ChannelIdentityProvisionRequest =
@@ -6204,6 +6225,8 @@ pub fn invoke(
         "vault.claims.upsert" => encode(vault_claims_upsert(memory, decode(value)?)?),
         "vault.recall" => encode(vault_recall(memory, decode(value)?)?),
         "vault.export" => encode(vault_export(memory, decode(value)?)?),
+        "vault.scope.ceiling" => encode(vault_scope_ceiling(memory, decode(value)?)?),
+        "vault.export.scoped" => encode(vault_export_scoped(memory, decode(value)?)?),
         "vault.receipts" => encode(vault_receipts(memory, decode(value)?)?),
         "vault.images.view" => encode(vault_images_view(memory, decode(value)?)?),
         "vault.receipts.get" => encode(vault_receipts_get(memory, decode(value)?)?),
@@ -7241,16 +7264,15 @@ pub fn vault_witness(
 }
 pub fn vault_claims_upsert(
     memory: &Memory<'_>,
-    input: crate::memory::ClaimInput,
+    input: crate::memory::ScopedClaimInput,
 ) -> MemoryResult<crate::memory::CommitReceipt> {
-    crate::memory::caps::check_claim_input(&input)?;
     crate::gate::record_references::admit_row_references(
         memory,
         "vault.claims.upsert",
         &input,
-        &["/subject_ref", "/world_ref", "/relationship_ref"],
+        &["/subject_ref", "/evidence_turn_refs/*"],
     )?;
-    memory.claim_upsert(&input)
+    memory.claim_upsert_scoped(&input)
 }
 pub fn vault_recall(
     memory: &Memory<'_>,
@@ -7271,6 +7293,18 @@ pub fn vault_export(
     input: crate::memory::ExportOptions,
 ) -> MemoryResult<crate::memory::MemoryExport> {
     memory.export(&input)
+}
+pub fn vault_scope_ceiling(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::memory::CredentialCeiling> {
+    memory.credential_ceiling()
+}
+pub fn vault_export_scoped(
+    memory: &Memory<'_>,
+    input: crate::memory::ScopedExportRequest,
+) -> MemoryResult<crate::memory::ScopedExport> {
+    memory.export_scoped(&input)
 }
 pub fn vault_receipts(
     memory: &Memory<'_>,
@@ -9474,23 +9508,16 @@ pub fn self_desktop_handover(
 }
 pub fn vault_commit(
     memory: &Memory<'_>,
-    input: CommitRequest,
+    input: crate::memory::ScopedCommitRequest,
 ) -> MemoryResult<Vec<crate::memory::CommitOutcome>> {
     crate::memory::caps::check_batch_len("claims", input.claims.len())?;
-    for claim in &input.claims {
-        crate::memory::caps::check_claim_input(claim)?;
-    }
     crate::gate::record_references::admit_row_references(
         memory,
         "vault.commit",
         &input,
-        &[
-            "/claims/*/subject_ref",
-            "/claims/*/world_ref",
-            "/claims/*/relationship_ref",
-        ],
+        &["/claims/*/subject_ref", "/claims/*/evidence_turn_refs/*"],
     )?;
-    memory.commit(&input.claims)
+    memory.commit_scoped(&input.claims, false)
 }
 pub fn vault_remember(
     memory: &Memory<'_>,
@@ -10031,23 +10058,16 @@ pub fn vault_consolidation_status(
 }
 pub fn vault_claims_seed(
     memory: &Memory<'_>,
-    input: CommitRequest,
+    input: crate::memory::ScopedCommitRequest,
 ) -> MemoryResult<Vec<crate::memory::CommitOutcome>> {
     crate::memory::caps::check_batch_len("claims", input.claims.len())?;
-    for claim in &input.claims {
-        crate::memory::caps::check_claim_input(claim)?;
-    }
     crate::gate::record_references::admit_row_references(
         memory,
         "vault.claims.seed",
         &input,
-        &[
-            "/claims/*/subject_ref",
-            "/claims/*/world_ref",
-            "/claims/*/relationship_ref",
-        ],
+        &["/claims/*/subject_ref", "/claims/*/evidence_turn_refs/*"],
     )?;
-    memory_requests::seed_claims(memory, input)
+    memory.commit_scoped(&input.claims, true)
 }
 pub fn vault_channel_identities_provision(
     memory: &Memory<'_>,

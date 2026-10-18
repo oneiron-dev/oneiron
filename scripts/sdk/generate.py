@@ -1123,6 +1123,12 @@ def facade_dispatch(facade_rows):
     # which the credential must carry.
     def record_scope_guard(r):
         admission = r.get('admission', {})
+        if admission.get('claim_record_scope'):
+            return 'let position = facade_claim_position(server, call)?;'
+        if admission.get('credential_record_scope'):
+            return 'facade_scoped_credential(auth)?;'
+        if admission.get('scoped_export'):
+            return 'facade_scoped_export_credential(auth)?;'
         if admission.get('born_record_scope'):
             return 'let position = facade_landing(server, call)?;'
         if admission.get('lane_record_scope'):
@@ -1212,7 +1218,7 @@ def facade_dispatch(facade_rows):
         if takes_task_work_turn(r):
             # Rule 5: the engine call runs on the turn the dispatch awaited.
             result = f'facade_invoke_in_turn({on}, actor, class, "{name}", value, &producers, Some(turn))?'
-        if r.get('admission', {}).get('born_record_scope'):
+        if r.get('admission', {}).get('born_record_scope') or r.get('admission', {}).get('claim_record_scope'):
             result = f'facade_invoke_born({on}, actor, class, "{name}", value, position, &producers)?'
         result += ';'
         readables = r.get('admission', {}).get('readable', [])
@@ -1239,7 +1245,7 @@ def facade_dispatch(facade_rows):
             landed = 'server.ai.turn_landed_by(server.vault(), actor, class);'
         # A born door's landing judges its record bounds, so only the grant is
         # left to check.
-        require = 'require_granted' if r.get('admission', {}).get('born_record_scope') else 'require'
+        require = 'require_granted' if r.get('admission', {}).get('born_record_scope') or r.get('admission', {}).get('claim_record_scope') else 'require'
         head += f'''auth.{require}(CoreScope::{r["scope"]})?;
         {record_scope_guard(r)}
         let value = input?;\n'''
