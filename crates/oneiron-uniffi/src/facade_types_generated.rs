@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 621 facade rows, 2258 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 12; generated in and out: 581.
+// UniFFI census: 622 facade rows, 2260 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 13; generated in and out: 581.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -34754,6 +34754,25 @@ pub struct SummaryRegenerateRequest {
 pub struct SummaryProposalRequest {
     #[serde(rename = "proposal_ref")]
     pub proposal_ref: String,
+}
+
+/// `oneiron::task_verb::sdk_memory::AuthorTakeTarget`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AuthorTakeTarget {
+    #[serde(rename = "subject")]
+    Subject(String),
+    #[serde(rename = "claim")]
+    Claim(String),
+}
+
+/// `oneiron::task_verb::sdk_memory::AuthorTakeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorTakeRequest {
+    #[serde(rename = "target")]
+    pub target: AuthorTakeTarget,
+    #[serde(rename = "markdown")]
+    pub markdown: String,
 }
 
 /// `oneiron::task_verb::sdk_memory::CreateNoteFromEntityRequest`.
