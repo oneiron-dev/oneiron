@@ -110,6 +110,7 @@ pub enum AgentVerb {
     VaultResearchWeave,
     VaultResearchMeasureSearch,
     VaultResearchMeasureHeldOut,
+    VaultResearchEvaluateSplit,
     VaultResearchMarkInvalid,
     VaultResearchPrune,
     VaultResearchSelect,
@@ -471,6 +472,7 @@ impl AgentVerb {
         Self::VaultResearchWeave,
         Self::VaultResearchMeasureSearch,
         Self::VaultResearchMeasureHeldOut,
+        Self::VaultResearchEvaluateSplit,
         Self::VaultResearchMarkInvalid,
         Self::VaultResearchPrune,
         Self::VaultResearchSelect,
@@ -835,6 +837,7 @@ impl AgentVerb {
             Self::VaultResearchWeave => "vault.research.weave",
             Self::VaultResearchMeasureSearch => "vault.research.measure_search",
             Self::VaultResearchMeasureHeldOut => "vault.research.measure_held_out",
+            Self::VaultResearchEvaluateSplit => "vault.research.evaluate_split",
             Self::VaultResearchMarkInvalid => "vault.research.mark_invalid",
             Self::VaultResearchPrune => "vault.research.prune",
             Self::VaultResearchSelect => "vault.research.select",
@@ -1199,6 +1202,7 @@ impl AgentVerb {
                 | Self::VaultResearchWeave
                 | Self::VaultResearchMeasureSearch
                 | Self::VaultResearchMeasureHeldOut
+                | Self::VaultResearchEvaluateSplit
                 | Self::VaultResearchMarkInvalid
                 | Self::VaultResearchPrune
                 | Self::VaultResearchSelect
@@ -1567,6 +1571,7 @@ impl AgentVerb {
                 | Self::VaultResearchWeave
                 | Self::VaultResearchMeasureSearch
                 | Self::VaultResearchMeasureHeldOut
+                | Self::VaultResearchEvaluateSplit
                 | Self::VaultResearchMarkInvalid
                 | Self::VaultResearchPrune
                 | Self::VaultResearchSelect
@@ -1961,6 +1966,7 @@ impl AgentVerb {
                 | Self::VaultResearchWeave
                 | Self::VaultResearchMeasureSearch
                 | Self::VaultResearchMeasureHeldOut
+                | Self::VaultResearchEvaluateSplit
                 | Self::VaultResearchMarkInvalid
                 | Self::VaultResearchPrune
                 | Self::VaultResearchSelect
@@ -2568,6 +2574,7 @@ impl AgentVerb {
             Self::VaultResearchWeave => &["spec"],
             Self::VaultResearchMeasureSearch => &["spec"],
             Self::VaultResearchMeasureHeldOut => &["spec"],
+            Self::VaultResearchEvaluateSplit => &["spec"],
             Self::VaultResearchMarkInvalid => &["spec"],
             Self::VaultResearchPrune => &["spec"],
             Self::VaultResearchSelect => &["spec"],
@@ -2930,6 +2937,7 @@ impl AgentVerb {
             Self::VaultResearchWeave => &["spec"],
             Self::VaultResearchMeasureSearch => &["spec"],
             Self::VaultResearchMeasureHeldOut => &["spec"],
+            Self::VaultResearchEvaluateSplit => &["spec"],
             Self::VaultResearchMarkInvalid => &["spec"],
             Self::VaultResearchPrune => &["spec"],
             Self::VaultResearchSelect => &["spec"],
@@ -3488,6 +3496,9 @@ impl AgentVerb {
             }
             Self::VaultResearchMeasureHeldOut => {
                 "Records a node's held-out evidence, once; only the promotion basis reads it."
+            }
+            Self::VaultResearchEvaluateSplit => {
+                "The owner scores one arm of a bound claim-authoring campaign on one split under its bound config; the blind taste questions go through the host's decision ladder, and the report is returned, not stored."
             }
             Self::VaultResearchMarkInvalid => {
                 "Marks a node buggy: it stays as evidence and takes debug children."

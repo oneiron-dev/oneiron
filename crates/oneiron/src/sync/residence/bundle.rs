@@ -9,8 +9,11 @@
 //!
 //! Erase replaces a kept generation's pad object in place, at the same length;
 //! the old object is deleted, and the home keeps no prior versions. Every door
-//! serves only a machine of the owner's whose proof stands here, and none asks
-//! which worlds it reads: the home never learns which worlds a reader wants.
+//! in this module serves only a machine of the owner's whose proof stands here,
+//! and none asks which worlds it reads: the home never learns which worlds a
+//! reader wants. A commit names the recovery root its publisher pins, and the
+//! kit door (`kit_fetch`) serves that generation to the holder of that root's
+//! kit.
 
 use crate::Vault;
 use crate::authority::PeerMachine;
@@ -18,8 +21,8 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncProtocolValidation};
 use crate::side_table::{self, Raw, SideTable};
 use crate::world_keys::{
-    SealedBundleGeneration, SealedKeyPads, SealedVaultBundle, retired_bundle_generations,
-    sealed_bundle_slot,
+    RecoveryRootId, SealedBundleGeneration, SealedKeyPads, SealedVaultBundle,
+    retired_bundle_generations, sealed_bundle_slot,
 };
 
 /// The most object bytes one upload part carries; in base64 it stays under the
@@ -48,6 +51,9 @@ const STAGE_PARTS: SideTable<String, Vec<u8>, Raw> =
 
 /// u64be bundle length ‖ digest ‖ u64be pad object length ‖ digest.
 const ENTRY_LEN: usize = 8 + 32 + 8 + 32;
+/// The recovery root id ‖ its anchor key, after an entry whose publisher named
+/// a root.
+const KIT_ROOT_LEN: usize = 32 + 32;
 /// u64be second ‖ generation ‖ u64be total ‖ digest ‖ u64be bytes staged.
 const STAGE_LEN: usize = 8 + 24 + 8 + 32 + 8;
 
@@ -89,6 +95,15 @@ impl SealedBundleObject {
     }
 }
 
+/// The recovery root a generation's publisher named on commit: the kit door
+/// serves the generation to that root's owner anchor alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SealedBundleKitRoot {
+    pub root: RecoveryRootId,
+    /// The root's owner anchor, from its record in the vault.
+    pub anchor_key: [u8; 32],
+}
+
 /// One generation the home keeps, as a reader lists it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SealedBundleEntry {
@@ -99,6 +114,8 @@ pub struct SealedBundleEntry {
     pub pads_len: u64,
     /// BLAKE3 of the pad object's bytes.
     pub pads_digest: [u8; 32],
+    /// The root the publisher named; `None` when it pinned none.
+    pub kit: Option<SealedBundleKitRoot>,
 }
 
 impl SealedBundleEntry {
@@ -112,24 +129,42 @@ impl SealedBundleEntry {
     }
 
     fn encode(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(ENTRY_LEN);
+        let mut out = Vec::with_capacity(ENTRY_LEN + KIT_ROOT_LEN);
         out.extend_from_slice(&self.bundle_len.to_be_bytes());
         out.extend_from_slice(&self.bundle_digest);
         out.extend_from_slice(&self.pads_len.to_be_bytes());
         out.extend_from_slice(&self.pads_digest);
+        if let Some(kit) = &self.kit {
+            out.extend_from_slice(&kit.root.0);
+            out.extend_from_slice(&kit.anchor_key);
+        }
         out
     }
 
     fn decode(generation: SealedBundleGeneration, raw: &[u8]) -> Result<Self> {
-        if raw.len() != ENTRY_LEN {
-            return Err(Error::InvalidKey);
-        }
+        let kit = match raw.len() {
+            ENTRY_LEN => None,
+            len if len == ENTRY_LEN + KIT_ROOT_LEN => Some(SealedBundleKitRoot {
+                root: RecoveryRootId(
+                    raw[ENTRY_LEN..ENTRY_LEN + 32]
+                        .try_into()
+                        .map_err(|_| Error::InvalidKey)?,
+                ),
+                anchor_key: raw[ENTRY_LEN + 32..]
+                    .try_into()
+                    .map_err(|_| Error::InvalidKey)?,
+            }),
+            _ => return Err(Error::InvalidKey),
+        };
         Ok(Self {
             generation,
             bundle_len: be_u64(&raw[..8])?,
             bundle_digest: raw[8..40].try_into().map_err(|_| Error::InvalidKey)?,
             pads_len: be_u64(&raw[40..48])?,
-            pads_digest: raw[48..].try_into().map_err(|_| Error::InvalidKey)?,
+            pads_digest: raw[48..ENTRY_LEN]
+                .try_into()
+                .map_err(|_| Error::InvalidKey)?,
+            kit,
         })
     }
 }
@@ -145,7 +180,7 @@ pub struct SealedBundleStage {
     pub digest: [u8; 32],
 }
 
-fn denied() -> Error {
+pub(super) fn denied() -> Error {
     Error::sync_protocol(SyncProtocolValidation::DocumentAdmissionDenied)
 }
 
@@ -155,7 +190,7 @@ fn be_u64(raw: &[u8]) -> Result<u64> {
     ))
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(super) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
@@ -263,7 +298,7 @@ fn drop_stage_in(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, key: &str) -> Result
 }
 
 /// Every kept generation, oldest first.
-fn entries_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<SealedBundleEntry>> {
+pub(super) fn entries_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<SealedBundleEntry>> {
     let mut out = Vec::new();
     for row in GENERATIONS.iter_raw_from(&vault.store, txn, &[])? {
         let (key, raw) = row?;
@@ -276,7 +311,7 @@ fn entries_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<SealedBundleEn
     Ok(out)
 }
 
-fn entry_in(
+pub(super) fn entry_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     generation: &SealedBundleGeneration,
@@ -431,17 +466,36 @@ fn staged_whole(
 /// keeps only objects that parse as the generation named. Then it retires
 /// what [`retired_bundle_generations`] names.
 ///
+/// `root` is the recovery root the machine pins, when it pins one: the home
+/// keeps it, with its anchor from the root's record here, and the kit door
+/// serves the generation to that root alone.
+///
 /// # Errors
 ///
 /// A refused peer, parent or slot; no whole stage of either object, or one of
-/// another generation; storage errors.
+/// another generation; a root the vault holds no valid record of; storage
+/// errors.
 pub fn commit_sealed_bundle(
     vault: &Vault,
     peer: PeerMachine,
     generation: SealedBundleGeneration,
     parent: Option<SealedBundleGeneration>,
+    root: Option<RecoveryRootId>,
 ) -> Result<SealedBundleEntry> {
     let machine = owner_machine(vault, peer)?;
+    let kit = match root {
+        None => None,
+        Some(root) => {
+            let (_, record) = vault
+                .owner_root_records()?
+                .remove(&root)
+                .ok_or_else(denied)?;
+            Some(SealedBundleKitRoot {
+                root,
+                anchor_key: record.anchor_key,
+            })
+        }
+    };
     let (bundle, pads) = {
         let txn = vault.store.env.read_txn()?;
         (
@@ -474,6 +528,7 @@ pub fn commit_sealed_bundle(
         bundle_digest: bundle_stage.digest,
         pads_len: pads_stage.total,
         pads_digest: pads_stage.digest,
+        kit,
     };
     vault.with_write_txn_grouped(|wtxn| {
         let latest = entries_in(vault, wtxn)?
@@ -628,6 +683,19 @@ pub fn sealed_bundle_part(
     let Some(entry) = entry else {
         return Ok(None);
     };
+    Ok(read_part_in(vault, &txn, &entry, object, offset)?.map(|part| (entry, part)))
+}
+
+/// One slice of the kept generation `entry`'s `object`, at most
+/// [`SEALED_BUNDLE_READ_PART_MAX`] bytes from `offset`. `None` at or past the
+/// object's end.
+pub(super) fn read_part_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    entry: &SealedBundleEntry,
+    object: SealedBundleObject,
+    offset: u64,
+) -> Result<Option<Vec<u8>>> {
     let (total, _) = entry.object(object);
     if offset >= total {
         return Ok(None);
@@ -638,7 +706,7 @@ pub fn sealed_bundle_part(
     let mut at = offset - offset % stored;
     while at < end {
         let row = PARTS
-            .get_borrowed(&vault.store, &txn, &part_key(&entry.generation, object, at))?
+            .get_borrowed(&vault.store, txn, &part_key(&entry.generation, object, at))?
             .ok_or(Error::CorruptedIndex("sealed bundle part"))?;
         let from = usize::try_from(offset.saturating_sub(at)).map_err(|_| Error::InvalidKey)?;
         let to =
@@ -652,5 +720,5 @@ pub fn sealed_bundle_part(
     if part.len() as u64 != end - offset {
         return Err(Error::CorruptedIndex("sealed bundle part"));
     }
-    Ok(Some((entry, part)))
+    Ok(Some(part))
 }

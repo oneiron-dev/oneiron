@@ -4,10 +4,12 @@
 mod authority;
 mod bundle;
 mod index;
+mod kit_fetch;
 pub(crate) use authority::{catch_up_authority, pinned_checkpoint_pending};
 pub use bundle::SealedBundleRelay;
 pub(crate) use bundle::relay_sealed_bundle;
 pub use index::ResidenceIndexWindow;
+pub use kit_fetch::fetch_sealed_bundle_with_kit;
 
 use std::collections::HashSet;
 use std::time::Duration;
@@ -20,7 +22,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
 
-use super::base::SyncClient;
+use super::base::{ITEM11_UNREADABLE_HOME_PROMOTION, SyncClient, home_reads_window};
 use super::types::{SyncClientConfig, SyncResidenceMode};
 use crate::EntityId;
 use crate::sync::residence_operation_budgets::ResidenceOperationBudgets;
@@ -540,6 +542,13 @@ impl SyncClient {
         let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
             return Err(TransportError::Storage("home node offline".into()));
         };
+        // A home that may not read the window's world is not told its name
+        // (FIX 922 item 11): the thin cache stays read-only, as with no home.
+        if ITEM11_UNREADABLE_HOME_PROMOTION && !home_reads_window(&self.vault, rpc.home, window) {
+            return Err(TransportError::Storage(
+                "home may not read this world".into(),
+            ));
+        }
         let reply: PromotionReply = serde_json::from_value(
             rpc.request(
                 "residence.promote",
