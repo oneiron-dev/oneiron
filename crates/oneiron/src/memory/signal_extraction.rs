@@ -178,14 +178,17 @@ impl Memory<'_> {
             }
             let candidate_evidence = match body.evidence.as_ref() {
                 Some(rmpv::Value::Map(entries)) => entries.iter().find_map(|(key, value)| {
-                    (key.as_str() == Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY))
-                        .then_some(value)
+                    (key.as_str()
+                        == Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY))
+                    .then_some(value)
                 }),
                 _ => None,
             };
             let citations = candidate_evidence
-                .filter(|value| matches!(value, rmpv::Value::Map(fields)
-                    if fields.iter().any(|(key, _)| key.as_str() == Some("locators"))))
+                .filter(|value| {
+                    matches!(value, rmpv::Value::Map(fields)
+                    if fields.iter().any(|(key, _)| key.as_str() == Some("locators")))
+                })
                 .map(decode_verified_citations)
                 .transpose()?
                 .unwrap_or_default();
@@ -210,7 +213,10 @@ impl Memory<'_> {
                 .iter()
                 .flat_map(|source| {
                     std::iter::once(source.source_ref.as_str()).chain(
-                        source.messages.iter().map(|message| message.message_ref.as_str()),
+                        source
+                            .messages
+                            .iter()
+                            .map(|message| message.message_ref.as_str()),
                     )
                 })
                 .map(EntityId::from_hex)

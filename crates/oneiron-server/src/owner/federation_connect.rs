@@ -11,7 +11,8 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::parse_hex;
 use oneiron::federation::{FederationDirectionScope, FederationPactScope};
 pub(crate) use oneiron::task_verb::sdk::{
-    AcceptConnect, ConnectAccepted as Accepted, ConnectGrant, ConnectIdentity, MintConnectGrant, Offer, OfferConnect,
+    AcceptConnect, ConnectAccepted as Accepted, ConnectGrant, ConnectIdentity, MintConnectGrant,
+    Offer, OfferConnect,
 };
 use oneiron::task_verb::sdk::{
     AcceptRescopeConnect, ConnectDelivery, ConnectDisconnected, ConnectExportRequest,
@@ -163,97 +164,163 @@ fn scope_pair(
     inbound: FederationDirectionScope,
 ) -> OwnerResult<FederationPactScope> {
     let fold = server.vault().authority_fold()?;
-    let state = fold.federation_pacts.get(&hex_field("pact", pact)?).ok_or_else(|| {
-        OwnerError::NotFound("pact", pact.to_owned())
-    })?;
-    let local = fold.vault_id.ok_or_else(|| OwnerError::Refused("no authority root".into()))?;
+    let state = fold
+        .federation_pacts
+        .get(&hex_field("pact", pact)?)
+        .ok_or_else(|| OwnerError::NotFound("pact", pact.to_owned()))?;
+    let local = fold
+        .vault_id
+        .ok_or_else(|| OwnerError::Refused("no authority root".into()))?;
     Ok(if local <= state.peer_vault_id {
-        FederationPactScope { lo_to_hi: outbound, hi_to_lo: inbound }
+        FederationPactScope {
+            lo_to_hi: outbound,
+            hi_to_lo: inbound,
+        }
     } else {
-        FederationPactScope { lo_to_hi: inbound, hi_to_lo: outbound }
+        FederationPactScope {
+            lo_to_hi: inbound,
+            hi_to_lo: outbound,
+        }
     })
 }
 
-fn pact_receipt(pact: String, state: oneiron::authority::FederationPactState) -> ConnectPactReceipt {
+fn pact_receipt(
+    pact: String,
+    state: oneiron::authority::FederationPactState,
+) -> ConnectPactReceipt {
     ConnectPactReceipt {
-        pact, status: state.status, epoch: state.pact_epoch,
-        scope: state.pact_scope, effective_scope: state.effective_scope,
+        pact,
+        status: state.status,
+        epoch: state.pact_epoch,
+        scope: state.pact_scope,
+        effective_scope: state.effective_scope,
     }
 }
 
 fn rescope_json(offered: &oneiron::authority::ConnectRescopeOffer) -> RescopeOffer {
     let offer = offer_json(&offered.offer);
     RescopeOffer {
-        pact: offer.pact, epoch: offered.epoch, nonce: offer.nonce, from: offer.from,
-        to: offer.to, scope: offer.scope, signer: offer.signer, signature: offer.signature,
+        pact: offer.pact,
+        epoch: offered.epoch,
+        nonce: offer.nonce,
+        from: offer.from,
+        to: offer.to,
+        scope: offer.scope,
+        signer: offer.signer,
+        signature: offer.signature,
     }
 }
 
 pub(crate) fn rescope_offer(
-    server: &SyncServer, owner: &AuthenticatedOwner, request: &RescopeConnect,
+    server: &SyncServer,
+    owner: &AuthenticatedOwner,
+    request: &RescopeConnect,
 ) -> OwnerResult<RescopeOffer> {
-    let scope = scope_pair(server, &request.pact, request.outbound.clone(), request.inbound.clone())?;
+    let scope = scope_pair(
+        server,
+        &request.pact,
+        request.outbound.clone(),
+        request.inbound.clone(),
+    )?;
     let pact = hex_field("pact", &request.pact)?;
     let offered = with_issuer(server, |issuer| {
-        Ok(server.vault().propose_connect_rescope_as(owner, issuer,
-            pact, request.epoch, scope))
-    })?.map_err(|error| refused(server.vault(), owner, error))?;
+        Ok(server
+            .vault()
+            .propose_connect_rescope_as(owner, issuer, pact, request.epoch, scope))
+    })?
+    .map_err(|error| refused(server.vault(), owner, error))?;
     Ok(rescope_json(&offered))
 }
 
 pub(crate) fn rescope_accept(
-    server: &SyncServer, owner: &AuthenticatedOwner, request: &AcceptRescopeConnect,
+    server: &SyncServer,
+    owner: &AuthenticatedOwner,
+    request: &AcceptRescopeConnect,
 ) -> OwnerResult<ConnectRescoped> {
     let offer = &request.offer;
     let offered = oneiron::authority::ConnectRescopeOffer {
         epoch: offer.epoch,
         offer: parse_offer(&Offer {
-            pact: offer.pact.clone(), nonce: offer.nonce.clone(), from: offer.from.clone(),
-            to: offer.to.clone(), scope: offer.scope.clone(), signer: offer.signer.clone(),
+            pact: offer.pact.clone(),
+            nonce: offer.nonce.clone(),
+            from: offer.from.clone(),
+            to: offer.to.clone(),
+            scope: offer.scope.clone(),
+            signer: offer.signer.clone(),
             signature: offer.signature.clone(),
         })?,
     };
     let (state, counter) = with_issuer(server, |issuer| {
-        Ok(server.vault().accept_connect_rescope_as(owner, issuer, &offered))
-    })?.map_err(|error| refused(server.vault(), owner, error))?;
-    Ok(ConnectRescoped { receipt: pact_receipt(offer.pact.clone(), state), counter: rescope_json(&counter) })
+        Ok(server
+            .vault()
+            .accept_connect_rescope_as(owner, issuer, &offered))
+    })?
+    .map_err(|error| refused(server.vault(), owner, error))?;
+    Ok(ConnectRescoped {
+        receipt: pact_receipt(offer.pact.clone(), state),
+        counter: rescope_json(&counter),
+    })
 }
 
 pub(crate) fn narrow(
-    server: &SyncServer, owner: &AuthenticatedOwner, request: &NarrowConnect,
+    server: &SyncServer,
+    owner: &AuthenticatedOwner,
+    request: &NarrowConnect,
 ) -> OwnerResult<ConnectPactReceipt> {
     let pact = hex_field("pact", &request.pact)?;
     let state = with_issuer(server, |issuer| {
-        Ok(server.vault().narrow_connect_as(owner, issuer, pact,
-            request.epoch, request.outbound.clone()))
-    })?.map_err(|error| refused(server.vault(), owner, error))?;
+        Ok(server.vault().narrow_connect_as(
+            owner,
+            issuer,
+            pact,
+            request.epoch,
+            request.outbound.clone(),
+        ))
+    })?
+    .map_err(|error| refused(server.vault(), owner, error))?;
     Ok(pact_receipt(request.pact.clone(), state))
 }
 
 pub(crate) fn disconnect(
-    server: &SyncServer, owner: &AuthenticatedOwner, request: &ConnectPactRequest,
+    server: &SyncServer,
+    owner: &AuthenticatedOwner,
+    request: &ConnectPactRequest,
 ) -> OwnerResult<ConnectDisconnected> {
     let pact = hex_field("pact", &request.pact)?;
     let state = with_issuer(server, |issuer| {
         Ok(server.vault().disconnect_connect_as(owner, issuer, pact))
-    })?.map_err(|error| refused(server.vault(), owner, error))?;
+    })?
+    .map_err(|error| refused(server.vault(), owner, error))?;
     Ok(ConnectDisconnected {
         receipt: pact_receipt(request.pact.clone(), state),
-        outbound_access: false, inbound_access: false, sync_stopped: true,
-        copied_bytes_recallable: false, recipient_copy_state: oneiron::receipt::GuestCopyState::Unknown,
+        outbound_access: false,
+        inbound_access: false,
+        sync_stopped: true,
+        copied_bytes_recallable: false,
+        recipient_copy_state: oneiron::receipt::GuestCopyState::Unknown,
     })
 }
 
 pub(crate) fn export(
-    server: &SyncServer, owner: &AuthenticatedOwner, request: ConnectExportRequest,
+    server: &SyncServer,
+    owner: &AuthenticatedOwner,
+    request: ConnectExportRequest,
 ) -> OwnerResult<ConnectDelivery> {
     with_issuer(server, |issuer| {
-        Ok(oneiron::sync::SyncClient::export_connect_window_as(&server.reassert_manager, owner, issuer, request))
-    })?.map_err(|error| refused(server.vault(), owner, error))
+        Ok(oneiron::sync::SyncClient::export_connect_window_as(
+            &server.reassert_manager,
+            owner,
+            issuer,
+            request,
+        ))
+    })?
+    .map_err(|error| refused(server.vault(), owner, error))
 }
 
 pub(crate) fn rejoin(
-    server: &SyncServer, owner: &AuthenticatedOwner, request: ConnectDelivery,
+    server: &SyncServer,
+    owner: &AuthenticatedOwner,
+    request: ConnectDelivery,
 ) -> OwnerResult<ConnectRejoined> {
     oneiron::sync::SyncClient::rejoin_connect_as(&server.reassert_manager, owner, request)
         .map_err(|error| refused(server.vault(), owner, error))
