@@ -753,6 +753,13 @@ pub(super) fn filter_window_doc(
     // Rule A: a birth crosses only beside an owner this filter shipped, and
     // only as far as `reach` lets it.
     copy_births_within(source, &out, reach)?;
+    // FIX 2902: a proved machine of this vault's takes, beside each shipped
+    // row, the origin this vault's import judged its bytes by.
+    if matches!(reach, BirthReach::OwnMachines)
+        && matches!(withhold, Withhold::Worlds(_) | Withhold::Peer(_))
+    {
+        crate::sync::ingest::copy_peer_origins(source, &out)?;
+    }
     crate::sync::note::copy_selected(source, &out, &notes_dropped)?;
     out.commit();
     Ok(out)

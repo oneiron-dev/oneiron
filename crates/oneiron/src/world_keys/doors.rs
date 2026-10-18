@@ -220,6 +220,9 @@ impl Vault {
     }
 
     /// The key a settings edit leaves `world` with, in the edit's transaction.
+    /// - When this install may not read the world after the edit, it opens and
+    ///   mints nothing: the signed decision commits, and a holder does the key
+    ///   work (`None`, "awaiting a holder" on the receipt).
     /// - When this machine may read the world after the edit and the world has no
     ///   key yet, the key is minted in this commit, and any refusal (no keystore, a
     ///   keystore failure, no machine identity) refuses the edit: a private world
@@ -236,16 +239,27 @@ impl Vault {
         world: EntityId,
         secret: Result<&MachineSecret>,
     ) -> Result<Option<WorldKeyStatus>> {
-        let needs_key = {
+        let (private, reads, needs_key) = {
             let fold = self.authority_view_readonly_in_txn(txn)?;
             let machine = crate::identity::read_machine_id_in_txn(self, txn)?;
-            fold.world_privacy(world).read != EffectiveRead::Everywhere
-                && fold.current_world_key(world).is_none()
-                && machine.is_some_and(|machine| {
-                    fold.trusted_machine(machine).is_some()
-                        && fold.world_readable_on(world, Destination::Machine(machine))
-                })
+            let private = fold.world_privacy(world).read != EffectiveRead::Everywhere;
+            let reads = machine.is_some_and(|machine| {
+                fold.trusted_machine(machine).is_some()
+                    && fold.world_readable_on(world, Destination::Machine(machine))
+            });
+            (
+                private,
+                reads,
+                private && reads && fold.current_world_key(world).is_none(),
+            )
         };
+        // Key possession and the owner's recipient choice, never who decides
+        // (mesh contract §5): only an allowed reader opens or mints the
+        // world's key, so a carrier that may not read the world skips the
+        // helper before it reaches `require_mine_reader`.
+        if private && !reads {
+            return Ok(None);
+        }
         let attempt = match secret {
             Ok(secret) => self.ensure_world_key_or_wide_in_txn(txn, owner, world, secret),
             Err(error) if needs_key => return Err(error),

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 581 facade rows, 2210 declarations.
-Inputs: 530 of 581 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 513 of 581 fully typed, 68 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 586 facade rows, 2224 declarations.
+Inputs: 535 of 586 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 518 of 586 fully typed, 68 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 91; unread shapes: 0.
 """
 
@@ -1597,6 +1597,45 @@ class MemoryPack(TypedDict):
     rendered: NotRequired[str | None]
     narrowing: ScopedReadReceipt
     retrieval_run_id: NotRequired[RetrievalRunId | None]
+class RetrievalWeights(TypedDict):
+    affect: float
+    arousal: float
+    community: float
+    vad: float
+class RetrievalWeightsView(TypedDict):
+    manifest_ref: str
+    body_hash: str
+    weights: RetrievalWeights
+class RetrievalWeightsConfigureRequest(TypedDict):
+    expected_body_hash: str
+    weights: RetrievalWeights
+class RetrievalWeightsReceipt(TypedDict):
+    configuration: RetrievalWeightsView
+    receipt_ref: str
+VadAnnotationSource = Literal["model_inference", "user_self_report"]
+class AffectAnnotationPut(TypedDict):
+    turn_ref: str
+    vad: QueryAffect
+    source: VadAnnotationSource
+    annotated_at: int
+    scope: ClaimScope
+    sensitivity: NotRequired[int | None]
+class AffectClaimConsolidateRequest(TypedDict):
+    claim_ref: str
+class AffectTurnEvidence(TypedDict):
+    turn_ref: str
+    vad: QueryAffect
+    source: VadAnnotationSource
+    annotated_at: int
+class AffectClaimConsolidation(TypedDict):
+    claim_ref: str
+    vad: NotRequired[QueryAffect | None]
+    evidence_turns: list[AffectTurnEvidence]
+    semantic_edges_updated: int
+    structural_edges_skipped: int
+    active_state_ref: NotRequired[str | None]
+    created_state_ref: NotRequired[str | None]
+    superseded_state_refs: list[str]
 class RetrievalRunsRequest(TypedDict):
     limit: NotRequired[int | None]
 RetrievalAction = Literal["pipeline", "context_pack", "vault_search", "graph_fs_coreutils", "speculative"]
@@ -8658,6 +8697,29 @@ class LiveVoiceToolReply(TypedDict):
     reply: ConnectorCallReply
 class LiveVoiceSessionRequest(TypedDict):
     session_ref: str
+AnonymousChatRequestTarget = Literal["house_mind", "plain_model"]
+class AnonymousChatRequest(TypedDict):
+    text: str
+    target: NotRequired[AnonymousChatRequestTarget]
+    model: NotRequired[ModelId | None]
+class AnonymousChatSkippedCheckView(TypedDict):
+    input: bool
+    reason: PolicySkipReason
+AnonymousChatBlockReasonView = Literal["policy", "human_review_unavailable"]
+class AnonymousChatResponseReply(TypedDict):
+    type: Literal["reply"]
+    content: str
+    notices: list[GateSystemNoticeRecord]
+    skipped_checks: list[AnonymousChatSkippedCheckView]
+    model_notices: list[GateSystemNoticeRecord]
+class AnonymousChatResponseBlocked(TypedDict):
+    type: Literal["blocked"]
+    input: bool
+    notice: GateSystemNoticeRecord
+    preceding_notices: list[GateSystemNoticeRecord]
+    reason: AnonymousChatBlockReasonView
+    model_notices: list[GateSystemNoticeRecord]
+AnonymousChatResponse = AnonymousChatResponseReply | AnonymousChatResponseBlocked
 class AiOptionsRequest(TypedDict):
     operation: NotRequired[str | None]
     inputs: NotRequired[list[str]]
