@@ -31,7 +31,7 @@ pub struct StateIndexEvidence {
 }
 
 /// Numerical inputs retained so an agent can make its own mode decision.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ModeGateInputs {
     pub affect: f32,
     pub goal_velocity: f32,
@@ -39,7 +39,7 @@ pub struct ModeGateInputs {
 }
 
 /// Unknown subjects return a neutral 0.5 with no inputs or claim. Absence is not evidence.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StateIndex {
     pub value: f32,
     pub inputs: Option<ModeGateInputs>,

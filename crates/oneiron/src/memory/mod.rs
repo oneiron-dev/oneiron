@@ -24,6 +24,8 @@
 //! unchanged from the flat-file era.
 
 pub mod affect;
+pub mod coping_doors;
+pub mod wellness_doors;
 mod answer_boundary;
 mod archive_purge;
 mod artifact_hosting_doors;

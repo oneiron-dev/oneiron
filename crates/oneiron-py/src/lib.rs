@@ -877,6 +877,73 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_affect_coping_record(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.affect.coping.record")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.affect.coping.record", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_affect_coping_update(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.affect.coping.update")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.affect.coping.update", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_affect_coping_aggregate(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.affect.coping.aggregate")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.affect.coping.aggregate", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_affect_wellness_policy_get(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.affect.wellness.policy.get")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.affect.wellness.policy.get", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_affect_wellness_policy_configure(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(input_json, "vault.affect.wellness.policy.configure")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.affect.wellness.policy.configure", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_affect_wellness_derive(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.affect.wellness.derive")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.affect.wellness.derive", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_affect_wellness_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.affect.wellness.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.affect.wellness.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_retrieval_recall(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.retrieval.recall")?;
         let output = py

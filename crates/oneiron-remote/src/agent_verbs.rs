@@ -263,6 +263,27 @@ impl OneironClient {
                 "vault.affect.claims.consolidate" => remote_agent_verb_output::<
                     oneiron::memory::affect::AffectClaimConsolidation,
                 >(client, verb, &input),
+                "vault.affect.coping.record" => remote_agent_verb_output::<
+                    oneiron::memory::coping_doors::CopingOutcomeReceipt,
+                >(client, verb, &input),
+                "vault.affect.coping.update" => remote_agent_verb_output::<
+                    oneiron::memory::coping_doors::CopingOutcomeReceipt,
+                >(client, verb, &input),
+                "vault.affect.coping.aggregate" => remote_agent_verb_output::<
+                    oneiron::memory::coping_doors::CopingAggregate,
+                >(client, verb, &input),
+                "vault.affect.wellness.policy.get" => remote_agent_verb_output::<
+                    Option<oneiron::dreamer_runner::maintenance::action_mode::ActionModePolicy>,
+                >(client, verb, &input),
+                "vault.affect.wellness.policy.configure" => remote_agent_verb_output::<
+                    Option<oneiron::dreamer_runner::maintenance::action_mode::ActionModePolicy>,
+                >(client, verb, &input),
+                "vault.affect.wellness.derive" => remote_agent_verb_output::<
+                    oneiron::memory::wellness_doors::WellnessProjection,
+                >(client, verb, &input),
+                "vault.affect.wellness.get" => remote_agent_verb_output::<
+                    oneiron::memory::wellness_doors::WellnessProjection,
+                >(client, verb, &input),
                 "vault.retrieval.recall" => {
                     remote_agent_verb_output::<oneiron::memory::MemoryPack>(client, verb, &input)
                 }
@@ -3400,6 +3421,96 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.affect.claims.consolidate", value)
+    }
+    pub fn vault_affect_coping_record(
+        &self,
+        input: &oneiron::memory::coping_doors::CopingOutcomeRecordRequest,
+    ) -> Result<oneiron::memory::coping_doors::CopingOutcomeReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.affect.coping.record", value)
+    }
+    pub fn vault_affect_coping_update(
+        &self,
+        input: &oneiron::memory::coping_doors::CopingOutcomeUpdateRequest,
+    ) -> Result<oneiron::memory::coping_doors::CopingOutcomeReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.affect.coping.update", value)
+    }
+    pub fn vault_affect_coping_aggregate(
+        &self,
+        input: &oneiron::memory::coping_doors::CopingAggregateRequest,
+    ) -> Result<oneiron::memory::coping_doors::CopingAggregate, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.affect.coping.aggregate", value)
+    }
+    pub fn vault_affect_wellness_policy_get(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<
+        Option<oneiron::dreamer_runner::maintenance::action_mode::ActionModePolicy>,
+        MemoryError,
+    > {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.affect.wellness.policy.get", value)
+    }
+    pub fn vault_affect_wellness_policy_configure(
+        &self,
+        input: &oneiron::memory::wellness_doors::WellnessPolicyConfigureRequest,
+    ) -> Result<
+        Option<oneiron::dreamer_runner::maintenance::action_mode::ActionModePolicy>,
+        MemoryError,
+    > {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.affect.wellness.policy.configure", value)
+    }
+    pub fn vault_affect_wellness_derive(
+        &self,
+        input: &oneiron::memory::wellness_doors::WellnessPersonRequest,
+    ) -> Result<oneiron::memory::wellness_doors::WellnessProjection, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.affect.wellness.derive", value)
+    }
+    pub fn vault_affect_wellness_get(
+        &self,
+        input: &oneiron::memory::wellness_doors::WellnessPersonRequest,
+    ) -> Result<oneiron::memory::wellness_doors::WellnessProjection, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.affect.wellness.get", value)
     }
     pub fn vault_retrieval_recall(
         &self,

@@ -571,6 +571,69 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_affect_coping_record(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.affect.coping.record", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_affect_coping_update(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.affect.coping.update", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_affect_coping_aggregate(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.affect.coping.aggregate", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_affect_wellness_policy_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.affect.wellness.policy.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_affect_wellness_policy_configure(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.affect.wellness.policy.configure", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_affect_wellness_derive(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.affect.wellness.derive", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_affect_wellness_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.affect.wellness.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_retrieval_recall(
         &self,
         input: serde_json::Value,

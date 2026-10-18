@@ -455,7 +455,7 @@ impl Vault {
 
     pub(super) fn turn_vad_annotation_in_txn(
         &self,
-        txn: &heed::RwTxn<'_>,
+        txn: &heed::RoTxn<'_>,
         turn_id: &EntityId,
     ) -> Result<Option<VadAnnotation>> {
         let Some(raw) = self
