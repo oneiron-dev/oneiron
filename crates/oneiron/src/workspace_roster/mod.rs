@@ -154,9 +154,9 @@ pub(crate) use project::{
     project_mint_gate_refs_in_txn, project_room_dependency, projects_led_in_txn,
     reconcile_project_rooms, retire_goal_for_delete, room_facets_in, root_project_in,
     seed_root_project, settle_leader_chat_record, speaks_as_in_txn,
-    validate_local_leader_chat_turns, validate_project_body,
-    validate_project_edge_delete, validate_project_edge_put, validate_project_graph,
-    validate_project_transition, validate_room_body, verify_existing_leader_chat_turn,
+    validate_local_leader_chat_turns, validate_project_body, validate_project_edge_delete,
+    validate_project_edge_put, validate_project_graph, validate_project_transition,
+    validate_room_body, verify_existing_leader_chat_turn,
 };
 pub(crate) use project::{
     PROJECT_REVISION_SHORT_ID_PREFIX, ProjectForks, capture_before_tear, capture_project_put,

@@ -357,7 +357,9 @@ impl Vault {
         actor: WriteActor,
         at: u64,
     ) -> Result<LeaderChat> {
-        self.with_write_txn_grouped(|txn| self.open_leader_chat_in_txn(txn, id, projects, actor, at))
+        self.with_write_txn_grouped(|txn| {
+            self.open_leader_chat_in_txn(txn, id, projects, actor, at)
+        })
     }
 
     /// [`Self::open_leader_chat`] inside the caller's write transaction, with
