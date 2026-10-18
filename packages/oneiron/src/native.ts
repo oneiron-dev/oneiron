@@ -57,6 +57,8 @@ steer(input: unknown): unknown
 describe(input: unknown): unknown
 tasksCreate(input: unknown): unknown
 tasksWave(input: unknown): unknown
+vaultFanoutSpawn(input: unknown): unknown
+vaultFanoutSlots(input: unknown): unknown
 vaultFanoutLaunch(input: unknown): unknown
 selfBudget(input: unknown): unknown
 selfBudgetLand(input: unknown): unknown
@@ -78,6 +80,10 @@ vaultRecall(query: string, effort: string | undefined, scope: RecallScope | unde
 vaultRetrievalWeightsGet(input: unknown): unknown
 vaultRetrievalWeightsConfigure(input: unknown): unknown
 vaultAffectAnnotationsPut(input: unknown): unknown
+vaultTaggingStatus(input: unknown): unknown
+vaultTaggingTags(input: unknown): unknown
+vaultTaggingHistory(input: unknown): unknown
+vaultTaggingMentions(input: unknown): unknown
 vaultAffectClaimsConsolidate(input: unknown): unknown
 vaultRetrievalRecall(input: unknown): unknown
 vaultRetrievalRuns(input: unknown): unknown
@@ -465,6 +471,10 @@ aiStepsSubmit(input: unknown): unknown
 aiStepsReceipt(input: unknown): unknown
 aiReply(input: unknown): unknown
 vaultReceiptsContext(input: unknown): unknown
+aiVoiceAsrOpen(input: unknown): unknown
+aiVoiceAsrHypothesis(input: unknown): unknown
+aiVoiceAsrFinalize(input: unknown): unknown
+aiVoiceAsrClose(input: unknown): unknown
 aiVoiceStart(input: unknown): unknown
 aiVoiceAudio(input: unknown): unknown
 aiVoiceEvents(input: unknown): unknown
@@ -532,6 +542,7 @@ vaultGet(input: unknown): unknown
 vaultRefsResolve(input: unknown): unknown
 vaultRefsLinks(input: unknown): unknown
 vaultSearchHybrid(input: unknown): unknown
+vaultSearchTemporal(input: unknown): unknown
 vaultSearchBm25(input: unknown): unknown
 vaultNeighbors(input: unknown): unknown
 vaultStructuralPut(input: unknown): unknown
@@ -611,6 +622,7 @@ vaultSummariesProposalsMerge(input: unknown): unknown
 vaultSummariesProposalsSwitch(input: unknown): unknown
 vaultSummariesProposalsReject(input: unknown): unknown
 vaultNotesCreate(input: unknown): unknown
+vaultNotesAuthorTake(input: unknown): unknown
 vaultNotesFromEntity(input: unknown): unknown
 vaultNotesRead(input: unknown): unknown
 vaultNotesHistory(input: unknown): unknown

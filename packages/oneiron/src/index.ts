@@ -368,6 +368,10 @@ export class Oneiron {
       apply: (input: Facade.ShapeApplyRequest): Facade.ShapeApplyReceipt => this.#call(() => this.#client.vaultShapeApply(input) as Facade.ShapeApplyReceipt),
     },
     fanout: {
+      /** Admits input-order child slots under this credential's attached live run, through the frozen fan-out approval gate and one shared parent spend tree. */
+      spawn: (input: Facade.LiveRunRequest<Facade.FanoutBatchInput>): Facade.FanoutBatchView => this.#call(() => this.#client.vaultFanoutSpawn(input) as Facade.FanoutBatchView),
+      /** Reads a batch launch in input slot order, with child errors, results, reservations, settled spend and released holds from its shared parent lease tree. */
+      slots: (input: Facade.FanoutLaunchRequest): Facade.FanoutBatchView | null => this.#call(() => this.#client.vaultFanoutSlots(input) as Facade.FanoutBatchView | null),
       /** One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by the vault owner, its creator, or a live lead/board holder of its project, anything else reads as none. */
       launch: (input: Facade.FanoutLaunchRequest): Facade.FanoutLaunchView | null => this.#call(() => this.#client.vaultFanoutLaunch(input) as Facade.FanoutLaunchView | null),
       /** The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible. */
@@ -479,6 +483,16 @@ export class Oneiron {
         /** The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction. */
         consolidate: (input: Facade.AffectClaimConsolidateRequest): Facade.AffectClaimConsolidation => this.#call(() => this.#client.vaultAffectClaimsConsolidate(input) as Facade.AffectClaimConsolidation),
       },
+    },
+    tagging: {
+      /** Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker and failure reason. */
+      status: (input: Facade.TaggingTurnRequest): Facade.TaggingStatusView => this.#call(() => this.#client.vaultTaggingStatus(input) as Facade.TaggingStatusView),
+      /** Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them. */
+      tags: (input: Facade.TaggingTurnRequest): Facade.TaggingTagsView => this.#call(() => this.#client.vaultTaggingTags(input) as Facade.TaggingTagsView),
+      /** Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome. */
+      history: (input: Facade.TaggingTurnRequest): Facade.TaggingHistoryView => this.#call(() => this.#client.vaultTaggingHistory(input) as Facade.TaggingHistoryView),
+      /** Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller. */
+      mentions: (input: Facade.TaggingMentionsRequest): Facade.TaggingMentionsView => this.#call(() => this.#client.vaultTaggingMentions(input) as Facade.TaggingMentionsView),
     },
     /** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */
     export: Object.assign((format?: string): MemoryExport => this.#call(() => this.#client.vaultExport({format: format}) as MemoryExport), {
@@ -1590,6 +1604,8 @@ export class Oneiron {
     search: {
       /** Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence. */
       hybrid: (input: Facade.HybridSearchRequest): Facade.ScopedReadResult<Facade.HybridSearchHit[]> => this.#call(() => this.#client.vaultSearchHybrid(input) as Facade.ScopedReadResult<Facade.HybridSearchHit[]>),
+      /** Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds. */
+      temporal: (input: Facade.TemporalSearchRequest): Facade.ScopedReadResult<Facade.TemporalSearchResult> => this.#call(() => this.#client.vaultSearchTemporal(input) as Facade.ScopedReadResult<Facade.TemporalSearchResult>),
       /** BM25 text search over the engine index; surfaceable claims only. */
       bm25: (input: Facade.QueryBm25Request): Facade.ScopedReadResult<Facade.LexicalHit[]> => this.#call(() => this.#client.vaultSearchBm25(input) as Facade.ScopedReadResult<Facade.LexicalHit[]>),
     },
@@ -1715,6 +1731,8 @@ export class Oneiron {
     notes: {
       /** Creates a NOTE of a registered kind, its first authored text as its birth. */
       create: (input: Facade.CreateNoteRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesCreate(input) as Facade.EntityRefReceipt),
+      /** Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target. */
+      author_take: (input: Facade.AuthorTakeRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesAuthorTake(input) as Facade.EntityRefReceipt),
       /** Creates a NOTE of a registered kind from an existing entity. */
       from_entity: (input: Facade.CreateNoteFromEntityRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesFromEntity(input) as Facade.EntityRefReceipt),
       /** Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot. */
@@ -1812,6 +1830,16 @@ export class Oneiron {
     /** Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs. */
     reply: (input: Facade.AiReplyRequest): Facade.AiReply => this.#call(() => this.#client.aiReply(input) as Facade.AiReply),
     voice: {
+      asr: {
+        /** Opens one credential-bound utterance for host-enriched ASR speculative recall, with fixed scope, at most four fires and a call-mode deadline. */
+        open: (input: Facade.AsrOpenRequest): Facade.AsrSession => this.#call(() => this.#client.aiVoiceAsrOpen(input) as Facade.AsrSession),
+        /** Observes an ASR hypothesis and host enrichment; returns the engine signature-change decision, actual fire budget, scoped candidates and a per-fire receipt. */
+        hypothesis: (input: Facade.AsrHypothesisRequest): Facade.AsrHypothesisReceipt => this.#call(() => this.#client.aiVoiceAsrHypothesis(input) as Facade.AsrHypothesisReceipt),
+        /** Consumes an ASR utterance, promoting its compatible last fire with receipt linkage or running one full finalize pass with warm-fill and honest partial reporting. */
+        finalize: (input: Facade.AsrHypothesisRequest): Facade.AsrFinalReceipt => this.#call(() => this.#client.aiVoiceAsrFinalize(input) as Facade.AsrFinalReceipt),
+        /** Closes an unfinished ASR utterance under its opening credential and releases its warm candidates without a final retrieval. */
+        close: (input: Facade.AsrCloseRequest): Facade.AsrClosed => this.#call(() => this.#client.aiVoiceAsrClose(input) as Facade.AsrClosed),
+      },
       /** Opens an owner-bound live media session on the configured voice routes, using the caller credential, room audience and existing budget gates. */
       start: (input: Facade.LiveVoiceStartRequest): Facade.LiveVoiceSession => this.#call(() => this.#client.aiVoiceStart(input) as Facade.LiveVoiceSession),
       /** Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech retires old output through the shared cancellation path. */

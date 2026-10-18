@@ -78,7 +78,7 @@ impl AgentSpendCalibration {
 }
 
 /// Where an expected spend comes from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SpendBasis {
     /// Learned from settled launches of this agent.
@@ -89,7 +89,7 @@ pub enum SpendBasis {
 
 /// Where an expected dollar figure comes from. Calibrated native units do
 /// not make the dollars calibrated.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DollarBasis {
     /// The host quotes no USD price for this unit, model or route: the
@@ -163,7 +163,7 @@ impl crate::Vault {
 }
 
 /// An expected spend and the evidence behind it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ExpectedSpend {
     pub units: u64,
     /// The settled samples behind the figure (summed over a tree's nodes).

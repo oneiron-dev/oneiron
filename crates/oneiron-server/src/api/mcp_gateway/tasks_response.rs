@@ -867,6 +867,8 @@ fn mcp_agent_verb_input(
             Ok(Value::Object(map))
         }
         "tasks.wave" => a.spec.clone().ok_or_else(invalid),
+        "vault.fanout.spawn" => a.spec.clone().ok_or_else(invalid),
+        "vault.fanout.slots" => a.spec.clone().ok_or_else(invalid),
         "vault.fanout.launch" => a.spec.clone().ok_or_else(invalid),
         "self.budget" => a.spec.clone().ok_or_else(invalid),
         "self.budget.land" => a.spec.clone().ok_or_else(invalid),
@@ -902,6 +904,10 @@ fn mcp_agent_verb_input(
         "vault.retrieval.weights.get" => a.spec.clone().ok_or_else(invalid),
         "vault.retrieval.weights.configure" => a.spec.clone().ok_or_else(invalid),
         "vault.affect.annotations.put" => a.spec.clone().ok_or_else(invalid),
+        "vault.tagging.status" => a.spec.clone().ok_or_else(invalid),
+        "vault.tagging.tags" => a.spec.clone().ok_or_else(invalid),
+        "vault.tagging.history" => a.spec.clone().ok_or_else(invalid),
+        "vault.tagging.mentions" => a.spec.clone().ok_or_else(invalid),
         "vault.affect.claims.consolidate" => a.spec.clone().ok_or_else(invalid),
         "vault.retrieval.recall" => a.spec.clone().ok_or_else(invalid),
         "vault.retrieval.runs" => a.spec.clone().ok_or_else(invalid),
@@ -1398,6 +1404,10 @@ fn mcp_agent_verb_input(
         "ai.steps.receipt" => a.spec.clone().ok_or_else(invalid),
         "ai.reply" => a.spec.clone().ok_or_else(invalid),
         "vault.receipts.context" => a.spec.clone().ok_or_else(invalid),
+        "ai.voice.asr.open" => a.spec.clone().ok_or_else(invalid),
+        "ai.voice.asr.hypothesis" => a.spec.clone().ok_or_else(invalid),
+        "ai.voice.asr.finalize" => a.spec.clone().ok_or_else(invalid),
+        "ai.voice.asr.close" => a.spec.clone().ok_or_else(invalid),
         "ai.voice.start" => a.spec.clone().ok_or_else(invalid),
         "ai.voice.audio" => a.spec.clone().ok_or_else(invalid),
         "ai.voice.events" => a.spec.clone().ok_or_else(invalid),
@@ -1465,6 +1475,7 @@ fn mcp_agent_verb_input(
         "vault.refs.resolve" => a.spec.clone().ok_or_else(invalid),
         "vault.refs.links" => a.spec.clone().ok_or_else(invalid),
         "vault.search.hybrid" => a.spec.clone().ok_or_else(invalid),
+        "vault.search.temporal" => a.spec.clone().ok_or_else(invalid),
         "vault.search.bm25" => a.spec.clone().ok_or_else(invalid),
         "vault.neighbors" => a.spec.clone().ok_or_else(invalid),
         "vault.structural.put" => a.spec.clone().ok_or_else(invalid),
@@ -1544,6 +1555,7 @@ fn mcp_agent_verb_input(
         "vault.summaries.proposals.switch" => a.spec.clone().ok_or_else(invalid),
         "vault.summaries.proposals.reject" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.create" => a.spec.clone().ok_or_else(invalid),
+        "vault.notes.author_take" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.from_entity" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.read" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.history" => a.spec.clone().ok_or_else(invalid),
@@ -1739,6 +1751,12 @@ pub(crate) fn mcp_agent_verb_arguments(
         "tasks.wave" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.fanout.spawn" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.fanout.slots" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.fanout.launch" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -1806,6 +1824,18 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.affect.annotations.put" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.tagging.status" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.tagging.tags" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.tagging.history" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.tagging.mentions" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.affect.claims.consolidate" => {
@@ -2990,6 +3020,18 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.receipts.context" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "ai.voice.asr.open" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "ai.voice.asr.hypothesis" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "ai.voice.asr.finalize" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "ai.voice.asr.close" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "ai.voice.start" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -3189,6 +3231,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.search.hybrid" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.search.temporal" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.search.bm25" => {
@@ -3426,6 +3471,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.notes.create" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.notes.author_take" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.notes.from_entity" => {
@@ -4071,6 +4119,43 @@ async fn execute_agent_verb_row(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "vault.fanout.spawn" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.fanout.spawn", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveRunRequest<
+                oneiron::task_verb::sdk::FanoutBatchInput,
+            > = serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_fanout_spawn(
+                server,
+                auth,
+                actor
+                    .off_record_session
+                    .as_deref()
+                    .map(oneiron::EntityId::from_hex)
+                    .transpose()
+                    .map_err(|_| invalid())?,
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.fanout.slots" => {
+            let input: oneiron::task_verb::sdk::FanoutLaunchRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_fanout_slots(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "vault.fanout.launch" => {
             let input: oneiron::task_verb::sdk::FanoutLaunchRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
@@ -4401,6 +4486,38 @@ async fn execute_agent_verb_row(
             let input: oneiron::memory::affect::AffectAnnotationPut =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_affect_annotations_put(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.tagging.status" => {
+            let input: oneiron::tagging::TaggingTurnRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_tagging_status(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.tagging.tags" => {
+            let input: oneiron::tagging::TaggingTurnRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_tagging_tags(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.tagging.history" => {
+            let input: oneiron::tagging::TaggingTurnRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_tagging_history(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.tagging.mentions" => {
+            let input: oneiron::tagging::TaggingMentionsRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_tagging_mentions(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10693,6 +10810,78 @@ async fn execute_agent_verb_row(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "ai.voice.asr.open" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("ai.voice.asr.open", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::AsrOpenRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::ai_voice_asr_open(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "ai.voice.asr.hypothesis" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("ai.voice.asr.hypothesis", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::AsrHypothesisRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::ai_voice_asr_hypothesis(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "ai.voice.asr.finalize" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("ai.voice.asr.finalize", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::AsrHypothesisRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::ai_voice_asr_finalize(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "ai.voice.asr.close" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("ai.voice.asr.close", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::AsrCloseRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::ai_voice_asr_close(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "ai.voice.start" => {
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             oneiron::task_verb::sdk::validate_input("ai.voice.start", &input)
@@ -11625,6 +11814,14 @@ async fn execute_agent_verb_row(
             let input: oneiron::memory::HybridSearchRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_search_hybrid(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.search.temporal" => {
+            let input: oneiron::memory::TemporalSearchRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_search_temporal(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12673,6 +12870,14 @@ async fn execute_agent_verb_row(
             let input: oneiron::task_verb::sdk::CreateNoteRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_notes_create(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.notes.author_take" => {
+            let input: oneiron::task_verb::sdk::AuthorTakeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_notes_author_take(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

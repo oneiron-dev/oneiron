@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 672 code-mode rows (651 host rows, 21 run rows), 2386 declarations.
-// Replies: 593 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 684 code-mode rows (663 host rows, 21 run rows), 2432 declarations.
+// Replies: 605 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 95; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -228,7 +228,9 @@ declare namespace Sdk {
   type TaskCreateReceipt = { task_ref?: EntityId | null; proposal_ref?: EntityId | null; approval: ClaimApprovalStatus; effected: boolean; route?: TaskRouteOutcome | null; task_record?: RecordRef | null; proposal_record?: RecordRef | null };
   type TaskWaveRequest = { epic_task_ref: string; planner_ref: string; objective: string; constraints?: unknown };
   type TaskWaveReceipt = { attempt_ref: string; state: string };
-  type FanoutLaunchRequest = { launch_ref: EntityId };
+  type LiveRunRequest<T> = { live_run: string; spec: T };
+  type FanoutChildInput = { agent_ref: EntityId; label: string; prompt: string };
+  type FanoutBatchInput = { intent_key: string; children: FanoutChildInput[] };
   type PeerCount = { peer: EntityId; count: number };
   type SpendBasis = "calibrated" | "prior";
   type DollarBasis = "unknown_price" | "upper_bound_rate" | "sum" | "incomplete_or_overflow";
@@ -241,12 +243,21 @@ declare namespace Sdk {
   type FanoutStatement = { agent_count: number; consult_count: number; task_count: number; per_peer: PeerCount[]; expected: ExpectedSpend; unit: LeaseUnit; cap?: SpendCapView | null; over_available: boolean; more_would_buy?: string | null; width_check?: ExceptionalWidthCheck | null; stated_at: number };
   type FanoutLaunchHold = { surface_ref: string; denied: boolean };
   type FanoutLaunchView = { launch_ref: EntityId; plan_digest: string; statement: FanoutStatement; held?: FanoutLaunchHold | null; check_row_ref?: string | null; choice_receipt_ref?: string | null; task_refs: EntityId[] };
-  type SelfBudgetRequest = { attempt: string; run?: string | null };
+  type FanoutSlotState = "held" | "pending" | "completed" | "error";
+  type FanoutSlotTerminal = { disposition: TaskTerminalDisposition; result_ref?: EntityId | null; finished_at: number };
+  type AttemptState = "Queued" | "Leased" | "Paused" | "Completed" | "Failed" | "Cancelled" | "Scheduled" | "Landing" | "Abandoned";
   type SpendState = "open" | "closed";
   type SpendPayer = { party: EntityId; granted_by: EntityId; at_ms: number };
   type SpendScope = { scope: SpendScopeId; parent?: SpendScopeId | null; unit: LeaseUnit; cap_units: number; hard: boolean; spent_units: number; held_units: number; state: SpendState; shown_at_ms?: number | null; opened_at: number; closed_at?: number | null; agent?: EntityId | null; payer?: SpendPayer | null };
   type SpendSignal = { signal: "wrap_up"; available_units: number; cap_units: number } | { signal: "at_cap"; cap_units: number };
   type SpendRead = { scope: SpendScopeId; unit: LeaseUnit; spent_units: number; available_units: number; cap_scope: SpendScopeId; cap_units: number; signal?: SpendSignal | null };
+  type FanoutLeaseView = { lease: SpendScope; spend: SpendRead; released_units?: number | null };
+  type FanoutSlotAttempt = { attempt_ref: string; state: AttemptState; last_error?: string | null; result_ref?: string | null; budget_hold: boolean; lease?: FanoutLeaseView | null };
+  type FanoutChildSlot = { index: number; input: FanoutChildInput; task_ref?: EntityId | null; state: FanoutSlotState; terminal?: FanoutSlotTerminal | null; attempts: FanoutSlotAttempt[] };
+  type FanoutSharedAccounting = { parent?: FanoutLeaseView | null; hard_cap?: FanoutLeaseView | null };
+  type FanoutBatchView = { launch: FanoutLaunchView; parent_task_ref: EntityId; slots: FanoutChildSlot[]; accounting: FanoutSharedAccounting };
+  type FanoutLaunchRequest = { launch_ref: EntityId };
+  type SelfBudgetRequest = { attempt: string; run?: string | null };
   type SpendLeaseView = { lease: SpendScope; spend: SpendRead };
   type AttemptLandingReserve = { limit_units?: number; reserve_units?: number; spent_units?: number; dial_generation?: number | null };
   type LandingTrigger = "cancel_request" | "budget_warning" | "lease_warning";
@@ -332,6 +343,26 @@ declare namespace Sdk {
   type RetrievalWeightsReceipt = { configuration: RetrievalWeightsView; receipt_ref: string };
   type VadAnnotationSource = "model_inference" | "user_self_report";
   type AffectAnnotationPut = { turn_ref: string; vad: QueryAffect; source: VadAnnotationSource; annotated_at: number; scope: ClaimScope; sensitivity?: number | null };
+  type TaggingTurnRequest = { turn_ref: string };
+  type TaggingMarkerState = "unconfigured" | "absent" | "pending" | "retrying" | "settled" | "failed";
+  type TaggingMarkerView = { attempt_ref: string; state: string; checkpoint?: string | null; stack?: string | null; attempt_count: number; retry_of?: string | null; scheduled_at?: number | null; last_error?: string | null; created_at: number; updated_at: number };
+  type TaggingFailureView = { class: string; code?: string | null; refusal?: string | null };
+  type TaggingOutcomeView = { outcome: "saved"; spans: number; links: number; mood: boolean; linked: number; minted: number; context_links: number; speaker_links: number; unresolved_context_links: number; unresolved_speaker_links: number; surprise?: number | null } | { outcome: "shadowed"; spans: number; links: number; mood: boolean; mapped_spans: number; context_links: number; speaker_links: number } | { outcome: "imported"; spans: number; links: number; mood: boolean } | { outcome: "skipped"; reason: string } | { outcome: "superseded"; retry_at: number } | { outcome: "deferred"; retry_at: number } | { outcome: "failed"; failure: TaggingFailureView; retry_at: number } | { outcome: "rekeyed" } | { outcome: "handed_back"; reason: string; retry_at: number } | { outcome: "unreadable" };
+  type TaggingTraceView = { recorded_at: number; attempt: string; turn_ref?: string | null; checkpoint: string; stack?: string | null; model?: string | null; input_hash?: string | null; try_number: number; call_micros?: number | null; outcome: TaggingOutcomeView };
+  type TaggingStatusView = { turn_ref: string; state: TaggingMarkerState; configured: boolean; checkpoint?: string | null; stack?: string | null; mode?: string | null; model?: string | null; marker?: TaggingMarkerView | null; failure?: TaggingFailureView | null; retry_at?: number | null; try_number?: number | null; has_tags: boolean; saved_at?: number | null; last_trace?: TaggingTraceView | null };
+  type DerivationEnvelopeView = { content_hash: string; model_id: string; stack?: string | null; version: string; params_hash: string };
+  type MentionLinkView = { link: "tag" } | { link: "candidates"; kind: number; entity_refs: string[] } | { link: "minted"; kind: number; entity_ref: string };
+  type TaggingSpeakerTarget = "speaker" | "addressee";
+  type MentionReferenceView = { kind: "context" } | { kind: "speaker"; target: TaggingSpeakerTarget; resolved: boolean };
+  type TaggedMentionView = { index: number; message_ref: string; start: number; end: number; label: string; confidence: number; link: MentionLinkView; antecedent?: number | null; reference?: MentionReferenceView | null; link_confidence?: number | null };
+  type MergeEvidenceView = { span: number; antecedent: number; confidence: number };
+  type TaggingVadView = { valence: number; arousal: number; dominance: number };
+  type TurnTagsView = { turn_ref: string; envelope: DerivationEnvelopeView; message_refs: string[]; mentions: TaggedMentionView[]; merge_evidence: MergeEvidenceView[]; mood?: TaggingVadView | null; saved_at: number; surprise?: number | null };
+  type TaggingTagsView = { turn_ref: string; tags?: TurnTagsView | null };
+  type TaggingHistoryView = { turn_ref: string; traces: TaggingTraceView[] };
+  type TaggingMentionsRequest = { entity_ref: string; limit: number };
+  type TaggingMentionHitView = { turn_ref: string; index: number; mention: TaggedMentionView };
+  type TaggingMentionsView = { entity_ref: string; mentions: TaggingMentionHitView[] };
   type AffectClaimConsolidateRequest = { claim_ref: string };
   type AffectTurnEvidence = { turn_ref: string; vad: QueryAffect; source: VadAnnotationSource; annotated_at: number };
   type AffectClaimConsolidation = { claim_ref: string; vad?: QueryAffect | null; evidence_turns: AffectTurnEvidence[]; semantic_edges_updated: number; structural_edges_skipped: number; active_state_ref?: string | null; created_state_ref?: string | null; superseded_state_refs: string[] };
@@ -1252,7 +1283,6 @@ declare namespace Sdk {
   type SecretUseStatus = "answered" | "failed" | "withheld";
   type SecretUseRecord = { handle: string; generation: number; effector: string; operation: string; decision: string; used_at: number };
   type SecretUseAnswer = { status: SecretUseStatus; result?: unknown | null; failure?: string | null; receipt: SecretUseRecord };
-  type LiveRunRequest<T> = { live_run: string; spec: T };
   type SecretGrantPurpose = { kind: "operation"; name: string } | { kind: "connector"; name: string } | { kind: "host_destination"; name: string } | { kind: "local_file"; effector: string; path: string; project_id: string };
   type SecretGrantMintRequest = { handle: string; purpose: SecretGrantPurpose; ttl_secs?: number | null };
   type SecretGrantViewStatus = "active" | "expired" | "revoked" | "replaced";
@@ -1452,7 +1482,7 @@ declare namespace Sdk {
   type TaskTypeTreeRead = { project_ref?: EntityId | null; tree_version?: number | null };
   type TaskTypeTreeReadReply = { project_ref?: EntityId | null; in_force_skill_ref?: EntityId | null; tree?: TaskTypeTreeView | null };
   type PlannedSpawnRead = { spawn_ref: EntityId };
-  type SpawnPhase = "reserved" | "planned" | "launched" | "in_doubt";
+  type SpawnPhase = "planned" | "launched" | "refused";
   type CoordinationPatternView = "solo" | "ceo_decides" | "committee" | "vote" | "market" | "rotation";
   type SkillRevisionView = { skill_ref: EntityId; version: string };
   type ProviderPinView = { rung: DecisionRung; model: string; version: string };
@@ -1472,7 +1502,6 @@ declare namespace Sdk {
   type ObservationIssue = { kind: "stamp_mismatch"; consumer: string; reference: string; expected: TypeStamp; actual: TypeStamp } | { kind: "missing_binding"; reference: string } | { kind: "several_teams"; team_refs: string[] } | { kind: "team_mismatch"; member_ref: EntityId; expected: string; actual?: string | null } | { kind: "unavailable"; consumer: string; reason: string };
   type PlannedSpawnObservation = { spawn_ref: EntityId; phase: SpawnPhase; type_ref: TypeStamp; plan?: PlanObservation | null; launched: LaunchedMember[]; resolved?: ResolvedTeam | null; binding?: TeamBindingView | null; receipt?: TeamReceiptView | null; routes: RouteObservation[]; critics: CriticObservation[]; learning: LearningObservation[]; issues: ObservationIssue[] };
   type CancelForceRequest = { task_ref: EntityId; reason?: string | null };
-  type AttemptState = "Queued" | "Leased" | "Paused" | "Completed" | "Failed" | "Cancelled" | "Scheduled" | "Landing" | "Abandoned";
   type AgentRunStatus = "spawned" | "working" | "needs_input" | "delivered" | "archived" | "failed" | "abandoned";
   type RunAskQuestion = { who: string; prompt: string; options: string[]; deadline?: number | null };
   type RunAskAnswerKind = "Word" | "Companion" | "Default" | "Unknown";
@@ -1767,6 +1796,15 @@ declare namespace Sdk {
   type AiReply = { reply: string; model: string; receipt_refs: string[]; l2_base?: AiReplyL2Base | null };
   type ContextReceiptFields = { persona_compile_stamp: string; activated_memory_ids: string[]; board_state_ref: string; substrate_ref?: string | null; model?: string | null; reasoning_effort?: string | null; prompt_input_ref?: string | null; disclosure_stamp?: string | null };
   type ContextEmitReceipt = { receipt_ref: string; occurred_at: number; actor: string; conversation_id: string; request_digest: string; result_digest: string; context: ContextReceiptFields };
+  type AsrOpenRequest = { utterance_id: string; scope?: RecallScope; fire_limit?: number | null; final_limit?: number | null; deadline_ms?: number | null };
+  type AsrSession = { handle: string; utterance_id: string; scope: RecallScope; max_fires: number; fire_limit: number; final_limit: number; limit_clamped: boolean; deadline_ms: number; narrowing: ScopedReadReceipt };
+  type AsrHypothesisRequest = { handle: string; revision: number; text: string; entity_labels: string[]; salient_terms: string[]; query_vector?: number[] | null };
+  type AsrFireDecision = "fired" | "missed_deadline" | "skipped_unchanged" | "skipped_empty_signature" | "skipped_cap_exhausted";
+  type AsrHypothesisReceipt = { receipt_ref: string; handle: string; utterance_id: string; revision: number; text: string; scope: RecallScope; decision: AsrFireDecision; fires_used: number; run_id?: string | null; partial: boolean; result_refs: string[]; narrowing: ScopedReadReceipt };
+  type AsrFinalDecision = "promoted" | "finalized";
+  type AsrFinalReceipt = { receipt_ref: string; handle: string; utterance_id: string; revision: number; text: string; scope: RecallScope; decision: AsrFinalDecision; reused_fire_receipt?: string | null; fires_used: number; run_id?: string | null; warm_appended: number; partial: boolean; result_refs: string[]; narrowing: ScopedReadReceipt };
+  type AsrCloseRequest = { handle: string };
+  type AsrClosed = { handle: string };
   type LiveVoiceStartRequest = { sample_rate: number; channels: number; room_ref?: string | null; roster_ref?: string | null };
   type LiveVoiceSession = { session_ref: string; sample_rate: number; channels: number };
   type LiveVoiceAudioRequest = { session_ref: string; utterance_id: string; pcm_base64: string; speaking: boolean; end_utterance?: boolean };
@@ -1993,6 +2031,12 @@ declare namespace Sdk {
   type HybridRankReplay = { now: number; blend_weights: RetrievalBlendWeights };
   type HybridSearchRequest = { query?: string | null; query_vector?: number[] | null; phonetic_codes?: string[]; ppr?: HybridPprQuery | null; temporal?: HybridTemporalQuery | null; replay?: HybridRankReplay | null; limit: number };
   type HybridSearchHit = { entity_ref: string; source_revision_ref?: string | null; score: number; access_factor?: number | null; components: RetrievalScoreComponent[] };
+  type TemporalAnchorMode = "occurred" | "learned" | "both" | "auto";
+  type TemporalSearchRange = { start: number; end: number };
+  type TemporalSearchRequest = { start: number; end: number; sigma_secs: number; anchor_mode?: TemporalAnchorMode; learned_start?: number | null; learned_end?: number | null; adaptive?: boolean; occurred_range?: TemporalSearchRange | null; learned_range?: TemporalSearchRange | null; limit: number };
+  type TemporalSearchHit = { entity_ref: string; source_revision_ref?: string | null; score: number; occurred_start: number; occurred_end: number; learned_at: number };
+  type TemporalSearchReport = { sigma_secs: number; rounds: number };
+  type TemporalSearchResult = { hits: TemporalSearchHit[]; widening?: TemporalSearchReport | null };
   type QueryBm25Request = { query: string; limit: number };
   type LexicalHit = { short_id: string; kind: string; score: number; snippet?: string | null; record?: RecordRef | null };
   type NeighborOpts = { edge_kind?: string | null; min_weight?: number | null; limit: number };
@@ -2282,6 +2326,8 @@ declare namespace Sdk {
   type SummaryMutationResult = { proposal: SummaryProposalView; read_refs: string[] };
   type SummaryRegenerateRequest = { summary_ref: string; base: number[]; keep: string; text: string; read_refs: string[] };
   type SummaryProposalRequest = { proposal_ref: string };
+  type AuthorTakeTarget = { subject: string } | { claim: string };
+  type AuthorTakeRequest = { target: AuthorTakeTarget; markdown: string };
   type CreateNoteFromEntityRequest = { source_ref: string; kind: string };
   type NoteReadRequest = { note_ref: string; reason?: string | null; version?: NoteVersion | null; spans?: NoteReadSpan[] };
   type NoteAccessRequest = { note_ref: string; reason?: string | null };
@@ -2436,6 +2482,16 @@ declare const ai: {
   voice: {
     /** Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed. */
     ack(input: Sdk.LiveVoiceAckRequest): Promise<Sdk.LiveVoiceProcessed | StoredResult>;
+    asr: {
+      /** Closes an unfinished ASR utterance under its opening credential and releases its warm candidates without a final retrieval. */
+      close(input: Sdk.AsrCloseRequest): Promise<Sdk.AsrClosed | StoredResult>;
+      /** Consumes an ASR utterance, promoting its compatible last fire with receipt linkage or running one full finalize pass with warm-fill and honest partial reporting. */
+      finalize(input: Sdk.AsrHypothesisRequest): Promise<Sdk.AsrFinalReceipt | StoredResult>;
+      /** Observes an ASR hypothesis and host enrichment; returns the engine signature-change decision, actual fire budget, scoped candidates and a per-fire receipt. */
+      hypothesis(input: Sdk.AsrHypothesisRequest): Promise<Sdk.AsrHypothesisReceipt | StoredResult>;
+      /** Opens one credential-bound utterance for host-enriched ASR speculative recall, with fixed scope, at most four fires and a call-mode deadline. */
+      open(input: Sdk.AsrOpenRequest): Promise<Sdk.AsrSession | StoredResult>;
+    };
     /** Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech retires old output through the shared cancellation path. */
     audio(input: Sdk.LiveVoiceAudioRequest): Promise<Sdk.LiveVoiceProcessed | StoredResult>;
     /** Ends and releases a live voice session and its retained events; read terminal usage and acknowledge playout before closing. */
@@ -3262,6 +3318,10 @@ declare const vault: Sdk.VaultHost & {
     resume(input: Sdk.FanoutResumeRequest): Promise<Sdk.FanoutLaunchView | StoredResult>;
     /** A live lead or board holder of a held fan-out launch's project rules on it by the digest they saw: approve once, or deny, which keeps the hold visible; only the owner may remember. */
     resume_as(input: Sdk.FanoutResumeRequest): Promise<Sdk.FanoutLaunchView | StoredResult>;
+    /** Reads a batch launch in input slot order, with child errors, results, reservations, settled spend and released holds from its shared parent lease tree. */
+    slots(input: Sdk.FanoutLaunchRequest): Promise<Sdk.FanoutBatchView | null | StoredResult>;
+    /** Admits input-order child slots under this credential's attached live run, through the frozen fan-out approval gate and one shared parent spend tree. */
+    spawn(input: Sdk.LiveRunRequest<Sdk.FanoutBatchInput>): Promise<Sdk.FanoutBatchView | StoredResult>;
   };
   federation: {
     connect: {
@@ -3427,6 +3487,8 @@ declare const vault: Sdk.VaultHost & {
   /** The weighted-edge neighbourhood of one entity, filtered by edge kind and minimum weight. */
   neighbors(input: Sdk.NeighborsRequest): Promise<Sdk.ScopedReadResult<Sdk.NeighborHit[]> | StoredResult>;
   notes: {
+    /** Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target. */
+    author_take(input: Sdk.AuthorTakeRequest): Promise<Sdk.EntityRefReceipt | StoredResult>;
     /** Creates a NOTE of a registered kind, its first authored text as its birth. */
     create(input: Sdk.CreateNoteRequest): Promise<Sdk.EntityRefReceipt | StoredResult>;
     /** One NOTE's overrides and the extraction, context and retention defaults its gates read after them. */
@@ -3791,6 +3853,8 @@ declare const vault: Sdk.VaultHost & {
     bm25(input: Sdk.QueryBm25Request): Promise<Sdk.ScopedReadResult<Sdk.LexicalHit[]> | StoredResult>;
     /** Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence. */
     hybrid(input: Sdk.HybridSearchRequest): Promise<Sdk.ScopedReadResult<Sdk.HybridSearchHit[]> | StoredResult>;
+    /** Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds. */
+    temporal(input: Sdk.TemporalSearchRequest): Promise<Sdk.ScopedReadResult<Sdk.TemporalSearchResult> | StoredResult>;
   };
   secrets: {
     /** The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued. */
@@ -3975,6 +4039,16 @@ declare const vault: Sdk.VaultHost & {
     mint(input: Sdk.SupportGrantMintRequest): Promise<Sdk.SupportGrantMintAnswer | StoredResult>;
     /** The owner revokes one support grant; what support already read is not recalled. */
     revoke(input: Sdk.SupportGrantRevokeRequest): Promise<Sdk.SupportGrantRevokeAnswer | StoredResult>;
+  };
+  tagging: {
+    /** Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome. */
+    history(input: Sdk.TaggingTurnRequest): Promise<Sdk.TaggingHistoryView | StoredResult>;
+    /** Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller. */
+    mentions(input: Sdk.TaggingMentionsRequest): Promise<Sdk.TaggingMentionsView | StoredResult>;
+    /** Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker and failure reason. */
+    status(input: Sdk.TaggingTurnRequest): Promise<Sdk.TaggingStatusView | StoredResult>;
+    /** Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them. */
+    tags(input: Sdk.TaggingTurnRequest): Promise<Sdk.TaggingTagsView | StoredResult>;
   };
   task_types: {
     /** The owner reads the task-type tree in force, or one kept tree version, for the vault or a project. */

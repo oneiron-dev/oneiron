@@ -133,6 +133,16 @@ export_facade! {
     let output = client.tasks_wave(&input)?;
     crate::codec::lift_record("tasks.wave", &output)
 };
+"vault.fanout.spawn" => fn vault_fanout_spawn(&self, input: LiveRunRequestFanoutBatchInput) -> FanoutBatchView = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::FanoutBatchInput> = crate::codec::lower_record("vault.fanout.spawn", input)?;
+    let output = client.vault_fanout_spawn(&input)?;
+    crate::codec::lift_record("vault.fanout.spawn", &output)
+};
+"vault.fanout.slots" => fn vault_fanout_slots(&self, input: FanoutLaunchRequest) -> Option<FanoutBatchView> = |client| {
+    let input: oneiron::task_verb::sdk::FanoutLaunchRequest = crate::codec::lower_record("vault.fanout.slots", input)?;
+    let output = client.vault_fanout_slots(&input)?;
+    crate::codec::lift_record("vault.fanout.slots", &output)
+};
 "vault.fanout.launch" => fn vault_fanout_launch(&self, input: FanoutLaunchRequest) -> Option<FanoutLaunchView> = |client| {
     let input: oneiron::task_verb::sdk::FanoutLaunchRequest = crate::codec::lower_record("vault.fanout.launch", input)?;
     let output = client.vault_fanout_launch(&input)?;
@@ -241,6 +251,26 @@ export_facade! {
     let input: oneiron::memory::affect::AffectAnnotationPut = crate::codec::lower_record("vault.affect.annotations.put", input)?;
     let output = client.vault_affect_annotations_put(&input)?;
     Lift::lift(output)
+};
+"vault.tagging.status" => fn vault_tagging_status(&self, input: TaggingTurnRequest) -> TaggingStatusView = |client| {
+    let input: oneiron::tagging::TaggingTurnRequest = crate::codec::lower_record("vault.tagging.status", input)?;
+    let output = client.vault_tagging_status(&input)?;
+    crate::codec::lift_record("vault.tagging.status", &output)
+};
+"vault.tagging.tags" => fn vault_tagging_tags(&self, input: TaggingTurnRequest) -> TaggingTagsView = |client| {
+    let input: oneiron::tagging::TaggingTurnRequest = crate::codec::lower_record("vault.tagging.tags", input)?;
+    let output = client.vault_tagging_tags(&input)?;
+    crate::codec::lift_record("vault.tagging.tags", &output)
+};
+"vault.tagging.history" => fn vault_tagging_history(&self, input: TaggingTurnRequest) -> TaggingHistoryView = |client| {
+    let input: oneiron::tagging::TaggingTurnRequest = crate::codec::lower_record("vault.tagging.history", input)?;
+    let output = client.vault_tagging_history(&input)?;
+    crate::codec::lift_record("vault.tagging.history", &output)
+};
+"vault.tagging.mentions" => fn vault_tagging_mentions(&self, input: TaggingMentionsRequest) -> TaggingMentionsView = |client| {
+    let input: oneiron::tagging::TaggingMentionsRequest = crate::codec::lower_record("vault.tagging.mentions", input)?;
+    let output = client.vault_tagging_mentions(&input)?;
+    crate::codec::lift_record("vault.tagging.mentions", &output)
 };
 "vault.affect.claims.consolidate" => fn vault_affect_claims_consolidate(&self, input: AffectClaimConsolidateRequest) -> AffectClaimConsolidation = |client| {
     let input: oneiron::memory::affect::AffectClaimConsolidateRequest = crate::codec::lower_record("vault.affect.claims.consolidate", input)?;
@@ -2176,6 +2206,26 @@ export_facade! {
     let output = client.vault_receipts_context(&input)?;
     crate::codec::lift_record("vault.receipts.context", &output)
 };
+"ai.voice.asr.open" => fn ai_voice_asr_open(&self, input: AsrOpenRequest) -> AsrSession = |client| {
+    let input: oneiron::task_verb::sdk::AsrOpenRequest = crate::codec::lower_record("ai.voice.asr.open", input)?;
+    let output = client.ai_voice_asr_open(&input)?;
+    crate::codec::lift_record("ai.voice.asr.open", &output)
+};
+"ai.voice.asr.hypothesis" => fn ai_voice_asr_hypothesis(&self, input: AsrHypothesisRequest) -> AsrHypothesisReceipt = |client| {
+    let input: oneiron::task_verb::sdk::AsrHypothesisRequest = crate::codec::lower_record("ai.voice.asr.hypothesis", input)?;
+    let output = client.ai_voice_asr_hypothesis(&input)?;
+    crate::codec::lift_record("ai.voice.asr.hypothesis", &output)
+};
+"ai.voice.asr.finalize" => fn ai_voice_asr_finalize(&self, input: AsrHypothesisRequest) -> AsrFinalReceipt = |client| {
+    let input: oneiron::task_verb::sdk::AsrHypothesisRequest = crate::codec::lower_record("ai.voice.asr.finalize", input)?;
+    let output = client.ai_voice_asr_finalize(&input)?;
+    crate::codec::lift_record("ai.voice.asr.finalize", &output)
+};
+"ai.voice.asr.close" => fn ai_voice_asr_close(&self, input: AsrCloseRequest) -> AsrClosed = |client| {
+    let input: oneiron::task_verb::sdk::AsrCloseRequest = crate::codec::lower_record("ai.voice.asr.close", input)?;
+    let output = client.ai_voice_asr_close(&input)?;
+    crate::codec::lift_record("ai.voice.asr.close", &output)
+};
 "ai.voice.start" => fn ai_voice_start(&self, input: LiveVoiceStartRequest) -> LiveVoiceSession = |client| {
     let input: oneiron::task_verb::sdk::LiveVoiceStartRequest = crate::codec::lower_record("ai.voice.start", input)?;
     let output = client.ai_voice_start(&input)?;
@@ -2510,6 +2560,11 @@ export_facade! {
     let input: oneiron::memory::HybridSearchRequest = crate::codec::lower_record("vault.search.hybrid", input)?;
     let output = client.vault_search_hybrid(&input)?;
     crate::codec::lift_record("vault.search.hybrid", &output)
+};
+"vault.search.temporal" => fn vault_search_temporal(&self, input: TemporalSearchRequest) -> ScopedReadResultTemporalSearchResult = |client| {
+    let input: oneiron::memory::TemporalSearchRequest = crate::codec::lower_record("vault.search.temporal", input)?;
+    let output = client.vault_search_temporal(&input)?;
+    crate::codec::lift_record("vault.search.temporal", &output)
 };
 "vault.search.bm25" => fn vault_search_bm25(&self, query: String, limit: u32) -> LexicalHits = |client| {
     let input: oneiron::task_verb::sdk::QueryBm25Request = (query, limit).lower()?;
@@ -2904,6 +2959,11 @@ export_facade! {
 "vault.notes.create" => fn vault_notes_create(&self, input: CreateNoteRequest) -> EntityRefReceipt = |client| {
     let input: oneiron::task_verb::sdk::CreateNoteRequest = crate::codec::lower_record("vault.notes.create", input)?;
     let output = client.vault_notes_create(&input)?;
+    Lift::lift(output)
+};
+"vault.notes.author_take" => fn vault_notes_author_take(&self, input: AuthorTakeRequest) -> EntityRefReceipt = |client| {
+    let input: oneiron::task_verb::sdk::AuthorTakeRequest = crate::codec::lower_record("vault.notes.author_take", input)?;
+    let output = client.vault_notes_author_take(&input)?;
     Lift::lift(output)
 };
 "vault.notes.from_entity" => fn vault_notes_from_entity(&self, input: CreateNoteFromEntityRequest) -> EntityRefReceipt = |client| {

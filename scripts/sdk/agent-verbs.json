@@ -488,6 +488,35 @@
       "section": false
     },
     {
+      "name": "vault.fanout.spawn",
+      "openapi": true,
+      "description": "Admits input-order child slots under this credential's attached live run, through the frozen fan-out approval gate and one shared parent spend tree.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::FanoutBatchInput>",
+      "output": "crate::task_verb::sdk::FanoutBatchView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.fanout.spawn\", &input)?",
+      "host_door": true,
+      "host_door_session": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.fanout.slots",
+      "openapi": true,
+      "description": "Reads a batch launch in input slot order, with child errors, results, reservations, settled spend and released holds from its shared parent lease tree.",
+      "input": "crate::task_verb::sdk::FanoutLaunchRequest",
+      "output": "Option<crate::task_verb::sdk::FanoutBatchView>",
+      "call": "memory.fanout_batch_slots(input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.fanout.launch",
       "description": "One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by the vault owner, its creator, or a live lead/board holder of its project, anything else reads as none.",
       "input": "crate::task_verb::sdk::FanoutLaunchRequest",
@@ -895,6 +924,77 @@
       },
       "section": false,
       "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "vault.tagging.status",
+      "description": "Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker and failure reason.",
+      "refs": [
+        "/turn_ref"
+      ],
+      "input": "crate::tagging::TaggingTurnRequest",
+      "output": "crate::tagging::TaggingStatusView",
+      "call": "memory.tagging_status(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "turn_ref"
+        ]
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.tagging.tags",
+      "description": "Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them.",
+      "refs": [
+        "/turn_ref"
+      ],
+      "input": "crate::tagging::TaggingTurnRequest",
+      "output": "crate::tagging::TaggingTagsView",
+      "call": "memory.tagging_tags(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "turn_ref"
+        ]
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.tagging.history",
+      "description": "Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome.",
+      "refs": [
+        "/turn_ref"
+      ],
+      "input": "crate::tagging::TaggingTurnRequest",
+      "output": "crate::tagging::TaggingHistoryView",
+      "call": "memory.tagging_history(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "turn_ref"
+        ]
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.tagging.mentions",
+      "description": "Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller.",
+      "input": "crate::tagging::TaggingMentionsRequest",
+      "output": "crate::tagging::TaggingMentionsView",
+      "call": "memory.tagging_mentions(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "validate": "crate::memory::caps::check_limit_nonzero(input.limit)?;"
+      },
+      "section": false,
       "openapi": true
     },
     {
@@ -7053,6 +7153,68 @@
       "openapi": true
     },
     {
+      "name": "ai.voice.asr.open",
+      "description": "Opens one credential-bound utterance for host-enriched ASR speculative recall, with fixed scope, at most four fires and a call-mode deadline.",
+      "input": "crate::task_verb::sdk::AsrOpenRequest",
+      "output": "crate::task_verb::sdk::AsrSession",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.asr.open\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "ai.voice.asr.hypothesis",
+      "description": "Observes an ASR hypothesis and host enrichment; returns the engine signature-change decision, actual fire budget, scoped candidates and a per-fire receipt.",
+      "input": "crate::task_verb::sdk::AsrHypothesisRequest",
+      "output": "crate::task_verb::sdk::AsrHypothesisReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.asr.hypothesis\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "validate": "input.validate()?;"
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "ai.voice.asr.finalize",
+      "description": "Consumes an ASR utterance, promoting its compatible last fire with receipt linkage or running one full finalize pass with warm-fill and honest partial reporting.",
+      "input": "crate::task_verb::sdk::AsrHypothesisRequest",
+      "output": "crate::task_verb::sdk::AsrFinalReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.asr.finalize\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "validate": "input.validate()?;"
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "ai.voice.asr.close",
+      "description": "Closes an unfinished ASR utterance under its opening credential and releases its warm candidates without a final retrieval.",
+      "input": "crate::task_verb::sdk::AsrCloseRequest",
+      "output": "crate::task_verb::sdk::AsrClosed",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.asr.close\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "ai.voice.start",
       "description": "Opens an owner-bound live media session on the configured voice routes, using the caller credential, room audience and existing budget gates.",
       "input": "crate::task_verb::sdk::LiveVoiceStartRequest",
@@ -8522,6 +8684,25 @@
       "input": "crate::memory::HybridSearchRequest",
       "output": "crate::claim::ScopedReadResult<Vec<crate::memory::HybridSearchHit>>",
       "call": "memory.query_hybrid(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true,
+        "validate": "input.validate()?;"
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "vault.search.temporal",
+      "description": "Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds.",
+      "input": "crate::memory::TemporalSearchRequest",
+      "output": "crate::claim::ScopedReadResult<crate::memory::TemporalSearchResult>",
+      "call": "memory.query_temporal(&input)?",
       "scope": "Read",
       "admission": {
         "lane_record_scope": true,
@@ -10368,6 +10549,27 @@
         "native": "agent_verb",
         "request": true
       }
+    },
+    {
+      "name": "vault.notes.author_take",
+      "description": "Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target.",
+      "refs": [
+        "/target/subject",
+        "/target/claim"
+      ],
+      "input": "AuthorTakeRequest",
+      "output": "crate::memory::EntityRefReceipt",
+      "call": "memory_requests::author_take(memory, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true
     },
     {
       "name": "vault.notes.from_entity",

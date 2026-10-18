@@ -272,10 +272,12 @@ mod production_ports_tests;
 
 pub(crate) use symbol_lease::forget_symbols;
 
+mod fanout_batch;
 mod recall_door;
 pub mod sdk;
 mod sdk_agents;
 mod sdk_anonymous_chat;
+mod sdk_asr;
 mod sdk_authority_history;
 mod sdk_calendar;
 mod sdk_campaign_split;

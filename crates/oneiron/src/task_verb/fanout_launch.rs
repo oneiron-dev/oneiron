@@ -253,7 +253,7 @@ pub(super) struct StoredLaunch {
     /// The project whose live lead and board may rule on this launch beside
     /// the owner, bound at admission; `None` leaves it to the owner.
     approval_project: Option<EntityId>,
-    payload: LaunchPayload,
+    pub(super) payload: LaunchPayload,
     plan: FanoutPlan,
     estimate: FanoutEstimate,
     /// Stated before anything launched; every read returns this copy.
@@ -268,7 +268,7 @@ pub(super) struct StoredLaunch {
     /// Planning attempts parked under the fan-out hold for this launch.
     held_attempts: Vec<AttemptId>,
     dispatched_at: Option<u64>,
-    task_refs: Vec<EntityId>,
+    pub(super) task_refs: Vec<EntityId>,
     denied: bool,
     choice_receipt_ref: Option<String>,
     /// Shipped default rows the admission read in place of rows missing
@@ -332,7 +332,7 @@ fn save_launch(vault: &Vault, txn: &mut heed::RwTxn<'_>, launch: &StoredLaunch) 
 }
 
 /// The ref of `actor`'s launch of the cut named `plan_ref`.
-fn wave_launch_ref(actor: EntityId, plan_ref: &str) -> Result<EntityId> {
+pub(super) fn wave_launch_ref(actor: EntityId, plan_ref: &str) -> Result<EntityId> {
     EntityId::derive(
         LAUNCH_REF_DOMAIN,
         &[b"wave", actor.as_bytes(), plan_ref.as_bytes()],
@@ -1226,10 +1226,21 @@ impl Memory<'_> {
         &self,
         launch_ref: EntityId,
     ) -> MemoryResult<Option<FanoutLaunchReceipt>> {
+        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        Ok(self
+            .readable_task_fanout_in(&txn, launch_ref)?
+            .map(|launch| launch.receipt()))
+    }
+
+    /// The launch door's same admission inside a batch observation's snapshot.
+    pub(super) fn readable_task_fanout_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        launch_ref: EntityId,
+    ) -> MemoryResult<Option<StoredLaunch>> {
         let vault = self.vault();
-        let txn = vault.store.env.read_txn().map_err(Error::from)?;
-        verify_actor_binding_in_txn(vault, &txn, self.actor(), self.actor_class())?;
-        let Some(launch) = load_launch(vault, &txn, launch_ref)? else {
+        verify_actor_binding_in_txn(vault, txn, self.actor(), self.actor_class())?;
+        let Some(launch) = load_launch(vault, txn, launch_ref)? else {
             return Ok(None);
         };
         let own = launch.actor == self.actor() && launch.actor_class == self.actor_class() as u8;
@@ -1245,7 +1256,7 @@ impl Memory<'_> {
         {
             return Ok(None);
         }
-        Ok(Some(launch.receipt()))
+        Ok(Some(launch))
     }
 
     /// Rules on a held launch by the digest the authenticated owner saw; no
