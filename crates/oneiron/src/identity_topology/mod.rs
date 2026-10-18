@@ -95,7 +95,6 @@ pub use act_admission::{
     EngineCause, SEAL_NO_STANDING, SealAuthority, SealStanding, TOPOLOGY_SEAL_REVISION_CONTEXT,
     TopologySeal, TopologySealBy,
 };
-pub(crate) use act_admission::topology_seal_revision_for_store_in_txn;
 pub use admission_disposition::{AdmissionDisposition, AdmissionVerdict};
 pub(crate) use admission_disposition::{SealTrust, core_digest, decision_in_force_by_seal_in_txn};
 #[cfg(all(test, feature = "sync"))]
