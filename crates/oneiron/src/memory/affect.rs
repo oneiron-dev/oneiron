@@ -45,14 +45,23 @@ pub struct AffectClaimConsolidation {
 }
 
 fn query_affect(vad: crate::affect::Vad) -> QueryAffect {
-    QueryAffect { valence: vad.valence, arousal: vad.arousal, dominance: vad.dominance }
+    QueryAffect {
+        valence: vad.valence,
+        arousal: vad.arousal,
+        dominance: vad.dominance,
+    }
 }
 
 impl Memory<'_> {
     /// The annotation is an ordinary scoped, attributed, gated claim, not a raw seed.
-    pub fn affect_annotation_put(&self, input: &AffectAnnotationPut) -> MemoryResult<CommitReceipt> {
+    pub fn affect_annotation_put(
+        &self,
+        input: &AffectAnnotationPut,
+    ) -> MemoryResult<CommitReceipt> {
         let turn = self.resolve_ref(&input.turn_ref)?;
-        let entity = self.get_entity(&input.turn_ref)?.value
+        let entity = self
+            .get_entity(&input.turn_ref)?
+            .value
             .ok_or_else(|| MemoryError::not_found("annotation requires a readable TURN"))?;
         if entity.kind != "TURN" {
             return Err(MemoryError::bad_request("annotation requires a TURN"));
@@ -69,7 +78,8 @@ impl Memory<'_> {
             source: match input.source {
                 VadAnnotationSource::ModelInference => "inferred",
                 VadAnnotationSource::UserSelfReport => "user_stated",
-            }.to_owned(),
+            }
+            .to_owned(),
             scope: input.scope.clone(),
             sensitivity: input.sensitivity,
             evidence_turn_refs: vec![turn.to_hex()],
@@ -88,26 +98,38 @@ impl Memory<'_> {
         input: &AffectClaimConsolidateRequest,
     ) -> MemoryResult<AffectClaimConsolidation> {
         owner.revalidate(self.vault)?;
-        self.get_entity(&input.claim_ref)?.value
+        self.get_entity(&input.claim_ref)?
+            .value
             .ok_or_else(|| MemoryError::not_found("consolidation requires a readable claim"))?;
         let claim = self.resolve_ref(&input.claim_ref)?;
         let result = self.vault.consolidate_claim_vad_as_owner(
-            owner, &claim, self.vault.store.clock.now_recorded_at(),
+            owner,
+            &claim,
+            self.vault.store.clock.now_recorded_at(),
         )?;
         Ok(AffectClaimConsolidation {
             claim_ref: result.claim_id.to_hex(),
             vad: result.vad.map(query_affect),
-            evidence_turns: result.evidence_turns.into_iter().map(|evidence| AffectTurnEvidence {
-                turn_ref: evidence.turn_id.to_hex(),
-                vad: query_affect(evidence.annotation.vad),
-                source: evidence.annotation.source,
-                annotated_at: evidence.annotation.annotated_at,
-            }).collect(),
+            evidence_turns: result
+                .evidence_turns
+                .into_iter()
+                .map(|evidence| AffectTurnEvidence {
+                    turn_ref: evidence.turn_id.to_hex(),
+                    vad: query_affect(evidence.annotation.vad),
+                    source: evidence.annotation.source,
+                    annotated_at: evidence.annotation.annotated_at,
+                })
+                .collect(),
             semantic_edges_updated: result.semantic_edges_updated,
             structural_edges_skipped: result.structural_edges_skipped,
             active_state_ref: result.reappraisal.active_claim_id.map(|id| id.to_hex()),
             created_state_ref: result.reappraisal.created_claim_id.map(|id| id.to_hex()),
-            superseded_state_refs: result.reappraisal.superseded_claim_ids.into_iter().map(|id| id.to_hex()).collect(),
+            superseded_state_refs: result
+                .reappraisal
+                .superseded_claim_ids
+                .into_iter()
+                .map(|id| id.to_hex())
+                .collect(),
         })
     }
 }

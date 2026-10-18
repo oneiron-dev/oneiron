@@ -294,7 +294,11 @@ fn history(
                 at: receipt.at,
                 before: at(before),
                 after: at(after),
-                read_refs: receipt.read_refs.iter().map(|reference| raw(reference)).collect::<Result<_>>()?,
+                read_refs: receipt
+                    .read_refs
+                    .iter()
+                    .map(|reference| raw(reference))
+                    .collect::<Result<_>>()?,
             })
         })
         .collect::<Result<_>>()?;
@@ -321,7 +325,12 @@ fn history(
                 proposal_index: fork.index,
                 proposal_len: fork.len,
                 proposal_settled: fork.settled,
-                read_refs: fork.record.read_refs.iter().map(|reference| raw(reference)).collect::<Result<_>>()?,
+                read_refs: fork
+                    .record
+                    .read_refs
+                    .iter()
+                    .map(|reference| raw(reference))
+                    .collect::<Result<_>>()?,
                 keep: fork.record.keep,
             })
         })
@@ -702,7 +711,12 @@ fn bind_rows(
                 at: receipt.at,
                 before: frontier(receipt.before)?,
                 after: frontier(receipt.after)?,
-                read_refs: receipt.read_refs.iter().copied().map(hex).collect::<Result<_>>()?,
+                read_refs: receipt
+                    .read_refs
+                    .iter()
+                    .copied()
+                    .map(hex)
+                    .collect::<Result<_>>()?,
             },
         )?;
     }
@@ -746,7 +760,12 @@ fn bind_rows(
                 CanonicalForkStatus::Switched => ForkStatus::Switched,
                 CanonicalForkStatus::Rejected => ForkStatus::Rejected,
             },
-            read_refs: fork.read_refs.iter().copied().map(hex).collect::<Result<_>>()?,
+            read_refs: fork
+                .read_refs
+                .iter()
+                .copied()
+                .map(hex)
+                .collect::<Result<_>>()?,
             keep: fork.keep.clone(),
         };
         ENTITY_DOC_FORK.put(store, txn, &record.fork, &record)?;

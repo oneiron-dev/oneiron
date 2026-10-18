@@ -4,12 +4,12 @@
 mod content_policy;
 pub use content_policy::*;
 mod retrieval_weights;
-pub use retrieval_weights::{
-    RetrievalWeights, RetrievalWeightsConfigureRequest, RetrievalWeightsReceipt, RetrievalWeightsView,
-    configure_retrieval_weights_as_owner, retrieval_weights_as_owner,
-};
 pub(crate) use retrieval_weights::{
     RETRIEVAL_WEIGHTS_KEY, decode_retrieval_weights, retrieval_weights_for_run,
+};
+pub use retrieval_weights::{
+    RetrievalWeights, RetrievalWeightsConfigureRequest, RetrievalWeightsReceipt,
+    RetrievalWeightsView, configure_retrieval_weights_as_owner, retrieval_weights_as_owner,
 };
 mod types;
 pub use types::*;

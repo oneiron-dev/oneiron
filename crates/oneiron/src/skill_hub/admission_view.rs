@@ -144,10 +144,14 @@ impl Vault {
         }
         let hub = self.hub_record_in_txn(txn, &source.hub_id)?;
         let record = read_skill(self, txn, &candidate)?;
-        if !matches!(record.lifecycle_status, SkillLifecycle::Candidate | SkillLifecycle::Quarantined)
-            || record.approval_status == ClaimApprovalStatus::Rejected
+        if !matches!(
+            record.lifecycle_status,
+            SkillLifecycle::Candidate | SkillLifecycle::Quarantined
+        ) || record.approval_status == ClaimApprovalStatus::Rejected
         {
-            return Err(invalid("admission requires an open candidate or archived skill"));
+            return Err(invalid(
+                "admission requires an open candidate or archived skill",
+            ));
         }
         if record
             .governance_tier

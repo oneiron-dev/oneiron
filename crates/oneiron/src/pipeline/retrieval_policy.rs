@@ -13,7 +13,9 @@ use crate::store::RetrievalState;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[repr(u8)]
 #[serde(rename_all = "snake_case")]
 pub enum RetrievalIntent {

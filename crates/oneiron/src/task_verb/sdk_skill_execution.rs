@@ -1,12 +1,12 @@
 //! Typed owner observations and reads over the existing pack attribution projector.
 use serde::{Deserialize, Serialize};
 
+use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::learning::Anchor;
-use crate::memory::{MemoryError, MemoryResult, MEMORY_CODE_NOT_FOUND};
+use crate::memory::{MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult};
 use crate::receipt::{PackAttributionFields, ReceiptRecord};
 use crate::skill_attribution::{AnchoredPackOutcome, LateCreditReceipt};
-use crate::Vault;
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -52,7 +52,11 @@ pub fn skill_pack_receipt_as_owner(
         .ok_or_else(|| MemoryError::new(MEMORY_CODE_NOT_FOUND, "no stamped pack receipt", &[]))?;
     let loaded_skills = receipt.pack_manifest_skills().unwrap_or_default();
     let attribution = receipt.pack_attribution_fields()?;
-    Ok(SkillPackReceipt { receipt, loaded_skills, attribution })
+    Ok(SkillPackReceipt {
+        receipt,
+        loaded_skills,
+        attribution,
+    })
 }
 
 /// `persisted` is false while attribution facts are unavailable. The caller
@@ -82,7 +86,8 @@ pub fn skill_pack_outcome_as_owner(
         },
         crate::unix_seconds_now(),
     )?;
-    let persisted = crate::skill_attribution::late_credit_receipt(vault, &receipt.receipt_id)?.is_some();
+    let persisted =
+        crate::skill_attribution::late_credit_receipt(vault, &receipt.receipt_id)?.is_some();
     Ok(SkillPackOutcomeProjection { receipt, persisted })
 }
 
@@ -92,5 +97,8 @@ pub fn skill_pack_credit_as_owner(
     input: &SkillPackCreditRequest,
 ) -> MemoryResult<Option<LateCreditReceipt>> {
     owner.revalidate(vault)?;
-    Ok(crate::skill_attribution::late_credit_receipt(vault, &input.receipt_id)?)
+    Ok(crate::skill_attribution::late_credit_receipt(
+        vault,
+        &input.receipt_id,
+    )?)
 }

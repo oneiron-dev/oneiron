@@ -23,9 +23,16 @@ pub struct SkillConvertRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum SkillConvertReceipt {
-    Created { entity: EntityId },
-    DupPointer { entity: EntityId },
-    MergeProposed { existing: EntityId, proposal: EntityId },
+    Created {
+        entity: EntityId,
+    },
+    DupPointer {
+        entity: EntityId,
+    },
+    MergeProposed {
+        existing: EntityId,
+        proposal: EntityId,
+    },
 }
 
 impl SkillConvertReceipt {
@@ -49,15 +56,21 @@ pub fn skill_convert_as_owner(
         hint: input.hint.clone(),
     };
     let at = vault.now_recorded_at();
-    Ok(match crate::skill_convert::convert_messages_to_skill(
-        vault, &request, refiner, TimeRange { start: at, end: at }, at,
-    )? {
-        ConvertOutcome::Created(entity) => SkillConvertReceipt::Created { entity },
-        ConvertOutcome::DupPointer(entity) => SkillConvertReceipt::DupPointer { entity },
-        ConvertOutcome::MergeProposed { existing, proposal } => {
-            SkillConvertReceipt::MergeProposed { existing, proposal }
-        }
-    })
+    Ok(
+        match crate::skill_convert::convert_messages_to_skill(
+            vault,
+            &request,
+            refiner,
+            TimeRange { start: at, end: at },
+            at,
+        )? {
+            ConvertOutcome::Created(entity) => SkillConvertReceipt::Created { entity },
+            ConvertOutcome::DupPointer(entity) => SkillConvertReceipt::DupPointer { entity },
+            ConvertOutcome::MergeProposed { existing, proposal } => {
+                SkillConvertReceipt::MergeProposed { existing, proposal }
+            }
+        },
+    )
 }
 
 /// Public archive spelling of the engine's existing soft-retired Quarantined state.
@@ -196,14 +209,17 @@ impl SkillLibraryView {
             .chain(self.source_messages.iter().map(|source| source.message_ref))
             .chain(self.receipts.sources.iter().map(|source| source.hub_id))
             .chain(self.lineage.iter().flat_map(|hop| {
-                std::iter::once(hop.parent).chain(hop.hub_sources.iter().map(|source| source.hub_id))
+                std::iter::once(hop.parent)
+                    .chain(hop.hub_sources.iter().map(|source| source.hub_id))
             }))
             .collect()
     }
 }
 
 fn skill(vault: &Vault, entity: &EntityId) -> MemoryResult<SkillRecord> {
-    vault.get_skill_record(entity)?.ok_or_else(|| Error::EntityNotFound.into())
+    vault
+        .get_skill_record(entity)?
+        .ok_or_else(|| Error::EntityNotFound.into())
 }
 
 pub fn skill_library_get_as_owner(
@@ -219,9 +235,16 @@ pub fn skill_library_get_as_owner(
         let package = vault.runtime_skill_package_in_txn(&txn, &input.entity, &record)?;
         let (files, capabilities) = match package {
             Some(package) => (
-                Some(package.files.into_iter().map(|file| SkillLibraryFile {
-                    path: file.path, content: file.content,
-                }).collect()),
+                Some(
+                    package
+                        .files
+                        .into_iter()
+                        .map(|file| SkillLibraryFile {
+                            path: file.path,
+                            content: file.content,
+                        })
+                        .collect(),
+                ),
                 Some(SkillCapabilityView {
                     bins: package.capabilities.bins.into_iter().collect(),
                     env: package.capabilities.env.into_iter().collect(),
@@ -231,12 +254,20 @@ pub fn skill_library_get_as_owner(
             ),
             None => (None, None),
         };
-        let source_messages = source_refs.into_iter().map(|message_ref| {
-            Ok(SkillSourceEvidence {
-                available: crate::vault::live_entity_row_in_txn(&vault.store, &txn, &message_ref)?.is_live(),
-                message_ref,
+        let source_messages = source_refs
+            .into_iter()
+            .map(|message_ref| {
+                Ok(SkillSourceEvidence {
+                    available: crate::vault::live_entity_row_in_txn(
+                        &vault.store,
+                        &txn,
+                        &message_ref,
+                    )?
+                    .is_live(),
+                    message_ref,
+                })
             })
-        }).collect::<crate::Result<Vec<_>>>()?;
+            .collect::<crate::Result<Vec<_>>>()?;
         (files, capabilities, source_messages)
     };
     let mut lineage = Vec::new();
@@ -250,7 +281,10 @@ pub fn skill_library_get_as_owner(
         let parent_record = vault.get_skill_record(&parent)?;
         lineage.push(SkillForkLineage {
             parent,
-            parent_version: provenance.get("forkOfVersion").and_then(serde_json::Value::as_str).map(str::to_owned),
+            parent_version: provenance
+                .get("forkOfVersion")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned),
             // The existing fork law retains a row/version, not a document pin.
             parent_document: None,
             parent_frontier: None,
@@ -261,15 +295,21 @@ pub fn skill_library_get_as_owner(
         child = parent;
     }
     let scans = match record.content_hash {
-        Some(hash) => vault.skill_scan_verdicts_for_content_hash(hash)?.into_iter().map(|claim| {
-            serde_json::from_value(crate::msgpack_value_to_json(&claim.value))
-                .map_err(|_| MemoryError::bad_request("invalid stored skill scan receipt"))
-        }).collect::<MemoryResult<Vec<_>>>()?,
+        Some(hash) => vault
+            .skill_scan_verdicts_for_content_hash(hash)?
+            .into_iter()
+            .map(|claim| {
+                serde_json::from_value(crate::msgpack_value_to_json(&claim.value))
+                    .map_err(|_| MemoryError::bad_request("invalid stored skill scan receipt"))
+            })
+            .collect::<MemoryResult<Vec<_>>>()?,
         None => Vec::new(),
     };
-    let stale = crate::skill_convert::skill_stale_note(vault, &input.entity)?.map(|note| SkillStaleView {
-        reason: note.reason, deleted_refs: note.deleted_refs,
-    });
+    let stale =
+        crate::skill_convert::skill_stale_note(vault, &input.entity)?.map(|note| SkillStaleView {
+            reason: note.reason,
+            deleted_refs: note.deleted_refs,
+        });
     Ok(SkillLibraryView {
         entity: input.entity,
         content_hash: record.content_hash.map(|hash| hash.to_hex()),
@@ -279,19 +319,31 @@ pub fn skill_library_get_as_owner(
         source: record.source.as_str().to_owned(),
         role: record.role.as_str().to_owned(),
         call: record.call.map(|call| SkillLibraryCall {
-            reference: call.reference, arguments: call.arguments, returns: call.returns,
+            reference: call.reference,
+            arguments: call.arguments,
+            returns: call.returns,
         }),
         governance_tier: record.governance_tier.map(|tier| tier.as_str().to_owned()),
         generated: record.generated,
         human_authored: record.human_authored,
-        dependencies: record.dependencies.into_iter().map(|dependency| SkillLibraryDependency {
-            skill_id: dependency.skill_id, min_version: dependency.min_version,
-        }).collect(),
+        dependencies: record
+            .dependencies
+            .into_iter()
+            .map(|dependency| SkillLibraryDependency {
+                skill_id: dependency.skill_id,
+                min_version: dependency.min_version,
+            })
+            .collect(),
         provenance: crate::msgpack_value_to_json(&record.provenance),
         skill_id: record.skill_id,
         desc: record.desc,
         version: record.version,
-        source_messages, stale, lineage, files, capabilities, scans,
+        source_messages,
+        stale,
+        lineage,
+        files,
+        capabilities,
+        scans,
         receipts: super::sdk::hub_skill_receipts_as_owner(vault, owner, input)?,
     })
 }
@@ -305,12 +357,20 @@ pub fn skill_library_list_as_owner(
     if input.limit == 0 {
         return Err(MemoryError::bad_request("limit must be positive"));
     }
-    let ids = vault.entities_by_type_page(crate::registry::ENTITY_TYPE_SKILL, input.after.as_ref(), input.limit)?;
+    let ids = vault.entities_by_type_page(
+        crate::registry::ENTITY_TYPE_SKILL,
+        input.after.as_ref(),
+        input.limit,
+    )?;
     let next_after = ids.last().copied();
     let mut skills = Vec::new();
     for entity in ids {
         if vault.get_skill_record(&entity)?.is_some() {
-            skills.push(skill_library_get_as_owner(vault, owner, &HubSkillRequest { entity })?);
+            skills.push(skill_library_get_as_owner(
+                vault,
+                owner,
+                &HubSkillRequest { entity },
+            )?);
         }
     }
     Ok(SkillLibraryPage { skills, next_after })
@@ -337,8 +397,12 @@ fn lifecycle_as_owner(
         crate::skill::validate_skill_update(&prior, &updated)?;
         let at = vault.now_recorded_at();
         vault.apply_skill_record_body(
-            txn, &entity, TimeRange { start: at, end: at }, at,
-            crate::skill::encode_skill_record(&updated)?, false,
+            txn,
+            &entity,
+            TimeRange { start: at, end: at },
+            at,
+            crate::skill::encode_skill_record(&updated)?,
+            false,
         )
     })?;
     Ok(())
@@ -373,7 +437,12 @@ pub fn skill_library_fork_as_owner(
     vault.with_write_txn_grouped(|txn| {
         owner.revalidate_in_txn(vault, txn)?;
         vault.fork_skill_record_in_txn(
-            txn, &input.parent, &entity, &input.skill_id, TimeRange { start: at, end: at }, at,
+            txn,
+            &input.parent,
+            &entity,
+            &input.skill_id,
+            TimeRange { start: at, end: at },
+            at,
         )
     })?;
     skill_library_get_as_owner(vault, owner, &HubSkillRequest { entity })
@@ -401,9 +470,19 @@ pub struct SkillLibraryRestoreRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum SkillLibraryRestoreReceipt {
-    Restored { skill: Box<SkillLibraryView>, admission: Option<HubAdmissionReceipt> },
-    PendingAdmission { entity: EntityId, content_hash: String, effect_digest: String },
-    Refused { entity: EntityId, admission: HubAdmissionReceipt },
+    Restored {
+        skill: Box<SkillLibraryView>,
+        admission: Option<HubAdmissionReceipt>,
+    },
+    PendingAdmission {
+        entity: EntityId,
+        content_hash: String,
+        effect_digest: String,
+    },
+    Refused {
+        entity: EntityId,
+        admission: HubAdmissionReceipt,
+    },
 }
 
 pub fn skill_restore_as_owner(
@@ -415,41 +494,64 @@ pub fn skill_restore_as_owner(
     owner.revalidate(vault)?;
     let record = skill(vault, &input.entity)?;
     if record.lifecycle_status != SkillLifecycle::Quarantined {
-        return Err(MemoryError::bad_request("restore requires an archived skill"));
+        return Err(MemoryError::bad_request(
+            "restore requires an archived skill",
+        ));
     }
     {
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
         for source in crate::skill_convert::source_message_refs(&record)? {
             if !crate::vault::live_entity_row_in_txn(&vault.store, &txn, &source)?.is_live() {
-                return Err(MemoryError::bad_request("restore source evidence is unavailable"));
+                return Err(MemoryError::bad_request(
+                    "restore source evidence is unavailable",
+                ));
             }
         }
     }
     let admission = if let Some(admission) = &input.admission {
-        let publisher = vault.admit_skill_publisher(owner, &admission.publisher, admission.source.hub_id)?;
+        let publisher =
+            vault.admit_skill_publisher(owner, &admission.publisher, admission.source.hub_id)?;
         let ask = vault.prepare_marketplace_activation(
-            input.entity, &admission.source, &publisher, admission.evidence_skill,
+            input.entity,
+            &admission.source,
+            &publisher,
+            admission.evidence_skill,
         )?;
         let digest = ask.effect_digest().to_hex();
         let Some(shown) = &admission.effect_digest else {
             return Ok(SkillLibraryRestoreReceipt::PendingAdmission {
-                entity: input.entity, content_hash: ask.content_hash().to_hex(), effect_digest: digest,
+                entity: input.entity,
+                content_hash: ask.content_hash().to_hex(),
+                effect_digest: digest,
             });
         };
         if shown != &digest {
-            return Err(MemoryError::bad_request("restore admission moved; prepare it again"));
+            return Err(MemoryError::bad_request(
+                "restore admission moved; prepare it again",
+            ));
         }
-        let scorer = scorer.ok_or_else(|| MemoryError::new(
-            crate::memory::MEMORY_CODE_MODEL_UNAVAILABLE, "no held-out skill judge is registered", &[],
-        ))?;
+        let scorer = scorer.ok_or_else(|| {
+            MemoryError::new(
+                crate::memory::MEMORY_CODE_MODEL_UNAVAILABLE,
+                "no held-out skill judge is registered",
+                &[],
+            )
+        })?;
         vault.approve_marketplace_activation(&ask, owner)?;
         let at = vault.now_recorded_at();
         match vault.admit_marketplace_skill(&ask, scorer, TimeRange { start: at, end: at }, at)? {
             HubAdmissionDisposition::Ruled(receipt) if receipt.accepted => Some(*receipt),
-            HubAdmissionDisposition::Ruled(receipt) => return Ok(SkillLibraryRestoreReceipt::Refused {
-                entity: input.entity, admission: *receipt,
-            }),
-            HubAdmissionDisposition::PendingConsent => return Err(MemoryError::bad_request("restore needs current owner consent")),
+            HubAdmissionDisposition::Ruled(receipt) => {
+                return Ok(SkillLibraryRestoreReceipt::Refused {
+                    entity: input.entity,
+                    admission: *receipt,
+                });
+            }
+            HubAdmissionDisposition::PendingConsent => {
+                return Err(MemoryError::bad_request(
+                    "restore needs current owner consent",
+                ));
+            }
         }
     } else {
         // The normal hub/fork activation gate refuses without its admission proof.
@@ -457,7 +559,13 @@ pub fn skill_restore_as_owner(
         None
     };
     Ok(SkillLibraryRestoreReceipt::Restored {
-        skill: Box::new(skill_library_get_as_owner(vault, owner, &HubSkillRequest { entity: input.entity })?),
+        skill: Box::new(skill_library_get_as_owner(
+            vault,
+            owner,
+            &HubSkillRequest {
+                entity: input.entity,
+            },
+        )?),
         admission,
     })
 }
@@ -475,7 +583,9 @@ pub fn skill_hash_rule_as_owner(
     input: &SkillHashRuleRequest,
 ) -> MemoryResult<HubConsentReceipt> {
     let hash = crate::skill::SkillContentHash::parse_hex(&input.content_hash)?;
-    Ok(vault.set_marketplace_blocked_hash(owner, hash, input.blocked)?.into())
+    Ok(vault
+        .set_marketplace_blocked_hash(owner, hash, input.blocked)?
+        .into())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -489,5 +599,7 @@ pub fn skill_code_auto_install_as_owner(
     owner: &AuthenticatedOwner,
     input: &SkillCodeAutoInstallRequest,
 ) -> MemoryResult<HubConsentReceipt> {
-    Ok(vault.set_marketplace_code_auto_install(owner, input.enabled)?.into())
+    Ok(vault
+        .set_marketplace_code_auto_install(owner, input.enabled)?
+        .into())
 }

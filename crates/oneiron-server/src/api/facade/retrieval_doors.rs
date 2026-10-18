@@ -18,16 +18,22 @@ pub(crate) async fn vault_retrieval_runs(
 ) -> Listed<Vec<oneiron::task_verb::sdk::RetrievalRunEvidence>> {
     let admitted = || -> MemoryResult<_> {
         let owner = owner_proof(auth, server, "vault.retrieval.runs")?;
-        let caller = super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
         Ok((owner, caller))
     };
     let (owner, caller) = match admitted() {
         Ok(admitted) => admitted,
         Err(error) => return (Err(error), Vec::new()),
     };
-    credential_listing(server, auth, caller, "vault.retrieval.runs", move |_, _, memory| {
-        sdk::retrieval_runs_as_owner(&memory, &owner, input)
-    }).await
+    credential_listing(
+        server,
+        auth,
+        caller,
+        "vault.retrieval.runs",
+        move |_, _, memory| sdk::retrieval_runs_as_owner(&memory, &owner, input),
+    )
+    .await
 }
 
 pub(crate) async fn vault_retrieval_run(
@@ -37,16 +43,22 @@ pub(crate) async fn vault_retrieval_run(
 ) -> Listed<Option<oneiron::task_verb::sdk::RetrievalRunEvidence>> {
     let admitted = || -> MemoryResult<_> {
         let owner = owner_proof(auth, server, "vault.retrieval.run")?;
-        let caller = super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
         Ok((owner, caller))
     };
     let (owner, caller) = match admitted() {
         Ok(admitted) => admitted,
         Err(error) => return (Err(error), Vec::new()),
     };
-    credential_listing(server, auth, caller, "vault.retrieval.run", move |_, _, memory| {
-        sdk::retrieval_run_as_owner(&memory, &owner, input)
-    }).await
+    credential_listing(
+        server,
+        auth,
+        caller,
+        "vault.retrieval.run",
+        move |_, _, memory| sdk::retrieval_run_as_owner(&memory, &owner, input),
+    )
+    .await
 }
 
 pub(crate) async fn vault_retrieval_turn(
@@ -56,16 +68,22 @@ pub(crate) async fn vault_retrieval_turn(
 ) -> Listed<Vec<oneiron::task_verb::sdk::RetrievalRunEvidence>> {
     let admitted = || -> MemoryResult<_> {
         let owner = owner_proof(auth, server, "vault.retrieval.turn")?;
-        let caller = super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
         Ok((owner, caller))
     };
     let (owner, caller) = match admitted() {
         Ok(admitted) => admitted,
         Err(error) => return (Err(error), Vec::new()),
     };
-    credential_listing(server, auth, caller, "vault.retrieval.turn", move |_, _, memory| {
-        sdk::retrieval_turn_as_owner(&memory, &owner, input)
-    }).await
+    credential_listing(
+        server,
+        auth,
+        caller,
+        "vault.retrieval.turn",
+        move |_, _, memory| sdk::retrieval_turn_as_owner(&memory, &owner, input),
+    )
+    .await
 }
 
 pub(crate) async fn vault_retrieval_outcomes_put(
@@ -75,16 +93,22 @@ pub(crate) async fn vault_retrieval_outcomes_put(
 ) -> Listed<Vec<oneiron::store::RetrievalOutcomeRecord>> {
     let admitted = || -> MemoryResult<_> {
         let owner = owner_proof(auth, server, "vault.retrieval.outcomes.put")?;
-        let caller = super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
         Ok((owner, caller))
     };
     let (owner, caller) = match admitted() {
         Ok(admitted) => admitted,
         Err(error) => return (Err(error), Vec::new()),
     };
-    credential_listing(server, auth, caller, "vault.retrieval.outcomes.put", move |_, _, memory| {
-        sdk::retrieval_outcomes_put_as_owner(&memory, &owner, input)
-    }).await
+    credential_listing(
+        server,
+        auth,
+        caller,
+        "vault.retrieval.outcomes.put",
+        move |_, _, memory| sdk::retrieval_outcomes_put_as_owner(&memory, &owner, input),
+    )
+    .await
 }
 
 pub(crate) async fn vault_retrieval_outcomes_end(
@@ -94,16 +118,22 @@ pub(crate) async fn vault_retrieval_outcomes_end(
 ) -> Listed<Vec<oneiron::task_verb::sdk::RetrievalRunEvidence>> {
     let admitted = || -> MemoryResult<_> {
         let owner = owner_proof(auth, server, "vault.retrieval.outcomes.end")?;
-        let caller = super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
         Ok((owner, caller))
     };
     let (owner, caller) = match admitted() {
         Ok(admitted) => admitted,
         Err(error) => return (Err(error), Vec::new()),
     };
-    credential_listing(server, auth, caller, "vault.retrieval.outcomes.end", move |_, _, memory| {
-        sdk::retrieval_outcomes_end_as_owner(&memory, &owner, input)
-    }).await
+    credential_listing(
+        server,
+        auth,
+        caller,
+        "vault.retrieval.outcomes.end",
+        move |_, _, memory| sdk::retrieval_outcomes_end_as_owner(&memory, &owner, input),
+    )
+    .await
 }
 
 pub(crate) async fn vault_retrieval_trace(
@@ -113,16 +143,22 @@ pub(crate) async fn vault_retrieval_trace(
 ) -> Listed<Option<oneiron::store::RetrievalTrace>> {
     let admitted = || -> MemoryResult<_> {
         let owner = owner_proof(auth, server, "vault.retrieval.trace")?;
-        let caller = super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
         Ok((owner, caller))
     };
     let (owner, caller) = match admitted() {
         Ok(admitted) => admitted,
         Err(error) => return (Err(error), Vec::new()),
     };
-    credential_listing(server, auth, caller, "vault.retrieval.trace", move |_, _, memory| {
-        sdk::retrieval_trace_as_owner(&memory, &owner, input)
-    }).await
+    credential_listing(
+        server,
+        auth,
+        caller,
+        "vault.retrieval.trace",
+        move |_, _, memory| sdk::retrieval_trace_as_owner(&memory, &owner, input),
+    )
+    .await
 }
 
 pub(crate) async fn vault_retrieval_export(
@@ -132,16 +168,22 @@ pub(crate) async fn vault_retrieval_export(
 ) -> Listed<oneiron::task_verb::sdk::RetrievalDiagnosticExport> {
     let admitted = || -> MemoryResult<_> {
         let owner = owner_proof(auth, server, "vault.retrieval.export")?;
-        let caller = super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
         Ok((owner, caller))
     };
     let (owner, caller) = match admitted() {
         Ok(admitted) => admitted,
         Err(error) => return (Err(error), Vec::new()),
     };
-    credential_listing(server, auth, caller, "vault.retrieval.export", move |_, _, memory| {
-        sdk::retrieval_export_as_owner(&memory, &owner, input)
-    }).await
+    credential_listing(
+        server,
+        auth,
+        caller,
+        "vault.retrieval.export",
+        move |_, _, memory| sdk::retrieval_export_as_owner(&memory, &owner, input),
+    )
+    .await
 }
 
 pub(crate) async fn vault_retrieval_replay(
@@ -151,18 +193,23 @@ pub(crate) async fn vault_retrieval_replay(
 ) -> Listed<oneiron::task_verb::sdk::RetrievalDiagnosticReplay> {
     let admitted = || -> MemoryResult<_> {
         let owner = owner_proof(auth, server, "vault.retrieval.replay")?;
-        let caller = super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
         Ok((owner, caller))
     };
     let (owner, caller) = match admitted() {
         Ok(admitted) => admitted,
         Err(error) => return (Err(error), Vec::new()),
     };
-    credential_listing(server, auth, caller, "vault.retrieval.replay", move |_, _, memory| {
-        sdk::retrieval_replay_as_owner(&memory, &owner, input)
-    }).await
+    credential_listing(
+        server,
+        auth,
+        caller,
+        "vault.retrieval.replay",
+        move |_, _, memory| sdk::retrieval_replay_as_owner(&memory, &owner, input),
+    )
+    .await
 }
-
 
 /// The diagnostic SDK takes the whole recall request; the host still embeds,
 /// budgets, narrows and finalizes through the one existing serving door.
@@ -173,7 +220,8 @@ pub(crate) async fn vault_retrieval_recall(
 ) -> Listed<oneiron::memory::MemoryPack> {
     let admitted = || -> MemoryResult<_> {
         let owner = owner_proof(auth, server, "vault.retrieval.recall")?;
-        let caller = super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
         owner.revalidate(server.vault())?;
         Ok(caller)
     };
@@ -181,7 +229,14 @@ pub(crate) async fn vault_retrieval_recall(
         Ok(caller) => caller,
         Err(error) => return (Err(error), Vec::new()),
     };
-    server.recall_off_runtime_listing(
-        actor, class, auth.verified_slip().cloned(), auth.locality(), None, input,
-    ).await
+    server
+        .recall_off_runtime_listing(
+            actor,
+            class,
+            auth.verified_slip().cloned(),
+            auth.locality(),
+            None,
+            input,
+        )
+        .await
 }

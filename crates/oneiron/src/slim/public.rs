@@ -2,15 +2,15 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    HeapDropReport, InboundResumeOutcome, JournaledResumeStep, ShedBlocker, ShedCause,
-    ShedOutcome, SlimResidue, SlimState,
+    HeapDropReport, InboundResumeOutcome, JournaledResumeStep, ShedBlocker, ShedCause, ShedOutcome,
+    SlimResidue, SlimState,
 };
+use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::memory::{MemoryError, MemoryResult};
 use crate::outbound_intent_ledger::{IntentState, intent_ledger_records};
-use crate::Vault;
 
 /// The serving host's declared policy; it is not a provider-call timeout.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -134,7 +134,9 @@ pub enum SlimDropOutcome {
         residue: SlimResidueView,
         dropped: HeapDropReport,
     },
-    Refused { blocker: ShedBlocker },
+    Refused {
+        blocker: ShedBlocker,
+    },
 }
 
 impl From<ShedOutcome> for SlimDropReceipt {
@@ -194,7 +196,9 @@ pub enum SlimResumeStepRequest {
         attempt_id: String,
         step_hash: String,
     },
-    OutboundIntent { intent_id: String },
+    OutboundIntent {
+        intent_id: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

@@ -61,7 +61,9 @@ impl PipelineBuilder<'_> {
                 temporal_hints: Vec::new(),
             });
         }
-        if let Some(weights) = crate::gate::policy_manifest_doors::retrieval_weights_for_run(self.vault)? {
+        if let Some(weights) =
+            crate::gate::policy_manifest_doors::retrieval_weights_for_run(self.vault)?
+        {
             if !self.affect_policy_overridden {
                 self.affect_policy.emotion_weight = weights.affect;
                 self.affect_policy.arousal_stretch = weights.arousal;

@@ -60,7 +60,11 @@ impl SkillsConfig {
             &self.project_proposal_draft_skill,
         )?;
         skill_id("goal_intake_skill", &self.goal_intake_skill)?;
-        if self.conversion_prompt.as_ref().is_some_and(|prompt| prompt.trim().is_empty()) {
+        if self
+            .conversion_prompt
+            .as_ref()
+            .is_some_and(|prompt| prompt.trim().is_empty())
+        {
             anyhow::bail!("skills.conversion_prompt must not be empty");
         }
         Ok(())

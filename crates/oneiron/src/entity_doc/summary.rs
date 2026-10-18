@@ -184,10 +184,14 @@ pub(crate) fn summary_read_in_txn(
     spans: &[crate::scope_summary::SummarySpan],
 ) -> Result<crate::scope_summary::SummaryReadView> {
     let (head, doc) = summary_doc(vault, txn, entity)?;
-    let row = vault.store.port_entity_record(txn, entity)?.ok_or(Error::EntityNotFound)?;
+    let row = vault
+        .store
+        .port_entity_record(txn, entity)?
+        .ok_or(Error::EntityNotFound)?;
     let logical = super::resolve_record_body(&vault.store, txn, entity, &row.body)?;
     let body = crate::scope_summary::decode_scope_summary_body(&logical)?;
-    let anchors = spans.iter()
+    let anchors = spans
+        .iter()
         .map(|span| super::verbs::make_anchor(&doc, *entity, span.start, span.end))
         .collect::<Result<Vec<_>>>()?;
     Ok(crate::scope_summary::SummaryReadView {
@@ -198,7 +202,9 @@ pub(crate) fn summary_read_in_txn(
         metadata: summary_meta_in_txn(vault, txn, entity)?,
         covers: body.covers.iter().map(EntityId::to_hex).collect(),
         read_refs: crate::ports::dependency_sources_in(&vault.store, txn, entity)?
-            .iter().map(EntityId::to_hex).collect(),
+            .iter()
+            .map(EntityId::to_hex)
+            .collect(),
         anchors,
         birth: doc.birth().clone(),
     })
@@ -219,20 +225,29 @@ pub(crate) fn open_summary_proposal(
 
     let vault = memory.vault();
     let reader = memory.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
-    let sources = read_refs.iter()
+    let sources = read_refs
+        .iter()
         .map(|reference| crate::memory::resolve_entity_ref(vault, reference))
         .collect::<crate::memory::MemoryResult<Vec<_>>>()?;
     if sources.contains(&request.entity) {
-        return Err(crate::memory::MemoryError::bad_request("a SUMMARY cannot be its own generation source"));
+        return Err(crate::memory::MemoryError::bad_request(
+            "a SUMMARY cannot be its own generation source",
+        ));
     }
     let proposal = vault.new_entity_id()?;
-    let mut registry = vault.entity_docs.lock()
+    let mut registry = vault
+        .entity_docs
+        .lock()
         .map_err(|_| super::invalid("document registry poisoned"))?;
     let bundle = vault.try_with_write_txn_grouped(|txn| {
         vault.authorize_shared_content_write_in_txn(txn, request.entity, &request.actor)?;
         let mut admitted = sources.clone();
         admitted.push(request.entity);
-        if reader.get_entities_parts_in_txn(txn, &admitted)?.iter().any(Option::is_none) {
+        if reader
+            .get_entities_parts_in_txn(txn, &admitted)?
+            .iter()
+            .any(Option::is_none)
+        {
             return Err(crate::memory::MemoryError::new(
                 crate::memory::MEMORY_CODE_NOT_FOUND,
                 "SUMMARY generation input is absent or not readable",
@@ -242,8 +257,11 @@ pub(crate) fn open_summary_proposal(
         let (_, live) = summary_doc(vault, txn, &request.entity)?;
         if let Some(keep) = keep {
             let base = live.fork(&request.base)?;
-            let base_keep = base.metadata()?.get("keep")
-                .and_then(rmpv::Value::as_str).map(str::to_owned);
+            let base_keep = base
+                .metadata()?
+                .get("keep")
+                .and_then(rmpv::Value::as_str)
+                .map(str::to_owned);
             if summary_meta_in_txn(vault, txn, &request.entity)?.keep != keep
                 || base_keep.as_deref() != Some(keep)
             {
@@ -251,7 +269,11 @@ pub(crate) fn open_summary_proposal(
             }
         }
         let mut bundle = super::forks::open_proposal_in_txn(
-            vault, txn, &proposal, std::slice::from_ref(request), authorization,
+            vault,
+            txn,
+            &proposal,
+            std::slice::from_ref(request),
+            authorization,
             vault.now_recorded_at(),
         )?;
         let refs: Vec<String> = sources.iter().map(EntityId::to_hex).collect();
@@ -264,7 +286,10 @@ pub(crate) fn open_summary_proposal(
         for mut receipt in super::forks::receipts(&vault.store, txn, &request.entity)? {
             if receipt.proposal == proposal.to_hex() {
                 receipt.read_refs.clone_from(&refs);
-                let key = HexPair(HexId(request.entity), HexId(EntityId::from_hex(&receipt.receipt)?));
+                let key = HexPair(
+                    HexId(request.entity),
+                    HexId(EntityId::from_hex(&receipt.receipt)?),
+                );
                 ENTITY_DOC_RECEIPT.put(&vault.store, txn, &key, &receipt)?;
             }
         }

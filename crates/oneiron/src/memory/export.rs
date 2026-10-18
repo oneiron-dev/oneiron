@@ -328,10 +328,7 @@ impl Vault {
     /// Whether [`Self::export_with_authenticated_owner_listing`] admits
     /// `owner` now, in a read snapshot of its own; the export asks again in
     /// its own.
-    pub fn admit_authenticated_owner_export(
-        &self,
-        owner: &AuthenticatedOwner,
-    ) -> MemoryResult<()> {
+    pub fn admit_authenticated_owner_export(&self, owner: &AuthenticatedOwner) -> MemoryResult<()> {
         self.admit_authenticated_owner(owner)?;
         Ok(())
     }

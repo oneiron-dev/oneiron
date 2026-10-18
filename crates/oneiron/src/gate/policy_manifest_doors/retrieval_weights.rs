@@ -36,7 +36,8 @@ impl RetrievalWeights {
             emotion_weight: self.affect,
             arousal_stretch: self.arousal,
             ..Default::default()
-        }.validate()?;
+        }
+        .validate()?;
         crate::config::validate_ppr_vad_alpha(self.vad)?;
         crate::config::validate_ppr_community(&crate::config::PprCommunityConfig {
             beta: self.community,
@@ -68,16 +69,20 @@ pub struct RetrievalWeightsReceipt {
 pub(crate) fn decode_retrieval_weights(
     fields: &[(rmpv::Value, rmpv::Value)],
 ) -> Result<Option<RetrievalWeights>> {
-    let mut rows = fields.iter().filter(|(key, _)| key.as_str() == Some(RETRIEVAL_WEIGHTS_KEY));
-    let Some((_, value)) = rows.next() else { return Ok(None) };
+    let mut rows = fields
+        .iter()
+        .filter(|(key, _)| key.as_str() == Some(RETRIEVAL_WEIGHTS_KEY));
+    let Some((_, value)) = rows.next() else {
+        return Ok(None);
+    };
     if rows.next().is_some() {
         return Err(invalid("duplicate retrieval_weights"));
     }
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, value)
         .map_err(|_| invalid("retrieval weights encoding"))?;
-    let weights: RetrievalWeights = rmp_serde::from_slice(&bytes)
-        .map_err(|_| invalid("invalid retrieval weights"))?;
+    let weights: RetrievalWeights =
+        rmp_serde::from_slice(&bytes).map_err(|_| invalid("invalid retrieval weights"))?;
     weights.validate()?;
     Ok(Some(weights))
 }
@@ -87,9 +92,13 @@ pub(crate) fn decode_retrieval_weights(
 pub(crate) fn retrieval_weights_for_run(vault: &Vault) -> Result<Option<RetrievalWeights>> {
     let txn = vault.store.env.read_txn()?;
     let id = crate::gate::default_policy_manifest_id()?;
-    let Some(body) = body_in_txn(vault, &txn, id)? else { return Ok(None) };
+    let Some(body) = body_in_txn(vault, &txn, id)? else {
+        return Ok(None);
+    };
     if !crate::gate::manifest_authenticity::manifest_is_trusted(&vault.store, &txn, &id, &body)? {
-        return Err(invalid("retrieval weights require an owner-trusted manifest"));
+        return Err(invalid(
+            "retrieval weights require an owner-trusted manifest",
+        ));
     }
     decode_retrieval_weights(&decode_fields(&body)?)
 }
@@ -98,7 +107,9 @@ fn view(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<RetrievalWeightsView> {
     let id = crate::gate::default_policy_manifest_id()?;
     let body = body_in_txn(vault, txn, id)?.ok_or(Error::EntityNotFound)?;
     if !crate::gate::manifest_authenticity::manifest_is_trusted(&vault.store, txn, &id, &body)? {
-        return Err(invalid("retrieval weights require an owner-trusted manifest"));
+        return Err(invalid(
+            "retrieval weights require an owner-trusted manifest",
+        ));
     }
     let weights = decode_retrieval_weights(&decode_fields(&body)?)?
         .unwrap_or_else(|| RetrievalWeights::from_config(&vault.config));
@@ -109,7 +120,10 @@ fn view(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<RetrievalWeightsView> {
     })
 }
 
-pub fn retrieval_weights_as_owner(vault: &Vault, owner: &AuthenticatedOwner) -> Result<RetrievalWeightsView> {
+pub fn retrieval_weights_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+) -> Result<RetrievalWeightsView> {
     let txn = vault.store.env.read_txn()?;
     owner.revalidate_in_txn(vault, &txn)?;
     view(vault, &txn)
@@ -126,7 +140,9 @@ pub fn configure_retrieval_weights_as_owner(
         let actor = owner.revalidate_in_txn(vault, txn)?;
         let current = view(vault, txn)?;
         if current.body_hash != input.expected_body_hash {
-            return Err(invalid("expected_body_hash must match the current policy manifest"));
+            return Err(invalid(
+                "expected_body_hash must match the current policy manifest",
+            ));
         }
         let id = crate::gate::default_policy_manifest_id()?;
         let body = body_in_txn(vault, txn, id)?.ok_or(Error::EntityNotFound)?;
@@ -137,10 +153,28 @@ pub fn configure_retrieval_weights_as_owner(
         let value = rmpv::decode::read_value(&mut std::io::Cursor::new(replacement))
             .map_err(|_| invalid("retrieval weights encoding"))?;
         fields.push((rmpv::Value::from(RETRIEVAL_WEIGHTS_KEY), value));
-        vault.write_owner_policy_manifest_in_txn(owner, txn, id, encode_fields(fields)?, crate::unix_seconds_now())?;
+        vault.write_owner_policy_manifest_in_txn(
+            owner,
+            txn,
+            id,
+            encode_fields(fields)?,
+            crate::unix_seconds_now(),
+        )?;
         let body = body_in_txn(vault, txn, id)?.ok_or(Error::EntityNotFound)?;
-        let receipt_ref = record(vault, txn, WriteActor::new(actor, EdgeActorClass::Human), id, &body,
-            ("allow", vec!["gate.allow.owner_retrieval_weights".to_owned()]))?;
-        Ok(RetrievalWeightsReceipt { configuration: view(vault, txn)?, receipt_ref })
+        let receipt_ref = record(
+            vault,
+            txn,
+            WriteActor::new(actor, EdgeActorClass::Human),
+            id,
+            &body,
+            (
+                "allow",
+                vec!["gate.allow.owner_retrieval_weights".to_owned()],
+            ),
+        )?;
+        Ok(RetrievalWeightsReceipt {
+            configuration: view(vault, txn)?,
+            receipt_ref,
+        })
     })
 }
