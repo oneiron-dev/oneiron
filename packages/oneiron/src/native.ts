@@ -438,6 +438,7 @@ aiVoiceUsage(input: unknown): unknown
 aiVoiceTool(input: unknown): unknown
 aiVoiceEnd(input: unknown): unknown
 aiVoiceClose(input: unknown): unknown
+aiAnonymousChat(input: unknown): unknown
 aiOptions(input: unknown): unknown
 aiImage(input: unknown): unknown
 aiSpeech(input: unknown): unknown

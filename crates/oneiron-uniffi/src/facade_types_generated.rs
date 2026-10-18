@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 565 facade rows, 2100 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 11; generated in and out: 527.
+// UniFFI census: 566 facade rows, 2105 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 11; generated in and out: 528.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -26442,6 +26442,75 @@ pub struct LiveVoiceToolReply {
 pub struct LiveVoiceSessionRequest {
     #[serde(rename = "session_ref")]
     pub session_ref: String,
+}
+
+/// `oneiron::task_verb::sdk_anonymous_chat::AnonymousChatRequestTarget`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AnonymousChatRequestTarget {
+    #[serde(rename = "house_mind")]
+    HouseMind,
+    #[serde(rename = "plain_model")]
+    PlainModel,
+}
+
+/// `oneiron::task_verb::sdk_anonymous_chat::AnonymousChatRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AnonymousChatRequest {
+    #[serde(rename = "text")]
+    pub text: String,
+    #[serde(rename = "target", default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<AnonymousChatRequestTarget>,
+    #[serde(rename = "model", default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_anonymous_chat::AnonymousChatSkippedCheckView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AnonymousChatSkippedCheckView {
+    #[serde(rename = "input")]
+    pub input: bool,
+    #[serde(rename = "reason")]
+    pub reason: PolicySkipReason,
+}
+
+/// `oneiron::task_verb::sdk_anonymous_chat::AnonymousChatBlockReasonView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AnonymousChatBlockReasonView {
+    #[serde(rename = "policy")]
+    Policy,
+    #[serde(rename = "human_review_unavailable")]
+    HumanReviewUnavailable,
+}
+
+/// `oneiron::task_verb::sdk_anonymous_chat::AnonymousChatResponse`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "type")]
+pub enum AnonymousChatResponse {
+    #[serde(rename = "reply")]
+    Reply {
+        #[serde(rename = "content")]
+        content: String,
+        #[serde(rename = "notices")]
+        notices: Vec<GateSystemNoticeRecord>,
+        #[serde(rename = "skipped_checks")]
+        skipped_checks: Vec<AnonymousChatSkippedCheckView>,
+        #[serde(rename = "model_notices")]
+        model_notices: Vec<GateSystemNoticeRecord>,
+    },
+    #[serde(rename = "blocked")]
+    Blocked {
+        #[serde(rename = "input")]
+        input: bool,
+        #[serde(rename = "notice")]
+        notice: GateSystemNoticeRecord,
+        #[serde(rename = "preceding_notices")]
+        preceding_notices: Vec<GateSystemNoticeRecord>,
+        #[serde(rename = "reason")]
+        reason: AnonymousChatBlockReasonView,
+        #[serde(rename = "model_notices")]
+        model_notices: Vec<GateSystemNoticeRecord>,
+    },
 }
 
 /// `oneiron::task_verb::sdk_host::AiOptionsRequest`.

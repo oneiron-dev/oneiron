@@ -1289,6 +1289,9 @@ impl OneironClient {
                 "ai.voice.close" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::LiveVoiceProcessed,
                 >(client, verb, &input),
+                "ai.anonymous_chat" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::AnonymousChatResponse,
+                >(client, verb, &input),
                 "ai.options" => remote_agent_verb_output::<oneiron::task_verb::sdk::AiOptions>(
                     client, verb, &input,
                 ),
@@ -6805,6 +6808,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("ai.voice.close", value)
+    }
+    pub fn ai_anonymous_chat(
+        &self,
+        input: &oneiron::task_verb::sdk::AnonymousChatRequest,
+    ) -> Result<oneiron::task_verb::sdk::AnonymousChatResponse, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.anonymous_chat", value)
     }
     pub fn ai_options(
         &self,

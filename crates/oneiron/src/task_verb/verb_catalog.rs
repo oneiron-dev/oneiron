@@ -412,6 +412,7 @@ pub enum AgentVerb {
     AiVoiceTool,
     AiVoiceEnd,
     AiVoiceClose,
+    AiAnonymousChat,
     AiOptions,
     AiImage,
     AiSpeech,
@@ -1023,6 +1024,7 @@ impl AgentVerb {
         Self::AiVoiceTool,
         Self::AiVoiceEnd,
         Self::AiVoiceClose,
+        Self::AiAnonymousChat,
         Self::AiOptions,
         Self::AiImage,
         Self::AiSpeech,
@@ -1643,6 +1645,7 @@ impl AgentVerb {
             Self::AiVoiceTool => "ai.voice.tool",
             Self::AiVoiceEnd => "ai.voice.end",
             Self::AiVoiceClose => "ai.voice.close",
+            Self::AiAnonymousChat => "ai.anonymous_chat",
             Self::AiOptions => "ai.options",
             Self::AiImage => "ai.image",
             Self::AiSpeech => "ai.speech",
@@ -2257,6 +2260,7 @@ impl AgentVerb {
                 | Self::AiVoiceTool
                 | Self::AiVoiceEnd
                 | Self::AiVoiceClose
+                | Self::AiAnonymousChat
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
@@ -2875,6 +2879,7 @@ impl AgentVerb {
                 | Self::AiVoiceTool
                 | Self::AiVoiceEnd
                 | Self::AiVoiceClose
+                | Self::AiAnonymousChat
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
@@ -3546,6 +3551,7 @@ impl AgentVerb {
                 | Self::AiVoiceTool
                 | Self::AiVoiceEnd
                 | Self::AiVoiceClose
+                | Self::AiAnonymousChat
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
@@ -4539,6 +4545,7 @@ impl AgentVerb {
             Self::AiVoiceTool => &["spec"],
             Self::AiVoiceEnd => &["spec"],
             Self::AiVoiceClose => &["spec"],
+            Self::AiAnonymousChat => &["spec"],
             Self::AiOptions => &["spec"],
             Self::AiImage => &["spec"],
             Self::AiSpeech => &["spec"],
@@ -5151,6 +5158,7 @@ impl AgentVerb {
             Self::AiVoiceTool => &["spec"],
             Self::AiVoiceEnd => &["spec"],
             Self::AiVoiceClose => &["spec"],
+            Self::AiAnonymousChat => &["spec"],
             Self::AiOptions => &["spec"],
             Self::AiImage => &["spec"],
             Self::AiSpeech => &["spec"],
@@ -6533,6 +6541,9 @@ impl AgentVerb {
             }
             Self::AiVoiceClose => {
                 "Ends and releases a live voice session and its retained events; read terminal usage and acknowledge playout before closing."
+            }
+            Self::AiAnonymousChat => {
+                "One standalone memory-free turn on the house configuration or a plain model, with ephemeral policy notices; use the HTTP SDK, not a recorded MCP or code-mode call."
             }
             Self::AiOptions => {
                 "The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."
