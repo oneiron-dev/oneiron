@@ -23505,7 +23505,7 @@
       "crate-vis": 17,
       "enum": 1,
       "fn": 9,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 4
      }
     },
@@ -23520,6 +23520,24 @@
      "surface": {
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SharedActPoliciesView",
+      "SharedActPolicyChange",
+      "SharedActPolicyChangeState"
+     ],
+     "path": "src/federation/pending_act/policy_change.rs",
+     "purpose": "Shared-act policy reads and durable changes (DOOR-129)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -49059,7 +49077,7 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 35,
+      "re-export": 36,
       "struct": 36
      }
     },
@@ -49323,7 +49341,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 486
+      "fn": 490
      }
     },
     {
@@ -49749,6 +49767,21 @@
       "crate-vis": 1,
       "fn": 15,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SharedActPolicyAnswerRequest",
+      "SharedActPolicyChangeRequest",
+      "SharedActPolicyProposeRequest"
+     ],
+     "path": "src/task_verb/sdk_shared_policy.rs",
+     "purpose": "The shared-act policy rows a host door answers (DOOR-129): `vault.shared.policy.get` reads every row a live…",
+     "surface": {
+      "fn": 4,
+      "struct": 3
      }
     },
     {
@@ -55231,7 +55264,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 36,
+     "files": 37,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55966,7 +55999,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 147,
+     "files": 148,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -56136,7 +56169,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3419,
+   "source_files": 3421,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64549,7 +64582,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 436
+      "fn": 440
      }
     },
     {
@@ -65597,7 +65630,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 437
+      "fn": 441
      }
     },
     {
@@ -68720,7 +68753,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 86
+      "crate-vis": 87
      }
     },
     {
@@ -68911,6 +68944,16 @@
      "purpose": "The host doors of the shared-vault invitation rows (OF-531 / OF-158), beside `shared_act_doors`: an invitee…",
      "surface": {
       "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/shared_policy_doors.rs",
+     "purpose": "The host doors of the shared-act policy rows (DOOR-129), beside `shared_act_doors`: a live Owner reads every…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -76065,7 +76108,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 342,
+     "files": 343,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -76480,7 +76523,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 666,
+   "source_files": 667,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -77998,6 +78041,14 @@
       "SharedActExecutionReceipt",
       "SharedActExport",
       "SharedActOutcome",
+      "SharedActPoliciesView",
+      "SharedActPolicy",
+      "SharedActPolicyAnswerRequest",
+      "SharedActPolicyChange",
+      "SharedActPolicyChangeRequest",
+      "SharedActPolicyChangeState",
+      "SharedActPolicyProposeRequest",
+      "SharedActPrecedence",
       "SharedActRequest",
       "SharedBriefCitation",
       "SharedBriefView",
@@ -78265,8 +78316,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 436,
-      "struct": 1152
+      "enum": 438,
+      "struct": 1158
      }
     },
     {
