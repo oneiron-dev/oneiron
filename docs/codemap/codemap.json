@@ -491,7 +491,7 @@
      "surface": {
       "crate-vis": 6,
       "enum": 1,
-      "fn": 8
+      "fn": 10
      }
     },
     {
@@ -11457,6 +11457,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_run/dispatcher/host_doors.rs",
+     "purpose": "Typed coordination calls whose credential admission and verb hooks are owned by the host's verb-table door",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_run/dispatcher/human_speech.rs",
      "purpose": "Ask-human durable waits and executor speech witnessing",
      "surface": {
@@ -11473,7 +11483,7 @@
      "path": "src/code_run/dispatcher/leader.rs",
      "purpose": "Host entry points for the CEO starter on a leased, task-bound leader",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 9,
       "struct": 2
      }
@@ -30326,6 +30336,95 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ChannelIdentityBindRequest",
+      "ChannelIdentityCustody",
+      "ChannelIdentityLifecycleReceipt",
+      "ChannelIdentityProvisionRequest",
+      "ChannelIdentityReleaseRequest",
+      "ChannelIdentityRequest",
+      "ChannelIdentityView"
+     ],
+     "path": "src/memory/channel_doors/lifecycle.rs",
+     "purpose": "—",
+     "surface": {
+      "enum": 2,
+      "fn": 7,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/channel_doors/mod.rs",
+     "purpose": "Typed ChannelIdentity, selection, passport and delivery-window doors",
+     "surface": {
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ThreadMaskView",
+      "ThreadPassportLookup",
+      "ThreadPassportRequest",
+      "ThreadPassportView",
+      "ThreadPassportsRequest",
+      "ThreadPassportsView"
+     ],
+     "path": "src/memory/channel_doors/passport.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DeliveryWindowEvaluateRequest",
+      "DeliveryWindowPolicies",
+      "DeliveryWindowPolicyPutRequest",
+      "DeliveryWindowPolicyRequest",
+      "DeliveryWindowPolicyRetractRequest",
+      "DeliveryWindowPolicyRow",
+      "DeliveryWindowPreview",
+      "DeliveryWindowRule"
+     ],
+     "path": "src/memory/channel_doors/policy.rs",
+     "purpose": "—",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ChannelSelectionCandidateInput",
+      "ChannelSelectionPatchInput",
+      "ChannelSelectionRequest",
+      "ChannelSelectionRuleInput",
+      "ChannelSelectionUpdateRequest",
+      "ChannelSelectionView"
+     ],
+     "path": "src/memory/channel_doors/selection.rs",
+     "purpose": "—",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -30761,7 +30860,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 2,
+      "mod": 3,
       "re-export": 37
      }
     },
@@ -48438,8 +48537,32 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 26,
+      "re-export": 29,
       "struct": 36
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AgentCeilingInput",
+      "AgentDefinitionCreateRequest",
+      "AgentDefinitionLifecycle",
+      "AgentDefinitionRequest",
+      "AgentDefinitionSpec",
+      "AgentDefinitionUpdateRequest",
+      "AgentDefinitionView",
+      "AgentMcpInput",
+      "AgentScopeInput",
+      "AgentSkillInput"
+     ],
+     "path": "src/task_verb/sdk_agents.rs",
+     "purpose": "Typed custom AGENT_DEF authoring",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 3,
+      "fn": 3,
+      "struct": 7
      }
     },
     {
@@ -48626,7 +48749,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 378
+      "fn": 402
      }
     },
     {
@@ -48706,6 +48829,18 @@
       "enum": 1,
       "fn": 5,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LiveRunRequest"
+     ],
+     "path": "src/task_verb/sdk_live_run.rs",
+     "purpose": "Typed host projections of the run's coordination verbs",
+     "surface": {
+      "struct": 1
      }
     },
     {
@@ -48962,6 +49097,24 @@
       "crate-vis": 1,
       "fn": 15,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WorkspaceCompanionInput",
+      "WorkspaceMemberOnboardRequest",
+      "WorkspacePresetReceipt",
+      "WorkspacePresetRequest",
+      "WorkspaceRosterRequest"
+     ],
+     "path": "src/task_verb/sdk_workspace.rs",
+     "purpose": "Workspace roster and companion onboarding through the existing runner",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "struct": 4
      }
     },
     {
@@ -54023,7 +54176,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 76,
+     "files": 77,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54625,7 +54778,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 135,
+     "files": 140,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55136,7 +55289,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 136,
+     "files": 139,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -55306,7 +55459,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3368,
+   "source_files": 3377,
    "test_files": 902
   },
   "oneiron-android": {
@@ -63701,7 +63854,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 329
+      "fn": 353
      }
     },
     {
@@ -64749,7 +64902,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 330
+      "fn": 354
      }
     },
     {
@@ -67596,6 +67749,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/agent_definition_doors.rs",
+     "purpose": "Custom definitions and workspace onboarding, with the caller's own proof",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -67623,6 +67786,16 @@
      "purpose": "The host door of a campaign split's evaluation, `vault.research.evaluate_split` (FIX 655): the owner scores…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/channel_doors.rs",
+     "purpose": "Credential-bound host projections of the typed channel setup verbs",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -67762,7 +67935,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 69
+      "crate-vis": 73
      }
     },
     {
@@ -67773,6 +67946,16 @@
      "purpose": "The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`…",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/live_run_doors.rs",
+     "purpose": "Public coordination doors over the caller's own live-run attachment",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -75017,7 +75200,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 324,
+     "files": 327,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -75432,7 +75615,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 646,
+   "source_files": 649,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -75630,6 +75813,13 @@
       "ActorCeiling",
       "AdmissionBasis",
       "AdmissionConsent",
+      "AgentCeilingInput",
+      "AgentDefinitionCreateRequest",
+      "AgentDefinitionLifecycle",
+      "AgentDefinitionRequest",
+      "AgentDefinitionSpec",
+      "AgentDefinitionUpdateRequest",
+      "AgentDefinitionView",
       "AgentHealthApplicationState",
       "AgentHealthCard",
       "AgentHealthCardView",
@@ -75646,9 +75836,15 @@
       "AgentHealthRunTree",
       "AgentHealthSignal",
       "AgentHealthTone",
+      "AgentMcpInput",
       "AgentPackExport",
       "AgentPackExportFile",
       "AgentPackExportRequest",
+      "AgentScopeInput",
+      "AgentSkillInput",
+      "AgentSpawnInput",
+      "AgentSpawnKind",
+      "AgentSpawnOutput",
       "AiAnswer",
       "AiCallRequest",
       "AiOperation",
@@ -75761,7 +75957,28 @@
       "Care",
       "CellTypeRef",
       "ChangeKind",
+      "ChannelIdentityBindRequest",
+      "ChannelIdentityBinding",
+      "ChannelIdentityCustody",
+      "ChannelIdentityFace",
+      "ChannelIdentityFulfillment",
+      "ChannelIdentityLifecycleReceipt",
+      "ChannelIdentityProvisionRequest",
+      "ChannelIdentityReleaseRequest",
+      "ChannelIdentityRequest",
+      "ChannelIdentitySelectionDecision",
+      "ChannelIdentitySelectionRule",
+      "ChannelIdentitySelectionRuleSet",
+      "ChannelIdentityShape",
+      "ChannelIdentityState",
+      "ChannelIdentityView",
       "ChannelMessageSubscription",
+      "ChannelSelectionCandidateInput",
+      "ChannelSelectionPatchInput",
+      "ChannelSelectionRequest",
+      "ChannelSelectionRuleInput",
+      "ChannelSelectionUpdateRequest",
+      "ChannelSelectionView",
       "ChannelSubscriptionRequest",
       "ChannelSubscriptionRevokeRequest",
       "ChannelSubscriptionRevoked",
@@ -75771,6 +75988,7 @@
       "ChartKind",
       "ChartSeries",
       "ChartSource",
+      "ChatProjection",
       "ClaimApprovalStatus",
       "ClaimLineAtom",
       "CodeBlameView",
@@ -75793,6 +76011,7 @@
       "CodeUnitVersionView",
       "ColdAuthorityAuditRow",
       "CollectionAtom",
+      "CommReach",
       "CompanionSharingRequest",
       "CompanionSharingSetRequest",
       "CompanionSharingStored",
@@ -75837,6 +76056,7 @@
       "ConsentStateSpendConsent",
       "ConsultPayloadRef",
       "ContextDefault",
+      "ContextSpec",
       "ConversationCreateInput",
       "ConversationTurnCreateInput",
       "CooperativeDeletionDispositionKind",
@@ -75905,7 +76125,25 @@
       "DeckProposeRequest",
       "DeckReviewView",
       "DeclaredMaximum",
+      "DelegatedGrant",
+      "DelegatedGrantScope",
       "DeliveryStatus",
+      "DeliveryWindowApnsInterruptionLevel",
+      "DeliveryWindowContextCondition",
+      "DeliveryWindowDecision",
+      "DeliveryWindowEvaluateRequest",
+      "DeliveryWindowLadderRung",
+      "DeliveryWindowMatch",
+      "DeliveryWindowPolicies",
+      "DeliveryWindowPolicyPutRequest",
+      "DeliveryWindowPolicyRequest",
+      "DeliveryWindowPolicyRetractRequest",
+      "DeliveryWindowPolicyRow",
+      "DeliveryWindowPreview",
+      "DeliveryWindowResolution",
+      "DeliveryWindowRule",
+      "DeliveryWindowTimeWindow",
+      "DeliveryWindowVerbClass",
       "DerivationKind",
       "DiaryEntryReceipt",
       "DiaryEntryRequest",
@@ -76107,6 +76345,9 @@
       "LadderTerminalDisposition",
       "Landing",
       "LandingReceipt",
+      "LaunchStatement",
+      "LeaderSplitInput",
+      "LeaderSplitOutput",
       "LearningCell",
       "LearningChoiceValue",
       "LearningPredicate",
@@ -76162,6 +76403,8 @@
       "LiftFamily",
       "LiftTrigger",
       "LinkedText",
+      "LiveRunRequestAgentSpawnInput",
+      "LiveRunRequestLeaderSplitInput",
       "LlmCapability",
       "LlmError",
       "MadeBy",
@@ -76174,9 +76417,11 @@
       "MediaAtom",
       "MediaUsage",
       "MemberAnswer",
+      "MemberOnboardingOutcome",
       "MemberVerdict",
       "MembershipConsent",
       "MemoryExport",
+      "MemoryProjection",
       "MergeCrossover",
       "MergedFinding",
       "MeshPathDirection",
@@ -76444,6 +76689,7 @@
       "RecordRefPreview",
       "RefreshPolicy",
       "RelationshipChange",
+      "RelationshipContext",
       "ReleasedWait",
       "RemovalExportDelivery",
       "RenderPair",
@@ -76594,9 +76840,12 @@
       "SelectionBenchmark",
       "SelectionRanking",
       "SelectionReceipt",
+      "SelectionRuleScope",
+      "SelectionRuleWriterKind",
       "SelfDurableWait",
       "SelfDurableWaitReason",
       "SelfEffect",
+      "SelfHeldShape",
       "SelfUiAction",
       "SelfUiBindableProperty",
       "SelfUiBinding",
@@ -76693,6 +76942,12 @@
       "SpaceMoveState",
       "SpaceProbe",
       "SpaceRef",
+      "SpawnCare",
+      "SpawnKnobSpawnPattern",
+      "SpawnKnobString",
+      "SpawnKnobU32",
+      "SpawnKnobU64",
+      "SpawnPattern",
       "SpawnPins",
       "SpendBasis",
       "SpendCapView",
@@ -76781,6 +77036,12 @@
       "TextCommitReceipt",
       "TextInputControl",
       "ThreadEntryAtom",
+      "ThreadMaskView",
+      "ThreadPassportLookup",
+      "ThreadPassportRequest",
+      "ThreadPassportView",
+      "ThreadPassportsRequest",
+      "ThreadPassportsView",
       "ThrobberAtom",
       "ToggleControl",
       "TravelChoice",
@@ -76830,7 +77091,15 @@
       "WireWitnessReceipt",
       "WorkCompanionPolicy",
       "WorkCompanionSetRequest",
+      "WorkspaceCompanionInput",
+      "WorkspaceMemberOnboardRequest",
+      "WorkspacePresetReceipt",
+      "WorkspacePresetRequest",
       "WorkspaceRefRequest",
+      "WorkspaceRosterEntry",
+      "WorkspaceRosterPreset",
+      "WorkspaceRosterRequest",
+      "WorkspaceRosterRole",
       "XlsxAlignment",
       "XlsxArea",
       "XlsxBodyOp",
@@ -76858,8 +77127,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 336,
-      "struct": 893
+      "enum": 371,
+      "struct": 944
      }
     },
     {
