@@ -360,6 +360,8 @@ pub enum AgentVerb {
     VaultNotesEdit,
     VaultNotesSeal,
     VaultNotesLifecycle,
+    VaultNotesSetOverrides,
+    VaultNotesDefaults,
 }
 impl AgentVerb {
     pub const ALL: &[Self] = &[
@@ -722,6 +724,8 @@ impl AgentVerb {
         Self::VaultNotesEdit,
         Self::VaultNotesSeal,
         Self::VaultNotesLifecycle,
+        Self::VaultNotesSetOverrides,
+        Self::VaultNotesDefaults,
     ];
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|verb| verb.as_str() == name)
@@ -1091,6 +1095,8 @@ impl AgentVerb {
             Self::VaultNotesEdit => "vault.notes.edit",
             Self::VaultNotesSeal => "vault.notes.seal",
             Self::VaultNotesLifecycle => "vault.notes.lifecycle",
+            Self::VaultNotesSetOverrides => "vault.notes.set_overrides",
+            Self::VaultNotesDefaults => "vault.notes.defaults",
         }
     }
     pub const fn is_facade(self) -> bool {
@@ -1412,6 +1418,8 @@ impl AgentVerb {
                 | Self::VaultNotesEdit
                 | Self::VaultNotesSeal
                 | Self::VaultNotesLifecycle
+                | Self::VaultNotesSetOverrides
+                | Self::VaultNotesDefaults
         )
     }
     pub const fn is_browser(self) -> bool {
@@ -1781,6 +1789,8 @@ impl AgentVerb {
                 | Self::VaultNotesEdit
                 | Self::VaultNotesSeal
                 | Self::VaultNotesLifecycle
+                | Self::VaultNotesSetOverrides
+                | Self::VaultNotesDefaults
         )
     }
     pub const fn is_section(self) -> bool {
@@ -2208,6 +2218,8 @@ impl AgentVerb {
                 | Self::VaultNotesEdit
                 | Self::VaultNotesSeal
                 | Self::VaultNotesLifecycle
+                | Self::VaultNotesSetOverrides
+                | Self::VaultNotesDefaults
         )
     }
     pub const fn born_in_scope(self) -> bool {
@@ -2433,6 +2445,7 @@ impl AgentVerb {
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesEdit
                 | Self::VaultNotesSeal
+                | Self::VaultNotesSetOverrides
         )
     }
     pub const fn proposes(self) -> bool {
@@ -2824,6 +2837,8 @@ impl AgentVerb {
             Self::VaultNotesEdit => &["spec"],
             Self::VaultNotesSeal => &["spec"],
             Self::VaultNotesLifecycle => &["spec"],
+            Self::VaultNotesSetOverrides => &["spec"],
+            Self::VaultNotesDefaults => &["spec"],
         }
     }
     pub const fn required_fields(self) -> &'static [&'static str] {
@@ -3187,6 +3202,8 @@ impl AgentVerb {
             Self::VaultNotesEdit => &["spec"],
             Self::VaultNotesSeal => &["spec"],
             Self::VaultNotesLifecycle => &["spec"],
+            Self::VaultNotesSetOverrides => &["spec"],
+            Self::VaultNotesDefaults => &["spec"],
         }
     }
     /// The row's one-line description, as the verb table states it.
@@ -3893,7 +3910,7 @@ impl AgentVerb {
                 "Opens a URL in the run's own browser session and observes the page; a long page's observation comes in pages, read on with observe and its next cursor."
             }
             Self::SelfBrowserObserve => {
-                "Observes the current page of the run's browser session, in pages: an answer with next goes on, and observe with that cursor reads the next page."
+                "Observes the current page of the run's browser session, in pages read on with observe and an answer's next cursor; the verbs follow a tab an act opens, or a closed tab's opener, and name the move as switched."
             }
             Self::SelfBrowserFind => {
                 "Finds the page rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page."
@@ -3947,7 +3964,7 @@ impl AgentVerb {
                 "Opens an app of the run's own desktop guest by app:name and observes its window; a long window's observation comes in pages, read on with observe and its next cursor."
             }
             Self::SelfDesktopObserve => {
-                "Observes the current window of the run's desktop guest, in pages: an answer with next goes on, and observe with that cursor reads the next page."
+                "Observes the current window of the run's desktop guest, in pages read on with observe and an answer's next cursor; a tree walk cut short answers partial, and its last page's next walks the window again."
             }
             Self::SelfDesktopFind => {
                 "Finds the window rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page."
@@ -4168,6 +4185,12 @@ impl AgentVerb {
             }
             Self::VaultNotesLifecycle => {
                 "Where one NOTE stands (active, sealed, archived or tombstoned) and its seal, if it has one."
+            }
+            Self::VaultNotesSetOverrides => {
+                "Sets the extraction, context and retention defaults one NOTE overrides over its kind's, by its author or the owner; empty overrides clear them. An override never widens a scope or grant check."
+            }
+            Self::VaultNotesDefaults => {
+                "One NOTE's overrides and the extraction, context and retention defaults its gates read after them."
             }
         }
     }

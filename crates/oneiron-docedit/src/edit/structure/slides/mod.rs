@@ -15,7 +15,8 @@
 //!
 //! A reorder is a permutation of the slide ids. It rewrites the order of
 //! `p:sldIdLst` and of each section's list, and refuses an order that splits
-//! a section or moves sections past each other.
+//! a section or moves sections past each other. The app properties' slide
+//! titles move with their slides.
 mod app_props;
 mod check;
 mod lifecycle;
@@ -629,5 +630,6 @@ pub(super) fn reorder(
         }
     }
     next.replace_xml_part(&lists.part, xml::splice(&lists.bytes, edits)?)?;
+    app_props::slides_reordered(next, &current, order)?;
     Ok((Plan::Reordered, Vec::new()))
 }

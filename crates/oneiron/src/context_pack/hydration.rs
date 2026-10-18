@@ -204,7 +204,13 @@ pub(super) fn hydrate_entity(
     };
 
     if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
-        && !crate::note::note_body_readable(store, rtxn, &raw[ENTITY_METADATA_HEADER_LEN..], None)?
+        && !crate::note::note_body_readable(
+            store,
+            rtxn,
+            &id,
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            None,
+        )?
     {
         return Ok(None);
     }

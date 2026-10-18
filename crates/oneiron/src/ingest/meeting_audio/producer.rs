@@ -8,13 +8,12 @@ use crate::ingest::MEETING_TRANSCRIPT_SCHEMA_V1;
 
 use super::alignment::make_turns;
 use super::cleanup::{AcousticCandidate, apply_cleanup};
-use super::packing::{packed_audio, source_times};
+use super::packing::{pack_speech_cut, packed_audio, quietest_ms, source_times};
 use super::provenance::{execution_mode, pcm_sha256, sha256, validate_receipt};
 use super::{
     AsrPackRequest, AsrRole, AudioError, AudioFile, AudioResult, BatchAsrRequest, BatchDefault,
     CleanupRequest, InferenceExecution, MeetingAudioHost, ProcessingTier,
     ProducedMeetingTranscript, ProducerOptions, TranscriptWord, align_words_to_speakers,
-    pack_speech,
 };
 
 /// Produce without admitting claims, enrolling speakers, or persisting audio.
@@ -39,7 +38,10 @@ pub fn produce_meeting_transcript<H: MeetingAudioHost + ?Sized>(
     let mut invocation_ids = HashSet::new();
     let vad = host.silero_vad(&audio, &pcm_hash)?;
     validate_receipt(&vad.provenance, &pcm_hash, &mut invocation_ids)?;
-    let packs = pack_speech(&vad.spans, duration_ms)?;
+    // An utterance longer than a pack is cut at its quietest point (Rule 5).
+    let packs = pack_speech_cut(&vad.spans, duration_ms, |lo, hi| {
+        quietest_ms(&audio, lo, hi)
+    })?;
     let row = options.batch_asr_policy.clone().unwrap_or_else(|| {
         crate::llm::PurposeDefaultTable::default()
             .voice(crate::llm::VoiceLane::AsrBatch)
@@ -106,13 +108,8 @@ pub fn produce_meeting_transcript<H: MeetingAudioHost + ?Sized>(
                     .acoustic_candidates
                     .iter()
                     .any(|candidate| candidate.trim().is_empty())
-                || options.cleanup_policy.as_ref().is_some_and(|policy| {
-                    word.acoustic_candidates.len() > policy.max_candidates_per_word
-                        || word
-                            .acoustic_candidates
-                            .iter()
-                            .any(|candidate| candidate.len() > policy.max_candidate_bytes)
-                })
+                // Every acoustic alternative is kept, however many and long
+                // (Rule 5).
                 || word.confidence.is_some_and(|confidence| {
                     !confidence.is_finite() || !(0.0..=1.0).contains(&confidence)
                 })

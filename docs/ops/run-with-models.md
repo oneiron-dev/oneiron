@@ -699,9 +699,8 @@ microsoft_tsc = "/opt/typescript-7.1.0-dev.20261010.1/package/lib/tsc"  # option
 
 Shadow mode blocks nothing and changes no program's result. Once a step's own
 state is saved, the check's report is appended to the run's replay record as
-`executor/repl/<step>.code-check.json`: backend and pin, latency, the first 32
-diagnostics in program coordinates (`diagnostics_omitted` counts the rest), or
-a failure code. Each check also logs one `oneiron::code_check` line with the
+`executor/repl/<step>.code-check.json`: backend and pin, latency, every
+diagnostic in program coordinates with its whole message, or a failure code. Each check also logs one `oneiron::code_check` line with the
 step's outcome (`completed`, `waiting`, `continued` or `failed`) and the
 running counts. A step that fails keeps no report, and neither does a run in an
 off-record session, whose overlay is quota-bounded; their checks are only in
@@ -1517,6 +1516,13 @@ return; a front tab that closes gives way to the tab that opened it. `GET
 /v1/owner/browsers/stream?run=<hex>` streams the front tab as the desktop's
 stream does, with a `tabs` event when the tabs change.
 
+The agent's own verbs follow the tabs too. A tab the agent's click opens
+comes to the front once it loads, and the click's observation reads it
+whole; a tab opened between calls comes to the front at the next verb; and
+a front tab that closes while the agent drives it gives way to the tab that
+opened it, else the newest. The next answer names the move as `switched`
+(`{tab, url, title, from, why}`, `why` being `opened` or `closed`).
+
 A browser or desktop observation comes in pages: an answer whose outline
 does not fit one page (256 KiB of rows) carries `next`, and
 `observe({cursor: next})` reads the next page of the same observation. The
@@ -1524,7 +1530,15 @@ pages of the last 8 observations stay readable. `find` and `wait_for` page
 their rows the same way, read on with `find({cursor: next})`. A desktop
 window's tree is read whole: a walk cua-driver cuts at its node budget is
 read again with a larger one, and a walk cut at its time budget with a
-longer one, up to 12 s.
+longer one, up to 12 s. A walk still cut there answers what it reached,
+marked `partial` (`{reason, visited, pending, walk_ms}`), as a whole
+observation, never a diff; its last page still carries `next`, and that
+cursor walks the window again at four times the time, up to cua-driver's
+120 s ceiling, and reads on with the rows past those already answered.
+`find`, `wait_for` and `expect` carry the same `partial` when the tree
+they read was cut. A routine `decide` step with more than 61 candidates
+asks its decider in pages of 61, moving to the next page on NONE; a step
+is never refused for its count.
 
 ## 11. When a provider refuses for a limit
 
@@ -1706,6 +1720,10 @@ unbound:
 [models.decisions]
 # The write gate's auto check through the ladder: allow or hold.
 auto_check = "Should this claim land without the owner's review?"
+# The wire health check's question, past a crossed threshold: a bot, or a
+# valid burst. Unlike the other rows, an unworded health check is still asked,
+# in the host's own words; a check already asked keeps the words it was asked in.
+wire_health = "Is this traffic one of our own tools, or a bot?"
 
 [models.decisions.seat]
 # A manifest-backed execute_code run picks its seat through the ladder:

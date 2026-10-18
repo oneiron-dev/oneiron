@@ -129,7 +129,7 @@ def exclusive_tracks(items, duration_ms, error=RuntimeRefusal):
         start = milliseconds(segment.start, duration_ms, error)
         end = milliseconds(segment.end, duration_ms, error)
         if (start < previous_end or end <= start or not isinstance(speaker, str)
-                or not speaker.strip() or len(speaker) > 128):
+                or not speaker.strip()):
             raise error("InvalidExclusiveDiarization")
         tracks.append({"start_ms": start, "end_ms": end, "speaker_cluster": speaker})
         previous_end = end
@@ -410,7 +410,10 @@ class LocalRuntime:
 
     def cleanup(self, turns):
         spec = self.require("cleanup")
-        if not isinstance(turns, list) or not turns or len(turns) > 10000:
+        # Every turn is cleaned, however many (Rule 5): turns go in groups that
+        # fit the model's input, and a group whose answer the output budget cut
+        # goes again as two halves, each its own call.
+        if not isinstance(turns, list) or not turns:
             raise self.error("InvalidCleanupInput")
         from mlx_lm import generate, load
         from mlx_lm.sample_utils import make_sampler
@@ -425,6 +428,9 @@ class LocalRuntime:
                 raise self.error("CleanupInputTooLong")
             text = generate(model, tokenizer, prompt=prompt, max_tokens=spec["max_tokens"], sampler=make_sampler(temp=0.0), verbose=False)
             if len(tokenizer.encode(text)) >= spec["max_tokens"]:
+                if len(group) > 1:
+                    half = len(group) // 2
+                    return generate_group(group[:half]) + generate_group(group[half:])
                 raise self.error("CleanupTokenBudgetExhausted")
             return cleanup_texts(text, len(group), self.error)
         result, group = [], []
@@ -502,8 +508,7 @@ def checked_process_tracks(tracks, duration_ms, error):
         if (not isinstance(track, dict) or set(track) != {"start_ms", "end_ms", "speaker_cluster"}
                 or type(track["start_ms"]) is not int or type(track["end_ms"]) is not int
                 or not previous <= track["start_ms"] < track["end_ms"] <= duration_ms
-                or not isinstance(track["speaker_cluster"], str) or not track["speaker_cluster"].strip()
-                or len(track["speaker_cluster"]) > 128):
+                or not isinstance(track["speaker_cluster"], str) or not track["speaker_cluster"].strip()):
             raise error("InvalidExclusiveDiarization")
         previous = track["end_ms"]
     return tracks
