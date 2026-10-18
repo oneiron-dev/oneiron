@@ -281,6 +281,11 @@ vaultSharedExecute(input: unknown): unknown
 vaultSharedReceipt(input: unknown): unknown
 vaultSharedOutcomes(input: unknown): unknown
 vaultSharedDeletion(input: unknown): unknown
+vaultOrgAdminConfigure(input: unknown): unknown
+vaultOrgAdminPowers(input: unknown): unknown
+vaultMembersResetProjectAccess(input: unknown): unknown
+vaultMembersDelegate(input: unknown): unknown
+vaultMembersProjection(input: unknown): unknown
 vaultMembersAdd(input: unknown): unknown
 vaultMembersInvitationSlip(input: unknown): unknown
 vaultMembersChange(input: unknown): unknown

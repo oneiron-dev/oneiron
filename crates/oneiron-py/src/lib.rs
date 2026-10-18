@@ -2372,6 +2372,48 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_org_admin_configure(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.org_admin.configure")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.org_admin.configure", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_org_admin_powers(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.org_admin.powers")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.org_admin.powers", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_members_reset_project_access(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.members.reset_project_access")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.members.reset_project_access", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_members_delegate(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.members.delegate")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.members.delegate", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_members_projection(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.members.projection")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.members.projection", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_members_add(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.members.add")?;
         let output = py

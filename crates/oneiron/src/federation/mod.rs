@@ -75,6 +75,7 @@ mod guest;
 mod peer_authority;
 pub mod record_scope;
 mod relationships;
+pub(crate) use relationships::resolve_member_relationship_filtered;
 mod stale;
 pub(crate) use stale::world_registered_to_pact_in;
 

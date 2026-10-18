@@ -2164,6 +2164,51 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_org_admin_configure(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.org_admin.configure", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_org_admin_powers(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.org_admin.powers", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_members_reset_project_access(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.members.reset_project_access", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_members_delegate(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.members.delegate", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_members_projection(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.members.projection", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_members_add(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.members.add", js_json(input))
