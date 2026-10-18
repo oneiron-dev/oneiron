@@ -29717,6 +29717,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AnswerAdmission"
+     ],
+     "path": "src/memory/answer_boundary.rs",
+     "purpose": "The answer boundary (OF-063, Engine ruling 1231): an answer's citations checked against the evidence it was…",
+     "surface": {
+      "enum": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ArchivePurgeEntry",
       "ArchivePurgePreview"
      ],
@@ -29833,7 +29846,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ChatAbstentionReason",
@@ -30257,7 +30270,7 @@
      "surface": {
       "crate-vis": 15,
       "mod": 2,
-      "re-export": 35
+      "re-export": 36
      }
     },
     {
@@ -53681,7 +53694,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 132,
+     "files": 133,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54360,9 +54373,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 185,
+   "over_bar": 184,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3302,
+   "source_files": 3303,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67034,13 +67047,23 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/memory_reason.rs",
      "purpose": "ONE-207: `POST /v1/companion/memory/reason`",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/memory_reason/answer_admission.rs",
+     "purpose": "The reasoning read's answer boundary (OF-063, Engine ruling 1231): a deep composition crosses the engine's…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -67718,7 +67741,7 @@
      "path": "src/api/scoped_auth.rs",
      "purpose": "Legacy owner-auth gate and scoped-read constructors for both auth flavors",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -69929,6 +69952,7 @@
      "path": "src/embedded.rs",
      "purpose": "The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened…",
      "surface": {
+      "crate-vis": 3,
       "fn": 1,
       "re-export": 2
      }
@@ -73559,7 +73583,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 314,
+     "files": 315,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -73958,9 +73982,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 55,
+   "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 625,
+   "source_files": 626,
    "test_files": 182
   },
   "oneiron-spawn": {
