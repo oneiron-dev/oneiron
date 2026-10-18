@@ -369,6 +369,7 @@ both bindings and their export-census tests in one change.
 - `vault.agents.spawn.get`
 - `vault.tasks.cancel_force`
 - `vault.runs.branches.get`
+- `vault.consults.get`
 - `vault.workspace.establish`
 - `vault.workspace.members.onboard`
 - `vault.workspace.roster`

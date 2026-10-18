@@ -3,13 +3,15 @@
 //! read the tree in force or one kept version; and the owner's read of one
 //! spawned agent by its attempt; and the owner's run doors over one TASK's
 //! branches (DOOR-100): the unrefusable force-stop of every live branch,
-//! and the read of every branch. `host_doors` re-exports them, so the
+//! and the read of every branch; and the owner's read of one consult's
+//! terminal register (DOOR-063). `host_doors` re-exports them, so the
 //! generated HTTP facade handler and the MCP dispatcher call them by the
 //! name every host door has.
 use std::sync::Arc;
 
 use oneiron::task_verb::run_doors::{
-    CancelForceReceipt, CancelForceRequest, RunBranchesRequest, RunBranchesView,
+    CancelForceReceipt, CancelForceRequest, ConsultInspection, ConsultReadRequest,
+    ConsultSummaryView, RunBranchesRequest, RunBranchesView,
 };
 use oneiron::team::doors::{
     CriticAssociation, PlannedSpawnObservation, PlannedSpawnRead, TaskTypeTreePin,
@@ -110,6 +112,46 @@ pub(crate) async fn vault_runs_branches_get(
         |read| Some(vec![read.task_ref]),
     )
     .await
+}
+
+/// A consult read names the TASK, the result its settlement wrote, each
+/// evidence or reason ref and a countered outcome's new TASK.
+pub(crate) async fn vault_consults_get(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ConsultReadRequest,
+) -> MaybeListed<ConsultInspection> {
+    const VERB: &str = "vault.consults.get";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| {
+            oneiron::task_verb::run_doors::read_consult_as(server.vault(), &owner, input)
+        },
+        consult_rows,
+    )
+    .await
+}
+
+fn consult_rows(read: &ConsultInspection) -> Option<Vec<oneiron::EntityId>> {
+    let mut rows = vec![read.task_ref];
+    if let Some(terminal) = &read.terminal {
+        rows.extend(terminal.result_ref);
+        match &terminal.summary {
+            Some(ConsultSummaryView::Answer { evidence_refs }) => {
+                rows.extend(evidence_refs.iter().map(|evidence| evidence.entity_ref()));
+            }
+            Some(ConsultSummaryView::Abstained { reason_ref }) => {
+                rows.push(reason_ref.entity_ref());
+            }
+            None => {}
+        }
+        rows.extend(terminal.counter_task_ref);
+    }
+    rows.sort_unstable();
+    rows.dedup();
+    Some(rows)
 }
 
 fn spawn_rows(read: &PlannedSpawnObservation) -> Option<Vec<oneiron::EntityId>> {
