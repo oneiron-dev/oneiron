@@ -88,11 +88,6 @@ pub(super) struct RecordingJsHost<'a, 's> {
     callable_depth: u32,
 }
 
-/// The deepest callable skills nest. Each runs its step inside its caller's,
-/// on the same thread's stack, so a call past it fails
-/// `skills_call_depth_exceeded` before its step runs.
-const CALLABLE_NEST_DEPTH: u32 = 8;
-
 /// The name a reader child reads its parent's source by.
 const READER_SOURCE_NAME: &str = "src";
 
@@ -272,8 +267,8 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
     /// The skill runs under a child of `parent`, the caller's step token: a
     /// stop of the caller stops it, and its owner's suspension stops it alone
     /// (FIX 600). A cancelled skill answers `code_step_cancelled`, and the
-    /// caller's step goes on. A callable's own call nests inside it, at most
-    /// [`CALLABLE_NEST_DEPTH`] deep.
+    /// caller's step goes on. A callable's own call nests inside it: past
+    /// the `[limits] callable_nest_depth` row it asks, and the call runs.
     fn call_skill(
         &mut self,
         seq: u64,
@@ -289,9 +284,6 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
                 error,
             })
         };
-        if self.callable_depth >= CALLABLE_NEST_DEPTH {
-            return Ok(failed("skills_call_depth_exceeded".to_owned()));
-        }
         let site = ExecutorCallSite {
             run_id: self.run_id,
             seq,
@@ -325,6 +317,10 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         };
         let (run_id, determinism) = (self.run_id, self.determinism);
         self.callable_depth += 1;
+        lease.vault.measure_limit(
+            crate::limit_ask::EngineLimit::CallableNestDepth,
+            u64::from(self.callable_depth),
+        );
         let ran = crate::skill::execute_callable_skill_cancellable(
             &lease.vault,
             &lease.leased,

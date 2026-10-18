@@ -118,11 +118,15 @@ pub enum EngineLimit {
     /// UTF-8 bytes of one contribution fork's answer its judge reads. Past
     /// it the row asks and the judge reads the answer whole.
     ContributionJudgeAnswerBytes,
+    /// Callable skills one call nests, itself included: a callable that
+    /// calls another runs the inner one's step inside its own. Past it the
+    /// row asks whether everything is okay and the call runs.
+    CallableNestDepth,
 }
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 27] = [
+    pub const ALL: [Self; 28] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -150,6 +154,7 @@ impl EngineLimit {
         Self::JudgeRubricBytes,
         Self::ContributionJudgeTaskBytes,
         Self::ContributionJudgeAnswerBytes,
+        Self::CallableNestDepth,
     ];
 
     /// The config key that sets the row.
@@ -182,6 +187,7 @@ impl EngineLimit {
             Self::JudgeRubricBytes => "limits.judge_rubric_bytes",
             Self::ContributionJudgeTaskBytes => "limits.contribution_judge_task_bytes",
             Self::ContributionJudgeAnswerBytes => "limits.contribution_judge_answer_bytes",
+            Self::CallableNestDepth => "limits.callable_nest_depth",
         }
     }
 
@@ -220,6 +226,7 @@ impl EngineLimit {
             // ladder refuses a larger one: the row asks before that.
             Self::ContributionJudgeTaskBytes => 24 << 10,
             Self::ContributionJudgeAnswerBytes => 16 << 10,
+            Self::CallableNestDepth => 8,
         }
     }
 }
