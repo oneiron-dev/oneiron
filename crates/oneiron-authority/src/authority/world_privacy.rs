@@ -170,16 +170,18 @@ pub enum PrivacyDirection {
 /// (Inherit to Ordered or back, or a reordering) counts as a widen: a route
 /// the world never used could read it (CALLS "FIX 4480 direction", open).
 #[must_use]
-pub fn privacy_direction<'a>(
-    heads: impl IntoIterator<Item = &'a WorldPrivacy>,
+pub fn privacy_direction<H: core::borrow::Borrow<WorldPrivacy>>(
+    heads: impl IntoIterator<Item = H>,
     next: &WorldPrivacy,
 ) -> PrivacyDirection {
     let default = WorldPrivacy::default();
-    let mut heads = heads.into_iter().peekable();
-    let heads: Vec<&WorldPrivacy> = if heads.peek().is_none() {
+    let held: Vec<H> = heads.into_iter().collect();
+    let heads: Vec<&WorldPrivacy> = if held.is_empty() {
         vec![&default]
     } else {
-        heads.collect()
+        held.iter()
+            .map(<H as core::borrow::Borrow<WorldPrivacy>>::borrow)
+            .collect()
     };
     if heads.iter().all(|head| *head == next) {
         return PrivacyDirection::Equal;

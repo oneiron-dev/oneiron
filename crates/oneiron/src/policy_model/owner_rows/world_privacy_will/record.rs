@@ -153,10 +153,11 @@ pub(super) struct NewRequest {
 }
 
 impl Vault {
-    /// Opens one request in the caller's writer. A proposal tells every
-    /// holder at once, its notice's one tap cancelling it; a widen ask tells
-    /// them through the decision ask its door queues after the commit
-    /// ([`Self::queue_world_privacy_ask`]).
+    /// Opens one request in the caller's writer and tells every holder at
+    /// once: a proposal's notice cancels it in one tap; a widen ask's notice
+    /// names the request each holder confirms or declines at the
+    /// world-privacy door, beside the decision ask its door queues for the
+    /// owners after the commit ([`Self::queue_world_privacy_ask`]).
     pub(super) fn open_world_privacy_request_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -182,17 +183,26 @@ impl Vault {
             at,
         };
         REQUESTS.put(&self.store, txn, &id, &request)?;
-        if new.kind == WorldPrivacyRequestKind::Proposal {
-            self.notify_world_holders_in_txn(
-                txn,
+        let (kind, detail) = match new.kind {
+            WorldPrivacyRequestKind::Proposal => (
                 NotificationKind::WorldPrivacyProposed,
-                &request.request_id,
-                new.world,
-                &new.holders,
                 "an agent proposes stricter settings for this world; any one holder accepts it, \
                  and this notice's tap cancels it",
-            )?;
-        }
+            ),
+            WorldPrivacyRequestKind::WidenAsk => (
+                NotificationKind::Ask,
+                "a widen of this world's settings waits for a holder's yes: it is irreversible \
+                 in effect, so confirm or decline it at the world-privacy door",
+            ),
+        };
+        self.notify_world_holders_in_txn(
+            txn,
+            kind,
+            &request.request_id,
+            new.world,
+            &new.holders,
+            detail,
+        )?;
         Ok(request)
     }
 
