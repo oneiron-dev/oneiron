@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 846 facade rows, 2921 declarations.
+Census: 846 facade rows, 2924 declarations.
 Inputs: 794 of 846 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 762 of 846 fully typed, 84 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 100; unread shapes: 0.
+Opaque serde_json::Value leaves: 101; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -4811,7 +4811,7 @@ class SharedActPoliciesView(TypedDict):
 class SharedActPolicyProposeRequest(TypedDict):
     vault_id: str
     act: str
-    policy: NotRequired[SharedActPolicy | None]
+    policy: SharedActPolicy | None
     expected_policy_hash: str
 SharedActPolicyChangeState = Literal["pending", "applied", "vetoed", "stale"]
 class SharedActPolicyChange(TypedDict):
@@ -10359,10 +10359,10 @@ class ScopeResourceProjection(TypedDict):
     key: str
 ScopeResource = ScopeResourceBucket | ScopeResourceDocumentVersion | ScopeResourceProjection
 class ScopeScope(TypedDict):
-    world: NotRequired[str | None]
-    facet: NotRequired[str | None]
-    relationship: NotRequired[str | None]
-    project: NotRequired[str | None]
+    world: str | None
+    facet: str | None
+    relationship: str | None
+    project: str | None
     readable: list[ScopeResource]
     writable: list[ScopeResource]
 class ProjectAuthority(TypedDict):
@@ -11691,7 +11691,7 @@ class DecisionAsk(TypedDict):
     prior: NotRequired[AskPrior | None]
     queue_pin: ProviderPin
     to: AskTo
-    correlation: NotRequired[str | None]
+    correlation: str | None
     role: NotRequired[ResolvedRole | None]
     answer: NotRequired[AskAnswer | None]
     withdrawn_at: NotRequired[int | None]
@@ -11779,7 +11779,7 @@ class ConstraintObject(TypedDict):
     schema_version: int
     weekdays: NotRequired[list[ConstraintWeekday]]
     local_time_windows: NotRequired[list[LocalMinuteWindow]]
-    utc_window: NotRequired[ConstraintTimeRangeWire | None]
+    utc_window: ConstraintTimeRangeWire | None
     allow_flex_pool: bool
 class BookingConstraintInputObject(TypedDict):
     kind: Literal["object"]
@@ -14866,6 +14866,19 @@ class LeaderSplitOutput(TypedDict):
 class SkillCallInput(TypedDict):
     skill: str
     args: Any
+class LensFrameEventRequest(TypedDict):
+    event: GeneratedUiActionEvent
+    idempotencyKey: str
+LensFrameEventReplyLocal = TypedDict("LensFrameEventReplyLocal", {"$state": GeneratedUiStateSnapshot})
+class LensFrameEventReplyTool(TypedDict):
+    outcome: Any
+    readReceipt: ScopedReadReceipt
+class LensFrameEventReplyCallback(TypedDict):
+    queued: bool
+    callbackId: str
+LensFrameEventReply = LensFrameEventReplyLocal | LensFrameEventReplyTool | LensFrameEventReplyCallback
+class CloseLensFrameReply(TypedDict):
+    closed: bool
 class MessageResultSource(TypedDict):
     run_id: EntityId
     occurrence: EntityId

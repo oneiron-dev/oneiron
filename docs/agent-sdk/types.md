@@ -401,6 +401,8 @@ export type FacadeReceipt = {
   actorRef?: string
   contentKind: string
   claimRef?: string
+  /** That claim as a typed record ref, labelled with its kind and id. */
+  claim?: RecordRef
   /** A family receipt's own fields; empty on a gate-ledger row. */
   fields: Record<string, string>
 }
@@ -608,6 +610,8 @@ class FacadeReceipt(TypedDict):
     actor_ref: str | None
     content_kind: str
     claim_ref: str | None
+    # That claim as a typed record ref, labelled with its kind and id.
+    claim: RecordRef | None
     fields: NotRequired[dict[str, str]]
 
 
@@ -648,20 +652,8 @@ class KeyValueNamespaces(TypedDict):
     limit: NotRequired[int]
     offset: NotRequired[int]
 
-class TasksOverflow(TypedDict):
-    known_omitted_rows: int
-    source_exhausted: bool
-
-class TasksSectionDescription(TypedDict):
-    kind: Literal["tasks_section"]
-    rows: list[dict[str, Any]]
-    overflow: TasksOverflow | None
-
-class TaskCardDescription(TypedDict):
-    kind: Literal["task_card"]
-    lines: list[str]
-
-TaskDescription = TasksSectionDescription | TaskCardDescription
+# `describe`'s answer, every variant the engine writes (the generated type).
+TaskDescription = Facade.TaskDescription
 
 class TaskCancelReceipt(TypedDict):
     approval: Literal["auto", "proposed", "approved", "rejected"]

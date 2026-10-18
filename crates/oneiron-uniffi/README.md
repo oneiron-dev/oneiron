@@ -43,8 +43,8 @@
 | `in_room_turn(room_ref: String)` | `client.inRoomTurn(roomRef:)` | a NEW handle whose every verb runs as a turn in that room |
 | `last_receipt_ref() -> Option<String>` | `client.lastReceiptRef()` | the `call:<32hex>` receipt the last remote reply stated; `nil` when embedded |
 | `retry(pending: WireJson, verb: String, input: WireJson) -> WireJson` | `client.retry(pending:verb:input:)` | resends a call a verb hook stopped on an ask under its invocation: `pending` is the `PENDING_ASK` failure's `pending` payload, `input` the same input; answers the verb's wire JSON |
-| `lens_frame_event(card_id: String, request: WireJson) -> WireJson` | `client.lensFrameEvent(cardId:request:)` | sends one `{event, idempotencyKey}` on a lens card the connected server rendered; answers `{"$state"}` or `{outcome, readReceipt}` |
-| `close_lens_frame(card_id: String) -> WireJson` | `client.closeLensFrame(cardId:)` | closes that card and frees its frame; answers `{closed}` |
+| `lens_frame_event(card_id: String, request: LensFrameEventRequest) -> LensFrameEventReply` | `client.lensFrameEvent(cardId:request:)` | sends one `{event, idempotencyKey}` record on a lens card the connected server rendered; answers the `Local` (`$state`), `Tool` (`outcome`, `readReceipt`) or `Callback` variant |
+| `close_lens_frame(card_id: String) -> CloseLensFrameReply` | `client.closeLensFrame(cardId:)` | closes that card and frees its frame; answers `{closed}` |
 
 The two lens-card methods are routes outside the facade (OF-181), not verbs. A
 card's frame lives only on the served host that rendered it

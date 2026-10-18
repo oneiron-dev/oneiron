@@ -40,6 +40,9 @@ CRATES = {
     'oneiron_container': 'crates/oneiron-container/src',
     'oneiron_spawn': 'crates/oneiron-spawn/src',
     'oneiron_guest': 'crates/oneiron-guest/src',
+    # The client crate: the hand-written lens-frame calls cross its bodies
+    # (FIX 3297). Read only when a root names it.
+    'oneiron_remote': 'crates/oneiron-remote/src',
 }
 # Read up front; any other crate is read the first time a path names it.
 EAGER = ('oneiron', 'oneiron_contracts', 'oneiron_authority', 'oneiron_model', 'oneiron_retrieval')
@@ -56,6 +59,13 @@ STRING = ('prim', 'string')
 BOOL = ('prim', 'bool')
 NULL = ('prim', 'null')
 OPAQUE = ('opaque',)
+# Field codecs that write an id's 16 bytes: serde_json writes `[u8; 16]` as
+# an array of numbers. By (crate, module path) a codec path resolves to; each
+# maps the id leaf, under any Option, sequence or map around it.
+BYTE_ID_CODECS = {
+    ('oneiron', ('llm', 'entity_refs')): ('array', ('prim', 'int', 'u8')),
+    ('oneiron', ('llm', 'entity_refs', 'list')): ('array', ('prim', 'int', 'u8')),
+}
 
 # Types of std and of external crates, by the last segment of their path.
 LEAVES = {
@@ -689,13 +699,18 @@ class Inventory:
         'A field under `with = codec`: id, hex, digest, base64 and decimal codecs put a string on the wire.'
         leaf = codec.rsplit('::', 1)[-1]
         if re.search(r'limited|bounded|capped', codec): return self.ir(ast, context, params, where)
+        # A codec that writes an id's raw bytes (`crate::llm::entity_refs`
+        # and its `list`): serde_json spells them as an array of numbers, so
+        # its name never reads as a string codec (FIX 4395).
+        wire = BYTE_ID_CODECS.get(self.codec_place(codec, context))
         # `decimal`: a u64 the JSON wire carries as a decimal string, past
         # JavaScript's safe integers (the shared vault id, OF-158).
-        stringy = re.search(r'entit|ref|_id|id_|^id$|::id$|hex|digest|base64|b64|hash|blake|uuid|display|decimal', codec + '::' + leaf)
-        if not stringy:
+        stringy = wire is None and re.search(r'entit|ref|_id|id_|^id$|::id$|hex|digest|base64|b64|hash|blake|uuid|display|decimal', codec + '::' + leaf)
+        if wire is None and not stringy:
             mirror = self.codec_mirror(codec, context)
             if mirror is not None: return self.ir(parse_type(mirror[0]), mirror[1], params, where)
             return self.fallback(where, codec, 'field codec')
+        wire = wire or STRING
         def walk(node):
             if node[0] == 'path':
                 name = node[1][-1]
@@ -704,18 +719,24 @@ class Inventory:
                     return ('array', walk(node[2][0]))
                 if name in MAPS and len(node[2]) > 1: return ('map', walk(node[2][1]))
             if node[0] == 'ref': return walk(node[1])
-            return STRING
+            return wire
         return walk(ast)
 
-    def codec_mirror(self, codec, context):
-        'The wire mirror a codec module reads in its `deserialize` (`Option::<Row>::deserialize(deserializer)`), with the context its names resolve in; None when it reads none.'
+    def codec_place(self, codec, context):
+        'The (crate, module path) a codec path names from its field\'s file; None for an external one.'
         crate, file, module = context
         segments = codec.split('::')
         names, _ = self.index.uses(crate, file)
         if segments[0] in names: segments = list(names[segments[0]]) + segments[1:]
         place = self.index.absolute(segments, crate, module)
         if place is None or not place[1]: return None
-        target, path = place[0], tuple(place[1])
+        return place[0], tuple(place[1])
+
+    def codec_mirror(self, codec, context):
+        'The wire mirror a codec module reads in its `deserialize` (`Option::<Row>::deserialize(deserializer)`), with the context its names resolve in; None when it reads none.'
+        place = self.codec_place(codec, context)
+        if place is None: return None
+        target, path = place
         own = self.index.modules.get((target, path))
         if own is not None:
             text, where = self.index.files[(target, own)], (target, own, path)
@@ -769,9 +790,15 @@ class Inventory:
             if serde.get('flatten'):
                 flat.append(('partial', value[1]) if value[0] == 'option' else value); continue
             key = serialize_case(serde.get('rename')) or rename(name, case, False)
-            optional = (value[0] == 'option' or 'default' in serde or container_default or 'skip_serializing_if' in serde
+            # serde reads a missing `Option` as `None` only without a field
+            # codec: under `with`/`deserialize_with` and no `default` the key
+            # is required, `null` allowed (FIX 4287).
+            required_null = (value[0] == 'option' and isinstance(codec_of(serde), str) and 'default' not in serde
+                             and not container_default)
+            optional = ((value[0] == 'option' and not required_null) or 'default' in serde or container_default
+                        or 'skip_serializing_if' in serde
                         or serde.get('skip_serializing') is True or serde.get('skip_deserializing') is True)
-            if value[0] == 'option' and isinstance(codec_of(serde), str) and 'default' not in serde and not container_default:
+            if required_null:
                 self.null_fields.add((where, key))
             out.append((key, value, optional))
         return out, flat

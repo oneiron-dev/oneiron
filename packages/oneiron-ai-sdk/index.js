@@ -43,9 +43,12 @@ export function memoryTools(memory) {
       execute: ({ query, options }) => memory.vault.recall(query, options),
     }),
     receipts: tool({
-      description: "Read memory governance receipts, newest first.",
-      inputSchema: schema({ limit: { type: "integer", minimum: 1, maximum: 1000 } }),
-      execute: ({ limit }) => memory.vault.receipts(limit),
+      description: "Read memory governance receipts, newest first: the gate decision ledger, or the receipts of the named kinds (gate, hook, outbound, ...).",
+      inputSchema: schema({
+        limit: { type: "integer", minimum: 1, maximum: 1000 },
+        kinds: { type: "array", items: { type: "string" } },
+      }),
+      execute: ({ limit, kinds }) => memory.vault.receipts(limit, kinds),
     }),
   }
 }

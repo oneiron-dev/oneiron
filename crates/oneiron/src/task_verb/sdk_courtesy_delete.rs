@@ -34,7 +34,7 @@ pub struct CourtesyDeleteSendRequest {
 }
 
 /// One ask this vault sent, as its outbox holds it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CourtesyDeleteSent {
     /// The ask's request id, as 32 hex.
     pub request: String,
@@ -82,7 +82,7 @@ pub struct CourtesyDeleteAnswerRequest {
 
 /// One world an incoming ask names, with its stale stamp when the pact's
 /// end already stopped its refresh.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CourtesyDeleteAskedWorld {
     pub world: String,
     pub stale: Option<String>,
@@ -90,8 +90,9 @@ pub struct CourtesyDeleteAskedWorld {
 }
 
 /// The owner's recorded choice on an incoming ask.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CourtesyDeleteChoice {
+    #[schemars(with = "String")]
     pub choice: CooperativeDeletionDispositionKind,
     pub reason_code: Option<String>,
     /// RFC 3339.
@@ -102,7 +103,7 @@ pub struct CourtesyDeleteChoice {
 }
 
 /// One ask a former peer sent, filed for the owner's review.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CourtesyDeleteIncoming {
     pub request: String,
     pub pact: String,

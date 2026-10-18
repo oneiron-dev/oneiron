@@ -975,7 +975,7 @@ declare namespace Sdk {
   type SharedActPrecedence = "vault_only" | "holder_may_narrow";
   type SharedActPolicy = { wait_secs: number; objector_roles: FederationGrantRole[]; initiator_roles: FederationGrantRole[]; policy_editor_roles: FederationGrantRole[]; required_verb: string; starter_may_object: boolean; max_act_name_bytes: number; max_payload_bytes: number; precedence: SharedActPrecedence };
   type SharedActPoliciesView = { vault_id: string; shipped: Record<string, SharedActPolicy>; overrides: Record<string, SharedActPolicy>; effective: Record<string, SharedActPolicy>; policy_hash: string };
-  type SharedActPolicyProposeRequest = { vault_id: string; act: string; policy?: SharedActPolicy | null; expected_policy_hash: string };
+  type SharedActPolicyProposeRequest = { vault_id: string; act: string; policy: SharedActPolicy | null; expected_policy_hash: string };
   type SharedActPolicyChangeState = "pending" | "applied" | "vetoed" | "stale";
   type SharedActPolicyChange = { id: string; vault_id: string; act: string; policy?: SharedActPolicy | null; base_policy_hash: string; proposer: string; proposed_at: number; approvals: string[]; vetoed_by?: string | null; state: SharedActPolicyChangeState; settled_at?: number | null; awaiting?: string[] };
   type SharedActPolicyAnswerRequest = { change_id: string; approve: boolean };
@@ -2096,7 +2096,7 @@ declare namespace Sdk {
   type ProjectRevisionHash = number[];
   type ProjectParentWitness = { project: EntityId; head: ProjectRevisionHash; leader: EntityId };
   type ScopeResource = { kind: "bucket"; key: string } | { kind: "document_version"; document: string; version: string } | { kind: "projection"; key: string };
-  type ScopeScope = { world?: string | null; facet?: string | null; relationship?: string | null; project?: string | null; readable: ScopeResource[]; writable: ScopeResource[] };
+  type ScopeScope = { world: string | null; facet: string | null; relationship: string | null; project: string | null; readable: ScopeResource[]; writable: ScopeResource[] };
   type ProjectAuthority = { parents: string[]; parent_heads?: ProjectParentWitness[]; claims_scope_ref: string; slice: ScopeScope; depth_limit: number; depth_remaining: number; leader: string; board: string[]; roster?: string[] | null };
   type ProjectAnchor = { authority: ProjectAuthority; proof?: ProjectWriteProof | null };
   type ProjectProofVersion = "v2" | "v3";
@@ -2341,7 +2341,7 @@ declare namespace Sdk {
   type RoleHolder = { actor: string; kind: HolderKind };
   type ResolvedRole = { role: AskRole; holders: RoleHolder[] };
   type AskAnswer = { answer: DecisionAnswer; answered_at: number; by: string; role: AskRole; kind: HolderKind; changed: boolean; reason?: string | null; rule?: HostRuleRef | null };
-  type DecisionAsk = { seq: number; id: string; asked_at: number; question: DecisionQuestion; principal: string; evidence: string[]; reason: HumanAskReason; prior?: AskPrior | null; queue_pin: ProviderPin; to: AskTo; correlation?: string | null; role?: ResolvedRole | null; answer?: AskAnswer | null; withdrawn_at?: number | null };
+  type DecisionAsk = { seq: number; id: string; asked_at: number; question: DecisionQuestion; principal: string; evidence: string[]; reason: HumanAskReason; prior?: AskPrior | null; queue_pin: ProviderPin; to: AskTo; correlation: string | null; role?: ResolvedRole | null; answer?: AskAnswer | null; withdrawn_at?: number | null };
   type DecisionAskClimbRequest = { seq: number };
   type ConnectorListRequest = { query?: string | null };
   type ConnectorEntry = { name: string; connector: string; summary: string; verbs: string[]; call_class: string; registered_at: number };
@@ -2404,7 +2404,7 @@ declare namespace Sdk {
   type ConstraintWeekday = "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
   type LocalMinuteWindow = { start_minute: number; end_minute: number };
   type ConstraintTimeRangeWire = { start: number; end: number };
-  type ConstraintObject = { schema_version: number; weekdays?: ConstraintWeekday[]; local_time_windows?: LocalMinuteWindow[]; utc_window?: ConstraintTimeRangeWire | null; allow_flex_pool: boolean };
+  type ConstraintObject = { schema_version: number; weekdays?: ConstraintWeekday[]; local_time_windows?: LocalMinuteWindow[]; utc_window: ConstraintTimeRangeWire | null; allow_flex_pool: boolean };
   type BookingConstraintInput = { kind: "object"; value: ConstraintObject } | { kind: "free_text"; value: string };
   type BookingAvailabilityInput = { event_type: EventTypeKey; window: TimeRangeWire; visitor_tz: string; constraint?: BookingConstraintInput | null; session_ref: string };
   type BookingAvailabilityRequest = { op: "availability"; page_token: string; input: BookingAvailabilityInput };

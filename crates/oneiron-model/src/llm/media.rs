@@ -470,7 +470,7 @@ impl MediaRequest {
 
 /// What a provider counted for one media call. Tokens when it counts
 /// tokens; otherwise its native counts.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MediaUsage {
     #[serde(default)]
     pub input_tokens: u64,

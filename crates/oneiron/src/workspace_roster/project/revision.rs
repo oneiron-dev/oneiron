@@ -20,7 +20,8 @@ pub(crate) const PROJECT_REVISION_SHORT_ID_PREFIX: &str = "pv";
 const REVISION_HASH_DOMAIN: &[u8] = b"oneiron/project-revision/v1/";
 
 /// blake3(REVISION_HASH_DOMAIN || canonical body). Serde: a MessagePack bin of
-/// exactly 32 bytes; another length or an array form is refused.
+/// exactly 32 bytes, or the array of exactly 32 numbers serde_json writes for
+/// it; another length is refused.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ProjectRevisionHash(pub [u8; 32]);
 
@@ -44,7 +45,7 @@ impl<'de> Deserialize<'de> for ProjectRevisionHash {
         deserializer: D,
     ) -> std::result::Result<Self, D::Error> {
         struct Bytes32;
-        impl serde::de::Visitor<'_> for Bytes32 {
+        impl<'de> serde::de::Visitor<'de> for Bytes32 {
             type Value = ProjectRevisionHash;
             fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 f.write_str("32 bytes")
@@ -57,6 +58,18 @@ impl<'de> Deserialize<'de> for ProjectRevisionHash {
                     .try_into()
                     .map(ProjectRevisionHash)
                     .map_err(|_| E::invalid_length(bytes.len(), &self))
+            }
+            // serde_json writes the bytes as an array of numbers; exactly 32
+            // of them read back (FIX 3296).
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> std::result::Result<Self::Value, A::Error> {
+                let mut bytes = Vec::with_capacity(32);
+                while let Some(byte) = seq.next_element::<u8>()? {
+                    bytes.push(byte);
+                }
+                self.visit_bytes(&bytes)
             }
         }
         deserializer.deserialize_bytes(Bytes32)

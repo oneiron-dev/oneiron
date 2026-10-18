@@ -396,6 +396,8 @@ export type FacadeReceipt = {
   actorRef?: string
   contentKind: string
   claimRef?: string
+  /** That claim as a typed record ref, labelled with its kind and id. */
+  claim?: RecordRef
   /** A family receipt's own fields; empty on a gate-ledger row. */
   fields: Record<string, string>
 }

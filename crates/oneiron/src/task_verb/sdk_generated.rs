@@ -5126,6 +5126,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "ai.voice.end",
     "ai.voice.close",
     "ai.anonymous_chat",
+    "ai.speech",
     "vault.voices.packs.put",
     "vault.voices.render_consent",
     "vault.voices.targets.provision",
@@ -6366,6 +6367,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "ai.anonymous_chat" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::AnonymousChatResponse,
         >(),
+        "ai.speech" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::AiAnswer>()
+        }
         "vault.voices.packs.put" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::VoiceBankPackReceipt,
         >(),
