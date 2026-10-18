@@ -2,14 +2,15 @@
 //! schedules and the proactivity digest are deterministic projections, so a
 //! server with no `[models]`, or whose Dreamer did not start, still serves
 //! them on their deadlines, on the vault's home node only. A vault no node
-//! has claimed is claimed here, as the standing-question pump claims it.
+//! has claimed is claimed here, as the standing-question pump claims it,
+//! except on a device of another home, which claims nothing.
 //! With a Dreamer, its timer's Deadline passes serve them instead, so
 //! exactly one runner does. It sleeps until the next digest falls due and
 //! wakes early on a committed change.
 use std::sync::Arc;
 use std::time::Duration;
 
-use oneiron::{DreamerRunnerStore, Vault};
+use oneiron::DreamerRunnerStore;
 
 use crate::server::{HousekeepingAdmission, SyncServer};
 
@@ -37,7 +38,7 @@ pub(crate) fn spawn(
             let next = match admit() {
                 Some(pass) => tokio::task::spawn_blocking(move || {
                     let _pass = pass;
-                    serve_due(server.vault(), oneiron_vault_contract::now_ts())
+                    serve_due(&server, oneiron_vault_contract::now_ts())
                 })
                 .await
                 .unwrap_or_else(|error| {
@@ -66,8 +67,9 @@ pub(crate) fn spawn(
 /// weave digest, each failure logged by kind on its own (their text can
 /// quote the vault). Returns the earliest second either falls due next;
 /// `None` off home, or when neither is armed.
-fn serve_due(vault: &Vault, now: u64) -> Option<u64> {
-    let home = crate::decision_graph::at_home(vault, now).and_then(|home| {
+fn serve_due(server: &SyncServer, now: u64) -> Option<u64> {
+    let vault = server.vault();
+    let home = crate::decision_graph::at_home(server, now).and_then(|home| {
         if !home {
             return Ok(None);
         }
