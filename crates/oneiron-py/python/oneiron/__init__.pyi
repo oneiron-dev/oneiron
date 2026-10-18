@@ -380,6 +380,10 @@ class Oneiron:
     def tasks(self) -> "Oneiron._TasksVerbs": ...
     @property
     def reveal(self) -> "Oneiron._RevealVerbs": ...
+    def mount(self, spec: Facade.GraphFsMountRequest) -> Facade.GraphFsMounted:
+        """Open the caller-scoped live graph or a retained repository snapshot, resolving a snapshot id to its exact fork hash."""
+    @property
+    def graph_fs(self) -> "Oneiron._GraphFsVerbs": ...
     def can(self, request: TaskCanAskRequest) -> TaskAskPreflight: ...
     def peek(self, request: TaskAskHandle) -> list[TaskAskPersonEvidence]: ...
     @overload
@@ -2491,6 +2495,25 @@ class Oneiron:
             """Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt."""
         def describe(self, spec: Facade.RevealDescribeRequest) -> Facade.RevealHandleCard:
             """What a secret handle names, where it was found and what a reveal of it would do now; never the value."""
+    class _GraphFsVerbs:
+        def readdir(self, spec: Facade.GraphFsPathRequest) -> Facade.GraphFsDirectoryView:
+            """List one directory at the mounted reference under the caller read gate, with a sealed continuation."""
+        def read_file(self, spec: Facade.GraphFsPathRequest) -> Facade.GraphFsOutput:
+            """Read a bounded page of file bytes at the mounted reference, with its encoding and sealed continuation."""
+        def read_link(self, spec: Facade.GraphFsLinkRequest) -> Facade.GraphFsLinkView:
+            """Resolve a visible graph link at the mounted reference without following a host filesystem link."""
+        def ls(self, spec: Facade.GraphFsLsRequest) -> Facade.GraphFsOutput:
+            """List names at the mounted reference, using the live temporal index when requested."""
+        def find(self, spec: Facade.GraphFsFindRequest) -> Facade.GraphFsOutput:
+            """Walk visible paths at the mounted reference, or push a live newer-than query into the temporal index."""
+        def grep(self, spec: Facade.GraphFsGrepRequest) -> Facade.GraphFsOutput:
+            """Search visible mounted file bytes, using the live claim text index for supported recursive patterns."""
+        def cat(self, spec: Facade.GraphFsPathRequest) -> Facade.GraphFsOutput:
+            """Read a bounded page of mounted file bytes as UTF-8 or base64 without changing its reference."""
+        def head(self, spec: Facade.GraphFsHeadRequest) -> Facade.GraphFsOutput:
+            """Read the first requested lines at the mounted reference with bounded output and a sealed continuation."""
+        def wc(self, spec: Facade.GraphFsLinkRequest) -> Facade.GraphFsOutput:
+            """Count lines, words and bytes of a visible file at the mounted reference."""
     class _AiVerbs:
         @property
         def steps(self) -> "Oneiron._AiStepsVerbs": ...

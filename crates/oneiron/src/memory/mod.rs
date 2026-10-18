@@ -64,6 +64,7 @@ mod export;
 mod expression_preference;
 pub mod extraction;
 pub mod hook_regen_doors;
+pub mod graph_fs_doors;
 mod inspection;
 mod key_value;
 mod lifted_view;

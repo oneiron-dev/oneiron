@@ -306,6 +306,12 @@ class Oneiron:
     @property
     def reveal(self) -> "Oneiron._RevealVerbs":
         return Oneiron._RevealVerbs(self._client)
+    def mount(self, spec):
+        """Open the caller-scoped live graph or a retained repository snapshot, resolving a snapshot id to its exact fork hash."""
+        return json.loads(_translate(lambda: self._client.mount(json.dumps(spec))))
+    @property
+    def graph_fs(self) -> "Oneiron._GraphFsVerbs":
+        return Oneiron._GraphFsVerbs(self._client)
     def can(self, request: dict[str, Any]) -> dict[str, Any]:
         """Read-only ask routing or attributed partial answers."""
         return json.loads(_translate(lambda: self._client.can(json.dumps(request, allow_nan=False))))
@@ -3936,6 +3942,36 @@ class Oneiron:
         def describe(self, spec):
             """What a secret handle names, where it was found and what a reveal of it would do now; never the value."""
             return json.loads(_translate(lambda: self._client.reveal_describe(json.dumps(spec))))
+    class _GraphFsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def readdir(self, spec):
+            """List one directory at the mounted reference under the caller read gate, with a sealed continuation."""
+            return json.loads(_translate(lambda: self._client.graph_fs_readdir(json.dumps(spec))))
+        def read_file(self, spec):
+            """Read a bounded page of file bytes at the mounted reference, with its encoding and sealed continuation."""
+            return json.loads(_translate(lambda: self._client.graph_fs_read_file(json.dumps(spec))))
+        def read_link(self, spec):
+            """Resolve a visible graph link at the mounted reference without following a host filesystem link."""
+            return json.loads(_translate(lambda: self._client.graph_fs_read_link(json.dumps(spec))))
+        def ls(self, spec):
+            """List names at the mounted reference, using the live temporal index when requested."""
+            return json.loads(_translate(lambda: self._client.graph_fs_ls(json.dumps(spec))))
+        def find(self, spec):
+            """Walk visible paths at the mounted reference, or push a live newer-than query into the temporal index."""
+            return json.loads(_translate(lambda: self._client.graph_fs_find(json.dumps(spec))))
+        def grep(self, spec):
+            """Search visible mounted file bytes, using the live claim text index for supported recursive patterns."""
+            return json.loads(_translate(lambda: self._client.graph_fs_grep(json.dumps(spec))))
+        def cat(self, spec):
+            """Read a bounded page of mounted file bytes as UTF-8 or base64 without changing its reference."""
+            return json.loads(_translate(lambda: self._client.graph_fs_cat(json.dumps(spec))))
+        def head(self, spec):
+            """Read the first requested lines at the mounted reference with bounded output and a sealed continuation."""
+            return json.loads(_translate(lambda: self._client.graph_fs_head(json.dumps(spec))))
+        def wc(self, spec):
+            """Count lines, words and bytes of a visible file at the mounted reference."""
+            return json.loads(_translate(lambda: self._client.graph_fs_wc(json.dumps(spec))))
     class _AiVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

@@ -410,6 +410,16 @@ pub enum AgentVerb {
     VaultArtifactsThreadsList,
     VaultArtifactsThreadsAssign,
     VaultArtifactsThreadsState,
+    Mount,
+    GraphFsReaddir,
+    GraphFsReadFile,
+    GraphFsReadLink,
+    GraphFsLs,
+    GraphFsFind,
+    GraphFsGrep,
+    GraphFsCat,
+    GraphFsHead,
+    GraphFsWc,
     VaultCodeDiff,
     VaultCodeBlame,
     VaultCodeProposalView,
@@ -1216,6 +1226,16 @@ impl AgentVerb {
         Self::VaultArtifactsThreadsList,
         Self::VaultArtifactsThreadsAssign,
         Self::VaultArtifactsThreadsState,
+        Self::Mount,
+        Self::GraphFsReaddir,
+        Self::GraphFsReadFile,
+        Self::GraphFsReadLink,
+        Self::GraphFsLs,
+        Self::GraphFsFind,
+        Self::GraphFsGrep,
+        Self::GraphFsCat,
+        Self::GraphFsHead,
+        Self::GraphFsWc,
         Self::VaultCodeDiff,
         Self::VaultCodeBlame,
         Self::VaultCodeProposalView,
@@ -2043,6 +2063,16 @@ impl AgentVerb {
             Self::VaultArtifactsThreadsList => "vault.artifacts.threads.list",
             Self::VaultArtifactsThreadsAssign => "vault.artifacts.threads.assign",
             Self::VaultArtifactsThreadsState => "vault.artifacts.threads.state",
+            Self::Mount => "mount",
+            Self::GraphFsReaddir => "graph_fs.readdir",
+            Self::GraphFsReadFile => "graph_fs.read_file",
+            Self::GraphFsReadLink => "graph_fs.read_link",
+            Self::GraphFsLs => "graph_fs.ls",
+            Self::GraphFsFind => "graph_fs.find",
+            Self::GraphFsGrep => "graph_fs.grep",
+            Self::GraphFsCat => "graph_fs.cat",
+            Self::GraphFsHead => "graph_fs.head",
+            Self::GraphFsWc => "graph_fs.wc",
             Self::VaultCodeDiff => "vault.code.diff",
             Self::VaultCodeBlame => "vault.code.blame",
             Self::VaultCodeProposalView => "vault.code.proposal_view",
@@ -2852,6 +2882,16 @@ impl AgentVerb {
                 | Self::VaultArtifactsThreadsList
                 | Self::VaultArtifactsThreadsAssign
                 | Self::VaultArtifactsThreadsState
+                | Self::Mount
+                | Self::GraphFsReaddir
+                | Self::GraphFsReadFile
+                | Self::GraphFsReadLink
+                | Self::GraphFsLs
+                | Self::GraphFsFind
+                | Self::GraphFsGrep
+                | Self::GraphFsCat
+                | Self::GraphFsHead
+                | Self::GraphFsWc
                 | Self::VaultCodeDiff
                 | Self::VaultCodeBlame
                 | Self::VaultCodeProposalView
@@ -3685,6 +3725,16 @@ impl AgentVerb {
                 | Self::VaultArtifactsThreadsList
                 | Self::VaultArtifactsThreadsAssign
                 | Self::VaultArtifactsThreadsState
+                | Self::Mount
+                | Self::GraphFsReaddir
+                | Self::GraphFsReadFile
+                | Self::GraphFsReadLink
+                | Self::GraphFsLs
+                | Self::GraphFsFind
+                | Self::GraphFsGrep
+                | Self::GraphFsCat
+                | Self::GraphFsHead
+                | Self::GraphFsWc
                 | Self::VaultCodeDiff
                 | Self::VaultCodeBlame
                 | Self::VaultCodeProposalView
@@ -4167,6 +4217,16 @@ impl AgentVerb {
                 | Self::VaultScopePosition
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
+                | Self::Mount
+                | Self::GraphFsReaddir
+                | Self::GraphFsReadFile
+                | Self::GraphFsReadLink
+                | Self::GraphFsLs
+                | Self::GraphFsFind
+                | Self::GraphFsGrep
+                | Self::GraphFsCat
+                | Self::GraphFsHead
+                | Self::GraphFsWc
                 | Self::VaultCommit
                 | Self::VaultCalendarOccurrences
                 | Self::VaultCalendarRead
@@ -5889,6 +5949,16 @@ impl AgentVerb {
             Self::VaultArtifactsThreadsList => &["spec"],
             Self::VaultArtifactsThreadsAssign => &["spec"],
             Self::VaultArtifactsThreadsState => &["spec"],
+            Self::Mount => &["spec"],
+            Self::GraphFsReaddir => &["spec"],
+            Self::GraphFsReadFile => &["spec"],
+            Self::GraphFsReadLink => &["spec"],
+            Self::GraphFsLs => &["spec"],
+            Self::GraphFsFind => &["spec"],
+            Self::GraphFsGrep => &["spec"],
+            Self::GraphFsCat => &["spec"],
+            Self::GraphFsHead => &["spec"],
+            Self::GraphFsWc => &["spec"],
             Self::VaultCodeDiff => &["spec"],
             Self::VaultCodeBlame => &["spec"],
             Self::VaultCodeProposalView => &["spec"],
@@ -6696,6 +6766,16 @@ impl AgentVerb {
             Self::VaultArtifactsThreadsList => &["spec"],
             Self::VaultArtifactsThreadsAssign => &["spec"],
             Self::VaultArtifactsThreadsState => &["spec"],
+            Self::Mount => &["spec"],
+            Self::GraphFsReaddir => &["spec"],
+            Self::GraphFsReadFile => &["spec"],
+            Self::GraphFsReadLink => &["spec"],
+            Self::GraphFsLs => &["spec"],
+            Self::GraphFsFind => &["spec"],
+            Self::GraphFsGrep => &["spec"],
+            Self::GraphFsCat => &["spec"],
+            Self::GraphFsHead => &["spec"],
+            Self::GraphFsWc => &["spec"],
             Self::VaultCodeDiff => &["spec"],
             Self::VaultCodeBlame => &["spec"],
             Self::VaultCodeProposalView => &["spec"],
@@ -8283,6 +8363,36 @@ impl AgentVerb {
             }
             Self::VaultArtifactsThreadsState => {
                 "Opens or resolves a thread through its existing claim gate, preserving its anchor, comments and drift."
+            }
+            Self::Mount => {
+                "Open the caller-scoped live graph or a retained repository snapshot, resolving a snapshot id to its exact fork hash."
+            }
+            Self::GraphFsReaddir => {
+                "List one directory at the mounted reference under the caller read gate, with a sealed continuation."
+            }
+            Self::GraphFsReadFile => {
+                "Read a bounded page of file bytes at the mounted reference, with its encoding and sealed continuation."
+            }
+            Self::GraphFsReadLink => {
+                "Resolve a visible graph link at the mounted reference without following a host filesystem link."
+            }
+            Self::GraphFsLs => {
+                "List names at the mounted reference, using the live temporal index when requested."
+            }
+            Self::GraphFsFind => {
+                "Walk visible paths at the mounted reference, or push a live newer-than query into the temporal index."
+            }
+            Self::GraphFsGrep => {
+                "Search visible mounted file bytes, using the live claim text index for supported recursive patterns."
+            }
+            Self::GraphFsCat => {
+                "Read a bounded page of mounted file bytes as UTF-8 or base64 without changing its reference."
+            }
+            Self::GraphFsHead => {
+                "Read the first requested lines at the mounted reference with bounded output and a sealed continuation."
+            }
+            Self::GraphFsWc => {
+                "Count lines, words and bytes of a visible file at the mounted reference."
             }
             Self::VaultCodeDiff => {
                 "The semantic changes between two tested states of one code file, each unit with the operations that made it: actor, session, turn, activity, intent, model and effort."

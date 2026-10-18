@@ -3928,6 +3928,76 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn mount(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "mount")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("mount", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn graph_fs_readdir(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "graph_fs.readdir")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("graph_fs.readdir", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn graph_fs_read_file(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "graph_fs.read_file")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("graph_fs.read_file", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn graph_fs_read_link(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "graph_fs.read_link")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("graph_fs.read_link", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn graph_fs_ls(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "graph_fs.ls")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("graph_fs.ls", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn graph_fs_find(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "graph_fs.find")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("graph_fs.find", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn graph_fs_grep(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "graph_fs.grep")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("graph_fs.grep", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn graph_fs_cat(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "graph_fs.cat")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("graph_fs.cat", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn graph_fs_head(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "graph_fs.head")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("graph_fs.head", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn graph_fs_wc(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "graph_fs.wc")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("graph_fs.wc", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_code_diff(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(request_json, "vault.code.diff")?;
         let output = py

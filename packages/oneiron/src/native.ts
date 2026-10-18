@@ -436,6 +436,16 @@ vaultArtifactsThreadsRead(input: unknown): unknown
 vaultArtifactsThreadsList(input: unknown): unknown
 vaultArtifactsThreadsAssign(input: unknown): unknown
 vaultArtifactsThreadsState(input: unknown): unknown
+mount(input: unknown): unknown
+graphFsReaddir(input: unknown): unknown
+graphFsReadFile(input: unknown): unknown
+graphFsReadLink(input: unknown): unknown
+graphFsLs(input: unknown): unknown
+graphFsFind(input: unknown): unknown
+graphFsGrep(input: unknown): unknown
+graphFsCat(input: unknown): unknown
+graphFsHead(input: unknown): unknown
+graphFsWc(input: unknown): unknown
 vaultCodeDiff(requestJson: string): string
 vaultCodeBlame(requestJson: string): string
 vaultCodeProposalView(requestJson: string): string
