@@ -59,6 +59,7 @@ impl PipelineBuilder<'_> {
                 telemetry_run_id: None,
                 signals: Vec::new(),
                 temporal_hints: Vec::new(),
+                temporal_report: None,
             });
         }
         if let Some(weights) =
@@ -269,8 +270,10 @@ impl PipelineBuilder<'_> {
                 telemetry_run_id: None,
                 signals: telemetry_signals,
                 temporal_hints,
+                temporal_report: attempt.temporal_report,
             });
         }
+        let mut temporal_report = attempt.temporal_report;
         let mut diagnostics = attempt.diagnostics;
         let mut ppr_expand_executed = attempt.ppr_expand_executed;
         let mut scores = attempt.scores;
@@ -352,6 +355,7 @@ impl PipelineBuilder<'_> {
                 self.flush_ppr_cache_writes(&retry.deferred_ppr_cache_writes)?;
                 // A retry cache hit must not erase an earlier miss in this run.
                 merge_retrieval_diagnostics(&mut diagnostics, retry.diagnostics);
+                temporal_report = retry.temporal_report;
                 scores = retry.scores;
                 cited_messages = retry.cited_messages;
                 revisions = retry.revisions;
@@ -583,6 +587,7 @@ impl PipelineBuilder<'_> {
             telemetry_run_id,
             signals: telemetry_signals,
             temporal_hints,
+            temporal_report,
         })
     }
 

@@ -138,6 +138,8 @@ pub(super) fn temporal_window(
 
     let mut sigma = sigma_initial;
     let mut settled_sigma = None;
+    let mut settled_round = None;
+    let mut rounds = 0;
     let mut previous_radius = None;
     let mut candidates = TemporalCandidates::default();
     // With a reader, the collectors say whether the last round's window could
@@ -149,6 +151,7 @@ pub(super) fn temporal_window(
     let mut can_grow = true;
 
     for round in 0..ADAPTIVE_ROUNDS {
+        rounds = round + 1;
         let radius = compute_radius(range_width, sigma);
 
         if can_grow && (round == 0 || previous_radius != Some(radius)) {
@@ -187,6 +190,7 @@ pub(super) fn temporal_window(
                 && reader.read_at_least(store, rtxn, candidates.ids(), config.limit)?
             {
                 settled_sigma = Some(sigma);
+                settled_round = Some(rounds);
             }
             // Once no wider window can add a row, the rounds left change
             // only the window's sigma, and that picks nothing: the bound cuts
@@ -202,6 +206,7 @@ pub(super) fn temporal_window(
         } else {
             if settled_sigma.is_none() && candidates.count() >= config.limit {
                 settled_sigma = Some(sigma);
+                settled_round = Some(rounds);
             }
             if last || candidates.count() >= rows {
                 break;
@@ -222,6 +227,11 @@ pub(super) fn temporal_window(
         sigma: settled_sigma.unwrap_or(sigma),
         ..window
     };
+
+    metadata_cache.temporal_report = Some(super::TemporalSearchReport {
+        sigma_secs: request.sigma,
+        rounds: settled_round.unwrap_or(rounds),
+    });
 
     let mut scored = Vec::<TemporalCandidateScore>::new();
 

@@ -539,6 +539,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.refs.resolve", post(facade_route))
         .route("/vault.refs.links", post(facade_route))
         .route("/vault.search.hybrid", post(facade_route))
+        .route("/vault.search.temporal", post(facade_route))
         .route("/vault.search.bm25", post(facade_route))
         .route("/vault.neighbors", post(facade_route))
         .route("/vault.structural.put", post(facade_route))

@@ -502,6 +502,7 @@ impl PipelineBuilder<'_> {
                     }),
                     ppr_expand_executed: false,
                     early_empty_no_telemetry: !capture_replay_enabled,
+                    temporal_report: metadata_cache.temporal_report,
                 });
             }
 
@@ -899,6 +900,7 @@ impl PipelineBuilder<'_> {
                 replay_inputs,
                 ppr_expand_executed,
                 early_empty_no_telemetry: false,
+                temporal_report: metadata_cache.temporal_report,
             })
         }
     }

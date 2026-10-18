@@ -24,6 +24,8 @@ mod media_channel;
 pub mod retrieval_policy;
 mod support;
 mod temporal_bound;
+mod temporal_report;
+pub use temporal_report::TemporalSearchReport;
 mod trace;
 mod types;
 mod world_authority;

@@ -4510,6 +4510,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_search_temporal(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.search.temporal")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.search.temporal", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_search_bm25(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.search.bm25")?;
         let output = py
