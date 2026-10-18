@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 914 code-mode rows (890 host rows, 24 run rows), 3071 declarations.
-// Replies: 823 fully typed, 87 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 920 code-mode rows (896 host rows, 24 run rows), 3085 declarations.
+// Replies: 829 fully typed, 87 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 102; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2525,7 +2525,21 @@ declare namespace Sdk {
   type CalendarFreebusyRequest = { calendars: CalendarSel[]; range: CalendarRangeDto };
   type CalendarFreebusyIntervalDto = { start_utc: number; end_utc: number };
   type CalendarFreebusyDto = CalendarFreebusyIntervalDto[];
-  type TranscriptFileDropInput = { source_blob_ref: string; decoded_text: string; arrived_at_ms: number };
+  type CalendarMeetingRequest = { event_ref: string };
+  type PrepSectionKind = "prior_commitment" | "attendee_thread" | "dossier_delta";
+  type PrepItem = { kind: PrepSectionKind; text: string; source_refs: string[]; observed_at: number };
+  type PrepSection = { kind: PrepSectionKind; items: PrepItem[] };
+  type PrepPack = { event_ref: string; built_at: number; sections: PrepSection[]; word_count: number };
+  type EventOutcome = "held" | "no_show" | "cancelled_pre_start" | "unknown";
+  type EventOutcomeBasis = "machine" | "owner_attested";
+  type EventOutcomeClaimValue = { outcome: EventOutcome; basis: EventOutcomeBasis; recorded_at: number };
+  type CalendarEventOutcome = { event_ref: string; outcome: EventOutcome; claim?: EventOutcomeClaimValue | null };
+  type CalendarCheckInDue = { event_ref: string; observed_at: number; grace_secs: number; due_at?: number | null; due: boolean; outcome?: EventOutcomeClaimValue | null };
+  type CalendarCheckInAnswer = "held" | "no_show" | "rescheduled";
+  type CalendarCheckInRequest = { event_ref: string; answer: CalendarCheckInAnswer };
+  type CalendarCheckInReceipt = { disposition: "outcome"; event_ref: string; claim_ref: string; value: EventOutcomeClaimValue } | { disposition: "reschedule_requested"; event_ref: string; claim_ref: string; value: EventOutcomeClaimValue };
+  type CalendarOutcomePolicy = { grace_secs: number };
+  type TranscriptFileDropInput = { source_blob_ref: string; decoded_text: string; arrived_at_ms: number; event_ref?: string | null };
   type TranscriptIngestOutcome = { outcome: "session"; session_ref: EntityId; turn_refs: EntityId[]; wake_turn_refs: EntityId[]; extraction_enqueued: boolean } | { outcome: "retry_open_session"; open_session_ref: EntityId } | { outcome: "note_fallback"; note_ref: EntityId };
   type ClaimListFilter = { subject_ref?: string | null; predicate?: string | null; lifecycle?: string | null; limit: number };
   type ClaimDemoteActionInput = { kind: "decay"; new_claim_of_weight: number } | { kind: "weaken"; new_confidence: number } | { kind: "stale" };
@@ -3725,8 +3739,16 @@ declare const vault: Sdk.VaultHost & {
     settlements(input: Sdk.RunSettlementsRequest): Promise<Sdk.RunSettlementsView | StoredResult>;
   };
   calendar: {
+    check_in: {
+      /** The owner answers a due check-in as held, no_show or rescheduled; the caller cannot assert machine evidence or replace it. */
+      answer(input: Sdk.CalendarCheckInRequest): Promise<Sdk.CalendarCheckInReceipt | StoredResult>;
+      /** Observes whether a meeting check-in is due under owner proof, live evidence and the engine clock, without advancing time or recording an outcome. */
+      due(input: Sdk.CalendarMeetingRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarCheckInDue | null> | StoredResult>;
+    };
     /** Creates a native or evidence-linked dreamer EVENT as the caller, with atomic projector-recorded origin and engine-stamped recorded time. */
     create(input: Sdk.CalendarEventCreateRequest): Promise<Sdk.CalendarEventCreated | StoredResult>;
+    /** Reads the caller-visible meeting outcome and its recorded basis; silence projects to unknown and never to held or no_show. */
+    event_outcome(input: Sdk.CalendarMeetingRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarEventOutcome | null> | StoredResult>;
     /** Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt. */
     freebusy(input: Sdk.CalendarFreebusyRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarFreebusyDto> | StoredResult>;
     ics: {
@@ -3739,18 +3761,26 @@ declare const vault: Sdk.VaultHost & {
     };
     /** Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions. */
     occurrences(input: Sdk.CalendarOccurrencesRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarOccurrenceView[]> | StoredResult>;
+    outcome_policy: {
+      /** Reads the owner-configured post-meeting grace policy, including the default 1800 seconds when no override exists. */
+      get(input: Sdk.EmptyRequest): Promise<Sdk.CalendarOutcomePolicy | StoredResult>;
+      /** Sets the post-meeting grace in real seconds under owner proof, without changing event times or minting attendance evidence. */
+      set(input: Sdk.CalendarOutcomePolicy): Promise<Sdk.CalendarOutcomePolicy | StoredResult>;
+    };
     passports: {
       /** Reads recorded passport revisions oldest first for one EVENT, system and UID, retaining explicit approval and lifecycle under the caller recorded-read gate. */
       history(input: Sdk.CalendarPassportReadRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarPassportRevision[]> | StoredResult>;
       /** Reads the admitted passport head for one EVENT, system and UID through the caller scoped-read gate, including sequence, semantic hash, direction and presence. */
       read(input: Sdk.CalendarPassportReadRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarPassportRevision | null> | StoredResult>;
     };
+    /** Builds a fresh caller-scoped meeting PrepPack with commitments first and a 250-word ceiling, or deliberately returns no pack. */
+    prep(input: Sdk.CalendarMeetingRequest): Promise<Sdk.ScopedReadResult<Sdk.PrepPack | null> | StoredResult>;
     /** Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt. */
     read(input: Sdk.CalendarReadRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarEventView | null> | StoredResult>;
     /** Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt. */
     search(input: Sdk.CalendarSearchRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarEventView[]> | StoredResult>;
     transcript: {
-      /** Ingests an uploaded UTF-8 transcript as the caller, retaining source labels and atomically closing its SESSION with ordered TURNs and extraction wake receipts. */
+      /** Ingests verified uploaded UTF-8 transcript bytes as a closed SESSION with ordered TURNs; an optional meeting link earns a machine outcome through the caller gate. */
       ingest(input: Sdk.TranscriptFileDropInput): Promise<Sdk.TranscriptIngestOutcome | StoredResult>;
     };
   };

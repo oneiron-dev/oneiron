@@ -61,6 +61,7 @@ pub mod google_internal;
 pub mod ics;
 pub mod ingest;
 pub mod invite;
+pub mod meeting;
 pub mod origin;
 pub mod outcome;
 pub mod passport;

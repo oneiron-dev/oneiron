@@ -6170,6 +6170,65 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_calendar_prep(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.calendar.prep")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.calendar.prep", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_calendar_event_outcome(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.calendar.event_outcome")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.calendar.event_outcome", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_calendar_check_in_due(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.calendar.check_in.due")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.calendar.check_in.due", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_calendar_check_in_answer(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.calendar.check_in.answer")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.calendar.check_in.answer", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_calendar_outcome_policy_get(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.calendar.outcome_policy.get")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.calendar.outcome_policy.get", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_calendar_outcome_policy_set(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.calendar.outcome_policy.set")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.calendar.outcome_policy.set", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_calendar_transcript_ingest(
         &self,
         py: Python<'_>,

@@ -2170,6 +2170,28 @@ impl OneironClient {
                 "vault.calendar.freebusy" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<oneiron::memory::CalendarFreebusyDto>,
                 >(client, verb, &input),
+                "vault.calendar.prep" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<Option<oneiron::calendar::PrepPack>>,
+                >(client, verb, &input),
+                "vault.calendar.event_outcome" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<
+                        Option<oneiron::calendar::meeting::CalendarEventOutcome>,
+                    >,
+                >(client, verb, &input),
+                "vault.calendar.check_in.due" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<
+                        Option<oneiron::calendar::meeting::CalendarCheckInDue>,
+                    >,
+                >(client, verb, &input),
+                "vault.calendar.check_in.answer" => remote_agent_verb_output::<
+                    oneiron::calendar::meeting::CalendarCheckInReceipt,
+                >(client, verb, &input),
+                "vault.calendar.outcome_policy.get" => remote_agent_verb_output::<
+                    oneiron::calendar::meeting::CalendarOutcomePolicy,
+                >(client, verb, &input),
+                "vault.calendar.outcome_policy.set" => remote_agent_verb_output::<
+                    oneiron::calendar::meeting::CalendarOutcomePolicy,
+                >(client, verb, &input),
                 "vault.calendar.transcript.ingest" => remote_agent_verb_output::<
                     oneiron::calendar::transcript::TranscriptIngestOutcome,
                 >(client, verb, &input),
@@ -11266,6 +11288,85 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.calendar.freebusy", value)
+    }
+    pub fn vault_calendar_prep(
+        &self,
+        input: &oneiron::calendar::meeting::CalendarMeetingRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<Option<oneiron::calendar::PrepPack>>, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.calendar.prep", value)
+    }
+    pub fn vault_calendar_event_outcome(
+        &self,
+        input: &oneiron::calendar::meeting::CalendarMeetingRequest,
+    ) -> Result<
+        oneiron::claim::ScopedReadResult<Option<oneiron::calendar::meeting::CalendarEventOutcome>>,
+        MemoryError,
+    > {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.calendar.event_outcome", value)
+    }
+    pub fn vault_calendar_check_in_due(
+        &self,
+        input: &oneiron::calendar::meeting::CalendarMeetingRequest,
+    ) -> Result<
+        oneiron::claim::ScopedReadResult<Option<oneiron::calendar::meeting::CalendarCheckInDue>>,
+        MemoryError,
+    > {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.calendar.check_in.due", value)
+    }
+    pub fn vault_calendar_check_in_answer(
+        &self,
+        input: &oneiron::calendar::meeting::CalendarCheckInRequest,
+    ) -> Result<oneiron::calendar::meeting::CalendarCheckInReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.calendar.check_in.answer", value)
+    }
+    pub fn vault_calendar_outcome_policy_get(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::calendar::meeting::CalendarOutcomePolicy, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.calendar.outcome_policy.get", value)
+    }
+    pub fn vault_calendar_outcome_policy_set(
+        &self,
+        input: &oneiron::calendar::meeting::CalendarOutcomePolicy,
+    ) -> Result<oneiron::calendar::meeting::CalendarOutcomePolicy, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.calendar.outcome_policy.set", value)
     }
     pub fn vault_calendar_transcript_ingest(
         &self,
