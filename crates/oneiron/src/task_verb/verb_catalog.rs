@@ -95,6 +95,14 @@ pub enum AgentVerb {
     VaultSkillsImport,
     VaultSkillsSync,
     VaultSkillsReceipts,
+    VaultSkillsConvert,
+    VaultSkillsGet,
+    VaultSkillsList,
+    VaultSkillsArchive,
+    VaultSkillsRestore,
+    VaultSkillsFork,
+    VaultSkillsRulesSet,
+    VaultSkillsCodeAutoInstallSet,
     VaultSkillsPermissionsApprove,
     VaultPacksHooksBind,
     VaultPacksHooksList,
@@ -690,6 +698,14 @@ impl AgentVerb {
         Self::VaultSkillsImport,
         Self::VaultSkillsSync,
         Self::VaultSkillsReceipts,
+        Self::VaultSkillsConvert,
+        Self::VaultSkillsGet,
+        Self::VaultSkillsList,
+        Self::VaultSkillsArchive,
+        Self::VaultSkillsRestore,
+        Self::VaultSkillsFork,
+        Self::VaultSkillsRulesSet,
+        Self::VaultSkillsCodeAutoInstallSet,
         Self::VaultSkillsPermissionsApprove,
         Self::VaultPacksHooksBind,
         Self::VaultPacksHooksList,
@@ -1288,6 +1304,14 @@ impl AgentVerb {
             Self::VaultSkillsImport => "vault.skills.import",
             Self::VaultSkillsSync => "vault.skills.sync",
             Self::VaultSkillsReceipts => "vault.skills.receipts",
+            Self::VaultSkillsConvert => "vault.skills.convert",
+            Self::VaultSkillsGet => "vault.skills.get",
+            Self::VaultSkillsList => "vault.skills.list",
+            Self::VaultSkillsArchive => "vault.skills.archive",
+            Self::VaultSkillsRestore => "vault.skills.restore",
+            Self::VaultSkillsFork => "vault.skills.fork",
+            Self::VaultSkillsRulesSet => "vault.skills.rules.set",
+            Self::VaultSkillsCodeAutoInstallSet => "vault.skills.code_auto_install.set",
             Self::VaultSkillsPermissionsApprove => "vault.skills.permissions.approve",
             Self::VaultPacksHooksBind => "vault.packs.hooks.bind",
             Self::VaultPacksHooksList => "vault.packs.hooks.list",
@@ -1892,6 +1916,14 @@ impl AgentVerb {
                 | Self::VaultSkillsImport
                 | Self::VaultSkillsSync
                 | Self::VaultSkillsReceipts
+                | Self::VaultSkillsConvert
+                | Self::VaultSkillsGet
+                | Self::VaultSkillsList
+                | Self::VaultSkillsArchive
+                | Self::VaultSkillsRestore
+                | Self::VaultSkillsFork
+                | Self::VaultSkillsRulesSet
+                | Self::VaultSkillsCodeAutoInstallSet
                 | Self::VaultSkillsPermissionsApprove
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksList
@@ -2494,6 +2526,14 @@ impl AgentVerb {
                 | Self::VaultSkillsImport
                 | Self::VaultSkillsSync
                 | Self::VaultSkillsReceipts
+                | Self::VaultSkillsConvert
+                | Self::VaultSkillsGet
+                | Self::VaultSkillsList
+                | Self::VaultSkillsArchive
+                | Self::VaultSkillsRestore
+                | Self::VaultSkillsFork
+                | Self::VaultSkillsRulesSet
+                | Self::VaultSkillsCodeAutoInstallSet
                 | Self::VaultSkillsPermissionsApprove
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksList
@@ -3149,6 +3189,14 @@ impl AgentVerb {
                 | Self::VaultSkillsImport
                 | Self::VaultSkillsSync
                 | Self::VaultSkillsReceipts
+                | Self::VaultSkillsConvert
+                | Self::VaultSkillsGet
+                | Self::VaultSkillsList
+                | Self::VaultSkillsArchive
+                | Self::VaultSkillsRestore
+                | Self::VaultSkillsFork
+                | Self::VaultSkillsRulesSet
+                | Self::VaultSkillsCodeAutoInstallSet
                 | Self::VaultSkillsPermissionsApprove
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksList
@@ -3678,6 +3726,12 @@ impl AgentVerb {
                 | Self::VaultPacksSync
                 | Self::VaultSkillsImport
                 | Self::VaultSkillsSync
+                | Self::VaultSkillsConvert
+                | Self::VaultSkillsArchive
+                | Self::VaultSkillsRestore
+                | Self::VaultSkillsFork
+                | Self::VaultSkillsRulesSet
+                | Self::VaultSkillsCodeAutoInstallSet
                 | Self::VaultSkillsPermissionsApprove
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksQualify
@@ -4117,6 +4171,14 @@ impl AgentVerb {
             Self::VaultSkillsImport => &["spec"],
             Self::VaultSkillsSync => &["spec"],
             Self::VaultSkillsReceipts => &["spec"],
+            Self::VaultSkillsConvert => &["spec"],
+            Self::VaultSkillsGet => &["spec"],
+            Self::VaultSkillsList => &["spec"],
+            Self::VaultSkillsArchive => &["spec"],
+            Self::VaultSkillsRestore => &["spec"],
+            Self::VaultSkillsFork => &["spec"],
+            Self::VaultSkillsRulesSet => &["spec"],
+            Self::VaultSkillsCodeAutoInstallSet => &["spec"],
             Self::VaultSkillsPermissionsApprove => &["spec"],
             Self::VaultPacksHooksBind => &["spec"],
             Self::VaultPacksHooksList => &["spec"],
@@ -4713,6 +4775,14 @@ impl AgentVerb {
             Self::VaultSkillsImport => &["spec"],
             Self::VaultSkillsSync => &["spec"],
             Self::VaultSkillsReceipts => &["spec"],
+            Self::VaultSkillsConvert => &["spec"],
+            Self::VaultSkillsGet => &["spec"],
+            Self::VaultSkillsList => &["spec"],
+            Self::VaultSkillsArchive => &["spec"],
+            Self::VaultSkillsRestore => &["spec"],
+            Self::VaultSkillsFork => &["spec"],
+            Self::VaultSkillsRulesSet => &["spec"],
+            Self::VaultSkillsCodeAutoInstallSet => &["spec"],
             Self::VaultSkillsPermissionsApprove => &["spec"],
             Self::VaultPacksHooksBind => &["spec"],
             Self::VaultPacksHooksList => &["spec"],
@@ -5483,6 +5553,30 @@ impl AgentVerb {
             }
             Self::VaultSkillsReceipts => {
                 "Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner."
+            }
+            Self::VaultSkillsConvert => {
+                "Converts selected messages through the configured refiner; user initiation approves conversion, never admission."
+            }
+            Self::VaultSkillsGet => {
+                "Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry."
+            }
+            Self::VaultSkillsList => {
+                "Lists a page of the owner skill library, including inactive skills and their retained evidence."
+            }
+            Self::VaultSkillsArchive => {
+                "The owner soft-retires an active skill without deleting its body, source or receipts; running callable invocations are cancelled."
+            }
+            Self::VaultSkillsRestore => {
+                "The owner restores an archived skill through the same admission gates; a hub restore prepares exact consent and reruns held-out scoring."
+            }
+            Self::VaultSkillsFork => {
+                "The owner forks a stored skill under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable."
+            }
+            Self::VaultSkillsRulesSet => {
+                "The owner sets or clears a known-bad canonical skill hash rule, independently of advisory scanner prose."
+            }
+            Self::VaultSkillsCodeAutoInstallSet => {
+                "The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification."
             }
             Self::VaultSkillsPermissionsApprove => {
                 "The owner answers one imported skill permission ask at its exact hub source."

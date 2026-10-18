@@ -291,6 +291,7 @@ mod sdk_federation;
 mod sdk_guest_revoke;
 mod sdk_host;
 mod sdk_hub;
+mod sdk_skills;
 mod sdk_legal_hold;
 mod sdk_live_run;
 mod sdk_live_voice;
