@@ -43,8 +43,10 @@ mod causal_write;
 mod checkpoint;
 mod checkpoint_adopt;
 mod checkpoint_attest;
+mod checkpoint_choice;
 mod checkpoint_image;
 mod checkpoint_policy;
+mod checkpoint_policy_choice;
 mod claim_write;
 mod engine_machine;
 mod entry_transition;
@@ -130,19 +132,20 @@ pub use oneiron_authority::authority::{
     ActSurface, AuthorityAttestation, AuthorityConfirmAction, AuthorityConfirmKind,
     AuthorityEntryHash, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
     AuthoritySignatureSuite, AuthorityTier, AuthorityVaultId, CRITICAL_WRITE_CONFIRM_DOMAIN,
-    CRITICAL_WRITE_CONFIRM_SCHEMA_VERSION, CommReach, CriticalWriteConfirmAction,
-    CriticalWriteConfirmDisposition, CriticalWriteConfirmMethod, CriticalWriteConfirmState,
-    DeviceAuthority, FEDERATION_PACT_DOMAIN, FEDERATION_SCOPE_COMMIT_DOMAIN,
-    FederationGrantActivation, FederationLifecycleAction, FederationLifecycleKind,
-    FederationLifecycleRejection, FederationPactGesture, FederationPactState, FederationPactStatus,
-    FoldedDevice, GENESIS_FRAGILE_FLAG, GenesisRecoveryStep, GrantTravelSet,
-    MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MACHINE_SEEN_WORLD_EDITS_MAX,
-    MAX_PACT_SCOPE_BYTES, MachineDeviceClass, MachineEncryptionKey, MachineOwnership,
-    MachineProfile, MachineRole, ModelOrder, OWNER_HANDOVER_REF_MAX, OwnerAct, OwnerActKind,
-    OwnerHandover, OwnerHandoverCause, OwnerRootRecord, OwnerWorkBody, OwnerWorkKind,
-    OwnerWorkOutcome, OwnerWorkRefusal, OwnerWorkRequest, OwnerWorkResult, PrivacyDirection,
-    RESIDENCE_REASON_MAX, RESIDENCE_WINDOW_KEY_MAX, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER,
-    ROLE_RECOVERY, ReadLocation, RecoveryRootId, ResidenceAct, ResidenceDirective, ResidenceResult,
+    CRITICAL_WRITE_CONFIRM_SCHEMA_VERSION, CheckpointPolicySet, CheckpointRootChoice, CommReach,
+    CriticalWriteConfirmAction, CriticalWriteConfirmDisposition, CriticalWriteConfirmMethod,
+    CriticalWriteConfirmState, DeviceAuthority, FEDERATION_PACT_DOMAIN,
+    FEDERATION_SCOPE_COMMIT_DOMAIN, FederationGrantActivation, FederationLifecycleAction,
+    FederationLifecycleKind, FederationLifecycleRejection, FederationPactGesture,
+    FederationPactState, FederationPactStatus, FoldedDevice, GENESIS_FRAGILE_FLAG,
+    GenesisRecoveryStep, GrantTravelSet, MACHINE_ENCRYPTION_KEY_LEN,
+    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MACHINE_SEEN_WORLD_EDITS_MAX, MAX_PACT_SCOPE_BYTES,
+    MachineDeviceClass, MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole,
+    ModelOrder, OWNER_HANDOVER_REF_MAX, OwnerAct, OwnerActKind, OwnerHandover, OwnerHandoverCause,
+    OwnerRootRecord, OwnerWorkBody, OwnerWorkKind, OwnerWorkOutcome, OwnerWorkRefusal,
+    OwnerWorkRequest, OwnerWorkResult, PrivacyDirection, RESIDENCE_REASON_MAX,
+    RESIDENCE_WINDOW_KEY_MAX, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY,
+    ReadLocation, RecoveryRootId, ResidenceAct, ResidenceDirective, ResidenceResult,
     ResidenceResultStatus, RootChange, SUPPORT_GRANT_DEFAULT_TTL_SECS, SUPPORT_GRANT_MAX_TTL_SECS,
     SealedCopies, SlipClaims, SlipMintAction, SupportDelegation, WORLD_MODEL_ROUTE_MAX_BYTES,
     WORLD_MODEL_ROUTES_MAX, WorldKeyMode, WorldKeyWrapsRecord, WorldPrivacy, WorldPrivacyEdit,
@@ -171,8 +174,10 @@ pub use checkpoint_adopt::{
     AuthorityCheckpointBundle, AuthorityCheckpointExpectation, VerifiedAuthorityCheckpoint,
 };
 pub use checkpoint_attest::*;
+pub use checkpoint_choice::CheckpointPolicyHead;
 pub use checkpoint_image::*;
 pub use checkpoint_policy::*;
+pub use checkpoint_policy_choice::CheckpointPolicyView;
 pub use fold_engine::*;
 pub use fold_state::*;
 pub use forwarded_caller::{

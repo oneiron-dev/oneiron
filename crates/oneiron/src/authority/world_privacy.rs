@@ -599,10 +599,45 @@ pub(super) fn live_edits_by(
         .filter(|(_, signer)| **signer == machine)
         .map(|(hash, _)| *hash)
         .chain(super::grant_travel::live_choices_by(fold, machine))
+        .chain(super::checkpoint_choice::live_choices_by(fold, machine))
         .chain(super::machine_profile::live_answers_by(fold, machine))
         .chain(super::owner_work::pending_carried_by(fold, machine))
         .take(MACHINE_SEEN_WORLD_EDITS_MAX)
         .collect()
+}
+
+/// Whether a fold past a base (a resumed fold's chain, or the tail past an
+/// adopted image) moved no world but those its own rows edit: every other
+/// world reads as the base read it, and the only refused edits it adds are
+/// its own (FIX 4535). A settings edit judges only its own world's edits, as
+/// a grant travel choice judges only its grant's, and neither changes a
+/// machine's standing, which the caller compares whole.
+pub(super) fn worlds_unmoved_past<'a>(
+    fold: &AuthorityFold,
+    base: &AuthorityFold,
+    rows: impl IntoIterator<Item = (AuthorityEntryHash, &'a AuthorityLogEntry)>,
+) -> bool {
+    let mut edited = BTreeSet::new();
+    let mut own = BTreeSet::new();
+    for (hash, entry) in rows {
+        if let AuthorityOp::WorldPrivacy(edit) = &entry.op {
+            edited.insert(edit.world);
+            own.insert(hash);
+        }
+    }
+    let unedited = |worlds: &BTreeMap<EntityId, FoldedWorld>| {
+        worlds
+            .iter()
+            .filter(|(world, _)| !edited.contains(*world))
+            .map(|(world, folded)| (*world, folded.clone()))
+            .collect::<Vec<_>>()
+    };
+    unedited(&fold.worlds) == unedited(&base.worlds)
+        && fold
+            .refused_world_edits
+            .iter()
+            .filter(|hash| !own.contains(*hash))
+            .eq(base.refused_world_edits.iter())
 }
 
 /// The edits that never count at full strength on this install: each one
