@@ -85,9 +85,10 @@ fn owner_signer(fold: &AuthorityFold, signer: &[u8; 32]) -> bool {
 /// Signs the transition of record `id` as it stands in `record`, with
 /// `signing`, this machine's install key or the owner anchor, its value
 /// sealed to every machine mine under `fold`'s pin. `None` when the record
-/// must stay here: it is not portable, the vault has no authority genesis, or
+/// must stay here: it is not portable, the vault has no authority genesis,
 /// `signing` is neither the pinned root's anchor nor a machine mine under the
-/// pin.
+/// pin, or the record is live but an admitted revoke names its id, which no
+/// carrier brings back (WILL L04 row 04).
 pub(crate) fn sign_custody_transition(
     fold: &AuthorityFold,
     signing: &SigningKey,
@@ -99,7 +100,10 @@ pub(crate) fn sign_custody_transition(
     let Some(vault_id) = fold.vault_id else {
         return Ok(None);
     };
-    if !custody_portable(record) || !owner_signer(fold, &signer) {
+    if !custody_portable(record)
+        || !owner_signer(fold, &signer)
+        || (record.status != SecretCustodyStatus::Revoked && fold.custody_revoked(&id))
+    {
         return Ok(None);
     }
     let mut bare = record.clone();
@@ -395,12 +399,20 @@ pub(crate) enum CustodyApplied {
     Kept,
     /// This machine holds no value the transition sealed to it.
     Unopened,
+    /// An admitted revoke names the record's id, so this live transition is
+    /// refused: a held portable record and its leases were revoked here, and
+    /// nothing the transition carries is written or kept (WILL L04 row 04).
+    Refused,
 }
 
 /// Writes a verified `transition` into this vault's custody, with `value` the
 /// one this machine opened from it. A generation never goes back, a revoked
 /// record never comes back, and a record this vault keeps local never takes a
 /// peer's transition. A revocation also revokes the record's leases here.
+///
+/// An admitted revoke of the id in this transaction's fold is terminal (CALLS
+/// CUSTODY_CONCURRENT_ACTIVE): a live transition of it is refused, and a held
+/// portable record dies with its leases, though no revoked transition came.
 pub(crate) fn apply_custody_transition_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -408,6 +420,12 @@ pub(crate) fn apply_custody_transition_in_txn(
     value: Option<&[u8]>,
     at: u64,
 ) -> Result<CustodyApplied> {
+    if transition.status != SecretCustodyStatus::Revoked
+        && super::control::custody_revoked_in_txn(vault, wtxn, &transition.id)?
+    {
+        super::control::settle_revoked_in_txn(vault, wtxn, &transition.id, at)?;
+        return Ok(CustodyApplied::Refused);
+    }
     let mut record = transition.record()?;
     let held = super::read_secret_custody_in_txn(&vault.store, wtxn, &transition.id)?.map(|held| {
         (
@@ -427,6 +445,9 @@ pub(crate) fn apply_custody_transition_in_txn(
         }
     }
     if transition.status == SecretCustodyStatus::Revoked {
+        // Nothing is written for an id this vault never held: never an empty
+        // record. The id's terminal knowledge is its admitted revoke request
+        // on the main log, which every replica folds, not this carrier.
         if held.is_none() {
             return Ok(CustodyApplied::Stale);
         }

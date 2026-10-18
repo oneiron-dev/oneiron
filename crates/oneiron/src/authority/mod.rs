@@ -152,6 +152,8 @@ pub use oneiron_authority::authority::{
     machine_profile_proof_transcript, privacy_direction, sign_federation_pact_gesture,
     validate_authority_log_entry_body_bytes, verify_authority_signature,
 };
+// The custody work body's own types (WILL L04 row 04).
+pub use oneiron_authority::authority::{CustodyChange, CustodyRecipientPermit};
 mod federation_activation;
 pub use federation_activation::federation_grant_activation;
 

@@ -66,6 +66,7 @@
 
 mod carrier_marks;
 mod codec;
+mod control;
 mod doors;
 mod floor;
 mod found_keys;
@@ -92,6 +93,8 @@ mod floor_keys {
 pub(crate) use self::carrier_marks::{CarrierMark, carrier_mark_in_txn, put_carrier_mark_in_txn};
 pub(crate) use self::codec::{CUSTODY_SEAL_REASON, reject_secret_custody_byte};
 pub use self::codec::{decode_secret_custody_body, encode_secret_custody_body};
+pub use self::control::SecretRevoked;
+pub(crate) use self::control::{custody_work_executor, refuse_revoked_use_in_txn};
 pub(crate) use self::doors::{
     CustodyWrite, SecretCustodyAdmission, put_secret_custody_in_txn,
     read_secret_custody_admission_in_txn, read_secret_custody_in_txn,
