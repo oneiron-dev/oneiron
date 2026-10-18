@@ -125,6 +125,45 @@ pub enum SecretError {
     /// validation (SECRET-02).
     #[error("invalid secret lease body: {0}")]
     InvalidSecretLeaseBody(&'static str),
+    /// A secret grant was redeemed after its record rotated: it pins the
+    /// value generation it was minted at (FIX 4313). Renewing it mints a
+    /// fresh grant at the current generation; nothing already delivered is
+    /// recalled.
+    #[error(
+        "secret grant {} was minted at generation {pinned_generation}; the secret has rotated to generation {current_generation}: renew the grant",
+        grant_id.to_hex()
+    )]
+    SecretGrantStale {
+        grant_id: EntityId,
+        pinned_generation: u32,
+        current_generation: u32,
+    },
+    /// A secret grant was presented for a use it does not bind: another
+    /// operation, connector, destination or effector (FIX 4313).
+    #[error("secret grant {} does not cover this use: {reason}", grant_id.to_hex())]
+    SecretGrantTargetMismatch {
+        grant_id: EntityId,
+        reason: &'static str,
+    },
+    /// A door grant has made every send its use count allows (FIX 4313).
+    #[error("secret grant {} has made its {sends} sends", grant_id.to_hex())]
+    SecretGrantSpent { grant_id: EntityId, sends: u32 },
+    /// A T1 grant's bytes could not reach the host destination it names:
+    /// the run's host registered no such destination, or refused the
+    /// delivery (FIX 4313). The reason never carries value bytes.
+    #[error("secret delivery to host destination `{destination}` refused: {reason}")]
+    SecretHostDeliveryRefused {
+        destination: String,
+        reason: &'static str,
+    },
+    /// A grant's teardown revoked it, but its cleanup kept a copy the vault
+    /// wrote (a T2 file that could not be removed, a destination the host
+    /// could not clear); the retry sweep keeps trying (FIX 4313).
+    #[error(
+        "secret grant {} is revoked, but its cleanup kept the copy it delivered",
+        grant_id.to_hex()
+    )]
+    SecretGrantCleanupKept { grant_id: EntityId },
     /// A rotation-receipt row or a stored taint-ref list failed structural
     /// validation (SECRET-04, ONE-1922).
     #[error("invalid secret rotation body: {0}")]
@@ -195,6 +234,11 @@ impl SecretError {
             Self::InvalidSecretRotationBody(_) => ErrorKind::InvalidSecretRotationBody,
             Self::TaintedArtifactStale { .. } => ErrorKind::TaintedArtifactStale,
             Self::InvalidSecretLeaseBody(_) => ErrorKind::InvalidSecretLeaseBody,
+            Self::SecretGrantStale { .. } => ErrorKind::SecretGrantStale,
+            Self::SecretGrantTargetMismatch { .. } => ErrorKind::SecretGrantTargetMismatch,
+            Self::SecretGrantSpent { .. } => ErrorKind::SecretGrantSpent,
+            Self::SecretHostDeliveryRefused { .. } => ErrorKind::SecretHostDeliveryRefused,
+            Self::SecretGrantCleanupKept { .. } => ErrorKind::SecretGrantCleanupKept,
             Self::WorldKeyRefused(_) | Self::SealedBundleNoCapsule => ErrorKind::WorldKeyRefused,
             Self::KeystoreUnavailable(_) => ErrorKind::KeystoreUnavailable,
             Self::UnverifiedKitRestore { .. } => ErrorKind::UnverifiedKitRestore,

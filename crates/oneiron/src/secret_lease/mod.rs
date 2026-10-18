@@ -66,6 +66,22 @@
 //! owns rotation and attaches exhaust taint from
 //! [`DoorInjectionReceipt::taint_token`].
 //!
+//! # Grants (FIX 4313)
+//!
+//! A [`SecretLeaseGrant`] is the value-free right a holder redeems: the
+//! custody record, the generation it pins, the holder principal and run, the
+//! effector, the target and the expiry, beside the lease a T1/T2 grant rides.
+//! [`Vault::mint_secret_grant`](crate::Vault::mint_secret_grant),
+//! [`Vault::renew_secret_grant`](crate::Vault::renew_secret_grant),
+//! [`Vault::redeem_secret_grant_at_door`](crate::Vault::redeem_secret_grant_at_door)
+//! and [`Vault::teardown_secret_grant`](crate::Vault::teardown_secret_grant)
+//! are its lifecycle; T1 bytes reach the run only through its host's
+//! [`SecretHostDelivery`]. Rotation stays lease-scoped: it revokes no grant,
+//! but a grant minted before it refuses to redeem after it
+//! ([`SecretError::SecretGrantStale`](crate::error::SecretError::SecretGrantStale)),
+//! and renewal mints a fresh grant at the current generation. Bytes delivered
+//! before the rotation are not recalled.
+//!
 //! # Receipt residence
 //!
 //! The RS1 receipt-family discriminator ([`crate::receipt::ReceiptKind`])
@@ -86,14 +102,27 @@
 
 mod admission;
 mod codec;
+mod delivery;
 mod doors;
 mod files;
+mod grant;
+mod grant_doors;
+mod grant_redeem;
 mod storage;
 mod types;
 
 pub(crate) use self::admission::reveal_tier_admission;
 pub use self::admission::tier_admission;
 pub(crate) use self::codec::decode_local_registration_body;
+pub use self::delivery::{NoSecretHostDelivery, SecretHostDelivery};
+pub(crate) use self::grant::erase_secret_grant_actor_in_txn;
+pub use self::grant::{
+    SECRET_GRANT_DEFAULT_TTL_SECS, SECRET_GRANT_MAX_TTL_SECS, SECRET_GRANT_RENEW_HANDOVER,
+    SECRET_GRANT_T0_MAX_SENDS, SECRET_GRANT_TEARDOWN_KEPT_REFUSES, SecretCleanup,
+    SecretGrantCaller, SecretGrantHandover, SecretGrantHolder, SecretGrantMinted,
+    SecretGrantRedemption, SecretGrantRef, SecretGrantStatus, SecretGrantTarget,
+    SecretGrantTeardown, SecretLeaseGrant,
+};
 pub(crate) use self::storage::{
     stamp_reveal_lease_in_txn, teardown_local_registration_in_txn, write_secret_lease_in_txn,
 };

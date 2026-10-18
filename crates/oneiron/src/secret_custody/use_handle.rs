@@ -31,6 +31,7 @@
 //! (`Vault::clear_secret_record_from`).
 
 mod bind;
+mod lease;
 
 use std::fmt;
 
@@ -334,6 +335,7 @@ impl Vault {
             generation: rec.rotation_generation,
             operation,
             effector,
+            grant: None,
         };
         let admitted = if !live || rec.status != SecretCustodyStatus::Active {
             Err(not_active(&used.handle))
@@ -345,14 +347,30 @@ impl Vault {
         } else {
             self.check_secret_at_door(&rec.name, effector)
         };
+        self.use_admitted(&used, &rec.name, admitted, consume)
+    }
+
+    /// The half of a use every entry shares once its admission is settled:
+    /// a refused admission writes its refused record and returns the
+    /// refusal; an admitted one runs `consume` on the record `used` names
+    /// (its live name is `name`), clears what came back of the value, and
+    /// writes the used record.
+    fn use_admitted(
+        &self,
+        used: &Used<'_>,
+        name: &str,
+        admitted: Result<()>,
+        consume: &mut dyn FnMut(&SecretUseTarget<'_>) -> SecretUseConsumed,
+    ) -> Result<SecretUseOutcome> {
         if let Err(refusal) = admitted {
             used.record(self, SecretUseDecision::Refused, SecretUseSend::NotSent)?;
             return Err(refusal);
         }
+        let (id, effector) = (used.secret, used.effector);
         let target = SecretUseTarget {
-            name: &rec.name,
+            name,
             effector,
-            operation,
+            operation: used.operation,
             custody: id,
         };
         let SecretUseConsumed {
@@ -428,6 +446,8 @@ struct Used<'a> {
     generation: u32,
     operation: &'a str,
     effector: &'a str,
+    /// The grant a lease-aware use redeemed (FIX 4313), if any.
+    grant: Option<EntityId>,
 }
 
 impl Used<'_> {
@@ -451,6 +471,17 @@ impl Used<'_> {
             digest.update(&(part.len() as u64).to_be_bytes());
             digest.update(part);
         }
+        let mut details = vec![
+            format!("use:{}", self.operation),
+            format!("handle:{}", self.handle),
+            format!("generation:{}", self.generation),
+            format!("effector:{}", self.effector),
+            format!("decision:{}", decision.as_str()),
+            format!("send:{}", send.as_str()),
+        ];
+        if let Some(grant) = self.grant {
+            details.push(format!("grant:{}", grant.to_hex()));
+        }
         let used_at = vault.with_write_txn_grouped(|txn| {
             let created_at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
             let record = GateDecisionRecord {
@@ -466,14 +497,7 @@ impl Used<'_> {
                 receipt_reasons: Vec::new(),
                 system_notices: crate::store::GateSystemNoticeRecord::receipt_details(
                     SECRET_USE_CONTENT_KIND,
-                    vec![
-                        format!("use:{}", self.operation),
-                        format!("handle:{}", self.handle),
-                        format!("generation:{}", self.generation),
-                        format!("effector:{}", self.effector),
-                        format!("decision:{}", decision.as_str()),
-                        format!("send:{}", send.as_str()),
-                    ],
+                    details,
                 ),
                 actor_class: self.user.actor_class.gate_actor_class().into(),
                 actor_ref: Some(self.user.actor.to_hex()),
@@ -502,7 +526,7 @@ impl Used<'_> {
 }
 
 /// Resolves a handle to its short id and the custody record it names.
-fn handle_record_in_txn(
+pub(crate) fn handle_record_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     handle: &str,
