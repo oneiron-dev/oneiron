@@ -56,8 +56,45 @@ impl Vault {
         owner_answer: Option<&crate::consent::OwnerAuthoredWrite>,
         now: u64,
     ) -> Result<SettledProposal> {
+        self.settle_reviewed_claim_in_txn(wtxn, id, action, actor, owner_answer, now, false)
+    }
+
+    /// The owner's reviewed generated claim, including an unvetted Auto
+    /// head, through the same materialization, Gate and receipt machinery.
+    pub(crate) fn vet_generated_claim_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        action: GateConsentBundleAction,
+        actor: WriteActor,
+        owner_answer: Option<&crate::consent::OwnerAuthoredWrite>,
+        now: u64,
+    ) -> Result<SettledProposal> {
+        self.verify_owner_write_actor_in_txn(wtxn, &actor)?;
+        let body = self.get_claim_in_txn(wtxn, &id)?.ok_or(Error::EntityNotFound)?;
+        if !crate::claim::claim_generated_origin(&body) {
+            return Err(Error::InvalidClaimBody("vetting requires a generated-origin claim"));
+        }
+        self.settle_reviewed_claim_in_txn(wtxn, id, action, actor, owner_answer, now, true)
+    }
+
+    #[expect(clippy::too_many_arguments, reason = "one reviewed settlement and its vetting mode")]
+    fn settle_reviewed_claim_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        action: GateConsentBundleAction,
+        actor: WriteActor,
+        owner_answer: Option<&crate::consent::OwnerAuthoredWrite>,
+        now: u64,
+        vetting: bool,
+    ) -> Result<SettledProposal> {
         let (body, header) = live_claim_parts_in_txn(&self.store, &*wtxn, &id)?;
-        if body.approval != ClaimApprovalStatus::Proposed
+        let vet_auto = vetting
+            && body.approval == ClaimApprovalStatus::Auto
+            && crate::claim::claim_generated_origin(&body)
+            && action == GateConsentBundleAction::Approve;
+        if (body.approval != ClaimApprovalStatus::Proposed && !vet_auto)
             || body.lifecycle != ClaimLifecycleStatus::Active
         {
             return Err(Error::InvalidClaimBody(

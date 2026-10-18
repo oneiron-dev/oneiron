@@ -456,6 +456,10 @@ both bindings and their export-census tests in one change.
 - `vault.artifacts.read`
 - `vault.consolidation.enqueue`
 - `vault.consolidation.status`
+- `vault.consolidation.promote`
+- `vault.consolidation.evidence`
+- `vault.claims.vet`
+- `vault.claims.vetting`
 - `vault.memory.signal_extraction`
 - `vault.memory.signal_extraction.result`
 - `vault.claims.seed`

@@ -324,15 +324,24 @@ pub(super) fn resolve(
     if anchor.entity != entity.to_hex() {
         return Err(invalid("anchor belongs to another document"));
     }
+    resolve_cursors(doc, &anchor.frontier, &anchor.start, &anchor.end)
+}
+
+pub(super) fn resolve_cursors(
+    doc: &EntityDoc,
+    frontier: &[u8],
+    start: &[u8],
+    end: &[u8],
+) -> Result<(usize, usize)> {
     let body = doc.doc.get_text(BODY);
-    let start = Cursor::decode(&anchor.start).map_err(|_| invalid("invalid start cursor"))?;
-    let end = Cursor::decode(&anchor.end).map_err(|_| invalid("invalid end cursor"))?;
+    let start = Cursor::decode(start).map_err(|_| invalid("invalid start cursor"))?;
+    let end = Cursor::decode(end).map_err(|_| invalid("invalid end cursor"))?;
     if start.container != body.id() || end.container != body.id() {
         return Err(invalid("anchor container mismatch"));
     }
     // Unknown origins fail closed. A retained shallow origin may still map a
     // live cursor, so the cursor query, not a scalar age, determines drift.
-    let origin = decode_frontier(&anchor.frontier)?;
+    let origin = decode_frontier(frontier)?;
     let vv = doc
         .doc
         .frontiers_to_vv(&origin)

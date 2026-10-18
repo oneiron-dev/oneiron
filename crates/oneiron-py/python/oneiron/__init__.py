@@ -881,6 +881,12 @@ class Oneiron:
         def admit(self, input: dict[str, Any]) -> Any:
             """Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides."""
             return json.loads(_translate(lambda: self._client.vault_claims_admit(json.dumps(input, allow_nan=False))))
+        def vet(self, spec):
+            """Vets a reviewed generated-origin Auto claim or proposal through the owner Gate and signed settlement; it still contributes zero corroboration."""
+            return json.loads(_translate(lambda: self._client.vault_claims_vet(json.dumps(spec))))
+        def vetting(self, spec):
+            """Reviews an exact generated-origin Auto claim or proposal before owner vetting, returning the content-bound review handle."""
+            return json.loads(_translate(lambda: self._client.vault_claims_vetting(json.dumps(spec))))
         def seed(self, input: dict[str, Any]) -> Any:
             """Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt."""
             return json.loads(_translate(lambda: self._client.vault_claims_seed(json.dumps(input, allow_nan=False))))
@@ -2507,6 +2513,12 @@ class Oneiron:
         def status(self, spec):
             """Reads the status of one consolidation attempt by its durable job reference."""
             return json.loads(_translate(lambda: self._client.vault_consolidation_status(json.dumps(spec))))
+        def promote(self, spec):
+            """Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals."""
+            return json.loads(_translate(lambda: self._client.vault_consolidation_promote(json.dumps(spec))))
+        def evidence(self, spec):
+            """Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner."""
+            return json.loads(_translate(lambda: self._client.vault_consolidation_evidence(json.dumps(spec))))
     class _VaultMemoryVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
