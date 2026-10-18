@@ -92,6 +92,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // The sealed bundle's custody and cursors follow the live vault.
     (&t::SYNC_RESIDENCE_BUNDLE_GENERATION, LIVE),
     (&t::SYNC_RESIDENCE_BUNDLE_PART, LIVE),
+    // The publisher turn's queue is the home's record of whose turn is
+    // next across slots, so it follows the live vault too (FIX 3351).
+    (&t::SYNC_RESIDENCE_BUNDLE_TURN, LIVE),
     (&t::SYNC_RESIDENCE_BUNDLE_SWEPT, LIVE),
     (&t::SYNC_RESIDENCE_BUNDLE_CURSOR, LIVE),
     (&t::SYNC_ROOM_FACT_DIRTY, CONTENT),

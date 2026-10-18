@@ -2,14 +2,18 @@
 //! FIX 922). Once in each fixed UTC slot a machine of the owner's takes the
 //! home's newest generation in when it is newer than the last one it took. An
 //! eligible publisher then uploads a fresh generation for the slot when the
-//! slot has none yet, changed or not: in parts the home stages, then a commit
-//! on the parent it took. A take runs on that cadence only, never on a world
-//! opening or changing, and a missed slot is not replayed. The slot and the
-//! last generation taken persist across restarts and re-homes.
+//! slot has none yet, changed or not, once it holds the home's publisher turn
+//! (`turn`): in parts the home stages, then a commit on the parent it took. A
+//! take runs on that cadence only, never on a world opening or changing, and a
+//! missed slot is not replayed. The slot and the last generation taken persist
+//! across restarts and re-homes.
 //!
 //! Erase rewrites every kept pad: each upkeep tick strips every world whose
 //! keys were destroyed here, and that this machine has not swept yet, from
-//! every pad object the home keeps (`Vault::drop_world_from_key_pads`).
+//! every pad object the home keeps (`Vault::drop_world_from_key_pads`). A pad
+//! object sealed before this machine was added does not open with its key;
+//! the owner's recovery kit sweeps it from here on request
+//! ([`SyncClient::sweep_sealed_bundle_erases_with_kit`]).
 //!
 //! A commit names the recovery root this machine pins, so a kit-only restore
 //! can read the generation through the home's kit door (`kit_fetch`).
@@ -17,6 +21,8 @@
 //! A phone takes no generation in and uploads none, and no machine relays to a
 //! home it knows is a phone (FIX 3349, `holds_sealed_bundle`). A phone still
 //! sweeps its erases from the kept pad objects.
+
+mod turn;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -38,8 +44,8 @@ use crate::sync::residence::{
 };
 use crate::sync::transport::TransportError;
 use crate::world_keys::{
-    RecoveryRootId, SEALED_BUNDLE_KEEP, SealedBundleGeneration, SealedKeyPads, SealedVaultBundle,
-    sealed_bundle_slot,
+    RecoveryRootId, RecoveryRootSeed, SEALED_BUNDLE_KEEP, SealedBundleGeneration, SealedKeyPads,
+    SealedVaultBundle, sealed_bundle_slot,
 };
 use crate::{EntityId, Vault};
 
@@ -53,11 +59,18 @@ const SWEPT: SideTable<HexId, Vec<u8>, Raw> =
 /// How many times, in one slot, a publisher whose parent went stale takes the
 /// new newest generation in and uploads again.
 const STALE_PARENT_RETRIES: usize = 1;
+/// How many times, in one slot, a publisher whose upload the home refused on
+/// an unchanged parent (its disk floor, a slot ahead of its clock, a turn that
+/// lapsed) assembles and uploads again (CALLS:
+/// SEALED_BUNDLE_NONSTALE_REFUSAL_RETRIES_PER_SLOT). Past it the slot is
+/// finished, and the next slot uploads again (FIX 3353).
+const SEALED_BUNDLE_NONSTALE_REFUSAL_RETRIES_PER_SLOT: usize = 0;
 
-/// The publisher call (FIX 922): every eligible machine tries each slot, and
-/// the home's one-generation-per-slot rule lets the first commit win; the rest
-/// take that generation in. Eligible: a machine mine here (the caller's check)
-/// that syncs everything, not an opened-item machine or a federation lane.
+/// The publisher call (FIX 922): every eligible machine asks for the home's
+/// publisher turn each slot, the holder publishes, and the rest take its
+/// generation in (FIX 3351). Eligible: a machine mine here (the caller's
+/// check) that syncs everything, not an opened-item machine or a federation
+/// lane.
 fn may_publish(config: &SyncClientConfig) -> bool {
     config.residence_mode != SyncResidenceMode::Opened && config.federation_peer.is_none()
 }
@@ -147,6 +160,10 @@ fn storage(error: crate::Error) -> TransportError {
     TransportError::Storage(error.to_string())
 }
 
+fn upload_refused() -> TransportError {
+    TransportError::Storage("home refused the sealed bundle upload".into())
+}
+
 fn load_cursor(vault: &Vault) -> crate::error::Result<Cursor> {
     let txn = vault.store.env.read_txn()?;
     let Some(raw) = CURSOR.get(&vault.store, &txn, &())? else {
@@ -218,6 +235,43 @@ impl SyncClient {
         relay_sealed_bundle(&self.manager, &self.config).await
     }
 
+    /// Erase's sweep of every pad object the home keeps, opened with this
+    /// machine's key or else `seed`, the owner's recovery kit (FIX 3355): a
+    /// pad object sealed before this machine was added does not open with its
+    /// key, and holds every erased world back each slot. The kit serves this
+    /// call alone; nothing keeps it. Sweeps every world erased here not swept
+    /// yet, held back this slot or not, and returns how many a kept object
+    /// held. A federation lane and a machine not mine here sweep nothing, nor
+    /// does a home known to be a phone, which keeps none.
+    pub async fn sweep_sealed_bundle_erases_with_kit(
+        &self,
+        seed: &RecoveryRootSeed,
+    ) -> Result<usize, TransportError> {
+        let vault = &self.vault;
+        if self.config.federation_peer.is_some()
+            || !vault
+                .local_machine()
+                .map_err(storage)?
+                .is_some_and(|machine| machine.mine)
+        {
+            return Ok(0);
+        }
+        let now_slot = sealed_bundle_slot(vault.store.clock.now_recorded_at());
+        // Held back in this slot counts as owed too.
+        let erased = erased_due(vault, now_slot.saturating_add(1)).map_err(storage)?;
+        if erased.is_empty() {
+            return Ok(0);
+        }
+        let budgets = residence_budgets(vault)?;
+        let Some(mut rpc) = ResidenceRpc::connect(vault, &self.config, budgets).await? else {
+            return Err(TransportError::Storage("home node offline".into()));
+        };
+        if !home_holds_sealed_bundle(vault, rpc.home).map_err(storage)? {
+            return Ok(0);
+        }
+        sweep_erased(vault, &mut rpc, &erased, now_slot, Some(seed)).await
+    }
+
     /// One generation's bundle and pad object as the home keeps them, for a
     /// restore from the cloud copy: `generation` names one, `None` the newest.
     /// `None` when the home keeps no such generation.
@@ -275,7 +329,7 @@ pub(crate) async fn relay_sealed_bundle(
         return Ok(relay);
     }
     if !erased.is_empty() {
-        relay.erased = sweep_erased(vault, &mut rpc, &erased, now_slot).await?;
+        relay.erased = sweep_erased(vault, &mut rpc, &erased, now_slot, None).await?;
     }
     if slot_due {
         let slot = SlotRelay {
@@ -300,11 +354,16 @@ struct SlotRelay<'a> {
 
 impl SlotRelay<'_> {
     /// Takes the newest generation in when it is newer than the last taken,
-    /// then publishes the slot's generation when the slot has none and this
-    /// machine publishes. A take that fails here uploads nothing this slot:
-    /// the upload would carry less than the home holds. The slot is finished
-    /// once its upload is in, another machine's is, or the take or the
-    /// assembly failed here; a refused upload tries again next tick.
+    /// then publishes the slot's generation when the slot has none, this
+    /// machine publishes and it holds the publisher turn. A publisher asks for
+    /// the turn even once the slot is won, so it waits its turn for the next
+    /// one. A take that fails here uploads nothing this slot: the upload would
+    /// carry less than the home holds. The slot is finished once its upload is
+    /// in, another machine's is, the take or the assembly failed here, or the
+    /// home refused the upload on an unchanged parent past
+    /// [`SEALED_BUNDLE_NONSTALE_REFUSAL_RETRIES_PER_SLOT`]; a machine waiting
+    /// for the turn, or whose upload did not reach the home, tries again next
+    /// tick.
     async fn run(
         &self,
         rpc: &mut ResidenceRpc,
@@ -316,6 +375,7 @@ impl SlotRelay<'_> {
         // what this machine cannot read from them.
         let mut held: Option<(SealedVaultBundle, SealedKeyPads)> = None;
         let mut retries = 0;
+        let mut refusals = 0;
         loop {
             let latest = list_generations(rpc).await?.first().copied();
             if let Some(newest) =
@@ -332,9 +392,13 @@ impl SlotRelay<'_> {
                 })
                 .await
                 .map_err(|error| TransportError::Storage(error.to_string()))?;
-                cursor.taken = Some(newest);
                 match took {
-                    Ok(take) => relay.taken = Some((newest, take)),
+                    Ok(take) => {
+                        cursor.taken = Some(newest);
+                        relay.taken = Some((newest, take));
+                    }
+                    // Not taken: the next slot takes it again before any
+                    // upload (FIX 3358).
                     Err(error) => {
                         cursor.slot = self.slot;
                         store_cursor(vault, cursor).map_err(storage)?;
@@ -345,7 +409,15 @@ impl SlotRelay<'_> {
                 held = Some((bundle, pads));
             }
             if !self.publisher || latest.is_some_and(|newest| newest.slot >= self.slot) {
+                if self.publisher {
+                    turn::ask_turn(rpc, false).await?;
+                }
                 break;
+            }
+            // Another machine holds the turn: its generation comes in on a
+            // later tick, or its turn lapses.
+            if !turn::ask_turn(rpc, false).await? {
+                return Ok(());
             }
             if let Some(newest) = latest
                 && held
@@ -357,11 +429,15 @@ impl SlotRelay<'_> {
                         .await?
                         .ok_or_else(refused)?,
                 );
+                // A long fetch renews the turn once it ends.
+                if !turn::ask_turn(rpc, false).await? {
+                    return Ok(());
+                }
             }
             let manager = Arc::clone(self.manager);
             let slot = self.slot;
             let holder = holder_destination(vault, rpc.home);
-            let (upload, back) = tokio::task::spawn_blocking(move || {
+            let (upload, back) = turn::renewing_turn(rpc, move || {
                 let upload = manager.assemble_sealed_bundle(
                     slot,
                     holder,
@@ -369,14 +445,15 @@ impl SlotRelay<'_> {
                 );
                 (upload, held)
             })
-            .await
-            .map_err(|error| TransportError::Storage(error.to_string()))?;
+            .await?;
             held = back;
             let upload = match upload {
                 Ok(upload) => upload,
                 Err(error) => {
                     cursor.slot = self.slot;
                     store_cursor(vault, cursor).map_err(storage)?;
+                    // The next machine waiting need not wait out the lease.
+                    let _ = turn::ask_turn(rpc, true).await;
                     return Err(storage(error));
                 }
             };
@@ -410,12 +487,20 @@ impl SlotRelay<'_> {
             // A refused upload: when the newest generation moved meanwhile,
             // the parent went stale.
             let moved = list_generations(rpc).await?.first().copied() != latest;
-            if !moved || retries == STALE_PARENT_RETRIES {
-                return Err(TransportError::Storage(
-                    "home refused the sealed bundle upload".into(),
-                ));
+            if moved {
+                if retries == STALE_PARENT_RETRIES {
+                    return Err(upload_refused());
+                }
+                retries += 1;
+            } else {
+                if refusals == SEALED_BUNDLE_NONSTALE_REFUSAL_RETRIES_PER_SLOT {
+                    cursor.slot = self.slot;
+                    store_cursor(vault, cursor).map_err(storage)?;
+                    let _ = turn::ask_turn(rpc, true).await;
+                    return Err(upload_refused());
+                }
+                refusals += 1;
             }
-            retries += 1;
         }
         cursor.slot = self.slot;
         store_cursor(vault, cursor).map_err(storage)
@@ -424,14 +509,17 @@ impl SlotRelay<'_> {
 
 /// Strips each of `erased` from every pad object the home keeps, rewriting
 /// every kept object whether it held the world or not; returns how many
-/// worlds a kept object held. A world is swept once every kept object is
-/// rewritten without it, or once none holds it. A kept object that does not
-/// open here holds every world back until the next slot.
+/// worlds a kept object held. Each object opens with this machine's key, or
+/// else `kit`, a recovery kit the owner handed this sweep. A world is swept
+/// once every kept object is rewritten without it, or once none holds it. A
+/// kept object that opens with neither holds every world back until the next
+/// slot.
 async fn sweep_erased(
     vault: &Vault,
     rpc: &mut ResidenceRpc,
     erased: &[EntityId],
     now_slot: u64,
+    kit: Option<&RecoveryRootSeed>,
 ) -> Result<usize, TransportError> {
     let mut kept = Vec::new();
     for generation in list_generations(rpc).await? {
@@ -452,7 +540,7 @@ async fn sweep_erased(
     }
     let mut held = BTreeSet::new();
     for pads in &kept {
-        match vault.open_key_pads(pads) {
+        match vault.open_key_pads_to_erase(pads, kit) {
             Ok(opened) => held.extend(opened.keys().map(|key| key.world)),
             Err(_) => {
                 for world in erased {
@@ -466,7 +554,7 @@ async fn sweep_erased(
     for world in erased {
         if held.contains(world) {
             let rewritten = vault
-                .drop_world_from_key_pads(*world, &kept, None)
+                .drop_world_from_key_pads(*world, &kept, kit)
                 .map_err(storage)?;
             for (old, new) in kept.iter().zip(&rewritten) {
                 if !replace_pads(rpc, old, new).await? {
@@ -612,7 +700,7 @@ pub(super) async fn fetch_generation(
 }
 
 /// Stages one object on the home in parts; `false` when the home refused a
-/// part.
+/// part (FIX 3353). A part that did not reach the home is an error.
 async fn put_object(
     rpc: &mut ResidenceRpc,
     generation: &SealedBundleGeneration,
@@ -623,8 +711,8 @@ async fn put_object(
     let digest = sealed_digest_hex(blake3::hash(bytes).as_bytes());
     let mut offset = 0;
     for part in bytes.chunks(SEALED_BUNDLE_PUT_PART_MAX) {
-        match rpc
-            .request(
+        let staged = rpc
+            .call(
                 "residence.bundle.put",
                 json!({
                     "generation": generation.as_str(),
@@ -635,11 +723,9 @@ async fn put_object(
                     "part": base64::engine::general_purpose::STANDARD.encode(part),
                 }),
             )
-            .await
-        {
-            Ok(_) => {}
-            Err(TransportError::InvalidPayload(_)) => return Ok(false),
-            Err(error) => return Err(error),
+            .await?;
+        if staged.is_err() {
+            return Ok(false);
         }
         offset += part.len();
     }
@@ -647,15 +733,16 @@ async fn put_object(
 }
 
 /// Commits the generation staged here on `parent`, naming `root`, the
-/// recovery root whose kit may read it; `false` when the home refused it.
+/// recovery root whose kit may read it; `false` when the home refused it. A
+/// commit that did not reach the home is an error.
 async fn commit_generation(
     rpc: &mut ResidenceRpc,
     generation: &SealedBundleGeneration,
     parent: Option<SealedBundleGeneration>,
     root: Option<RecoveryRootId>,
 ) -> Result<bool, TransportError> {
-    match rpc
-        .request(
+    Ok(rpc
+        .call(
             "residence.bundle.commit",
             json!({
                 "generation": sealed_generation_hex(generation),
@@ -663,12 +750,8 @@ async fn commit_generation(
                 "root": root.as_ref().map(|root| sealed_digest_hex(&root.0)),
             }),
         )
-        .await
-    {
-        Ok(_) => Ok(true),
-        Err(TransportError::InvalidPayload(_)) => Ok(false),
-        Err(error) => Err(error),
-    }
+        .await?
+        .is_ok())
 }
 
 /// Replaces one kept pad object with its rewrite, on the digest of the object

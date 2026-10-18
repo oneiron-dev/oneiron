@@ -14,8 +14,10 @@
 //!   (`world_keys::bundle`).
 //! - A publisher seals a fresh section of each carried world it reads, and
 //!   carries every other section of the latest generation byte for byte, except
-//!   the ones it opens of a world no longer eligible for this holder or deleted
-//!   here.
+//!   those of a world it knows was deleted here or is no longer eligible for
+//!   this holder ([`SEALED_BUNDLE_CARRY_FILTER`]), read here or not: it knows a
+//!   section's world from a key it holds, or from the pad object's index (FIX
+//!   3359). A section of a world it does not know rides on.
 //! - A take opens the sections this machine may read and merges each window into
 //!   its mirror. It never reads the base section: base syncs live between the
 //!   owner's machines. A kit restore reads it all, on an install with no machine
@@ -57,6 +59,22 @@ const SEALED_BUNDLE_WORLD_VERSION: u8 = 1;
 const BASE_LABEL: &[u8] = b"oneiron/sealed-bundle-base\0";
 const WORLD_LABEL: &[u8] = b"oneiron/sealed-bundle-world\0";
 
+/// Why a publisher stops carrying a section of the latest generation whose
+/// world it knows.
+enum CarryDrop {
+    /// The world was deleted here, or its keys destroyed here.
+    DeletedHere,
+    /// This machine's authority names the world, and a bundle for the holder
+    /// no longer carries it.
+    Ineligible,
+}
+
+/// The sections a publisher stops carrying, read here or not (CALLS:
+/// SEALED_BUNDLE_CARRY_FILTER): those of a world known deleted here or known
+/// ineligible for the holder. A section of an unknown or unmapped world stays
+/// carried.
+const SEALED_BUNDLE_CARRY_FILTER: &[CarryDrop] = &[CarryDrop::DeletedHere, CarryDrop::Ineligible];
+
 /// What one take moved.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SealedBundleTake {
@@ -95,8 +113,8 @@ impl WindowManager {
     /// that keeps it: the base section, a fresh section of every world the
     /// bundle carries for `holder` that this machine reads, and every other
     /// section of `latest` (the holder's newest generation and its pad object)
-    /// unchanged, minus the sections of worlds this machine reads that are no
-    /// longer eligible for `holder`. Refused on an opened-item machine.
+    /// unchanged, minus the sections [`SEALED_BUNDLE_CARRY_FILTER`] drops.
+    /// Refused on an opened-item machine.
     pub fn assemble_sealed_bundle(
         &self,
         slot: u64,
@@ -127,31 +145,33 @@ impl WindowManager {
             }
             fresh.push((world, encode_world_section(world, &snapshots)?));
         }
-        let (carried, latest_pads) = match latest {
-            None => (Vec::new(), None),
+        let latest = match latest {
+            None => None,
             Some((bundle, pads)) => {
                 let opened = vault.open_vault_bundle_to_carry(bundle)?;
                 let pads = vault.open_key_pads(pads)?;
                 if pads.generation() != opened.generation() {
                     return Err(refused("the pad object is another generation's"));
                 }
-                // The sections this machine opens go unless their world is still
-                // eligible for this holder, was not deleted here and has no fresh
-                // one.
-                let keys = vault.bundle_reader_keys(Some(&pads), true)?;
-                let mut dropped = Vec::new();
-                for key in &keys {
-                    let world = key.id().world;
-                    if fresh.iter().any(|(sealed, _)| *sealed == world)
-                        || !eligible.contains(&world)
-                        || deleted_here(vault, world)?
-                    {
-                        dropped.push(key);
-                    }
-                }
-                (opened.sections_except(&dropped), Some(pads))
+                Some((opened, pads))
             }
         };
+        // A section whose world this machine knows goes when that world has a
+        // fresh one or the carry filter drops it.
+        let mut carried = Vec::new();
+        if let Some((opened, pads)) = &latest {
+            let keys = vault.bundle_reader_keys(Some(pads), true)?;
+            let known = vault.sealed_bundle_known_worlds()?;
+            for (key, section) in opened.sections_known(&keys, pads) {
+                if let Some(key) = key
+                    && (fresh.iter().any(|(sealed, _)| *sealed == key.world)
+                        || carry_drops(vault, key.world, &eligible, &known)?)
+                {
+                    continue;
+                }
+                carried.push((key, section));
+            }
+        }
         let worlds: Vec<(EntityId, &[u8])> = fresh
             .iter()
             .map(|(world, payload)| (*world, payload.as_slice()))
@@ -162,7 +182,7 @@ impl WindowManager {
             &base,
             &worlds,
             &carried,
-            latest_pads.as_ref(),
+            latest.as_ref().map(|(_, pads)| pads),
         )
     }
 
@@ -362,6 +382,27 @@ impl WindowManager {
         };
         without_pad_rows(snapshot).map(Some)
     }
+}
+
+/// Whether [`SEALED_BUNDLE_CARRY_FILTER`] drops a section of `world` from the
+/// next generation: `eligible` holds the worlds a bundle for its holder
+/// carries, `known` every world this machine's authority names.
+fn carry_drops(
+    vault: &Vault,
+    world: EntityId,
+    eligible: &BTreeSet<EntityId>,
+    known: &BTreeSet<EntityId>,
+) -> Result<bool> {
+    for filter in SEALED_BUNDLE_CARRY_FILTER {
+        let drops = match filter {
+            CarryDrop::DeletedHere => deleted_here(vault, world)?,
+            CarryDrop::Ineligible => known.contains(&world) && !eligible.contains(&world),
+        };
+        if drops {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Whether `world` was deleted here or its keys destroyed here: an ordinary take
