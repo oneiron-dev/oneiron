@@ -9,12 +9,12 @@ use oneiron::EntityId;
 use oneiron::authority::{Destination, PeerMachine};
 use oneiron::sync::residence::{
     INDEX_PAGE_MAX, IndexPage, ResidenceAdmission, SealedBundleEntry, SealedBundleObject,
-    SealedBundleStage, WindowIndexEntry, authority_append_for, authority_checkpoint_part_for,
-    authority_range_for, authority_tail_for, authority_wanted, commit_sealed_bundle,
-    home_search_candidates, index_selection_revision, promotion_snapshot_with,
-    replace_sealed_bundle_pads, sealed_bundle_generations, sealed_bundle_part,
-    sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex, sealed_generation_hex,
-    selected_item_blob_with, stage_sealed_bundle_part, window_index_page,
+    SealedBundleStage, WindowIndexEntry, ask_sealed_bundle_turn, authority_append_for,
+    authority_checkpoint_part_for, authority_range_for, authority_tail_for, authority_wanted,
+    commit_sealed_bundle, home_search_candidates, index_selection_revision,
+    promotion_snapshot_with, replace_sealed_bundle_pads, sealed_bundle_generations,
+    sealed_bundle_part, sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex,
+    sealed_generation_hex, selected_item_blob_with, stage_sealed_bundle_part, window_index_page,
     window_index_projection_with,
 };
 use oneiron::sync::residence_operation_budgets::ResidenceOperationBudgets;
@@ -175,6 +175,15 @@ struct BundleCommitRequest {
 #[serde(deny_unknown_fields)]
 struct BundleListRequest {}
 
+/// A machine's ask for the publisher turn, or with `leave` its giving its
+/// place up (FIX 3351).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BundleTurnRequest {
+    #[serde(default)]
+    leave: bool,
+}
+
 /// One slice of a kept generation's object; no generation names the newest.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -284,6 +293,7 @@ pub(super) fn run(
             "residence.promote" => promote(server, auth, peer, request.params),
             "residence.window.vv" => window_vv(server, auth, peer, request.params),
             "residence.search" => search(server, auth, peer, request.params, budgets),
+            "residence.bundle.turn" => bundle_turn(server, auth, peer, request.params),
             "residence.bundle.put" => bundle_put(server, auth, peer, request.params),
             "residence.bundle.commit" => bundle_commit(server, auth, peer, request.params),
             "residence.bundle.list" => bundle_list(server, peer, request.params),
@@ -869,6 +879,24 @@ fn bundle_entry(entry: &SealedBundleEntry) -> Value {
         "padsLength": entry.pads_len,
         "padsDigest": sealed_digest_hex(&entry.pads_digest),
     })
+}
+
+/// Asks for the publisher turn of the vault's sealed bundle for a machine of
+/// the owner's whose proof stands here, or gives its place up (FIX 3351):
+/// only the holder stages a bundle and commits. A refused machine looks
+/// missing.
+fn bundle_turn(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    peer: PeerMachine,
+    params: Value,
+) -> Result<Answer, AppError> {
+    auth.require(CoreScope::Write)?;
+    let input: BundleTurnRequest =
+        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let turn = ask_sealed_bundle_turn(&server.vault, peer, input.leave)
+        .map_err(|_| AppError::not_found("sealed bundle", None))?;
+    Ok((json!({"turn": turn}), Some(Vec::new())))
 }
 
 /// Stages one part of an upload of the vault's sealed bundle or its pad object

@@ -2,10 +2,11 @@
 //! FIX 922). Once in each fixed UTC slot a machine of the owner's takes the
 //! home's newest generation in when it is newer than the last one it took. An
 //! eligible publisher then uploads a fresh generation for the slot when the
-//! slot has none yet, changed or not: in parts the home stages, then a commit
-//! on the parent it took. A take runs on that cadence only, never on a world
-//! opening or changing, and a missed slot is not replayed. The slot and the
-//! last generation taken persist across restarts and re-homes.
+//! slot has none yet, changed or not, once it holds the home's publisher turn
+//! (`turn`): in parts the home stages, then a commit on the parent it took. A
+//! take runs on that cadence only, never on a world opening or changing, and a
+//! missed slot is not replayed. The slot and the last generation taken persist
+//! across restarts and re-homes.
 //!
 //! Erase rewrites every kept pad: each upkeep tick strips every world whose
 //! keys were destroyed here, and that this machine has not swept yet, from
@@ -17,6 +18,8 @@
 //! A phone takes no generation in and uploads none, and no machine relays to a
 //! home it knows is a phone (FIX 3349, `holds_sealed_bundle`). A phone still
 //! sweeps its erases from the kept pad objects.
+
+mod turn;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -54,10 +57,11 @@ const SWEPT: SideTable<HexId, Vec<u8>, Raw> =
 /// new newest generation in and uploads again.
 const STALE_PARENT_RETRIES: usize = 1;
 
-/// The publisher call (FIX 922): every eligible machine tries each slot, and
-/// the home's one-generation-per-slot rule lets the first commit win; the rest
-/// take that generation in. Eligible: a machine mine here (the caller's check)
-/// that syncs everything, not an opened-item machine or a federation lane.
+/// The publisher call (FIX 922): every eligible machine asks for the home's
+/// publisher turn each slot, the holder publishes, and the rest take its
+/// generation in (FIX 3351). Eligible: a machine mine here (the caller's
+/// check) that syncs everything, not an opened-item machine or a federation
+/// lane.
 fn may_publish(config: &SyncClientConfig) -> bool {
     config.residence_mode != SyncResidenceMode::Opened && config.federation_peer.is_none()
 }
@@ -300,11 +304,14 @@ struct SlotRelay<'a> {
 
 impl SlotRelay<'_> {
     /// Takes the newest generation in when it is newer than the last taken,
-    /// then publishes the slot's generation when the slot has none and this
-    /// machine publishes. A take that fails here uploads nothing this slot:
-    /// the upload would carry less than the home holds. The slot is finished
-    /// once its upload is in, another machine's is, or the take or the
-    /// assembly failed here; a refused upload tries again next tick.
+    /// then publishes the slot's generation when the slot has none, this
+    /// machine publishes and it holds the publisher turn. A publisher asks for
+    /// the turn even once the slot is won, so it waits its turn for the next
+    /// one. A take that fails here uploads nothing this slot: the upload would
+    /// carry less than the home holds. The slot is finished once its upload is
+    /// in, another machine's is, or the take or the assembly failed here; a
+    /// machine waiting for the turn, or whose upload was refused, tries again
+    /// next tick.
     async fn run(
         &self,
         rpc: &mut ResidenceRpc,
@@ -345,7 +352,15 @@ impl SlotRelay<'_> {
                 held = Some((bundle, pads));
             }
             if !self.publisher || latest.is_some_and(|newest| newest.slot >= self.slot) {
+                if self.publisher {
+                    turn::ask_turn(rpc, false).await?;
+                }
                 break;
+            }
+            // Another machine holds the turn: its generation comes in on a
+            // later tick, or its turn lapses.
+            if !turn::ask_turn(rpc, false).await? {
+                return Ok(());
             }
             if let Some(newest) = latest
                 && held
@@ -357,11 +372,15 @@ impl SlotRelay<'_> {
                         .await?
                         .ok_or_else(refused)?,
                 );
+                // A long fetch renews the turn once it ends.
+                if !turn::ask_turn(rpc, false).await? {
+                    return Ok(());
+                }
             }
             let manager = Arc::clone(self.manager);
             let slot = self.slot;
             let holder = holder_destination(vault, rpc.home);
-            let (upload, back) = tokio::task::spawn_blocking(move || {
+            let (upload, back) = turn::renewing_turn(rpc, move || {
                 let upload = manager.assemble_sealed_bundle(
                     slot,
                     holder,
@@ -369,14 +388,15 @@ impl SlotRelay<'_> {
                 );
                 (upload, held)
             })
-            .await
-            .map_err(|error| TransportError::Storage(error.to_string()))?;
+            .await?;
             held = back;
             let upload = match upload {
                 Ok(upload) => upload,
                 Err(error) => {
                     cursor.slot = self.slot;
                     store_cursor(vault, cursor).map_err(storage)?;
+                    // The next machine waiting need not wait out the lease.
+                    let _ = turn::ask_turn(rpc, true).await;
                     return Err(storage(error));
                 }
             };

@@ -292,6 +292,9 @@ side_tables! {
     /// commit: u64be vault second of its latest part ‖ generation (24) ‖ u64be total ‖ digest
     /// (32) ‖ u64be bytes staged. Key: hex32 (the uploading machine) ":" b|k.
     SYNC_RESIDENCE_BUNDLE_STAGE: SyncState b"rb:s:" Raw;
+    /// The publisher turn of the vault's sealed bundle on the home (FIX 3351): u64be vault second
+    /// the holder's turn runs from ‖ each machine that asked for it (16), the holder first. Key: ().
+    SYNC_RESIDENCE_BUNDLE_TURN: SyncState b"rb:t" Raw;
     /// One part of a staged upload. Key: hex32 (the uploading machine) ":" b|k ":" hex16
     /// (offset).
     SYNC_RESIDENCE_BUNDLE_STAGE_PART: SyncState b"rb:u:" Raw;

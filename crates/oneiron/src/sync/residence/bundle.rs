@@ -4,7 +4,8 @@
 //! A machine of the owner's stages an upload in parts, then commits the
 //! generation whole, naming the newest generation it took as its parent: a
 //! parent that moved, or a slot that already has a generation, is refused, so
-//! each UTC slot gets one upload. The home then retires what
+//! each UTC slot gets one upload. Only the machine holding the publisher turn
+//! (`bundle_turn`) stages a bundle or commits. The home then retires what
 //! `retired_bundle_generations` names, each bundle with its pad object.
 //!
 //! Erase replaces a kept generation's pad object in place, at the same length;
@@ -20,6 +21,7 @@
 //! serves it one. A phone still lists the generations and rewrites their pad
 //! objects, so an erase made on it sweeps them.
 
+use super::bundle_turn::{hold_turn_in, published_in};
 use crate::Vault;
 use crate::authority::{MachineDeviceClass, PeerMachine};
 use crate::entity_id::EntityId;
@@ -250,7 +252,7 @@ pub(crate) fn holds_sealed_bundle(class: MachineDeviceClass) -> bool {
 /// stands here on the key it proved, on a home that keeps sealed copies. A door
 /// that takes or serves the `bundle` object itself also refuses a peer whose
 /// trusted profile is a phone's. Any other peer is refused.
-fn owner_machine(vault: &Vault, peer: PeerMachine, bundle: bool) -> Result<EntityId> {
+pub(super) fn owner_machine(vault: &Vault, peer: PeerMachine, bundle: bool) -> Result<EntityId> {
     let PeerMachine::Proven { machine, key } = peer else {
         return Err(denied());
     };
@@ -385,13 +387,15 @@ fn retire_in(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, now_slot: u64) -> Result
 /// Stages one part of an upload from the machine `peer` proved, bound to
 /// `stage`. `offset` must be the bytes staged so far, and 0 starts the upload
 /// over; a machine stages one bundle and one pad object at a time. Any staged
-/// upload idle for an hour is dropped. Returns the bytes staged.
+/// upload idle for an hour is dropped. Only the machine holding the publisher
+/// turn stages a bundle, and a part it stages renews its turn. Returns the
+/// bytes staged.
 ///
 /// # Errors
 ///
-/// A refused peer; an empty or oversized part, or one past the total; an
-/// offset other than the bytes staged, or an upload staged with another
-/// binding; storage errors.
+/// A refused peer; a bundle from a machine not holding the turn; an empty or
+/// oversized part, or one past the total; an offset other than the bytes
+/// staged, or an upload staged with another binding; storage errors.
 pub fn stage_sealed_bundle_part(
     vault: &Vault,
     peer: PeerMachine,
@@ -434,6 +438,10 @@ pub fn stage_sealed_bundle_part(
             }
         }
         if staged.unwrap_or(0) != offset {
+            return Err(denied());
+        }
+        // A pad object's stage may be erase's rewrite, which takes no turn.
+        if !hold_turn_in(vault, wtxn, machine, now)? && stage.object == SealedBundleObject::Bundle {
             return Err(denied());
         }
         for head in &dropped {
@@ -486,10 +494,11 @@ fn staged_whole(
 /// object the machine `peer` proved staged whole for it, and drops its stages.
 /// `parent` is the newest generation that machine took, or `None` when the
 /// home kept none. Refused when the home's newest is another by now, when the
-/// generation's slot is not past the newest's (one generation per slot), and
-/// for a slot not yet open on the home's clock. The home opens nothing: it
-/// keeps only objects that parse as the generation named. Then it retires
-/// what [`retired_bundle_generations`] names.
+/// generation's slot is not past the newest's (one generation per slot), for
+/// a slot not yet open on the home's clock, and for a machine not holding the
+/// publisher turn. The home opens nothing: it keeps only objects that parse as
+/// the generation named. Then the machine leaves the turn's queue, and the
+/// home retires what [`retired_bundle_generations`] names.
 ///
 /// `root` is the recovery root the machine pins, when it pins one: the home
 /// keeps it, with its anchor from the root's record here, and the kit door
@@ -497,9 +506,9 @@ fn staged_whole(
 ///
 /// # Errors
 ///
-/// A refused peer, parent or slot; no whole stage of either object, or one of
-/// another generation; a root the vault holds no valid record of; storage
-/// errors.
+/// A refused peer, parent, slot or turn; no whole stage of either object, or
+/// one of another generation; a root the vault holds no valid record of;
+/// storage errors.
 pub fn commit_sealed_bundle(
     vault: &Vault,
     peer: PeerMachine,
@@ -559,10 +568,12 @@ pub fn commit_sealed_bundle(
         let latest = entries_in(vault, wtxn)?
             .last()
             .map(|entry| entry.generation);
-        let now_slot = sealed_bundle_slot(vault.instant_in_txn(wtxn)?.secs());
+        let now = vault.instant_in_txn(wtxn)?.secs();
+        let now_slot = sealed_bundle_slot(now);
         if latest != parent
             || latest.is_some_and(|latest| generation.slot <= latest.slot)
             || generation.slot > now_slot
+            || !hold_turn_in(vault, wtxn, machine, now)?
         {
             return Err(denied());
         }
@@ -589,6 +600,7 @@ pub fn commit_sealed_bundle(
         for object in [SealedBundleObject::Bundle, SealedBundleObject::Pads] {
             drop_stage_in(vault, wtxn, &stage_key(machine, object))?;
         }
+        published_in(vault, wtxn, machine, now)?;
         retire_in(vault, wtxn, now_slot)?;
         Ok(entry)
     })
