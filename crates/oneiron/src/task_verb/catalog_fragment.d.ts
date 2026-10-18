@@ -122,7 +122,7 @@ declare namespace Sdk {
   type ShapePlanRequest = { seed?: ShapeSeed | null; preset?: ShapePresetPick | null };
   type ShapePlanSummary = { changes: number; needs_word: number; ceremonies: number; no_door: number };
   type ShapeReachVerdict = "can" | "asks";
-  type ShapeReachFact = { actor: string; actor_name?: string | null; verb: string; channel: string; sender: string; identity: string; class?: string | null; audience?: string[]; verdict: ShapeReachVerdict };
+  type ShapeReachFact = { actor: string; actor_name?: string | null; verb: string; channel: string; sender: string; identity: string; class?: string | null; audience?: string[]; audience_names?: string[]; verdict: ShapeReachVerdict };
   type ShapeReach = { facts: ShapeReachFact[] };
   type ShapePlanReach = { before: ShapeReach; after: ShapeReach; unresolved: string[]; line: string };
   type ShapePlan = { seed_id?: string | null; seed: ShapeSeed; frontier: string; items: ShapePlanItem[]; undeclared: ShapeRow[]; summary: ShapePlanSummary; reach?: ShapePlanReach };
