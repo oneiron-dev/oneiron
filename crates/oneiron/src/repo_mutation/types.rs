@@ -200,6 +200,7 @@ pub struct RepoConflictClaim {
     pub ours_tree: String,
     pub theirs_tree: String,
     pub conflicted_paths: Vec<String>,
+    pub proposals: Vec<EntityId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
