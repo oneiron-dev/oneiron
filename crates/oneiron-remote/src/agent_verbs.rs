@@ -692,6 +692,30 @@ impl OneironClient {
                 "vault.artifacts.view" => remote_agent_verb_output::<
                     Option<oneiron::blob_artifact::ArtifactView>,
                 >(client, verb, &input),
+                "vault.artifacts.units" => remote_agent_verb_output::<
+                    oneiron::anchored_annotation::ArtifactUnitsView,
+                >(client, verb, &input),
+                "vault.artifacts.anchors.pin" => remote_agent_verb_output::<
+                    oneiron::anchored_annotation::AnnotationAnchorView,
+                >(client, verb, &input),
+                "vault.artifacts.threads.open" => remote_agent_verb_output::<
+                    oneiron::anchored_annotation::AnnotationThreadView,
+                >(client, verb, &input),
+                "vault.artifacts.threads.comment" => remote_agent_verb_output::<
+                    oneiron::anchored_annotation::AnnotationCommentView,
+                >(client, verb, &input),
+                "vault.artifacts.threads.read" => remote_agent_verb_output::<
+                    Option<oneiron::anchored_annotation::AnnotationThreadView>,
+                >(client, verb, &input),
+                "vault.artifacts.threads.list" => remote_agent_verb_output::<
+                    Vec<oneiron::anchored_annotation::AnnotationThreadView>,
+                >(client, verb, &input),
+                "vault.artifacts.threads.assign" => remote_agent_verb_output::<
+                    oneiron::anchored_annotation::AnnotationBriefView,
+                >(client, verb, &input),
+                "vault.artifacts.threads.state" => remote_agent_verb_output::<
+                    oneiron::anchored_annotation::AnnotationThreadView,
+                >(client, verb, &input),
                 "vault.code.diff" => remote_agent_verb_output::<
                     Option<oneiron::code_document::CodeDiffView>,
                 >(client, verb, &input),
@@ -3966,6 +3990,102 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.artifacts.view", value)
+    }
+    pub fn vault_artifacts_units(
+        &self,
+        input: &oneiron::anchored_annotation::ArtifactUnitsRequest,
+    ) -> Result<oneiron::anchored_annotation::ArtifactUnitsView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.units", value)
+    }
+    pub fn vault_artifacts_anchors_pin(
+        &self,
+        input: &oneiron::anchored_annotation::AnnotationPinRequest,
+    ) -> Result<oneiron::anchored_annotation::AnnotationAnchorView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.anchors.pin", value)
+    }
+    pub fn vault_artifacts_threads_open(
+        &self,
+        input: &oneiron::anchored_annotation::AnnotationThreadOpenRequest,
+    ) -> Result<oneiron::anchored_annotation::AnnotationThreadView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.threads.open", value)
+    }
+    pub fn vault_artifacts_threads_comment(
+        &self,
+        input: &oneiron::anchored_annotation::AnnotationCommentRequest,
+    ) -> Result<oneiron::anchored_annotation::AnnotationCommentView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.threads.comment", value)
+    }
+    pub fn vault_artifacts_threads_read(
+        &self,
+        input: &oneiron::anchored_annotation::AnnotationThreadRequest,
+    ) -> Result<Option<oneiron::anchored_annotation::AnnotationThreadView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.threads.read", value)
+    }
+    pub fn vault_artifacts_threads_list(
+        &self,
+        input: &oneiron::blob_artifact::ArtifactRefRequest,
+    ) -> Result<Vec<oneiron::anchored_annotation::AnnotationThreadView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.threads.list", value)
+    }
+    pub fn vault_artifacts_threads_assign(
+        &self,
+        input: &oneiron::anchored_annotation::AnnotationAssignRequest,
+    ) -> Result<oneiron::anchored_annotation::AnnotationBriefView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.threads.assign", value)
+    }
+    pub fn vault_artifacts_threads_state(
+        &self,
+        input: &oneiron::anchored_annotation::AnnotationStateRequest,
+    ) -> Result<oneiron::anchored_annotation::AnnotationThreadView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.threads.state", value)
     }
     /// The semantic changes between two tested states of one code file, each with the operations that made it.
     pub fn vault_code_diff(

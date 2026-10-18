@@ -217,6 +217,14 @@ both bindings and their export-census tests in one change.
 - `vault.shares.view`
 - `vault.hooks.replay`
 - `vault.artifacts.view`
+- `vault.artifacts.units`
+- `vault.artifacts.anchors.pin`
+- `vault.artifacts.threads.open`
+- `vault.artifacts.threads.comment`
+- `vault.artifacts.threads.read`
+- `vault.artifacts.threads.list`
+- `vault.artifacts.threads.assign`
+- `vault.artifacts.threads.state`
 - `vault.code.diff`
 - `vault.code.blame`
 - `vault.code.proposal_view`

@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 473 code-mode rows (452 host rows, 21 run rows), 1708 declarations.
-// Replies: 412 fully typed, 57 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 481 code-mode rows (460 host rows, 21 run rows), 1725 declarations.
+// Replies: 420 fully typed, 57 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 82; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -956,6 +956,23 @@ declare namespace Sdk {
   type BornFromSource = { trigger: MadeByTrigger } | { agent_run: string };
   type ArtifactVersionView = { version: number; content_hash: string; parent_version?: number | null; fork_of_version?: number | null; provenance: string; run_ref?: string | null; created_at: number; export_name: string; export_media_type: string; made_by: MadeBy; born_from: BornFromSource[] };
   type ArtifactView = { artifact_id: EntityId; kind: ArtifactKind; name: string; media_type: string; head?: number | null; versions: ArtifactVersionView[] };
+  type ArtifactUnitsRequest = { artifact_ref: string; version?: number | null };
+  type AnnotationLocator = { format: "xlsx"; sheet: string; range: string } | { format: "docx"; para_path: string; char_start: number; char_end: number } | { format: "pptx"; slide: number; shape_id: string };
+  type ArtifactUnitView = { locator: AnnotationLocator; quote?: string | null };
+  type ArtifactUnitsView = { status: "supported"; artifact_id: EntityId; version: number; content_hash: string; kind: ArtifactKind; units: ArtifactUnitView[] } | { status: "unsupported"; artifact_id: EntityId; kind: ArtifactKind; reason: string };
+  type AnnotationPinRequest = { artifact_ref: string; version?: number | null; locator: AnnotationLocator };
+  type AnnotationAnchorView = { artifact_id: EntityId; version: number; locator: AnnotationLocator; quote?: string | null };
+  type AnnotationThreadOpenRequest = { artifact_ref: string; version: number; locator: AnnotationLocator; text: string };
+  type AnnotationResolution = "pinned" | "mapped" | "drifted";
+  type AnnotationDriftView = { drifted_at_version: number; pinned_version: number };
+  type AnnotationThreadState = "open" | "resolved";
+  type AnnotationCommentView = { thread_id: EntityId; author: EntityId; text: string; at: number; claim_id: EntityId };
+  type AnnotationBriefView = { brief_ref: string; task_id: EntityId; thread_id: EntityId; anchor: AnnotationAnchorView; artifact_version: number; thread_text: string; assignee?: EntityId | null };
+  type AnnotationThreadView = { thread_id: EntityId; origin: AnnotationAnchorView; anchor: AnnotationAnchorView; resolution: AnnotationResolution; drift?: AnnotationDriftView | null; state: AnnotationThreadState; head_claim_id: EntityId; comments: AnnotationCommentView[]; brief?: AnnotationBriefView | null };
+  type AnnotationCommentRequest = { artifact_ref: string; thread_ref: string; text: string };
+  type AnnotationThreadRequest = { artifact_ref: string; thread_ref: string };
+  type AnnotationAssignRequest = { artifact_ref: string; thread_ref: string; assignee_ref?: string | null };
+  type AnnotationStateRequest = { artifact_ref: string; thread_ref: string; state: AnnotationThreadState };
   type CodeStateRequest = { repo: string; path: string; revision_ref?: string | null };
   type CodeDiffRequest = { before: CodeStateRequest; after: CodeStateRequest };
   type CodeStateView = { document_ref: string; repo: string; path: string; revision_ref?: string | null; text_hash: string };
@@ -1998,6 +2015,10 @@ declare const vault: Sdk.VaultHost & {
     update(input: Sdk.AgentDefinitionUpdateRequest): Promise<Sdk.AgentDefinitionView | StoredResult>;
   };
   artifacts: {
+    anchors: {
+      /** Pins an exact readable locator and quote in an artifact version; opening a thread makes the pin durable. */
+      pin(input: Sdk.AnnotationPinRequest): Promise<Sdk.AnnotationAnchorView | StoredResult>;
+    };
     /** Appends one version of bytes to a blob artifact's append-only chain. */
     append(input: Sdk.AppendBlobVersionRequest): Promise<Sdk.BlobVersionView | StoredResult>;
     /** Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard. */
@@ -2074,8 +2095,24 @@ declare const vault: Sdk.VaultHost & {
     release_wait(input: Sdk.ProposalSettleRequest): Promise<Sdk.ReleasedWait | StoredResult>;
     /** Reviews an artifact's head slides through the host's decision ladder and holds the result as a proposal for Keep or Discard. */
     review_slides(input: Sdk.SlideReviewSubmit): Promise<Sdk.SlideReviewOutcome | StoredResult>;
+    threads: {
+      /** Assigns an anchored thread into a durable task brief with its anchor and transcript; an agent-definition assignee dispatches through the engine. */
+      assign(input: Sdk.AnnotationAssignRequest): Promise<Sdk.AnnotationBriefView | StoredResult>;
+      /** Appends a comment as the caller; returns its first stored part, with every part available through threads.read. */
+      comment(input: Sdk.AnnotationCommentRequest): Promise<Sdk.AnnotationCommentView | StoredResult>;
+      /** Lists an artifact's readable threads with their opening pins, current anchors, drift, comments and assignments. */
+      list(input: Sdk.ArtifactRefRequest): Promise<Sdk.AnnotationThreadView[] | StoredResult>;
+      /** Opens an anchored thread with its first comment as the caller, retaining its exact version, locator and quote. */
+      open(input: Sdk.AnnotationThreadOpenRequest): Promise<Sdk.AnnotationThreadView | StoredResult>;
+      /** Reads a thread, its opening quote, current anchor, explicit pinned, mapped or drifted disposition, comments and assignment. */
+      read(input: Sdk.AnnotationThreadRequest): Promise<Sdk.AnnotationThreadView | null | StoredResult>;
+      /** Opens or resolves a thread through its existing claim gate, preserving its anchor, comments and drift. */
+      state(input: Sdk.AnnotationStateRequest): Promise<Sdk.AnnotationThreadView | StoredResult>;
+    };
     /** Undoes one Keep by appending a new version. */
     undo(input: Sdk.ProposalSettleRequest): Promise<Sdk.UndoneKeep | StoredResult>;
+    /** Inspects real DOCX blocks, XLSX cells and PPTX shapes in one version; other kinds explicitly report no annotation unit adapter. */
+    units(input: Sdk.ArtifactUnitsRequest): Promise<Sdk.ArtifactUnitsView | StoredResult>;
     /** One artifact: its kind, name, type, head and every version with its made_by and born-from. */
     view(input: Sdk.ArtifactRefRequest): Promise<Sdk.ArtifactView | null | StoredResult>;
     /** The organ calls held beside one artifact until one of the owner's nodes can run them, each with why it waits. */
