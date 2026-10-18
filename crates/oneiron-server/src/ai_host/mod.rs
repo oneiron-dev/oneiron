@@ -59,6 +59,7 @@ mod sync_wake;
 pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
+pub(crate) mod trained_serving;
 mod training_offer;
 pub(crate) mod training_pack;
 mod turn_actions;
@@ -703,10 +704,11 @@ impl Drop for AiHost {
 /// A parked attempt is requeued only when this server's Dreamer parked it
 /// itself (a pass cut at its deadline, an executor error): that park is its
 /// own checkpoint, cleared here; so is an agent run's park on a provider
-/// outage (FIX 3194), whose run goes on from its next step. One parked on a
-/// signal (a budget or consent trap, a wait) stays leased: a restart is not
-/// its resume signal (runtime.md), and it resumes only when its signal is
-/// consumed. Expiry is by age, so "now"
+/// outage (FIX 3194), whose run goes on from its next step, and any other
+/// owner's checkpoint park, whose owner died with the process that held it.
+/// One parked on a signal (a budget or consent trap, a wait) stays leased: a
+/// restart is not its resume signal (runtime.md), and it resumes only when
+/// its signal is consumed. Expiry is by age, so "now"
 /// is the later of the wall clock and one second past the youngest lease:
 /// every dead lease expires, even after the clock stepped back, and none
 /// waits.
@@ -737,6 +739,7 @@ fn recover_dead_leases(vault: &Vault) {
         match parked {
             Some(park)
                 if park.park_owner == dreamer::LEASE_OWNER
+                    || park.cause == oneiron::DreamerParkCause::Checkpoint
                     || run_outage_park(&park.park_owner, park.cause) =>
             {
                 if let Err(error) = runner.resume_parked(row.id, &park.park_owner, unix_now()) {

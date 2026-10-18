@@ -16,8 +16,7 @@ import uuid
 
 CODE_FILES = {"meeting-audio-worker.py", "meeting-audio-native.py", "meeting_audio_runtime.py", "meeting_audio_process.py", "meeting_audio_ctc.py"}
 PROTOCOL = "oneiron.meeting_audio.host.v1"
-MAX_REPLY = 1024 * 1024
-MAX_AUDIO = 16000 * 2 * 7200
+# No request, reply, audio, code file or profile is refused by its size (Rule 5).
 
 
 def sha(data):
@@ -45,12 +44,12 @@ def check_files(spec, error):
         raise error("ProcessInterpreterUnavailable")
     for name, checksum in spec["code_sha256"].items():
         path = Path(spec["script"]).with_name(name)
-        if not path.is_file() or path.stat().st_size > MAX_REPLY or sha(path.read_bytes()) != checksum:
+        if not path.is_file() or sha(path.read_bytes()) != checksum:
             raise error("ProcessCodeDigestMismatch")
     if sha(Path(__file__).read_bytes()) != spec["code_sha256"]["meeting_audio_process.py"]:
         raise error("ProcessCodeDigestMismatch")
     profile = Path(spec["profile"])
-    if not profile.is_file() or profile.stat().st_size > MAX_REPLY or sha(profile.read_bytes()) != spec["profile_sha256"]:
+    if not profile.is_file() or sha(profile.read_bytes()) != spec["profile_sha256"]:
         raise error("ProcessProfileDigestMismatch")
 
 
@@ -89,8 +88,6 @@ def exchange(command, request, timeout, error):
                                 child.stdout.close()
                             else:
                                 output.extend(data)
-                                if len(output) > MAX_REPLY:
-                                    raise error("ProcessOutputTooLarge")
             try:
                 child.wait(timeout=max(0.001, deadline - time.monotonic()))
             except subprocess.TimeoutExpired:
@@ -107,14 +104,12 @@ def exchange(command, request, timeout, error):
 
 def call(spec, stage, operation, body, options, error, parse):
     check_files(spec, error)
-    if stage not in {"alignment", "diarization"} or len(body) > MAX_AUDIO:
+    if stage not in {"alignment", "diarization"}:
         raise error("InvalidProcessRequest")
     request_id = str(uuid.uuid4())
     header = {"protocol": PROTOCOL, "request_id": request_id, "operation": operation,
               "input_bytes": len(body), "input_sha256": sha(body), "options": options}
     encoded = json.dumps(header, ensure_ascii=False, allow_nan=False).encode()
-    if len(encoded) > MAX_REPLY:
-        raise error("ProcessRequestTooLarge")
     command = [spec["interpreter"], "-I", "-B", spec["script"], "--stage", stage, "--runtime-profile", spec["profile"],
                "--runtime-profile-sha256", spec["profile_sha256"]]
     status, output = exchange(command, encoded + b"\n" + body, spec["timeout_seconds"], error)

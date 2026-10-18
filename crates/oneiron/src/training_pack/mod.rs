@@ -17,7 +17,8 @@ use crate::side_table::{self, Named, SideTable};
 
 pub(crate) use authorize::training_run_job_input;
 pub use connector::{TrainOutput, TrainRequest, TrainingConnector, TrainingFuture};
-pub use promotion::TrainingEvalInput;
+pub use promotion::{SwapExpectation, TrainingEvalInput, ViewedSwap};
+pub(crate) use promotion::{role_swap_receipt_in, training_run_in, training_runs_in};
 pub use types::*;
 
 const RUNS: SideTable<EntityId, TrainingRun, Named> =

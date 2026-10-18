@@ -988,6 +988,30 @@ to you as a `rubric_recheck` ask in your digest. `POST /v1/owner/coach/judge-ask
 drops it for good and asks the case again, as a `rubric_regrade` A/B ask in a later digest, which
 you pick like any other.
 
+## Swap in a trained model
+
+When you say yes to a Coach offer to train a custom model, the run trains, is scored on its
+held-out cases, and then waits for a separate choice: a trained model never swaps in by itself.
+Once a run is scored and its checks allow a swap (no exact-hash overlap with the held-out cases,
+passing export checks, a passing held-out verdict under the plan's harness), the Coach asks each
+owner in their conversation with it: "Swap in the trained model" or "Keep the current model".
+The question names the starting and returned checkpoints with their load-set hashes, the
+harness, the export checks, the overlaps and the held-out metrics, and reads the paired
+comparison with the current model as unknown, since nothing measured it yet. Doing nothing keeps
+the current model, and only your own answer settles it. Embedder runs are not asked: their swap
+re-embeds through a space move.
+
+`POST /v1/owner/coach/training-runs/view` with `{"run"}` shows a run: its state, evaluation,
+export checks and overlaps, every swap receipt, every swap question and `serving`. `POST
+/v1/owner/coach/training-runs/swap` with `{"run", "choice": {"kind": "evaluated"}, "expected":
+{"spec", "checkpoint"}}` swaps in the result you viewed, named by the `spec` and `checkpoint`
+hashes the view showed; a result that moved since is refused as changed. `{"kind":
+"explicit_override", "reason"}` binds a returned checkpoint whose checks failed, with your reason
+on its receipt. Either answer closes the run's other open questions.
+
+No trained-weight loader exists yet: a swapped role is bound, and `serving` reads `unavailable`,
+with the custody pin a loader would load.
+
 ## Answer the decision ladder's asks
 
 When a typed decision climbs past every model rung (the dial reaches the
@@ -1373,18 +1397,22 @@ like this:
 
 A handle has no expiry time. It holds while the run keeps its lease, and a run parked on a
 durable wait keeps its handle. Once the run ends or takes a new lease, attach again. One
-credential attaches per lease: the same credential gets the same handle back, and another
-credential is refused. The run's record keeps the attachment, so a handle still works after a
-restart once the runner holds the same lease again. An action and the run's own step never run
-at once: an attach or action waits up to 5 seconds for the current step or action to end, and
-then runs before the run's next step. Refusals carry these codes:
+credential is attached per lease: the same credential gets the same handle back, and another
+credential is refused. To move the run to another credential paired to the same agent (a
+rotated slip, or another harness), attach with that credential and the body `{"rebind": true}`.
+It gets a new handle, and the old handle stops working (`live_run_unavailable`). The run's
+record keeps the attachment, so a handle still works after a restart once the runner holds the
+same lease again. An action and the run's own step never run at once: an attach or action waits
+up to 5 seconds for the current step or action to end, and then runs before the run's next
+step. Refusals carry these codes:
 - 400 `live_run_required`: a live-run action named no handle.
 - 400 `live_run_invalid`: the handle is malformed.
 - 403 `live_run_unavailable`: an unknown run, a credential or agent that is not the attached
   one, or a run with no attachment. All of these get the same answer.
 - 409 `live_run_stale`: the run's lease moved on.
 - 409 `code_run_busy`: the run stayed mid-step or mid-action for those 5 seconds. Retry.
-- 409 `live_run_attached`: another credential is attached to this lease.
+- 409 `live_run_attached`: another credential is attached to this lease, and the attach did not
+  ask to rebind.
 
 An MCP client runs these actions with the `invoke_action` tool, on either MCP endpoint. Its
 arguments are `verb`, `args`, `idempotencyKey` and `liveRun`, the same fields as the HTTP body,

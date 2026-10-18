@@ -13,10 +13,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `src/cdp.rs` | src | m | 8 crate-vis | — | The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL… |
 | `src/desktop.rs` | src | XL | 4 struct · 2 enum · 15 fn | AbandonedTakeover, DesktopGuest, DesktopSession, PersonInput, Takeover, TakeoverRecord | A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server… |
-| `src/driver.rs` | src | XL | 25 crate-vis | — | The CDP driver: one page in a Chromium guest, read as an outline and acted on by ref |
-| `src/lib.rs` | src | L | 39 struct · 8 enum · 2 trait · 12 fn · 11 const · 5 re-export | BatchInput, BatchOutput, BatchStep, BrowserDriver, BrowserError, BrowserPersonInput, BrowserTab, ClickInput +41 | Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`) |
+| `src/driver.rs` | src | XL | 30 crate-vis | — | The CDP driver: one page in a Chromium guest, read as an outline and acted on by ref |
+| `src/lib.rs` | src | XL | 41 struct · 9 enum · 2 trait · 12 fn · 11 const · 5 re-export | BatchInput, BatchOutput, BatchStep, BrowserDriver, BrowserError, BrowserPersonInput, BrowserTab, ClickInput +44 | Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`) |
 | `src/library.rs` | src | m | 14 struct · 1 enum · 1 trait · 3 fn · 3 const · 2 crate-vis | LibraryCard, LibraryFindInput, LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput, LibraryRetiredInput, LibraryRetiredOutput, LibraryRunInput +8 | The replay library (OF-598; EIRI-ARCH-0002 "The replay library"): a solved browser run, kept as a… |
 | `src/mcp.rs` | src | s | 5 crate-vis | — | MCP over a guest's stdio, as `cua-driver mcp` serves it: JSON-RPC 2.0, one message per line, on one reader… |
 | `src/outline.rs` | src | s | 2 crate-vis | — | The accessibility tree as rows a program reads: a closed set of roles, closed menus collapsed, layout and… |
 | `src/receipt_evidence.rs` | src | s | 1 enum · 1 trait | ReceiptEvidence, ReceiptEvidenceSink | An effect receipt's screenshot kept past its session (FIX 2150) |
-| `src/session.rs` | src | m | 2 struct · 21 fn · 3 crate-vis | BrowserGuest, BrowserSession | A browser session: one Chromium guest in a container and the CDP driver attached to it, with the host's… |
+| `src/session.rs` | src | L | 2 struct · 22 fn · 3 crate-vis | BrowserGuest, BrowserSession | A browser session: one Chromium guest in a container and the CDP driver attached to it, with the host's… |

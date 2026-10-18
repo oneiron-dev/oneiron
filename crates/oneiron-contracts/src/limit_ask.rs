@@ -117,6 +117,18 @@ pub enum EngineLimit {
     /// Bytes of the judge's rubric (the active shared `judge` skill's text)
     /// one judgment or label re-check reads. Past it the rubric is read whole.
     JudgeRubricBytes,
+    /// Items one Dreamer-maintenance or Coach row holds: an owner policy's
+    /// rules, aliases, groups, voices or evidence refs, a diagnostic's or
+    /// card's evidence refs, a training offer's losses or refs. Past it the
+    /// row is kept whole.
+    MaintenanceRowItems,
+    /// Bytes of one text field a Dreamer-maintenance or Coach row holds (a
+    /// template, a rule's instruction, a route, a draft, an offer's note).
+    /// Past it the text is kept whole.
+    MaintenanceTextBytes,
+    /// Rows one Dreamer-maintenance or Coach pass reads to find its work
+    /// (receipts, calls, runs). Past it the pass reads them all.
+    MaintenanceScanRows,
     /// Bytes of the skill instructions one held-out replay judgment reads.
     /// Past it the instructions are read whole.
     JudgeInstructionsBytes,
@@ -135,11 +147,18 @@ pub enum EngineLimit {
     /// calls another runs the inner one's step inside its own. Past it the
     /// row asks whether everything is okay and the call runs.
     CallableNestDepth,
+    /// Bytes of the banked source clip one cloned-voice render sends as its
+    /// reference. Past it the whole clip is still sent.
+    VoiceReferenceBytes,
+    /// Bytes of one signing item's PDF the e-sign seal holds in memory: its
+    /// original or its prepared copy, whichever is larger. Past it asks
+    /// whether everything is okay, and the item is prepared and sealed whole.
+    EsignPdfBytes,
 }
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 32] = [
+    pub const ALL: [Self; 37] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -167,11 +186,16 @@ impl EngineLimit {
         Self::PackScriptOutputBytes,
         Self::PackScriptOutputRows,
         Self::JudgeRubricBytes,
+        Self::MaintenanceRowItems,
+        Self::MaintenanceTextBytes,
+        Self::MaintenanceScanRows,
         Self::JudgeInstructionsBytes,
         Self::JudgeReplayTextBytes,
         Self::ContributionJudgeTaskBytes,
         Self::ContributionJudgeAnswerBytes,
         Self::CallableNestDepth,
+        Self::VoiceReferenceBytes,
+        Self::EsignPdfBytes,
     ];
 
     /// The config key that sets the row.
@@ -204,11 +228,16 @@ impl EngineLimit {
             Self::PackScriptOutputBytes => "limits.pack_script_output_bytes",
             Self::PackScriptOutputRows => "limits.pack_script_output_rows",
             Self::JudgeRubricBytes => "limits.judge_rubric_bytes",
+            Self::MaintenanceRowItems => "limits.maintenance_row_items",
+            Self::MaintenanceTextBytes => "limits.maintenance_text_bytes",
+            Self::MaintenanceScanRows => "limits.maintenance_scan_rows",
             Self::JudgeInstructionsBytes => "limits.judge_instructions_bytes",
             Self::JudgeReplayTextBytes => "limits.judge_replay_text_bytes",
             Self::ContributionJudgeTaskBytes => "limits.contribution_judge_task_bytes",
             Self::ContributionJudgeAnswerBytes => "limits.contribution_judge_answer_bytes",
             Self::CallableNestDepth => "limits.callable_nest_depth",
+            Self::VoiceReferenceBytes => "limits.voice_reference_bytes",
+            Self::EsignPdfBytes => "limits.esign_pdf_bytes",
         }
     }
 
@@ -245,6 +274,9 @@ impl EngineLimit {
             // The shipped rubric is about 1 KiB; the judgment's state holds
             // at most 64 KiB in all.
             Self::JudgeRubricBytes => 8_192,
+            Self::MaintenanceRowItems => 256,
+            Self::MaintenanceTextBytes => 65_536,
+            Self::MaintenanceScanRows => 50_000,
             // The shares the judge cut to before Rule 5: 8 KiB of
             // instructions and 40,000 bytes of replay text.
             Self::JudgeInstructionsBytes => 8_192,
@@ -254,6 +286,9 @@ impl EngineLimit {
             Self::ContributionJudgeTaskBytes => 24 << 10,
             Self::ContributionJudgeAnswerBytes => 16 << 10,
             Self::CallableNestDepth => 8,
+            // The serving policy's old reference cap.
+            Self::VoiceReferenceBytes => 16 << 20,
+            Self::EsignPdfBytes => 256 << 20,
         }
     }
 }

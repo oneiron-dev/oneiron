@@ -3,29 +3,32 @@
 //!
 //! Each axis below has a restrict whose result is never wider than its left
 //! side, so `restrict(before, after) == after` proves `after` no wider on
-//! it. A row table counts when every row it held is still there, in place
-//! where its readers run rows in order, and each row added only restricts.
-//! Source trust compares its folded slots. Every other field must be equal:
-//! the owner policy rows, a fold that depends on provenance, and any field
-//! added later. A narrowing the comparator cannot prove reads as a widening
-//! and waits for the owner.
+//! it. A row table counts when every row it held is still there (in place
+//! where its readers run rows in order) or gives way at its key to one that
+//! only restricts it, and each row added only restricts. Wait rows compare
+//! what they resolve, source trust its folded slots, and delegation grants
+//! what the gate admits by them. Every other field must be equal: the owner
+//! policy rows, a fold that depends on provenance, and any field added
+//! later. A narrowing the comparator cannot prove reads as a widening and
+//! waits for the owner.
 use super::{CommOptOutPosture, PolicyManifestResolution};
 use crate::EntityId;
 use crate::claim::ClaimSource;
 use crate::gate::ceiling::{
-    ActorCeiling, PolicyApprovalCeiling, PolicyAxes, PolicyCriticality, PolicyPack,
-    PolicySensitivity, SourceTrustCeiling, SourceTrustRow,
+    ActorCeiling, DelegationFoldCache, DelegationGrantRecord, PolicyApprovalCeiling, PolicyAxes,
+    PolicyCriticality, PolicyPack, PolicySensitivity, SourceTrustCeiling, SourceTrustRow,
 };
 use crate::gate::class_policy::{
-    ActPolicyTable, ActPosture, ClassPolicyPrecedence, WaitPolicyRow, WaitPolicyTable,
+    ActPolicyTable, ActPosture, ClassPolicyPrecedence, WaitPolicyTable, WaitResolution,
 };
-use crate::gate::fanout_policy::{FanoutScopedRow, merge_controls};
+use crate::gate::fanout_policy::{self, FanoutScopedRow, merge_controls};
 use crate::gate::grants::{PolicyScopedGrant, scoped_read_grant_has_read_effector};
 use crate::gate::mail_policy::MailPolicy;
 use crate::gate::policy_values::{PolicyPrecedence, PolicyRowScope, PolicyValue, PolicyValueRow};
 use crate::gate::room_policy::RoomPolicyRow;
 use crate::gate::weave_policy;
 use crate::llm::BudgetPolicyTable;
+use std::collections::BTreeSet;
 
 /// `probe` takes `before`'s value where `narrower(before, after)` holds.
 fn settle<T: Clone>(probe: &mut T, before: &T, after: &T, narrower: impl FnOnce(&T, &T) -> bool) {
@@ -72,9 +75,28 @@ fn meet_in<T: Clone + PartialEq>(before: &T, after: &T, restrict: impl FnOnce(&m
 /// Every row of `before` is still in `after`, counting copies, and each row
 /// `after` adds is `narrow`.
 fn adds_only<T: PartialEq>(before: &[T], after: &[T], narrow: impl Fn(&T) -> bool) -> bool {
+    replaces_or_adds(before, after, |_, _| false, narrow)
+}
+
+/// [`adds_only`], where a row `before` held may instead give way to one row
+/// that `replaces` it. Rows kept as they were pair off first.
+fn replaces_or_adds<T: PartialEq>(
+    before: &[T],
+    after: &[T],
+    replaces: impl Fn(&T, &T) -> bool,
+    narrow: impl Fn(&T) -> bool,
+) -> bool {
     let mut added: Vec<&T> = after.iter().collect();
+    let mut gone = Vec::new();
     for row in before {
-        let Some(at) = added.iter().position(|kept| *kept == row) else {
+        if let Some(at) = added.iter().position(|kept| *kept == row) {
+            added.remove(at);
+        } else {
+            gone.push(row);
+        }
+    }
+    for row in gone {
+        let Some(at) = added.iter().position(|&new| replaces(row, new)) else {
             return false;
         };
         added.remove(at);
@@ -160,16 +182,33 @@ fn value_rows_narrow(before: &[PolicyValueRow], after: &[PolicyValueRow]) -> boo
     adds_only(before, after, |row| value_row_narrows(row) && !held(row))
 }
 
-/// A new wait row, appended: a holder's at the default precedence runs
-/// after every row before it and only raises the floor and lowers the
-/// ceiling inside the window it meets. A vault row can give a class its
-/// first bounds or make it vault-only.
-fn wait_row_narrows(row: &WaitPolicyRow) -> bool {
-    row.holder_ref.is_some() && matches!(row.precedence, ClassPolicyPrecedence::NestedNarrowing)
+/// One class's wait, no wider: a window whose floor stays or rises and whose
+/// ceiling stays or falls, or a contradiction, which its caller refuses. An
+/// ungoverned class stays so; a first window is not ordered against it.
+fn wait_no_wider(before: WaitResolution, after: WaitResolution) -> bool {
+    use WaitResolution::{Contradictory, Resolved, Ungoverned};
+    match (before, after) {
+        (_, Contradictory) | (Ungoverned, Ungoverned) => true,
+        (Resolved(before), Resolved(after)) => {
+            after.min_secs >= before.min_secs && cap_no_higher(before.max_secs, after.max_secs)
+        }
+        _ => false,
+    }
 }
 
+/// Wait rows on what they resolve, for every class and holder either side
+/// names. A holder no row names reads as none, and a holder row's clamps
+/// depend on the rows before it, so no row-wise rule replaces this.
 fn wait_rows_narrow(before: &WaitPolicyTable, after: &WaitPolicyTable) -> bool {
-    appends_only(before.rows(), after.rows(), wait_row_narrows)
+    let rows = || before.rows().iter().chain(after.rows());
+    let classes: BTreeSet<&str> = rows().map(|row| row.wait_class.as_str()).collect();
+    let holders: BTreeSet<Option<EntityId>> =
+        rows().map(|row| row.holder_ref).chain([None]).collect();
+    classes.iter().all(|class| {
+        holders.iter().all(|&holder| {
+            wait_no_wider(before.resolve(class, holder), after.resolve(class, holder))
+        })
+    })
 }
 
 /// A source-trust slot on the same binding, its cap no higher (none, the
@@ -206,6 +245,36 @@ fn trust_narrows(before: &SourceTrustCeiling, after: &SourceTrustCeiling) -> boo
         && before.malformed_manifest_seen == after.malformed_manifest_seen
 }
 
+/// The actor a delegation grant ref admits at Auto: its record's binding,
+/// where its chain's ceiling is Auto. The gate holds anything else Pending.
+fn delegation_admits<'a>(
+    fold: &'a DelegationFoldCache,
+    grant_ref: &str,
+) -> Option<(&'a str, Option<&'a str>)> {
+    if fold.effective_ceiling(grant_ref) != Some(PolicyApprovalCeiling::Auto) {
+        return None;
+    }
+    match fold.records.get(grant_ref)? {
+        DelegationGrantRecord::Grant {
+            actor_class,
+            actor_ref,
+            ..
+        } => Some((actor_class.trim(), actor_ref.as_deref())),
+        DelegationGrantRecord::RevokeGrant { .. } => None,
+    }
+}
+
+/// Delegation grants on what the gate admits by them: each ref that admits
+/// after admitted before, bound to the same actor. A grant revoked, dropped,
+/// lowered or cut off by its parent only narrows; a new or rebound one can
+/// admit an actor the vault held Pending.
+fn delegation_narrows(before: &DelegationFoldCache, after: &DelegationFoldCache) -> bool {
+    after.records.keys().all(|grant_ref| {
+        delegation_admits(after, grant_ref)
+            .is_none_or(|bound| delegation_admits(before, grant_ref) == Some(bound))
+    })
+}
+
 /// A new scoped grant that grants nothing: it carries a budget and no read
 /// effector, so no read, effect or note door admits by it and no read
 /// fallback moves. A matching one can only veto a coach offer.
@@ -231,18 +300,37 @@ fn budget_rows_narrow(before: &BudgetPolicyTable, after: &BudgetPolicyTable) -> 
     })
 }
 
-/// New mail rows beside a vault row the vault already had, each one that
-/// only meets. With no vault row there is no mail policy, and a first one
-/// can class a recipient cold and make a graduation grant usable.
+/// Mail rows beside a vault row the vault already had: an old row narrowed
+/// in place, and new rows that only meet. With no vault row there is no mail
+/// policy, and a first one can class a recipient cold and make a graduation
+/// grant usable.
 fn mail_rows_narrow(before: &[MailPolicy], after: &[MailPolicy]) -> bool {
     before.iter().any(MailPolicy::is_vault_row)
-        && adds_only(before, after, MailPolicy::only_meets_beside_vault)
+        && replaces_or_adds(
+            before,
+            after,
+            MailPolicy::narrows_in_place,
+            MailPolicy::only_meets_beside_vault,
+        )
 }
 
-/// New weave rows, each for a role the vault already rows, where every
-/// matching row meets. A first row replaces the shipped table, a new role
-/// opens a reader, and under holder-required a row for a holder that had
-/// none turns it on.
+/// A weave row standing in for one at the same role and holder: its
+/// sections a subset and each count no greater, which is what the meet
+/// would leave.
+fn weave_row_replaces(before: &weave_policy::Row, after: &weave_policy::Row) -> bool {
+    after.role == before.role
+        && after.holder == before.holder
+        && after.sections.is_subset(&before.sections)
+        && after.max_sections <= before.max_sections
+        && after.max_predicates <= before.max_predicates
+        && after.max_edge_kinds <= before.max_edge_kinds
+        && after.max_rows <= before.max_rows
+}
+
+/// Weave rows narrowed in place, and new ones each for a role the vault
+/// already rows, where every matching row meets. A first row replaces the
+/// shipped table, a new role opens a reader, and under holder-required a
+/// row for a holder that had none turns it on.
 fn weave_rows_narrow(
     before: &[weave_policy::Row],
     after: &[weave_policy::Row],
@@ -254,7 +342,7 @@ fn weave_rows_narrow(
             .any(|old| old.role == role && old.holder == holder)
     };
     !before.is_empty()
-        && adds_only(before, after, |row| {
+        && replaces_or_adds(before, after, weave_row_replaces, |row| {
             held(&row.role, None)
                 && (precedence == weave_policy::Precedence::NestedNarrowing
                     || held(&row.role, row.holder))
@@ -265,10 +353,16 @@ fn room_rows_narrow(before: &[RoomPolicyRow], after: &[RoomPolicyRow]) -> bool {
     appends_only(before, after, RoomPolicyRow::only_narrows_appended)
 }
 
-/// A new fan-out scope row with no holder meets what it matches; a holder
-/// row restarts from the vault under nested narrowing.
+/// Fan-out scope rows: an old row whose policy narrows in place under the
+/// same ref, scope and holder, and new rows with no holder, which meet what
+/// they match. A new holder row restarts from the vault under nested
+/// narrowing, and a row moved to another scope or holder can cross one.
 fn fanout_rows_narrow(before: &[FanoutScopedRow], after: &[FanoutScopedRow]) -> bool {
-    adds_only(before, after, |row| row.holder_ref.is_none())
+    let replaces = |old: &FanoutScopedRow, new: &FanoutScopedRow| {
+        (&new.row_ref, &new.scope, &new.holder_ref) == (&old.row_ref, &old.scope, &old.holder_ref)
+            && fanout_policy::narrow(&old.policy, &new.policy) == new.policy
+    };
+    replaces_or_adds(before, after, replaces, |row| row.holder_ref.is_none())
 }
 
 /// Whether `after` is no wider than `before` on every axis. A fail-closed
@@ -347,13 +441,14 @@ pub(crate) fn manifest_resolution_narrows(
     by_value_both!(dreamer_failure_precedence);
     in_place_both!(livequery_tracker_limits);
     in_place_both!(credential_lifetimes);
-    // A dropped row proves nothing here, and a replaced one only as a
-    // budget cap lowered in place.
+    // A dropped row proves nothing here, and a replaced one only where it
+    // keeps its key and meets: a budget cap, a fan-out, mail or weave row.
     axis!(packs, |b, a| adds_only(b, a, pack_narrows));
     axis!(actor_ceilings, |b, a| adds_only(b, a, ceiling_narrows));
     axis!(act_policy, act_rows_narrow);
     axis!(wait_policy, wait_rows_narrow);
     axis!(source_trust, trust_narrows);
+    axis!(delegation_fold, delegation_narrows);
     axis!(scoped_grants, |b, a| adds_only(b, a, grant_narrows));
     axis!(budget_policy, budget_rows_narrow);
     axis!(native_mail_policy, |b, a| mail_rows_narrow(b, a));

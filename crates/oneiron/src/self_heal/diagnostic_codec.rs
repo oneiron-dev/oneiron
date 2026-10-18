@@ -8,7 +8,7 @@ use super::admission::validate_detector_id;
 use super::event::{
     AgentHealthSignal, DIAGNOSTIC_ACTOR_CLASSES, DIAGNOSTIC_BODY_KEYS, DIAGNOSTIC_SCHEMA_VERSION,
     DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass, DiagnosticReplayCoordinate,
-    DiagnosticSourceKind, MAX_EVIDENCE_REFS, MAX_REF_LEN, MAX_TOKEN_LEN, invalid_diagnostic,
+    DiagnosticSourceKind, MAX_REF_LEN, MAX_TOKEN_LEN, invalid_diagnostic,
 };
 use super::invariant_canonical::{canonical_invariant_value, stored_invariant_field};
 use super::untrusted_text::{is_forbidden_text_scalar, validate_untrusted_detail};
@@ -34,9 +34,6 @@ pub fn encode_diagnostic_event_body(event: &DiagnosticEvent) -> Result<Vec<u8>> 
     let mut evidence_refs = event.evidence_refs.clone();
     evidence_refs.sort_unstable();
     evidence_refs.dedup();
-    if evidence_refs.len() > MAX_EVIDENCE_REFS {
-        return Err(invalid_diagnostic("too many evidence refs"));
-    }
     let evidence: Vec<Value> = evidence_refs.iter().map(entity_ref_value).collect();
 
     let values = [
@@ -393,9 +390,6 @@ fn decode_evidence_refs(value: &Value) -> Result<Vec<EntityId>> {
     let Value::Array(items) = value else {
         return Err(invalid_diagnostic("evidence_refs must be an array"));
     };
-    if items.len() > MAX_EVIDENCE_REFS {
-        return Err(invalid_diagnostic("too many evidence refs"));
-    }
     let mut refs: Vec<EntityId> = Vec::with_capacity(items.len());
     for item in items {
         let entity = decode_entity_ref(item)?;

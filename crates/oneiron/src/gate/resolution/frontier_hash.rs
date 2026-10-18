@@ -113,7 +113,6 @@ pub(super) fn hash_policy_frontier_v0(
         for row in &resolution.voice_serving {
             for value in [
                 row.vault.max_text_bytes,
-                row.vault.max_pcm_bytes,
                 row.vault.max_ref_bytes,
                 row.vault.max_queued_renders,
                 row.vault.max_inflight_uploads,
@@ -128,7 +127,6 @@ pub(super) fn hash_policy_frontier_v0(
                 hash_bytes(hasher, holder.as_bytes());
                 for value in [
                     limits.max_text_bytes,
-                    limits.max_pcm_bytes,
                     limits.max_ref_bytes,
                     limits.max_queued_renders,
                     limits.max_inflight_uploads,
@@ -208,7 +206,6 @@ pub(super) fn hash_policy_frontier_v0(
     if let Some(limits) = resolution.pptx_comment_limits {
         hash_str(hasher, "pptx_comment_limits:nested_narrowing");
         for value in [
-            limits.max_author_name_bytes,
             limits.max_xml_bytes,
             limits.max_xml_attributes,
             limits.max_xml_namespaces,
@@ -267,7 +264,6 @@ pub(super) fn hash_policy_frontier_v0(
                 }
             }
             hash_u64(hasher, row.limits.max_text_bytes as u64);
-            hash_u64(hasher, row.limits.max_pcm_fragment_bytes as u64);
         }
     }
     // The shipped row and an absent legacy row resolve identically. Only a

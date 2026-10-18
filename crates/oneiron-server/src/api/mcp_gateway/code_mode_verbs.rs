@@ -137,6 +137,10 @@ struct RunDesktop {
     seats: Arc<crate::server::DesktopSeats>,
     vault: Arc<oneiron::Vault>,
     run_id: oneiron::EntityId,
+    /// Whether this door gave the run's desktop its press policy yet, as
+    /// [`RunBrowser`]'s does: a budgeted grant's batch count spends down
+    /// across this door's calls and never refills at one.
+    policy_set: AtomicBool,
 }
 
 impl Drop for RunDesktop {
@@ -307,8 +311,12 @@ pub(crate) enum VerdictAsker {
     Connector(McpCallContext),
     /// A pumped run's own agent, which holds no credential: each decision is
     /// the agent's `ai.verdict` through its run's host door, under a fresh
-    /// invocation.
-    Agent(oneiron::WriteActor),
+    /// invocation, on the run's own line when its entry bound one (so a
+    /// room-funded run's step verdicts bill its payer, FIX 3574).
+    Agent(
+        oneiron::WriteActor,
+        Option<oneiron::llm::run_admission::RunAdmission>,
+    ),
 }
 
 impl RoutineDecider for LadderDecider {
@@ -354,7 +362,7 @@ impl RoutineDecider for LadderDecider {
                     let _ = sender.send(execute_step_verdict(&server, &actor, input, run).await);
                 }));
             }
-            VerdictAsker::Agent(actor) => {
+            VerdictAsker::Agent(actor, line) => {
                 self.runtime.spawn_blocking(move || {
                     let answered = crate::server::answer_as_agent(
                         &server,
@@ -364,7 +372,7 @@ impl RoutineDecider for LadderDecider {
                         AgentVerb::AiVerdict,
                         input,
                         held,
-                        None,
+                        line.as_ref(),
                     );
                     let _ = sender.send(answered.map_err(super::mcp_facade_error));
                 });
@@ -553,17 +561,26 @@ impl RunBrowser {
         driver.set_receipt_sink(Box::new(writer));
         // While a person is asked or holds the browser, the session refuses
         // the verb `browser_taken_over`; the first answer after they hand it
-        // back carries the takeover's record as `takeover`.
+        // back carries the takeover's record as `takeover`. An answer after
+        // the agent's verbs moved to another tab (one its act opened, or the
+        // one a closed tab gave way to) names the move as `switched`.
         let mut output = drive_run_guest(&self.vault, self.run_id, driver, verb, input)?;
         self.seats.asked(self.run_id, driver.takeover());
-        if let Some(object) = output.as_object_mut()
-            && let Some(record) = driver.take_returned()
-        {
-            object.insert(
-                "takeover".into(),
-                serde_json::to_value(record)
-                    .map_err(|e| BrowserError::Unavailable(e.to_string()))?,
-            );
+        if let Some(object) = output.as_object_mut() {
+            if let Some(record) = driver.take_returned() {
+                object.insert(
+                    "takeover".into(),
+                    serde_json::to_value(record)
+                        .map_err(|e| BrowserError::Unavailable(e.to_string()))?,
+                );
+            }
+            if let Some(switch) = driver.take_switched() {
+                object.insert(
+                    "switched".into(),
+                    serde_json::to_value(switch)
+                        .map_err(|e| BrowserError::Unavailable(e.to_string()))?,
+                );
+            }
         }
         Ok(output)
     }
@@ -582,6 +599,7 @@ impl RunDesktop {
             seats: Arc::clone(&server.desktop_seats),
             vault: Arc::clone(&server.vault),
             run_id,
+            policy_set: AtomicBool::new(false),
         })
     }
 
@@ -612,7 +630,9 @@ impl RunDesktop {
             *session = Some(DesktopSession::attach(&self.guest, transport)?);
         }
         let driver = session.as_mut().ok_or(BrowserError::GuestLost)?;
-        driver.set_policy(self.guest.policy.clone());
+        if !self.policy_set.swap(true, Ordering::AcqRel) {
+            driver.set_policy(self.guest.policy.clone());
+        }
         driver.set_decider(Box::new(decider));
         driver.set_receipt_sink(Box::new(writer));
         let mut output = drive_run_guest(&self.vault, self.run_id, driver, verb, input)?;

@@ -260,8 +260,8 @@ pub(crate) use gate::{
     ensure_current_judge_in_txn, optimizer_birth_marker_for_create_in_txn,
     project_goal_revision_proposals_in_txn, settle_skill_tradeoff_ask_as_in_txn,
     settle_skill_tradeoff_ask_in_txn, skill_edit_preflight_passed_in_txn,
-    skill_edit_trial_basis_in_txn, skill_edit_verdict_receipts, skill_tradeoff_ask_in_txn,
-    validate_judge_revision, with_optimized_skill_admission,
+    skill_edit_trial_basis_in_txn, skill_edit_verdict_in_txn, skill_edit_verdict_receipts,
+    skill_tradeoff_ask_in_txn, validate_judge_revision, with_optimized_skill_admission,
 };
 
 pub(crate) use self::goal_binding::validate_goal_birth_in_txn;

@@ -33,6 +33,8 @@ impl Reader {
     /// the same name source writes nothing, or goes on where the text bound
     /// stopped it; a new one replaces the turn's spans. A turn that reads
     /// gone loses its spans. The pass's bound pays for the bytes it hashes.
+    /// A turn whose tagged MESSAGE this replica does not hold is not read:
+    /// it waits, [`Read::Deferred`], with every row it holds.
     pub(super) fn read_in_txn(
         &self,
         vault: &Vault,
@@ -41,6 +43,12 @@ impl Reader {
         pass: &mut SievePass,
     ) -> Result<Read> {
         let store = &vault.store;
+        // Its words read only partly here until a promotion brings the row
+        // back (OF-534): a read of the rest would retire spans and replace
+        // the reading it holds with a fragment's.
+        if crate::tagging::tagged_messages_absent_in_txn(store, txn, turn)? {
+            return Ok(Read::Deferred);
+        }
         let Some(TurnChunks { chunks, withheld }) = turn_chunks_in_txn(vault, txn, turn)? else {
             pass.spans_retired += retire_in_txn(store, txn, turn)?;
             return Ok(Read::Gone);
@@ -142,7 +150,9 @@ impl Reader {
     /// longer reads at the held length, sends the turn to a whole read: a
     /// chunk it reads on in when it reads it, and a chunk before the resume
     /// point when the read is about to settle, checked once for the read
-    /// and paid for by the bound.
+    /// and paid for by the bound. A turn whose tagged MESSAGE this replica
+    /// does not hold waits with its continuation, here and at the whole read
+    /// every fallback above sends it to.
     pub(super) fn read_on_in_txn(
         &self,
         vault: &Vault,
@@ -151,6 +161,9 @@ impl Reader {
         pass: &mut SievePass,
     ) -> Result<Read> {
         let store = &vault.store;
+        if crate::tagging::tagged_messages_absent_in_txn(store, txn, turn)? {
+            return Ok(Read::Deferred);
+        }
         let (Some(held), Some(read)) =
             (CONTINUE.get(store, txn, turn)?, READ.get(store, txn, turn)?)
         else {
@@ -165,7 +178,7 @@ impl Reader {
         let tags = match read.names {
             NameSource::Rules { rules } if rules == RULES_VERSION => None,
             NameSource::SavedTags { envelope } => {
-                match crate::tagging::tag_set_in_txn(store, txn, turn)? {
+                match crate::tagging::readable_view_in_txn(store, txn, turn)? {
                     Some(tags) if envelope_digest(&tags.envelope) == envelope => {
                         Some((tags, envelope))
                     }
@@ -276,7 +289,7 @@ impl Reader {
                     let mention = &tags.mentions[index];
                     let origin = SpanOrigin::SavedTag {
                         envelope,
-                        index: u32::try_from(index).unwrap_or(u32::MAX),
+                        index: index as u64,
                     };
                     let confidence = percent(mention.confidence);
                     let range = (start, mention.end);
@@ -322,10 +335,9 @@ impl Reader {
         origin: SpanOrigin,
         confidence: u8,
     ) -> SieveSpan {
-        let start = u32::try_from(start).unwrap_or(u32::MAX);
-        let end = u32::try_from(end).unwrap_or(u32::MAX);
+        let (start, end) = (start as u64, end as u64);
         let mut id = blake3::Hasher::new();
-        id.update(b"oneiron:dreamer-sieve:span:v1");
+        id.update(b"oneiron:dreamer-sieve:span:v2");
         id.update(turn.as_bytes());
         id.update(chunk.source.as_bytes());
         id.update(&start.to_be_bytes());

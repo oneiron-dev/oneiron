@@ -11,15 +11,21 @@
 //! said stays in the history, marked interrupted. Each safeguard notice said
 //! to the person enters the history too, and the next turn hears it. A turn
 //! assembled for a new audience revision, as after an attendee entered the
-//! call's room, starts from that audience's own history (OF-365 P5). What
+//! call's room, starts from that audience's own history (OF-365 P5), and so
+//! does one after another call went live in the room or ended. A call heard
+//! in a room reads it again each turn, with every speaker a call live there
+//! must place; a room a missing entry holds starts no turn (FIX 3342). What
 //! a turn's memories read found, heard and withheld goes to the owner's
-//! client with the turn's first event, its narrowing receipts whole.
+//! client with the turn's first event, its narrowing receipts whole; a turn
+//! cancelled or ended before any event sends it then.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use futures_util::StreamExt;
+use oneiron::claim::ScopedRead;
 use oneiron::context_board::{BoardBlockHeader, BoardBudgetRequest};
+use oneiron::conversation::RoomLiveSpeakerEntries;
 use oneiron::llm::run_admission::PayerPerson;
 use oneiron::llm::{DEFAULT_BUDGET_RESERVE_UNITS, FinishReason};
 use oneiron::store::GateSystemNoticeRecord;
@@ -33,6 +39,7 @@ use tokio::task::JoinHandle;
 
 use super::{HostError, VoiceBrainOut};
 use crate::ai_host::{AiHandle, CHAT_ROLE};
+use crate::api::RoomAudience;
 use crate::api::ai::chat::{chat_request, text_message};
 use crate::auth::CoreAuth;
 use crate::models::Seat;
@@ -66,6 +73,10 @@ pub struct ChatBrainBindings {
     /// The call's credential, as the owner door admitted it at hello. Each
     /// turn's memories are read under it; it is never bound again.
     pub(crate) auth: CoreAuth,
+    /// The room the call is heard in, as the host proved the caller reads
+    /// it at hello: the host's own binding, never a claim a request makes.
+    /// Each turn proves it again under `auth`. `None` for no room.
+    pub(crate) room: Option<EntityId>,
     /// The answering agent's instructions, read under the call owner's
     /// credential; `None` answers with none.
     pub instructions: Option<String>,
@@ -86,6 +97,9 @@ pub struct ChatBrain {
     history: Arc<Mutex<Vec<LlmMessage>>>,
     /// The audience revision `history` was heard under.
     history_revision: Option<u64>,
+    /// The room's live speakers `history` was heard under, for a call heard
+    /// in a room.
+    history_live: Option<RoomLiveSpeakerEntries>,
     turn: Option<Running>,
 }
 
@@ -96,6 +110,8 @@ struct Running {
     /// What it has handed the speech host so far; whichever ends it, the
     /// turn's terminal or a cancel, takes it.
     said: Arc<Mutex<Option<String>>>,
+    /// Its memories receipt until an event carries it, shared the same way.
+    memories: Arc<Mutex<Option<TurnMemories>>>,
 }
 
 /// The turn's retrieved memories, as the brain hears them.
@@ -105,6 +121,14 @@ struct Memories {
     /// The rows it carries, for the audience's disclosure receipts.
     ids: Vec<EntityId>,
 }
+
+/// What a turn's memories read gives: the memories heard, what the read
+/// found, heard and withheld, and the live speakers of the call's room.
+type TurnRead = (
+    Option<Memories>,
+    Option<TurnMemories>,
+    Option<RoomLiveSpeakerEntries>,
+);
 
 impl ChatBrain {
     /// A server with no chat seat refuses.
@@ -119,14 +143,21 @@ impl ChatBrain {
             seat,
             history: Arc::new(Mutex::new(Vec::new())),
             history_revision: None,
+            history_live: None,
             turn: None,
         })
     }
 
     /// The newcomer barrier's history half: a turn for a new audience
     /// revision starts from that audience's history, never the old one's.
-    fn rebuild_history(&mut self, audience_revision: u64) -> oneiron::Result<()> {
-        if self.history_revision == Some(audience_revision) {
+    /// So does a turn whose room's live speakers moved, as when another call
+    /// went live there or ended, though this call's audience looks the same.
+    fn rebuild_history(
+        &mut self,
+        audience_revision: u64,
+        live: Option<RoomLiveSpeakerEntries>,
+    ) -> oneiron::Result<()> {
+        if self.history_revision == Some(audience_revision) && self.history_live == live {
             return Ok(());
         }
         match PRIOR_TURNS_ON_NEW_AUDIENCE {
@@ -137,15 +168,18 @@ impl ChatBrain {
                 .clear(),
         }
         self.history_revision = Some(audience_revision);
+        self.history_live = live;
         Ok(())
     }
 
-    /// The turn's admitted stream, opened before anything is spoken, whether
-    /// the turn heard context from outside it, and what its memories read
-    /// found and withheld.
+    /// The turn's admitted stream over its `memories`, opened before
+    /// anything is spoken, whether the turn heard context from outside it,
+    /// and what its memories read found and withheld.
     fn open(
         &self,
         request: &BrainRequest,
+        memories: Option<Memories>,
+        heard: Option<TurnMemories>,
     ) -> oneiron::Result<(LlmStream<'static>, bool, Option<TurnMemories>)> {
         let ChatBrainBindings {
             ai,
@@ -156,7 +190,6 @@ impl ChatBrain {
             ..
         } = &self.bindings;
         let settings = ai.chat_settings();
-        let (memories, heard) = self.memories(request)?;
         let mut messages: Vec<LlmMessage> = instructions
             .iter()
             .map(|text| text_message(LlmMessageRole::System, text.clone()))
@@ -217,27 +250,55 @@ impl ChatBrain {
     /// narrowed to its audience and clamped to what that audience may hear.
     /// Only a row with text to say is kept: the brain has no tools to open a
     /// bare reference. `None` when none is left. Beside it, what the read
-    /// found, heard and withheld, whenever the retrieval found a row.
-    fn memories(
-        &self,
-        request: &BrainRequest,
-    ) -> oneiron::Result<(Option<Memories>, Option<TurnMemories>)> {
+    /// found, heard and withheld, whenever the retrieval found a row, and
+    /// the live speakers of the call's room.
+    ///
+    /// A call heard in a room proves the room on every turn, retrieval or
+    /// none, so a room whose live calls' speakers are not all entered holds
+    /// the turn with the engine's typed error, and no turn starts as if the
+    /// room were complete. Its audience is the room's members and every
+    /// speaker a call live there must place, named or not (FIX 3342).
+    fn memories(&self, request: &BrainRequest) -> oneiron::Result<TurnRead> {
+        let ChatBrainBindings { vault, auth, .. } = &self.bindings;
+        let in_room = match self.bindings.room {
+            Some(room) => Some(room_audience(vault, auth, room)?),
+            None => None,
+        };
+        let live = in_room
+            .as_ref()
+            .map(|(_, _, audience)| audience.live.clone());
         let refs = &request.retrieval.result_refs;
         if refs.is_empty() {
-            return Ok((None, None));
+            return Ok((None, None, live));
         }
-        let ChatBrainBindings { vault, auth, .. } = &self.bindings;
         let ids = refs
             .iter()
             .map(|reference| EntityId::from_hex(reference))
             .collect::<oneiron::Result<Vec<_>>>()?;
-        let set = &request.interlocutors;
-        let read = crate::api::scoped_read_for_core_auth(vault, auth)
-            .and_then(|read| {
-                crate::api::narrow_to_core_audience(vault, auth, read, None, None, Some(set))
-            })
-            .map_err(|error| refused(format!("{error:?}")))?;
-        let disclosure = DisclosureContext::resolve(vault, set.clone())?;
+        let (read, members, room) = match in_room {
+            Some((read, members, room)) => (read, Some(members), Some(room)),
+            None => {
+                let read = crate::api::scoped_read_for_core_auth(vault, auth)
+                    .map_err(|error| refused(format!("{error:?}")))?;
+                (read, None, None)
+            }
+        };
+        let set = match &room {
+            Some(room) => room.live.merged_into(request.interlocutors.clone()),
+            None => request.interlocutors.clone(),
+        };
+        let read = crate::api::narrow_to_core_audience(
+            vault,
+            auth,
+            read,
+            members.as_deref(),
+            room.as_ref(),
+            Some(&set),
+        )
+        .map_err(|error| refused(format!("{error:?}")))?;
+        // With no room (or no proven reader) this is `resolve`'s context.
+        let reader = room.as_ref().is_some_and(|room| room.reader.is_some());
+        let disclosure = DisclosureContext::resolve_room(vault, set, reader)?;
         let mut section = MemoriesSection::pins_only(Some(disclosure.assembly(0)));
         let receipts =
             section.include_pinned_ids_with_disclosure(&read, &ids, Some(&disclosure))?;
@@ -248,7 +309,7 @@ impl ChatBrain {
             receipts,
         };
         if section.rows.is_empty() {
-            return Ok((None, Some(heard)));
+            return Ok((None, Some(heard), live));
         }
         let ids = section
             .rows
@@ -274,6 +335,7 @@ impl ChatBrain {
                 ids,
             }),
             Some(heard),
+            live,
         ))
     }
 
@@ -284,6 +346,27 @@ impl ChatBrain {
             return;
         };
         running.handle.abort();
+        // A turn cancelled before its first event still owes the owner's
+        // client its memories receipt. An empty delta carries it: the host
+        // hands the receipt on first and says nothing for a cancelled turn.
+        if let Some(memories) = running
+            .memories
+            .lock()
+            .ok()
+            .and_then(|mut memories| memories.take())
+            && self
+                .bindings
+                .out
+                .try_send(VoiceBrainOut {
+                    generation: running.generation,
+                    event: BrainEvent::TextDelta(String::new()),
+                    externally_tainted: false,
+                    memories: Some(memories),
+                })
+                .is_err()
+        {
+            tracing::warn!("voice brain: a cancelled turn's memories receipt was not delivered");
+        }
         let said = running.said.lock().ok().and_then(|mut said| said.take());
         if let Some(said) = said.filter(|said| !said.is_empty())
             && let Ok(mut history) = self.history.lock()
@@ -296,11 +379,31 @@ impl ChatBrain {
     }
 }
 
+/// `room`'s audience as the call's credential reads it now, with the read
+/// that proved it: its members and live speakers, in one snapshot. The
+/// engine reads them, so a hold stays its typed error.
+fn room_audience<'a>(
+    vault: &'a Vault,
+    auth: &CoreAuth,
+    room: EntityId,
+) -> oneiron::Result<(ScopedRead<'a>, Vec<EntityId>, RoomAudience)> {
+    let read = crate::api::scoped_read_for_core_auth(vault, auth)
+        .map_err(|error| refused(format!("{error:?}")))?;
+    let principal = auth
+        .principal_ref()
+        .and_then(|id| EntityId::from_hex(id).ok());
+    let (members, live) = vault.room_audience_with_live_under(&read, room, principal)?;
+    let audience = RoomAudience::resolve(vault, auth, &members, live)
+        .map_err(|error| refused(format!("{error:?}")))?;
+    Ok((read, members, audience))
+}
+
 impl Brain for ChatBrain {
     fn start(&mut self, request: &BrainRequest) -> oneiron::Result<()> {
         self.abort();
-        self.rebuild_history(request.audience_revision)?;
-        let (stream, tainted, memories) = self.open(request)?;
+        let (memories, heard, live) = self.memories(request)?;
+        self.rebuild_history(request.audience_revision, live)?;
+        let (stream, tainted, memories) = self.open(request, memories, heard)?;
         let generation = request.generation;
         self.history
             .lock()
@@ -310,10 +413,11 @@ impl Brain for ChatBrain {
                 request.transcript.clone(),
             ));
         let said = Arc::new(Mutex::new(Some(String::new())));
+        let memories = Arc::new(Mutex::new(memories));
         let turn = Turn {
             generation,
             tainted,
-            memories,
+            memories: Arc::clone(&memories),
             out: self.bindings.out.clone(),
             history: Arc::clone(&self.history),
             said: Arc::clone(&said),
@@ -327,6 +431,7 @@ impl Brain for ChatBrain {
             generation,
             handle,
             said,
+            memories,
         });
         Ok(())
     }
@@ -376,8 +481,9 @@ struct Turn {
     /// The turn heard context from outside it: every event says so, from
     /// the first delta, so its first sentence already passes the safeguard.
     tainted: bool,
-    /// What its memories read found and withheld, sent with its first event.
-    memories: Option<TurnMemories>,
+    /// What its memories read found and withheld, sent with its first event;
+    /// shared with its cancel, which sends it when no event did.
+    memories: Arc<Mutex<Option<TurnMemories>>>,
     out: mpsc::Sender<VoiceBrainOut>,
     history: Arc<Mutex<Vec<LlmMessage>>>,
     /// What the turn has handed the speech host, shared with its cancel.
@@ -398,11 +504,21 @@ impl Turn {
                         said.push_str(&text);
                     }
                 }
-                // A cancelled terminal is no answer: nothing more is said.
+                // A cancelled terminal is no answer: nothing more is said,
+                // but a memories receipt no event carried still goes.
                 Some(Ok(LlmStreamEvent::Done {
                     finish_reason: FinishReason::Cancelled,
                     ..
-                })) => return,
+                })) => {
+                    let owed = self
+                        .memories
+                        .lock()
+                        .is_ok_and(|memories| memories.is_some());
+                    if owed {
+                        self.send(BrainEvent::TextDelta(String::new())).await;
+                    }
+                    return;
+                }
                 Some(Ok(LlmStreamEvent::Done { .. })) => break BrainEvent::Done,
                 Some(Ok(_)) => {}
                 Some(Err(error)) => break BrainEvent::Error(error.to_string()),
@@ -421,12 +537,18 @@ impl Turn {
 
     /// `false` once the host stopped listening.
     async fn send(&mut self, event: BrainEvent) -> bool {
+        // Taken before the await, so no lock is held across it.
+        let memories = self
+            .memories
+            .lock()
+            .ok()
+            .and_then(|mut memories| memories.take());
         self.out
             .send(VoiceBrainOut {
                 generation: self.generation,
                 event,
                 externally_tainted: self.tainted,
-                memories: self.memories.take(),
+                memories,
             })
             .await
             .is_ok()

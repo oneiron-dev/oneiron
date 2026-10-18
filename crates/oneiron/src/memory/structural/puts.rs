@@ -9,7 +9,7 @@ use crate::memory::support::{
     verify_owner_actor_binding_in_txn,
 };
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
-use crate::provenance::birth::{MAX_BIRTH_INPUTS, RowBirth};
+use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::registry::{
     ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE,
@@ -184,14 +184,10 @@ impl Memory<'_> {
             self.vault.ensure_text_index_trusted()?;
         }
         // Rule A: an ASSET_TEXT is born in its writer's class from the ASSETs
-        // it derives from, the first MAX_BIRTH_INPUTS of them; a non-person's
+        // it derives from, every one of them; a non-person's
         // text that derives from none names no input, so it has no birth.
         let birth = if type_byte == ENTITY_TYPE_ASSET_TEXT {
-            let inputs: Vec<_> = sources
-                .iter()
-                .map(|(source, _)| *source)
-                .take(MAX_BIRTH_INPUTS)
-                .collect();
+            let inputs: Vec<_> = sources.iter().map(|(source, _)| *source).collect();
             RowBirth::written(
                 WriteActor::new(self.actor, self.actor_class),
                 MadeByClass::of_writer(self.actor_class),
