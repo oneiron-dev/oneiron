@@ -17498,11 +17498,22 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/disclosure/import_audience.rs",
+     "purpose": "The standing import audience rule (OF-492): the owner's answer to one sensitive-topic ask, kept as a private…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/disclosure/mod.rs",
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)",
      "surface": {
       "crate-vis": 5,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -17554,7 +17565,7 @@
      "path": "src/disclosure/tier_classification.rs",
      "purpose": "Mode/tier classification and disclosure-claim structural validation",
      "surface": {
-      "const": 8,
+      "const": 9,
       "crate-vis": 4,
       "enum": 2,
       "fn": 3
@@ -17844,7 +17855,7 @@
      "path": "src/dreamer_consolidation/conflict.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 9,
       "struct": 9
      }
@@ -17962,7 +17973,7 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "mod": 3,
       "re-export": 18
      }
@@ -19451,7 +19462,19 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/type_tree_gate.rs",
+     "purpose": "The held-out gate on a team-shape tree revision (ARCH-0079 #task-type, OF-420): \"revised by the loop from…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
+      "TeamShapeReserve",
+      "TreeGateOutcome",
       "TypeEvidence",
       "TypeNamer",
       "TypeTreeUpkeepReport"
@@ -19459,9 +19482,10 @@
      "path": "src/dreamer_runner/maintenance/type_tree_upkeep.rs",
      "purpose": "Type-tree upkeep (ARCH-0079 #task-type, OF-541, OF-420): \"Splits, merges and names task types from the…",
      "surface": {
-      "const": 2,
+      "const": 4,
+      "enum": 1,
       "fn": 3,
-      "struct": 2,
+      "struct": 3,
       "trait": 1
      }
     },
@@ -26094,6 +26118,25 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ImportAudience",
+      "ImportAudienceCluster",
+      "ImportAudienceOption",
+      "ImportAudienceState"
+     ],
+     "path": "src/ingest/audience.rs",
+     "purpose": "Import audience topics (OF-492)",
+     "surface": {
+      "const": 3,
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -26682,7 +26725,7 @@
      "surface": {
       "crate-vis": 4,
       "mod": 4,
-      "re-export": 15
+      "re-export": 16
      }
     },
     {
@@ -28267,7 +28310,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 38,
+      "const": 40,
       "fn": 1,
       "struct": 1
      }
@@ -43179,14 +43222,14 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/skill_reliability/ledger.rs",
      "purpose": "The durable per-(skill, receipt) outcome ledger: the contributing-win door and the tallies read off it",
      "surface": {
       "const": 1,
-      "crate-vis": 25,
+      "crate-vis": 26,
       "fn": 3
      }
     },
@@ -53358,7 +53401,7 @@
      "purpose": "Delivery-window policy claims and evaluator for OF-327 O3"
     },
     "disclosure": {
-     "files": 10,
+     "files": 11,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -53407,7 +53450,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 57,
+     "files": 58,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -53631,7 +53674,7 @@
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue"
     },
     "ingest": {
-     "files": 56,
+     "files": 57,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -54172,7 +54215,7 @@
     "skill_reliability": {
      "files": 15,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Bayesian skill retrieval over the shared learning.reliability projection"
     },
@@ -54422,9 +54465,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 184,
+   "over_bar": 185,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3307,
+   "source_files": 3310,
    "test_files": 902
   },
   "oneiron-android": {
@@ -69551,6 +69594,7 @@
       "ConnectorSlateSettings",
       "DecisionsSettings",
       "ImagePickSettings",
+      "ImportAudienceSettings",
       "SeatPickSettings",
       "SystemOneSettings"
      ],
@@ -69559,7 +69603,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "struct": 7
+      "struct": 8
      }
     },
     {
@@ -69950,7 +69994,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 19,
-      "fn": 23,
+      "fn": 24,
       "struct": 1
      }
     },
@@ -70563,6 +70607,16 @@
      "path": "src/idempotency/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/import_audience.rs",
+     "purpose": "The import audience sweep (OF-492)",
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -73834,6 +73888,13 @@
      "layout": "file+dir",
      "purpose": "—"
     },
+    "import_audience": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The import audience sweep (OF-492)"
+    },
     "ladder_poll": {
      "files": 1,
      "impl_vault": false,
@@ -74033,7 +74094,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 626,
+   "source_files": 627,
    "test_files": 182
   },
   "oneiron-spawn": {
