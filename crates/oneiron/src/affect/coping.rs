@@ -33,7 +33,17 @@ const EVIDENCE_KEY_TURN: &str = "turn";
 const EVIDENCE_KEY_DELTA: &str = "vadDelta";
 const EVIDENCE_KEY_CONFIDENCE: &str = "confidence";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 pub enum CopingStrategy {
     SitSel,
     SitMod,
@@ -352,8 +362,13 @@ pub fn coping_outcome_claim_candidate(
 }
 
 #[must_use]
-fn coping_outcome_evidence_value(turn_id: EntityId, vad_delta: VadDelta, confidence: f32) -> Value {
-    Value::Map(vec![
+fn coping_outcome_evidence_value(
+    turn_id: EntityId,
+    vad_delta: VadDelta,
+    confidence: f32,
+    baseline: Option<EntityId>,
+) -> Value {
+    let mut entries = vec![
         (Value::from(EVIDENCE_KEY_KIND), Value::from(EVIDENCE_KIND)),
         (
             Value::from(EVIDENCE_KEY_TURN),
@@ -361,7 +376,18 @@ fn coping_outcome_evidence_value(turn_id: EntityId, vad_delta: VadDelta, confide
         ),
         (Value::from(EVIDENCE_KEY_DELTA), vad_delta_value(vad_delta)),
         (Value::from(EVIDENCE_KEY_CONFIDENCE), Value::F32(confidence)),
-    ])
+    ];
+    if let Some(baseline) = baseline {
+        entries.push((Value::from("baseline_turn"), Value::from(baseline.to_hex())));
+        entries.push((
+            Value::from("turns"),
+            Value::Array(vec![
+                Value::from(baseline.to_hex()),
+                Value::from(turn_id.to_hex()),
+            ]),
+        ));
+    }
+    Value::Map(entries)
 }
 
 pub(crate) fn validate_coping_outcome_claim_structure(body: &ClaimBody) -> Result<()> {
@@ -415,27 +441,74 @@ impl Vault {
         confidence: f32,
         now: u64,
     ) -> Result<CopingOutcomeUpdate> {
-        let baseline = self
-            .turn_vad_annotation_for_consolidation(baseline_turn_id)?
-            .ok_or(Error::InvalidClaimBody(
-                "baseline turn VAD annotation missing",
-            ))?;
-        let later = self
-            .turn_vad_annotation_for_consolidation(later_turn_id)?
-            .ok_or(Error::InvalidClaimBody("later turn VAD annotation missing"))?;
-        let delta = VadDelta::new(
-            later.vad.valence - baseline.vad.valence,
-            later.vad.arousal - baseline.vad.arousal,
-            later.vad.dominance - baseline.vad.dominance,
-        )?;
-        self.update_coping_outcome_from_turn_vad_delta_checked(
+        self.with_write_txn_grouped(|txn| {
+            self.update_coping_outcome_from_turn_vad_in_txn(
+                txn,
+                prior_claim_id,
+                baseline_turn_id,
+                later_turn_id,
+                confidence,
+                now,
+                None,
+            )
+        })
+    }
+
+    /// The same update inside the caller's write, including both annotation reads.
+    pub(crate) fn update_coping_outcome_from_turn_vad_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        prior_claim_id: &EntityId,
+        baseline_turn_id: &EntityId,
+        later_turn_id: &EntityId,
+        confidence: f32,
+        now: u64,
+        envelope: Option<&crate::WriteEnvelope>,
+    ) -> Result<CopingOutcomeUpdate> {
+        let (delta, _, _) =
+            self.coping_turn_observation_in_txn(txn, baseline_turn_id, later_turn_id, now)?;
+        self.update_coping_outcome_from_turn_vad_delta_in_txn(
+            txn,
             prior_claim_id,
             *later_turn_id,
             delta,
             confidence,
             now,
             Some(*baseline_turn_id),
+            envelope,
         )
+    }
+
+    /// Shared measurement for the first observation and later aggregate updates.
+    pub(crate) fn coping_turn_observation_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        baseline_turn_id: &EntityId,
+        later_turn_id: &EntityId,
+        now: u64,
+    ) -> Result<(VadDelta, super::VadAnnotation, super::VadAnnotation)> {
+        let baseline = self
+            .turn_vad_annotation_in_txn(txn, baseline_turn_id)?
+            .ok_or(Error::InvalidClaimBody(
+                "baseline turn VAD annotation missing",
+            ))?;
+        let later = self
+            .turn_vad_annotation_in_txn(txn, later_turn_id)?
+            .ok_or(Error::InvalidClaimBody("later turn VAD annotation missing"))?;
+        if baseline_turn_id == later_turn_id
+            || baseline.annotated_at > later.annotated_at
+            || later.annotated_at > now
+        {
+            return Err(Error::InvalidClaimBody(
+                "coping observation needs ordered, non-future turns",
+            ));
+        }
+        let delta = VadDelta::new(
+            later.vad.valence - baseline.vad.valence,
+            later.vad.arousal - baseline.vad.arousal,
+            later.vad.dominance - baseline.vad.dominance,
+        )?;
+        Ok((delta, baseline, later))
     }
 
     /// Supersedes an active `coping.outcome` claim with an updated aggregate
@@ -467,10 +540,34 @@ impl Vault {
         now: u64,
         expected_strategy_ref: Option<EntityId>,
     ) -> Result<CopingOutcomeUpdate> {
-        let mut wtxn = self.store.env.write_txn()?;
+        self.with_write_txn_grouped(|txn| {
+            self.update_coping_outcome_from_turn_vad_delta_in_txn(
+                txn,
+                prior_claim_id,
+                turn_id,
+                vad_delta,
+                confidence,
+                now,
+                expected_strategy_ref,
+                None,
+            )
+        })
+    }
+
+    fn update_coping_outcome_from_turn_vad_delta_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        prior_claim_id: &EntityId,
+        turn_id: EntityId,
+        vad_delta: VadDelta,
+        confidence: f32,
+        now: u64,
+        expected_strategy_ref: Option<EntityId>,
+        envelope: Option<&crate::WriteEnvelope>,
+    ) -> Result<CopingOutcomeUpdate> {
         let raw = self
             .store
-            .port_entity_record(&wtxn, prior_claim_id)?
+            .port_entity_record(wtxn, prior_claim_id)?
             .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =
@@ -490,7 +587,7 @@ impl Vault {
         if !claim_consolidatable(&prior_body)
             || !crate::gate::claim_consolidation_eligible_in_txn(
                 &self.store,
-                &wtxn,
+                wtxn,
                 prior_claim_id,
                 crate::gate::ConsolidationReader::CopingOutcome,
             )?
@@ -537,19 +634,31 @@ impl Vault {
         )?;
         updated_body.salience = prior_body.salience;
         updated_body.evidence = Some(coping_outcome_evidence_value(
-            turn_id, vad_delta, confidence,
+            turn_id,
+            vad_delta,
+            confidence,
+            expected_strategy_ref,
         ));
+        if let Some(envelope) = envelope {
+            updated_body.evidence = Some(crate::write_envelope::write_envelope_evidence(
+                envelope,
+                updated_body.evidence,
+            ));
+        }
         updated_body.source = Some(ClaimSource::Inferred);
         updated_body.valid_from = Some(now);
         updated_body.world = prior_body.world;
         updated_body.scope = prior_body.scope;
+        updated_body.rel = prior_body.rel;
+        updated_body.scope_facet = prior_body.scope_facet;
+        updated_body.scope_project = prior_body.scope_project;
         let updated_data = encode_claim_body(&updated_body)?;
 
         apply_ops(
             &self.store,
             &self.config,
             &self.analyzer,
-            &mut wtxn,
+            wtxn,
             vec![
                 BatchOp::Put {
                     id: *prior_claim_id,
@@ -599,8 +708,6 @@ impl Vault {
             false,
             true,
         )?;
-        wtxn.commit()?;
-
         Ok(CopingOutcomeUpdate {
             prior_claim_id: *prior_claim_id,
             active_claim_id: new_claim_id,

@@ -17,13 +17,14 @@ use axum::routing::{get, post};
 use oneiron::EntityId;
 use oneiron::consent::ConsentReceipt;
 use oneiron::skill_hub::pack_catalog::{
-    MAX_ORGAN_BUILD_BYTES, PackHookBinding, PackInstallDisposition, PackInstallReceipt,
-    PackOrganBuild, PackOrganEntry, hub_pin,
+    MAX_ORGAN_BUILD_BYTES, PackInstallDisposition, PackInstallReceipt, PackOrganBuild,
+    PackOrganEntry, hub_pin,
 };
 use oneiron::skill_hub::{
     HubAdmissionReceipt, HubAskSurface, HubFile, HubImportReceipt, HubPin, HubRef,
     HubSyncDisposition, HubSyncPolicy, TrackedHubRef,
 };
+use oneiron::task_verb::sdk::HubHookBindingRow;
 use serde::{Deserialize, Serialize};
 
 use oneiron::lens::{GeneratedUiCard, GeneratedUiStateSnapshot};
@@ -271,32 +272,23 @@ fn read_folder(root: &Path) -> Result<Vec<HubFile>, OwnerError> {
     Ok(files)
 }
 
-/// `GET /v1/owner/packs/hooks`: every hook binding, enabled or not.
+/// `GET /v1/owner/packs/hooks`: every live binding, enabled or not,
+/// with the effective grant it reads under.
 async fn hook_bindings(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-) -> OwnerReply<Vec<HookBindingRow>> {
+) -> OwnerReply<Vec<HubHookBindingRow>> {
     owner(&auth, &server)?;
     let rows = blocking(move || {
         Ok(server
             .vault()
-            .pack_hook_bindings()?
+            .pack_hook_bindings_with_grants()?
             .into_iter()
-            .map(|(id, binding)| HookBindingRow {
-                id: id.to_hex(),
-                binding,
-            })
+            .map(|(id, binding, grant)| HubHookBindingRow { id, binding, grant })
             .collect())
     })
     .await?;
     Ok(Json(rows))
-}
-
-#[derive(Serialize)]
-struct HookBindingRow {
-    /// The binding claim, as 32 hex.
-    id: String,
-    binding: PackHookBinding,
 }
 
 #[derive(Debug, Deserialize)]

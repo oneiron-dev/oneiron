@@ -53,6 +53,7 @@ pub fn score_gate_skill_edit_with_scorer(
         scorer,
         &cycle,
         vault.store.clock.now_recorded_at(),
+        None,
     )
 }
 
@@ -79,7 +80,27 @@ pub fn score_gate_skill_edit_in_cycle(
     at: u64,
 ) -> Result<HeldOutVerdict> {
     let cycle = proven_cycle(vault, attempt)?;
-    rule_on_proposal(vault, proposal, scorer, &cycle, at)
+    rule_on_proposal(vault, proposal, scorer, &cycle, at, None)
+}
+
+/// The same gate, with the caller's owner proof revalidated in every write.
+/// No owner exception changes its evidence, tiers, cap or tradeoff ladder.
+pub(crate) fn score_gate_skill_edit_as_owner(
+    vault: &Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    proposal: &EntityId,
+    scorer: &dyn HeldOutReplayNotes,
+) -> Result<HeldOutVerdict> {
+    owner.revalidate(vault)?;
+    let cycle = SkillEditCycle::of_proposal(vault, proposal)?;
+    rule_on_proposal(
+        vault,
+        proposal,
+        scorer,
+        &cycle,
+        vault.now_recorded_at(),
+        Some(owner),
+    )
 }
 
 /// The gate itself, over a cycle that is already proven.
@@ -132,6 +153,7 @@ fn rule_on_proposal(
     scorer: &dyn HeldOutReplayNotes,
     cycle: &SkillEditCycle,
     at: u64,
+    owner: Option<&crate::consent::AuthenticatedOwner>,
 ) -> Result<HeldOutVerdict> {
     let judge_revision = scorer.judge_revision();
     validate_judge_revision(judge_revision)?;
@@ -149,6 +171,9 @@ fn rule_on_proposal(
     race_hook();
 
     let prepared = vault.with_write_txn_grouped(|wtxn| {
+        if let Some(owner) = owner {
+            owner.revalidate_in_txn(vault, wtxn)?;
+        }
         ensure_current_judge_in_txn(vault, &*wtxn, judge_revision)?;
         let staged = vault.read_skill_record_in_txn(&*wtxn, proposal)?;
         require_open_optimizer_proposal(&staged)?;
@@ -295,6 +320,9 @@ fn rule_on_proposal(
     let target = inputs.target;
 
     let verdict = vault.with_write_txn_grouped(|wtxn| {
+        if let Some(owner) = owner {
+            owner.revalidate_in_txn(vault, wtxn)?;
+        }
         // Re-read at the write door, exactly as ONE-1448's draft path does: the
         // scorer ran outside this transaction, so the target may have been
         // superseded and either tier may have been re-marked while it thought.

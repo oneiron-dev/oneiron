@@ -14,7 +14,7 @@ use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
 /// Four witnessed turns of one agent question, human answer, agent draft, human confirmation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GoalInterviewTurns {
     pub question: EntityId,
@@ -109,6 +109,25 @@ impl Vault {
         turns: GoalInterviewTurns,
         now: u64,
     ) -> Result<EntityId> {
+        self.complete_project_goal_intake(owner, project_id, attempt, turns, None, now)
+    }
+
+    /// Complete the witnessed interview, optionally checking the full record
+    /// the caller saw. The expected record supplies no authority: it must match
+    /// the human answer and the confirmed agent draft in the committing txn.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the interview binds its witnessed turns and expected record"
+    )]
+    pub fn complete_project_goal_intake(
+        &self,
+        owner: &AuthenticatedOwner,
+        project_id: EntityId,
+        attempt: AttemptId,
+        turns: GoalInterviewTurns,
+        expected: Option<&GoalRecord>,
+        now: u64,
+    ) -> Result<EntityId> {
         self.with_write_txn_grouped(|txn| {
             let actor = owner.revalidate_in_txn(self, txn)?;
             let attempt = AttemptQueue::new(self)
@@ -155,6 +174,9 @@ impl Vault {
             let answer = content(self, txn, &rows[1], crate::gate::WITNESS_AUTHOR_USER)?;
             let record: GoalRecord = serde_json::from_str(&answer).map_err(|_| invalid())?;
             record.validate()?;
+            if expected.is_some_and(|expected| expected != &record) {
+                return Err(invalid());
+            }
             let draft = content(self, txn, &rows[2], crate::gate::WITNESS_AUTHOR_COMPANION)?;
             if serde_json::from_str::<GoalRecord>(&draft).map_err(|_| invalid())? != record {
                 return Err(invalid());
