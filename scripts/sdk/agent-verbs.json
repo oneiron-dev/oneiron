@@ -1635,6 +1635,126 @@
       "openapi": true
     },
     {
+      "name": "vault.skills.convert",
+      "description": "Converts selected messages through the configured refiner; user initiation approves conversion, never admission.",
+      "input": "SkillConvertRequest",
+      "output": "crate::task_verb::sdk::SkillConvertReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.skills.convert\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.get",
+      "description": "Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry.",
+      "input": "HubSkillRequest",
+      "output": "crate::task_verb::sdk::SkillLibraryView",
+      "call": "crate::task_verb::sdk::skill_library_get_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.get\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.list",
+      "description": "Lists a page of the owner skill library, including inactive skills and their retained evidence.",
+      "input": "SkillLibraryListRequest",
+      "output": "crate::task_verb::sdk::SkillLibraryPage",
+      "call": "crate::task_verb::sdk::skill_library_list_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.list\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.archive",
+      "description": "The owner soft-retires an active skill without deleting its body, source or receipts; running callable invocations are cancelled.",
+      "input": "HubSkillRequest",
+      "output": "crate::task_verb::sdk::SkillLibraryView",
+      "call": "crate::task_verb::sdk::skill_archive_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.archive\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.restore",
+      "description": "The owner restores an archived skill through the same admission gates; a hub restore prepares exact consent and reruns held-out scoring.",
+      "input": "SkillLibraryRestoreRequest",
+      "output": "crate::task_verb::sdk::SkillLibraryRestoreReceipt",
+      "call": "crate::task_verb::sdk::skill_restore_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.restore\")?, &input, None)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.fork",
+      "description": "The owner forks a stored skill under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable.",
+      "input": "SkillLibraryForkRequest",
+      "output": "crate::task_verb::sdk::SkillLibraryView",
+      "call": "crate::task_verb::sdk::skill_library_fork_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.fork\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.rules.set",
+      "description": "The owner sets or clears a known-bad canonical skill hash rule, independently of advisory scanner prose.",
+      "input": "SkillHashRuleRequest",
+      "output": "crate::task_verb::sdk::HubConsentReceipt",
+      "call": "crate::task_verb::sdk::skill_hash_rule_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.rules.set\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.code_auto_install.set",
+      "description": "The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification.",
+      "input": "SkillCodeAutoInstallRequest",
+      "output": "crate::task_verb::sdk::HubConsentReceipt",
+      "call": "crate::task_verb::sdk::skill_code_auto_install_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.code_auto_install.set\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.skills.permissions.approve",
       "description": "The owner answers one imported skill permission ask at its exact hub source.",
       "input": "HubSkillPermissionRequest",

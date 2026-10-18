@@ -823,6 +823,69 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_skills_convert(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.convert", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_get(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_list(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.list", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_archive(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.archive", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_restore(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.restore", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_fork(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.fork", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_rules_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.rules.set", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_code_auto_install_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.code_auto_install.set", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_skills_permissions_approve(
         &self,
         input: serde_json::Value,

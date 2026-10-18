@@ -456,6 +456,46 @@ export_facade! {
     let output = client.vault_skills_receipts(&input)?;
     crate::codec::lift_record("vault.skills.receipts", &output)
 };
+"vault.skills.convert" => fn vault_skills_convert(&self, input: SkillConvertRequest) -> SkillConvertReceipt = |client| {
+    let input: oneiron::task_verb::sdk::SkillConvertRequest = crate::codec::lower_record("vault.skills.convert", input)?;
+    let output = client.vault_skills_convert(&input)?;
+    crate::codec::lift_record("vault.skills.convert", &output)
+};
+"vault.skills.get" => fn vault_skills_get(&self, input: HubSkillRequest) -> SkillLibraryView = |client| {
+    let input: oneiron::task_verb::sdk::HubSkillRequest = crate::codec::lower_record("vault.skills.get", input)?;
+    let output = client.vault_skills_get(&input)?;
+    crate::codec::lift_record("vault.skills.get", &output)
+};
+"vault.skills.list" => fn vault_skills_list(&self, input: SkillLibraryListRequest) -> SkillLibraryPage = |client| {
+    let input: oneiron::task_verb::sdk::SkillLibraryListRequest = crate::codec::lower_record("vault.skills.list", input)?;
+    let output = client.vault_skills_list(&input)?;
+    crate::codec::lift_record("vault.skills.list", &output)
+};
+"vault.skills.archive" => fn vault_skills_archive(&self, input: HubSkillRequest) -> SkillLibraryView = |client| {
+    let input: oneiron::task_verb::sdk::HubSkillRequest = crate::codec::lower_record("vault.skills.archive", input)?;
+    let output = client.vault_skills_archive(&input)?;
+    crate::codec::lift_record("vault.skills.archive", &output)
+};
+"vault.skills.restore" => fn vault_skills_restore(&self, input: SkillLibraryRestoreRequest) -> SkillLibraryRestoreReceipt = |client| {
+    let input: oneiron::task_verb::sdk::SkillLibraryRestoreRequest = crate::codec::lower_record("vault.skills.restore", input)?;
+    let output = client.vault_skills_restore(&input)?;
+    crate::codec::lift_record("vault.skills.restore", &output)
+};
+"vault.skills.fork" => fn vault_skills_fork(&self, input: SkillLibraryForkRequest) -> SkillLibraryView = |client| {
+    let input: oneiron::task_verb::sdk::SkillLibraryForkRequest = crate::codec::lower_record("vault.skills.fork", input)?;
+    let output = client.vault_skills_fork(&input)?;
+    crate::codec::lift_record("vault.skills.fork", &output)
+};
+"vault.skills.rules.set" => fn vault_skills_rules_set(&self, input: SkillHashRuleRequest) -> HubConsentReceipt = |client| {
+    let input: oneiron::task_verb::sdk::SkillHashRuleRequest = crate::codec::lower_record("vault.skills.rules.set", input)?;
+    let output = client.vault_skills_rules_set(&input)?;
+    crate::codec::lift_record("vault.skills.rules.set", &output)
+};
+"vault.skills.code_auto_install.set" => fn vault_skills_code_auto_install_set(&self, input: SkillCodeAutoInstallRequest) -> HubConsentReceipt = |client| {
+    let input: oneiron::task_verb::sdk::SkillCodeAutoInstallRequest = crate::codec::lower_record("vault.skills.code_auto_install.set", input)?;
+    let output = client.vault_skills_code_auto_install_set(&input)?;
+    crate::codec::lift_record("vault.skills.code_auto_install.set", &output)
+};
 "vault.skills.permissions.approve" => fn vault_skills_permissions_approve(&self, input: HubSkillPermissionRequest) -> HubConsentReceipt = |client| {
     let input: oneiron::task_verb::sdk::HubSkillPermissionRequest = crate::codec::lower_record("vault.skills.permissions.approve", input)?;
     let output = client.vault_skills_permissions_approve(&input)?;

@@ -1011,6 +1011,69 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_skills_convert(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skills.convert")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.skills.convert", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_skills_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skills.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.skills.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_skills_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skills.list")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.skills.list", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_skills_archive(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skills.archive")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.skills.archive", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_skills_restore(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skills.restore")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.skills.restore", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_skills_fork(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skills.fork")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.skills.fork", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_skills_rules_set(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skills.rules.set")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.skills.rules.set", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_skills_code_auto_install_set(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skills.code_auto_install.set")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.skills.code_auto_install.set", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_skills_permissions_approve(
         &self,
         py: Python<'_>,

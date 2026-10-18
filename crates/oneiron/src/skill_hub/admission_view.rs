@@ -87,7 +87,9 @@ pub(super) struct AdmissionSnapshot {
     pub(super) surface: HubAskSurface,
 }
 impl Vault {
-    /// Builds the ask from a locally stored Candidate and an admitted publisher.
+    /// Builds the ask from a locally stored Candidate or explicitly restored
+    /// Quarantined skill and an admitted publisher. Both require the same
+    /// exact owner consent, source checks and fresh held-out admission.
     /// `evidence_skill` names an active local evaluation baseline with real attributed
     /// outcomes. The held-out split is engine-selected, never caller-supplied evidence.
     pub fn prepare_marketplace_activation(
@@ -142,10 +144,10 @@ impl Vault {
         }
         let hub = self.hub_record_in_txn(txn, &source.hub_id)?;
         let record = read_skill(self, txn, &candidate)?;
-        if record.lifecycle_status != SkillLifecycle::Candidate
+        if !matches!(record.lifecycle_status, SkillLifecycle::Candidate | SkillLifecycle::Quarantined)
             || record.approval_status == ClaimApprovalStatus::Rejected
         {
-            return Err(invalid("admission requires an open candidate"));
+            return Err(invalid("admission requires an open candidate or archived skill"));
         }
         if record
             .governance_tier

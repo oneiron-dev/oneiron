@@ -12,7 +12,7 @@ use super::host_doors::{Listed, internal, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
-async fn owner_call<T: Send + 'static>(
+pub(super) async fn owner_call<T: Send + 'static>(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     verb: &'static str,

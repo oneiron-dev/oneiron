@@ -117,6 +117,8 @@ pub struct SyncServerConfig {
     /// Runtime mode and per-role model routing defaults. The single source of
     /// usage-mode truth: `runtime_usage_mode()` derives from `runtime.mode`.
     pub runtime: RuntimeConfig,
+    /// `[skills]`: resolved skill settings, including the conversion prompt.
+    pub skills: SkillsConfig,
     /// `[line]`: the plan of the LINE Official Account the built-in LINE
     /// pack serves, and the pushes it includes each month.
     pub line: LineConfig,
@@ -154,6 +156,7 @@ impl Default for SyncServerConfig {
             limits: LimitsConfig::default(),
             feedback_inbox: FeedbackInboxConfig::default(),
             runtime: RuntimeConfig::default(),
+            skills: SkillsConfig::default(),
             line: LineConfig::default(),
         }
     }
@@ -230,6 +233,7 @@ impl fmt::Debug for SyncServerConfig {
             .field("limits", &self.limits)
             .field("feedback_inbox", &self.feedback_inbox)
             .field("runtime", &self.runtime)
+            .field("skills", &self.skills)
             .field("line", &self.line)
             .finish()
     }
@@ -548,6 +552,7 @@ impl ServeConfig {
             limits: self.limits.clone(),
             feedback_inbox: self.feedback.inbox,
             runtime: self.runtime.clone(),
+            skills: self.skills.clone(),
             line: self.line,
         };
         if let Err(error) = crate::oauth_relay::warm_if_configured(&sync) {
