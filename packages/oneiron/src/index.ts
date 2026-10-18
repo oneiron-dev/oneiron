@@ -875,6 +875,22 @@ export class Oneiron {
       proposal_view: (request: Facade.CodeProposalViewRequest): Facade.CodeProposalView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeProposalView(keyedJson(request))) as Facade.CodeProposalView | null; return result === null ? null : result }),
       /** Every file changed between two trees of a repository, unit by unit, with the operations that wrote each. */
       repo_diff: (request: Facade.CodeRepoDiffRequest): Facade.CodeRepoDiffView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeRepoDiff(keyedJson(request))) as Facade.CodeRepoDiffView | null; return result === null ? null : result }),
+      /** Export one already-finalized and reviewed document revision through the existing origin publication protocol. */
+      export: (input: Facade.CodeExportRequest): Facade.CodeExportResult => this.#call(() => this.#client.vaultCodeExport(input) as Facade.CodeExportResult),
+      origin: {
+        authority: {
+          /** Read one served origin authority and this host identity under the owner credential. */
+          get: (input: Facade.OriginRepoRequest): Facade.OriginAuthorityView => this.#call(() => this.#client.vaultCodeOriginAuthorityGet(input) as Facade.OriginAuthorityView),
+          /** Cut over one existing served origin under the owner proof and expected authority epoch. */
+          set: (input: Facade.OriginAuthoritySetRequest): Facade.OriginAuthorityView => this.#call(() => this.#client.vaultCodeOriginAuthoritySet(input) as Facade.OriginAuthorityView),
+        },
+        /** Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement. */
+        publications: (input: Facade.OriginPublicationsRequest): Facade.OriginPublicationsView => this.#call(() => this.#client.vaultCodeOriginPublications(input) as Facade.OriginPublicationsView),
+      },
+      checkout: {
+        /** Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential. */
+        bind: (input: Facade.CheckoutDoorBindRequest): Facade.CheckoutDoorBinding => this.#call(() => this.#client.vaultCodeCheckoutBind(input) as Facade.CheckoutDoorBinding),
+      },
     },
     agents: {
       /** The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched. */

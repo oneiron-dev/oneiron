@@ -225,6 +225,11 @@ vaultCodeDiff(requestJson: string): string
 vaultCodeBlame(requestJson: string): string
 vaultCodeProposalView(requestJson: string): string
 vaultCodeRepoDiff(requestJson: string): string
+vaultCodeExport(input: unknown): unknown
+vaultCodeOriginAuthorityGet(input: unknown): unknown
+vaultCodeOriginAuthoritySet(input: unknown): unknown
+vaultCodeOriginPublications(input: unknown): unknown
+vaultCodeCheckoutBind(input: unknown): unknown
 vaultArtifactsExport(requestJson: string): string
 vaultAgentsCreate(input: unknown): unknown
 vaultAgentsGet(input: unknown): unknown

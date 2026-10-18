@@ -199,6 +199,11 @@ pub enum AgentVerb {
     VaultCodeBlame,
     VaultCodeProposalView,
     VaultCodeRepoDiff,
+    VaultCodeExport,
+    VaultCodeOriginAuthorityGet,
+    VaultCodeOriginAuthoritySet,
+    VaultCodeOriginPublications,
+    VaultCodeCheckoutBind,
     VaultArtifactsExport,
     VaultAgentsCreate,
     VaultAgentsGet,
@@ -627,6 +632,11 @@ impl AgentVerb {
         Self::VaultCodeBlame,
         Self::VaultCodeProposalView,
         Self::VaultCodeRepoDiff,
+        Self::VaultCodeExport,
+        Self::VaultCodeOriginAuthorityGet,
+        Self::VaultCodeOriginAuthoritySet,
+        Self::VaultCodeOriginPublications,
+        Self::VaultCodeCheckoutBind,
         Self::VaultArtifactsExport,
         Self::VaultAgentsCreate,
         Self::VaultAgentsGet,
@@ -1062,6 +1072,11 @@ impl AgentVerb {
             Self::VaultCodeBlame => "vault.code.blame",
             Self::VaultCodeProposalView => "vault.code.proposal_view",
             Self::VaultCodeRepoDiff => "vault.code.repo_diff",
+            Self::VaultCodeExport => "vault.code.export",
+            Self::VaultCodeOriginAuthorityGet => "vault.code.origin.authority.get",
+            Self::VaultCodeOriginAuthoritySet => "vault.code.origin.authority.set",
+            Self::VaultCodeOriginPublications => "vault.code.origin.publications",
+            Self::VaultCodeCheckoutBind => "vault.code.checkout.bind",
             Self::VaultArtifactsExport => "vault.artifacts.export",
             Self::VaultAgentsCreate => "vault.agents.create",
             Self::VaultAgentsGet => "vault.agents.get",
@@ -1493,6 +1508,11 @@ impl AgentVerb {
                 | Self::VaultCodeBlame
                 | Self::VaultCodeProposalView
                 | Self::VaultCodeRepoDiff
+                | Self::VaultCodeExport
+                | Self::VaultCodeOriginAuthorityGet
+                | Self::VaultCodeOriginAuthoritySet
+                | Self::VaultCodeOriginPublications
+                | Self::VaultCodeCheckoutBind
                 | Self::VaultArtifactsExport
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
@@ -1928,6 +1948,11 @@ impl AgentVerb {
                 | Self::VaultCodeBlame
                 | Self::VaultCodeProposalView
                 | Self::VaultCodeRepoDiff
+                | Self::VaultCodeExport
+                | Self::VaultCodeOriginAuthorityGet
+                | Self::VaultCodeOriginAuthoritySet
+                | Self::VaultCodeOriginPublications
+                | Self::VaultCodeCheckoutBind
                 | Self::VaultArtifactsExport
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
@@ -2401,6 +2426,11 @@ impl AgentVerb {
                 | Self::VaultCodeBlame
                 | Self::VaultCodeProposalView
                 | Self::VaultCodeRepoDiff
+                | Self::VaultCodeExport
+                | Self::VaultCodeOriginAuthorityGet
+                | Self::VaultCodeOriginAuthoritySet
+                | Self::VaultCodeOriginPublications
+                | Self::VaultCodeCheckoutBind
                 | Self::VaultArtifactsExport
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
@@ -2743,6 +2773,9 @@ impl AgentVerb {
                 | Self::SelfUse
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
+                | Self::VaultCodeExport
+                | Self::VaultCodeOriginAuthoritySet
+                | Self::VaultCodeCheckoutBind
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsUpdate
                 | Self::VaultWorkspaceEstablish
@@ -3102,6 +3135,11 @@ impl AgentVerb {
             Self::VaultCodeBlame => &["spec"],
             Self::VaultCodeProposalView => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
+            Self::VaultCodeExport => &["spec"],
+            Self::VaultCodeOriginAuthorityGet => &["spec"],
+            Self::VaultCodeOriginAuthoritySet => &["spec"],
+            Self::VaultCodeOriginPublications => &["spec"],
+            Self::VaultCodeCheckoutBind => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultAgentsCreate => &["spec"],
             Self::VaultAgentsGet => &["spec"],
@@ -3531,6 +3569,11 @@ impl AgentVerb {
             Self::VaultCodeBlame => &["spec"],
             Self::VaultCodeProposalView => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
+            Self::VaultCodeExport => &["spec"],
+            Self::VaultCodeOriginAuthorityGet => &["spec"],
+            Self::VaultCodeOriginAuthoritySet => &["spec"],
+            Self::VaultCodeOriginPublications => &["spec"],
+            Self::VaultCodeCheckoutBind => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultAgentsCreate => &["spec"],
             Self::VaultAgentsGet => &["spec"],
@@ -4318,6 +4361,21 @@ impl AgentVerb {
             }
             Self::VaultCodeRepoDiff => {
                 "Every file changed between two repository trees, each a code revision or a git snapshot: added, removed, modified or renamed, each unit with the operations that wrote it."
+            }
+            Self::VaultCodeExport => {
+                "Export one already-finalized and reviewed document revision through the existing origin publication protocol."
+            }
+            Self::VaultCodeOriginAuthorityGet => {
+                "Read one served origin authority and this host identity under the owner credential."
+            }
+            Self::VaultCodeOriginAuthoritySet => {
+                "Cut over one existing served origin under the owner proof and expected authority epoch."
+            }
+            Self::VaultCodeOriginPublications => {
+                "Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement."
+            }
+            Self::VaultCodeCheckoutBind => {
+                "Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential."
             }
             Self::VaultArtifactsExport => {
                 "One artifact version's export file, with the born-with text the caller chose and a share receipt listing it."

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 382 facade rows, 1495 declarations.
-Inputs: 339 of 382 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 339 of 382 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 387 facade rows, 1508 declarations.
+Inputs: 344 of 387 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 344 of 387 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 75; unread shapes: 0.
 """
 
@@ -4329,6 +4329,72 @@ class CodeRepoDiffView(TypedDict):
     files: list[CodeFileDiffView]
     not_text: list[str]
     rendered: str
+class CodeExportRequest(TypedDict):
+    repo: str
+    checkout: str
+    epoch: int
+    revision: EntityId
+    ref_name: str
+    expected_old_oid: NotRequired[str | None]
+    endpoint: str
+OriginPublicationState = Literal["prepared", "published", "failed", "conflicted"]
+class OriginPublicationView(TypedDict):
+    receipt: EntityId
+    repo_id: EntityId
+    ref_name: str
+    git_commit: str
+    provenance_receipt: EntityId
+    publication_claim: NotRequired[EntityId | None]
+    actor: NotRequired[EntityId | None]
+    status: OriginPublicationState
+    failure: NotRequired[str | None]
+    created_at: int
+    finished_at: NotRequired[int | None]
+class CodeExportResult(TypedDict):
+    revision: EntityId
+    git_commit: str
+    remote_url: str
+    receipt: EntityId
+    publication: OriginPublicationView
+    ref_was_already_applied: bool
+    wire_replayed: bool
+    wire_rejected: bool
+class OriginRepoRequest(TypedDict):
+    repo: str
+OriginResidence = Literal["local-vault", "cloud-vault"]
+class OriginAuthority(TypedDict):
+    epoch: int
+    residence: OriginResidence
+    writer: str
+    mirror: bool
+class OriginAuthorityView(TypedDict):
+    repo: str
+    host: NotRequired[str | None]
+    authority: NotRequired[OriginAuthority | None]
+class OriginAuthoritySetRequest(TypedDict):
+    repo: str
+    expected_epoch: NotRequired[int | None]
+    residence: OriginResidence
+    writer: NotRequired[str | None]
+    mirror: NotRequired[bool]
+class OriginPublicationsRequest(TypedDict):
+    repo: str
+    ref_name: str
+    git_commit: str
+class OriginPublicationsView(TypedDict):
+    repo: str
+    publications: list[OriginPublicationView]
+class CheckoutDoorBindRequest(TypedDict):
+    repo: str
+    checkout: str
+    epoch: int
+    endpoint: str
+class CheckoutDoorBinding(TypedDict):
+    repo: str
+    checkout: str
+    epoch: int
+    checkout_path: str
+    remote_url: str
 class ArtifactExportRequest(TypedDict):
     artifact_ref: str
     version: NotRequired[int | None]

@@ -976,6 +976,31 @@ export_facade! {
     let output = client.vault_code_repo_diff(&input)?;
     crate::codec::lift_record("vault.code.repo_diff", &output)
 };
+"vault.code.export" => fn vault_code_export(&self, input: CodeExportRequest) -> CodeExportResult = |client| {
+    let input: oneiron::memory::origin_doors::CodeExportRequest = crate::codec::lower_record("vault.code.export", input)?;
+    let output = client.vault_code_export(&input)?;
+    crate::codec::lift_record("vault.code.export", &output)
+};
+"vault.code.origin.authority.get" => fn vault_code_origin_authority_get(&self, input: OriginRepoRequest) -> OriginAuthorityView = |client| {
+    let input: oneiron::memory::origin_doors::OriginRepoRequest = crate::codec::lower_record("vault.code.origin.authority.get", input)?;
+    let output = client.vault_code_origin_authority_get(&input)?;
+    crate::codec::lift_record("vault.code.origin.authority.get", &output)
+};
+"vault.code.origin.authority.set" => fn vault_code_origin_authority_set(&self, input: OriginAuthoritySetRequest) -> OriginAuthorityView = |client| {
+    let input: oneiron::memory::origin_doors::OriginAuthoritySetRequest = crate::codec::lower_record("vault.code.origin.authority.set", input)?;
+    let output = client.vault_code_origin_authority_set(&input)?;
+    crate::codec::lift_record("vault.code.origin.authority.set", &output)
+};
+"vault.code.origin.publications" => fn vault_code_origin_publications(&self, input: OriginPublicationsRequest) -> OriginPublicationsView = |client| {
+    let input: oneiron::memory::origin_doors::OriginPublicationsRequest = crate::codec::lower_record("vault.code.origin.publications", input)?;
+    let output = client.vault_code_origin_publications(&input)?;
+    crate::codec::lift_record("vault.code.origin.publications", &output)
+};
+"vault.code.checkout.bind" => fn vault_code_checkout_bind(&self, input: CheckoutDoorBindRequest) -> CheckoutDoorBinding = |client| {
+    let input: oneiron::memory::origin_doors::CheckoutDoorBindRequest = crate::codec::lower_record("vault.code.checkout.bind", input)?;
+    let output = client.vault_code_checkout_bind(&input)?;
+    crate::codec::lift_record("vault.code.checkout.bind", &output)
+};
 "vault.artifacts.export" => fn vault_artifacts_export(&self, input: ArtifactExportRequest) -> Option<ArtifactExportFile> = |client| {
     let input: oneiron::blob_artifact::ArtifactExportRequest = crate::codec::lower_record("vault.artifacts.export", input)?;
     let output = client.vault_artifacts_export(&input)?;

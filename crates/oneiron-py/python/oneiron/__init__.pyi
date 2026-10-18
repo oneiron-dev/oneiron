@@ -1105,6 +1105,25 @@ class Oneiron:
         def blame(self, request: Facade.CodeStateRequest) -> Facade.CodeBlameView | None: ...
         def proposal_view(self, request: Facade.CodeProposalViewRequest) -> Facade.CodeProposalView | None: ...
         def repo_diff(self, request: Facade.CodeRepoDiffRequest) -> Facade.CodeRepoDiffView | None: ...
+        def export(self, spec: Facade.CodeExportRequest) -> Facade.CodeExportResult:
+            """Export one already-finalized and reviewed document revision through the existing origin publication protocol."""
+        @property
+        def origin(self) -> "Oneiron._VaultCodeOriginVerbs": ...
+        @property
+        def checkout(self) -> "Oneiron._VaultCodeCheckoutVerbs": ...
+    class _VaultCodeOriginVerbs:
+        @property
+        def authority(self) -> "Oneiron._VaultCodeOriginAuthorityVerbs": ...
+        def publications(self, spec: Facade.OriginPublicationsRequest) -> Facade.OriginPublicationsView:
+            """Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement."""
+    class _VaultCodeOriginAuthorityVerbs:
+        def get(self, spec: Facade.OriginRepoRequest) -> Facade.OriginAuthorityView:
+            """Read one served origin authority and this host identity under the owner credential."""
+        def set(self, spec: Facade.OriginAuthoritySetRequest) -> Facade.OriginAuthorityView:
+            """Cut over one existing served origin under the owner proof and expected authority epoch."""
+    class _VaultCodeCheckoutVerbs:
+        def bind(self, spec: Facade.CheckoutDoorBindRequest) -> Facade.CheckoutDoorBinding:
+            """Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential."""
     class _VaultAgentsVerbs:
         def create(self, spec: Facade.AgentDefinitionCreateRequest) -> Facade.AgentDefinitionView:
             """The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched."""

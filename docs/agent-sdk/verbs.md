@@ -201,6 +201,11 @@ both bindings and their export-census tests in one change.
 - `vault.code.blame`
 - `vault.code.proposal_view`
 - `vault.code.repo_diff`
+- `vault.code.export`
+- `vault.code.origin.authority.get`
+- `vault.code.origin.authority.set`
+- `vault.code.origin.publications`
+- `vault.code.checkout.bind`
 - `vault.artifacts.export`
 - `vault.agents.create`
 - `vault.agents.get`

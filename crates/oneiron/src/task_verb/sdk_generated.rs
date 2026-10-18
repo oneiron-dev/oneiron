@@ -1034,6 +1034,36 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.export",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::CodeExportRequest,
+                >(),
+            ),
+            (
+                "vault.code.origin.authority.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::OriginRepoRequest,
+                >(),
+            ),
+            (
+                "vault.code.origin.authority.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::OriginAuthoritySetRequest,
+                >(),
+            ),
+            (
+                "vault.code.origin.publications",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::OriginPublicationsRequest,
+                >(),
+            ),
+            (
+                "vault.code.checkout.bind",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::CheckoutDoorBindRequest,
+                >(),
+            ),
+            (
                 "vault.artifacts.export",
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::ArtifactExportRequest,
@@ -3613,6 +3643,41 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.export" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.origin.authority.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.origin.authority.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.origin.publications" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.checkout.bind" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.artifacts.export" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -5598,6 +5663,24 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.code.repo_diff" => {
             let _input: crate::code_document::CodeRepoDiffRequest = decode(value.clone())?;
         }
+        "vault.code.export" => {
+            let _input: crate::memory::origin_doors::CodeExportRequest = decode(value.clone())?;
+        }
+        "vault.code.origin.authority.get" => {
+            let _input: crate::memory::origin_doors::OriginRepoRequest = decode(value.clone())?;
+        }
+        "vault.code.origin.authority.set" => {
+            let _input: crate::memory::origin_doors::OriginAuthoritySetRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.origin.publications" => {
+            let _input: crate::memory::origin_doors::OriginPublicationsRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.checkout.bind" => {
+            let _input: crate::memory::origin_doors::CheckoutDoorBindRequest =
+                decode(value.clone())?;
+        }
         "vault.artifacts.export" => {
             let _input: crate::blob_artifact::ArtifactExportRequest = decode(value.clone())?;
         }
@@ -6652,6 +6735,17 @@ pub fn invoke(
         "vault.code.blame" => encode(vault_code_blame(memory, decode(value)?)?),
         "vault.code.proposal_view" => encode(vault_code_proposal_view(memory, decode(value)?)?),
         "vault.code.repo_diff" => encode(vault_code_repo_diff(memory, decode(value)?)?),
+        "vault.code.export" => encode(vault_code_export(memory, decode(value)?)?),
+        "vault.code.origin.authority.get" => {
+            encode(vault_code_origin_authority_get(memory, decode(value)?)?)
+        }
+        "vault.code.origin.authority.set" => {
+            encode(vault_code_origin_authority_set(memory, decode(value)?)?)
+        }
+        "vault.code.origin.publications" => {
+            encode(vault_code_origin_publications(memory, decode(value)?)?)
+        }
+        "vault.code.checkout.bind" => encode(vault_code_checkout_bind(memory, decode(value)?)?),
         "vault.artifacts.export" => encode(vault_artifacts_export(memory, decode(value)?)?),
         "vault.agents.create" => encode(vault_agents_create(memory, decode(value)?)?),
         "vault.agents.get" => encode(vault_agents_get(memory, decode(value)?)?),
@@ -8726,6 +8820,45 @@ pub fn vault_code_repo_diff(
     input: crate::code_document::CodeRepoDiffRequest,
 ) -> MemoryResult<Option<crate::code_document::CodeRepoDiffView>> {
     memory.code_repo_diff(&input)
+}
+pub fn vault_code_export(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::CodeExportRequest,
+) -> MemoryResult<crate::memory::origin_doors::CodeExportResult> {
+    memory.code_export_as(&memory.embedded_owner("vault.code.export")?, input)
+}
+pub fn vault_code_origin_authority_get(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::OriginRepoRequest,
+) -> MemoryResult<crate::memory::origin_doors::OriginAuthorityView> {
+    memory.origin_authority_get_as(
+        &memory.embedded_owner("vault.code.origin.authority.get")?,
+        input,
+    )
+}
+pub fn vault_code_origin_authority_set(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::OriginAuthoritySetRequest,
+) -> MemoryResult<crate::memory::origin_doors::OriginAuthorityView> {
+    memory.origin_authority_set_as(
+        &memory.embedded_owner("vault.code.origin.authority.set")?,
+        input,
+    )
+}
+pub fn vault_code_origin_publications(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::OriginPublicationsRequest,
+) -> MemoryResult<crate::memory::origin_doors::OriginPublicationsView> {
+    memory.origin_publications_as(
+        &memory.embedded_owner("vault.code.origin.publications")?,
+        input,
+    )
+}
+pub fn vault_code_checkout_bind(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::CheckoutDoorBindRequest,
+) -> MemoryResult<crate::memory::origin_doors::CheckoutDoorBinding> {
+    memory.checkout_door_bind_as(&memory.embedded_owner("vault.code.checkout.bind")?, input)
 }
 pub fn vault_artifacts_export(
     memory: &Memory<'_>,

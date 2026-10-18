@@ -1607,6 +1607,39 @@ class Oneiron:
         def repo_diff(self, request: dict[str, Any]) -> dict[str, Any] | None:
             """Every file changed between two trees of a repository, unit by unit, with the operations that wrote each."""
             return json.loads(_translate(lambda: self._client.vault_code_repo_diff(json.dumps(request, allow_nan=False))))
+        def export(self, spec):
+            """Export one already-finalized and reviewed document revision through the existing origin publication protocol."""
+            return json.loads(_translate(lambda: self._client.vault_code_export(json.dumps(spec))))
+        @property
+        def origin(self) -> "Oneiron._VaultCodeOriginVerbs":
+            return Oneiron._VaultCodeOriginVerbs(self._client)
+        @property
+        def checkout(self) -> "Oneiron._VaultCodeCheckoutVerbs":
+            return Oneiron._VaultCodeCheckoutVerbs(self._client)
+    class _VaultCodeOriginVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def authority(self) -> "Oneiron._VaultCodeOriginAuthorityVerbs":
+            return Oneiron._VaultCodeOriginAuthorityVerbs(self._client)
+        def publications(self, spec):
+            """Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement."""
+            return json.loads(_translate(lambda: self._client.vault_code_origin_publications(json.dumps(spec))))
+    class _VaultCodeOriginAuthorityVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """Read one served origin authority and this host identity under the owner credential."""
+            return json.loads(_translate(lambda: self._client.vault_code_origin_authority_get(json.dumps(spec))))
+        def set(self, spec):
+            """Cut over one existing served origin under the owner proof and expected authority epoch."""
+            return json.loads(_translate(lambda: self._client.vault_code_origin_authority_set(json.dumps(spec))))
+    class _VaultCodeCheckoutVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def bind(self, spec):
+            """Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential."""
+            return json.loads(_translate(lambda: self._client.vault_code_checkout_bind(json.dumps(spec))))
     class _VaultAgentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
