@@ -368,6 +368,7 @@ vaultArtifactsReleaseWait(requestJson: string): string
 vaultArtifactsReviewSlides(requestJson: string): string
 vaultArtifactsAsk(input: unknown): unknown
 vaultCriticReview(input: unknown): unknown
+vaultArtifactsInspectDeck(input: unknown): unknown
 vaultArtifactsProposeDeck(requestJson: string): string
 vaultArtifactsProposeOutput(requestJson: string): string
 vaultArtifactsKeep(requestJson: string): string

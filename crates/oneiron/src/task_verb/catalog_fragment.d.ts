@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 616 code-mode rows (595 host rows, 21 run rows), 2205 declarations.
-// Replies: 538 fully typed, 74 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 617 code-mode rows (596 host rows, 21 run rows), 2236 declarations.
+// Replies: 539 fully typed, 74 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 98; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 94; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -1437,8 +1437,42 @@ declare namespace Sdk {
   type CriticPrediction = { what: string; by_when: number; how_checked: OutcomeBinding };
   type CritiqueArtifact = { schema_version: number; artifact_id: string; run_id: string; branch_job: AttemptId; candidate_ref: string; lens_id: string; domain: string; provenance: CritiqueProvenance; calibration: LearningCell; prediction?: CriticPrediction | null; verdict: CritiqueVerdict; severity: CritiqueSeverity; hard_check_passed?: boolean | null; evidence_refs: string[]; suggested_edit?: string | null; out_of_scope?: boolean; created_at: number };
   type CriticReviewOutcome = { verdict_claim_ref: string; triage: CritiqueTriage; artifacts: CritiqueArtifact[]; receipts: DecisionReceipt[] };
-  type DeckProposeRequest = { artifact_ref: string; transaction: unknown; run_ref: string; context?: unknown; made_by?: unknown | null };
-  type DeckProposeOutcome = { proposed?: PendingProposalView | null; rejected?: unknown | null };
+  type DeckInspectRequest = { artifact_ref: string; version?: number | null };
+  type Digest = string;
+  type IdMarks = { slide?: number; shapes?: Record<string, number> };
+  type DeckShapeKind = "shape" | "picture" | "graphic_frame" | "connector" | "group";
+  type DeckShapeInspection = { kind: DeckShapeKind; id?: number | null; creation_id?: string | null; name?: string | null; group_path: number[]; content_fingerprint: Digest };
+  type DeckSlideInspection = { part: string; sld_id: number; creation_id?: number | null; content_fingerprint: Digest; render_fingerprint: Digest; shapes: DeckShapeInspection[] };
+  type DeckIdentityAmbiguity = { kind: "duplicate_slide_creation_id"; creation_id: number; slides: number[] } | { kind: "duplicate_shape_id"; slide: number; id: number; shapes: number[] } | { kind: "duplicate_shape_creation_id"; slide: number; id: string; shapes: number[] };
+  type PptxShapeIdentity = { shape_id: number; creation_id?: string | null; fingerprint: number[]; position?: [number, number] | null };
+  type PptxSlideIdentity = { slide: number; part: string; sld_id: number; creation_id?: number | null; fingerprint: number[]; shapes: PptxShapeIdentity[] };
+  type PptxInspection = { slides: PptxSlideIdentity[]; signature_parts: string[] };
+  type DeckCommentInspection = { state: "inspected"; inspection: PptxInspection } | { state: "refused"; reason: string };
+  type DeckInspectionView = { artifact_id: EntityId; version: number; base: Digest; marks: IdMarks; slides: DeckSlideInspection[]; ambiguities: DeckIdentityAmbiguity[]; comments: DeckCommentInspection };
+  type StepTarget = { slide: string; shape: number; expected: Digest };
+  type StepXfrm = { offset?: number[] | null; extent?: number[] | null; rotation?: number | null; flip_h?: boolean | null; flip_v?: boolean | null };
+  type StepAssetKind = "factual" | "illustration";
+  type AssetRef = { artifact: string; version: number; hash: Digest; kind: StepAssetKind; description: string };
+  type StepPreset = "rect" | "roundRect" | "ellipse" | "triangle" | "rightArrow";
+  type StepSequence = "name" | "categories" | "values";
+  type StepCell = "missing" | { number: number } | { text: string } | { date: string };
+  type DeckStep = { set_text: { target: StepTarget; text: string } } | { replace_run_text: { target: StepTarget; paragraph: number; run: number; expected: string; text: string } } | { set_xfrm: { target: StepTarget; xfrm: StepXfrm } } | { move_in_slide_space: { target: StepTarget; dx: number; dy: number } } | { set_picture: { target: StepTarget; asset: AssetRef } } | { set_notes: { slide: string; expected?: string | null; text: string } } | { add_shape: { slide: string; preset: StepPreset; name: string; offset: number[]; extent: number[] } } | { delete_shape: { target: StepTarget; cascade?: boolean } } | { reparent: { target: StepTarget; parent?: number | null } } | { duplicate_slide: { slide: string; expected: Digest } } | { reorder_slides: { order: number[] } } | { set_table_cell: { slide: string; table: number; row: number; col: number; expected: string; value: string } } | { set_series_values: { chart: string; series: number; sequence: StepSequence; values: StepCell[] } };
+  type DeckTransaction = { schema: number; base: Digest; marks?: IdMarks; seed: string; steps: DeckStep[] };
+  type DeckRenderSide = "base" | "candidate";
+  type DeckRender = { side: DeckRenderSide; slide: string; image_hash: number[]; renderer: string };
+  type DeckEditContext = { made_by?: EntityId | null; thread?: EntityId | null; renders?: DeckRender[] };
+  type DeckProposeRequest = { artifact_ref: string; transaction: DeckTransaction; run_ref: string; context?: DeckEditContext; made_by?: MadeBy | null };
+  type OfficeFormat = "xlsx" | "docx" | "pptx";
+  type DeckRejectionSheet = { name: string; index: number };
+  type DeckRejectionSheetDependency = { from_sheet: string; to_sheet: string };
+  type DeckRejectionSummary = { format: OfficeFormat; sheets: DeckRejectionSheet[]; defined_names: string[]; has_pivots: boolean; has_charts: boolean; has_macros: boolean; cross_sheet_dependencies: DeckRejectionSheetDependency[]; unknown_parts: string[] };
+  type DeckRejectionCheck = { name: string; passed: boolean; detail: string };
+  type DeckRejectionReport = { ok: boolean; checks: DeckRejectionCheck[] };
+  type DeckNativeRefusal = { kind: "external_chart_source"; detail: string } | { kind: "formula_backed_series"; detail: string } | { kind: "ambiguous_chart_data"; detail: string } | { kind: "shared_chart_data" } | { kind: "unsupported_chart_family"; detail: string } | { kind: "merged_continuation_cell" } | { kind: "unsupported_merge_topology"; detail: string } | { kind: "length_change"; have: number; want: number } | { kind: "stale"; detail: string } | { kind: "invalid"; detail: string } | { kind: "cache_mismatch" } | { kind: "outside_allowed_parts"; part: string } | { kind: "workbook"; detail: string } | { kind: "package"; detail: string } | { kind: "xml"; detail: string };
+  type DeckStepRefusal = { kind: "target_changed" } | { kind: "ambiguous_anchor"; detail: string } | { kind: "animated_text_structure_changed" } | { kind: "animation_dependency_unsupported"; detail: string } | { kind: "non_invertible_group_transform" } | { kind: "unrepresentable_transform"; detail: string } | { kind: "inherited_transform" } | { kind: "part_diff_outside_transaction"; part: string } | { kind: "write_outside_target"; part: string; why: string } | { kind: "text_mapping"; detail: string } | { kind: "missing"; detail: string } | { kind: "id_space_exhausted" } | { kind: "reparent_unsupported"; detail: string } | { kind: "clone_dependency_unsupported"; relationship: string } | { kind: "reorder_unsupported"; detail: string } | { kind: "glued_connector"; connector?: number | null } | { kind: "invalid"; detail: string } | { kind: "picture"; detail: string } | { kind: "read_back"; detail: string } | { kind: "package"; detail: string } | { kind: "xml"; detail: string } | { kind: "deck"; detail: string } | { kind: "native"; refusal: DeckNativeRefusal } | { kind: "asset"; detail: string };
+  type DeckTransactionRefusal = { kind: "invalid"; detail: string } | { kind: "base_changed" } | { kind: "not_editable" } | { kind: "step"; step: number; verb: string; refusal: DeckStepRefusal } | { kind: "part_diff_outside_transaction"; part: string } | { kind: "package"; detail: string } | { kind: "deck"; detail: string };
+  type DeckProposeRejection = { inspection: DeckRejectionSummary; report: DeckRejectionReport; refusal: DeckTransactionRefusal };
+  type DeckProposeOutcome = { proposed?: PendingProposalView | null; rejected?: DeckProposeRejection | null };
   type NativeOutputRequest = { artifact_ref: string; run_ref: string; name: string; media_type: string; content_base64: string; report?: unknown; made_by?: unknown | null };
   type ReceiptKind = "outbound" | "gate" | "identity_lifecycle" | "scoped_read" | "share" | "artifact_settle" | "proposal_outcome" | "commitment_lifecycle" | "extraction" | "served_form" | "hook" | "reference_refusal" | "task_lifecycle";
   type ReceiptRecord = { receipt_id: string; receipt_kind: ReceiptKind; occurred_at: number; actor?: string | null; on_behalf_of?: string | null; outcome: string; job_ref?: string | null; trigger_ref?: string | null; policy_trace?: string[]; fields?: Record<string, string> };
@@ -1938,9 +1972,6 @@ declare namespace Sdk {
   type NodeKind = "root" | "slide" | "group" | "shape" | "picture" | "graphic_frame" | "connector";
   type GeometryProps = { offset?: [number, number] | null; extent?: [number, number] | null; rotation?: number | null; flip_h?: boolean | null; flip_v?: boolean | null };
   type Preset = "rect" | "round_rect" | "ellipse" | "triangle" | "right_arrow";
-  type Digest = string;
-  type StepAssetKind = "factual" | "illustration";
-  type AssetRef = { artifact: string; version: number; hash: Digest; kind: StepAssetKind; description: string };
   type HeldMedia = { part: string; hash: Digest };
   type ChartKind = "bar" | "line" | "pie" | "area" | "scatter" | "doughnut" | "radar";
   type ChartSeries = { name: string; values: (number | null)[]; family?: ChartKind | null; x?: (number | null)[] | null };
@@ -2597,6 +2628,8 @@ declare const vault: Sdk.VaultHost & {
     discard(input: Sdk.ProposalSettleRequest): Promise<Sdk.DiscardedProposal | StoredResult>;
     /** One artifact version's export file, with the born-with text the caller chose and a share receipt listing it. */
     export(input: Sdk.ArtifactExportRequest): Promise<Sdk.ArtifactExportFile | null | StoredResult>;
+    /** Inspects one PPTX version for native edit targets and comment identities without minting ids. */
+    inspect_deck(input: Sdk.DeckInspectRequest): Promise<Sdk.DeckInspectionView | StoredResult>;
     /** Settles one waiting artifact proposal into a version. */
     keep(input: Sdk.ProposalSettleRequest): Promise<Sdk.KeptProposal | StoredResult>;
     /** The proposals waiting beside one artifact. */

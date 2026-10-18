@@ -7849,6 +7849,34 @@ async fn vault_critic_review(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_artifacts_inspect_deck(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.artifacts.inspect_deck",
+        oneiron::memory::RoomTurnHandle::serves("vault.artifacts.inspect_deck"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.inspect_deck",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_artifacts_propose_deck(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -13491,6 +13519,7 @@ pub(crate) async fn call_verb(
         "vault.artifacts.review_slides" => vault_artifacts_review_slides(server, call, input).await,
         "vault.artifacts.ask" => vault_artifacts_ask(server, call, input).await,
         "vault.critic.review" => vault_critic_review(server, call, input).await,
+        "vault.artifacts.inspect_deck" => vault_artifacts_inspect_deck(server, call, input).await,
         "vault.artifacts.propose_deck" => vault_artifacts_propose_deck(server, call, input).await,
         "vault.artifacts.propose_output" => {
             vault_artifacts_propose_output(server, call, input).await
