@@ -48,8 +48,38 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "get",
+        path: "/browsers",
+        summary: "Each bound run browser whose guest started, with who has it, the agent's ask while it waits, the holder's count of inputs, and its tabs, the front one marked.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/browsers/input",
+        summary: "One click, type, key, hotkey, scroll or navigate from the owner who holds the browser, at the pixels of the screen they were last shown, in the front tab or the named one, which comes to the front.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/browsers/return",
+        summary: "The owner hands the browser back, from holding it or from the agent's ask unanswered; the agent's verbs drive the tab they left in front.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/browsers/screen",
+        summary: "The front tab's viewport as a PNG, or the named tab's, which the owner who holds the browser brings to the front; unmasked, for the owner only: never kept, never a receipt.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
         path: "/browsers/stream",
         summary: "The run browser's front tab as server-sent events while the owner watches or holds it, as the desktop stream sends its display: state, frame, error, ended and refused events, and tabs when the browser's tabs change.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/browsers/take",
+        summary: "The owner holds the run's browser, asked or not, once the agent's call in flight ends.",
         row: None,
     },
     OwnerRoute {
