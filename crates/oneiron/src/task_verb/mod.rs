@@ -61,6 +61,7 @@ pub(crate) use lifecycle_receipt::{
     erase_in_txn as erase_lifecycle_receipts_in_txn, task_lifecycle_receipts,
 };
 mod linear_store;
+mod mirror_edit;
 mod owner_index;
 mod policy_change_followup;
 mod presence_diagnostics;
@@ -256,7 +257,11 @@ pub use fanout_launch::{FanoutCheckChoice, FanoutLaunchReceipt};
 pub use wave_port::{VaultWaveTaskPort, WaveDispatchGeneration, WaveDispatchPage};
 
 pub use linear_store::VaultLinearTaskStore;
-pub(crate) use linear_store::{forget_task_mirror, linear_effect_state_in_txn, note_task_write};
+pub(crate) use linear_store::{
+    drop_mirror_link_in, forget_task_mirror, linear_effect_state_in_txn, linear_issue_task_in,
+    mark_mirror_dirty_in, note_task_write, put_mirror_link_in,
+};
+pub(crate) use mirror_edit::prove_task_owner_in;
 
 #[cfg(test)]
 mod production_ports_tests;

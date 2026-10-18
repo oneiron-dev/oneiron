@@ -3686,6 +3686,33 @@ impl NativeClient {
         serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
     }
     #[napi]
+    pub fn vault_tasks_linear_mapping(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.tasks.linear.mapping", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_tasks_linear_mapping_edit(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.tasks.linear.mapping.edit", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_tasks_linear_provenance(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.tasks.linear.provenance", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn self_agents_spawn(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.agents.spawn", input)

@@ -403,6 +403,9 @@ vaultNotesSeal(requestJson: string): string
 vaultNotesLifecycle(requestJson: string): string
 vaultNotesSetOverrides(requestJson: string): string
 vaultNotesDefaults(requestJson: string): string
+vaultTasksLinearMapping(input: unknown): unknown
+vaultTasksLinearMappingEdit(input: unknown): unknown
+vaultTasksLinearProvenance(input: unknown): unknown
 selfAgentsSpawn(input: unknown): unknown
 selfLeaderSplit(input: unknown): unknown
 // END GENERATED AGENT VERBS

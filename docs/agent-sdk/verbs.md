@@ -379,3 +379,6 @@ both bindings and their export-census tests in one change.
 - `vault.notes.lifecycle`
 - `vault.notes.set_overrides`
 - `vault.notes.defaults`
+- `vault.tasks.linear.mapping`
+- `vault.tasks.linear.mapping.edit`
+- `vault.tasks.linear.provenance`

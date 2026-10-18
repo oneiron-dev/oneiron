@@ -6629,6 +6629,55 @@
       }
     },
     {
+      "name": "vault.tasks.linear.mapping",
+      "description": "One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events.",
+      "refs": ["/task_ref"],
+      "input": "crate::linear_sync::LinearMappingRequest",
+      "output": "crate::linear_sync::LinearMappingView",
+      "call": "memory.linear_mapping(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "task_ref"
+        ]
+      },
+      "section": false
+    },
+    {
+      "name": "vault.tasks.linear.mapping.edit",
+      "description": "Links, unlinks or mirrors again one TASK's Linear issue, by the TASK's owner at the mapping revision the caller read, under an intent key.",
+      "input": "crate::linear_sync::LinearMappingEdit",
+      "output": "crate::linear_sync::LinearMappingEditReceipt",
+      "call": "memory.linear_mapping_edit(&input, None)?",
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.tasks.linear.provenance",
+      "description": "One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts.",
+      "refs": ["/task_ref"],
+      "input": "crate::linear_sync::LinearProvenanceRequest",
+      "output": "crate::linear_sync::LinearProvenancePage",
+      "call": "memory.linear_provenance(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "task_ref"
+        ]
+      },
+      "page": {
+        "rows": "events",
+        "cursor": "next_cursor"
+      },
+      "section": false
+    },
+    {
       "name": "self.fold",
       "input": "crate::compaction::FoldMarkInput",
       "output": "crate::compaction::FoldReply<crate::compaction::FoldMarked>",

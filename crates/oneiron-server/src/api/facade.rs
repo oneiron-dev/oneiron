@@ -47,6 +47,7 @@ mod guest_doors;
 mod hub_doors;
 pub(super) mod host_doors;
 mod legal_hold_doors;
+mod linear_doors;
 mod live_run_doors;
 mod note_doors;
 mod policy_doors;

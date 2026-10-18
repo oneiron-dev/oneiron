@@ -2100,6 +2100,23 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::note::NoteRefRequest>(),
             ),
             (
+                "vault.tasks.linear.mapping",
+                crate::code_run::vault_read::request_schema::<
+                    crate::linear_sync::LinearMappingRequest,
+                >(),
+            ),
+            (
+                "vault.tasks.linear.mapping.edit",
+                crate::code_run::vault_read::request_schema::<crate::linear_sync::LinearMappingEdit>(
+                ),
+            ),
+            (
+                "vault.tasks.linear.provenance",
+                crate::code_run::vault_read::request_schema::<
+                    crate::linear_sync::LinearProvenanceRequest,
+                >(),
+            ),
+            (
                 "self.agents.spawn",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::LiveRunRequest<crate::code_run::AgentSpawnInput>,
@@ -4866,6 +4883,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.tasks.linear.mapping" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.tasks.linear.mapping.edit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.tasks.linear.provenance" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "self.agents.spawn" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -6219,6 +6257,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.notes.defaults" => {
             let _input: crate::note::NoteRefRequest = decode(value.clone())?;
         }
+        "vault.tasks.linear.mapping" => {
+            let _input: crate::linear_sync::LinearMappingRequest = decode(value.clone())?;
+        }
+        "vault.tasks.linear.mapping.edit" => {
+            let _input: crate::linear_sync::LinearMappingEdit = decode(value.clone())?;
+        }
+        "vault.tasks.linear.provenance" => {
+            let _input: crate::linear_sync::LinearProvenanceRequest = decode(value.clone())?;
+        }
         "self.agents.spawn" => {
             let _input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::AgentSpawnInput> =
                 decode(value.clone())?;
@@ -6849,6 +6896,13 @@ pub fn invoke(
         "vault.notes.lifecycle" => encode(vault_notes_lifecycle(memory, decode(value)?)?),
         "vault.notes.set_overrides" => encode(vault_notes_set_overrides(memory, decode(value)?)?),
         "vault.notes.defaults" => encode(vault_notes_defaults(memory, decode(value)?)?),
+        "vault.tasks.linear.mapping" => encode(vault_tasks_linear_mapping(memory, decode(value)?)?),
+        "vault.tasks.linear.mapping.edit" => {
+            encode(vault_tasks_linear_mapping_edit(memory, decode(value)?)?)
+        }
+        "vault.tasks.linear.provenance" => {
+            encode(vault_tasks_linear_provenance(memory, decode(value)?)?)
+        }
         "self.agents.spawn" => encode(self_agents_spawn(memory, decode(value)?)?),
         "self.leader.split" => encode(self_leader_split(memory, decode(value)?)?),
         _ => Err(MemoryError::bad_request("unknown SDK agent verb")),
@@ -10408,6 +10462,36 @@ pub fn vault_notes_defaults(
         &["/note_ref"],
     )?;
     memory.note_defaults(&input)
+}
+pub fn vault_tasks_linear_mapping(
+    memory: &Memory<'_>,
+    input: crate::linear_sync::LinearMappingRequest,
+) -> MemoryResult<crate::linear_sync::LinearMappingView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.tasks.linear.mapping",
+        &input,
+        &["/task_ref"],
+    )?;
+    memory.linear_mapping(&input)
+}
+pub fn vault_tasks_linear_mapping_edit(
+    memory: &Memory<'_>,
+    input: crate::linear_sync::LinearMappingEdit,
+) -> MemoryResult<crate::linear_sync::LinearMappingEditReceipt> {
+    memory.linear_mapping_edit(&input, None)
+}
+pub fn vault_tasks_linear_provenance(
+    memory: &Memory<'_>,
+    input: crate::linear_sync::LinearProvenanceRequest,
+) -> MemoryResult<crate::linear_sync::LinearProvenancePage> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.tasks.linear.provenance",
+        &input,
+        &["/task_ref"],
+    )?;
+    memory.linear_provenance(&input)
 }
 pub fn self_agents_spawn(
     memory: &Memory<'_>,

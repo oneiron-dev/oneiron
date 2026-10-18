@@ -417,6 +417,9 @@ pub enum AgentVerb {
     VaultNotesLifecycle,
     VaultNotesSetOverrides,
     VaultNotesDefaults,
+    VaultTasksLinearMapping,
+    VaultTasksLinearMappingEdit,
+    VaultTasksLinearProvenance,
     SelfAgentsSpawn,
     SelfLeaderSplit,
 }
@@ -838,6 +841,9 @@ impl AgentVerb {
         Self::VaultNotesLifecycle,
         Self::VaultNotesSetOverrides,
         Self::VaultNotesDefaults,
+        Self::VaultTasksLinearMapping,
+        Self::VaultTasksLinearMappingEdit,
+        Self::VaultTasksLinearProvenance,
         Self::SelfAgentsSpawn,
         Self::SelfLeaderSplit,
     ];
@@ -1270,6 +1276,9 @@ impl AgentVerb {
             Self::VaultNotesLifecycle => "vault.notes.lifecycle",
             Self::VaultNotesSetOverrides => "vault.notes.set_overrides",
             Self::VaultNotesDefaults => "vault.notes.defaults",
+            Self::VaultTasksLinearMapping => "vault.tasks.linear.mapping",
+            Self::VaultTasksLinearMappingEdit => "vault.tasks.linear.mapping.edit",
+            Self::VaultTasksLinearProvenance => "vault.tasks.linear.provenance",
             Self::SelfAgentsSpawn => "self.agents.spawn",
             Self::SelfLeaderSplit => "self.leader.split",
         }
@@ -1650,6 +1659,9 @@ impl AgentVerb {
                 | Self::VaultNotesLifecycle
                 | Self::VaultNotesSetOverrides
                 | Self::VaultNotesDefaults
+                | Self::VaultTasksLinearMapping
+                | Self::VaultTasksLinearMappingEdit
+                | Self::VaultTasksLinearProvenance
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
         )
@@ -2078,6 +2090,9 @@ impl AgentVerb {
                 | Self::VaultNotesLifecycle
                 | Self::VaultNotesSetOverrides
                 | Self::VaultNotesDefaults
+                | Self::VaultTasksLinearMapping
+                | Self::VaultTasksLinearMappingEdit
+                | Self::VaultTasksLinearProvenance
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
         )
@@ -2145,6 +2160,7 @@ impl AgentVerb {
                 | Self::VaultWritesPending
                 | Self::VaultArtifactsBodyCommits
                 | Self::VaultClaimsSeed
+                | Self::VaultTasksLinearProvenance
         )
     }
     pub const fn filtered_read(self) -> bool {
@@ -2567,6 +2583,9 @@ impl AgentVerb {
                 | Self::VaultNotesLifecycle
                 | Self::VaultNotesSetOverrides
                 | Self::VaultNotesDefaults
+                | Self::VaultTasksLinearMapping
+                | Self::VaultTasksLinearMappingEdit
+                | Self::VaultTasksLinearProvenance
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
         )
@@ -2823,6 +2842,7 @@ impl AgentVerb {
                 | Self::VaultNotesEdit
                 | Self::VaultNotesSeal
                 | Self::VaultNotesSetOverrides
+                | Self::VaultTasksLinearMappingEdit
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
         )
@@ -3274,6 +3294,9 @@ impl AgentVerb {
             Self::VaultNotesLifecycle => &["spec"],
             Self::VaultNotesSetOverrides => &["spec"],
             Self::VaultNotesDefaults => &["spec"],
+            Self::VaultTasksLinearMapping => &["spec"],
+            Self::VaultTasksLinearMappingEdit => &["spec"],
+            Self::VaultTasksLinearProvenance => &["spec"],
             Self::SelfAgentsSpawn => &["spec"],
             Self::SelfLeaderSplit => &["spec"],
         }
@@ -3696,6 +3719,9 @@ impl AgentVerb {
             Self::VaultNotesLifecycle => &["spec"],
             Self::VaultNotesSetOverrides => &["spec"],
             Self::VaultNotesDefaults => &["spec"],
+            Self::VaultTasksLinearMapping => &["spec"],
+            Self::VaultTasksLinearMappingEdit => &["spec"],
+            Self::VaultTasksLinearProvenance => &["spec"],
             Self::SelfAgentsSpawn => &["spec"],
             Self::SelfLeaderSplit => &["spec"],
         }
@@ -4848,6 +4874,15 @@ impl AgentVerb {
             }
             Self::VaultNotesDefaults => {
                 "One NOTE's overrides and the extraction, context and retention defaults its gates read after them."
+            }
+            Self::VaultTasksLinearMapping => {
+                "One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events."
+            }
+            Self::VaultTasksLinearMappingEdit => {
+                "Links, unlinks or mirrors again one TASK's Linear issue, by the TASK's owner at the mapping revision the caller read, under an intent key."
+            }
+            Self::VaultTasksLinearProvenance => {
+                "One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts."
             }
             Self::SelfAgentsSpawn => {
                 "Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity."

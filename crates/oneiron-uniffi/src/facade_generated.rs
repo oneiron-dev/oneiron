@@ -1866,6 +1866,21 @@ export_facade! {
     let output = client.vault_notes_defaults(&input)?;
     crate::codec::lift_record("vault.notes.defaults", &output)
 };
+"vault.tasks.linear.mapping" => fn vault_tasks_linear_mapping(&self, input: LinearMappingRequest) -> LinearMappingView = |client| {
+    let input: oneiron::linear_sync::LinearMappingRequest = crate::codec::lower_record("vault.tasks.linear.mapping", input)?;
+    let output = client.vault_tasks_linear_mapping(&input)?;
+    crate::codec::lift_record("vault.tasks.linear.mapping", &output)
+};
+"vault.tasks.linear.mapping.edit" => fn vault_tasks_linear_mapping_edit(&self, input: LinearMappingEdit) -> LinearMappingEditReceipt = |client| {
+    let input: oneiron::linear_sync::LinearMappingEdit = crate::codec::lower_record("vault.tasks.linear.mapping.edit", input)?;
+    let output = client.vault_tasks_linear_mapping_edit(&input)?;
+    crate::codec::lift_record("vault.tasks.linear.mapping.edit", &output)
+};
+"vault.tasks.linear.provenance" => fn vault_tasks_linear_provenance(&self, input: LinearProvenanceRequest) -> LinearProvenancePage = |client| {
+    let input: oneiron::linear_sync::LinearProvenanceRequest = crate::codec::lower_record("vault.tasks.linear.provenance", input)?;
+    let output = client.vault_tasks_linear_provenance(&input)?;
+    crate::codec::lift_record("vault.tasks.linear.provenance", &output)
+};
 "self.agents.spawn" => fn self_agents_spawn(&self, input: LiveRunRequestAgentSpawnInput) -> AgentSpawnOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::AgentSpawnInput> = crate::codec::lower_record("self.agents.spawn", input)?;
     let output = client.self_agents_spawn(&input)?;
