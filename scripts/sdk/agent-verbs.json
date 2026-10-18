@@ -6496,6 +6496,54 @@
       "section": false
     },
     {
+      "name": "host.compact",
+      "description": "Compacts a conversation window on the configured cheap backend, preserving add-only hook pins through the existing gate and keyframe mint.",
+      "input": "crate::runtime_hooks::host_doors::HostCompactRequest",
+      "output": "crate::runtime_hooks::host_doors::HostCompactResult",
+      "call": "crate::task_verb::sdk::host_only(memory, \"host.compact\", &input)?",
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "host.wake",
+      "description": "Schedules the host wake through its typed trigger; pre-hook Skip keeps its reason and Timer includes the engine maintenance lanes.",
+      "input": "crate::runtime_hooks::host_doors::HostWakeRequest",
+      "output": "crate::runtime_hooks::host_doors::HostWakeResult",
+      "call": "crate::task_verb::sdk::host_only(memory, \"host.wake\", &input)?",
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "host.budget.hit",
+      "description": "Notifies a spent durable budget seat under Suspend, retaining the original line, root payer, cap and accounting for hook follow-up work.",
+      "input": "crate::runtime_hooks::host_doors::HostBudgetHitRequest",
+      "output": "crate::runtime_hooks::host_doors::HostBudgetHitResult",
+      "call": "crate::task_verb::sdk::host_only(memory, \"host.budget.hit\", &input)?",
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.hooks.replay",
       "description": "The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands.",
       "input": "crate::task_verb::sdk::HooksReplayRequest",

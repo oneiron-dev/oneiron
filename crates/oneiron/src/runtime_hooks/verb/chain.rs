@@ -377,7 +377,12 @@ impl<'c> Chain<'c> {
         }
         self.token = token;
         for (index, &(id, binding)) in hooks.iter().enumerate().skip(start) {
-            let stop = match self.run(id, binding, &args, None, Some(check))? {
+            let verb = self.call.verb.clone();
+            let rewrite_check = |next: &Value| {
+                crate::runtime_hooks::host_doors::check_rewrite(&verb, &args, next)?;
+                check(next)
+            };
+            let stop = match self.run(id, binding, &args, None, Some(&rewrite_check))? {
                 Some(HookOutcome::Rewrite { args: next }) => {
                     args = next;
                     None
@@ -406,6 +411,9 @@ impl<'c> Chain<'c> {
                     }
                 }
                 Some(_) => None,
+                // A refused Skip (including a blocking hook's) cannot
+                // turn compaction into an Ask and stop the pass.
+                None if self.call.verb == COMPACT => None,
                 None if binding.selector.blocking => match self.call.domain {
                     VerbDomain::Read => Some(self.hide(binding)),
                     VerbDomain::Write => {

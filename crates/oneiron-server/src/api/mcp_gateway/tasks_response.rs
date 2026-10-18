@@ -1278,6 +1278,9 @@ fn mcp_agent_verb_input(
         "vault.shares.create" => a.spec.clone().ok_or_else(invalid),
         "vault.shares.revoke" => a.spec.clone().ok_or_else(invalid),
         "vault.shares.view" => a.spec.clone().ok_or_else(invalid),
+        "host.compact" => a.spec.clone().ok_or_else(invalid),
+        "host.wake" => a.spec.clone().ok_or_else(invalid),
+        "host.budget.hit" => a.spec.clone().ok_or_else(invalid),
         "vault.hooks.replay" => a.spec.clone().ok_or_else(invalid),
         "vault.hooks.regen.due" => a.spec.clone().ok_or_else(invalid),
         "vault.hooks.regen.get" => a.spec.clone().ok_or_else(invalid),
@@ -3128,6 +3131,15 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.shares.view" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "host.compact" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "host.wake" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "host.budget.hit" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.hooks.replay" => {
@@ -11908,6 +11920,78 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
                 crate::api::facade::host_doors::vault_shares_view(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "host.compact" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("host.compact", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::runtime_hooks::host_doors::HostCompactRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::host_compact(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                memory.invocation(),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "host.wake" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("host.wake", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::runtime_hooks::host_doors::HostWakeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::host_wake(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                memory.invocation(),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "host.budget.hit" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("host.budget.hit", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::runtime_hooks::host_doors::HostBudgetHitRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::host_budget_hit(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                memory.invocation(),
+                input,
+            )
+            .await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)

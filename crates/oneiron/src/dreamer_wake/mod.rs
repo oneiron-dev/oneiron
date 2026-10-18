@@ -35,6 +35,7 @@ pub(crate) use self::projector::held_round_members_away_in_txn;
 pub use self::recipe::*;
 pub use self::recipes::WakeRecipePolicy;
 pub use self::scheduling::*;
+pub(crate) use self::scheduling::request_wake_in_txn;
 pub(crate) use self::sieve::grant_written_in_txn as sieve_grant_written_in_txn;
 pub(crate) use self::sieve::owe_read_in_txn as owe_sieve_read_in_txn;
 pub use self::sieve::{

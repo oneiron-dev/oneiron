@@ -10006,6 +10006,87 @@ async fn vault_shares_view(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn host_compact(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "host.compact")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("host.compact", &value)?;
+    let hooks = facade_hooks_pre(server, call, "host.compact", value).await?;
+    let (output, listed) = super::host_doors::host_compact(
+        server,
+        auth,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn host_wake(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "host.wake")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("host.wake", &value)?;
+    let hooks = facade_hooks_pre(server, call, "host.wake", value).await?;
+    let (output, listed) = super::host_doors::host_wake(
+        server,
+        auth,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn host_budget_hit(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "host.budget.hit")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("host.budget.hit", &value)?;
+    let hooks = facade_hooks_pre(server, call, "host.budget.hit", value).await?;
+    let (output, listed) = super::host_doors::host_budget_hit(
+        server,
+        auth,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_hooks_replay(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -20310,6 +20391,9 @@ pub(crate) async fn call_verb(
         "vault.shares.create" => vault_shares_create(server, call, input).await,
         "vault.shares.revoke" => vault_shares_revoke(server, call, input).await,
         "vault.shares.view" => vault_shares_view(server, call, input).await,
+        "host.compact" => host_compact(server, call, input).await,
+        "host.wake" => host_wake(server, call, input).await,
+        "host.budget.hit" => host_budget_hit(server, call, input).await,
         "vault.hooks.replay" => vault_hooks_replay(server, call, input).await,
         "vault.hooks.regen.due" => vault_hooks_regen_due(server, call, input).await,
         "vault.hooks.regen.get" => vault_hooks_regen_get(server, call, input).await,

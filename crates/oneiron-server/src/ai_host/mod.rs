@@ -123,12 +123,25 @@ pub struct AiHandle {
     /// Dreamer's passes ask their typed questions through it, and the
     /// workflow pump rules on a wave cut's fan-out through it.
     decisions: Arc<OnceLock<DecisionHost>>,
+    /// The same cheap compactor code mode serves, exposed to typed host
+    /// triggers once that route is bound. No route means MODEL_UNAVAILABLE.
+    host_compaction: Arc<OnceLock<(
+        Arc<dyn oneiron::compaction::CompactionBackend>,
+        oneiron::compaction::CompactionGatePolicy,
+    )>>,
     /// The host syncs as a device of another home (`[device_sync]`): it
     /// defers to the elected home and never claims it.
     device: bool,
 }
 
 impl AiHandle {
+    pub(crate) fn host_compaction(&self) -> Option<(
+        Arc<dyn oneiron::compaction::CompactionBackend>,
+        oneiron::compaction::CompactionGatePolicy,
+    )> {
+        self.host_compaction.get().cloned()
+    }
+
     /// No `[models]`: every seat empty, every worker idle for want of one.
     #[must_use]
     pub fn inert() -> Self {
@@ -171,6 +184,7 @@ impl AiHandle {
             inbound: Arc::new(AtomicU64::new(unix_now())),
             summaries: false,
             decisions: Arc::default(),
+            host_compaction: Arc::default(),
             device: false,
         }
     }

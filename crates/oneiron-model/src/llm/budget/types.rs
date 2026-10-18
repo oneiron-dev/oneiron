@@ -8,7 +8,7 @@ use crate::llm::BudgetLease;
 
 pub const DEFAULT_BUDGET_RESERVE_UNITS: u64 = 8_000;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BudgetExhaustionPolicy {
     #[default]

@@ -81,6 +81,7 @@ mod graph_ask_doors;
 mod guest_document_doors;
 mod guest_doors;
 mod hook_regen_doors;
+mod host_trigger_doors;
 pub(super) mod host_doors;
 mod hub_doors;
 mod learning_doors;
@@ -694,6 +695,7 @@ pub(crate) async fn row_hooks_pre_with(
             domain: verb_hook_boundary::row_domain(&verb),
             reader,
         };
+        oneiron::runtime_hooks::host_doors::admit_trigger(&server.vault, &verb, &args)?;
         let admit = |args: &serde_json::Value| {
             oneiron::task_verb::sdk::validate_input(&verb, args)
                 .map_err(|error| error.to_string())?;
