@@ -820,6 +820,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.get", post(facade_route))
         .route("/vault.refs.resolve", post(facade_route))
         .route("/vault.refs.links", post(facade_route))
+        .route("/vault.search.vector.config", post(facade_route))
+        .route("/vault.vectors.put", post(facade_route))
         .route("/vault.search.hybrid", post(facade_route))
         .route("/vault.search.temporal", post(facade_route))
         .route("/vault.search.bm25", post(facade_route))

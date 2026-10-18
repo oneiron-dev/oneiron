@@ -2144,9 +2144,9 @@
     },
     {
       "name": "vault.search.vector",
-      "description": "Searches the text index or one declared embedding space through its query tower, with per-kind raw match evidence and the caller's read receipt.",
+      "description": "Searches the text index or a declared embedding space with per-kind matches and revision pins; text-index MRL reads report refinement, and explicit voice_hot skips rescore at the reduced voice limit.",
       "input": "crate::memory::VectorSearchRequest",
-      "output": "crate::claim::ScopedReadResult<Vec<crate::memory::VectorSearchHit>>",
+      "output": "crate::claim::ScopedReadResult<crate::memory::VectorSearchResult>",
       "call": "memory.query_vector(&input)?",
       "scope": "Read",
       "admission": {
@@ -2155,7 +2155,11 @@
       },
       "section": false,
       "mcp_scope": "filtered",
-      "openapi": true
+      "openapi": true,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      }
     },
     {
       "name": "vault.images.view",
@@ -12501,6 +12505,36 @@
       },
       "section": false,
       "mcp_scope": "filtered"
+    },
+    {
+      "name": "vault.search.vector.config",
+      "description": "Reads this vault open's persisted dimensions and optional MRL fast_dims prefix; graph shape is configured before open, never changed by a search.",
+      "input": "EmptyRequest",
+      "output": "crate::claim::ScopedReadResult<crate::memory::VectorSearchConfig>",
+      "call": "memory.vector_search_config()?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_fields": {},
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "vault.vectors.put",
+      "description": "Supplies one full-width vector for a readable record as the authenticated owner; the existing write gate checks model, transform, width, revision staging and graph updates atomically.",
+      "input": "crate::memory::VectorPutRequest",
+      "output": "crate::memory::VectorPutReceipt",
+      "call": "memory.put_vector_as_owner(&memory.embedded_owner(\"vault.vectors.put\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.search.hybrid",

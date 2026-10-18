@@ -789,6 +789,8 @@ vaultHydrate(input: unknown): unknown
 vaultGet(input: unknown): unknown
 vaultRefsResolve(input: unknown): unknown
 vaultRefsLinks(input: unknown): unknown
+vaultSearchVectorConfig(input: unknown): unknown
+vaultVectorsPut(input: unknown): unknown
 vaultSearchHybrid(input: unknown): unknown
 vaultSearchTemporal(input: unknown): unknown
 vaultSearchBm25(input: unknown): unknown

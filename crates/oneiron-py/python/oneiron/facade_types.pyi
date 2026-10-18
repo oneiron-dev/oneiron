@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 936 facade rows, 3195 declarations.
-Inputs: 880 of 936 fully typed, 56 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 838 of 936 fully typed, 98 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 938 facade rows, 3201 declarations.
+Inputs: 882 of 938 fully typed, 56 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 840 of 938 fully typed, 98 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
 """
 
@@ -2951,17 +2951,31 @@ class AssetResolved(TypedDict):
     asset_text_ref: NotRequired[str | None]
     handle: NotRequired[str | None]
     receipt_refs: list[str]
+VectorSearchLane = Literal["ordinary", "voice_hot"]
 class VectorSearchRequest(TypedDict):
     space: NotRequired[str | None]
     query_kind: NotRequired[InputKind | None]
     query: list[float]
     kinds: NotRequired[list[InputKind]]
     limit: int
+    lane: NotRequired[VectorSearchLane]
 class VectorSearchHit(TypedDict):
     entity_ref: str
     source_revision_ref: NotRequired[str | None]
     score: float
     embedding_matches: list[EmbeddingMatchEvidence]
+class VectorRefinement(TypedDict):
+    stored_dimensions: int
+    candidate_dimensions: int
+    query_dimensions: int
+    score_dimensions: int
+    full_dimension_rescore: bool
+class VectorSearchResult(TypedDict):
+    hits: list[VectorSearchHit]
+    lane: VectorSearchLane
+    effective_limit: int
+    limit_clamped: bool
+    refinement: NotRequired[VectorRefinement | None]
 class PixelRegion(TypedDict):
     x: int
     y: int
@@ -13156,6 +13170,15 @@ class RecordLinks(TypedDict):
     texts: list[LinkedText]
     narrowing: NotRequired[ScopedReadReceipt | None]
     next_after: NotRequired[str | None]
+class VectorSearchConfig(TypedDict):
+    dimensions: int
+    fast_dims: NotRequired[int | None]
+class VectorPutRequest(TypedDict):
+    entity_ref: str
+    vector: list[float]
+class VectorPutReceipt(TypedDict):
+    entity_ref: str
+    dimensions: int
 class HybridPprQuery(TypedDict):
     seeds: list[str]
     depth: int

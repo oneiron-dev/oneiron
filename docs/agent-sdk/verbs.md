@@ -765,6 +765,8 @@ both bindings and their export-census tests in one change.
 - `vault.get`
 - `vault.refs.resolve`
 - `vault.refs.links`
+- `vault.search.vector.config`
+- `vault.vectors.put`
 - `vault.search.hybrid`
 - `vault.search.temporal`
 - `vault.search.bm25`

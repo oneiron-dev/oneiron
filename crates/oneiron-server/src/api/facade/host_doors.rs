@@ -180,6 +180,7 @@ pub(crate) use super::eval_doors::*;
 pub(crate) use super::hyde_doors::*;
 pub(crate) use super::research_doors::*;
 pub(crate) use super::retrieval_doors::*;
+pub(crate) use super::vector_doors::*;
 // The owner's project-card tap door (OF-501), likewise.
 pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
@@ -1296,6 +1297,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.slim.drop_heavy"
         | "vault.slim.resume"
         | "vault.retrieval.recall"
+        | "vault.vectors.put"
         | "vault.retrieval.runs"
         | "vault.retrieval.run"
         | "vault.retrieval.turn"
