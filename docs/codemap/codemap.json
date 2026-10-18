@@ -49041,7 +49041,7 @@
      "path": "src/sync/types.rs",
      "purpose": "Sync-specific types for the CRDT sync layer",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 12,
       "struct": 3
      }
