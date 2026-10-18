@@ -327,7 +327,7 @@ impl<'a> Xml<'a> {
     }
 
     fn is_review_metadata(&self, node: usize) -> bool {
-        use super::package::{COMMENT_EXT, P, SLIDE_ID_EXT};
+        use super::model::{COMMENT_EXT, P, SLIDE_ID_EXT};
         let n = &self.nodes[node];
         if n.is(P, "ext") {
             let Some(list) = n.parent else {
