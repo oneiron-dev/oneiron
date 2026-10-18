@@ -556,6 +556,52 @@ above. Any other run uses the table above. A long run never outgrows one
 summary's sources: each summary stands for the records the calls before it
 were served, so the next one names only the records served since.
 
+`compaction_backend = "self"` makes the agent its own compaction writer
+(FIX 4465). The key sets who writes, not which model: every epoch and fold
+summary of its window is written as the agent, under its byline, on the same
+cheap route, wearing its home. The home is read once per pass, through the
+existing doors, under the agent's own Grant at the place its caller sits:
+its voice (its PERSON's compiled persona), its lessons (its admitted, active
+`actor.lesson` and `actor.failure_mode` claims) and its diary (read through
+the diary door as its own reader). There is no self-model binding yet, so
+that part is reported absent. A part the agent has none of, or may not read,
+is absent; it is never filled from the owner's memory or another agent's
+diary. The home takes only the tokens the admitted model's context leaves
+once the window, its pins and the reply are counted; what does not fit is
+cut and reported as cut.
+
+Which model and context a self-written pass uses is a per-wake policy row,
+`self_compaction` in the inference defaults (`GET`/`PUT` with the purpose
+rows): `source` is `retained_turns` (the shipped default: the agent's own
+`compaction_model` when its definition names one, else the house compaction
+seat, reading the retained steps) or `live_fork` (a fork of the live
+context), and `locality` is the widest place the call may be served (shipped
+`third_party`; a delegated edit cannot widen it). The writer's model is
+admitted as exactly that model, on its own one-model ladder. Whether the
+agent runs on this device, on a hosted server or in the resident pump does
+not matter: the same run is served the same way.
+
+A pass that cannot be written as the agent keeps its raw window for the turn
+and says why; it never falls back to the Dreamer or to the plain cheap
+writer. The run's `compaction` object carries `self_unavailable`:
+`live_fork_not_built` (the row selects `live_fork`, which needs the live fork
+this host does not cut yet), `session_receipts_not_built` (a run bound to a
+room: its receipts have no room store yet), `no_identity` (the actor is not
+an agent anchored to a PERSON), `identity_unreadable`, `policy_unreadable`,
+`model_not_served`, or `route_wider_than_policy`.
+
+Each self-written summary lands only through its packet: a turn digest of
+its window, admitted through the packet door's host-log binding against the
+run's retained steps, with the snapshot the pass stamped when the gate
+accepted it. Its receipt records who wrote it (the agent) and what ran it:
+the admitted model, the provider and the model it reported, the
+provider-reported input, cached-read, cache-write and output tokens (`null`
+when the provider reported none, never a guessed zero), each try the gate
+refused as its own line, the call's step hash and the home parts it wore.
+The epoch's receipt rides its coverage row and is named by its SUMMARY's
+birth; a fold's rides its fold record. The run's `compaction` object shows
+the last one as `self_writer`.
+
 A run in an off-record room compacts the same way, inside the room: the pass
 reads the room's view, and the summary, its sources and its step coverage
 stay in the room's overlay. Nothing reaches the vault, no summary is embedded

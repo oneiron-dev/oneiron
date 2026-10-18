@@ -85,23 +85,30 @@ pub(super) fn run_with_limit(
     attempt: &AttemptId,
     limit: usize,
 ) -> Result<CleanupRunReport> {
-    vault.with_write_txn_grouped(|txn| {
-        if let Some(report) = run_record::read_in_txn(vault, txn, attempt)? {
-            return Ok(report);
+    vault.with_write_txn_grouped(|txn| run_in_txn(vault, txn, attempt, limit))
+}
+
+pub(super) fn run_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    attempt: &AttemptId,
+    limit: usize,
+) -> Result<CleanupRunReport> {
+    if let Some(report) = run_record::read_in_txn(vault, txn, attempt)? {
+        return Ok(report);
+    }
+    let CleanupScan {
+        candidates,
+        cursors,
+    } = scan_in_txn(vault, txn, limit)?;
+    let report = run_cleanup_candidates_in_txn(vault, txn, attempt, candidates)?;
+    for (tag, after) in cursors {
+        if let Some(id) = after {
+            SCAN_CURSOR.put(&vault.store, txn, &tag, &id)?;
+        } else {
+            SCAN_CURSOR.delete(&vault.store, txn, &tag)?;
         }
-        let CleanupScan {
-            candidates,
-            cursors,
-        } = scan_in_txn(vault, txn, limit)?;
-        let report = run_cleanup_candidates_in_txn(vault, txn, attempt, candidates)?;
-        for (tag, after) in cursors {
-            if let Some(id) = after {
-                SCAN_CURSOR.put(&vault.store, txn, &tag, &id)?;
-            } else {
-                SCAN_CURSOR.delete(&vault.store, txn, &tag)?;
-            }
-        }
-        run_record::put_in_txn(vault, txn, &report)?;
-        Ok(report)
-    })
+    }
+    run_record::put_in_txn(vault, txn, &report)?;
+    Ok(report)
 }

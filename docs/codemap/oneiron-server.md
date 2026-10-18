@@ -24,6 +24,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/code_fix.rs` | src | m | 9 crate-vis | — | The host Coach's code fixes (DEC-0005 FIX6, OF-380) |
 | `src/ai_host/code_mode.rs` | src | s | 1 crate-vis | — | MCP `execute_code` on the served vault: the checked-in QuickJS component, run by the engine executor on the… |
 | `src/ai_host/compaction.rs` | src | m | 7 crate-vis | — | Compaction for code mode's runs (agent-runtime-v1 §d7) |
+| `src/ai_host/compaction/self_writer.rs` | src | s | 2 crate-vis | — | The agent's own compaction writer (FIX 4465, owner 10-19: "the toggle sets WHO writes, not which model") |
+| `src/ai_host/compaction/serve.rs` | src | m | 7 crate-vis | — | The house compaction route's call (moved from `compaction.rs`): one pass's request, admitted on the role's… |
 | `src/ai_host/compaction/tests.rs` | test | s | 1 crate-vis | — | A compaction pass is bounded work: it outlives the call that started it, so its thread holds a permit of its… |
 | `src/ai_host/connector_event.rs` | src | s | 2 crate-vis | — | The served connector-event responder (OF-519): what a Dreamer pass runs when a subscribed Slack or LINE… |
 | `src/ai_host/contribution.rs` | src | m | 2 crate-vis | — | The host's replay capsule for the Coach's contribution checks (FIX 3028): the concrete… |
@@ -168,6 +170,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/campaign_split_doors.rs` | src | s | 1 crate-vis | — | The host door of a campaign split's evaluation, `vault.research.evaluate_split` (FIX 655): the owner scores… |
 | `src/api/facade/channel_doors.rs` | src | s | 9 crate-vis | — | Credential-bound host projections of the typed channel setup verbs |
 | `src/api/facade/claim_settle_doors.rs` | src | s | 2 crate-vis | — | The host doors of one proposed claim's review and settlement (DOOR-115): `vault.claims.review` and… |
+| `src/api/facade/cleanup_doors.rs` | src | s | 2 crate-vis | — | Archive cleanup and evidence-backed re-mention, under the owner's own proof |
 | `src/api/facade/code_doors.rs` | src | s | 5 crate-vis | — | Credential-bound host projections of the typed symbol lease, proposal submit and oplog doors (DOOR-137) |
 | `src/api/facade/code_run_doors.rs` | src | s | 1 crate-vis | — | The credential-bound host projection of the typed per-model code-run heal count door (DOOR-093) |
 | `src/api/facade/codebase_doors.rs` | src | s | 4 crate-vis | — | Credential-bound host projections of the typed code snapshot doors (DOOR-118) |
@@ -194,7 +197,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/gate_policy_doors.rs` | src | s | 4 crate-vis | — | Owner policy and checker host doors |
 | `src/api/facade/graph_ask_doors.rs` | src | m | 8 crate-vis | — | OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the… |
 | `src/api/facade/guest_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's guest revoke row (OF-232): `vault.guests.revoke` |
-| `src/api/facade/host_doors.rs` | src | XL | 114 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | XL | 115 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/hub_doors.rs` | src | m | 17 crate-vis | — | Owner-proof facade doors for configured hubs and pinned foreign imports |
 | `src/api/facade/learning_doors.rs` | src | s | 2 crate-vis | — | Read-only measured-learning doors under the vault owner's existing proof |
 | `src/api/facade/legal_hold_doors.rs` | src | s | 8 crate-vis | — | The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`… |
@@ -635,6 +638,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/livequery/publication.rs` | src | m | 7 crate-vis | — | Revision-keyed publication lifecycle; one bounded owner per logical session |
 | `src/livequery/remediation_tests.rs` | test | s | — | — | — |
 | `src/livequery/residence.rs` | src | L | 3 crate-vis | — | Grant-scoped home-node reads for opened-item devices |
+| `src/livequery/residence/bundle_access.rs` | src | s | 1 crate-vis | — | `residence.bundle.access` (FIX 4271): a late joiner's access to the kept sealed pad objects, one tagged call |
 | `src/livequery/residence/machine_history.rs` | src | s | 1 crate-vis | — | `residence.machine-history` (FIX 3820): a target's machine-claim history, a page at a time, for a machine… |
 | `src/livequery/residence/tests.rs` | test | m | 1 crate-vis | — | — |
 | `src/livequery/routing.rs` | src | s | 5 crate-vis | — | Private routing header for the EXISTING server broadcast channel and a socket's own reply queue |

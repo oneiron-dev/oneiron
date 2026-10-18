@@ -5127,6 +5127,47 @@ async fn vault_authority_handoff_alarms_acknowledge(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_cleanup_run(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.cleanup.run")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.cleanup.run", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.cleanup.run", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_cleanup_run(server, auth, facade_input(hooks.args.clone())?).await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_entities_mention(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.entities.mention")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.entities.mention", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.entities.mention", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_entities_mention(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_legal_holds_place(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -14504,6 +14545,8 @@ pub(crate) async fn call_verb(
         "vault.authority.handoff_alarms.acknowledge" => {
             vault_authority_handoff_alarms_acknowledge(server, call, input).await
         }
+        "vault.cleanup.run" => vault_cleanup_run(server, call, input).await,
+        "vault.entities.mention" => vault_entities_mention(server, call, input).await,
         "vault.legal_holds.place" => vault_legal_holds_place(server, call, input).await,
         "vault.legal_holds.widen" => vault_legal_holds_widen(server, call, input).await,
         "vault.legal_holds.list" => vault_legal_holds_list(server, call, input).await,

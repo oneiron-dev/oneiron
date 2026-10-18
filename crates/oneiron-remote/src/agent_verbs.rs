@@ -720,6 +720,12 @@ impl OneironClient {
                         client, verb, &input,
                     )
                 }
+                "vault.cleanup.run" => remote_agent_verb_output::<
+                    oneiron::vault_cleanup::surface::CleanupRunView,
+                >(client, verb, &input),
+                "vault.entities.mention" => remote_agent_verb_output::<
+                    oneiron::ingest::EntityResolutionWaterfallDecision,
+                >(client, verb, &input),
                 "vault.legal_holds.place" => {
                     remote_agent_verb_output::<oneiron::deletion::LegalHold>(client, verb, &input)
                 }
@@ -4670,6 +4676,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.authority.handoff_alarms.acknowledge", value)
+    }
+    pub fn vault_cleanup_run(
+        &self,
+        input: &oneiron::vault_cleanup::surface::CleanupRunRequest,
+    ) -> Result<oneiron::vault_cleanup::surface::CleanupRunView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.cleanup.run", value)
+    }
+    pub fn vault_entities_mention(
+        &self,
+        input: &oneiron::ingest::EntityMentionRequest,
+    ) -> Result<oneiron::ingest::EntityResolutionWaterfallDecision, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.entities.mention", value)
     }
     pub fn vault_legal_holds_place(
         &self,

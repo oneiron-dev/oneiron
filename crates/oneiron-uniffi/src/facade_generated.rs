@@ -1106,6 +1106,16 @@ export_facade! {
     let output = client.vault_authority_handoff_alarms_acknowledge(&input)?;
     crate::codec::lift_record("vault.authority.handoff_alarms.acknowledge", &output)
 };
+"vault.cleanup.run" => fn vault_cleanup_run(&self) -> CleanupRunView = |client| {
+    let input: oneiron::vault_cleanup::surface::CleanupRunRequest = crate::codec::lower_empty("vault.cleanup.run")?;
+    let output = client.vault_cleanup_run(&input)?;
+    crate::codec::lift_record("vault.cleanup.run", &output)
+};
+"vault.entities.mention" => fn vault_entities_mention(&self, input: EntityMentionRequest) -> EntityResolutionWaterfallDecision = |client| {
+    let input: oneiron::ingest::EntityMentionRequest = crate::codec::lower_record("vault.entities.mention", input)?;
+    let output = client.vault_entities_mention(&input)?;
+    crate::codec::lift_record("vault.entities.mention", &output)
+};
 "vault.legal_holds.place" => fn vault_legal_holds_place(&self, input: LegalHoldPlaceRequest) -> LegalHold = |client| {
     let input: oneiron::task_verb::sdk::LegalHoldPlaceRequest = crate::codec::lower_record("vault.legal_holds.place", input)?;
     let output = client.vault_legal_holds_place(&input)?;
