@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 641 code-mode rows (620 host rows, 21 run rows), 2308 declarations.
-// Replies: 563 fully typed, 74 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 645 code-mode rows (624 host rows, 21 run rows), 2326 declarations.
+// Replies: 567 fully typed, 74 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 94; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1083,6 +1083,24 @@ declare namespace Sdk {
   type RelayResolution = "pattern_decided" | "model_decided" | "pattern_gated_allow" | "log_only" | "no_policy_in_play" | "vault_side_decided" | "unresolved";
   type HostedPassEvidence = { version: string; policy_hash: string; verify_content_hash: number[] };
   type HostedRelayDecision = { service_identity: string; verdict?: PolicyClassifyVerdict | null; degraded?: RelayBoundaryDegrade | null; resolution?: RelayResolution | null; hosted_evidence?: HostedPassEvidence | null; receipt_ref?: string | null; final_content?: string | null; outbound_halted: boolean; system_notice?: string | null; system_notices: GateSystemNoticeRecord[] };
+  type ApproveOnceRequest = { effect_digest: string };
+  type ConsentActReceipt = { decision_ref: string; outcome: string; reason_code: string; grant_ref?: string | null; diff_handle: number[] };
+  type ActionEnvelopeRequest = { project: string; audience: string[]; budget: number };
+  type ActionBoundRequest = { actor: string; class: string; envelope: ActionEnvelopeRequest };
+  type DisclosureEnvelopeRequest = { selectors: string[] };
+  type DisclosureBoundRequest = { audience: string[]; class: string; envelope: DisclosureEnvelopeRequest };
+  type StandingGrantBound = ActionBoundRequest | DisclosureBoundRequest;
+  type CreateStandingGrantRequest = { bound: StandingGrantBound };
+  type ConsentRegistryQuery = { limit: number; include_revoked?: boolean };
+  type ConsentDomain = "disclosure" | "action";
+  type ConsentGrantStatus = "active" | "revoked";
+  type ConsentRevokeAction = { command: string; grant_ref: string };
+  type BypassScope = { project: EntityId } | { thread: EntityId };
+  type BypassExtent = { scope: BypassScope; floor_version: number };
+  type ConsentRegistryDelegation = { purpose: string; ticket_ref?: string | null; approved_by: string; wall_expires_at: number; status: SupportGrantStatus };
+  type ConsentRegistryRow = { grant_ref: string; domain: ConsentDomain; subject: string; class: string; selectors: string[]; scope?: Scope | null; status: ConsentGrantStatus; created_at: number; revoke_action: ConsentRevokeAction; bypass?: BypassExtent | null; delegation?: ConsentRegistryDelegation | null };
+  type ConsentRegistry = { rows: ConsentRegistryRow[] };
+  type RevokeGrantRequest = { grant: string };
   type PolicyManifestRead = { manifest_ref?: string | null };
   type PolicyCriticality = "normal" | "critical";
   type PolicySensitivity = "normal" | "sensitive";
@@ -2967,6 +2985,16 @@ declare const vault: Sdk.VaultHost & {
       /** The owner stops one connector event subscription; the agent's key for the channel stays. */
       revoke(input: Sdk.ChannelSubscriptionRevokeRequest): Promise<Sdk.ChannelSubscriptionRevoked | StoredResult>;
     };
+  };
+  consent: {
+    /** The owner approves exactly one engine-emitted effect digest; no standing grant is created. */
+    approve_once(input: Sdk.ApproveOnceRequest): Promise<Sdk.ConsentActReceipt | StoredResult>;
+    /** The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision. */
+    create_standing_grant(input: Sdk.CreateStandingGrantRequest): Promise<Sdk.ConsentActReceipt | StoredResult>;
+    /** The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants. */
+    registry(input: Sdk.ConsentRegistryQuery): Promise<Sdk.ConsentRegistry | StoredResult>;
+    /** The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted. */
+    revoke(input: Sdk.RevokeGrantRequest): Promise<Sdk.ConsentActReceipt | StoredResult>;
   };
   consolidation: {
     /** Enqueues one consolidation attempt and returns its durable job reference. */

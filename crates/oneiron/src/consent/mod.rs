@@ -55,6 +55,7 @@ mod contact_clearance;
 mod doors;
 mod effect;
 mod grant;
+pub mod lifecycle;
 mod owner_reason;
 mod registry;
 mod support;

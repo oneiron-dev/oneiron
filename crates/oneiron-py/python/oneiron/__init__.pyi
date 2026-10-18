@@ -588,6 +588,8 @@ class Oneiron:
         @property
         def policy(self) -> "Oneiron._VaultPolicyVerbs": ...
         @property
+        def consent(self) -> "Oneiron._VaultConsentVerbs": ...
+        @property
         def gate(self) -> "Oneiron._VaultGateVerbs": ...
         @property
         def learning(self) -> "Oneiron._VaultLearningVerbs": ...
@@ -1304,6 +1306,15 @@ class Oneiron:
     class _VaultPolicyRelayVerbs:
         def decide(self, spec: Facade.PolicyOutboundRequest) -> Facade.HostedRelayDecision:
             """Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer."""
+    class _VaultConsentVerbs:
+        def approve_once(self, spec: Facade.ApproveOnceRequest) -> Facade.ConsentActReceipt:
+            """The owner approves exactly one engine-emitted effect digest; no standing grant is created."""
+        def create_standing_grant(self, spec: Facade.CreateStandingGrantRequest) -> Facade.ConsentActReceipt:
+            """The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision."""
+        def registry(self, spec: Facade.ConsentRegistryQuery) -> Facade.ConsentRegistry:
+            """The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants."""
+        def revoke(self, spec: Facade.RevokeGrantRequest) -> Facade.ConsentActReceipt:
+            """The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted."""
     class _VaultGateVerbs:
         @property
         def policy(self) -> "Oneiron._VaultGatePolicyVerbs": ...

@@ -676,6 +676,9 @@ class Oneiron:
         def policy(self) -> "Oneiron._VaultPolicyVerbs":
             return Oneiron._VaultPolicyVerbs(self._client)
         @property
+        def consent(self) -> "Oneiron._VaultConsentVerbs":
+            return Oneiron._VaultConsentVerbs(self._client)
+        @property
         def gate(self) -> "Oneiron._VaultGateVerbs":
             return Oneiron._VaultGateVerbs(self._client)
         @property
@@ -1880,6 +1883,21 @@ class Oneiron:
         def decide(self, spec):
             """Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer."""
             return json.loads(_translate(lambda: self._client.vault_policy_relay_decide(json.dumps(spec))))
+    class _VaultConsentVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def approve_once(self, spec):
+            """The owner approves exactly one engine-emitted effect digest; no standing grant is created."""
+            return json.loads(_translate(lambda: self._client.vault_consent_approve_once(json.dumps(spec))))
+        def create_standing_grant(self, spec):
+            """The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision."""
+            return json.loads(_translate(lambda: self._client.vault_consent_create_standing_grant(json.dumps(spec))))
+        def registry(self, spec):
+            """The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants."""
+            return json.loads(_translate(lambda: self._client.vault_consent_registry(json.dumps(spec))))
+        def revoke(self, spec):
+            """The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted."""
+            return json.loads(_translate(lambda: self._client.vault_consent_revoke(json.dumps(spec))))
     class _VaultGateVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
