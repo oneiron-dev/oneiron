@@ -1006,6 +1006,8 @@ class Oneiron:
         @property
         def embedding_spaces(self) -> "Oneiron._VaultEmbeddingSpacesVerbs": ...
         @property
+        def policy(self) -> "Oneiron._VaultPolicyVerbs": ...
+        @property
         def gate(self) -> "Oneiron._VaultGateVerbs": ...
         @property
         def settings(self) -> "Oneiron._VaultSettingsVerbs": ...
@@ -1607,6 +1609,29 @@ class Oneiron:
             """Stores one retrieval probe the owner or another model wrote: kind, query, family, targets and author."""
         def delete(self, spec: Facade.EmbeddingSpaceProbeDeleteRequest) -> Facade.EmbeddingSpaceProbeDeleted:
             """Removes one stored embedding space probe by its id."""
+    class _VaultPolicyVerbs:
+        @property
+        def owner(self) -> "Oneiron._VaultPolicyOwnerVerbs": ...
+        @property
+        def outbound(self) -> "Oneiron._VaultPolicyOutboundVerbs": ...
+        @property
+        def relay(self) -> "Oneiron._VaultPolicyRelayVerbs": ...
+    class _VaultPolicyOwnerVerbs:
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.OwnerPolicyConfigurationView:
+            """The owner reads the content-policy configuration, default manifest hash and effective off/on state."""
+        def configure(self, spec: Facade.OwnerPolicyConfigureRequest) -> Facade.OwnerPolicyConfigurationReceipt:
+            """The owner configures or toggles content policy against the current manifest hash without changing other policy tables."""
+        @property
+        def row(self) -> "Oneiron._VaultPolicyOwnerRowVerbs": ...
+    class _VaultPolicyOwnerRowVerbs:
+        def change(self, spec: Facade.PolicyRowChangeRequest) -> Facade.PolicyRowReceipt:
+            """The owner adds, edits or removes a scoped content-policy row through its existing holder-governed writer and receives its change receipt."""
+    class _VaultPolicyOutboundVerbs:
+        def decide(self, spec: Facade.PolicyOutboundRequest) -> Facade.PolicyModelEnforcement:
+            """Decide an outbound candidate under owner policy with system notices and hash-only receipts; Warn and Skipped preserve its exact bytes."""
+    class _VaultPolicyRelayVerbs:
+        def decide(self, spec: Facade.PolicyOutboundRequest) -> Facade.HostedRelayDecision:
+            """Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer."""
     class _VaultGateVerbs:
         @property
         def policy(self) -> "Oneiron._VaultGatePolicyVerbs": ...

@@ -17169,14 +17169,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "TrustedContactNotice"
+      "TrustedContactNotice",
+      "TrustedContactNoticeAuthorization"
      ],
      "path": "src/counterparty_contact/trusted_contact_notice.rs",
      "purpose": "A trusted-contact notice crosses the OF-327 outbound rails like any other engine-staged send: staged with…",
      "surface": {
       "const": 2,
-      "crate-vis": 2,
-      "fn": 2,
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -49899,7 +49901,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 566
+      "fn": 568
      }
     },
     {
@@ -50388,14 +50390,19 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "TrustedContactAsksRequest",
       "TrustedContactAuthorization",
       "TrustedContactAuthorizationOutcome",
       "TrustedContactAuthorizeRequest",
+      "TrustedContactConcernFact",
+      "TrustedContactConcernProposal",
+      "TrustedContactConcernRequest",
       "TrustedContactConsentRequest",
+      "TrustedContactDeliverRequest",
+      "TrustedContactDeliveryReceipt",
       "TrustedContactDialRequest",
       "TrustedContactNameRequest",
       "TrustedContactRevokeRequest",
@@ -50406,9 +50413,9 @@
      "path": "src/task_verb/sdk_trusted_contact.rs",
      "purpose": "The trusted-contact rows a host door answers (DOOR-140 A, OF-527): the person names a trusted contact…",
      "surface": {
-      "enum": 1,
-      "fn": 8,
-      "struct": 10
+      "enum": 2,
+      "fn": 10,
+      "struct": 14
      }
     },
     {
@@ -65291,7 +65298,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 516
+      "fn": 518
      }
     },
     {
@@ -66340,7 +66347,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 517
+      "fn": 519
      }
     },
     {
@@ -69801,7 +69808,7 @@
      "path": "src/api/facade/trusted_contact_doors.rs",
      "purpose": "The host doors of the trusted-contact rows (DOOR-140 A, OF-527), beside `shared_policy_doors`",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -79310,10 +79317,15 @@
       "TrustedContactAuthorization",
       "TrustedContactAuthorizationOutcome",
       "TrustedContactAuthorizeRequest",
+      "TrustedContactConcernFact",
+      "TrustedContactConcernProposal",
+      "TrustedContactConcernRequest",
       "TrustedContactConsentRequest",
+      "TrustedContactDeliveryReceipt",
       "TrustedContactDial",
       "TrustedContactDialRequest",
       "TrustedContactNameRequest",
+      "TrustedContactNoticeAuthorization",
       "TrustedContactParty",
       "TrustedContactReach",
       "TrustedContactRevocation",
@@ -79446,8 +79458,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 478,
-      "struct": 1357
+      "enum": 480,
+      "struct": 1360
      }
     },
     {
