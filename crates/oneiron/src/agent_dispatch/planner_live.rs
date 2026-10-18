@@ -12,10 +12,17 @@
 //! rung that answers runs its configured workflow skill, loaded through the
 //! same door, and its executors ride the receipt. Planning never dispatches,
 //! never mints a TASK, and confers no authority.
+//!
+//! The owner's root plan (DOOR-111, `root_plan`) reads the same evidence in
+//! the root's launch context, and `intent` reserves it under the owner's
+//! intent key and freezes what it placed and planned.
+
+mod intent;
+mod root_plan;
 
 use std::collections::BTreeMap;
 
-use crate::attempt_queue::{AttemptQueue, AttemptRecord, AttemptState};
+use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::learning::{LearningCell, LearningPredicate, LearningRead, TypeRef, read_learning};
@@ -34,7 +41,7 @@ use super::task_type_tree::{load_team_type_tree, place_in_tree};
 use super::team_shape::{CoordinationPattern, team_shape_skill};
 use super::types::{AgentDispatchTarget, SpawnNeed};
 use super::widen_record::invalid;
-use super::{AgentDispatcher, decode_agent_dispatch_input};
+use super::{AgentDispatcher, SpawnSpend, decode_agent_dispatch_input};
 
 /// Host configuration: the skills the planner reads and runs. The
 /// team-shape skill's content and tree are the planner's lessons and type
@@ -167,8 +174,16 @@ impl AgentDispatcher<'_> {
     ) -> Result<Vec<ShapeQuote>> {
         request.need.validate()?;
         let live = self.live_planner_lease(leased)?;
-        let request = &request.with_owner_choices(self.vault, attempt_project(&live))?;
-        let evidence = self.planner_evidence(&live, &request.need, request.seats, at)?;
+        let project = attempt_project(&live);
+        let request = &request.with_owner_choices(self.vault, project)?;
+        let evidence = self.planner_evidence_for(
+            project,
+            Some(live.id),
+            None,
+            &request.need,
+            request.seats,
+            at,
+        )?;
         let mut quotes = ranked_quotes(&request.need, &evidence)?;
         quotes.truncate(n.max(1));
         Ok(quotes)
@@ -185,25 +200,41 @@ impl AgentDispatcher<'_> {
     ) -> Result<(SpawnPlanReceipt, Vec<ShapeQuote>)> {
         request.need.validate()?;
         let live = self.live_planner_lease(leased)?;
-        let request = &request.with_owner_choices(self.vault, attempt_project(&live))?;
-        let evidence = self.planner_evidence(&live, &request.need, request.seats, at)?;
-        let thresholds = PlannerThresholds::from_vault(self.vault)?;
-        let quotes = ranked_quotes(&request.need, &evidence)?;
-        let rung = planned_rung(&request.need, &quotes, thresholds);
+        let project = attempt_project(&live);
+        let request = &request.with_owner_choices(self.vault, project)?;
+        let evidence = self.planner_evidence_for(
+            project,
+            Some(live.id),
+            None,
+            &request.need,
+            request.seats,
+            at,
+        )?;
         // The answering rung's workflow skill loads through the same door,
         // so its revision is on the manifest and its executors on the receipt.
+        self.plan_over_evidence(request, team_shape, &evidence, |skill| {
+            let live = self.live_planner_lease(leased)?;
+            self.vault
+                .load_leased_callable_skill_pack(&live, skill, request.executor, at)
+        })
+    }
+
+    /// The plan over gathered evidence and a loaded team-shape pack: the
+    /// receipt, and every ranked candidate best first. The answering rung's
+    /// workflow skill, when it runs one, loads through the caller's door.
+    fn plan_over_evidence(
+        &self,
+        request: &LivePlanRequest<'_>,
+        team_shape: &LoadedSkillPack,
+        evidence: &PlannerEvidence,
+        load_rung: impl FnOnce(&EntityId) -> Result<LoadedSkillPack>,
+    ) -> Result<(SpawnPlanReceipt, Vec<ShapeQuote>)> {
+        let thresholds = PlannerThresholds::from_vault(self.vault)?;
+        let quotes = ranked_quotes(&request.need, evidence)?;
+        let rung = planned_rung(&request.need, &quotes, thresholds);
         let rung_pack = match (request.decisions, request.skills.rung(rung)) {
             (Some(_), Some(skill)) if rung != PlannerRung::CheapClassifier => {
-                let live = self.live_planner_lease(leased)?;
-                Some((
-                    skill,
-                    self.vault.load_leased_callable_skill_pack(
-                        &live,
-                        &skill,
-                        request.executor,
-                        at,
-                    )?,
-                ))
+                Some((skill, load_rung(&skill)?))
             }
             _ => None,
         };
@@ -212,7 +243,7 @@ impl AgentDispatcher<'_> {
         let mut receipt = plan_ranked(
             &request.need,
             quotes.clone(),
-            &evidence,
+            evidence,
             thresholds,
             request.decisions,
             PlannerQuestionContext {
@@ -246,10 +277,14 @@ impl AgentDispatcher<'_> {
         Ok(live)
     }
 
-    /// Everything one plan reads, from the vault.
-    fn planner_evidence(
+    /// Everything one plan reads, from the vault, in the launch context the
+    /// caller names: the project whose tree is in force, and the parent and
+    /// root spend the launch is stated under.
+    fn planner_evidence_for(
         &self,
-        live: &AttemptRecord,
+        project: Option<EntityId>,
+        parent: Option<AttemptId>,
+        spend: Option<&SpawnSpend>,
         need: &SpawnNeed,
         seats: &[PlannerSeat],
         at: u64,
@@ -257,7 +292,6 @@ impl AgentDispatcher<'_> {
         if seats.is_empty() {
             return Err(invalid("planner has no seats"));
         }
-        let project = attempt_project(live);
         let tree = load_team_type_tree(self.vault, project)?;
         tree.validate_current_ref(&need.type_ref)
             .map_err(|_| invalid("spawn type stamp is not in the tree in force"))?;
@@ -265,7 +299,7 @@ impl AgentDispatcher<'_> {
         let parents = TypeTree::from(tree).ancestors(&type_ref);
 
         // Cost: the launch statement dispatch freezes, per seat AGENT_DEF,
-        // under the parent's scope and the spawn's budget ask.
+        // under the caller's scope and the spawn's budget ask.
         let budget_ask = need.budget_cap_units.as_ref().map(|over| *over.value());
         let mut models: Vec<AvailableModel> = Vec::with_capacity(seats.len());
         let mut budget = PlanBudget::UNMETERED;
@@ -277,8 +311,8 @@ impl AgentDispatcher<'_> {
                 }
                 let launch = self.admit_launch_in_txn(
                     &txn,
-                    Some(live.id),
-                    None,
+                    parent,
+                    spend,
                     budget_ask,
                     &AgentDispatchTarget::Custom(seat.agent_def),
                     Some(&seat.model),
