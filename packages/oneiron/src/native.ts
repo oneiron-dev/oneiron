@@ -135,6 +135,11 @@ vaultPacksSetupVerify(input: unknown): unknown
 vaultAuthorityAudit(input: unknown): unknown
 vaultAuthorityHistoryExport(input: unknown): unknown
 vaultAuthorityHistoryImport(input: unknown): unknown
+vaultSlimPolicy(input: unknown): unknown
+vaultSlimState(input: unknown): unknown
+vaultSlimResumeStep(input: unknown): unknown
+vaultSlimDropHeavy(input: unknown): unknown
+vaultSlimResume(input: unknown): unknown
 vaultMeshPathReceipts(input: unknown): unknown
 vaultInspectionResolve(input: unknown): unknown
 vaultSharedProposeDelete(input: unknown): unknown

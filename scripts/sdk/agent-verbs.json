@@ -1834,6 +1834,81 @@
       "openapi": true
     },
     {
+      "name": "vault.slim.policy",
+      "description": "Reads the serving host idle policy: the long outbound wait, no exit on idle and lazy heap rebuild.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "crate::slim::public::SlimIdlePolicy",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.slim.policy\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.slim.state",
+      "description": "Observes FULL or SLIM atomically with this process id and the retained journaled resume pointer, without waking the vault.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "crate::slim::public::SlimStateSnapshot",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.slim.state\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.slim.resume_step",
+      "description": "Reads a saved model checkpoint or outbound intent by its retained identity, including after FULL or restart, without reissuing it.",
+      "input": "crate::slim::public::SlimResumeStepRequest",
+      "output": "crate::slim::public::SavedResumeStep",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.slim.resume_step\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.slim.drop_heavy",
+      "description": "Drops rebuildable heap in process and returns the completed engine transition, drop counts or typed refusal; one journaled outbound step is required.",
+      "input": "crate::slim::public::SlimDropRequest",
+      "output": "crate::slim::public::SlimDropReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.slim.drop_heavy\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.slim.resume",
+      "description": "Resumes logical FULL in the same process and returns its completion receipt; indexes rebuild lazily and no saved outbound step is reissued.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "crate::slim::public::SlimResumeReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.slim.resume\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.mesh.path_receipts",
       "description": "The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner.",
       "input": "crate::task_verb::sdk::MeshPathReceiptsRequest",

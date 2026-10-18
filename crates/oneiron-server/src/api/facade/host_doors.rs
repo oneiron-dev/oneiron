@@ -103,6 +103,7 @@ pub(crate) use super::budget_doors::*;
 pub(crate) use super::fanout_doors::*;
 // The owner's learned-setting doors, likewise.
 pub(crate) use super::setting_doors::*;
+pub(crate) use super::slim_doors::*;
 // The owner's historical secret lift sweep door (OF-067), likewise.
 pub(crate) use super::secret_lift_doors::*;
 // The owner's root wave door (OF-427), likewise.
@@ -1111,6 +1112,11 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.decisions.bands.read"
         | "vault.decisions.bands.learn"
         | "vault.decisions.bands.enforce"
+        | "vault.slim.policy"
+        | "vault.slim.state"
+        | "vault.slim.resume_step"
+        | "vault.slim.drop_heavy"
+        | "vault.slim.resume"
         | "vault.settings.learning"
         | "vault.settings.learning.put"
         | "vault.settings.learning.clear"

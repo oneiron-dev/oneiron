@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 537 facade rows, 1996 declarations.
-Inputs: 486 of 537 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 480 of 537 fully typed, 57 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 542 facade rows, 2013 declarations.
+Inputs: 491 of 542 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 485 of 542 fully typed, 57 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 89; unread shapes: 0.
 """
 
@@ -2942,6 +2942,104 @@ class SignedAuthorityHistory(TypedDict):
     entries: list[str]
 class AuthorityHistoryImported(TypedDict):
     entry_refs: list[str]
+class SlimIdlePolicy(TypedDict):
+    long_outbound_wait_secs: int
+    exits_on_idle: bool
+    lazy_rebuild: bool
+class SlimResumeStepOutboundIntent(TypedDict):
+    kind: Literal["outbound_intent"]
+    intent_id: str
+    attempt_id: str
+    call_seq: int
+    updated_ms: int
+class SlimResumeStepModel(TypedDict):
+    kind: Literal["model"]
+    attempt_id: str
+    step_hash: str
+    updated_ms: int
+SlimResumeStep = SlimResumeStepOutboundIntent | SlimResumeStepModel
+class SlimResidueView(TypedDict):
+    step: SlimResumeStep
+    entered_at_ms: int
+class SlimStateViewFull(TypedDict):
+    residency: Literal["full"]
+class SlimStateViewSlim(TypedDict):
+    residency: Literal["slim"]
+    residue: SlimResidueView
+SlimStateView = SlimStateViewFull | SlimStateViewSlim
+class SlimStateSnapshot(TypedDict):
+    process_id: int
+    state: SlimStateView
+class SlimResumeStepRequestModel(TypedDict):
+    kind: Literal["model"]
+    attempt_id: str
+    step_hash: str
+class SlimResumeStepRequestOutboundIntent(TypedDict):
+    kind: Literal["outbound_intent"]
+    intent_id: str
+SlimResumeStepRequest = SlimResumeStepRequestModel | SlimResumeStepRequestOutboundIntent
+StepProgression = Literal["started", "response_received", "logged", "finished"]
+class ModelStepCheckpoint(TypedDict):
+    progression: StepProgression
+    updated_ms: NotRequired[int | None]
+    claim_ref: NotRequired[str | None]
+SavedIntentState = Literal["pending", "done", "abandoned"]
+class SavedResumeStepModel(TypedDict):
+    kind: Literal["model"]
+    attempt_id: str
+    step_hash: str
+    checkpoint: ModelStepCheckpoint
+class SavedResumeStepOutboundIntent(TypedDict):
+    kind: Literal["outbound_intent"]
+    step: SlimResumeStep
+    state: SavedIntentState
+SavedResumeStep = SavedResumeStepModel | SavedResumeStepOutboundIntent
+ShedCause = Literal["long_outbound_wait", "memory_pressure"]
+class SlimDropRequest(TypedDict):
+    cause: ShedCause
+    waited_secs: int
+class HeapDropReport(TypedDict):
+    sync_windows: int
+    ppr_cache_rows: int
+    ppr_dependency_rows: int
+    hnsw_nodes: int
+    estimated_reclaimed_bytes: int
+class ShedBlockerNoPendingOutboundStep(TypedDict):
+    kind: Literal["no_pending_outbound_step"]
+class ShedBlockerMultiplePendingOutboundSteps(TypedDict):
+    kind: Literal["multiple_pending_outbound_steps"]
+    count: int
+class ShedBlockerSyncWindowBusy(TypedDict):
+    kind: Literal["sync_window_busy"]
+    window_key: str
+    outstanding_handles: int
+class ShedBlockerAlreadySlimForDifferentStep(TypedDict):
+    kind: Literal["already_slim_for_different_step"]
+ShedBlocker = ShedBlockerNoPendingOutboundStep | ShedBlockerMultiplePendingOutboundSteps | ShedBlockerSyncWindowBusy | ShedBlockerAlreadySlimForDifferentStep
+class SlimDropOutcomeEntered(TypedDict):
+    status: Literal["entered"]
+    residue: SlimResidueView
+    dropped: HeapDropReport
+class SlimDropOutcomeAlreadySlim(TypedDict):
+    status: Literal["already_slim"]
+    residue: SlimResidueView
+    dropped: HeapDropReport
+class SlimDropOutcomeRefused(TypedDict):
+    status: Literal["refused"]
+    blocker: ShedBlocker
+SlimDropOutcome = SlimDropOutcomeEntered | SlimDropOutcomeAlreadySlim | SlimDropOutcomeRefused
+class SlimDropReceipt(TypedDict):
+    process_id: int
+    outcome: SlimDropOutcome
+class SlimResumeOutcomeAlreadyFull(TypedDict):
+    status: Literal["already_full"]
+class SlimResumeOutcomeResumed(TypedDict):
+    status: Literal["resumed"]
+    residue: SlimResidueView
+SlimResumeOutcome = SlimResumeOutcomeAlreadyFull | SlimResumeOutcomeResumed
+class SlimResumeReceipt(TypedDict):
+    process_id: int
+    outcome: SlimResumeOutcome
 class MeshPathReceiptsRequest(TypedDict):
     limit: NotRequired[int | None]
 MeshPathDirection = Literal["inbound", "outbound"]
@@ -7250,7 +7348,6 @@ class ModelStepSubmit(TypedDict):
     step_key: str
     request: LlmRequest
     retry: NotRequired[ModelStepRetryPolicy]
-StepProgression = Literal["started", "response_received", "logged", "finished"]
 class LlmInputUsage(TypedDict):
     total: int
     cache_read: int

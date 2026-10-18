@@ -513,6 +513,32 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.slim.policy",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
+                "vault.slim.state",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
+                "vault.slim.resume_step",
+                crate::code_run::vault_read::request_schema::<
+                    crate::slim::public::SlimResumeStepRequest,
+                >(),
+            ),
+            (
+                "vault.slim.drop_heavy",
+                crate::code_run::vault_read::request_schema::<crate::slim::public::SlimDropRequest>(
+                ),
+            ),
+            (
+                "vault.slim.resume",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
                 "vault.mesh.path_receipts",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::MeshPathReceiptsRequest,
@@ -3128,6 +3154,11 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.packs.connector.grants.put",
     "vault.authority.history.export",
     "vault.authority.history.import",
+    "vault.slim.policy",
+    "vault.slim.state",
+    "vault.slim.resume_step",
+    "vault.slim.drop_heavy",
+    "vault.slim.resume",
     "vault.shared.policy.get",
     "vault.shared.policy.propose",
     "vault.shared.policy.answer",
@@ -3383,6 +3414,21 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.authority.history.import" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::AuthorityHistoryImported,
         >(),
+        "vault.slim.policy" => {
+            crate::code_run::vault_read::request_schema::<crate::slim::public::SlimIdlePolicy>()
+        }
+        "vault.slim.state" => {
+            crate::code_run::vault_read::request_schema::<crate::slim::public::SlimStateSnapshot>()
+        }
+        "vault.slim.resume_step" => {
+            crate::code_run::vault_read::request_schema::<crate::slim::public::SavedResumeStep>()
+        }
+        "vault.slim.drop_heavy" => {
+            crate::code_run::vault_read::request_schema::<crate::slim::public::SlimDropReceipt>()
+        }
+        "vault.slim.resume" => {
+            crate::code_run::vault_read::request_schema::<crate::slim::public::SlimResumeReceipt>()
+        }
         "vault.shared.policy.get" => crate::code_run::vault_read::request_schema::<
             crate::federation::SharedActPoliciesView,
         >(),
@@ -4667,6 +4713,41 @@ pub fn mcp_arguments_schema_from_input(
         }
         "vault.authority.history.export" => &[],
         "vault.authority.history.import" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.slim.policy" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.slim.state" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.slim.resume_step" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.slim.drop_heavy" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.slim.resume" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -8036,6 +8117,21 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.authority.history.import" => {
             let _input: crate::task_verb::sdk::SignedAuthorityHistory = decode(value.clone())?;
         }
+        "vault.slim.policy" => {
+            let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+        }
+        "vault.slim.state" => {
+            let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+        }
+        "vault.slim.resume_step" => {
+            let _input: crate::slim::public::SlimResumeStepRequest = decode(value.clone())?;
+        }
+        "vault.slim.drop_heavy" => {
+            let _input: crate::slim::public::SlimDropRequest = decode(value.clone())?;
+        }
+        "vault.slim.resume" => {
+            let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+        }
         "vault.mesh.path_receipts" => {
             let _input: crate::task_verb::sdk::MeshPathReceiptsRequest = decode(value.clone())?;
         }
@@ -9719,6 +9815,11 @@ pub fn invoke(
         "vault.authority.history.import" => {
             encode(vault_authority_history_import(memory, decode(value)?)?)
         }
+        "vault.slim.policy" => encode(vault_slim_policy(memory, decode(value)?)?),
+        "vault.slim.state" => encode(vault_slim_state(memory, decode(value)?)?),
+        "vault.slim.resume_step" => encode(vault_slim_resume_step(memory, decode(value)?)?),
+        "vault.slim.drop_heavy" => encode(vault_slim_drop_heavy(memory, decode(value)?)?),
+        "vault.slim.resume" => encode(vault_slim_resume(memory, decode(value)?)?),
         "vault.mesh.path_receipts" => encode(vault_mesh_path_receipts(memory, decode(value)?)?),
         "vault.inspection.resolve" => encode(vault_inspection_resolve(memory, decode(value)?)?),
         "vault.shared.propose_delete" => {
@@ -11531,6 +11632,36 @@ pub fn vault_authority_history_import(
         &memory.embedded_owner("vault.authority.history.import")?,
         input,
     )
+}
+pub fn vault_slim_policy(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<crate::slim::public::SlimIdlePolicy> {
+    crate::task_verb::sdk::host_only(memory, "vault.slim.policy", &input)
+}
+pub fn vault_slim_state(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<crate::slim::public::SlimStateSnapshot> {
+    crate::task_verb::sdk::host_only(memory, "vault.slim.state", &input)
+}
+pub fn vault_slim_resume_step(
+    memory: &Memory<'_>,
+    input: crate::slim::public::SlimResumeStepRequest,
+) -> MemoryResult<crate::slim::public::SavedResumeStep> {
+    crate::task_verb::sdk::host_only(memory, "vault.slim.resume_step", &input)
+}
+pub fn vault_slim_drop_heavy(
+    memory: &Memory<'_>,
+    input: crate::slim::public::SlimDropRequest,
+) -> MemoryResult<crate::slim::public::SlimDropReceipt> {
+    crate::task_verb::sdk::host_only(memory, "vault.slim.drop_heavy", &input)
+}
+pub fn vault_slim_resume(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<crate::slim::public::SlimResumeReceipt> {
+    crate::task_verb::sdk::host_only(memory, "vault.slim.resume", &input)
 }
 pub fn vault_mesh_path_receipts(
     memory: &Memory<'_>,

@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 594 code-mode rows (573 host rows, 21 run rows), 2086 declarations.
-// Replies: 526 fully typed, 64 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 599 code-mode rows (578 host rows, 21 run rows), 2103 declarations.
+// Replies: 531 fully typed, 64 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 94; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -600,6 +600,24 @@ declare namespace Sdk {
   type AuthorityAuditPage = { rows: AuthorityAuditRow[]; next_after?: EntityId | null; order: AuthorityAuditOrder; scanned: number; cold_attested?: ColdAuthorityAuditRow[] };
   type SignedAuthorityHistory = { entries: string[] };
   type AuthorityHistoryImported = { entry_refs: string[] };
+  type SlimIdlePolicy = { long_outbound_wait_secs: number; exits_on_idle: boolean; lazy_rebuild: boolean };
+  type SlimResumeStep = { kind: "outbound_intent"; intent_id: string; attempt_id: string; call_seq: number; updated_ms: number } | { kind: "model"; attempt_id: string; step_hash: string; updated_ms: number };
+  type SlimResidueView = { step: SlimResumeStep; entered_at_ms: number };
+  type SlimStateView = { residency: "full" } | { residency: "slim"; residue: SlimResidueView };
+  type SlimStateSnapshot = { process_id: number; state: SlimStateView };
+  type SlimResumeStepRequest = { kind: "model"; attempt_id: string; step_hash: string } | { kind: "outbound_intent"; intent_id: string };
+  type StepProgression = "started" | "response_received" | "logged" | "finished";
+  type ModelStepCheckpoint = { progression: StepProgression; updated_ms?: number | null; claim_ref?: string | null };
+  type SavedIntentState = "pending" | "done" | "abandoned";
+  type SavedResumeStep = { kind: "model"; attempt_id: string; step_hash: string; checkpoint: ModelStepCheckpoint } | { kind: "outbound_intent"; step: SlimResumeStep; state: SavedIntentState };
+  type ShedCause = "long_outbound_wait" | "memory_pressure";
+  type SlimDropRequest = { cause: ShedCause; waited_secs: number };
+  type HeapDropReport = { sync_windows: number; ppr_cache_rows: number; ppr_dependency_rows: number; hnsw_nodes: number; estimated_reclaimed_bytes: number };
+  type ShedBlocker = { kind: "no_pending_outbound_step" } | { kind: "multiple_pending_outbound_steps"; count: number } | { kind: "sync_window_busy"; window_key: string; outstanding_handles: number } | { kind: "already_slim_for_different_step" };
+  type SlimDropOutcome = { status: "entered"; residue: SlimResidueView; dropped: HeapDropReport } | { status: "already_slim"; residue: SlimResidueView; dropped: HeapDropReport } | { status: "refused"; blocker: ShedBlocker };
+  type SlimDropReceipt = { process_id: number; outcome: SlimDropOutcome };
+  type SlimResumeOutcome = { status: "already_full" } | { status: "resumed"; residue: SlimResidueView };
+  type SlimResumeReceipt = { process_id: number; outcome: SlimResumeOutcome };
   type MeshPathReceiptsRequest = { limit?: number | null };
   type MeshPathDirection = "inbound" | "outbound";
   type MeshPathOutcome = "admitted" | "refused" | "failed";
@@ -1479,7 +1497,6 @@ declare namespace Sdk {
   type LlmRequest = { model: ModelId; envelope: CallEnvelope; messages: LlmMessage[]; tools?: LlmToolSpec[]; params?: Record<string, unknown>; provider_options?: Record<string, unknown> };
   type ModelStepRetryPolicy = { max_attempts: number };
   type ModelStepSubmit = { step_key: string; request: LlmRequest; retry?: ModelStepRetryPolicy };
-  type StepProgression = "started" | "response_received" | "logged" | "finished";
   type LlmInputUsage = { total: number; cache_read: number; cache_write: number };
   type LlmOutputUsage = { total: number; text: number; reasoning: number };
   type LlmUsage = { input: LlmInputUsage; output: LlmOutputUsage; raw_provider: unknown };
@@ -3462,6 +3479,18 @@ declare const vault: Sdk.VaultHost & {
     receipts(input: Sdk.HubSkillRequest): Promise<Sdk.HubSkillReceipts | StoredResult>;
     /** The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities. */
     sync(input: Sdk.HubSkillRequest): Promise<Sdk.HubSkillSyncReceipt | StoredResult>;
+  };
+  slim: {
+    /** Drops rebuildable heap in process and returns the completed engine transition, drop counts or typed refusal; one journaled outbound step is required. */
+    drop_heavy(input: Sdk.SlimDropRequest): Promise<Sdk.SlimDropReceipt | StoredResult>;
+    /** Reads the serving host idle policy: the long outbound wait, no exit on idle and lazy heap rebuild. */
+    policy(input: Sdk.EmptyRequest): Promise<Sdk.SlimIdlePolicy | StoredResult>;
+    /** Resumes logical FULL in the same process and returns its completion receipt; indexes rebuild lazily and no saved outbound step is reissued. */
+    resume(input: Sdk.EmptyRequest): Promise<Sdk.SlimResumeReceipt | StoredResult>;
+    /** Reads a saved model checkpoint or outbound intent by its retained identity, including after FULL or restart, without reissuing it. */
+    resume_step(input: Sdk.SlimResumeStepRequest): Promise<Sdk.SavedResumeStep | StoredResult>;
+    /** Observes FULL or SLIM atomically with this process id and the retained journaled resume pointer, without waking the vault. */
+    state(input: Sdk.EmptyRequest): Promise<Sdk.SlimStateSnapshot | StoredResult>;
   };
   structural: {
     /** Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit. */

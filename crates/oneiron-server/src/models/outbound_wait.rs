@@ -24,6 +24,15 @@ impl OutboundWaitHost for ServerOutboundWait {
     }
 }
 
+/// Readback of the policy installed on every served vault.
+pub(crate) fn policy() -> oneiron::slim::public::SlimIdlePolicy {
+    oneiron::slim::public::SlimIdlePolicy {
+        long_outbound_wait_secs: LONG_OUTBOUND_WAIT.as_secs(),
+        exits_on_idle: false,
+        lazy_rebuild: true,
+    }
+}
+
 pub(crate) fn install(vault: &Vault) {
     vault.set_outbound_wait_host(Some(Arc::new(ServerOutboundWait)));
 }
