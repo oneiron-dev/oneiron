@@ -7911,7 +7911,7 @@
      "surface": {
       "const": 5,
       "enum": 2,
-      "fn": 25,
+      "fn": 26,
       "re-export": 2,
       "struct": 11,
       "type": 1
@@ -7924,7 +7924,8 @@
      "path": "src/build_cache/account.rs",
      "purpose": "Host-bound account cache: no process-global registry and no implicit cross-tenant lookup",
      "surface": {
-      "fn": 3
+      "crate-vis": 1,
+      "fn": 5
      }
     },
     {
@@ -7950,7 +7951,7 @@
      "path": "src/build_cache/reapi.rs",
      "purpose": "REAPI v2 protobuf digest encoding",
      "surface": {
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -8527,6 +8528,37 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar/meeting/facts.rs",
+     "purpose": "Hydration under the caller's lane, shared by prep, check-in and transcript linking",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CalendarCheckInAnswer",
+      "CalendarCheckInDue",
+      "CalendarCheckInReceipt",
+      "CalendarCheckInRequest",
+      "CalendarEventOutcome",
+      "CalendarMeetingRequest",
+      "CalendarOutcomePolicy"
+     ],
+     "path": "src/calendar/meeting/mod.rs",
+     "purpose": "Typed meeting prep, outcome observation and the owner's check-in policy",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 6,
+      "struct": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -8537,7 +8569,7 @@
      "surface": {
       "crate-vis": 8,
       "enum": 1,
-      "mod": 18,
+      "mod": 19,
       "re-export": 15
      }
     },
@@ -8583,7 +8615,7 @@
      "purpose": "CAL-07 event outcome: evidence ladder, outcome head, post-end check-in",
      "surface": {
       "const": 3,
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 5,
       "fn": 17,
       "struct": 6
@@ -8596,7 +8628,7 @@
      "path": "src/calendar/outcome/conditional.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -8646,6 +8678,7 @@
      "path": "src/calendar/prep/mod.rs",
      "purpose": "CAL-06 prep pack: the render-time context pack a meeting earns at T-45",
      "surface": {
+      "crate-vis": 1,
       "re-export": 4
      }
     },
@@ -8663,6 +8696,7 @@
      "purpose": "Ranked prep-pack assembly under the word ceiling",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "enum": 1,
       "fn": 1,
       "struct": 4
@@ -13868,7 +13902,7 @@
      "path": "src/code_view/mod.rs",
      "purpose": "Per-agent file views over codebase blobs, with one owned shared service set",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 8,
       "fn": 6,
       "re-export": 1,
       "struct": 3
@@ -30268,8 +30302,7 @@
      "path": "src/llm/decision/held.rs",
      "purpose": "What a component that outlives one call holds to ask typed questions (a worker thread, a provider a host…",
      "surface": {
-      "crate-vis": 2,
-      "fn": 2,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -30386,9 +30419,9 @@
      "path": "src/llm/decision/mod.rs",
      "purpose": "Typed question records and shared outcome projection",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 2,
       "mod": 2,
-      "re-export": 16
+      "re-export": 17
      }
     },
     {
@@ -32421,6 +32454,58 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/code_view_doors/execution.rs",
+     "purpose": "Native owner build/verify execution; result admission stays in the engine",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/code_view_doors/mod.rs",
+     "purpose": "Owner-credential working views and account-local build/verify reuse",
+     "surface": {
+      "fn": 5,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeActionDigest",
+      "CodeBuildClass",
+      "CodeBuildEntry",
+      "CodeBuildOutput",
+      "CodeBuildSpec",
+      "CodeCacheOutcome",
+      "CodeCacheReadRequest",
+      "CodeCacheState",
+      "CodeSecretTaintRef",
+      "CodeViewAction",
+      "CodeViewActionRequest",
+      "CodeViewBuildRequest",
+      "CodeViewFile",
+      "CodeViewFileBytes",
+      "CodeViewMaterializeRequest",
+      "CodeViewReadRequest",
+      "CodeViewRequest",
+      "CodeWorkingView"
+     ],
+     "path": "src/memory/code_view_doors/types.rs",
+     "purpose": "Account-local working views and immutable build results (ARCH-0050 / RC7)",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "struct": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/code_wait_doors/mod.rs",
      "purpose": "Typed code consent wait doors (DOOR-079): `vault.code.waits.resolve` answers one exact sealed code consent…",
      "surface": {
@@ -33075,8 +33160,8 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 21,
-      "re-export": 49
+      "mod": 22,
+      "re-export": 50
      }
     },
     {
@@ -34285,6 +34370,44 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/memory/witness/stream/api.rs",
+     "purpose": "MESSAGE doors adapt typed calls to the existing witness and stream programs",
+     "surface": {
+      "fn": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AppendToStreamRequest",
+      "BeginMessageStreamRequest",
+      "CancelStreamRequest",
+      "CommitMessageRequest",
+      "MessageBirth",
+      "MessageCancelKind",
+      "MessageCancelReason",
+      "MessageCommitOptions",
+      "MessageCustomCancel",
+      "MessageCustomCancelKind",
+      "MessageDocumentState",
+      "MessageDurability",
+      "MessageDurabilityRequest",
+      "MessageStreamMode",
+      "MessageStreamOptions",
+      "MessageStreamRequest"
+     ],
+     "path": "src/memory/witness/stream/api_types.rs",
+     "purpose": "Typed public MESSAGE lifecycle inputs, projected by the verb table",
+     "surface": {
+      "enum": 4,
+      "struct": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "MessageCompletion"
      ],
@@ -34329,7 +34452,7 @@
      "surface": {
       "crate-vis": 4,
       "fn": 2,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -34361,7 +34484,7 @@
      "path": "src/memory/witness/stream/storage.rs",
      "purpose": "Per-handle recovery seed, holding the stream's accepted text as of its last checkpoint, and terminal audit",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 2
      }
     },
@@ -40501,7 +40624,7 @@
      "path": "src/receipt/family.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 13,
       "struct": 2
      }
@@ -40630,6 +40753,16 @@
       "crate-vis": 19,
       "mod": 1,
       "re-export": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/receipt/off_device.rs",
+     "purpose": "A caller off this device and the receipt family (FIX 1119, FIX 1120): the rows each receipt names, by its…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -42464,7 +42597,7 @@
      "path": "src/runtime_hooks/store.rs",
      "purpose": "The runner's durable rows: cursors, the run memo, saved intents, the Hook receipts and the run index…",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -52531,7 +52664,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 908
+      "fn": 929
      }
     },
     {
@@ -52616,6 +52749,8 @@
       "HookReplayOutcome",
       "HookReplayRow",
       "HooksReplayRequest",
+      "PackBytesFile",
+      "PackFileDecodeError",
       "PackFileInput",
       "PackPutOutcome",
       "PackPutReceipt",
@@ -52626,16 +52761,17 @@
       "PackSetupReceipt",
       "PackSetupRequest",
       "PackSetupStoreSecret",
-      "PackSetupVerifyRequest"
+      "PackSetupVerifyRequest",
+      "PackTextFile"
      ],
      "path": "src/task_verb/sdk_host.rs",
      "purpose": "The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put`…",
      "surface": {
       "const": 4,
       "crate-vis": 1,
-      "enum": 6,
-      "fn": 25,
-      "struct": 27
+      "enum": 7,
+      "fn": 27,
+      "struct": 29
      }
     },
     {
@@ -58764,7 +58900,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 67,
+     "files": 69,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -59471,7 +59607,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 204,
+     "files": 209,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59674,7 +59810,7 @@
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)"
     },
     "receipt": {
-     "files": 32,
+     "files": 33,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -60152,7 +60288,7 @@
    },
    "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3671,
+   "source_files": 3679,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68727,7 +68863,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 877
+      "fn": 898
      }
     },
     {
@@ -69790,7 +69926,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 878
+      "fn": 899
      }
     },
     {
@@ -71725,7 +71861,7 @@
      "path": "src/api/ai/media.rs",
      "purpose": "The `ai.*` verbs past text: `GET /v1/ai/options`, `POST /v1/ai/image`, `/video`, `/speech`, `/transcribe`…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 17
      }
     },
     {
@@ -72813,7 +72949,7 @@
      "path": "src/api/facade/calendar_doors.rs",
      "purpose": "Owner-authorized calendar file imports through the credential's own handle",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 16
      }
     },
     {
@@ -72924,6 +73060,16 @@
      "purpose": "The credential-bound host projection of the typed per-model code-run heal count door (DOOR-093)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/code_view_doors.rs",
+     "purpose": "Typed owner projections of linked working views and account-local cache use",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -73283,7 +73429,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 146
+      "crate-vis": 148
      }
     },
     {
@@ -76170,7 +76316,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 12,
       "re-export": 21,
       "struct": 1
@@ -76522,7 +76668,7 @@
      "path": "src/commands/serve.rs",
      "purpose": "The unmanaged serve path: open the vault, build the server and its workers, serve until a stop signal, then…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 1,
       "struct": 1
      }
@@ -81213,7 +81359,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 410,
+     "files": 411,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -81642,7 +81788,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 760,
+   "source_files": 761,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -81945,6 +82091,7 @@
       "AnswerRecord",
       "AnswerSheetAtom",
       "AnsweringAuthority",
+      "AppendToStreamRequest",
       "ApproveOnceRequest",
       "ApproveScope",
       "ArchiveAxesProposal",
@@ -82049,6 +82196,7 @@
       "BatchOutput",
       "BatchState",
       "BatchStep",
+      "BeginMessageStreamRequest",
       "Birth",
       "BlindCampaignJudgeInput",
       "BlockChange",
@@ -82108,6 +82256,10 @@
       "BypassExtent",
       "BypassScope",
       "CadencePrecedence",
+      "CalendarCheckInAnswer",
+      "CalendarCheckInDue",
+      "CalendarCheckInReceipt",
+      "CalendarCheckInRequest",
       "CalendarConnectorConfigureRequest",
       "CalendarConnectorKillRequest",
       "CalendarConnectorKillSwitchState",
@@ -82118,6 +82270,7 @@
       "CalendarConnectorWriteRequest",
       "CalendarEventCreateRequest",
       "CalendarEventCreated",
+      "CalendarEventOutcome",
       "CalendarEventView",
       "CalendarFreebusyIntervalDto",
       "CalendarFreebusyRequest",
@@ -82135,8 +82288,10 @@
       "CalendarInstanceMoveRequest",
       "CalendarInviteSurfaceInput",
       "CalendarInviteSurfaceMethod",
+      "CalendarMeetingRequest",
       "CalendarOccurrenceView",
       "CalendarOccurrencesRequest",
+      "CalendarOutcomePolicy",
       "CalendarPassportDirection",
       "CalendarPassportPresence",
       "CalendarPassportReadRequest",
@@ -82204,6 +82359,7 @@
       "CancelMode",
       "CancelRejectionPathology",
       "CancelStanding",
+      "CancelStreamRequest",
       "CandidateLabel",
       "CandidateRef",
       "Care",
@@ -82321,7 +82477,15 @@
       "CoachInspectionView",
       "CoachProposalView",
       "CoachWorkingSetView",
+      "CodeActionDigest",
       "CodeBlameView",
+      "CodeBuildClass",
+      "CodeBuildEntry",
+      "CodeBuildOutput",
+      "CodeBuildSpec",
+      "CodeCacheOutcome",
+      "CodeCacheReadRequest",
+      "CodeCacheState",
       "CodeChangeView",
       "CodeConflictHistory",
       "CodeConflictRecordRequest",
@@ -82330,6 +82494,7 @@
       "CodeConflictViewRequest",
       "CodeDiffRequest",
       "CodeDiffView",
+      "CodeDocumentFrontier",
       "CodeExportRequest",
       "CodeExportResult",
       "CodeFileChange",
@@ -82356,6 +82521,7 @@
       "CodeRepoRequest",
       "CodeRunModelHealCountRequest",
       "CodeRunModelHealCountView",
+      "CodeSecretTaintRef",
       "CodeSnapshotDefinition",
       "CodeSnapshotDefinitionsRequest",
       "CodeSnapshotDefinitionsView",
@@ -82376,6 +82542,14 @@
       "CodeTreeRequest",
       "CodeUnitBlameView",
       "CodeUnitVersionView",
+      "CodeViewAction",
+      "CodeViewActionRequest",
+      "CodeViewBuildRequest",
+      "CodeViewFile",
+      "CodeViewFileBytes",
+      "CodeViewMaterializeRequest",
+      "CodeViewReadRequest",
+      "CodeViewRequest",
       "CodeWaitAnswerView",
       "CodeWaitChoice",
       "CodeWaitConsumptionView",
@@ -82387,12 +82561,14 @@
       "CodeWaitSettlementView",
       "CodeWaitState",
       "CodeWaitTarget",
+      "CodeWorkingView",
       "CohortRetirement",
       "CohortSummary",
       "ColdAuthorityAuditRow",
       "CollectionAtom",
       "CommReach",
       "CommandOutput",
+      "CommitMessageRequest",
       "CommitmentBirthKind",
       "CommitmentBirthProvenance",
       "CommitmentCloseRequest",
@@ -82818,6 +82994,9 @@
       "EvalSeat",
       "EvalSeatRequest",
       "EvalSourceGroup",
+      "EventOutcome",
+      "EventOutcomeBasis",
+      "EventOutcomeClaimValue",
       "EvidenceBasis",
       "EvidenceFloors",
       "EvidenceKind",
@@ -83394,11 +83573,28 @@
       "MeshPathOutcome",
       "MeshPathReceipt",
       "MeshPathReceiptsRequest",
+      "MessageBirth",
+      "MessageCancelKind",
+      "MessageCancelReason",
+      "MessageCommitOptions",
+      "MessageCompletion",
+      "MessageCustomCancel",
+      "MessageCustomCancelKind",
+      "MessageDocumentState",
+      "MessageDurability",
+      "MessageDurabilityRequest",
       "MessagePersonReceipt",
       "MessagePersonRequest",
       "MessageReactionExternal",
       "MessageReactionReceipt",
       "MessageReactionRequest",
+      "MessageStreamHandle",
+      "MessageStreamMode",
+      "MessageStreamOptions",
+      "MessageStreamPartial",
+      "MessageStreamReceipt",
+      "MessageStreamRequest",
+      "MessageWriteMode",
       "MetaLineAtom",
       "MetricAxis",
       "MetricDirection",
@@ -83607,6 +83803,7 @@
       "OwnerPolicyConfigureRequest",
       "PackAdapter",
       "PackAttributionFields",
+      "PackBytesFile",
       "PackCandidateReason",
       "PackConnectorReceipt",
       "PackFileInput",
@@ -83642,6 +83839,7 @@
       "PackSetupStoreSecret",
       "PackSetupVerifyRequest",
       "PackSetupView",
+      "PackTextFile",
       "PairedInterval",
       "PairedReading",
       "Paragraph",
@@ -83722,6 +83920,10 @@
       "PptxInspection",
       "PptxShapeIdentity",
       "PptxSlideIdentity",
+      "PrepItem",
+      "PrepPack",
+      "PrepSection",
+      "PrepSectionKind",
       "Preset",
       "PriorOrigin",
       "PriorRung",
@@ -84129,15 +84331,19 @@
       "ScopedReadResultDiagnosticEventViewList",
       "ScopedReadResultHybridSearchHitList",
       "ScopedReadResultLensFrameCard",
+      "ScopedReadResultOptionalCalendarCheckInDue",
+      "ScopedReadResultOptionalCalendarEventOutcome",
       "ScopedReadResultOptionalCalendarEventView",
       "ScopedReadResultOptionalCalendarPassportRevision",
       "ScopedReadResultOptionalClaimView",
       "ScopedReadResultOptionalDiagnosticEventView",
+      "ScopedReadResultOptionalMessageDurability",
       "ScopedReadResultOptionalNoteEditorBinding",
       "ScopedReadResultOptionalNoteForkView",
       "ScopedReadResultOptionalNoteHistoryView",
       "ScopedReadResultOptionalNoteReadView",
       "ScopedReadResultOptionalNoteVersionTree",
+      "ScopedReadResultOptionalPrepPack",
       "ScopedReadResultOptionalProductivityTree",
       "ScopedReadResultOptionalRecordPosition",
       "ScopedReadResultOptionalSharedBriefCitation",
@@ -84479,6 +84685,10 @@
       "StepXfrm",
       "StopCause",
       "StoredShapeSeed",
+      "StreamCadence",
+      "StreamFinality",
+      "StreamFinalityReason",
+      "StreamSyncVisibility",
       "SubgoalStatus",
       "SufficiencyCard",
       "SufficiencyInput",
@@ -84691,6 +84901,7 @@
       "VerdictBinding",
       "VerdictMode",
       "ViewInput",
+      "VisibleFilePolicy",
       "VoiceBankClipInput",
       "VoiceBankInspectRequest",
       "VoiceBankInspection",
@@ -84834,8 +85045,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 737,
-      "struct": 2257
+      "enum": 754,
+      "struct": 2305
      }
     },
     {

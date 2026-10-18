@@ -502,6 +502,72 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_commit_message(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.commit_message", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_begin_message_stream(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.begin_message_stream", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_append_to_stream(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.append_to_stream", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_flush_stream(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.flush_stream", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_finalize_stream(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.finalize_stream", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_cancel_stream(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.cancel_stream", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_message_stream_partial(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.message_stream_partial", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_messages_durability(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.messages.durability", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_witness(&self, turn: NapiWitnessTurnInput) -> napi::Result<NapiWitnessReceipt> {
         let turn = turn.into_engine()?;
         let output = self.inner.vault_witness(&turn).map_err(facade_error)?;
@@ -4461,6 +4527,69 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_code_views_materialize(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.views.materialize", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_views_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.views.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_views_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.views.read", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_views_action(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.views.action", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_views_build(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.views.build", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_cache_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.cache.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_cache_reuse(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.cache.reuse", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_code_snapshots_ingest(
         &self,
         input: serde_json::Value,
@@ -6083,6 +6212,57 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.calendar.freebusy", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_prep(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.prep", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_event_outcome(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.event_outcome", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_check_in_due(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.check_in.due", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_check_in_answer(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.check_in.answer", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_outcome_policy_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.outcome_policy.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_outcome_policy_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.outcome_policy.set", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
