@@ -2,15 +2,16 @@
 //! ARCH-0052: "content reads take the union; authority reads base."
 //!
 //! A stretch stages its turns under its own shell, never the room, so the
-//! room witness cannot bind them. This binds a project room stretch's
-//! thread turn as that witness binds one on base: its root, the room whose
+//! room witness cannot bind them. This binds a room stretch's thread turn
+//! as the project room witness binds one on base: its root, the room whose
 //! membership the thread reads under, the trunk turn it hangs off and, on
 //! the root, the audience it names. The turns its links name are read in
 //! the composed view, so a thread opens on a turn the stretch staged or
 //! continues one base holds; the audience, the room's membership and the
-//! writer's place in both are read on base. A 1:1 stretch has no room to
-//! read a thread under, and an ordinary room's thread opens on its DAG, so
-//! a witness opens none in either.
+//! writer's place in both are read on base. An ordinary room's thread opens
+//! on its DAG on base, but a stretch writes only through its witness, so
+//! its stretch opens one here as a project room's does (FIX 3559). A 1:1
+//! stretch has no room to read a thread under, so a witness opens none.
 
 use super::audience::{
     ThreadBinding, names_actor_in, private_members_readable_in, thread_binding,
@@ -48,13 +49,7 @@ pub(crate) fn overlay_thread_binding_in(
         } => Some(thread_binding(&body)?),
         _ => None,
     };
-    let project = match room {
-        Some(room) if super::super::project::ROOM_PROJECT.contains(&vault.store, txn, &room)? => {
-            Some(room)
-        }
-        _ => None,
-    };
-    let Some(room) = project else {
+    let Some(room) = room else {
         // No thread opens here. A stored thread turn still takes words from
         // its audience alone.
         if input.thread_audience.is_some() {
