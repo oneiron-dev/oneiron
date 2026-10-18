@@ -22,6 +22,7 @@ pub mod payoff;
 pub mod receipt;
 pub mod run;
 pub mod run_binding;
+mod spawn_intent;
 pub mod stack;
 
 pub use doors::{
@@ -59,5 +60,8 @@ pub use run::{
 pub use run_binding::{
     TeamRunBinding, record_team_start, record_team_start_in_txn, team_run_binding,
     team_run_binding_in_txn, team_spawn_context_for_attempt, team_spawn_context_for_attempt_in_txn,
+};
+pub use spawn_intent::{
+    PlannedIntentPhase, PlannedIntentView, PlannedSpawnHost, PlannedSpawnRequest,
 };
 pub use stack::{BranchResult, NodeComparison, compare_at_equal_budget};
