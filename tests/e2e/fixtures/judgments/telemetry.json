@@ -1,0 +1,77 @@
+{
+  "scenario": "JUDGMENTS-05",
+  "note": "No expected fork digest is taken from the engine. Assert equality/inequality for declared input changes only within the same vault.",
+  "vaults": [
+    "telemetry-a",
+    "telemetry-b"
+  ],
+  "corpus": [
+    {
+      "alias": "locker",
+      "text": "Parcel R17 is in locker cobalt."
+    },
+    {
+      "alias": "day",
+      "text": "Parcel R18 arrives on Tuesday."
+    }
+  ],
+  "query": "Where is parcel R17?",
+  "expectedSource": "locker",
+  "captureCases": [
+    {
+      "runCapture": false,
+      "trace": false
+    },
+    {
+      "runCapture": true,
+      "trace": false
+    },
+    {
+      "runCapture": true,
+      "trace": true
+    }
+  ],
+  "outcome": {
+    "confirmed_fact_hit": true,
+    "gate_score": 1,
+    "contributingRuns": "exact contributing run ids from public serving receipts"
+  },
+  "materialChanges": [
+    {
+      "id": "policy",
+      "change": "a declared retrieval policy parameter or version"
+    },
+    {
+      "id": "model",
+      "change": "a model revision, not only a display alias"
+    },
+    {
+      "id": "frontier",
+      "change": "one publicly committed source revision/frontier"
+    }
+  ],
+  "expected": {
+    "traceDefault": "off",
+    "optInStages": [
+      "per_channel",
+      "fused",
+      "blended",
+      "reranked",
+      "final"
+    ],
+    "runOutcomeJoin": "run_id",
+    "sameVaultSamePinnedInputs": "same fork identity and same ordered source ids/stage values",
+    "sameVaultMaterialChange": "different fork identity",
+    "crossVaultHashes": "not comparable; keyed per vault",
+    "crossVaultRunRead": "no record or access refusal",
+    "crossVaultOutcomeAttach": "refused with no mutation",
+    "persistedForbidden": [
+      "raw query text",
+      "unkeyed query hash",
+      "pack output text",
+      "raw frontier sample ids",
+      "trace key"
+    ],
+    "export": "supported local diagnostic/bench export only; no full-vault archive substitute"
+  }
+}

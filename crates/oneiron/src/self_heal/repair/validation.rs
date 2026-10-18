@@ -3,7 +3,7 @@
 use crate::claim::validate_predicate;
 use crate::error::{Error, Result};
 
-use super::super::{MAX_EVIDENCE_REFS, validate_ref};
+use super::super::validate_ref;
 use super::{RepairOperation, RepairProposal};
 
 pub(crate) fn validate_repair_proposal(proposal: &RepairProposal, session_tag: &str) -> Result<()> {
@@ -15,7 +15,7 @@ pub(crate) fn validate_repair_proposal(proposal: &RepairProposal, session_tag: &
     // They must not participate in authority or criticality recomputation.
     // Reserved namespaces may be DISCLOSED, never written by this module.
     validate_predicate(&proposal.target_predicate, true)?;
-    if proposal.diagnostic_refs.is_empty() || proposal.diagnostic_refs.len() > MAX_EVIDENCE_REFS {
+    if proposal.diagnostic_refs.is_empty() {
         return Err(Error::InvariantViolation("repair diagnostic ref count"));
     }
     match &proposal.operation {
