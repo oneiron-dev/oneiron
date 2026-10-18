@@ -3734,6 +3734,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_productivity_create(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.productivity.create", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_productivity_tree(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.productivity.tree", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_claims_admit(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.claims.admit", input)

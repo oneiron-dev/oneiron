@@ -4,6 +4,7 @@ use crate::edge::{EdgeInfo, EdgeKind};
 use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::scan_check::{EngineScan, ScanCount};
+use crate::vault::ReadMode;
 use crate::{EntityId, Error, Result};
 use std::collections::HashSet;
 
@@ -231,6 +232,95 @@ impl ScopedRead<'_> {
             receipt,
         })
     }
+
+    /// The `ChildOf` tree under `root` from ONE snapshot under one receipt:
+    /// the root at depth zero, then breadth-first each child whose exact
+    /// relation and both endpoints are admitted, down to `max_depth`. `node`
+    /// decodes each admitted live row; a row it declines is not in the tree
+    /// and is not descended. The value is `None` when the root is withheld,
+    /// missing or declined. `project` labels the nodes in the same snapshot.
+    pub(crate) fn child_of_tree_projected<N, T, E: From<Error>>(
+        &self,
+        root: &EntityId,
+        max_depth: u32,
+        node: impl Fn(&[u8]) -> std::result::Result<Option<N>, E>,
+        project: impl FnOnce(
+            &heed::RoTxn<'_>,
+            Option<Vec<ChildOfTreeNode<N>>>,
+        ) -> std::result::Result<T, E>,
+    ) -> std::result::Result<ScopedReadResult<T>, E> {
+        let txn = self.grant_read_txn()?;
+        let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
+        let anchor = self.admit_entity_in(&txn, &policy, &filter, root)?;
+        let mut suppressed = anchor.suppression();
+        let mut tree = None;
+        if anchor.visible()
+            && let Some(row) =
+                self.entity_raw_with_mode_in(&txn, &policy, &filter, root, ReadMode::Live)?
+            && let Some(value) = node(&row.raw)?
+        {
+            let mut nodes = vec![ChildOfTreeNode {
+                id: *root,
+                parent: None,
+                depth: 0,
+                node: value,
+            }];
+            // `ChildOf` is single-parent and acyclic, so each id is walked once.
+            let mut next = 0;
+            while let Some(at) = nodes.get(next) {
+                let (parent, depth) = (at.id, at.depth);
+                next += 1;
+                if depth >= max_depth {
+                    continue;
+                }
+                let admitted = self.admitted_edges_in(
+                    &txn,
+                    &policy,
+                    &filter,
+                    &parent,
+                    EdgeDirection::In,
+                    Some(EdgeKind::ChildOf),
+                    usize::MAX,
+                    usize::MAX,
+                    true,
+                )?;
+                suppressed += admitted.suppressed;
+                // Inbound views carry the child in `edge.target`.
+                let mut children: Vec<EntityId> = admitted
+                    .edges
+                    .into_iter()
+                    .map(|edge| edge.info().target)
+                    .collect();
+                children.sort_unstable();
+                for child in children {
+                    let Some(row) = self.entity_raw_with_mode_in(
+                        &txn,
+                        &policy,
+                        &filter,
+                        &child,
+                        ReadMode::Live,
+                    )?
+                    else {
+                        continue;
+                    };
+                    if let Some(value) = node(&row.raw)? {
+                        nodes.push(ChildOfTreeNode {
+                            id: child,
+                            parent: Some(parent),
+                            depth: depth + 1,
+                            node: value,
+                        });
+                    }
+                }
+            }
+            tree = Some(nodes);
+        }
+        let receipt = self.receipt_for(None, &policy, &filter, suppressed);
+        Ok(ScopedReadResult {
+            value: project(&txn, tree)?,
+            receipt,
+        })
+    }
 }
 
 /// One admitted neighbor of an anchor: the stored edge as the anchor sees it
@@ -239,4 +329,13 @@ pub(crate) struct AdmittedNeighbor {
     pub(crate) outbound: bool,
     pub(crate) edge: EdgeInfo,
     pub(crate) peer_type: Option<u8>,
+}
+
+/// One admitted node of a `ChildOf` tree: its tree parent (`None` at the
+/// root), its depth below the root, and what the walk's decoder read from it.
+pub(crate) struct ChildOfTreeNode<N> {
+    pub(crate) id: EntityId,
+    pub(crate) parent: Option<EntityId>,
+    pub(crate) depth: u32,
+    pub(crate) node: N,
 }

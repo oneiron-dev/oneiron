@@ -420,6 +420,8 @@ both bindings and their export-census tests in one change.
 - `vault.neighbors`
 - `vault.structural.put`
 - `vault.habits.checkin`
+- `vault.productivity.create`
+- `vault.productivity.tree`
 - `vault.claims.admit`
 - `vault.artifacts.create`
 - `vault.esign.create`

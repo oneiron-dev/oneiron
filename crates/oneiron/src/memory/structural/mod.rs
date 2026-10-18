@@ -5,9 +5,14 @@
 mod affiliated;
 mod codec;
 mod guards;
+mod productivity;
 mod puts;
 mod types;
 
+pub use self::productivity::{
+    ProductivityCreateRequest, ProductivityCreateRole, ProductivityNode, ProductivityRole,
+    ProductivityTree, ProductivityTreeRequest,
+};
 pub use self::types::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, EntityRefReceipt, EntityView,
     HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput, TextIndexField,

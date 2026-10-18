@@ -3736,6 +3736,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_productivity_create(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.productivity.create")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.productivity.create", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_productivity_tree(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.productivity.tree")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.productivity.tree", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_claims_admit(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.claims.admit")?;
         let output = py

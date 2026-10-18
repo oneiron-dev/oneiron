@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 559 code-mode rows (538 host rows, 21 run rows), 1967 declarations.
-// Replies: 492 fully typed, 63 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 561 code-mode rows (540 host rows, 21 run rows), 1973 declarations.
+// Replies: 494 fully typed, 63 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 94; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1630,6 +1630,12 @@ declare namespace Sdk {
   type StructuralEdgeSpec = { edge_kind: string; target_ref: string; weight?: number | null };
   type StructuralPutInput = { id?: string | null; kind: string; body: unknown; text_fields?: TextIndexField[] | null; edges?: StructuralEdgeSpec[] | null; occurred_at: number; learned_at?: number | null };
   type HabitCheckinInput = { habit_ref: string; id?: string | null; data?: unknown | null; occurred_at: number; learned_at?: number | null };
+  type ProductivityCreateRole = "goal" | "milestone" | "habit";
+  type ProductivityCreateRequest = { role: ProductivityCreateRole; label: string; parent_ref?: string | null };
+  type ProductivityTreeRequest = { root_ref: string; max_depth: number };
+  type ProductivityRole = "task" | "goal" | "milestone" | "habit" | "habit_checkin";
+  type ProductivityNode = { task_ref: string; id_hex: string; parent_ref?: string | null; depth: number; role: ProductivityRole; label?: string | null; current_streak?: number | null; longest_streak?: number | null };
+  type ProductivityTree = { root_ref: string; nodes: ProductivityNode[] };
   type AdmitImportedClaimInput = { source_id: string; source_record_id: string; id?: string | null; subject_ref: string; predicate: string; value: unknown; occurred_at: number; learned_at?: number | null };
   type ArtifactCreateRequest = { name: string; media_type: string; content_base64: string; run_ref?: string | null; made_by?: unknown | null };
   type DocumentKind = "document" | "template";
@@ -2998,6 +3004,12 @@ declare const vault: Sdk.VaultHost & {
     get(input: Sdk.PersonRequest): Promise<Sdk.PersonRow | StoredResult>;
     /** One page of the people the caller reads, in handle order. */
     list(input: Sdk.PeopleListRequest): Promise<Sdk.PeoplePage | StoredResult>;
+  };
+  productivity: {
+    /** Creates one inert Goal, Milestone or Habit TASK under an optional checked parent; an illegal nesting refuses the whole write. */
+    create(input: Sdk.ProductivityCreateRequest): Promise<Sdk.EntityRefReceipt | StoredResult>;
+    /** The role-labelled TASK tree under one root, read through the caller's lane, with each Habit's derived streak counters. */
+    tree(input: Sdk.ProductivityTreeRequest): Promise<Sdk.ScopedReadResult<Sdk.ProductivityTree | null> | StoredResult>;
   };
   projects: {
     /** The owner's tap that confirms a host-held project card; only the host's own door can complete it. */

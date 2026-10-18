@@ -205,7 +205,9 @@ pub(crate) use skill_authoring::{skill_author_in_txn, skill_author_proof_is_live
 pub(crate) use structural::append_agent_diary_in_txn;
 pub use structural::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, EntityRefReceipt, EntityView,
-    HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput, TextIndexField,
+    HabitCheckinInput, ProductivityCreateRequest, ProductivityCreateRole, ProductivityNode,
+    ProductivityRole, ProductivityTree, ProductivityTreeRequest, StructuralEdgeSpec,
+    StructuralPutInput, TextIndexField,
 };
 pub use subscriptions::{MemorySubscriptionOwner, ScopedView};
 pub use support::{HostWriteOrigin, Memory, RewriteAdmit, parse_actor_key, resolve_entity_ref};
