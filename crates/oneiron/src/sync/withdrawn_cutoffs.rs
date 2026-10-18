@@ -271,7 +271,9 @@ fn raise_epoch_floors(vault: &Vault, carried: &BTreeMap<EntityId, (u64, u64)>) -
 /// this vault's own, in one write, so ingest refuses the withdrawn body as it
 /// does where the withdrawal ran. A cutoff at or below the one held here is
 /// owed or done already: a repeat stages nothing, and none is lowered. Each
-/// carried epoch floor raises this vault's ([`raise_epoch_floors`]).
+/// carried epoch floor raises this vault's ([`raise_epoch_floors`]). A row of
+/// a carried generation or older that still holds its words here is withdrawn
+/// in the same write, as the withdrawal that cut it off withdrew it there.
 pub(crate) fn apply_withdrawn_cutoffs(vault: &Vault, carried: &[CarriedCutoff]) -> Result<()> {
     let mut newest = BTreeMap::new();
     let mut floors = BTreeMap::new();
@@ -288,17 +290,20 @@ pub(crate) fn apply_withdrawn_cutoffs(vault: &Vault, carried: &[CarriedCutoff]) 
         }
     }
     raise_epoch_floors(vault, &floors)?;
-    let pending = {
+    let (pending, resident) = {
         let rtxn = vault.store.env.read_txn()?;
         let mut pending = Vec::new();
-        for (id, generation) in newest {
-            if unseen(vault, &rtxn, &id, generation)? {
-                pending.push((id, generation));
+        let mut resident = false;
+        for (id, generation) in &newest {
+            if unseen(vault, &rtxn, id, *generation)? {
+                pending.push((*id, *generation));
             }
+            resident |=
+                crate::ports::holds_withdrawn_generation_in(&vault.store, &rtxn, id, *generation)?;
         }
-        pending
+        (pending, resident)
     };
-    if pending.is_empty() {
+    if pending.is_empty() && !resident {
         return Ok(());
     }
     vault.with_write_txn_grouped(|wtxn| {
@@ -320,6 +325,22 @@ pub(crate) fn apply_withdrawn_cutoffs(vault: &Vault, carried: &[CarriedCutoff]) 
                 entity = %id.to_hex(),
                 "withdrawn generation cutoff from another machine; its sweep is staged"
             );
+        }
+        // A row of a withdrawn generation already materialized here loses its
+        // words whichever carrier won its key, on every delivery of the
+        // cutoff: a repeat finds the keyframe and writes nothing.
+        for (id, generation) in &newest {
+            if crate::ports::withdraw_received_epoch_generation_in_txn(
+                &vault.store,
+                wtxn,
+                id,
+                *generation,
+            )? {
+                tracing::info!(
+                    entity = %id.to_hex(),
+                    "withdrawn generation cutoff from another machine; its resident words are scrubbed"
+                );
+            }
         }
         Ok(())
     })
