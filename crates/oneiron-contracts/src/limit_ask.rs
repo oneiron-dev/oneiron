@@ -111,11 +111,14 @@ pub enum EngineLimit {
     /// Bytes of the judge's rubric (the active shared `judge` skill's text)
     /// one judgment or label re-check reads. Past it the rubric is read whole.
     JudgeRubricBytes,
+    /// Bytes of the banked source clip one cloned-voice render sends as its
+    /// reference. Past it the whole clip is still sent.
+    VoiceReferenceBytes,
 }
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 24] = [
+    pub const ALL: [Self; 26] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -141,6 +144,7 @@ impl EngineLimit {
         Self::PptxCommentPatches,
         Self::ImportXlsxLiveCells,
         Self::JudgeRubricBytes,
+        Self::VoiceReferenceBytes,
     ];
 
     /// The config key that sets the row.
@@ -171,6 +175,7 @@ impl EngineLimit {
             Self::PptxCommentPatches => "limits.pptx_comment_patches",
             Self::ImportXlsxLiveCells => "limits.import_xlsx_live_cells",
             Self::JudgeRubricBytes => "limits.judge_rubric_bytes",
+            Self::VoiceReferenceBytes => "limits.voice_reference_bytes",
         }
     }
 
@@ -205,6 +210,8 @@ impl EngineLimit {
             // The shipped rubric is about 1 KiB; the judgment's state holds
             // at most 64 KiB in all.
             Self::JudgeRubricBytes => 8_192,
+            // The serving policy's old reference cap.
+            Self::VoiceReferenceBytes => 16 << 20,
         }
     }
 }

@@ -23,7 +23,7 @@ except ImportError:
     _zstd = None
 
 MODEL_ID = "openbmb/VoxCPM2"
-FIELDS = ("max_text_bytes", "max_pcm_bytes", "max_ref_bytes", "max_queued_renders",
+FIELDS = ("max_text_bytes", "max_ref_bytes", "max_queued_renders",
           "max_inflight_uploads", "upload_read_deadline_ms", "http_deadline_ms",
           "max_header_bytes")
 # MessagePack u64/4-byte framing and PCM16 are structural; deployment policy
@@ -37,12 +37,10 @@ def validate_limits(limits):
             or any(type(limits[k]) is not int or not 0 < limits[k] <= WIRE_U64
                    for k in FIELDS)
             or any(limits[k] > WIRE_USIZE for k in (
-                "max_text_bytes", "max_pcm_bytes", "max_ref_bytes",
+                "max_text_bytes", "max_ref_bytes",
                 "max_queued_renders", "max_inflight_uploads"))
             or limits["max_header_bytes"] > (1 << 32) - 1
             or limits["max_ref_bytes"] + limits["max_header_bytes"] + 4 > WIRE_USIZE
-            or limits["max_pcm_bytes"] + limits["max_header_bytes"] + 4 > WIRE_USIZE
-            or limits["max_pcm_bytes"] % 2
             or limits["max_ref_bytes"] < 12
             or limits["upload_read_deadline_ms"] > limits["http_deadline_ms"]):
         raise ValueError("invalid serving policy")
@@ -160,8 +158,6 @@ class Worker:
         values = np.asarray(samples)
         if values.ndim != 1 or not np.isfinite(values).all() or not values.size:
             raise ValueError("invalid model output")
-        if values.size * 2 > effective["max_pcm_bytes"]:
-            raise ValueError("render exceeded policy PCM budget")
         pcm = (np.clip(values, -1.0, 1.0) * 32767).astype("<i2").tobytes()
         return pack(response_meta, pcm)
 
