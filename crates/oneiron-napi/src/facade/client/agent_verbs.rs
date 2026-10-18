@@ -4445,6 +4445,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_booking_constraint_turn(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.booking.constraint_turn", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_booking_page_token(
         &self,
         input: serde_json::Value,

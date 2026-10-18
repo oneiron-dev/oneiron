@@ -2919,6 +2919,9 @@ class Oneiron:
     class _VaultBookingVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def constraint_turn(self, spec):
+            """Parses one scheduling constraint on a live published booking page as the caller, returning public slot controls, an email continuation or a deflect; this never holds or confirms a booking."""
+            return json.loads(_translate(lambda: self._client.vault_booking_constraint_turn(json.dumps(spec))))
         def page_token(self, spec):
             """The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority."""
             return json.loads(_translate(lambda: self._client.vault_booking_page_token(json.dumps(spec))))

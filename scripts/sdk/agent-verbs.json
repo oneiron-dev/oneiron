@@ -8466,6 +8466,20 @@
       }
     },
     {
+      "name": "vault.booking.constraint_turn",
+      "description": "Parses one scheduling constraint on a live published booking page as the caller, returning public slot controls, an email continuation or a deflect; this never holds or confirms a booking.",
+      "input": "crate::task_verb::sdk::BookingConstraintTurnRequest",
+      "output": "crate::task_verb::sdk::BookingConstraintTurnResponse",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.constraint_turn\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.booking.page_token",
       "description": "The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority.",
       "input": "crate::task_verb::sdk::BookingPageTokenRequest",
