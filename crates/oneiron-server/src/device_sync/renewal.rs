@@ -1,6 +1,8 @@
 //! FIX 3377: the device renews its paired owner credential at its home
 //! (`POST /v1/core/slips/renew`,
-//! [`oneiron_remote::OneironClient::renew_owner_device_credential`]).
+//! [`oneiron_remote::OneironClient::renew_owner_device_credential`]). A link
+//! that dials its home over the mesh posts the same request on one mesh
+//! stream instead (FIX 3561): the home's sync route serves the whole router.
 //!
 //! It renews once at start, then at half each new slip's lifetime, which it
 //! reads from that slip's own claims: never the home's `expires_at` against
@@ -34,6 +36,9 @@ const REFUSALS: [&str; 2] = ["UNAUTHORIZED", "FORBIDDEN"];
 /// cleartext origin off this machine.
 const UNUSABLE: &str = "BAD_REQUEST";
 
+/// The home's renew route, which its mesh sync route serves too.
+const RENEW_PATH: &str = "/v1/core/slips/renew";
+
 /// The pairing again a refusal asks for.
 const PAIR_AGAIN: &str = "pair this machine again: stop the vault, remove its device-sync \
                           enrolment (the .json and .cred files) and run `oneiron device enrol` \
@@ -61,6 +66,9 @@ pub(super) struct Renewal {
     origin: Option<String>,
     credential_file: PathBuf,
     vault: Arc<oneiron::Vault>,
+    /// The link's mesh carrier to the home, when it dials one: the renewal
+    /// goes over it rather than to the origin.
+    dialer: Option<Arc<dyn oneiron::sync::SyncDialer>>,
     due: Instant,
     retry: Duration,
     /// The renewal under way, kept across a caller that stopped waiting.
@@ -71,8 +79,13 @@ pub(super) struct Renewal {
 
 impl Renewal {
     /// Renews the credential in `credential_file` at the home `url` names,
-    /// the first time at once.
-    pub(super) fn new(url: &str, credential_file: PathBuf, vault: Arc<oneiron::Vault>) -> Self {
+    /// over `dialer` when the link has one, the first time at once.
+    pub(super) fn new(
+        url: &str,
+        credential_file: PathBuf,
+        vault: Arc<oneiron::Vault>,
+        dialer: Option<Arc<dyn oneiron::sync::SyncDialer>>,
+    ) -> Self {
         let origin = origin(url);
         if origin.is_none() {
             tracing::warn!(
@@ -84,6 +97,7 @@ impl Renewal {
             origin,
             credential_file,
             vault,
+            dialer,
             due: Instant::now(),
             retry: RETRY_FIRST,
             in_flight: None,
@@ -102,9 +116,12 @@ impl Renewal {
             if self.in_flight.is_none() {
                 tokio::time::sleep_until(self.due).await;
                 let (path, vault) = (self.credential_file.clone(), Arc::clone(&self.vault));
-                self.in_flight = Some(tokio::task::spawn_blocking(move || {
-                    renew(&origin, &path, &vault)
-                }));
+                self.in_flight = Some(match self.dialer.clone() {
+                    Some(dialer) => tokio::spawn(async move {
+                        renew_mesh(&origin, &path, &vault, dialer.as_ref()).await
+                    }),
+                    None => tokio::task::spawn_blocking(move || renew(&origin, &path, &vault)),
+                });
             }
             let Some(in_flight) = self.in_flight.as_mut() else {
                 continue;
@@ -166,6 +183,101 @@ fn renew(origin: &str, path: &Path, vault: &oneiron::Vault) -> Result<Renewed, F
             Failure::Failed(reason)
         }
     })?;
+    finish(path, &replacement)
+}
+
+/// The same renewal over one fresh mesh stream to the home: the same
+/// bearer, holder proof, machine proof and empty body the origin call
+/// sends, answered by the same route.
+async fn renew_mesh(
+    origin: &str,
+    path: &Path,
+    vault: &oneiron::Vault,
+    dialer: &dyn oneiron::sync::SyncDialer,
+) -> Result<Renewed, Failure> {
+    use axum::body::{Body, to_bytes};
+    use axum::http::{Request, Uri, header};
+    use oneiron::authority::{
+        CapabilitySlip, MACHINE_PROOF_HEADER, holder_proof, machine_proof_header_value,
+    };
+    let failed = |error: &dyn std::fmt::Display| Failure::Failed(format!("{error:#}"));
+    let mut current = PairedCredentialFile::read(path).map_err(|e| failed(&e))?;
+    let slip = CapabilitySlip::from_token(&current.token).map_err(|e| failed(&e))?;
+    let key = current.signing_key().map_err(|e| failed(&e))?;
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| failed(&e))?
+        .as_secs();
+    let proof = holder_proof(&slip, &key, timestamp).map_err(|e| failed(&e))?;
+    let nonce = proof
+        .get("nonce")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| Failure::Failed("could not sign the renewal's holder proof".to_owned()))?;
+    let (machine, signature) = vault
+        .machine_connection_proof(&current.token, timestamp, nonce)
+        .map_err(|e| failed(&e))?
+        .ok_or_else(|| {
+            Failure::Refused("this install is not a machine of the vault yet".to_owned())
+        })?;
+    let uri: Uri = origin.parse().map_err(|e| failed(&e))?;
+    let host = uri
+        .authority()
+        .ok_or_else(|| Failure::Unusable("the home's origin names no host".to_owned()))?;
+    let request = Request::post(RENEW_PATH)
+        .header(header::HOST, host.as_str())
+        .header(header::AUTHORIZATION, format!("Bearer {}", current.token))
+        .header("x-oneiron-binding", proof.to_string())
+        .header(
+            MACHINE_PROOF_HEADER,
+            machine_proof_header_value(machine, &signature),
+        )
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::ACCEPT, "application/json")
+        .header(header::CONNECTION, "close")
+        .body(Body::from("{}"))
+        .map_err(|e| failed(&e))?;
+    let stream = dialer.dial().await.map_err(|e| failed(&e))?;
+    let (mut sender, connection) =
+        hyper::client::conn::http1::handshake::<_, Body>(hyper_util::rt::TokioIo::new(stream))
+            .await
+            .map_err(|e| failed(&e))?;
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    let response = sender.send_request(request).await.map_err(|e| failed(&e))?;
+    let status = response.status();
+    let bytes = to_bytes(
+        Body::new(response.into_body()),
+        oneiron_remote::MAX_REMOTE_RESPONSE_BYTES,
+    )
+    .await
+    .map_err(|e| failed(&e))?;
+    if !status.is_success() {
+        let reason = format!(
+            "home answered {status}: {}",
+            String::from_utf8_lossy(&bytes)
+        );
+        return Err(match status.as_u16() {
+            401 | 403 => Failure::Refused(reason),
+            400 => Failure::Unusable(reason),
+            _ => Failure::Failed(reason),
+        });
+    }
+    #[derive(serde::Deserialize)]
+    struct Reply {
+        token: String,
+    }
+    let reply: Reply = serde_json::from_slice(&bytes).map_err(|e| failed(&e))?;
+    CapabilitySlip::from_token(&reply.token)
+        .map_err(|_| Failure::Failed(format!("the home answered {status} with no slip")))?;
+    current.token = reply.token;
+    finish(path, &current.credential())
+}
+
+/// Writes `replacement` over `path` and reads it back as the file now
+/// holds it, with its slip's lifetime.
+fn finish(path: &Path, replacement: &str) -> Result<Renewed, Failure> {
+    let failed = |error: anyhow::Error| Failure::Failed(format!("{error:#}"));
     credential_file::replace(path, replacement.as_bytes()).map_err(failed)?;
     let credential = PairedCredentialFile::read(path).map_err(failed)?;
     let ttl_secs = oneiron::authority::CapabilitySlip::from_token(&credential.token)

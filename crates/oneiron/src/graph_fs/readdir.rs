@@ -47,6 +47,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         Self {
             scoped_read,
             options,
+            snapshot: None,
         }
     }
 
@@ -58,6 +59,9 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
     pub fn readdir(&self, path: &str, cursor: Option<&str>) -> Result<GraphFsPage> {
         let normalized = normalize_path(path)?;
         let components = path_components(&normalized)?;
+        if self.snapshot.is_some() {
+            return self.snapshot_readdir(&normalized, cursor);
+        }
         match components.as_slice() {
             [] => Ok(self.fixed_page(
                 &normalized,
@@ -98,7 +102,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             ["entities", entity] => {
                 let id = parse_entity_id(entity)?;
                 let readable = self.scoped_read.is_entity_readable(&id)?;
-                let body = self.scoped_read.read(&[PointRead::id(id)], None)?.single();
+                let body = self.file_row(id)?;
                 let page = if readable {
                     self.fixed_page(
                         &normalized,
@@ -151,6 +155,9 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
     pub fn read_file(&self, path: &str) -> Result<GraphFsFileRead> {
         let normalized = normalize_path(path)?;
         let components = path_components(&normalized)?;
+        if self.snapshot.is_some() {
+            return self.snapshot_file(&normalized);
+        }
         match components.as_slice() {
             ["claims", claim] | ["claims", "by-id", claim] => Ok(self
                 .read_claim_file(&normalized, &parse_entity_id(claim)?)?
@@ -158,10 +165,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             ["entities", entity, "body"] => {
                 let id = parse_entity_id(entity)?;
                 let mount = self.options.mount;
-                Ok(self
-                    .scoped_read
-                    .read(&[PointRead::id(id)], None)?
-                    .single()
+                Ok(self.file_row(id)?
                     .map(|row| {
                         row.and_then(|row| row.body).map(|bytes| GraphFsFile {
                             path: normalized,
@@ -197,6 +201,9 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
     pub fn read_link(&self, path: &str) -> Result<Option<String>> {
         let normalized = normalize_path(path)?;
         let components = path_components(&normalized)?;
+        if self.snapshot.is_some() {
+            return Ok(None);
+        }
         let [component] = components.as_slice() else {
             return Ok(None);
         };
@@ -244,10 +251,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         path: &str,
         claim_id: &EntityId,
     ) -> Result<ScopedReadResult<Option<GraphFsFile>>> {
-        let ScopedReadResult { value, receipt } = self
-            .scoped_read
-            .read(&[PointRead::id(*claim_id)], None)?
-            .single();
+        let ScopedReadResult { value, receipt } = self.file_row(*claim_id)?;
         let Some(ReadRow {
             entity_type: ENTITY_TYPE_CLAIM,
             learned_at,
@@ -287,7 +291,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         id: EntityId,
         receipt: &mut ScopedReadReceipt,
     ) -> Result<Option<ReadRow>> {
-        let row = self.scoped_read.read(&[PointRead::id(id)], None)?.single();
+        let row = self.file_row(id)?;
         receipt.restrict_with(&row.receipt);
         Ok(row.value)
     }
@@ -738,6 +742,7 @@ pub(super) fn normalize_path(path: &str) -> Result<String> {
     if normalized.is_empty() {
         Ok("/".to_owned())
     } else {
+        path_components(normalized)?;
         Ok(normalized.to_owned())
     }
 }
