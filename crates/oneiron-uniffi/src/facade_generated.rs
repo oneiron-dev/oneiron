@@ -1601,6 +1601,26 @@ export_facade! {
     let output = client.vault_notes_from_entity(&input)?;
     Lift::lift(output)
 };
+"vault.notes.read" => fn vault_notes_read(&self, input: NoteReadRequest) -> ScopedReadResultOptionalNoteReadView = |client| {
+    let input: oneiron::note::NoteReadRequest = crate::codec::lower_record("vault.notes.read", input)?;
+    let output = client.vault_notes_read(&input)?;
+    crate::codec::lift_record("vault.notes.read", &output)
+};
+"vault.notes.history" => fn vault_notes_history(&self, input: NoteAccessRequest) -> ScopedReadResultOptionalNoteHistoryView = |client| {
+    let input: oneiron::note::NoteAccessRequest = crate::codec::lower_record("vault.notes.history", input)?;
+    let output = client.vault_notes_history(&input)?;
+    crate::codec::lift_record("vault.notes.history", &output)
+};
+"vault.notes.editor.bind" => fn vault_notes_editor_bind(&self, input: NoteAccessRequest) -> ScopedReadResultOptionalNoteEditorBinding = |client| {
+    let input: oneiron::note::NoteAccessRequest = crate::codec::lower_record("vault.notes.editor.bind", input)?;
+    let output = client.vault_notes_editor_bind(&input)?;
+    crate::codec::lift_record("vault.notes.editor.bind", &output)
+};
+"vault.notes.editor.close" => fn vault_notes_editor_close(&self, input: NoteEditorCloseRequest) -> NoteEditorClosed = |client| {
+    let input: oneiron::note::NoteEditorCloseRequest = crate::codec::lower_record("vault.notes.editor.close", input)?;
+    let output = client.vault_notes_editor_close(&input)?;
+    crate::codec::lift_record("vault.notes.editor.close", &output)
+};
 "vault.notes.edit" => fn vault_notes_edit(&self, input: EditNoteRequest) -> NoteEditOutcome = |client| {
     let input: oneiron::task_verb::sdk::EditNoteRequest = crate::codec::lower_record("vault.notes.edit", input)?;
     let output = client.vault_notes_edit(&input)?;

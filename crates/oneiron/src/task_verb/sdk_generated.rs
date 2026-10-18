@@ -1837,6 +1837,23 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<CreateNoteFromEntityRequest>(),
             ),
             (
+                "vault.notes.read",
+                crate::code_run::vault_read::request_schema::<crate::note::NoteReadRequest>(),
+            ),
+            (
+                "vault.notes.history",
+                crate::code_run::vault_read::request_schema::<crate::note::NoteAccessRequest>(),
+            ),
+            (
+                "vault.notes.editor.bind",
+                crate::code_run::vault_read::request_schema::<crate::note::NoteAccessRequest>(),
+            ),
+            (
+                "vault.notes.editor.close",
+                crate::code_run::vault_read::request_schema::<crate::note::NoteEditorCloseRequest>(
+                ),
+            ),
+            (
                 "vault.notes.edit",
                 crate::code_run::vault_read::request_schema::<EditNoteRequest>(),
             ),
@@ -4249,6 +4266,34 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.notes.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.notes.history" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.notes.editor.bind" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.notes.editor.close" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.notes.edit" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -5453,6 +5498,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.notes.from_entity" => {
             let _input: CreateNoteFromEntityRequest = decode(value.clone())?;
         }
+        "vault.notes.read" => {
+            let _input: crate::note::NoteReadRequest = decode(value.clone())?;
+        }
+        "vault.notes.history" => {
+            let _input: crate::note::NoteAccessRequest = decode(value.clone())?;
+        }
+        "vault.notes.editor.bind" => {
+            let _input: crate::note::NoteAccessRequest = decode(value.clone())?;
+        }
+        "vault.notes.editor.close" => {
+            let _input: crate::note::NoteEditorCloseRequest = decode(value.clone())?;
+        }
         "vault.notes.edit" => {
             let _input: EditNoteRequest = decode(value.clone())?;
         }
@@ -5994,6 +6051,10 @@ pub fn invoke(
         }
         "vault.notes.create" => encode(vault_notes_create(memory, decode(value)?)?),
         "vault.notes.from_entity" => encode(vault_notes_from_entity(memory, decode(value)?)?),
+        "vault.notes.read" => encode(vault_notes_read(memory, decode(value)?)?),
+        "vault.notes.history" => encode(vault_notes_history(memory, decode(value)?)?),
+        "vault.notes.editor.bind" => encode(vault_notes_editor_bind(memory, decode(value)?)?),
+        "vault.notes.editor.close" => encode(vault_notes_editor_close(memory, decode(value)?)?),
         "vault.notes.edit" => encode(vault_notes_edit(memory, decode(value)?)?),
         "vault.notes.seal" => encode(vault_notes_seal(memory, decode(value)?)?),
         "vault.notes.lifecycle" => encode(vault_notes_lifecycle(memory, decode(value)?)?),
@@ -9107,6 +9168,30 @@ pub fn vault_notes_from_entity(
         &["/source_ref"],
     )?;
     memory.create_note_from_entity(&input.source_ref, &input.kind)
+}
+pub fn vault_notes_read(
+    memory: &Memory<'_>,
+    input: crate::note::NoteReadRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::note::NoteReadView>>> {
+    memory.read_note(&input)
+}
+pub fn vault_notes_history(
+    memory: &Memory<'_>,
+    input: crate::note::NoteAccessRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::note::NoteHistoryView>>> {
+    memory.note_history(&input)
+}
+pub fn vault_notes_editor_bind(
+    memory: &Memory<'_>,
+    input: crate::note::NoteAccessRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::note::NoteEditorBinding>>> {
+    memory.bind_note_editor(&input)
+}
+pub fn vault_notes_editor_close(
+    memory: &Memory<'_>,
+    input: crate::note::NoteEditorCloseRequest,
+) -> MemoryResult<crate::note::NoteEditorClosed> {
+    memory.close_note_editor(&input)
 }
 pub fn vault_notes_edit(
     memory: &Memory<'_>,
