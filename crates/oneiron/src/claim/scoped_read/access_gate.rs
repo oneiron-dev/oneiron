@@ -81,13 +81,52 @@ impl<'v> ScopedRead<'v> {
     pub(super) fn relationship_claim_allowed_in(
         &self,
         txn: &heed::RoTxn<'_>,
+        id: &EntityId,
         body: &ClaimBody,
     ) -> Result<bool> {
         if !self.relationship_gated_in(txn)? {
             return Ok(true);
         }
+        let read = RelationshipRead::claim(body);
+        if self.support_disclosure_admits_in(txn, id, &read)? {
+            return Ok(true);
+        }
         let context = AccessContext::load(self.vault, txn, self.actor_key.principal_ref)?;
-        Ok(RelationshipRead::claim(body).allowed_by(&context))
+        Ok(read.allowed_by(&context))
+    }
+
+    /// The support-disclosure projection at the relationship gate (OF-606):
+    /// a live support slip reads a relationship-gated row it names exactly
+    /// in its records, inside its own read Scope, and never a private one.
+    /// It replaces only the relationship grant: the audience, locality,
+    /// private-thread, record and Scope conjuncts of the read still bind,
+    /// there is no owner exemption, and the gate binds every other row.
+    fn support_disclosure_admits_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        read: &RelationshipRead,
+    ) -> Result<bool> {
+        let Some(proof) = &self.actor_key.proof else {
+            return Ok(false);
+        };
+        let claims = proof.claims();
+        if claims.delegation.is_none() || !claims.records.contains(&id.to_hex()) {
+            return Ok(false);
+        }
+        let RelationshipRead::Gated {
+            private: false,
+            record,
+            ..
+        } = read
+        else {
+            return Ok(false);
+        };
+        let in_scope = self
+            .actor_key
+            .authority_scope()
+            .is_some_and(|authority| authority.admits("read", record, &Scope::top()));
+        Ok(in_scope && self.vault.capability_slip_is_live_in_txn(txn, proof)?)
     }
 
     pub(super) fn relationship_raw_allowed_in(
@@ -109,6 +148,9 @@ impl<'v> ScopedRead<'v> {
         )?;
         if let RelationshipRead::Decided(allowed) = read {
             return Ok(allowed);
+        }
+        if self.support_disclosure_admits_in(txn, id, &read)? {
+            return Ok(true);
         }
         let mut held = authority.0.borrow_mut();
         let context = match held.take() {
