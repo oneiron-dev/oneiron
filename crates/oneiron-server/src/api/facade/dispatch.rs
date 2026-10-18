@@ -361,6 +361,33 @@ async fn vault_reports_outbound(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn self_focus_wakes(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.focus.wakes")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.focus.wakes", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.focus.wakes", value).await?;
+    let output = facade_output(
+        super::host_doors::self_focus_wakes(
+            server,
+            auth,
+            caller,
+            Some(hooks.call().invocation),
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn self_focus_scratchpad_recall(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -22034,6 +22061,87 @@ async fn self_skills_call(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn self_focus_refresh(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.focus.refresh")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.focus.refresh", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.focus.refresh", value).await?;
+    let output = facade_output(
+        super::host_doors::self_focus_refresh(
+            server,
+            auth,
+            caller,
+            Some(hooks.call().invocation),
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn self_focus_subscribe(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.focus.subscribe")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.focus.subscribe", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.focus.subscribe", value).await?;
+    let output = facade_output(
+        super::host_doors::self_focus_subscribe(
+            server,
+            auth,
+            caller,
+            Some(hooks.call().invocation),
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn self_focus_unsubscribe(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.focus.unsubscribe")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.focus.unsubscribe", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.focus.unsubscribe", value).await?;
+    let output = facade_output(
+        super::host_doors::self_focus_unsubscribe(
+            server,
+            auth,
+            caller,
+            Some(hooks.call().invocation),
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 /// Runs facade verb `verb` for `call` over `input`, as its row admits it:
 /// the one verb table every server transport serves. A board, browser or run
 /// row is refused by the context it needs, which no facade call carries; any
@@ -22061,6 +22169,7 @@ pub(crate) async fn call_verb(
         "vault.reports.disclosure" => vault_reports_disclosure(server, call, input).await,
         "vault.reports.route" => vault_reports_route(server, call, input).await,
         "vault.reports.outbound" => vault_reports_outbound(server, call, input).await,
+        "self.focus.wakes" => self_focus_wakes(server, call, input).await,
         "self.focus.scratchpad.recall" => self_focus_scratchpad_recall(server, call, input).await,
         "self.focus.scratchpad.append" => self_focus_scratchpad_append(server, call, input).await,
         "self.focus.scratchpad.seal" => self_focus_scratchpad_seal(server, call, input).await,
@@ -23354,9 +23463,9 @@ pub(crate) async fn call_verb(
         "self.agents.spawn" => self_agents_spawn(server, call, input).await,
         "self.leader.split" => self_leader_split(server, call, input).await,
         "self.skills.call" => self_skills_call(server, call, input).await,
-        "self.focus.refresh" | "self.focus.subscribe" | "self.focus.unsubscribe" => {
-            Err(context_required(verb, VerbContext::Board))
-        }
+        "self.focus.refresh" => self_focus_refresh(server, call, input).await,
+        "self.focus.subscribe" => self_focus_subscribe(server, call, input).await,
+        "self.focus.unsubscribe" => self_focus_unsubscribe(server, call, input).await,
         "self.desktop.open"
         | "self.desktop.observe"
         | "self.desktop.find"

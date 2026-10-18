@@ -124,6 +124,12 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_focus_wakes(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.focus.wakes", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn self_focus_scratchpad_recall(
         &self,
         input: serde_json::Value,
@@ -8390,6 +8396,30 @@ impl NativeClient {
     pub fn self_skills_call(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.skills.call", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_focus_refresh(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.focus.refresh", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_focus_subscribe(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.focus.subscribe", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_focus_unsubscribe(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.focus.unsubscribe", js_json(input))
             .map_err(facade_error)
     }
 }

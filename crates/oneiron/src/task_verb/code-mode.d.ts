@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 975 code-mode rows (951 host rows, 24 run rows), 3248 declarations.
-// Replies: 870 fully typed, 101 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 976 code-mode rows (952 host rows, 24 run rows), 3251 declarations.
+// Replies: 871 fully typed, 101 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 104; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -68,10 +68,10 @@ declare namespace Sdk {
   type ReportSignatureView = { issue_ref: string; subject_hash: string; category: IssueCategory; kind: ReportKind };
   type ReportPayloadView = { route: ReportRoute; signature: ReportSignatureView; disclosed?: ReportRequest | null };
   type ReportOutboundView = { issue_ref: string; payload?: ReportPayloadView | null };
-  type BoardRefreshRequest = { frame_epoch?: number | null };
-  type BoardVerbOutput = unknown;
-  type SubscriptionScope = "my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts";
-  type BoardSubscriptionRequest = { scopes: SubscriptionScope[] };
+  type LiveRunRequest<T> = { live_run: string; spec: T };
+  type BoardWakeRequest = Record<string, never>;
+  type WakeEnvelope = { event_ref: string; task_ref: string; actor_ref: string; line: string };
+  type BoardWakeReply = { wakes: WakeEnvelope[] };
   type ScratchpadRecallRequest = { session_id: string; query: string };
   type EntityId = string;
   type ScratchpadRecallMark = "keep" | "scratch";
@@ -312,7 +312,6 @@ declare namespace Sdk {
   type TaskCreateReceipt = { task_ref?: EntityId | null; proposal_ref?: EntityId | null; approval: ClaimApprovalStatus; effected: boolean; route?: TaskRouteOutcome | null; task_record?: RecordRef | null; proposal_record?: RecordRef | null };
   type TaskWaveRequest = { epic_task_ref: string; planner_ref: string; objective: string; constraints?: unknown };
   type TaskWaveReceipt = { attempt_ref: string; state: string };
-  type LiveRunRequest<T> = { live_run: string; spec: T };
   type FanoutChildInput = { agent_ref: EntityId; label: string; prompt: string };
   type FanoutBatchInput = { intent_key: string; children: FanoutChildInput[] };
   type PeerCount = { peer: EntityId; count: number };
@@ -3196,6 +3195,10 @@ declare namespace Sdk {
   type LibraryRetiredOutput = { site: string; retired: RetiredCard[] };
   type LibraryRunInput = { workflow: string; args?: Record<string, string> };
   type LibraryRunOutput = { workflow: string; status: SubgoalStatus; unmet?: number[]; batch: BatchOutput };
+  type BoardRefreshRequest = { frame_epoch?: number | null };
+  type BoardVerbOutput = unknown;
+  type SubscriptionScope = "my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts";
+  type BoardSubscriptionRequest = { scopes: SubscriptionScope[] };
   type ConnectorAnswerAction = "accept" | "decline" | "cancel";
   type ConnectorQuestionAnswer = { key: string; action: ConnectorAnswerAction; content?: unknown | null };
   type ConnectorAnswerRequest = { handle: string; answers: ConnectorQuestionAnswer[] };
@@ -3569,6 +3572,8 @@ declare namespace self {
     subscribe(input: Sdk.BoardSubscriptionRequest): Promise<Sdk.BoardVerbOutput | StoredResult>;
     /** Unsubscribes the run's board stream from the named scopes. */
     unsubscribe(input: Sdk.BoardSubscriptionRequest): Promise<Sdk.BoardVerbOutput | StoredResult>;
+    /** Takes every wake queued for the attached run's board STREAM connection, each re-read under this credential at delivery. */
+    wakes(input: Sdk.LiveRunRequest<Sdk.BoardWakeRequest>): Promise<Sdk.BoardWakeReply | StoredResult>;
   };
   const fold: (span: readonly [number, number], options?: { note?: string | null }) => Promise<Sdk.FoldReply<Sdk.FoldMarked> | StoredResult>;
   const folds: ((input: Sdk.FoldsInput) => Promise<Sdk.FoldReply<Sdk.FoldList> | StoredResult>) & {

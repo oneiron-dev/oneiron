@@ -2718,8 +2718,16 @@ class Oneiron:
         @property
         def leader(self) -> "Oneiron._SelfLeaderVerbs": ...
     class _SelfFocusVerbs:
+        def wakes(self, spec: Facade.LiveRunRequest[Facade.BoardWakeRequest]) -> Facade.BoardWakeReply:
+            """Takes every wake queued for the attached run's board STREAM connection, each re-read under this credential at delivery."""
         @property
         def scratchpad(self) -> "Oneiron._SelfFocusScratchpadVerbs": ...
+        def refresh(self, spec: Facade.LiveRunRequest[Facade.BoardRefreshRequest]) -> Facade.BoardFrameReply:
+            """Re-renders the attached run's context board as one STREAM frame, at the frame epoch the caller last saw."""
+        def subscribe(self, spec: Facade.LiveRunRequest[Facade.BoardSubscriptionRequest]) -> Facade.BoardSubscriptionReply:
+            """Subscribes the attached run's board STREAM connection to the named scopes, inside its credential ceiling."""
+        def unsubscribe(self, spec: Facade.LiveRunRequest[Facade.BoardSubscriptionRequest]) -> Facade.BoardSubscriptionReply:
+            """Unsubscribes the attached run's board STREAM connection from the named scopes."""
     class _SelfFocusScratchpadVerbs:
         def recall(self, spec: Facade.ScratchpadRecallRequest) -> Facade.ScratchpadRecallReply:
             """Searches the bound actor's whole session scratchpad, live or sealed, for the lines holding every query word, folded lines in full."""

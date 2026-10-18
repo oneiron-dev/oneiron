@@ -796,6 +796,7 @@ fn mcp_agent_verb_input(
             );
             Ok(Value::Object(map))
         }
+        "self.focus.wakes" => a.spec.clone().ok_or_else(invalid),
         "self.focus.scratchpad.recall" => a.spec.clone().ok_or_else(invalid),
         "self.focus.scratchpad.append" => a.spec.clone().ok_or_else(invalid),
         "self.focus.scratchpad.seal" => a.spec.clone().ok_or_else(invalid),
@@ -1978,6 +1979,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             if let Some(value) = input.get("scopes") {
                 arguments.insert("scopes".to_owned(), value.clone());
             }
+        }
+        "self.focus.wakes" => {
+            arguments.insert("spec".to_owned(), input.clone());
         }
         "self.focus.scratchpad.recall" => {
             arguments.insert("spec".to_owned(), input.clone());
@@ -5323,6 +5327,25 @@ async fn execute_agent_verb_row(
                 oneiron::task_verb::sdk::self_focus_unsubscribe(context, input)
             })
             .await
+        }
+        "self.focus.wakes" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.focus.wakes", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveRunRequest<
+                oneiron::task_verb::sdk::BoardWakeRequest,
+            > = serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::self_focus_wakes(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                memory.invocation(),
+                input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
         }
         "self.focus.scratchpad.recall" => {
             let input: oneiron::task_verb::sdk::ScratchpadRecallRequest =

@@ -2310,6 +2310,8 @@ export class Oneiron {
   }
   readonly self = {
     focus: {
+      /** Takes every wake queued for the attached run's board STREAM connection, each re-read under this credential at delivery. */
+      wakes: (input: Facade.LiveRunRequest<Facade.BoardWakeRequest>): Facade.BoardWakeReply => this.#call(() => this.#client.selfFocusWakes(input) as Facade.BoardWakeReply),
       scratchpad: {
         /** Searches the bound actor's whole session scratchpad, live or sealed, for the lines holding every query word, folded lines in full. */
         recall: (input: Facade.ScratchpadRecallRequest): Facade.ScratchpadRecallReply => this.#call(() => this.#client.selfFocusScratchpadRecall(input) as Facade.ScratchpadRecallReply),
@@ -2318,6 +2320,12 @@ export class Oneiron {
         /** Seals the bound actor's session scratchpad, ending the run's pad; a session with no pad answers no pad. */
         seal: (input: Facade.ScratchpadSealRequest): Facade.ScratchpadWriteReply => this.#call(() => this.#client.selfFocusScratchpadSeal(input) as Facade.ScratchpadWriteReply),
       },
+      /** Re-renders the attached run's context board as one STREAM frame, at the frame epoch the caller last saw. */
+      refresh: (input: Facade.LiveRunRequest<Facade.BoardRefreshRequest>): Facade.BoardFrameReply => this.#call(() => this.#client.selfFocusRefresh(input) as Facade.BoardFrameReply),
+      /** Subscribes the attached run's board STREAM connection to the named scopes, inside its credential ceiling. */
+      subscribe: (input: Facade.LiveRunRequest<Facade.BoardSubscriptionRequest>): Facade.BoardSubscriptionReply => this.#call(() => this.#client.selfFocusSubscribe(input) as Facade.BoardSubscriptionReply),
+      /** Unsubscribes the attached run's board STREAM connection from the named scopes. */
+      unsubscribe: (input: Facade.LiveRunRequest<Facade.BoardSubscriptionRequest>): Facade.BoardSubscriptionReply => this.#call(() => this.#client.selfFocusUnsubscribe(input) as Facade.BoardSubscriptionReply),
     },
     memory: {
       /** Writes one private entry in the bound actor's own diary, as an actor-private NOTE. */
