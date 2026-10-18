@@ -201,7 +201,7 @@ pub(super) fn ensure_author(
     limits: &PptxCommentLimits,
 ) -> PatchResult<()> {
     let id = canonical_guid(&author.guid)?;
-    if author.name.trim().is_empty() || author.name.len() > limits.max_author_name_bytes {
+    if author.name.trim().is_empty() {
         return Err(PptxError::InvalidPatch);
     }
     let rels = relationships(parts, PRESENTATION_RELS, limits)?;

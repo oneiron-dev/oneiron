@@ -10,10 +10,11 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-/// Six independently bounded resource budgets for a PowerPoint comment edit.
+/// Five independently bounded XML budgets for a PowerPoint comment edit. A
+/// comment author's name has none: it is attribute text, which no codec
+/// bounds (Rule 5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PptxOperationalLimits {
-    pub max_author_name_bytes: usize,
     pub max_xml_bytes: usize,
     pub max_xml_attributes: usize,
     pub max_xml_namespaces: usize,
@@ -24,7 +25,6 @@ pub struct PptxOperationalLimits {
 impl Default for PptxOperationalLimits {
     fn default() -> Self {
         Self {
-            max_author_name_bytes: 4_096,
             max_xml_bytes: 32 * 1024 * 1024,
             max_xml_attributes: 4_096,
             max_xml_namespaces: 256,
@@ -39,7 +39,6 @@ impl PptxOperationalLimits {
     #[must_use]
     pub const fn narrow(self, holder: Self) -> Self {
         Self {
-            max_author_name_bytes: min(self.max_author_name_bytes, holder.max_author_name_bytes),
             max_xml_bytes: min(self.max_xml_bytes, holder.max_xml_bytes),
             max_xml_attributes: min(self.max_xml_attributes, holder.max_xml_attributes),
             max_xml_namespaces: min(self.max_xml_namespaces, holder.max_xml_namespaces),
@@ -50,8 +49,7 @@ impl PptxOperationalLimits {
 
     #[must_use]
     pub const fn valid(self) -> bool {
-        self.max_author_name_bytes > 0
-            && self.max_xml_bytes > 0
+        self.max_xml_bytes > 0
             && self.max_xml_attributes > 0
             && self.max_xml_namespaces > 0
             && self.max_xml_depth > 0
@@ -62,10 +60,6 @@ impl PptxOperationalLimits {
     pub(crate) fn policy_row(self) -> Value {
         Value::Map(vec![
             (Value::from("precedence"), Value::from("nested_narrowing")),
-            (
-                Value::from("max_author_name_bytes"),
-                Value::from(self.max_author_name_bytes as u64),
-            ),
             (
                 Value::from("max_xml_bytes"),
                 Value::from(self.max_xml_bytes as u64),
@@ -94,7 +88,7 @@ impl PptxOperationalLimits {
         let Value::Map(entries) = value else {
             return None;
         };
-        if entries.len() != 7 {
+        if entries.len() != 6 {
             return None;
         }
         let mut seen = BTreeSet::new();
@@ -103,7 +97,6 @@ impl PptxOperationalLimits {
             if !matches!(
                 name,
                 "precedence"
-                    | "max_author_name_bytes"
                     | "max_xml_bytes"
                     | "max_xml_attributes"
                     | "max_xml_namespaces"
@@ -133,7 +126,6 @@ impl PptxOperationalLimits {
             return None;
         }
         let limits = Self {
-            max_author_name_bytes: field("max_author_name_bytes")?,
             max_xml_bytes: field("max_xml_bytes")?,
             max_xml_attributes: field("max_xml_attributes")?,
             max_xml_namespaces: field("max_xml_namespaces")?,
@@ -152,7 +144,6 @@ impl PptxOperationalLimits {
             max_entries: u16::MAX as usize,
             max_part_bytes: 256 << 20,
             max_expanded_bytes: 1 << 30,
-            max_author_name_bytes: self.max_author_name_bytes,
             max_xml_bytes: self.max_xml_bytes,
             max_xml_attributes: self.max_xml_attributes,
             max_xml_namespaces: self.max_xml_namespaces,
