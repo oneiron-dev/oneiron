@@ -72,6 +72,9 @@ async fn ws_upgrade_handler(
     let auth = require_owner_auth(&headers, &server.config, server.vault().as_ref())
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
     let session_jti = auth.jti().map(str::to_owned);
+    // The socket's sync frames count under the actor its upgrade admitted,
+    // as an HTTP request counts under its own (OF-520, FIX 1086).
+    let telemetry_actor = auth.principal_ref().unwrap_or(auth.principal()).to_owned();
     // The binding door proved the machine with the upgrade's own slip proof.
     let machine = machine.map_or(oneiron::authority::PeerMachine::Unknown, |m| m.0);
     // The home answers with its own machine over that same proof, so the
@@ -103,7 +106,15 @@ async fn ws_upgrade_handler(
                 hold,
                 crate::api::call_receipt::on_connection(
                     connection,
-                    handle_connection(socket, server, conn_id, session_jti, locality, machine),
+                    handle_connection(
+                        socket,
+                        server,
+                        conn_id,
+                        session_jti,
+                        telemetry_actor,
+                        locality,
+                        machine,
+                    ),
                 ),
             )
         })
@@ -187,6 +198,7 @@ async fn handle_connection(
     server: Arc<SyncServer>,
     conn_id: u32,
     session_jti: Option<String>,
+    telemetry_actor: String,
     locality: oneiron::claim::CallerLocality,
     machine: oneiron::authority::PeerMachine,
 ) {
@@ -637,7 +649,7 @@ async fn handle_connection(
                 if !matches!(&msg, SyncMessage::Rpc(_) | SyncMessage::Sub(_)) {
                     let _ = server.wire_telemetry.record(
                         &format!("sync:{:02x}", data[0]),
-                        "sync-owner",
+                        &telemetry_actor,
                         oneiron_vault_contract::now_ts(),
                     );
                 }
