@@ -101,11 +101,17 @@ pub enum EngineLimit {
     /// it. An image whose header declares a raster past it asks whether
     /// everything is okay, and is decoded whole.
     SignatureDecodeBytes,
+    /// Bytes of one foreign pack script run's typed output. Past it the
+    /// output is read whole, up to the sandbox's own file bound.
+    PackScriptOutputBytes,
+    /// Inbound events, verbs or connector events one foreign pack script run
+    /// emits, whichever is most. Past it every row is served.
+    PackScriptOutputRows,
 }
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 24] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -128,6 +134,8 @@ impl EngineLimit {
         Self::ImportDecodedMessages,
         Self::ImportDecodedBytes,
         Self::SignatureDecodeBytes,
+        Self::PackScriptOutputBytes,
+        Self::PackScriptOutputRows,
     ];
 
     /// The config key that sets the row.
@@ -155,6 +163,8 @@ impl EngineLimit {
             Self::ImportDecodedMessages => "limits.import_decoded_messages",
             Self::ImportDecodedBytes => "limits.import_decoded_bytes",
             Self::SignatureDecodeBytes => "limits.signature_decode_bytes",
+            Self::PackScriptOutputBytes => "limits.pack_script_output_bytes",
+            Self::PackScriptOutputRows => "limits.pack_script_output_rows",
         }
     }
 
@@ -184,6 +194,8 @@ impl EngineLimit {
             Self::ImportDecodedMessages => 1_000_000,
             Self::ImportDecodedBytes => 1 << 30,
             Self::SignatureDecodeBytes => 1 << 30,
+            Self::PackScriptOutputBytes => 64 << 10,
+            Self::PackScriptOutputRows => 16,
         }
     }
 }

@@ -259,6 +259,8 @@ impl LimitsConfig {
             import_decoded_messages,
             import_decoded_bytes,
             signature_decode_bytes,
+            pack_script_output_bytes,
+            pack_script_output_rows,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -319,6 +321,8 @@ impl LimitsConfig {
             (EngineLimit::ImportDecodedMessages, import_decoded_messages),
             (EngineLimit::ImportDecodedBytes, import_decoded_bytes),
             (EngineLimit::SignatureDecodeBytes, signature_decode_bytes),
+            (EngineLimit::PackScriptOutputBytes, pack_script_output_bytes),
+            (EngineLimit::PackScriptOutputRows, pack_script_output_rows),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
@@ -449,4 +453,6 @@ pub(super) struct LimitsConfigOverride {
     pub(super) import_decoded_messages: Option<u64>,
     pub(super) import_decoded_bytes: Option<u64>,
     pub(super) signature_decode_bytes: Option<u64>,
+    pub(super) pack_script_output_bytes: Option<u64>,
+    pub(super) pack_script_output_rows: Option<u64>,
 }

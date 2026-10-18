@@ -15,6 +15,7 @@ use crate::{
         events::{ConnectorEventFilter, ConnectorWakeDecision},
     },
     consent::AuthenticatedOwner,
+    limit_ask::EngineLimit,
     outbound::OutboundIntent,
     surface_event::SurfaceEventAdmission,
 };
@@ -73,12 +74,15 @@ pub(crate) struct ScriptOutput {
 }
 impl ScriptOutput {
     pub(crate) fn decode(bytes: &[u8]) -> Result<Self> {
-        let output: Self = serde_json::from_slice(bytes)
-            .map_err(|_| invalid("invalid typed pack script output"))?;
-        if output.inbound.len() > 16 || output.verbs.len() > 16 || output.events.len() > 16 {
-            return Err(invalid("pack script output count exceeded"));
-        }
-        Ok(output)
+        serde_json::from_slice(bytes).map_err(|_| invalid("invalid typed pack script output"))
+    }
+
+    /// Inbound events, verbs or connector events, whichever is most.
+    fn rows(&self) -> usize {
+        self.inbound
+            .len()
+            .max(self.verbs.len())
+            .max(self.events.len())
     }
 }
 #[derive(Deserialize)]
@@ -314,6 +318,10 @@ impl Vault {
         }
         let bytes = plan.output_bytes(deltas[0].write())?;
         let output = ScriptOutput::decode(&bytes)?;
+        // Past its `[limits]` rows a run asks whether everything is okay, and
+        // is served whole (OF-520, Rule 5).
+        self.measure_limit(EngineLimit::PackScriptOutputBytes, bytes.len() as u64);
+        self.measure_limit(EngineLimit::PackScriptOutputRows, output.rows() as u64);
         let permitted: BTreeSet<&str> = grants
             .iter()
             .map(|grant| grant.requested.as_str())
