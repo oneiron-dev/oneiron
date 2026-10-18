@@ -1108,6 +1108,8 @@ class Oneiron:
             """Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override."""
     class _VaultRetrievalVerbs:
         @property
+        def aging(self) -> "Oneiron._VaultRetrievalAgingVerbs": ...
+        @property
         def weights(self) -> "Oneiron._VaultRetrievalWeightsVerbs": ...
         def recall(self, spec: Facade.RecallRequest) -> Facade.MemoryPack:
             """Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle."""
@@ -1125,6 +1127,11 @@ class Oneiron:
             """The owner exports finalized run evidence without query or pack text, raw frontier samples, trace keys or free-form outcome metadata."""
         def replay(self, spec: Facade.RetrievalDiagnosticRequest) -> Facade.RetrievalDiagnosticReplay:
             """The owner replays recorded state, ordered pack scores and trace from exact finalized runs; no fresh search, clock or outcome-derived feature is used."""
+    class _VaultRetrievalAgingVerbs:
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.ClaimAgingProfilesView:
+            """The owner reads class-level exponential aging profiles and the trusted manifest hash; confidence never ages."""
+        def configure(self, spec: Facade.ClaimAgingProfilesConfigureRequest) -> Facade.ClaimAgingProfilesReceipt:
+            """The owner edits all class-aging profiles against the current manifest hash without rewriting confidence, lifecycle or claim bodies."""
     class _VaultRetrievalWeightsVerbs:
         def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.RetrievalWeightsView:
             """The owner reads effective affect, arousal, community and semantic-edge VAD priors with the trusted manifest hash."""
@@ -1182,8 +1189,17 @@ class Oneiron:
         def search(self, request: KeyValueSearch) -> list[KeyValueItem]: ...
         def namespaces(self, request: KeyValueNamespaces) -> list[list[str]]: ...
     class _VaultCampaignVerbs:
+        def enroll(self, spec: Facade.CampaignEnrollRequest) -> Facade.CampaignEnrollmentReceipt:
+            """Enrolls a person in a campaign the caller owns, with evidence-backed channels and sticky senders. Writes no earned stage and sends nothing."""
+        @property
+        def stage(self) -> "Oneiron._VaultCampaignStageVerbs": ...
+        def unsubscribe(self, spec: Facade.CampaignUnsubscribeRequest) -> Facade.CampaignUnsubscribeReceipt:
+            """Immediately honors an unsubscribe with a channel-scoped enforcement claim and every suppressed membership head in one transaction."""
         @property
         def program(self) -> "Oneiron._VaultCampaignProgramVerbs": ...
+    class _VaultCampaignStageVerbs:
+        def evidence(self, spec: Facade.CampaignStageEvidenceRequest) -> Facade.CampaignStageEvidenceReceipt:
+            """Records earned-stage evidence under an authored ladder transition, in AUTO or propose mode. Owner-attested evidence requires the request owner proof; elapsed time earns nothing."""
     class _VaultCampaignProgramVerbs:
         def create(self, spec: Facade.CreateCampaignProgramRequest) -> Facade.CampaignProgramRecord:
             """Creates a campaign program (ordered steps and an optional saved-query audience) under a campaign the caller owns."""
@@ -2043,6 +2059,10 @@ class Oneiron:
     class _VaultRunsVerbs:
         @property
         def branches(self) -> "Oneiron._VaultRunsBranchesVerbs": ...
+        def step(self, spec: Facade.SettledStepRequest) -> Facade.SettledStepView | None:
+            """Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work."""
+        def checkpoint(self, spec: Facade.CheckpointReadRequest) -> Facade.CheckpointView | None:
+            """Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run."""
     class _VaultRunsBranchesVerbs:
         def get(self, spec: Facade.RunBranchesRequest) -> Facade.RunBranchesView:
             """The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts."""

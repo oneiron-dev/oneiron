@@ -952,9 +952,24 @@ class Oneiron:
     class _VaultCampaignVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def enroll(self, spec):
+            """Enrolls a person in a campaign the caller owns, with evidence-backed channels and sticky senders. Writes no earned stage and sends nothing."""
+            return json.loads(_translate(lambda: self._client.vault_campaign_enroll(json.dumps(spec))))
+        @property
+        def stage(self) -> "Oneiron._VaultCampaignStageVerbs":
+            return Oneiron._VaultCampaignStageVerbs(self._client)
+        def unsubscribe(self, spec):
+            """Immediately honors an unsubscribe with a channel-scoped enforcement claim and every suppressed membership head in one transaction."""
+            return json.loads(_translate(lambda: self._client.vault_campaign_unsubscribe(json.dumps(spec))))
         @property
         def program(self) -> "Oneiron._VaultCampaignProgramVerbs":
             return Oneiron._VaultCampaignProgramVerbs(self._client)
+    class _VaultCampaignStageVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def evidence(self, spec):
+            """Records earned-stage evidence under an authored ladder transition, in AUTO or propose mode. Owner-attested evidence requires the request owner proof; elapsed time earns nothing."""
+            return json.loads(_translate(lambda: self._client.vault_campaign_stage_evidence(json.dumps(spec))))
     class _VaultCampaignProgramVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2458,6 +2473,12 @@ class Oneiron:
         @property
         def branches(self) -> "Oneiron._VaultRunsBranchesVerbs":
             return Oneiron._VaultRunsBranchesVerbs(self._client)
+        def step(self, spec):
+            """Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work."""
+            return json.loads(_translate(lambda: self._client.vault_runs_step(json.dumps(spec))))
+        def checkpoint(self, spec):
+            """Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run."""
+            return json.loads(_translate(lambda: self._client.vault_runs_checkpoint(json.dumps(spec))))
     class _VaultRunsBranchesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

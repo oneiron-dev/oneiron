@@ -759,8 +759,17 @@ class Oneiron:
         def search(self, request: KeyValueSearch) -> list[KeyValueItem]: ...
         def namespaces(self, request: KeyValueNamespaces) -> list[list[str]]: ...
     class _VaultCampaignVerbs:
+        def enroll(self, spec: Facade.CampaignEnrollRequest) -> Facade.CampaignEnrollmentReceipt:
+            """Enrolls a person in a campaign the caller owns, with evidence-backed channels and sticky senders. Writes no earned stage and sends nothing."""
+        @property
+        def stage(self) -> "Oneiron._VaultCampaignStageVerbs": ...
+        def unsubscribe(self, spec: Facade.CampaignUnsubscribeRequest) -> Facade.CampaignUnsubscribeReceipt:
+            """Immediately honors an unsubscribe with a channel-scoped enforcement claim and every suppressed membership head in one transaction."""
         @property
         def program(self) -> "Oneiron._VaultCampaignProgramVerbs": ...
+    class _VaultCampaignStageVerbs:
+        def evidence(self, spec: Facade.CampaignStageEvidenceRequest) -> Facade.CampaignStageEvidenceReceipt:
+            """Records earned-stage evidence under an authored ladder transition, in AUTO or propose mode. Owner-attested evidence requires the request owner proof; elapsed time earns nothing."""
     class _VaultCampaignProgramVerbs:
         def create(self, spec: Facade.CreateCampaignProgramRequest) -> Facade.CampaignProgramRecord:
             """Creates a campaign program (ordered steps and an optional saved-query audience) under a campaign the caller owns."""
@@ -1620,6 +1629,10 @@ class Oneiron:
     class _VaultRunsVerbs:
         @property
         def branches(self) -> "Oneiron._VaultRunsBranchesVerbs": ...
+        def step(self, spec: Facade.SettledStepRequest) -> Facade.SettledStepView | None:
+            """Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work."""
+        def checkpoint(self, spec: Facade.CheckpointReadRequest) -> Facade.CheckpointView | None:
+            """Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run."""
     class _VaultRunsBranchesVerbs:
         def get(self, spec: Facade.RunBranchesRequest) -> Facade.RunBranchesView:
             """The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts."""

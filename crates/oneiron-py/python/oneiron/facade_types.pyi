@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 674 facade rows, 2458 declarations.
-Inputs: 622 of 674 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 601 of 674 fully typed, 73 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 94; unread shapes: 0.
+Census: 679 facade rows, 2488 declarations.
+Inputs: 627 of 679 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 604 of 679 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 95; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -2329,6 +2329,96 @@ class KeyValueNamespaces(TypedDict):
     max_depth: NotRequired[int | None]
     limit: NotRequired[int]
     offset: NotRequired[int]
+class CampaignMemberChannelSpec(TypedDict):
+    channel: str
+    basis_evidence: str
+    sender_ref: str
+class CampaignEnrollRequest(TypedDict):
+    campaign_ref: str
+    person_ref: str
+    channels: list[CampaignMemberChannelSpec]
+    evidence_refs: list[str]
+CampaignEnrollmentState = Literal["enrolled"]
+class CampaignActionProvenance(TypedDict):
+    actor_ref: str
+    evidence_refs: list[str]
+    recorded_at: int
+class CampaignEnrollmentReceipt(TypedDict):
+    membership_claim_ref: str
+    person_ref: str
+    campaign_ref: str
+    state: CampaignEnrollmentState
+    channels: list[CampaignMemberChannelSpec]
+    approval: str
+    provenance: CampaignActionProvenance
+    receipt_ref: str
+StageKey = str
+class StageDefinition(TypedDict):
+    key: StageKey
+    label: str
+StageEvidenceClass = Literal["meaningful_reply", "calendar_event", "calendar_event_outcome", "document_artifact_and_send_receipt", "counterparty_ledger", "task_list_progress", "recurring_commitment"]
+StageTransitionRule = TypedDict("StageTransitionRule", {"from": NotRequired[StageKey | None], "to": StageKey, "evidence_class": StageEvidenceClass, "owner_attested_allowed": bool})
+ReplyCode = Literal["positive_now", "positive_later", "referral", "objection", "not_interested", "complaint"]
+class ReplyDispositionPromote(TypedDict):
+    kind: Literal["promote"]
+    stage: StageKey
+class ReplyDispositionSnooze(TypedDict):
+    kind: Literal["snooze"]
+class ReplyDispositionRouteReferral(TypedDict):
+    kind: Literal["route_referral"]
+class ReplyDispositionRecordOnly(TypedDict):
+    kind: Literal["record_only"]
+class ReplyDispositionExit(TypedDict):
+    kind: Literal["exit"]
+class ReplyDispositionSuppress(TypedDict):
+    kind: Literal["suppress"]
+ReplyDisposition = ReplyDispositionPromote | ReplyDispositionSnooze | ReplyDispositionRouteReferral | ReplyDispositionRecordOnly | ReplyDispositionExit | ReplyDispositionSuppress
+class ReplyRouteRule(TypedDict):
+    code: ReplyCode
+    disposition: ReplyDisposition
+class NoShowRecoveryRule(TypedDict):
+    same_day_reschedule: bool
+    bump_after_secs: int
+    snooze_after_failed_bump: bool
+class StageLadderDefinition(TypedDict):
+    key: str
+    stages: list[StageDefinition]
+    transitions: list[StageTransitionRule]
+    reply_routes: list[ReplyRouteRule]
+    no_show_recovery: NoShowRecoveryRule
+EvidenceBasis = Literal["machine", "owner_attested"]
+CampaignStageEvidence = TypedDict("CampaignStageEvidence", {"class": StageEvidenceClass, "basis": EvidenceBasis, "evidence_refs": list[str], "recorded_at": int})
+PromotionMode = Literal["auto", "propose"]
+class CampaignStageEvidenceRequest(TypedDict):
+    campaign_ref: str
+    person_ref: str
+    ladder: StageLadderDefinition
+    target_stage: StageKey
+    evidence: CampaignStageEvidence
+    mode: NotRequired[PromotionMode]
+CampaignStageEvidenceOutcome = Literal["advanced", "proposed", "no_change"]
+class CampaignStageEvidenceReceipt(TypedDict):
+    person_ref: str
+    campaign_ref: str
+    outcome: CampaignStageEvidenceOutcome
+    stage_claim_ref: NotRequired[str | None]
+    stage: NotRequired[StageKey | None]
+    evidence: NotRequired[CampaignStageEvidence | None]
+    provenance: NotRequired[CampaignActionProvenance | None]
+    receipt_ref: NotRequired[str | None]
+class CampaignUnsubscribeRequest(TypedDict):
+    campaign_ref: str
+    person_ref: str
+    channel: str
+    evidence_ref: str
+class CampaignUnsubscribeReceipt(TypedDict):
+    campaign_ref: str
+    person_ref: str
+    channel: str
+    evidence_ref: str
+    suppression_claim_ref: str
+    member_claim_refs: list[str]
+    receipt_ref: str
 class CampaignProgramOutboundSpec(TypedDict):
     call_seq: int
     verb: str
@@ -11530,6 +11620,11 @@ class DreamerAttemptRef(TypedDict):
     existing: bool
 class ConsolidationStatusRequest(TypedDict):
     job_ref: str
+DreamerParkCauseView = Literal["provider_unavailable", "executor_error", "checkpoint", "cancelled", "signal", "other"]
+class DreamerParkedAttemptView(TypedDict):
+    job_ref: str
+    cause: DreamerParkCauseView
+    parked_at: int
 class DreamerAttemptView(TypedDict):
     job_ref: str
     state: str
@@ -11540,6 +11635,40 @@ class DreamerAttemptView(TypedDict):
     last_error: NotRequired[str | None]
     created_at: int
     updated_at: int
+    parked: NotRequired[DreamerParkedAttemptView | None]
+class SettledStepRequest(TypedDict):
+    job_ref: str
+    step_hash: str
+class SettledStepView(TypedDict):
+    job_ref: str
+    run_id: NotRequired[str | None]
+    claim_ref: str
+    step_hash: str
+    model: ModelId
+    purpose: str
+    params_hash: str
+    response: LlmResponse
+class CheckpointReadRequest(TypedDict):
+    run_ref: str
+    from_step: NotRequired[int]
+    limit: NotRequired[int | None]
+class CheckpointStepView(TypedDict):
+    step: int
+    label: str
+    state_hash: str
+    created_at_ms: int
+class CheckpointResumeView(TypedDict):
+    step: int
+    wait_ref: str
+    effect: str
+    output_handle: str
+    reply: NotRequired[Any | None]
+class CheckpointView(TypedDict):
+    run_ref: str
+    completed_steps: int
+    steps: list[CheckpointStepView]
+    resumed: list[CheckpointResumeView]
+    next_step: NotRequired[int | None]
 EvidenceKind = Literal["turn", "message", "note", "asset_text", "import_record"]
 class CursorSpan(TypedDict):
     start: list[int]

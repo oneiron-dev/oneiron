@@ -317,6 +317,15 @@ impl OneironClient {
                 "vault.kv.namespaces" => {
                     remote_agent_verb_output::<Vec<Vec<String>>>(client, verb, &input)
                 }
+                "vault.campaign.enroll" => remote_agent_verb_output::<
+                    oneiron::campaign::surface::CampaignEnrollmentReceipt,
+                >(client, verb, &input),
+                "vault.campaign.stage.evidence" => remote_agent_verb_output::<
+                    oneiron::campaign::surface::CampaignStageEvidenceReceipt,
+                >(client, verb, &input),
+                "vault.campaign.unsubscribe" => remote_agent_verb_output::<
+                    oneiron::campaign::surface::CampaignUnsubscribeReceipt,
+                >(client, verb, &input),
                 "vault.campaign.program.create" => remote_agent_verb_output::<
                     oneiron::campaign::surface::CampaignProgramRecord,
                 >(client, verb, &input),
@@ -1835,6 +1844,12 @@ impl OneironClient {
                 "vault.consolidation.status" => remote_agent_verb_output::<
                     Option<oneiron::memory::DreamerAttemptView>,
                 >(client, verb, &input),
+                "vault.runs.step" => remote_agent_verb_output::<
+                    Option<oneiron::llm::model_step::SettledStepView>,
+                >(client, verb, &input),
+                "vault.runs.checkpoint" => remote_agent_verb_output::<
+                    Option<oneiron::engine_executor::checkpoint_read::CheckpointView>,
+                >(client, verb, &input),
                 "vault.consolidation.promote" => remote_agent_verb_output::<
                     oneiron::memory::consolidation::ConsolidationPromotion,
                 >(client, verb, &input),
@@ -3282,6 +3297,42 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.kv.namespaces", value)
+    }
+    pub fn vault_campaign_enroll(
+        &self,
+        input: &oneiron::campaign::surface::CampaignEnrollRequest,
+    ) -> Result<oneiron::campaign::surface::CampaignEnrollmentReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.campaign.enroll", value)
+    }
+    pub fn vault_campaign_stage_evidence(
+        &self,
+        input: &oneiron::campaign::surface::CampaignStageEvidenceRequest,
+    ) -> Result<oneiron::campaign::surface::CampaignStageEvidenceReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.campaign.stage.evidence", value)
+    }
+    pub fn vault_campaign_unsubscribe(
+        &self,
+        input: &oneiron::campaign::surface::CampaignUnsubscribeRequest,
+    ) -> Result<oneiron::campaign::surface::CampaignUnsubscribeReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.campaign.unsubscribe", value)
     }
     pub fn vault_campaign_program_create(
         &self,
@@ -9360,6 +9411,31 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.consolidation.status", value)
+    }
+    pub fn vault_runs_step(
+        &self,
+        input: &oneiron::llm::model_step::SettledStepRequest,
+    ) -> Result<Option<oneiron::llm::model_step::SettledStepView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.runs.step", value)
+    }
+    pub fn vault_runs_checkpoint(
+        &self,
+        input: &oneiron::engine_executor::checkpoint_read::CheckpointReadRequest,
+    ) -> Result<Option<oneiron::engine_executor::checkpoint_read::CheckpointView>, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.runs.checkpoint", value)
     }
     pub fn vault_consolidation_promote(
         &self,
