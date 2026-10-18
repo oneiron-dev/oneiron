@@ -33,7 +33,17 @@ const EVIDENCE_KEY_TURN: &str = "turn";
 const EVIDENCE_KEY_DELTA: &str = "vadDelta";
 const EVIDENCE_KEY_CONFIDENCE: &str = "confidence";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 pub enum CopingStrategy {
     SitSel,
     SitMod,
@@ -369,9 +379,13 @@ fn coping_outcome_evidence_value(
     ];
     if let Some(baseline) = baseline {
         entries.push((Value::from("baseline_turn"), Value::from(baseline.to_hex())));
-        entries.push((Value::from("turns"), Value::Array(vec![
-            Value::from(baseline.to_hex()), Value::from(turn_id.to_hex()),
-        ])));
+        entries.push((
+            Value::from("turns"),
+            Value::Array(vec![
+                Value::from(baseline.to_hex()),
+                Value::from(turn_id.to_hex()),
+            ]),
+        ));
     }
     Value::Map(entries)
 }
@@ -429,7 +443,13 @@ impl Vault {
     ) -> Result<CopingOutcomeUpdate> {
         self.with_write_txn_grouped(|txn| {
             self.update_coping_outcome_from_turn_vad_in_txn(
-                txn, prior_claim_id, baseline_turn_id, later_turn_id, confidence, now, None,
+                txn,
+                prior_claim_id,
+                baseline_turn_id,
+                later_turn_id,
+                confidence,
+                now,
+                None,
             )
         })
     }
@@ -445,12 +465,17 @@ impl Vault {
         now: u64,
         envelope: Option<&crate::WriteEnvelope>,
     ) -> Result<CopingOutcomeUpdate> {
-        let (delta, _, _) = self.coping_turn_observation_in_txn(
-            txn, baseline_turn_id, later_turn_id, now,
-        )?;
+        let (delta, _, _) =
+            self.coping_turn_observation_in_txn(txn, baseline_turn_id, later_turn_id, now)?;
         self.update_coping_outcome_from_turn_vad_delta_in_txn(
-            txn, prior_claim_id, *later_turn_id, delta, confidence, now,
-            Some(*baseline_turn_id), envelope,
+            txn,
+            prior_claim_id,
+            *later_turn_id,
+            delta,
+            confidence,
+            now,
+            Some(*baseline_turn_id),
+            envelope,
         )
     }
 
@@ -462,15 +487,21 @@ impl Vault {
         later_turn_id: &EntityId,
         now: u64,
     ) -> Result<(VadDelta, super::VadAnnotation, super::VadAnnotation)> {
-        let baseline = self.turn_vad_annotation_in_txn(txn, baseline_turn_id)?
-            .ok_or(Error::InvalidClaimBody("baseline turn VAD annotation missing"))?;
-        let later = self.turn_vad_annotation_in_txn(txn, later_turn_id)?
+        let baseline = self
+            .turn_vad_annotation_in_txn(txn, baseline_turn_id)?
+            .ok_or(Error::InvalidClaimBody(
+                "baseline turn VAD annotation missing",
+            ))?;
+        let later = self
+            .turn_vad_annotation_in_txn(txn, later_turn_id)?
             .ok_or(Error::InvalidClaimBody("later turn VAD annotation missing"))?;
         if baseline_turn_id == later_turn_id
             || baseline.annotated_at > later.annotated_at
             || later.annotated_at > now
         {
-            return Err(Error::InvalidClaimBody("coping observation needs ordered, non-future turns"));
+            return Err(Error::InvalidClaimBody(
+                "coping observation needs ordered, non-future turns",
+            ));
         }
         let delta = VadDelta::new(
             later.vad.valence - baseline.vad.valence,
@@ -511,7 +542,14 @@ impl Vault {
     ) -> Result<CopingOutcomeUpdate> {
         self.with_write_txn_grouped(|txn| {
             self.update_coping_outcome_from_turn_vad_delta_in_txn(
-                txn, prior_claim_id, turn_id, vad_delta, confidence, now, expected_strategy_ref, None,
+                txn,
+                prior_claim_id,
+                turn_id,
+                vad_delta,
+                confidence,
+                now,
+                expected_strategy_ref,
+                None,
             )
         })
     }
@@ -596,11 +634,15 @@ impl Vault {
         )?;
         updated_body.salience = prior_body.salience;
         updated_body.evidence = Some(coping_outcome_evidence_value(
-            turn_id, vad_delta, confidence, expected_strategy_ref,
+            turn_id,
+            vad_delta,
+            confidence,
+            expected_strategy_ref,
         ));
         if let Some(envelope) = envelope {
             updated_body.evidence = Some(crate::write_envelope::write_envelope_evidence(
-                envelope, updated_body.evidence,
+                envelope,
+                updated_body.evidence,
             ));
         }
         updated_body.source = Some(ClaimSource::Inferred);
