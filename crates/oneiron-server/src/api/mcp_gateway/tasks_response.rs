@@ -1492,6 +1492,9 @@ fn mcp_agent_verb_input(
         "vault.calendar.freebusy" => a.spec.clone().ok_or_else(invalid),
         "vault.calendar.transcript.ingest" => a.spec.clone().ok_or_else(invalid),
         "vault.claims.list" => a.spec.clone().ok_or_else(invalid),
+        "vault.claims.demote" => a.spec.clone().ok_or_else(invalid),
+        "vault.claims.list_filtered" => a.spec.clone().ok_or_else(invalid),
+        "vault.claims.read_filtered" => a.spec.clone().ok_or_else(invalid),
         "vault.claims.history" => a.spec.clone().ok_or_else(invalid),
         "vault.delete" => a.spec.clone().ok_or_else(invalid),
         "vault.writes.pending" => a.spec.clone().ok_or_else(invalid),
@@ -3322,6 +3325,15 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.claims.list" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.claims.demote" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.claims.list_filtered" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.claims.read_filtered" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.claims.history" => {
@@ -12274,6 +12286,30 @@ async fn execute_agent_verb_row(
             let input: oneiron::memory::ClaimListFilter =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_claims_list(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.claims.demote" => {
+            let input: oneiron::memory::ClaimDemoteRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_claims_demote(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.claims.list_filtered" => {
+            let input: oneiron::memory::ClaimFilteredListRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_claims_list_filtered(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.claims.read_filtered" => {
+            let input: oneiron::memory::ClaimFilteredReadRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_claims_read_filtered(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
