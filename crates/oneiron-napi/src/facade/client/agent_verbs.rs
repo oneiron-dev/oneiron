@@ -568,6 +568,135 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_skill_hubs_put(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skill_hubs.put", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skill_hubs_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skill_hubs.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skill_hubs_publishers_admit(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skill_hubs.publishers.admit", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skill_hubs_publishers_revoke(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skill_hubs.publishers.revoke", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skill_hubs_refs_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skill_hubs.refs.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skill_hubs_refs_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skill_hubs.refs.set", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_install(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.install", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_sync(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.sync", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_get(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_import(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.import", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_sync(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.sync", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_receipts(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.receipts", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_permissions_approve(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.permissions.approve", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_hooks_bind(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.hooks.bind", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_hooks_list(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.hooks.list", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_hooks_qualify(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.hooks.qualify", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_packs_put(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.packs.put", input)

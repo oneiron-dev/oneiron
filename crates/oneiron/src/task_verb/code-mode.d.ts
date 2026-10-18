@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 415 code-mode rows (394 host rows, 21 run rows), 1508 declarations.
-// Replies: 361 fully typed, 50 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 431 code-mode rows (410 host rows, 21 run rows), 1548 declarations.
+// Replies: 377 fully typed, 50 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 79; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -391,8 +391,23 @@ declare namespace Sdk {
   type WeaveLinkCorrectionView = { label_ref: string; source_ref: string; kind: string; target_ref: string; actor_ref: string; recorded_at: number };
   type WeaveWrongItemRequest = { item: string; item_ref: string; project_ref?: string | null };
   type WeaveItemCorrectionView = { label_ref: string; item: string; item_ref: string; project_ref?: string | null; actor_ref: string; recorded_at: number };
-  type PackFileInput = { path: string; text: string };
-  type PackPutRequest = { files: PackFileInput[] };
+  type SkillHubKind = "git" | "http-index" | "local-dir";
+  type SkillHubTrustTier = "untrusted" | "community" | "verified";
+  type HubSyncPolicy = "pinned-ref" | "pinned-commit" | "content-hash-frozen" | "mirror-of-hub";
+  type SkillHubPutRequest = { hub: EntityId; kind: SkillHubKind; endpoint: string; trust_tier: SkillHubTrustTier; sync_policy: HubSyncPolicy };
+  type HubConsentOutcome = "approved" | "denied" | "revoked";
+  type HubConsentReceipt = { outcome: HubConsentOutcome; decision: string; grant_ref?: string | null };
+  type SkillHubConfigured = { hub: EntityId; consent: HubConsentReceipt };
+  type SkillHubRequest = { hub: EntityId };
+  type SkillHubRecord = { kind: SkillHubKind; endpoint: string; trust_tier: SkillHubTrustTier; sync_policy: HubSyncPolicy };
+  type SkillPublisherRequest = { hub: EntityId; identity: string };
+  type SkillPublisherAdmission = { hub: EntityId; identity: string; grant_ref: string };
+  type HubRefRequest = { hub: EntityId; ref_string: string };
+  type HubPin = { type: "semver"; value: string } | { type: "tag"; value: string } | { type: "commit"; value: string } | { type: "content_hash"; value: string } | { type: "none" };
+  type HubRef = { hub_id: EntityId; ref_string: string; pin: HubPin };
+  type TrackedHubRef = { hub_ref: HubRef; sync_policy: HubSyncPolicy; latest_seen?: string | null; latest_trusted?: string | null };
+  type HubRefSetRequest = { hub_ref: HubRef; sync_policy: HubSyncPolicy };
+  type HubImportRequest = { hub_ref: HubRef; publisher: string };
   type PackPutOutcome = "installed" | "candidate" | "blocked";
   type PackKind = "capability" | "connector" | "agent";
   type PackAdapter = { builtin: string } | { script: string };
@@ -410,6 +425,39 @@ declare namespace Sdk {
   type PackSection = { section_id: string; state_family: StateFamilyRef; verbs: SectionVerbRef[]; authority_lane: AuthorityLaneRef; budget_policy: BudgetPolicyRef };
   type PackInstallReceipt = { source_id: string; pack_name: string; content_hash: string; kind: PackKind; adapter?: PackAdapter | null; engine_version?: string | null; status: PackInstallStatus; candidate_reason?: PackCandidateReason | null; hub_id: string; hub_ref: string; pin_type: string; pin_value: string; publisher: string; permissions: PackPermissions; qualification_report_hash?: string | null; connector_qualification?: PackConnectorReceipt | null; runtime?: PackRuntimeRecipe | null; sections: PackSection[]; predicates: string[]; kinds: string[]; skills: string[]; agent?: string | null; installed_at: number };
   type PackPutReceipt = { outcome: PackPutOutcome; reason?: string | null; receipt?: PackInstallReceipt | null };
+  type HubPackRequest = { name: string };
+  type HubSkillImported = { entity: EntityId };
+  type HubSkillRequest = { entity: EntityId };
+  type HubSkillSyncOutcome = "applied" | "proposed" | "refused_by_policy";
+  type HubSkillSyncReceipt = { outcome: HubSkillSyncOutcome; proposal?: EntityId | null; approval?: ClaimApprovalStatus | null };
+  type InstallLifecycle = "candidate" | "active" | "stale" | "quarantined" | "superseded";
+  type InstallHoldReason = "source_only" | "rules_hit" | "code_auto_install_off" | "qualification_required" | "no_fit" | "local_approval" | "unloadable_approval" | "stale" | "quarantined" | "superseded" | "advisories";
+  type InstallDisposition = "installed" | "already_installed" | "pending_permission" | { not_installed: InstallHoldReason };
+  type HubImportReceipt = { entity: string; content_hash: string; hub_id: string; ref_string: string; pin_type: string; pin_value?: string | null; publisher?: string | null; publisher_grant?: string | null; installed_as: InstallLifecycle; disposition: InstallDisposition; fit_analysis?: string | null; requested_permissions?: string[]; at: number };
+  type HubAdmissionReceipt = { receipt_id: string; candidate: string; content_hash: string; binding: string; consent_digest: string; publisher: string; publisher_grant: string; hub_id: string; hub_ref: string; evidence_skill: string; held_out_digest: string; held_out_count: number; before: number; after: number; accepted: boolean; judge_revision: string; displaced_by_revision?: string | null; at: number };
+  type HubSkillReceipts = { sources: HubRef[]; imports: HubImportReceipt[]; admission?: HubAdmissionReceipt | null };
+  type HubSkillPermissionRequest = { entity: EntityId; hub_ref: HubRef };
+  type HubHookBindRequest = { pack: string };
+  type HookActorClass = "human" | "agent" | "system";
+  type HookPhase = "pre" | "post" | "fact";
+  type HookOutcomeKind = "continue" | "rewrite" | "skip" | "ask" | "add_block" | "annotate" | "redact" | "propose" | "enqueue" | "effect" | "nothing";
+  type HookRenderClass = "deterministic_eager" | "generative";
+  type HookSelector = { verbs: string[]; actors: HookActorClass[]; scope?: string | null; phase: HookPhase; priority: number; budget_ms: number; blocking: boolean; outcomes: HookOutcomeKind[]; served?: string[]; render_class?: HookRenderClass };
+  type HookAuthor = { kind: "owner" } | { kind: "foreign_actor"; actor_kind: string; identity: string; hub: string; grant: string; actor: string };
+  type PackHookBinding = { version: number; code: string; owner: string; source: string; pack: string; hook: string; hook_version: string; body_hash: string; selector: HookSelector; enabled: boolean; author: HookAuthor };
+  type HubHookBindingRow = { id: EntityId; binding: PackHookBinding };
+  type HubHookQualifyRequest = { source: EntityId };
+  type FactSource = "claim_changelog" | "settlement";
+  type FactPositionHex = string;
+  type FactKind = "claim.landed" | "claim.superseded" | "proposal.settled";
+  type HookReplayCase = { on: "fact"; source: FactSource; position: FactPositionHex; kind: FactKind; entity: string } | { on: "verb"; run_key: string; invocation: string; verb: string; phase: HookPhase };
+  type HookReplayCompare = "same" | "differs" | "incomplete";
+  type HookReplayOutcome = { status: "ran"; outcome_json?: string | null; outcome: string; reason?: string | null; recorded?: string | null; recorded_outcome_json?: string | null; compare: HookReplayCompare; from_memo: boolean; reads_live: boolean } | { status: "missing_history"; reason: string };
+  type HookReplayRow = { case: HookReplayCase; result: HookReplayOutcome };
+  type HubHookReplay = { hook: string; entries: HookReplayRow[] };
+  type HubHookQualificationReceipt = { put: PackPutReceipt; replays: HubHookReplay[] };
+  type PackFileInput = { path: string; text: string };
+  type PackPutRequest = { files: PackFileInput[] };
   type PackRemoveRequest = { pack: string };
   type ChannelSubscriptionRequest = { agent: string; channel: string };
   type ChannelMessageSubscription = { subscription: string; connector_key: string; connector: string; agent: string; existing: boolean };
@@ -794,14 +842,6 @@ declare namespace Sdk {
   type BornWith = Record<string, string>;
   type SharedBriefView = { share_ref: string; html: string; citations: SharedBriefCitation[]; born_with: BornWith };
   type HooksReplayRequest = { binding: string; since?: string | null; limit?: number | null };
-  type FactSource = "claim_changelog" | "settlement";
-  type FactPositionHex = string;
-  type FactKind = "claim.landed" | "claim.superseded" | "proposal.settled";
-  type HookPhase = "pre" | "post" | "fact";
-  type HookReplayCase = { on: "fact"; source: FactSource; position: FactPositionHex; kind: FactKind; entity: string } | { on: "verb"; run_key: string; invocation: string; verb: string; phase: HookPhase };
-  type HookReplayCompare = "same" | "differs" | "incomplete";
-  type HookReplayOutcome = { status: "ran"; outcome_json?: string | null; outcome: string; reason?: string | null; recorded?: string | null; recorded_outcome_json?: string | null; compare: HookReplayCompare; from_memo: boolean; reads_live: boolean } | { status: "missing_history"; reason: string };
-  type HookReplayRow = { case: HookReplayCase; result: HookReplayOutcome };
   type ArtifactRefRequest = { artifact_ref: string };
   type ArtifactKind = "document" | "sheet" | "deck" | "code" | "canvas" | "image" | "file";
   type MadeByInputRole = "input" | "prompt";
@@ -2239,6 +2279,18 @@ declare const vault: Sdk.VaultHost & {
     set_overrides(input: Sdk.SetNoteOverridesRequest): Promise<Sdk.NoteDefaultsView | StoredResult>;
   };
   packs: {
+    /** Reads an installed pack and its exact source, pin, publisher and requested powers as the owner. */
+    get(input: Sdk.HubPackRequest): Promise<Sdk.PackInstallReceipt | null | StoredResult>;
+    hooks: {
+      /** The owner consents to the installed pack hook capabilities, including a widening update; publisher identity stays foreign. */
+      bind(input: Sdk.HubHookBindRequest): Promise<Sdk.EntityId[] | StoredResult>;
+      /** Reads live pack hook bindings as the owner, excluding revoked foreign publisher grants. */
+      list(input: Sdk.EmptyRequest): Promise<Sdk.HubHookBindingRow[] | StoredResult>;
+      /** The owner qualifies a Candidate hub hook pack by real sandbox replay; qualification does not consent to wider hooks. */
+      qualify(input: Sdk.HubHookQualifyRequest): Promise<Sdk.HubHookQualificationReceipt | StoredResult>;
+    };
+    /** The owner fetches a pinned hub pack as its foreign publisher; code stays Candidate and hooks wait for consent. */
+    install(input: Sdk.HubImportRequest): Promise<Sdk.PackPutReceipt | StoredResult>;
     /** The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks. */
     put(input: Sdk.PackPutRequest): Promise<Sdk.PackPutReceipt | StoredResult>;
     /** The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate. */
@@ -2253,6 +2305,8 @@ declare const vault: Sdk.VaultHost & {
       /** Checks one pack connection with the engine's fixed read-only provider call for its declared check. */
       verify(input: Sdk.PackSetupVerifyRequest): Promise<Sdk.PackSetupReceipt | StoredResult>;
     };
+    /** The owner syncs a hub pack at its stored ref policy; wider hooks keep their old bindings until re-consent. */
+    sync(input: Sdk.HubPackRequest): Promise<Sdk.PackPutReceipt | StoredResult>;
   };
   people: {
     /** One person the vault knows, by their pr handle. */
@@ -2476,6 +2530,36 @@ declare const vault: Sdk.VaultHost & {
     create(input: Sdk.ShareCreateRequest): Promise<Sdk.ShareCreated | StoredResult>;
     revoke(input: Sdk.ShareRevokeRequest): Promise<Sdk.ShareRevokeReceipt | StoredResult>;
     view(input: Sdk.ShareViewRequest): Promise<Sdk.ScopedReadResult<Sdk.SharedBriefView | null> | StoredResult>;
+  };
+  skill_hubs: {
+    /** Reads one configured hub as the owner. */
+    get(input: Sdk.SkillHubRequest): Promise<Sdk.SkillHubRecord | StoredResult>;
+    publishers: {
+      /** The owner admits a foreign publisher to offer candidates from one configured hub, and nothing else. */
+      admit(input: Sdk.SkillPublisherRequest): Promise<Sdk.SkillPublisherAdmission | StoredResult>;
+      /** The owner revokes the exact offer-only publisher grant; foreign hooks recheck it before running. */
+      revoke(input: Sdk.SkillPublisherRequest): Promise<Sdk.HubConsentReceipt | StoredResult>;
+    };
+    /** The owner registers or revises a hub source; hub trust never grants activation authority. */
+    put(input: Sdk.SkillHubPutRequest): Promise<Sdk.SkillHubConfigured | StoredResult>;
+    refs: {
+      /** Reads one hub ref policy, pin and separate seen and trusted revisions as the owner. */
+      get(input: Sdk.HubRefRequest): Promise<Sdk.TrackedHubRef | null | StoredResult>;
+      /** The owner changes one hub ref policy and pin without fetching or trusting new bytes. */
+      set(input: Sdk.HubRefSetRequest): Promise<Sdk.TrackedHubRef | StoredResult>;
+    };
+  };
+  skills: {
+    /** The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask. */
+    import(input: Sdk.HubImportRequest): Promise<Sdk.HubSkillImported | StoredResult>;
+    permissions: {
+      /** The owner answers one imported skill permission ask at its exact hub source. */
+      approve(input: Sdk.HubSkillPermissionRequest): Promise<Sdk.HubConsentReceipt | StoredResult>;
+    };
+    /** Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner. */
+    receipts(input: Sdk.HubSkillRequest): Promise<Sdk.HubSkillReceipts | StoredResult>;
+    /** The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities. */
+    sync(input: Sdk.HubSkillRequest): Promise<Sdk.HubSkillSyncReceipt | StoredResult>;
   };
   structural: {
     /** Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit. */

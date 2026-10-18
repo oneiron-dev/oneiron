@@ -1075,6 +1075,229 @@
       "section": false
     },
     {
+      "name": "vault.skill_hubs.put",
+      "description": "The owner registers or revises a hub source; hub trust never grants activation authority.",
+      "input": "SkillHubPutRequest",
+      "output": "crate::task_verb::sdk::SkillHubConfigured",
+      "call": "crate::task_verb::sdk::skill_hub_put_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skill_hubs.put\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skill_hubs.get",
+      "description": "Reads one configured hub as the owner.",
+      "input": "SkillHubRequest",
+      "output": "crate::skill_hub::SkillHubRecord",
+      "call": "crate::task_verb::sdk::skill_hub_get_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skill_hubs.get\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skill_hubs.publishers.admit",
+      "description": "The owner admits a foreign publisher to offer candidates from one configured hub, and nothing else.",
+      "input": "SkillPublisherRequest",
+      "output": "crate::task_verb::sdk::SkillPublisherAdmission",
+      "call": "crate::task_verb::sdk::skill_publisher_admit_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skill_hubs.publishers.admit\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skill_hubs.publishers.revoke",
+      "description": "The owner revokes the exact offer-only publisher grant; foreign hooks recheck it before running.",
+      "input": "SkillPublisherRequest",
+      "output": "crate::task_verb::sdk::HubConsentReceipt",
+      "call": "crate::task_verb::sdk::skill_publisher_revoke_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skill_hubs.publishers.revoke\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skill_hubs.refs.get",
+      "description": "Reads one hub ref policy, pin and separate seen and trusted revisions as the owner.",
+      "input": "HubRefRequest",
+      "output": "Option<crate::skill_hub::TrackedHubRef>",
+      "call": "crate::task_verb::sdk::hub_ref_get_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skill_hubs.refs.get\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skill_hubs.refs.set",
+      "description": "The owner changes one hub ref policy and pin without fetching or trusting new bytes.",
+      "input": "HubRefSetRequest",
+      "output": "crate::skill_hub::TrackedHubRef",
+      "call": "crate::task_verb::sdk::hub_ref_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skill_hubs.refs.set\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.install",
+      "description": "The owner fetches a pinned hub pack as its foreign publisher; code stays Candidate and hooks wait for consent.",
+      "input": "HubImportRequest",
+      "output": "crate::task_verb::sdk::PackPutReceipt",
+      "call": "crate::task_verb::sdk::hub_pack_install_as_owner(memory.vault(), &memory.embedded_owner(\"vault.packs.install\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.sync",
+      "description": "The owner syncs a hub pack at its stored ref policy; wider hooks keep their old bindings until re-consent.",
+      "input": "HubPackRequest",
+      "output": "crate::task_verb::sdk::PackPutReceipt",
+      "call": "crate::task_verb::sdk::hub_pack_sync_as_owner(memory.vault(), &memory.embedded_owner(\"vault.packs.sync\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.get",
+      "description": "Reads an installed pack and its exact source, pin, publisher and requested powers as the owner.",
+      "input": "HubPackRequest",
+      "output": "Option<crate::skill_hub::pack_catalog::PackInstallReceipt>",
+      "call": "crate::task_verb::sdk::hub_pack_get_as_owner(memory.vault(), &memory.embedded_owner(\"vault.packs.get\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skills.import",
+      "description": "The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask.",
+      "input": "HubImportRequest",
+      "output": "crate::task_verb::sdk::HubSkillImported",
+      "call": "crate::task_verb::sdk::hub_skill_import_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.import\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skills.sync",
+      "description": "The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities.",
+      "input": "HubSkillRequest",
+      "output": "crate::task_verb::sdk::HubSkillSyncReceipt",
+      "call": "crate::task_verb::sdk::hub_skill_sync_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.sync\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skills.receipts",
+      "description": "Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner.",
+      "input": "HubSkillRequest",
+      "output": "crate::task_verb::sdk::HubSkillReceipts",
+      "call": "crate::task_verb::sdk::hub_skill_receipts_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.receipts\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skills.permissions.approve",
+      "description": "The owner answers one imported skill permission ask at its exact hub source.",
+      "input": "HubSkillPermissionRequest",
+      "output": "crate::task_verb::sdk::HubConsentReceipt",
+      "call": "crate::task_verb::sdk::hub_skill_permissions_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.permissions.approve\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.hooks.bind",
+      "description": "The owner consents to the installed pack hook capabilities, including a widening update; publisher identity stays foreign.",
+      "input": "HubHookBindRequest",
+      "output": "Vec<crate::EntityId>",
+      "call": "crate::task_verb::sdk::hub_hooks_bind_as_owner(memory.vault(), &memory.embedded_owner(\"vault.packs.hooks.bind\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.hooks.list",
+      "description": "Reads live pack hook bindings as the owner, excluding revoked foreign publisher grants.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::task_verb::sdk::HubHookBindingRow>",
+      "call": "crate::task_verb::sdk::hub_hooks_list_as_owner(memory.vault(), &memory.embedded_owner(\"vault.packs.hooks.list\")?, &crate::task_verb::sdk::EmptyRequest {})?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.hooks.qualify",
+      "description": "The owner qualifies a Candidate hub hook pack by real sandbox replay; qualification does not consent to wider hooks.",
+      "input": "HubHookQualifyRequest",
+      "output": "crate::task_verb::sdk::HubHookQualificationReceipt",
+      "call": "crate::task_verb::sdk::hub_hooks_qualify_embedded(memory, &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.packs.put",
       "description": "The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks.",
       "input": "PackPutRequest",

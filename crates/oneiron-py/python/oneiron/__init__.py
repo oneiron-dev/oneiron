@@ -528,8 +528,14 @@ class Oneiron:
         def weave(self) -> "Oneiron._VaultWeaveVerbs":
             return Oneiron._VaultWeaveVerbs(self._client)
         @property
+        def skill_hubs(self) -> "Oneiron._VaultSkillHubsVerbs":
+            return Oneiron._VaultSkillHubsVerbs(self._client)
+        @property
         def packs(self) -> "Oneiron._VaultPacksVerbs":
             return Oneiron._VaultPacksVerbs(self._client)
+        @property
+        def skills(self) -> "Oneiron._VaultSkillsVerbs":
+            return Oneiron._VaultSkillsVerbs(self._client)
         @property
         def connectors(self) -> "Oneiron._VaultConnectorsVerbs":
             return Oneiron._VaultConnectorsVerbs(self._client)
@@ -863,9 +869,54 @@ class Oneiron:
         def wrong(self, spec):
             """A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays."""
             return json.loads(_translate(lambda: self._client.vault_weave_item_wrong(json.dumps(spec))))
+    class _VaultSkillHubsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def put(self, spec):
+            """The owner registers or revises a hub source; hub trust never grants activation authority."""
+            return json.loads(_translate(lambda: self._client.vault_skill_hubs_put(json.dumps(spec))))
+        def get(self, spec):
+            """Reads one configured hub as the owner."""
+            return json.loads(_translate(lambda: self._client.vault_skill_hubs_get(json.dumps(spec))))
+        @property
+        def publishers(self) -> "Oneiron._VaultSkillHubsPublishersVerbs":
+            return Oneiron._VaultSkillHubsPublishersVerbs(self._client)
+        @property
+        def refs(self) -> "Oneiron._VaultSkillHubsRefsVerbs":
+            return Oneiron._VaultSkillHubsRefsVerbs(self._client)
+    class _VaultSkillHubsPublishersVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def admit(self, spec):
+            """The owner admits a foreign publisher to offer candidates from one configured hub, and nothing else."""
+            return json.loads(_translate(lambda: self._client.vault_skill_hubs_publishers_admit(json.dumps(spec))))
+        def revoke(self, spec):
+            """The owner revokes the exact offer-only publisher grant; foreign hooks recheck it before running."""
+            return json.loads(_translate(lambda: self._client.vault_skill_hubs_publishers_revoke(json.dumps(spec))))
+    class _VaultSkillHubsRefsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """Reads one hub ref policy, pin and separate seen and trusted revisions as the owner."""
+            return json.loads(_translate(lambda: self._client.vault_skill_hubs_refs_get(json.dumps(spec))))
+        def set(self, spec):
+            """The owner changes one hub ref policy and pin without fetching or trusting new bytes."""
+            return json.loads(_translate(lambda: self._client.vault_skill_hubs_refs_set(json.dumps(spec))))
     class _VaultPacksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def install(self, spec):
+            """The owner fetches a pinned hub pack as its foreign publisher; code stays Candidate and hooks wait for consent."""
+            return json.loads(_translate(lambda: self._client.vault_packs_install(json.dumps(spec))))
+        def sync(self, spec):
+            """The owner syncs a hub pack at its stored ref policy; wider hooks keep their old bindings until re-consent."""
+            return json.loads(_translate(lambda: self._client.vault_packs_sync(json.dumps(spec))))
+        def get(self, spec):
+            """Reads an installed pack and its exact source, pin, publisher and requested powers as the owner."""
+            return json.loads(_translate(lambda: self._client.vault_packs_get(json.dumps(spec))))
+        @property
+        def hooks(self) -> "Oneiron._VaultPacksHooksVerbs":
+            return Oneiron._VaultPacksHooksVerbs(self._client)
         def put(self, spec):
             """The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks."""
             return json.loads(_translate(lambda: self._client.vault_packs_put(json.dumps(spec))))
@@ -875,6 +926,18 @@ class Oneiron:
         @property
         def setup(self) -> "Oneiron._VaultPacksSetupVerbs":
             return Oneiron._VaultPacksSetupVerbs(self._client)
+    class _VaultPacksHooksVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def bind(self, spec):
+            """The owner consents to the installed pack hook capabilities, including a widening update; publisher identity stays foreign."""
+            return json.loads(_translate(lambda: self._client.vault_packs_hooks_bind(json.dumps(spec))))
+        def list(self, spec=None):
+            """Reads live pack hook bindings as the owner, excluding revoked foreign publisher grants."""
+            return json.loads(_translate(lambda: self._client.vault_packs_hooks_list(json.dumps({} if spec is None else spec))))
+        def qualify(self, spec):
+            """The owner qualifies a Candidate hub hook pack by real sandbox replay; qualification does not consent to wider hooks."""
+            return json.loads(_translate(lambda: self._client.vault_packs_hooks_qualify(json.dumps(spec))))
     class _VaultPacksSetupVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -890,6 +953,27 @@ class Oneiron:
         def verify(self, spec):
             """Checks one pack connection with the engine's fixed read-only provider call for its declared check."""
             return json.loads(_translate(lambda: self._client.vault_packs_setup_verify(json.dumps(spec))))
+    class _VaultSkillsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def import_(self, spec):
+            """The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask."""
+            return json.loads(_translate(lambda: self._client.vault_skills_import(json.dumps(spec))))
+        def sync(self, spec):
+            """The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities."""
+            return json.loads(_translate(lambda: self._client.vault_skills_sync(json.dumps(spec))))
+        def receipts(self, spec):
+            """Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner."""
+            return json.loads(_translate(lambda: self._client.vault_skills_receipts(json.dumps(spec))))
+        @property
+        def permissions(self) -> "Oneiron._VaultSkillsPermissionsVerbs":
+            return Oneiron._VaultSkillsPermissionsVerbs(self._client)
+    class _VaultSkillsPermissionsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def approve(self, spec):
+            """The owner answers one imported skill permission ask at its exact hub source."""
+            return json.loads(_translate(lambda: self._client.vault_skills_permissions_approve(json.dumps(spec))))
     class _VaultConnectorsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

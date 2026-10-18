@@ -291,6 +291,86 @@ export_facade! {
     let output = client.vault_weave_owner_item_wrong(&input)?;
     crate::codec::lift_record("vault.weave.owner.item.wrong", &output)
 };
+"vault.skill_hubs.put" => fn vault_skill_hubs_put(&self, input: SkillHubPutRequest) -> SkillHubConfigured = |client| {
+    let input: oneiron::task_verb::sdk::SkillHubPutRequest = crate::codec::lower_record("vault.skill_hubs.put", input)?;
+    let output = client.vault_skill_hubs_put(&input)?;
+    crate::codec::lift_record("vault.skill_hubs.put", &output)
+};
+"vault.skill_hubs.get" => fn vault_skill_hubs_get(&self, input: SkillHubRequest) -> SkillHubRecord = |client| {
+    let input: oneiron::task_verb::sdk::SkillHubRequest = crate::codec::lower_record("vault.skill_hubs.get", input)?;
+    let output = client.vault_skill_hubs_get(&input)?;
+    crate::codec::lift_record("vault.skill_hubs.get", &output)
+};
+"vault.skill_hubs.publishers.admit" => fn vault_skill_hubs_publishers_admit(&self, input: SkillPublisherRequest) -> SkillPublisherAdmission = |client| {
+    let input: oneiron::task_verb::sdk::SkillPublisherRequest = crate::codec::lower_record("vault.skill_hubs.publishers.admit", input)?;
+    let output = client.vault_skill_hubs_publishers_admit(&input)?;
+    crate::codec::lift_record("vault.skill_hubs.publishers.admit", &output)
+};
+"vault.skill_hubs.publishers.revoke" => fn vault_skill_hubs_publishers_revoke(&self, input: SkillPublisherRequest) -> HubConsentReceipt = |client| {
+    let input: oneiron::task_verb::sdk::SkillPublisherRequest = crate::codec::lower_record("vault.skill_hubs.publishers.revoke", input)?;
+    let output = client.vault_skill_hubs_publishers_revoke(&input)?;
+    crate::codec::lift_record("vault.skill_hubs.publishers.revoke", &output)
+};
+"vault.skill_hubs.refs.get" => fn vault_skill_hubs_refs_get(&self, input: HubRefRequest) -> Option<TrackedHubRef> = |client| {
+    let input: oneiron::task_verb::sdk::HubRefRequest = crate::codec::lower_record("vault.skill_hubs.refs.get", input)?;
+    let output = client.vault_skill_hubs_refs_get(&input)?;
+    crate::codec::lift_record("vault.skill_hubs.refs.get", &output)
+};
+"vault.skill_hubs.refs.set" => fn vault_skill_hubs_refs_set(&self, input: HubRefSetRequest) -> TrackedHubRef = |client| {
+    let input: oneiron::task_verb::sdk::HubRefSetRequest = crate::codec::lower_record("vault.skill_hubs.refs.set", input)?;
+    let output = client.vault_skill_hubs_refs_set(&input)?;
+    crate::codec::lift_record("vault.skill_hubs.refs.set", &output)
+};
+"vault.packs.install" => fn vault_packs_install(&self, input: HubImportRequest) -> PackPutReceipt = |client| {
+    let input: oneiron::task_verb::sdk::HubImportRequest = crate::codec::lower_record("vault.packs.install", input)?;
+    let output = client.vault_packs_install(&input)?;
+    crate::codec::lift_record("vault.packs.install", &output)
+};
+"vault.packs.sync" => fn vault_packs_sync(&self, input: HubPackRequest) -> PackPutReceipt = |client| {
+    let input: oneiron::task_verb::sdk::HubPackRequest = crate::codec::lower_record("vault.packs.sync", input)?;
+    let output = client.vault_packs_sync(&input)?;
+    crate::codec::lift_record("vault.packs.sync", &output)
+};
+"vault.packs.get" => fn vault_packs_get(&self, input: HubPackRequest) -> Option<PackInstallReceipt> = |client| {
+    let input: oneiron::task_verb::sdk::HubPackRequest = crate::codec::lower_record("vault.packs.get", input)?;
+    let output = client.vault_packs_get(&input)?;
+    crate::codec::lift_record("vault.packs.get", &output)
+};
+"vault.skills.import" => fn vault_skills_import(&self, input: HubImportRequest) -> HubSkillImported = |client| {
+    let input: oneiron::task_verb::sdk::HubImportRequest = crate::codec::lower_record("vault.skills.import", input)?;
+    let output = client.vault_skills_import(&input)?;
+    crate::codec::lift_record("vault.skills.import", &output)
+};
+"vault.skills.sync" => fn vault_skills_sync(&self, input: HubSkillRequest) -> HubSkillSyncReceipt = |client| {
+    let input: oneiron::task_verb::sdk::HubSkillRequest = crate::codec::lower_record("vault.skills.sync", input)?;
+    let output = client.vault_skills_sync(&input)?;
+    crate::codec::lift_record("vault.skills.sync", &output)
+};
+"vault.skills.receipts" => fn vault_skills_receipts(&self, input: HubSkillRequest) -> HubSkillReceipts = |client| {
+    let input: oneiron::task_verb::sdk::HubSkillRequest = crate::codec::lower_record("vault.skills.receipts", input)?;
+    let output = client.vault_skills_receipts(&input)?;
+    crate::codec::lift_record("vault.skills.receipts", &output)
+};
+"vault.skills.permissions.approve" => fn vault_skills_permissions_approve(&self, input: HubSkillPermissionRequest) -> HubConsentReceipt = |client| {
+    let input: oneiron::task_verb::sdk::HubSkillPermissionRequest = crate::codec::lower_record("vault.skills.permissions.approve", input)?;
+    let output = client.vault_skills_permissions_approve(&input)?;
+    crate::codec::lift_record("vault.skills.permissions.approve", &output)
+};
+"vault.packs.hooks.bind" => fn vault_packs_hooks_bind(&self, input: HubHookBindRequest) -> Vec<String> = |client| {
+    let input: oneiron::task_verb::sdk::HubHookBindRequest = crate::codec::lower_record("vault.packs.hooks.bind", input)?;
+    let output = client.vault_packs_hooks_bind(&input)?;
+    crate::codec::lift_record("vault.packs.hooks.bind", &output)
+};
+"vault.packs.hooks.list" => fn vault_packs_hooks_list(&self) -> Vec<HubHookBindingRow> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.packs.hooks.list")?;
+    let output = client.vault_packs_hooks_list(&input)?;
+    crate::codec::lift_record("vault.packs.hooks.list", &output)
+};
+"vault.packs.hooks.qualify" => fn vault_packs_hooks_qualify(&self, input: HubHookQualifyRequest) -> HubHookQualificationReceipt = |client| {
+    let input: oneiron::task_verb::sdk::HubHookQualifyRequest = crate::codec::lower_record("vault.packs.hooks.qualify", input)?;
+    let output = client.vault_packs_hooks_qualify(&input)?;
+    crate::codec::lift_record("vault.packs.hooks.qualify", &output)
+};
 "vault.packs.put" => fn vault_packs_put(&self, input: PackPutRequest) -> PackPutReceipt = |client| {
     let input: oneiron::task_verb::sdk::PackPutRequest = crate::codec::lower_record("vault.packs.put", input)?;
     let output = client.vault_packs_put(&input)?;
