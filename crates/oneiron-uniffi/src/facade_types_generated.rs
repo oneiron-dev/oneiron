@@ -30792,6 +30792,8 @@ pub enum SelfEffect {
     TasksWait,
     #[serde(rename = "TasksRefuse")]
     TasksRefuse,
+    #[serde(rename = "ConsultResult")]
+    ConsultResult,
     #[serde(rename = "SkillsCall")]
     SkillsCall,
     #[serde(rename = "MemorySearch")]

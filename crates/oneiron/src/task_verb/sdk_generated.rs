@@ -4616,6 +4616,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::code_run::MemoryEdgeInput>(),
             ),
             (
+                "tasks.consult.result",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::run_doors::ConsultLandRequest,
+                >(),
+            ),
+            (
                 "self.leader.advice",
                 crate::code_run::vault_read::request_schema::<crate::code_run::LeaderAdviceInput>(),
             ),
