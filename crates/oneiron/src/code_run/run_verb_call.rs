@@ -9,7 +9,6 @@
 use super::{
     JS_SAFE_INTEGER, MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput,
     MemoryTimeRange, SelfCall, SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall,
-    SelfMemorySupersedeClaimCall,
 };
 use crate::task_verb::sdk::RunVerb;
 use crate::{ClaimCandidate, ClaimSubject, EdgeKind, EntityId, Error, Result, TimeRange};
@@ -84,11 +83,7 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
         }
         RunVerb::VaultClaimsSupersede => {
             let args: MemorySupersedeInput = decode(input)?;
-            SelfCall::MemorySupersedeClaim(SelfMemorySupersedeClaimCall::new(
-                EntityId::from_hex(&args.new_id)?,
-                EntityId::from_hex(&args.old_id)?,
-                js_time(args.now)?,
-            ))
+            SelfCall::MemorySupersedeClaim(args.into_call()?)
         }
         RunVerb::VaultEdgesPut => {
             let args: MemoryEdgeInput = decode(input)?;

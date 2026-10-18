@@ -7623,6 +7623,40 @@
       "section": false
     },
     {
+      "name": "vault.memory.signal_extraction",
+      "description": "Queues typed extraction of witnessed turns on the configured production Dreamer role; returns durable partition job refs, never caller-authored candidates.",
+      "input": "crate::memory::SignalExtractionRequest",
+      "output": "crate::memory::SignalExtractionTicket",
+      "call": "memory.signal_extraction_as_owner(&memory.embedded_owner(\"vault.memory.signal_extraction\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "host_door_session": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.memory.signal_extraction.result",
+      "description": "Reads extraction completion, accepted claims, generated prospective queries and parent-verified source ranges and MESSAGE revisions as the owner may read them.",
+      "input": "crate::memory::SignalExtractionResultRequest",
+      "output": "Option<crate::memory::SignalExtractionResult>",
+      "call": "memory.signal_extraction_result_as_owner(&memory.embedded_owner(\"vault.memory.signal_extraction.result\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "host_door_session": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.claims.seed",
       "description": "Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt.",
       "refs": [
@@ -7917,7 +7951,11 @@
       "output": "crate::code_run::MemoryWriteOutput",
       "scope": "Write",
       "context": "run",
-      "effect": "MemorySupersedeClaim"
+      "effect": "MemorySupersedeClaim",
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::MemorySupersedeInput>",
+        "description": "Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override."
+      }
     },
     {
       "name": "vault.edges.put",

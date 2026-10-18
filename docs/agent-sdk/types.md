@@ -1073,6 +1073,8 @@ class Oneiron:
         @property
         def consolidation(self) -> "Oneiron._VaultConsolidationVerbs": ...
         @property
+        def memory(self) -> "Oneiron._VaultMemoryVerbs": ...
+        @property
         def channel_identities(self) -> "Oneiron._VaultChannelIdentitiesVerbs": ...
         @property
         def delivery_window(self) -> "Oneiron._VaultDeliveryWindowVerbs": ...
@@ -1139,6 +1141,8 @@ class Oneiron:
             """Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides."""
         def seed(self, input: Facade.ScopedCommitRequest) -> list[Facade.CommitOutcome]:
             """Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt."""
+        def supersede(self, spec: Facade.LiveRunRequest[Facade.MemorySupersedeInput]) -> Facade.MemoryWriteOutput:
+            """Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override."""
     class _VaultExportVerbs:
         def __call__(self, format: PackFormat | None = None) -> dict[str, Any]: ...
         def scoped(self, spec: Facade.ScopedExportRequest) -> Facade.ScopedExport:
@@ -1934,6 +1938,14 @@ class Oneiron:
             """Enqueues one consolidation attempt and returns its durable job reference."""
         def status(self, spec: Facade.ConsolidationStatusRequest) -> Facade.DreamerAttemptView | None:
             """Reads the status of one consolidation attempt by its durable job reference."""
+    class _VaultMemoryVerbs:
+        @property
+        def signal_extraction(self) -> "Oneiron._VaultMemorySignalExtractionVerbs": ...
+    class _VaultMemorySignalExtractionVerbs:
+        def __call__(self, spec: Facade.SignalExtractionRequest) -> Facade.SignalExtractionTicket:
+            """Queues typed extraction of witnessed turns on the configured production Dreamer role; returns durable partition job refs, never caller-authored candidates."""
+        def result(self, spec: Facade.SignalExtractionResultRequest) -> Facade.SignalExtractionResult | None:
+            """Reads extraction completion, accepted claims, generated prospective queries and parent-verified source ranges and MESSAGE revisions as the owner may read them."""
     class _VaultChannelIdentitiesVerbs:
         def provision(self, spec: Facade.ChannelIdentityProvisionRequest) -> Facade.ChannelIdentityLifecycleReceipt:
             """Provision an engine-held channel address, handle or shared presence through the existing lifecycle gate."""

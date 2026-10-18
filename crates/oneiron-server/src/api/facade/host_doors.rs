@@ -64,6 +64,7 @@ pub(crate) use super::shared_policy_doors::*;
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
+pub(crate) use super::extraction_doors::*;
 pub(crate) use super::model_step_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
@@ -1092,6 +1093,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.widen_proposals.decline"
         | "vault.craft_candidates"
         | "vault.craft_candidates.answer"
+        | "vault.memory.signal_extraction"
+        | "vault.memory.signal_extraction.result"
         | "vault.claims.review"
         | "vault.claims.settle"
         | "vault.settings.wake_policy.set"
