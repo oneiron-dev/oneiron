@@ -311,6 +311,10 @@ both bindings and their export-census tests in one change.
 - `vault.claims.retract`
 - `vault.forget`
 - `vault.booking.page_token`
+- `vault.calendar.create`
+- `vault.calendar.ics.import`
+- `vault.calendar.occurrences`
+- `vault.calendar.instances.move`
 - `vault.calendar.read`
 - `vault.calendar.search`
 - `vault.calendar.freebusy`
