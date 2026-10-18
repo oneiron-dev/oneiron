@@ -822,3 +822,13 @@ both bindings and their export-census tests in one change.
 - `vault.runs.settle`
 - `vault.runs.settlement`
 - `vault.revert_run`
+- `vault.identity.merge`
+- `vault.identity.split`
+- `vault.identity.facet`
+- `vault.identity.assert_distinct`
+- `vault.identity.propose`
+- `vault.identity.undo`
+- `vault.identity.resolve`
+- `vault.identity.events.get`
+- `vault.identity.proposals.resolve`
+- `vault.identity.proposals.for_pair`

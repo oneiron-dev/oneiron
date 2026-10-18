@@ -84,6 +84,7 @@ mod hook_regen_doors;
 mod host_trigger_doors;
 pub(super) mod host_doors;
 mod hub_doors;
+mod identity_topology_doors;
 mod learning_doors;
 mod legal_hold_doors;
 mod lens_selection_doors;
