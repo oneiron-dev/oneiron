@@ -83,15 +83,17 @@ pub(super) fn op(op: &Op, inputs: &[&[u8]], ports: Ports<'_>) -> Result<Done, Co
             Ok(Done::reply(Reply::XlsxBook { book }))
         }
         Op::XlsxProject(args) => {
-            let bytes = project_xlsx(
+            let projection = project_xlsx(
                 input(inputs, args.source)?,
                 &args.changes,
                 args.limits.package(),
             )
             .map_err(xlsx)?;
             Ok(Done::with(
-                Reply::Written,
-                Output::new("workbook", XLSX_MEDIA_TYPE, bytes),
+                Reply::XlsxProjected {
+                    effects: projection.effects,
+                },
+                Output::new("workbook", XLSX_MEDIA_TYPE, projection.bytes),
             ))
         }
         Op::XlsxMarkFullCalc(args) => {

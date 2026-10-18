@@ -49,8 +49,8 @@ use crate::server::SyncServer;
 /// vault gets the owner's proof bound to their slip, which the engine
 /// rechecks in the acting writer; any other person gets their own proof from
 /// their verified human slip, and the engine's roster, power and role checks
-/// decide. A managed vault is owned through its supervisor and refuses, as
-/// `/v1/owner` does there. An invitee's own slip (FIX 1925) is a person's
+/// decide. On a managed vault only its owner, attested by its supervisor for
+/// the request, gets a proof, through the owner door; anyone else refuses. An invitee's own slip (FIX 1925) is a person's
 /// proof only at its invitation's doors (`auth::INVITEE_DOORS`).
 pub(super) fn person(
     server: &SyncServer,
