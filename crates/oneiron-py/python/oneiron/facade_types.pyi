@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 484 facade rows, 1827 declarations.
-Inputs: 435 of 484 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 430 of 484 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 487 facade rows, 1831 declarations.
+Inputs: 438 of 487 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 433 of 487 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 88; unread shapes: 0.
 """
 
@@ -9000,6 +9000,27 @@ class NoteHistoryView(TypedDict):
     operations: list[NoteAuthorship]
     shallow_since: list[int]
     complete: bool
+class NoteHistoryPurgeRequest(TypedDict):
+    note_ref: str
+class NoteHistoryPurgeReceipt(TypedDict):
+    receipt: str
+    entity: str
+    document: str
+    actor: NotRequired[str | None]
+    requested: list[int]
+    applied: list[int]
+    at: int
+    live_text_hash: list[int]
+class NoteHistoryPurgeOutcomeErased(TypedDict):
+    state: Literal["erased"]
+    receipt: NoteHistoryPurgeReceipt
+class NoteHistoryPurgeOutcomeWaiting(TypedDict):
+    state: Literal["waiting"]
+    note_ref: str
+    act_id: str
+NoteHistoryPurgeOutcome = NoteHistoryPurgeOutcomeErased | NoteHistoryPurgeOutcomeWaiting
+class NoteHistoryPurgeExecuteRequest(TypedDict):
+    act_id: str
 class NoteEditorBinding(TypedDict):
     binding: str
     note: NoteReadView
