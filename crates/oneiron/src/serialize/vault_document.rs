@@ -49,6 +49,10 @@ pub(crate) struct DocumentTail {
     pub(crate) secrets_included: bool,
     /// OF-370: the vault's embedding setup, when this export carries it.
     pub(crate) embedding_setup: Option<ExportEmbeddingSetup>,
+    /// The rows this export is derived from, as a host lists them beside it
+    /// (DEC-0005): each row the snapshot read past its locality, the ones it
+    /// carries, counts or folds into another section among them.
+    pub(crate) sources: Vec<EntityId>,
 }
 
 /// The whole-vault document as its rows are spooled.
@@ -481,6 +485,7 @@ impl<'v> DocumentWriter<'v> {
             WholeVaultExportReceipt {
                 manifest,
                 diary_reads: tail.diary_reads,
+                sources: tail.sources,
             },
         ))
     }

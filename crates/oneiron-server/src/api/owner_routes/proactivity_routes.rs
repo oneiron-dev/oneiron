@@ -46,7 +46,7 @@ use oneiron::failure_signals::CodeFixSource;
 use oneiron::memory::OutboundScheduleContext;
 use oneiron::self_heal::detector_pass::MAX_T3_FINDINGS;
 use oneiron::self_heal::distillation::{MintedRegistration, ReviewedFinding};
-use oneiron::skill_optimize::{OfferAnswer, OfferAnswerRecord, TrainingOffer};
+use oneiron::skill_optimize::{OfferAnswer, OfferAnswerRecord, OfferSwitchReceipt, TrainingOffer};
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
@@ -70,6 +70,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/representation/decline", post(decline_representation))
         .route("/coach/training-offers", get(training_offers))
         .route("/coach/training-offers/answer", post(answer_training_offer))
+        .route(
+            "/coach/training-offers/undo",
+            post(undo_training_offer_switch),
+        )
         .route("/coach/code-fixes", get(code_fixes))
         .route(
             "/coach/judge-asks/minutes",
@@ -421,6 +425,35 @@ async fn answer_training_offer(
     })
     .await?;
     Ok(Json(record))
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UndoTrainingOfferSwitch {
+    /// An offer id, as 32 hex.
+    offer: String,
+}
+
+/// `POST /v1/owner/coach/training-offers/undo`: the owner's undo of the
+/// stock switch an approved offer bound, while the seat still holds it.
+async fn undo_training_offer_switch(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<UndoTrainingOfferSwitch>, JsonRejection>,
+) -> OwnerReply<OfferSwitchReceipt> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let receipt = blocking(move || -> OwnerResult<OfferSwitchReceipt> {
+        let offer = entity_id("offer", &request.offer)?;
+        Ok(oneiron::skill_optimize::undo_training_offer_switch(
+            server.vault(),
+            &owner,
+            &offer,
+            now_secs(),
+        )?)
+    })
+    .await?;
+    Ok(Json(receipt))
 }
 
 #[derive(Debug, Serialize, Deserialize)]

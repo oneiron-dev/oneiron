@@ -10,6 +10,7 @@ use crate::Vault;
 use crate::authority::VerifiedSlip;
 use crate::claim::CallerLocality;
 use crate::edge::EdgeActorClass;
+use crate::entity_id::EntityId;
 use crate::memory::verify_actor_binding_in_txn;
 use crate::side_table::{self, Named, SideTable};
 use crate::write_envelope::WriteActor;
@@ -118,13 +119,14 @@ impl Memory<'_> {
     }
 
     /// [`Self::export`] written to `sink` as it is built (FIX 2766): a vault
-    /// larger than memory exports, and the archive is never held whole.
+    /// larger than memory exports, and the archive is never held whole. Its
+    /// source rows are listed as [`Self::export`] lists them.
     pub fn export_to<W: Read + Write + Seek>(
         &self,
         opts: &ExportOptions,
         sink: W,
     ) -> MemoryResult<MemoryExportReceipt> {
-        render_export_to(
+        let (receipt, sources) = render_export_to(
             self.vault,
             opts,
             &self.actor.to_hex(),
@@ -132,22 +134,28 @@ impl Memory<'_> {
             WriteActor::new(self.actor, EdgeActorClass::Human),
             |txn| self.export_admitted_in_txn(txn, None),
             sink,
-        )
+        )?;
+        self.produced_from(sources);
+        Ok(receipt)
     }
 
+    /// The export, its source rows listed as this surface lists its reads
+    /// ([`Memory::listing_producers`]).
     fn export_routed(
         &self,
         opts: &ExportOptions,
         proof: Option<&VerifiedSlip>,
     ) -> MemoryResult<MemoryExport> {
-        render_export(
+        let (export, sources) = render_export(
             self.vault,
             opts,
             &self.actor.to_hex(),
             self.locality,
             WriteActor::new(self.actor, EdgeActorClass::Human),
             |txn| self.export_admitted_in_txn(txn, proof),
-        )
+        )?;
+        self.produced_from(sources);
+        Ok(export)
     }
 
     /// Whether [`Self::export`], or [`Self::export_with_verified_owner`]
@@ -228,6 +236,20 @@ impl Vault {
         proof: &VerifiedSlip,
         locality: CallerLocality,
     ) -> MemoryResult<MemoryExport> {
+        self.export_with_verified_host_owner_listing(opts, proof, locality)
+            .map(|(export, _)| export)
+    }
+
+    /// [`Self::export_with_verified_host_owner`], beside the rows the
+    /// archive is derived from (DEC-0005): each row its snapshot read past
+    /// the caller's locality, whether the archive carries it, counts it or
+    /// folds it into another section. A refusal lists none.
+    pub fn export_with_verified_host_owner_listing(
+        &self,
+        opts: &ExportOptions,
+        proof: &VerifiedSlip,
+        locality: CallerLocality,
+    ) -> MemoryResult<(MemoryExport, Vec<EntityId>)> {
         // A host-root export reads diaries as the vault's owner (OF-490).
         let reader = WriteActor::new(
             crate::vault::embedded_owner_actor_id()?,
@@ -279,9 +301,10 @@ fn validate_verified_owner(
     Ok(())
 }
 
-/// One export in one frame, for a door that answers with the whole archive:
-/// built through a spool file under the vault's staging directory (FIX 2766)
-/// and read back whole only here.
+/// The export both owner paths render in one frame, for a door that answers
+/// with the whole archive, beside the rows its snapshot read: built through a
+/// spool file under the vault's staging directory (FIX 2766) and read back
+/// whole only here.
 fn render_export(
     vault: &Vault,
     opts: &ExportOptions,
@@ -289,17 +312,21 @@ fn render_export(
     locality: CallerLocality,
     reader: WriteActor,
     admit: impl FnOnce(&heed::RoTxn<'_>) -> MemoryResult<()>,
-) -> MemoryResult<MemoryExport> {
+) -> MemoryResult<(MemoryExport, Vec<EntityId>)> {
     let mut spool = vault.archive_spool_file()?;
-    let receipt = render_export_to(vault, opts, by, locality, reader, admit, &mut spool)?;
+    let (receipt, sources) =
+        render_export_to(vault, opts, by, locality, reader, admit, &mut spool)?;
     spool.seek(SeekFrom::Start(0)).map_err(crate::Error::from)?;
     let mut archive = Vec::new();
     spool.read_to_end(&mut archive).map_err(crate::Error::from)?;
-    Ok(MemoryExport {
-        format: receipt.format,
-        archive,
-        digest: receipt.digest,
-    })
+    Ok((
+        MemoryExport {
+            format: receipt.format,
+            archive,
+            digest: receipt.digest,
+        },
+        sources,
+    ))
 }
 
 /// One export written to `sink` as it is built (FIX 2766): the archive is
@@ -313,7 +340,7 @@ fn render_export_to<W: Read + Write + Seek>(
     reader: WriteActor,
     admit: impl FnOnce(&heed::RoTxn<'_>) -> MemoryResult<()>,
     sink: W,
-) -> MemoryResult<MemoryExportReceipt> {
+) -> MemoryResult<(MemoryExportReceipt, Vec<EntityId>)> {
     let name = opts.format.as_deref().unwrap_or(EXPORT_TARGET_ARCHIVE);
     let include_secrets = opts.include_secrets.unwrap_or(true);
     let (mut sink, export) = match name {
@@ -355,11 +382,14 @@ fn render_export_to<W: Read + Write + Seek>(
     }) {
         tracing::warn!(%error, "whole-vault export served without its receipt");
     }
-    Ok(MemoryExportReceipt {
-        format,
-        bytes,
-        digest,
-    })
+    Ok((
+        MemoryExportReceipt {
+            format,
+            bytes,
+            digest,
+        },
+        export.sources,
+    ))
 }
 
 /// The length and BLAKE3 of what `sink` holds, read back from its start.

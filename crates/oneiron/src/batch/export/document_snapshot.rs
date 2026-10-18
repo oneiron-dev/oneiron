@@ -183,6 +183,7 @@ impl Vault {
             bytes,
             manifest: receipt.manifest,
             diary_reads: receipt.diary_reads,
+            sources: receipt.sources,
         })
     }
 
@@ -228,10 +229,16 @@ impl Vault {
         .collect::<Result<BTreeSet<_>>>()?;
         let mut writer =
             DocumentWriter::new(self, cut, scope == ExportScope::WholeVault, adapters, agent_ids)?;
+        // Every row read past the locality filter below: a row the archive
+        // carries, a custody record it carries as a value or a handle, a
+        // diary it carries or counts as held, and a receipt source, pack
+        // source or skill source carrier another section is folded from.
+        let mut sources = BTreeSet::new();
         // A run names no world, so a caller off this device gets no run's
         // results: none of a device-local world's may leave it (DEC-0005).
+        // Each run whose results go with it is a source, on this device only.
         if locality == CallerLocality::OnDevice && only.is_none() && cut == ExportCut::Archive {
-            self.export_run_results_in_txn(&rtxn, &mut writer)?;
+            sources.extend(self.export_run_results_in_txn(&rtxn, &mut writer)?);
         }
         let device_only = crate::settings::device_local_worlds_at(self, &rtxn, locality)?;
         let mut included = BTreeSet::new();
@@ -280,6 +287,7 @@ impl Vault {
                         locality == CallerLocality::OnDevice,
                         include_secrets,
                     )? {
+                        sources.insert(id);
                         writer.secret(&secret)?;
                     }
                 }
@@ -294,6 +302,7 @@ impl Vault {
             {
                 continue;
             }
+            sources.insert(id);
             if header.entity_type == crate::registry::ENTITY_TYPE_ASSET
                 && crate::receipt::is_receipt_archive_source(&raw[ENTITY_METADATA_HEADER_LEN..])
             {
@@ -471,6 +480,7 @@ impl Vault {
                 })? {
                     continue;
                 }
+                sources.insert(session);
                 writer.epoch_floor(&super::ExportEpochFloor {
                     session: session.to_hex(),
                     epoch,
@@ -505,6 +515,7 @@ impl Vault {
                         && only.is_none()
                         && cut == ExportCut::Archive,
                     embedding_setup,
+                    sources: sources.into_iter().collect(),
                 },
                 sink,
             )
@@ -519,11 +530,13 @@ impl Vault {
     /// of the same bytes neither clears it nor ships its body for it. A body
     /// no row holds any longer is withheld as absent. Each body goes to the
     /// writer as it is read.
+    /// Returns the runs whose results it wrote.
     fn export_run_results_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
         writer: &mut DocumentWriter<'_>,
-    ) -> Result<()> {
+    ) -> Result<Vec<EntityId>> {
+        let mut runs = Vec::new();
         let mut bodies = BTreeSet::new();
         for (run_id, outputs) in self.code_run_result_manifests_in_txn(rtxn)? {
             let mut occurrences = Vec::with_capacity(outputs.len());
@@ -561,8 +574,9 @@ impl Vault {
                 outputs: occurrences,
                 receipts,
             })?;
+            runs.push(run_id);
         }
-        Ok(())
+        Ok(runs)
     }
 }
 
