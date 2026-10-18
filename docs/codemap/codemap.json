@@ -48898,7 +48898,7 @@
      "path": "src/task_verb/comm_widen.rs",
      "purpose": "FIX 1380 phase 2: a comm refusal raises the one widen ask to the parent",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -49609,7 +49609,7 @@
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
       "enum": 1,
-      "fn": 12,
+      "fn": 13,
       "re-export": 44,
       "struct": 36
      }
@@ -71942,7 +71942,7 @@
      "path": "src/builtin_host/webhooks.rs",
      "purpose": "The provider webhooks of the served built-in channels (OF-519)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
