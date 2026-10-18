@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 316 facade rows, 1272 declarations.
-Inputs: 273 of 316 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 273 of 316 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 318 facade rows, 1279 declarations.
+Inputs: 275 of 318 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 275 of 318 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 73; unread shapes: 0.
 """
 
@@ -514,7 +514,7 @@ class ShapePlanSummary(TypedDict):
     ceremonies: int
     no_door: int
 ShapeReachVerdict = Literal["can", "asks"]
-ShapeReachFact = TypedDict("ShapeReachFact", {"actor": str, "actor_name": NotRequired[str | None], "verb": str, "channel": str, "sender": str, "identity": str, "class": NotRequired[str | None], "audience": NotRequired[list[str]], "verdict": ShapeReachVerdict})
+ShapeReachFact = TypedDict("ShapeReachFact", {"actor": str, "actor_name": NotRequired[str | None], "verb": str, "channel": str, "sender": str, "identity": str, "class": NotRequired[str | None], "audience": NotRequired[list[str]], "audience_names": NotRequired[list[str]], "verdict": ShapeReachVerdict})
 class ShapeReach(TypedDict):
     facts: list[ShapeReachFact]
 class ShapePlanReach(TypedDict):
@@ -6779,6 +6779,27 @@ NoteLifecycleStatus = Literal["active", "sealed", "archived", "tombstoned"]
 class NoteLifecycleView(TypedDict):
     status: NoteLifecycleStatus
     seal: NotRequired[NoteSeal | None]
+ExtractionDefault = Literal["allowed", "after_seal", "private_strategy_only", "disabled"]
+ContextDefault = Literal["owner_only", "relationship_scoped", "vault_readable", "explicit_only"]
+RetentionDefault = Literal["durable", "session_sealed", "archive_after_days"]
+class NoteOverrides(TypedDict):
+    extraction: NotRequired[ExtractionDefault | None]
+    context: NotRequired[ContextDefault | None]
+    retention: NotRequired[RetentionDefault | None]
+    archive_after_days: NotRequired[int | None]
+class SetNoteOverridesRequest(TypedDict):
+    note_ref: str
+    overrides: NotRequired[NoteOverrides]
+class NoteKindDescriptor(TypedDict):
+    pack: str
+    kind: str
+    extraction: ExtractionDefault
+    context: ContextDefault
+    retention: RetentionDefault
+    archive_after_days: NotRequired[int | None]
+class NoteDefaultsView(TypedDict):
+    overrides: NoteOverrides
+    defaults: NoteKindDescriptor
 class GeneratedUiStatePatchAdd(TypedDict):
     op: Literal["add"]
     path: str

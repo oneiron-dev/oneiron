@@ -1,6 +1,8 @@
-//! Lossless bounded PDF preparation and shared field presentation.
+//! Lossless PDF preparation and shared field presentation.
 //! Unsafe dynamic or ambiguous visual constructs fail closed. Only the native
 //! seal engine signs these bytes; ordinary compressed PDF structures are retained.
+//! No document size, page count or object count refuses a preparation (Rule
+//! 5): the bounds left are the codec's and the format's, below.
 use super::model::*;
 use lopdf::content::{Content, Operation};
 use lopdf::{Dictionary, Document, LoadOptions, Object, ObjectId, Stream, dictionary};
@@ -23,19 +25,32 @@ pub(crate) use streams::decode_stream;
 
 use evidence::{certificate, evidence};
 use fields::burn_fields;
-use source::{VisualCopy, check_content, page_content, pages, pdf_box, reject_signatures};
+use source::{PageContents, VisualCopy, pages, pdf_box, reject_signatures};
 
-const MAX_INPUT: usize = 16 * 1024 * 1024;
-const MAX_OUTPUT: usize = 64 * 1024 * 1024;
-const MAX_OBJECTS: usize = 50_000;
-const MAX_PAGES: usize = 1000;
-const MAX_NODES: usize = 500_000;
+/// The most one PDF stream decodes to: a decompression-bomb guard, held per
+/// stream and never summed over a page or a document (Rule 5). An unfiltered
+/// stream runs no codec and is read whole.
+const STREAM_DECODE_BYTES: usize = 64 * 1024 * 1024;
+// The name the render tests size an expansion bomb by: one stream past the
+// per-stream bound.
+#[cfg(test)]
+use self::STREAM_DECODE_BYTES as MAX_INPUT;
+/// The most indirect objects one PDF file holds: ISO 32000-1 Annex C,
+/// section C.2, Table C.1 (8,388,607).
+const MAX_INDIRECT_OBJECTS: usize = 8_388_607;
+/// The most bytes a prepared PDF spans: lopdf's writer records each object's
+/// byte offset as a `u32` (its xref entry), so an object past 4 GiB could not
+/// be addressed. The classic xref table's ten-digit offset (ISO 32000-1
+/// section 7.5.4) reaches further, so the codec's width binds.
+const MAX_PDF_BYTES: usize = u32::MAX as usize;
 type Result<T> = std::result::Result<T, PdfPreparationError>;
 
 /// Refusals are preparation failures, never a successful unsigned seal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum PdfPreparationError {
-    #[error("PDF preparation resource limit")]
+    /// Past a codec or format bound: a stream's decode bound, the format's
+    /// object count or the writer's offset width.
+    #[error("PDF past a codec or format bound")]
     Limit,
     #[error("malformed PDF")]
     MalformedPdf,
@@ -139,9 +154,6 @@ pub fn render_field_geometry(g: &FieldGeometry, crop: [f64; 4]) -> Result<PdfFie
 /// chain is checked and replayed; its projection must equal the supplied state.
 /// No I/O, clock, network, key custody or PAdES signing occurs here.
 pub fn prepare_esign_pdf(original: &[u8], request: PdfPreparation<'_>) -> Result<PreparedEsignPdf> {
-    if original.is_empty() || original.len() > MAX_INPUT {
-        return Err(PdfPreparationError::Limit);
-    }
     if !original.starts_with(b"%PDF-") {
         return Err(PdfPreparationError::MalformedPdf);
     }
@@ -196,12 +208,14 @@ pub fn prepare_esign_pdf(original: &[u8], request: PdfPreparation<'_>) -> Result
         source: &source,
         ids: BTreeMap::new(),
         active: BTreeSet::new(),
-        nodes: 0,
-        bytes: 0,
     };
     let mut kids = Vec::new();
     let mut images = fields::BurnImages::default();
-    let mut total_content = 0;
+    let mut contents = PageContents::default();
+    let mut annotation_arrays = BTreeSet::new();
+    // Every page's content opens inside this one shared stream; the page's
+    // own streams follow it by reference, and its closing stream ends it.
+    let open = out.add_object(Stream::new(Dictionary::new(), b"q\n".to_vec()));
     for (index, page) in input_pages.iter().enumerate() {
         let media = pdf_box(
             &source,
@@ -210,15 +224,10 @@ pub fn prepare_esign_pdf(original: &[u8], request: PdfPreparation<'_>) -> Result
         )?;
         let geometry = source::page_geometry(&source, page)?;
         let crop = geometry.crop;
-        let mut content = Vec::new();
-        if let Some(value) = page.get(b"Contents".as_slice()) {
-            page_content(&source, value, &mut content, 0, &mut 0)?;
-        }
-        total_content += content.len();
-        if total_content > MAX_INPUT {
-            return Err(PdfPreparationError::Limit);
-        }
-        check_content(&content)?;
+        let streams = match page.get(b"Contents".as_slice()) {
+            Some(value) => contents.admit(&source, value)?,
+            None => Vec::new(),
+        };
         let mut resources = match page.get(b"Resources".as_slice()) {
             Some(v) => copier.resources(&mut out, v, 0)?,
             None => Dictionary::new(),
@@ -226,6 +235,7 @@ pub fn prepare_esign_pdf(original: &[u8], request: PdfPreparation<'_>) -> Result
         let mut ops = appearance::flatten(
             &source,
             page.get(b"Annots".as_slice()),
+            &mut annotation_arrays,
             &mut copier,
             &mut out,
             &mut resources,
@@ -242,14 +252,19 @@ pub fn prepare_esign_pdf(original: &[u8], request: PdfPreparation<'_>) -> Result
             &mut images,
         )?);
         fields::op(&mut ops, "Q", &[]);
-        let mut flattened = b"q\n".to_vec();
-        flattened.extend(content);
-        flattened.extend(b"\nQ\nn\n");
-        flattened.extend(Content { operations: ops }.encode()?);
-        let stream = out.add_object(Stream::new(Dictionary::new(), flattened));
+        // The page's own streams are copied as they are, compression kept, and
+        // named in order: content shared by many pages is written once
+        // (ISO 32000-1 section 7.8.2 reads the array as one stream).
+        let mut page_streams = vec![Object::Reference(open)];
+        for id in streams {
+            page_streams.push(copier.copy(&mut out, &Object::Reference(id), 0)?);
+        }
+        let mut close = b"\nQ\nn\n".to_vec();
+        close.extend(Content { operations: ops }.encode()?);
+        page_streams.push(out.add_object(Stream::new(Dictionary::new(), close)).into());
         let mut new_page = dictionary! { "Type" => "Page", "Parent" => parent,
         "MediaBox" => media.iter().map(|v| Object::Real(*v as f32)).collect::<Vec<_>>(),
-        "CropBox" => crop.iter().map(|v| Object::Real(*v as f32)).collect::<Vec<_>>(), "Resources" => resources, "Contents" => stream };
+        "CropBox" => crop.iter().map(|v| Object::Real(*v as f32)).collect::<Vec<_>>(), "Resources" => resources, "Contents" => page_streams };
         new_page.set("Rotate", i64::from(geometry.rotation));
         new_page.set("UserUnit", Object::Real(geometry.user_unit as f32));
         for key in [b"Group".as_slice(), b"TrimBox", b"BleedBox", b"ArtBox"] {
@@ -276,7 +291,7 @@ pub fn prepare_esign_pdf(original: &[u8], request: PdfPreparation<'_>) -> Result
     }
     let root = out.add_object(catalog_out);
     out.trailer.set("Root", root);
-    if out.objects.len() > MAX_OBJECTS {
+    if out.objects.len() > MAX_INDIRECT_OBJECTS {
         return Err(PdfPreparationError::Limit);
     }
     let mut writer = BoundedOutput(Vec::new());
@@ -292,9 +307,6 @@ pub fn prepare_esign_pdf(original: &[u8], request: PdfPreparation<'_>) -> Result
 }
 /// Read actual inherited page boxes/rotation for editor and signing overlays.
 pub fn inspect_pdf_pages(bytes: &[u8]) -> Result<Vec<PageGeometry>> {
-    if bytes.is_empty() || bytes.len() > MAX_INPUT {
-        return Err(PdfPreparationError::Limit);
-    }
     let source = preflight::load(bytes)?;
     reject_signatures(&source)?;
     let mut input = Vec::new();
@@ -319,8 +331,9 @@ pub fn inspect_pdf_pages(bytes: &[u8]) -> Result<Vec<PageGeometry>> {
 /// page tree nests (ISO 32000-1 section 7.7.3.2).
 const PAGE_TREE_FANOUT: usize = 8191;
 /// Hangs `kids` (every page, in order, each made with `root` as its parent)
-/// under `root`, nesting intermediate nodes when they outgrow one node.
-fn page_tree(out: &mut Document, root: ObjectId, kids: Vec<Object>) -> Result<()> {
+/// under `root`, nesting intermediate nodes when they outgrow one node. The
+/// template layout hangs its pages here too.
+pub(super) fn page_tree(out: &mut Document, root: ObjectId, kids: Vec<Object>) -> Result<()> {
     let total = kids.len() as i64;
     let mut level: Vec<(Object, i64)> = kids.into_iter().map(|kid| (kid, 1)).collect();
     while level.len() > PAGE_TREE_FANOUT {
@@ -350,11 +363,13 @@ fn page_tree(out: &mut Document, root: ObjectId, kids: Vec<Object>) -> Result<()
     );
     Ok(())
 }
+/// The prepared PDF as it is written, held to [`MAX_PDF_BYTES`], the
+/// writer's offset width.
 struct BoundedOutput(Vec<u8>);
 impl std::io::Write for BoundedOutput {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        if bytes.len() > MAX_OUTPUT.saturating_sub(self.0.len()) {
-            return Err(std::io::Error::other("PDF output limit"));
+        if bytes.len() > MAX_PDF_BYTES.saturating_sub(self.0.len()) {
+            return Err(std::io::Error::other("PDF offset width"));
         }
         self.0.extend_from_slice(bytes);
         Ok(bytes.len())

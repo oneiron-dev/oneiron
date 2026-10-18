@@ -691,7 +691,7 @@ impl VoiceCascadeSession {
     }
 
     /// The session's audience now, after a bound session records the entry
-    /// of each speaker its roster could not place.
+    /// of each speaker its room's members do not cover.
     fn read_audience(&self) -> Result<InterlocutorSet> {
         self.enter_bound_speakers();
         self.resolve_audience()
@@ -709,28 +709,28 @@ impl VoiceCascadeSession {
         }
     }
 
+    /// A bound session records its live speakers' entries. A failure is
+    /// logged, not returned: the entry it left missing holds the room's
+    /// reads, typed, until a later read records it (FIX 1388/1389 C2).
     fn enter_bound_speakers(&self) {
         if let Some(bound) = &self.config.container
-            && let Err(error) = self.enter_unplaced_speakers(bound)
+            && let Err(error) = self.enter_live_speakers(bound)
         {
             tracing::warn!(%error, "voice: a speaker's entry was not recorded");
         }
     }
 
-    /// Each speaker the session's stored roster could not place enters the
-    /// bound container, keyed by the capture's speaker key under the
-    /// roster's revision, and its owner is asked who it is, once. A speaker
-    /// already entered replays its entry.
-    fn enter_unplaced_speakers(&self, bound: &VoiceContainerBinding) -> Result<()> {
+    /// Each speaker of the session's stored roster the bound room's members
+    /// do not cover enters the room, keyed by the capture's speaker key under
+    /// the roster's revision; one it could not place has its owner asked who
+    /// it is, once. A speaker already entered replays its entry.
+    fn enter_live_speakers(&self, bound: &VoiceContainerBinding) -> Result<()> {
         let Some(roster_ref) = self.config.interlocutors.voice_session_ref.as_deref() else {
             return Ok(());
         };
         let Some(roster) = self.vault.voice_session_roster(roster_ref)? else {
             return Ok(());
         };
-        if roster.unplaced_speakers().is_empty() {
-            return Ok(());
-        }
         let until = self
             .vault
             .now_recorded_at()

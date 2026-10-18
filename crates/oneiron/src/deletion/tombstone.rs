@@ -385,7 +385,8 @@ pub(crate) fn stage_engine_row_hard_erasure_in_txn(
 /// [`stage_engine_row_hard_erasure_in_txn`] in the window labelled `window`.
 /// A world's key pads go this way when the world is erased (fix 7), each in
 /// its world's window of the month it was learned; the erase door publishes
-/// theirs once it commits (FIX 343).
+/// theirs once it commits (FIX 343), and a batch's transaction owner once the
+/// batch commits (FIX 3334).
 pub(crate) fn stage_engine_row_hard_erasure_at_in_txn(
     store: &crate::store::Store,
     wtxn: &mut heed::RwTxn<'_>,

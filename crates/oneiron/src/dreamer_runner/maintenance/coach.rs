@@ -690,6 +690,7 @@ pub(super) fn run_training_offers(vault: &Vault, now: u64) -> Result<()> {
         Ok(())
     })?;
     crate::task_verb::issue_training_offer_asks(vault, now);
+    crate::task_verb::issue_training_swap_asks(vault, now);
     Ok(())
 }
 

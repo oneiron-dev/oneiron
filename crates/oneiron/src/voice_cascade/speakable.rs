@@ -37,7 +37,7 @@ pub(super) fn first_piece(text: &str, max_bytes: usize) -> usize {
 
 /// `text` as its pieces within `max_bytes`, in order. A piece that is only
 /// whitespace says nothing and is dropped.
-pub(super) fn pieces(text: &str, max_bytes: usize) -> Vec<&str> {
+pub fn pieces(text: &str, max_bytes: usize) -> Vec<&str> {
     let mut pieces = Vec::new();
     let mut rest = text;
     while !rest.is_empty() {

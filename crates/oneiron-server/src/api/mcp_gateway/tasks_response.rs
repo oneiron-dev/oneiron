@@ -1253,6 +1253,8 @@ fn mcp_agent_verb_input(
         "vault.notes.edit" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.seal" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.lifecycle" => a.spec.clone().ok_or_else(invalid),
+        "vault.notes.set_overrides" => a.spec.clone().ok_or_else(invalid),
+        "vault.notes.defaults" => a.spec.clone().ok_or_else(invalid),
         _ => Err(invalid()),
     }
 }
@@ -2305,6 +2307,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.notes.lifecycle" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.notes.set_overrides" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.notes.defaults" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         _ => return Err(invalid()),
@@ -6467,6 +6475,22 @@ async fn execute_agent_verb_row(
             let input: oneiron::note::NoteRefRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_notes_lifecycle(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.notes.set_overrides" => {
+            let input: oneiron::note::SetNoteOverridesRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_notes_set_overrides(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.notes.defaults" => {
+            let input: oneiron::note::NoteRefRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_notes_defaults(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

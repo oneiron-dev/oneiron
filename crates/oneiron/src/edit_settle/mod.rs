@@ -115,6 +115,7 @@ pub use pending::{
 pub use stranded::StrandedEditProposal;
 pub use undo::{KeepUndo, KeepUndoOutcome};
 
+pub(crate) use self::codec::archive_settlement_table;
 pub use self::keys::{
     SETTLE_VERB_CLASS, SETTLED_ANCHOR_KEYS, SETTLEMENT_RECORD_KEYS, SETTLEMENT_SCHEMA_VERSION,
 };

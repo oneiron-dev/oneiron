@@ -153,18 +153,29 @@ pub(crate) fn resolve_core_interlocutor_set(
         voice_session_ref,
     };
     let read_rosters = read.is_unnarrowed_owner();
-    vault
-        .resolve_interlocutors_under(&input, read, read_rosters)
-        .map(Some)
-        .map_err(|error| {
-            tracing::error!(error = %error, "core context-pack interlocutor resolution failed");
-            core_engine_error("core context-pack interlocutor resolution failed", error)
-        })
+    // A room read resolves its roster through the room's entries, and meets
+    // every speaker of a call live in the room, named or not (FIX 1388 C1).
+    match room {
+        Some(room) => vault
+            .resolve_interlocutors_in_room_under(&input, read, read_rosters, room.room)
+            .map(|set| room.live.merged_into(set)),
+        None => vault.resolve_interlocutors_under(&input, read, read_rosters),
+    }
+    .map(Some)
+    .map_err(|error| {
+        tracing::error!(error = %error, "core context-pack interlocutor resolution failed");
+        core_engine_error("core context-pack interlocutor resolution failed", error)
+    })
 }
 
 /// A room read's audience: every member but the room's proven reader,
 /// each as the room meet sees it, resolved in one snapshot.
 pub(crate) struct RoomAudience {
+    /// The room, as the caller was proven to read it.
+    pub(crate) room: oneiron::EntityId,
+    /// Its live voice calls' speakers, read in the same snapshot as its
+    /// members (FIX 1388/1389 C1).
+    pub(crate) live: oneiron::conversation::RoomLiveSpeakerEntries,
     /// The member the caller is proven to read the room as: the vault
     /// owner (see [`bound_room_owner`]) or one of the vault's own agents
     /// reading on its own credential.
@@ -180,6 +191,7 @@ impl RoomAudience {
         vault: &oneiron::Vault,
         auth: &CoreAuth,
         members: &[oneiron::EntityId],
+        live: oneiron::conversation::RoomLiveSpeakerEntries,
     ) -> Result<Self, ApiError> {
         let parties = vault
             .room_parties(members)
@@ -187,6 +199,8 @@ impl RoomAudience {
         let owner = bound_room_owner(vault, auth, members)?;
         let reader = owner.or_else(|| own_agent_reader(auth, members, &parties));
         Ok(Self {
+            room: live.room(),
+            live,
             reader,
             owner_reads: owner.is_some(),
             others: members
