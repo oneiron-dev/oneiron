@@ -141,6 +141,10 @@ pub enum AgentVerb {
     VaultResidencePrune,
     VaultRecordsErasePreview,
     VaultRecordsEraseConfirm,
+    VaultResearchCreateChild,
+    VaultResearchArchive,
+    VaultEvalsInventory,
+    VaultEvalsCohortsSetup,
     VaultResearchBind,
     VaultResearchFork,
     VaultResearchWeave,
@@ -610,6 +614,10 @@ impl AgentVerb {
         Self::VaultResidencePrune,
         Self::VaultRecordsErasePreview,
         Self::VaultRecordsEraseConfirm,
+        Self::VaultResearchCreateChild,
+        Self::VaultResearchArchive,
+        Self::VaultEvalsInventory,
+        Self::VaultEvalsCohortsSetup,
         Self::VaultResearchBind,
         Self::VaultResearchFork,
         Self::VaultResearchWeave,
@@ -1082,6 +1090,10 @@ impl AgentVerb {
             Self::VaultResidencePrune => "vault.residence.prune",
             Self::VaultRecordsErasePreview => "vault.records.erase_preview",
             Self::VaultRecordsEraseConfirm => "vault.records.erase_confirm",
+            Self::VaultResearchCreateChild => "vault.research.create_child",
+            Self::VaultResearchArchive => "vault.research.archive",
+            Self::VaultEvalsInventory => "vault.evals.inventory",
+            Self::VaultEvalsCohortsSetup => "vault.evals.cohorts.setup",
             Self::VaultResearchBind => "vault.research.bind",
             Self::VaultResearchFork => "vault.research.fork",
             Self::VaultResearchWeave => "vault.research.weave",
@@ -1558,6 +1570,10 @@ impl AgentVerb {
                 | Self::VaultResidencePrune
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
+                | Self::VaultResearchCreateChild
+                | Self::VaultResearchArchive
+                | Self::VaultEvalsInventory
+                | Self::VaultEvalsCohortsSetup
                 | Self::VaultResearchBind
                 | Self::VaultResearchFork
                 | Self::VaultResearchWeave
@@ -2034,6 +2050,10 @@ impl AgentVerb {
                 | Self::VaultResidencePrune
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
+                | Self::VaultResearchCreateChild
+                | Self::VaultResearchArchive
+                | Self::VaultEvalsInventory
+                | Self::VaultEvalsCohortsSetup
                 | Self::VaultResearchBind
                 | Self::VaultResearchFork
                 | Self::VaultResearchWeave
@@ -2551,6 +2571,10 @@ impl AgentVerb {
                 | Self::VaultResidencePrune
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
+                | Self::VaultResearchCreateChild
+                | Self::VaultResearchArchive
+                | Self::VaultEvalsInventory
+                | Self::VaultEvalsCohortsSetup
                 | Self::VaultResearchBind
                 | Self::VaultResearchFork
                 | Self::VaultResearchWeave
@@ -2950,6 +2974,8 @@ impl AgentVerb {
                 | Self::VaultResidencePrune
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
+                | Self::VaultResearchCreateChild
+                | Self::VaultEvalsCohortsSetup
                 | Self::VaultResearchBind
                 | Self::VaultResearchFork
                 | Self::VaultResearchWeave
@@ -3315,6 +3341,10 @@ impl AgentVerb {
             Self::VaultResidencePrune => &["spec"],
             Self::VaultRecordsErasePreview => &["spec"],
             Self::VaultRecordsEraseConfirm => &["spec"],
+            Self::VaultResearchCreateChild => &["spec"],
+            Self::VaultResearchArchive => &["spec"],
+            Self::VaultEvalsInventory => &["spec"],
+            Self::VaultEvalsCohortsSetup => &["spec"],
             Self::VaultResearchBind => &["spec"],
             Self::VaultResearchFork => &["spec"],
             Self::VaultResearchWeave => &["spec"],
@@ -3785,6 +3815,10 @@ impl AgentVerb {
             Self::VaultResidencePrune => &["spec"],
             Self::VaultRecordsErasePreview => &["spec"],
             Self::VaultRecordsEraseConfirm => &["spec"],
+            Self::VaultResearchCreateChild => &["spec"],
+            Self::VaultResearchArchive => &["spec"],
+            Self::VaultEvalsInventory => &["spec"],
+            Self::VaultEvalsCohortsSetup => &["spec"],
             Self::VaultResearchBind => &["spec"],
             Self::VaultResearchFork => &["spec"],
             Self::VaultResearchWeave => &["spec"],
@@ -4511,6 +4545,18 @@ impl AgentVerb {
             }
             Self::VaultRecordsEraseConfirm => {
                 "Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead."
+            }
+            Self::VaultResearchCreateChild => {
+                "The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave."
+            }
+            Self::VaultResearchArchive => {
+                "Reads the complete retained campaign record, including every pruned, buggy and woven candidate, original search and held-out evidence, selection rounds and promotion receipts, under the controller gate."
+            }
+            Self::VaultEvalsInventory => {
+                "The owner reads the metadata-only eval-authoring inventory: real receipt families, grounded case candidates, date-cut cohorts and exposure counts. Pin its built_at and digest for cohort setup."
+            }
+            Self::VaultEvalsCohortsSetup => {
+                "The owner sets up sealed cohorts from a pinned real inventory through the existing family, case and audited cut doors. Reports refused decisions; never serves sealed content or fabricates labels or skill provenance."
             }
             Self::VaultResearchBind => {
                 "Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it."

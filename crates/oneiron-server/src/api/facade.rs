@@ -33,6 +33,7 @@ mod budget_doors;
 mod call_context;
 mod calendar_doors;
 mod campaign_split_doors;
+mod research_doors;
 mod channel_doors;
 mod claim_settle_doors;
 mod connector_call_doors;

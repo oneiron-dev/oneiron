@@ -702,6 +702,29 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.research.create_child",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResearchChildWire,
+                >(),
+            ),
+            (
+                "vault.research.archive",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResearchArchiveWire,
+                >(),
+            ),
+            (
+                "vault.evals.inventory",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::EvalInventoryWire,
+                >(),
+            ),
+            (
+                "vault.evals.cohorts.setup",
+                crate::code_run::vault_read::request_schema::<crate::skill_optimize::EvalCohortSetup>(
+                ),
+            ),
+            (
                 "vault.research.bind",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ResearchBindWire,
@@ -3491,6 +3514,34 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.research.create_child" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.research.archive" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.evals.inventory" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.evals.cohorts.setup" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.research.bind" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -5940,6 +5991,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.records.erase_confirm" => {
             let _input: crate::task_verb::sdk::RecordEraseConfirmRequest = decode(value.clone())?;
         }
+        "vault.research.create_child" => {
+            let _input: crate::task_verb::sdk::ResearchChildWire = decode(value.clone())?;
+        }
+        "vault.research.archive" => {
+            let _input: crate::task_verb::sdk::ResearchArchiveWire = decode(value.clone())?;
+        }
+        "vault.evals.inventory" => {
+            let _input: crate::task_verb::sdk::EvalInventoryWire = decode(value.clone())?;
+        }
+        "vault.evals.cohorts.setup" => {
+            let _input: crate::skill_optimize::EvalCohortSetup = decode(value.clone())?;
+        }
         "vault.research.bind" => {
             let _input: crate::task_verb::sdk::ResearchBindWire = decode(value.clone())?;
         }
@@ -7206,6 +7269,12 @@ pub fn invoke(
         "vault.records.erase_confirm" => {
             encode(vault_records_erase_confirm(memory, decode(value)?)?)
         }
+        "vault.research.create_child" => {
+            encode(vault_research_create_child(memory, decode(value)?)?)
+        }
+        "vault.research.archive" => encode(vault_research_archive(memory, decode(value)?)?),
+        "vault.evals.inventory" => encode(vault_evals_inventory(memory, decode(value)?)?),
+        "vault.evals.cohorts.setup" => encode(vault_evals_cohorts_setup(memory, decode(value)?)?),
         "vault.research.bind" => encode(vault_research_bind(memory, decode(value)?)?),
         "vault.research.fork" => encode(vault_research_fork(memory, decode(value)?)?),
         "vault.research.weave" => encode(vault_research_weave(memory, decode(value)?)?),
@@ -9021,6 +9090,30 @@ pub fn vault_records_erase_confirm(
     input: crate::task_verb::sdk::RecordEraseConfirmRequest,
 ) -> MemoryResult<crate::task_verb::sdk::RecordEraseOutcome> {
     crate::task_verb::sdk::confirm_record_erase_embedded(memory, input)
+}
+pub fn vault_research_create_child(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResearchChildWire,
+) -> MemoryResult<crate::task_verb::sdk::ResearchChildReceipt> {
+    crate::task_verb::sdk::host_only(memory, "vault.research.create_child", &input)
+}
+pub fn vault_research_archive(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResearchArchiveWire,
+) -> MemoryResult<crate::task_verb::sdk::ResearchArchive> {
+    crate::task_verb::sdk::research_archive(memory, input)
+}
+pub fn vault_evals_inventory(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EvalInventoryWire,
+) -> MemoryResult<crate::skill_optimize::EvalAuthoringInventory> {
+    crate::task_verb::sdk::host_only(memory, "vault.evals.inventory", &input)
+}
+pub fn vault_evals_cohorts_setup(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::EvalCohortSetup,
+) -> MemoryResult<crate::skill_optimize::EvalAuthoringReport> {
+    crate::task_verb::sdk::host_only(memory, "vault.evals.cohorts.setup", &input)
 }
 pub fn vault_research_bind(
     memory: &Memory<'_>,

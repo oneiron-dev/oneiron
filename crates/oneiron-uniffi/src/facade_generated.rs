@@ -686,6 +686,26 @@ export_facade! {
     let output = client.vault_records_erase_confirm(&input)?;
     crate::codec::lift_record("vault.records.erase_confirm", &output)
 };
+"vault.research.create_child" => fn vault_research_create_child(&self, input: ResearchChildWire) -> ResearchChildReceipt = |client| {
+    let input: oneiron::task_verb::sdk::ResearchChildWire = crate::codec::lower_record("vault.research.create_child", input)?;
+    let output = client.vault_research_create_child(&input)?;
+    crate::codec::lift_record("vault.research.create_child", &output)
+};
+"vault.research.archive" => fn vault_research_archive(&self, input: ResearchArchiveWire) -> ResearchArchive = |client| {
+    let input: oneiron::task_verb::sdk::ResearchArchiveWire = crate::codec::lower_record("vault.research.archive", input)?;
+    let output = client.vault_research_archive(&input)?;
+    crate::codec::lift_record("vault.research.archive", &output)
+};
+"vault.evals.inventory" => fn vault_evals_inventory(&self, input: EvalInventoryWire) -> EvalAuthoringInventory = |client| {
+    let input: oneiron::task_verb::sdk::EvalInventoryWire = crate::codec::lower_record("vault.evals.inventory", input)?;
+    let output = client.vault_evals_inventory(&input)?;
+    crate::codec::lift_record("vault.evals.inventory", &output)
+};
+"vault.evals.cohorts.setup" => fn vault_evals_cohorts_setup(&self, input: EvalCohortSetup) -> EvalAuthoringReport = |client| {
+    let input: oneiron::skill_optimize::EvalCohortSetup = crate::codec::lower_record("vault.evals.cohorts.setup", input)?;
+    let output = client.vault_evals_cohorts_setup(&input)?;
+    crate::codec::lift_record("vault.evals.cohorts.setup", &output)
+};
 "vault.research.bind" => fn vault_research_bind(&self, input: ResearchBindWire) -> ResearchBinding = |client| {
     let input: oneiron::task_verb::sdk::ResearchBindWire = crate::codec::lower_record("vault.research.bind", input)?;
     let output = client.vault_research_bind(&input)?;

@@ -618,6 +618,9 @@ class Oneiron:
         def research(self) -> "Oneiron._VaultResearchVerbs":
             return Oneiron._VaultResearchVerbs(self._client)
         @property
+        def evals(self) -> "Oneiron._VaultEvalsVerbs":
+            return Oneiron._VaultEvalsVerbs(self._client)
+        @property
         def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs":
             return Oneiron._VaultLegalHoldsVerbs(self._client)
         @property
@@ -1294,6 +1297,12 @@ class Oneiron:
     class _VaultResearchVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def create_child(self, spec):
+            """The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave."""
+            return json.loads(_translate(lambda: self._client.vault_research_create_child(json.dumps(spec))))
+        def archive(self, spec):
+            """Reads the complete retained campaign record, including every pruned, buggy and woven candidate, original search and held-out evidence, selection rounds and promotion receipts, under the controller gate."""
+            return json.loads(_translate(lambda: self._client.vault_research_archive(json.dumps(spec))))
         def bind(self, spec):
             """Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it."""
             return json.loads(_translate(lambda: self._client.vault_research_bind(json.dumps(spec))))
@@ -1342,6 +1351,21 @@ class Oneiron:
         def record_benchmark(self, spec):
             """Records an estimator version's held-out selection benchmark against the DGM parent formula, once per version; a win of at least 30 cases lets its information gain rank parents."""
             return json.loads(_translate(lambda: self._client.vault_research_record_benchmark(json.dumps(spec))))
+    class _VaultEvalsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def inventory(self, spec):
+            """The owner reads the metadata-only eval-authoring inventory: real receipt families, grounded case candidates, date-cut cohorts and exposure counts. Pin its built_at and digest for cohort setup."""
+            return json.loads(_translate(lambda: self._client.vault_evals_inventory(json.dumps(spec))))
+        @property
+        def cohorts(self) -> "Oneiron._VaultEvalsCohortsVerbs":
+            return Oneiron._VaultEvalsCohortsVerbs(self._client)
+    class _VaultEvalsCohortsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def setup(self, spec):
+            """The owner sets up sealed cohorts from a pinned real inventory through the existing family, case and audited cut doors. Reports refused decisions; never serves sealed content or fabricates labels or skill provenance."""
+            return json.loads(_translate(lambda: self._client.vault_evals_cohorts_setup(json.dumps(spec))))
     class _VaultLegalHoldsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
