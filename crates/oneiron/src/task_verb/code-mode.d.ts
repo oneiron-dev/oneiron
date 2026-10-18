@@ -9,7 +9,7 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 541 code-mode rows (520 host rows, 21 run rows), 1911 declarations.
+// Census: 541 code-mode rows (520 host rows, 21 run rows), 1916 declarations.
 // Replies: 476 fully typed, 61 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 93; unread shapes: BoardVerbOutput.
@@ -709,6 +709,8 @@ declare namespace Sdk {
   type ResidenceModeName = "opened" | "all";
   type ResidenceModeRequest = { machine: EntityId; mode: ResidenceModeName };
   type ResidenceModeChanged = { mode: ResidenceModeName; retained: string[]; unsynced: string[]; pruned_items: number };
+  type ResidenceQueued = { directive: EntityId; machine: EntityId };
+  type ResidenceModeAnswer = (ResidenceModeChanged & { state: "applied" }) | (ResidenceQueued & { state: "queued" });
   type NoteReadSpan = { start: number; end: number };
   type ResidenceOpenRequest = { machine: EntityId; window: string; item: EntityId; reason?: string | null; spans?: NoteReadSpan[] };
   type NoteReadSource = "local" | "home";
@@ -717,12 +719,15 @@ declare namespace Sdk {
   type NoteAnchoredSpan = { start: NoteAnchor; end: NoteAnchor };
   type NoteReadView = { version: NoteVersion; markdown: string; title?: string | null; spans: NoteAnchoredSpan[]; source: NoteReadSource };
   type ResidenceOpened = { item: EntityId; window: string; residence: string; bytes: number; source: NoteReadSource; note?: NoteReadView | null };
+  type ResidenceOpenAnswer = (ResidenceOpened & { state: "applied" }) | (ResidenceQueued & { state: "queued" });
   type ResidenceMachineRequest = { machine: EntityId };
   type ResidenceIndexEntry = { entity_id: string; title?: string | null; learned_at: number };
   type ResidenceIndexWindowView = { window: string; items: ResidenceIndexEntry[] };
   type ResidenceIndex = { windows: ResidenceIndexWindowView[] };
+  type ResidenceIndexAnswer = (ResidenceIndex & { state: "applied" }) | (ResidenceQueued & { state: "queued" });
   type ResidencePruneRequest = { machine: EntityId; before: number };
   type ResidencePruned = { dropped: number };
+  type ResidencePruneAnswer = (ResidencePruned & { state: "applied" }) | (ResidenceQueued & { state: "queued" });
   type OffRecordEnterMode = "off_record" | "anonymous";
   type OffRecordBackendClass = "local" | "remote_provider";
   type OffRecordStartRequest = { session_ref: string; mode: OffRecordEnterMode; backend: OffRecordBackendClass };
@@ -3021,14 +3026,14 @@ declare const vault: Sdk.VaultHost & {
     weave(input: Sdk.ResearchWeaveWire): Promise<Sdk.ExperimentNode | StoredResult>;
   };
   residence: {
-    /** The thin index one of the owner's machines holds, window by window: what exists, never a body. */
-    index(input: Sdk.ResidenceMachineRequest): Promise<Sdk.ResidenceIndex | StoredResult>;
-    /** Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. */
-    mode(input: Sdk.ResidenceModeRequest): Promise<Sdk.ResidenceModeChanged | StoredResult>;
-    /** Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors. */
-    open(input: Sdk.ResidenceOpenRequest): Promise<Sdk.ResidenceOpened | StoredResult>;
-    /** Drops the opened-item caches one of the owner's machines last touched before a time. */
-    prune(input: Sdk.ResidencePruneRequest): Promise<Sdk.ResidencePruned | StoredResult>;
+    /** The thin index one of the owner's machines holds, window by window: what exists, never a body. A machine this host does not reach answers state queued, naming the directive. */
+    index(input: Sdk.ResidenceMachineRequest): Promise<Sdk.ResidenceIndexAnswer | StoredResult>;
+    /** Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive. */
+    mode(input: Sdk.ResidenceModeRequest): Promise<Sdk.ResidenceModeAnswer | StoredResult>;
+    /** Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors. A machine this host does not reach answers state queued, naming the directive. */
+    open(input: Sdk.ResidenceOpenRequest): Promise<Sdk.ResidenceOpenAnswer | StoredResult>;
+    /** Drops the opened-item caches one of the owner's machines last touched before a time. A machine this host does not reach answers state queued, naming the directive. */
+    prune(input: Sdk.ResidencePruneRequest): Promise<Sdk.ResidencePruneAnswer | StoredResult>;
   };
   rooms: {
     /** Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed. */

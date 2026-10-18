@@ -647,10 +647,10 @@ export interface FacadeResults {
   "vault.trusted_contacts.concern.authorize": Facade.TrustedContactAuthorization;
   "vault.guests.revoke": Facade.GuestRevokeResponse;
   "vault.guests.mint_slip": Facade.GuestSlipMinted;
-  "vault.residence.mode": Facade.ResidenceModeChanged;
-  "vault.residence.open": Facade.ResidenceOpened;
-  "vault.residence.index": Facade.ResidenceIndex;
-  "vault.residence.prune": Facade.ResidencePruned;
+  "vault.residence.mode": Facade.ResidenceModeAnswer;
+  "vault.residence.open": Facade.ResidenceOpenAnswer;
+  "vault.residence.index": Facade.ResidenceIndexAnswer;
+  "vault.residence.prune": Facade.ResidencePruneAnswer;
   "vault.off_record.start": Facade.OffRecordSessionView;
   "vault.off_record.status": Facade.OffRecordSessionView;
   "vault.off_record.witness": Facade.WitnessReceipt;
@@ -1150,10 +1150,10 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.trusted_contacts.concern.authorize": { description: "The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.guests.revoke": { description: "", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.guests.mint_slip": { description: "The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.residence.mode": { description: "Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.residence.open": { description: "Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.residence.index": { description: "The thin index one of the owner's machines holds, window by window: what exists, never a body.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "vault.residence.prune": { description: "Drops the opened-item caches one of the owner's machines last touched before a time.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.residence.mode": { description: "Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.residence.open": { description: "Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors. A machine this host does not reach answers state queued, naming the directive.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.residence.index": { description: "The thin index one of the owner's machines holds, window by window: what exists, never a body. A machine this host does not reach answers state queued, naming the directive.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.residence.prune": { description: "Drops the opened-item caches one of the owner's machines last touched before a time. A machine this host does not reach answers state queued, naming the directive.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.off_record.start": { description: "The owner enters an off-record session, off record or anonymous, as the owner route does; nothing of it reaches the vault unless the owner promotes or saves it.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.off_record.status": { description: "The owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.off_record.witness": { description: "The owner witnesses one turn into an off-record session; it stays in the room until promoted or dropped at close.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -2012,13 +2012,13 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         mint_slip: (input: Facade.GuestSlipMintRequest, options?: O): FacadeReturns<"vault.guests.mint_slip">[K] => invoke("vault.guests.mint_slip", input, options, newInvocation()),
       },
       residence: {
-        /** Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. */
+        /** Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive. */
         mode: (input: Facade.ResidenceModeRequest, options?: O): FacadeReturns<"vault.residence.mode">[K] => invoke("vault.residence.mode", input, options, newInvocation()),
-        /** Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors. */
+        /** Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors. A machine this host does not reach answers state queued, naming the directive. */
         open: (input: Facade.ResidenceOpenRequest, options?: O): FacadeReturns<"vault.residence.open">[K] => invoke("vault.residence.open", input, options, newInvocation()),
-        /** The thin index one of the owner's machines holds, window by window: what exists, never a body. */
+        /** The thin index one of the owner's machines holds, window by window: what exists, never a body. A machine this host does not reach answers state queued, naming the directive. */
         index: (input: Facade.ResidenceMachineRequest, options?: O): FacadeReturns<"vault.residence.index">[K] => invoke("vault.residence.index", input, options, newInvocation()),
-        /** Drops the opened-item caches one of the owner's machines last touched before a time. */
+        /** Drops the opened-item caches one of the owner's machines last touched before a time. A machine this host does not reach answers state queued, naming the directive. */
         prune: (input: Facade.ResidencePruneRequest, options?: O): FacadeReturns<"vault.residence.prune">[K] => invoke("vault.residence.prune", input, options, newInvocation()),
       },
       off_record: {

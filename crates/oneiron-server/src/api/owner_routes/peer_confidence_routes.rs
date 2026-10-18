@@ -3,29 +3,29 @@
 //! its scale; a peer without one gets the default.
 //! `/v1/owner/federation/grant-travel`: the born-with text one federation
 //! grant's windows carry to another vault (OF-491); a grant without one
-//! sends none.
+//! sends none. GET reads one grant's bound choice, POST binds or clears it.
 
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
+use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::share_travel::TravelChoice;
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::json_payload;
+use crate::api::{json_payload, query_params};
 use crate::auth::CoreAuth;
 use crate::owner::stamp::rfc3339_secs;
-use crate::owner::{OwnerResult, entity_id};
+use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/federation/peer-confidence", get(list).post(set))
-        .route("/federation/grant-travel", post(set_travel))
+        .route("/federation/grant-travel", get(get_travel).post(set_travel))
 }
 
 #[derive(Debug, Serialize)]
@@ -113,11 +113,47 @@ struct SetGrantTravel {
     travel: Option<TravelChoice>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GrantTravelQuery {
+    /// The federation grant, as 32 hex.
+    grant: String,
+}
+
 #[derive(Debug, Serialize)]
 struct GrantTravel {
     grant: String,
     travel: Option<TravelChoice>,
     set: Option<String>,
+}
+
+/// `GET /v1/owner/federation/grant-travel?grant=<id>`: the travel choice
+/// bound to one federation grant, with when the owner set it. A grant with
+/// none bound answers `travel` and `set` null: its windows send no text.
+/// An id that names no federation grant is not found.
+async fn get_travel(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<GrantTravelQuery>, QueryRejection>,
+) -> OwnerReply<GrantTravel> {
+    owner(&auth, &server)?;
+    let query = query_params(query)?;
+    let travel = blocking(move || -> OwnerResult<GrantTravel> {
+        let grant = entity_id("grant", &query.grant)?;
+        if server.vault().get_entity_type(&grant)?
+            != Some(oneiron::registry::ENTITY_TYPE_FEDERATION_GRANT)
+        {
+            return Err(OwnerError::NotFound("grant", query.grant));
+        }
+        let bound = server.vault().federation_grant_travel(&grant)?;
+        Ok(GrantTravel {
+            grant: grant.to_hex(),
+            set: bound.as_ref().map(|bound| rfc3339_secs(bound.set_at)),
+            travel: bound.map(|bound| bound.travel),
+        })
+    })
+    .await?;
+    Ok(Json(travel))
 }
 
 /// `POST /v1/owner/federation/grant-travel`: binds or clears one live

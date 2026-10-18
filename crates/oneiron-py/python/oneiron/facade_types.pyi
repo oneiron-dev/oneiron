@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 484 facade rows, 1822 declarations.
+Census: 484 facade rows, 1827 declarations.
 Inputs: 435 of 484 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 430 of 484 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 88; unread shapes: 0.
@@ -3463,6 +3463,14 @@ class ResidenceModeChanged(TypedDict):
     retained: list[str]
     unsynced: list[str]
     pruned_items: int
+class ResidenceQueued(TypedDict):
+    directive: EntityId
+    machine: EntityId
+class ResidenceModeAnswerApplied(ResidenceModeChanged):
+    state: Literal["applied"]
+class ResidenceModeAnswerQueued(ResidenceQueued):
+    state: Literal["queued"]
+ResidenceModeAnswer = ResidenceModeAnswerApplied | ResidenceModeAnswerQueued
 class NoteReadSpan(TypedDict):
     start: int
     end: int
@@ -3497,6 +3505,11 @@ class ResidenceOpened(TypedDict):
     bytes: int
     source: NoteReadSource
     note: NotRequired[NoteReadView | None]
+class ResidenceOpenAnswerApplied(ResidenceOpened):
+    state: Literal["applied"]
+class ResidenceOpenAnswerQueued(ResidenceQueued):
+    state: Literal["queued"]
+ResidenceOpenAnswer = ResidenceOpenAnswerApplied | ResidenceOpenAnswerQueued
 class ResidenceMachineRequest(TypedDict):
     machine: EntityId
 class ResidenceIndexEntry(TypedDict):
@@ -3508,11 +3521,21 @@ class ResidenceIndexWindowView(TypedDict):
     items: list[ResidenceIndexEntry]
 class ResidenceIndex(TypedDict):
     windows: list[ResidenceIndexWindowView]
+class ResidenceIndexAnswerApplied(ResidenceIndex):
+    state: Literal["applied"]
+class ResidenceIndexAnswerQueued(ResidenceQueued):
+    state: Literal["queued"]
+ResidenceIndexAnswer = ResidenceIndexAnswerApplied | ResidenceIndexAnswerQueued
 class ResidencePruneRequest(TypedDict):
     machine: EntityId
     before: int
 class ResidencePruned(TypedDict):
     dropped: int
+class ResidencePruneAnswerApplied(ResidencePruned):
+    state: Literal["applied"]
+class ResidencePruneAnswerQueued(ResidenceQueued):
+    state: Literal["queued"]
+ResidencePruneAnswer = ResidencePruneAnswerApplied | ResidencePruneAnswerQueued
 OffRecordEnterMode = Literal["off_record", "anonymous"]
 OffRecordBackendClass = Literal["local", "remote_provider"]
 class OffRecordStartRequest(TypedDict):

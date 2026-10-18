@@ -10846,25 +10846,25 @@ pub fn vault_guests_mint_slip(
 pub fn vault_residence_mode(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::ResidenceModeRequest,
-) -> MemoryResult<crate::task_verb::sdk::ResidenceModeChanged> {
+) -> MemoryResult<crate::task_verb::sdk::ResidenceModeAnswer> {
     crate::task_verb::sdk::residence_host_only(memory, "vault.residence.mode", &input)
 }
 pub fn vault_residence_open(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::ResidenceOpenRequest,
-) -> MemoryResult<crate::task_verb::sdk::ResidenceOpened> {
+) -> MemoryResult<crate::task_verb::sdk::ResidenceOpenAnswer> {
     crate::task_verb::sdk::residence_host_only(memory, "vault.residence.open", &input)
 }
 pub fn vault_residence_index(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::ResidenceMachineRequest,
-) -> MemoryResult<crate::task_verb::sdk::ResidenceIndex> {
+) -> MemoryResult<crate::task_verb::sdk::ResidenceIndexAnswer> {
     crate::task_verb::sdk::residence_host_only(memory, "vault.residence.index", &input)
 }
 pub fn vault_residence_prune(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::ResidencePruneRequest,
-) -> MemoryResult<crate::task_verb::sdk::ResidencePruned> {
+) -> MemoryResult<crate::task_verb::sdk::ResidencePruneAnswer> {
     crate::task_verb::sdk::residence_host_only(memory, "vault.residence.prune", &input)
 }
 pub fn vault_off_record_start(
