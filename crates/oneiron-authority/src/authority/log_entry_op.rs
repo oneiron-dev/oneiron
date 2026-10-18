@@ -388,7 +388,7 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         }
         AuthorityOp::MachineProfile(profile) => profile.validate(),
         AuthorityOp::OwnerRoot(record) => record.validate(),
-        AuthorityOp::WorldPrivacy(edit) => edit.settings.validate(),
+        AuthorityOp::WorldPrivacy(edit) => edit.validate(),
         AuthorityOp::WorldKeyWraps(record) => record.validate(),
         AuthorityOp::OwnerHandover(handover) => handover.validate(),
         AuthorityOp::ResidenceDirective(directive) => directive.validate(),

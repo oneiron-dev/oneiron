@@ -2250,6 +2250,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "ai.anonymous_chat",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::AnonymousChatRequest,
+                >(),
+            ),
+            (
                 "ai.options",
                 crate::code_run::vault_read::request_schema::<AiOptionsRequest>(),
             ),
@@ -3282,6 +3288,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "tasks.refuse",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<crate::code_run::TaskRefuseInput>,
+                >(),
+            ),
+            (
                 "self.agents.spawn",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::LiveRunRequest<crate::code_run::AgentSpawnInput>,
@@ -3316,10 +3328,6 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.edges.put",
                 crate::code_run::vault_read::request_schema::<crate::code_run::MemoryEdgeInput>(),
-            ),
-            (
-                "tasks.refuse",
-                crate::code_run::vault_read::request_schema::<crate::code_run::TaskRefuseInput>(),
             ),
             (
                 "self.leader.advice",
@@ -3522,6 +3530,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "ai.voice.usage",
     "ai.voice.end",
     "ai.voice.close",
+    "ai.anonymous_chat",
     "vault.voices.packs.put",
     "vault.voices.render_consent",
     "vault.voices.targets.provision",
@@ -4080,6 +4089,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "ai.voice.close" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::LiveVoiceProcessed,
         >(),
+        "ai.anonymous_chat" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::AnonymousChatResponse,
+        >(),
         "vault.voices.packs.put" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::VoiceBankPackReceipt,
         >(),
@@ -4314,6 +4326,7 @@ pub const NO_RECORD_ROWS: &[&str] = &[
     "vault.off_record.notes.create",
     "vault.off_record.claims.upsert",
     "self.off_record.execute",
+    "ai.anonymous_chat",
 ];
 pub fn mcp_arguments_schema(verb: &str) -> Option<serde_json::Value> {
     mcp_arguments_schema_from_input(verb, input_schema(verb)?)
@@ -7298,6 +7311,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "ai.anonymous_chat" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "ai.options" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -8454,6 +8474,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.folds" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "tasks.refuse" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -9842,6 +9869,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "ai.voice.close" => {
             let _input: crate::task_verb::sdk::LiveVoiceSessionRequest = decode(value.clone())?;
         }
+        "ai.anonymous_chat" => {
+            let _input: crate::task_verb::sdk::AnonymousChatRequest = decode(value.clone())?;
+        }
         "ai.options" => {
             let _input: AiOptionsRequest = decode(value.clone())?;
         }
@@ -10507,6 +10537,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.folds" => {
             let _input: crate::code_run::fold_api::FoldRunRequest = decode(value.clone())?;
         }
+        "tasks.refuse" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::TaskRefuseInput> =
+                decode(value.clone())?;
+        }
         "self.agents.spawn" => {
             let _input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::AgentSpawnInput> =
                 decode(value.clone())?;
@@ -10535,6 +10569,9 @@ pub fn invoke(
         return Err(
             wrong_root(verb).unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb"))
         );
+    }
+    if verb == "ai.anonymous_chat" {
+        return encode(ai_anonymous_chat(memory, decode(value)?)?);
     }
     // The row's one verb-hook boundary (ARCH-0080 §3).
     crate::task_verb::verb_hook_boundary::row(memory, verb, value, |value| match verb {
@@ -11242,6 +11279,7 @@ pub fn invoke(
         "ai.voice.tool" => encode(ai_voice_tool(memory, decode(value)?)?),
         "ai.voice.end" => encode(ai_voice_end(memory, decode(value)?)?),
         "ai.voice.close" => encode(ai_voice_close(memory, decode(value)?)?),
+        "ai.anonymous_chat" => encode(ai_anonymous_chat(memory, decode(value)?)?),
         "ai.options" => encode(ai_options(memory, decode(value)?)?),
         "ai.image" => encode(ai_image(memory, decode(value)?)?),
         "ai.speech" => encode(ai_speech(memory, decode(value)?)?),
@@ -11533,6 +11571,7 @@ pub fn invoke(
         "self.compact" => encode(self_compact(memory, decode(value)?)?),
         "self.unfold" => encode(self_unfold(memory, decode(value)?)?),
         "self.folds" => encode(self_folds(memory, decode(value)?)?),
+        "tasks.refuse" => encode(tasks_refuse(memory, decode(value)?)?),
         "self.agents.spawn" => encode(self_agents_spawn(memory, decode(value)?)?),
         "self.leader.split" => encode(self_leader_split(memory, decode(value)?)?),
         "self.skills.call" => encode(self_skills_call(memory, decode(value)?)?),
@@ -15203,6 +15242,12 @@ pub fn ai_voice_close(
 ) -> MemoryResult<crate::task_verb::sdk::LiveVoiceProcessed> {
     crate::task_verb::sdk::host_only(memory, "ai.voice.close", &input)
 }
+pub fn ai_anonymous_chat(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::AnonymousChatRequest,
+) -> MemoryResult<crate::task_verb::sdk::AnonymousChatResponse> {
+    crate::task_verb::sdk::host_only(memory, "ai.anonymous_chat", &input)
+}
 pub fn ai_options(
     memory: &Memory<'_>,
     input: AiOptionsRequest,
@@ -16843,6 +16888,12 @@ pub fn self_folds(
     input: crate::code_run::fold_api::FoldRunRequest,
 ) -> MemoryResult<crate::compaction::FoldReply<crate::compaction::FoldList>> {
     crate::task_verb::sdk::host_only(memory, "self.folds", &input)
+}
+pub fn tasks_refuse(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::TaskRefuseInput>,
+) -> MemoryResult<crate::code_run::TaskRefuseOutput> {
+    crate::task_verb::sdk::host_only(memory, "tasks.refuse", &input)
 }
 pub fn self_agents_spawn(
     memory: &Memory<'_>,

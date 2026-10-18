@@ -9656,6 +9656,20 @@ async fn ai_voice_close(
         facade_hooks_post(server, hooks, output).await?,
     ))
 }
+async fn ai_anonymous_chat(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    let _ = (server, auth, input);
+    Err(oneiron::memory::MemoryError::new(
+        oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE,
+        "anonymous chat requires its standalone HTTP SDK route",
+        &["Call POST /v1/ai/anonymous-chat or the HTTP SDK ai.anonymous_chat method."],
+    )
+    .into())
+}
 async fn ai_options(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -13647,6 +13661,31 @@ async fn self_folds(
         facade_hooks_post(server, hooks, output).await?,
     ))
 }
+async fn tasks_refuse(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "tasks.refuse")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("tasks.refuse", &value)?;
+    let hooks = facade_hooks_pre(server, call, "tasks.refuse", value).await?;
+    let output = facade_output(
+        super::host_doors::tasks_refuse(
+            server,
+            auth,
+            call.session()?,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn self_agents_spawn(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -14301,6 +14340,7 @@ pub(crate) async fn call_verb(
         "ai.voice.tool" => ai_voice_tool(server, call, input).await,
         "ai.voice.end" => ai_voice_end(server, call, input).await,
         "ai.voice.close" => ai_voice_close(server, call, input).await,
+        "ai.anonymous_chat" => ai_anonymous_chat(server, call, input).await,
         "ai.options" => ai_options(server, call, input).await,
         "ai.image" => ai_image(server, call, input).await,
         "ai.speech" => ai_speech(server, call, input).await,
@@ -14549,6 +14589,7 @@ pub(crate) async fn call_verb(
         "self.compact" => self_compact(server, call, input).await,
         "self.unfold" => self_unfold(server, call, input).await,
         "self.folds" => self_folds(server, call, input).await,
+        "tasks.refuse" => tasks_refuse(server, call, input).await,
         "self.agents.spawn" => self_agents_spawn(server, call, input).await,
         "self.leader.split" => self_leader_split(server, call, input).await,
         "self.skills.call" => self_skills_call(server, call, input).await,
@@ -14599,7 +14640,6 @@ pub(crate) async fn call_verb(
         | "vault.search"
         | "vault.claims.put"
         | "vault.edges.put"
-        | "tasks.refuse"
         | "self.leader.advice"
         | "self.leader.pattern"
         | "self.team.start"

@@ -7,7 +7,8 @@ use super::history_transfer::{re_root_entry, store};
 use super::machine_identity::{host, request_for};
 use super::support::RosterHead;
 use super::support::{
-    authority_key_from_ed, cosign_ed, device, ed_key, genesis_entry, sign_ed, unsigned_entry,
+    authority_key_from_ed, cosign_ed, device, ed_key, genesis_entry, owner_act, sign_ed,
+    unsigned_entry,
 };
 use super::world_privacy::{
     edit_by, land, other_machine, read_of, settings, stored_entries, world_row,
@@ -186,7 +187,7 @@ fn a_chain_of_raced_widens_never_widens() {
                 parents,
                 AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
                     world,
-                    owner: host.owner.actor(),
+                    act: owner_act(host.owner.actor(), world),
                     machine: laptop,
                     settings: settings(ReadLocation::Everywhere),
                 }),
@@ -367,7 +368,7 @@ fn a_crossed_row_still_bounds_its_signers_sequence() {
             parents,
             AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
                 world,
-                owner: host.owner.actor(),
+                act: owner_act(host.owner.actor(), world),
                 machine: laptop,
                 settings: settings(ReadLocation::Everywhere),
             }),
@@ -485,7 +486,7 @@ fn a_stale_machine_never_widens_a_world() {
                 parents,
                 AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
                     world,
-                    owner: EntityId::now(),
+                    act: owner_act(EntityId::now(), world),
                     machine,
                     settings: settings(read),
                 }),
@@ -573,7 +574,7 @@ fn a_holder_going_stale_never_accepts_a_refused_edit() {
                 parents,
                 AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
                     world,
-                    owner: EntityId::now(),
+                    act: owner_act(EntityId::now(), world),
                     machine,
                     settings: settings(read),
                 }),
@@ -683,7 +684,7 @@ fn a_conflict_weakened_back_never_accepts_a_refused_edit() {
                 parents,
                 AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
                     world,
-                    owner: EntityId::now(),
+                    act: owner_act(EntityId::now(), world),
                     machine,
                     settings: settings(read),
                 }),
@@ -799,7 +800,7 @@ fn a_narrowing_above_a_fenced_row_stays() {
                 parents,
                 AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
                     world,
-                    owner: EntityId::now(),
+                    act: owner_act(EntityId::now(), world),
                     machine: laptop,
                     settings: settings(read),
                 }),
@@ -884,14 +885,15 @@ fn a_world_edit_above_a_two_vault_row_folds_closed() {
         &root,
     );
     let key = ed_key(157);
+    let world = EntityId::now();
     let edit = sign_ed(
         unsigned_entry(
             Some(id),
             1,
             vec![hash(&joined)],
             AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
-                world: EntityId::now(),
-                owner: EntityId::now(),
+                world,
+                act: owner_act(EntityId::now(), world),
                 machine: EntityId::now(),
                 settings: settings(ReadLocation::Everywhere),
             }),
@@ -1000,7 +1002,7 @@ fn a_custodial_mark_acknowledges_no_widening() {
                 parents,
                 AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
                     world,
-                    owner: EntityId::now(),
+                    act: owner_act(EntityId::now(), world),
                     machine,
                     settings: settings(read),
                 }),
@@ -1163,7 +1165,7 @@ fn a_removal_of_a_conflicted_mark_never_acknowledges_a_widening() {
                 parents,
                 AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
                     world,
-                    owner: host.owner.actor(),
+                    act: owner_act(host.owner.actor(), world),
                     machine: laptop,
                     settings: settings(ReadLocation::Everywhere),
                 }),
@@ -1390,7 +1392,7 @@ fn a_widening_never_exempts_a_demotion_its_mark_never_followed() {
             parents,
             AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
                 world,
-                owner: host.owner.actor(),
+                act: owner_act(host.owner.actor(), world),
                 machine: laptop,
                 settings: settings(ReadLocation::Everywhere),
             }),

@@ -80,8 +80,7 @@ pub struct CloseLensFrameReply {
 /// lives only on the served host that rendered it, and an embedded handle
 /// renders with no host to keep one. The served client is the path; there is
 /// no bare renderer. One constant, so a later ruling changes one line.
-const EMBEDDED_LENS_FRAME_REFUSAL: &str =
-    "lens frames live on the served host that rendered the card, and an embedded handle keeps none; render the lens and send its events through a served client";
+const EMBEDDED_LENS_FRAME_REFUSAL: &str = "lens frames live on the served host that rendered the card, and an embedded handle keeps none; render the lens and send its events through a served client";
 
 /// The paths [`EMBEDDED_LENS_FRAME_REFUSAL`] names, in order.
 const EMBEDDED_LENS_FRAME_SUGGESTIONS: &[&str] = &[

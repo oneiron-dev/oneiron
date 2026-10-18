@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 588 facade rows, 2167 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 12; generated in and out: 548.
+// UniFFI census: 590 facade rows, 2178 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 12; generated in and out: 550.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -20412,6 +20412,29 @@ pub enum AgentCeilingInput {
     Proposed,
 }
 
+/// `oneiron::agent_def::refusal::RefusalLevel`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RefusalLevel {
+    #[serde(rename = "none")]
+    None,
+    #[serde(rename = "voice")]
+    Voice,
+    #[serde(rename = "veto")]
+    Veto,
+    #[serde(rename = "full")]
+    Full,
+}
+
+/// `oneiron::agent_def::refusal::RefusalDial`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RefusalDial {
+    #[serde(rename = "bond", default, skip_serializing_if = "Option::is_none")]
+    pub bond: Option<RefusalLevel>,
+    #[serde(rename = "logistics", default, skip_serializing_if = "Option::is_none")]
+    pub logistics: Option<RefusalLevel>,
+}
+
 /// `oneiron::agent_def::models::AgentModel`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -20476,6 +20499,8 @@ pub struct AgentDefinitionSpec {
         skip_serializing_if = "Option::is_none"
     )]
     pub display_name: Option<String>,
+    #[serde(rename = "refusal", default, skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<RefusalDial>,
     #[serde(rename = "models", default, skip_serializing_if = "Option::is_none")]
     pub models: Option<Vec<AgentModel>>,
     #[serde(
@@ -21026,24 +21051,13 @@ pub struct TeamReceiptView {
     pub outcome_receipt: Option<String>,
 }
 
-/// `oneiron::team::doors::RouteStampState`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum RouteStampState {
-    #[serde(rename = "unstamped_before_s5")]
-    UnstampedBeforeS5,
-    #[serde(rename = "stamped")]
-    Stamped,
-}
-
 /// `oneiron::team::doors::RouteObservation`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct RouteObservation {
     #[serde(rename = "run_ref")]
     pub run_ref: String,
-    #[serde(rename = "type_ref", default, skip_serializing_if = "Option::is_none")]
-    pub type_ref: Option<TypeStamp>,
-    #[serde(rename = "stamp_state")]
-    pub stamp_state: RouteStampState,
+    #[serde(rename = "type_ref")]
+    pub type_ref: TypeStamp,
     #[serde(rename = "model")]
     pub model: String,
     #[serde(rename = "effort")]
@@ -26851,6 +26865,75 @@ pub struct LiveVoiceToolReply {
 pub struct LiveVoiceSessionRequest {
     #[serde(rename = "session_ref")]
     pub session_ref: String,
+}
+
+/// `oneiron::task_verb::sdk_anonymous_chat::AnonymousChatRequestTarget`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AnonymousChatRequestTarget {
+    #[serde(rename = "house_mind")]
+    HouseMind,
+    #[serde(rename = "plain_model")]
+    PlainModel,
+}
+
+/// `oneiron::task_verb::sdk_anonymous_chat::AnonymousChatRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AnonymousChatRequest {
+    #[serde(rename = "text")]
+    pub text: String,
+    #[serde(rename = "target", default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<AnonymousChatRequestTarget>,
+    #[serde(rename = "model", default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_anonymous_chat::AnonymousChatSkippedCheckView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AnonymousChatSkippedCheckView {
+    #[serde(rename = "input")]
+    pub input: bool,
+    #[serde(rename = "reason")]
+    pub reason: PolicySkipReason,
+}
+
+/// `oneiron::task_verb::sdk_anonymous_chat::AnonymousChatBlockReasonView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AnonymousChatBlockReasonView {
+    #[serde(rename = "policy")]
+    Policy,
+    #[serde(rename = "human_review_unavailable")]
+    HumanReviewUnavailable,
+}
+
+/// `oneiron::task_verb::sdk_anonymous_chat::AnonymousChatResponse`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "type")]
+pub enum AnonymousChatResponse {
+    #[serde(rename = "reply")]
+    Reply {
+        #[serde(rename = "content")]
+        content: String,
+        #[serde(rename = "notices")]
+        notices: Vec<GateSystemNoticeRecord>,
+        #[serde(rename = "skipped_checks")]
+        skipped_checks: Vec<AnonymousChatSkippedCheckView>,
+        #[serde(rename = "model_notices")]
+        model_notices: Vec<GateSystemNoticeRecord>,
+    },
+    #[serde(rename = "blocked")]
+    Blocked {
+        #[serde(rename = "input")]
+        input: bool,
+        #[serde(rename = "notice")]
+        notice: GateSystemNoticeRecord,
+        #[serde(rename = "preceding_notices")]
+        preceding_notices: Vec<GateSystemNoticeRecord>,
+        #[serde(rename = "reason")]
+        reason: AnonymousChatBlockReasonView,
+        #[serde(rename = "model_notices")]
+        model_notices: Vec<GateSystemNoticeRecord>,
+    },
 }
 
 /// `oneiron::task_verb::sdk_host::AiOptionsRequest`.
@@ -34690,6 +34773,63 @@ pub enum FoldReplyFoldList {
         #[serde(rename = "error")]
         error: String,
     },
+}
+
+/// `oneiron::code_run::run_verbs::TaskRefuseDomain`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TaskRefuseDomain {
+    #[serde(rename = "bond")]
+    Bond,
+    #[serde(rename = "logistics")]
+    Logistics,
+}
+
+/// `oneiron::code_run::run_verbs::TaskRefuseInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRefuseInput {
+    #[serde(rename = "taskRef", default, skip_serializing_if = "Option::is_none")]
+    pub task_ref: Option<String>,
+    #[serde(rename = "domain")]
+    pub domain: TaskRefuseDomain,
+    #[serde(rename = "reasonRef")]
+    pub reason_ref: String,
+    #[serde(rename = "at", default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<u64>,
+}
+
+/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `TaskRefuseInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LiveRunRequestTaskRefuseInput {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+    #[serde(rename = "spec")]
+    pub spec: TaskRefuseInput,
+}
+
+/// `oneiron::agent_def::refusal::RefusalOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RefusalOutcome {
+    #[serde(rename = "proceed")]
+    Proceed,
+    #[serde(rename = "object")]
+    Object,
+    #[serde(rename = "decline")]
+    Decline,
+}
+
+/// `oneiron::code_run::run_verbs::TaskRefuseOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TaskRefuseOutput {
+    #[serde(rename = "task")]
+    pub task: String,
+    #[serde(rename = "level")]
+    pub level: RefusalLevel,
+    #[serde(rename = "outcome")]
+    pub outcome: RefusalOutcome,
+    #[serde(rename = "replay")]
+    pub replay: bool,
 }
 
 /// `oneiron::code_run::run_verbs::SpawnCare`.

@@ -1380,6 +1380,7 @@ fn mcp_agent_verb_input(
         "ai.voice.tool" => a.spec.clone().ok_or_else(invalid),
         "ai.voice.end" => a.spec.clone().ok_or_else(invalid),
         "ai.voice.close" => a.spec.clone().ok_or_else(invalid),
+        "ai.anonymous_chat" => a.spec.clone().ok_or_else(invalid),
         "ai.options" => a.spec.clone().ok_or_else(invalid),
         "ai.image" => a.spec.clone().ok_or_else(invalid),
         "ai.speech" => a.spec.clone().ok_or_else(invalid),
@@ -1546,6 +1547,7 @@ fn mcp_agent_verb_input(
         "self.compact" => a.spec.clone().ok_or_else(invalid),
         "self.unfold" => a.spec.clone().ok_or_else(invalid),
         "self.folds" => a.spec.clone().ok_or_else(invalid),
+        "tasks.refuse" => a.spec.clone().ok_or_else(invalid),
         "self.agents.spawn" => a.spec.clone().ok_or_else(invalid),
         "self.leader.split" => a.spec.clone().ok_or_else(invalid),
         "self.skills.call" => a.spec.clone().ok_or_else(invalid),
@@ -2911,6 +2913,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "ai.voice.close" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "ai.anonymous_chat" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "ai.options" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -3409,6 +3414,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "self.folds" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "tasks.refuse" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "self.agents.spawn" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -3508,6 +3516,15 @@ async fn execute_agent_verb_listing(
         .is_some_and(oneiron::task_verb::sdk::AgentVerb::is_mcp)
     {
         return Err(invalid());
+    }
+    // G10: MCP and code mode retain envelopes and results. Do not run a
+    // memory-free turn on either, or fire a hook that could retain its text.
+    if tool == "ai.anonymous_chat" {
+        return Err(McpGatewayError::new(
+            -32020,
+            "model_unavailable",
+            "anonymous chat requires its standalone HTTP SDK route",
+        ));
     }
     // A narrowed connector's TASKs are born in its own world and in the
     // facet its writes land in (its session's, or its own write facet).
@@ -12416,6 +12433,28 @@ async fn execute_agent_verb_row(
                 auth,
                 (actor.actor_ref, actor.actor_class),
                 memory.invocation(),
+                input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "tasks.refuse" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("tasks.refuse", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::TaskRefuseInput> =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::tasks_refuse(
+                server,
+                auth,
+                actor
+                    .off_record_session
+                    .as_deref()
+                    .map(oneiron::EntityId::from_hex)
+                    .transpose()
+                    .map_err(|_| invalid())?,
                 input,
             )
             .await

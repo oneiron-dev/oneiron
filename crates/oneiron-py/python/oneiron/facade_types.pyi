@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 588 facade rows, 2231 declarations.
-Inputs: 537 of 588 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 520 of 588 fully typed, 68 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 590 facade rows, 2241 declarations.
+Inputs: 539 of 590 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 522 of 590 fully typed, 68 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 91; unread shapes: 0.
 """
 
@@ -6620,6 +6620,10 @@ class AgentScopeInputWorld(TypedDict):
     world: EntityId
 AgentScopeInput = AgentScopeInputAll | AgentScopeInputBase | AgentScopeInputWorld
 AgentCeilingInput = Literal["auto", "proposed"]
+RefusalLevel = Literal["none", "voice", "veto", "full"]
+class RefusalDial(TypedDict):
+    bond: NotRequired[RefusalLevel | None]
+    logistics: NotRequired[RefusalLevel | None]
 class AgentModel(TypedDict):
     model_ref: ModelId
     when: str
@@ -6637,6 +6641,7 @@ class AgentDefinitionSpec(TypedDict):
     forked_from: NotRequired[EntityId | None]
     enabled: NotRequired[bool]
     display_name: NotRequired[str | None]
+    refusal: NotRequired[RefusalDial | None]
     models: NotRequired[list[AgentModel]]
     compaction_model: NotRequired[ModelId | None]
 class AgentDefinitionCreateRequest(TypedDict):
@@ -6808,11 +6813,9 @@ class TeamReceiptView(TypedDict):
     width: int
     models: list[str]
     outcome_receipt: NotRequired[str | None]
-RouteStampState = Literal["unstamped_before_s5", "stamped"]
 class RouteObservation(TypedDict):
     run_ref: EntityId
-    type_ref: NotRequired[TypeStamp | None]
-    stamp_state: RouteStampState
+    type_ref: TypeStamp
     model: str
     effort: ReasoningEffort
     why: str
@@ -8738,6 +8741,29 @@ class LiveVoiceToolReply(TypedDict):
     reply: ConnectorCallReply
 class LiveVoiceSessionRequest(TypedDict):
     session_ref: str
+AnonymousChatRequestTarget = Literal["house_mind", "plain_model"]
+class AnonymousChatRequest(TypedDict):
+    text: str
+    target: NotRequired[AnonymousChatRequestTarget]
+    model: NotRequired[ModelId | None]
+class AnonymousChatSkippedCheckView(TypedDict):
+    input: bool
+    reason: PolicySkipReason
+AnonymousChatBlockReasonView = Literal["policy", "human_review_unavailable"]
+class AnonymousChatResponseReply(TypedDict):
+    type: Literal["reply"]
+    content: str
+    notices: list[GateSystemNoticeRecord]
+    skipped_checks: list[AnonymousChatSkippedCheckView]
+    model_notices: list[GateSystemNoticeRecord]
+class AnonymousChatResponseBlocked(TypedDict):
+    type: Literal["blocked"]
+    input: bool
+    notice: GateSystemNoticeRecord
+    preceding_notices: list[GateSystemNoticeRecord]
+    reason: AnonymousChatBlockReasonView
+    model_notices: list[GateSystemNoticeRecord]
+AnonymousChatResponse = AnonymousChatResponseReply | AnonymousChatResponseBlocked
 class AiOptionsRequest(TypedDict):
     operation: NotRequired[str | None]
     inputs: NotRequired[list[str]]
@@ -11487,6 +11513,18 @@ class FoldCompactAsked(TypedDict):
 FoldUnfolded = TypedDict("FoldUnfolded", {"fold": str, "from": int, "through": int, "unfolded_after_step": int})
 class FoldRunRequest(TypedDict):
     live_run: str
+TaskRefuseDomain = Literal["bond", "logistics"]
+class TaskRefuseInput(TypedDict):
+    taskRef: NotRequired[str | None]
+    domain: TaskRefuseDomain
+    reasonRef: str
+    at: NotRequired[int | None]
+RefusalOutcome = Literal["proceed", "object", "decline"]
+class TaskRefuseOutput(TypedDict):
+    task: EntityId
+    level: RefusalLevel
+    outcome: RefusalOutcome
+    replay: bool
 SpawnCare = Literal["light", "medium", "high", "xhigh", "max"]
 class SpawnKnobSeed(TypedDict, Generic[T]):
     mode: Literal["seed"]

@@ -3809,6 +3809,12 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn ai_anonymous_chat(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.anonymous_chat", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn ai_options(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("ai.options", input)
@@ -5468,6 +5474,12 @@ impl NativeClient {
     pub fn self_folds(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.folds", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn tasks_refuse(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("tasks.refuse", input)
             .map_err(facade_error)
     }
     #[napi]

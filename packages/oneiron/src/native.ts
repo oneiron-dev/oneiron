@@ -449,6 +449,7 @@ aiVoiceUsage(input: unknown): unknown
 aiVoiceTool(input: unknown): unknown
 aiVoiceEnd(input: unknown): unknown
 aiVoiceClose(input: unknown): unknown
+aiAnonymousChat(input: unknown): unknown
 aiOptions(input: unknown): unknown
 aiImage(input: unknown): unknown
 aiSpeech(input: unknown): unknown
@@ -615,6 +616,7 @@ selfFold(input: unknown): unknown
 selfCompact(input: unknown): unknown
 selfUnfold(input: unknown): unknown
 selfFolds(input: unknown): unknown
+tasksRefuse(input: unknown): unknown
 selfAgentsSpawn(input: unknown): unknown
 selfLeaderSplit(input: unknown): unknown
 selfSkillsCall(input: unknown): unknown

@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 644 code-mode rows (623 host rows, 21 run rows), 2319 declarations.
-// Replies: 566 fully typed, 74 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 645 code-mode rows (624 host rows, 21 run rows), 2326 declarations.
+// Replies: 567 fully typed, 74 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 94; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1373,8 +1373,10 @@ declare namespace Sdk {
   type AgentMcpInput = { key: string; min_version?: string | null };
   type AgentScopeInput = { kind: "all" } | { kind: "base" } | { kind: "world"; world: EntityId };
   type AgentCeilingInput = "auto" | "proposed";
+  type RefusalLevel = "none" | "voice" | "veto" | "full";
+  type RefusalDial = { bond?: RefusalLevel | null; logistics?: RefusalLevel | null };
   type AgentModel = { model_ref: ModelId; when: string };
-  type AgentDefinitionSpec = { agent_id: string; desc: string; version: string; instructions?: string | null; skills?: AgentSkillInput[]; connectors?: string[]; code_mode_mcps?: AgentMcpInput[]; model_tier?: string | null; scope?: AgentScopeInput; ceiling?: AgentCeilingInput; forked_from?: EntityId | null; enabled?: boolean; display_name?: string | null; models?: AgentModel[]; compaction_model?: ModelId | null };
+  type AgentDefinitionSpec = { agent_id: string; desc: string; version: string; instructions?: string | null; skills?: AgentSkillInput[]; connectors?: string[]; code_mode_mcps?: AgentMcpInput[]; model_tier?: string | null; scope?: AgentScopeInput; ceiling?: AgentCeilingInput; forked_from?: EntityId | null; enabled?: boolean; display_name?: string | null; refusal?: RefusalDial | null; models?: AgentModel[]; compaction_model?: ModelId | null };
   type AgentDefinitionCreateRequest = { agent_def_ref: EntityId; definition: AgentDefinitionSpec };
   type AgentDefinitionLifecycle = "active" | "superseded" | "retracted";
   type AgentDefinitionView = { agent_def_ref: EntityId; definition: AgentDefinitionSpec; approval_status: ClaimApprovalStatus; lifecycle_status: AgentDefinitionLifecycle };
@@ -1411,8 +1413,7 @@ declare namespace Sdk {
   type ResolvedTeam = { type_ref: TypeStamp; pattern: CoordinationPatternView; width: number; model: string; axis?: TeamAxis | null; project_ref?: EntityId | null; root_attempt_ref: EntityId; member_attempt_refs: EntityId[]; team_ref?: string | null };
   type TeamBindingView = { team_ref: string; pattern: CoordinationPatternView; leader: EntityId; member_attempt_refs: EntityId[]; proposal_refs: string[]; root_task?: string | null; started_at: number };
   type TeamReceiptView = { team_ref: string; type_ref: TypeStamp; pattern: CoordinationPatternView; pattern_skill?: SkillRevisionView | null; axis: TeamAxis; width: number; models: string[]; outcome_receipt?: string | null };
-  type RouteStampState = "unstamped_before_s5" | "stamped";
-  type RouteObservation = { run_ref: EntityId; type_ref?: TypeStamp | null; stamp_state: RouteStampState; model: string; effort: ReasoningEffort; why: string; reused: boolean };
+  type RouteObservation = { run_ref: EntityId; type_ref: TypeStamp; model: string; effort: ReasoningEffort; why: string; reused: boolean };
   type CriticAssociation = "branch_attempt" | "canonical_run_ref";
   type CriticObservation = { run_ref: string; branch_attempt_ref: EntityId; association: CriticAssociation; artifact_id: string; target_ref: string; type_ref: TypeStamp; lens_ref: EntityId; lens_id: string; executor: string; axis: string; verdict: string };
   type DoorsLearningCellView = { predicate: string; subject: EntityId; executor: string; type_ref: TypeStamp; axis: string };
@@ -1733,6 +1734,11 @@ declare namespace Sdk {
   type ConnectorCallReply = { outcome: "delivered"; result?: ConnectorToolResult | null; reasons?: string[] } | { outcome: "held"; call_ref: string; decision_ref?: string | null; reasons: string[] } | { outcome: "refused"; decision_ref?: string | null; reasons: string[] } | { outcome: "pending_delivery"; call_ref?: string | null; reasons: string[] } | { outcome: "awaiting_input"; handle: string; source: string; foreign: boolean; questions: ConnectorQuestion[]; expires_at_ms: number; reasons?: string[] };
   type LiveVoiceToolReply = { processed: LiveVoiceProcessed; reply: ConnectorCallReply };
   type LiveVoiceSessionRequest = { session_ref: string };
+  type AnonymousChatRequestTarget = "house_mind" | "plain_model";
+  type AnonymousChatRequest = { text: string; target?: AnonymousChatRequestTarget; model?: ModelId | null };
+  type AnonymousChatSkippedCheckView = { input: boolean; reason: PolicySkipReason };
+  type AnonymousChatBlockReasonView = "policy" | "human_review_unavailable";
+  type AnonymousChatResponse = { type: "reply"; content: string; notices: GateSystemNoticeRecord[]; skipped_checks: AnonymousChatSkippedCheckView[]; model_notices: GateSystemNoticeRecord[] } | { type: "blocked"; input: boolean; notice: GateSystemNoticeRecord; preceding_notices: GateSystemNoticeRecord[]; reason: AnonymousChatBlockReasonView; model_notices: GateSystemNoticeRecord[] };
   type AiOptionsRequest = { operation?: string | null; inputs?: string[] };
   type AiOptions = { options: unknown[]; media_units_left?: number | null };
   type AiPart = { kind: "text"; text: string } | { kind: "image"; media_type: string; data: string } | { kind: "audio"; media_type: string; data: string } | { kind: "video"; media_type: string; data?: string | null; uri?: string | null } | { kind: "embedding"; vector: number[] };
@@ -2301,7 +2307,8 @@ declare namespace Sdk {
   type FoldsInput = Record<string, never>;
   type TaskRefuseDomain = "bond" | "logistics";
   type TaskRefuseInput = { taskRef?: string | null; domain: TaskRefuseDomain; reasonRef: string; at?: number | null };
-  type TaskRefuseOutput = { task: EntityId; level: string; outcome: string; replay: boolean };
+  type RefusalOutcome = "proceed" | "object" | "decline";
+  type TaskRefuseOutput = { task: EntityId; level: RefusalLevel; outcome: RefusalOutcome; replay: boolean };
   type SpawnCare = "light" | "medium" | "high" | "xhigh" | "max";
   type SpawnKnob<T> = { mode: "seed"; value: T; weight_runs: number } | { mode: "pin"; value: T };
   type SpawnPattern = "solo" | "ceo_decides" | "committee" | "vote" | "market" | "rotation";
@@ -2337,6 +2344,8 @@ declare namespace Sdk {
   type SummarizeInput = { ref: string; effort?: SummarizeInputEffort | null; group?: string[] | null; defer?: boolean | null };
 }
 declare const ai: {
+  /** One standalone memory-free turn on the house configuration or a plain model, with ephemeral policy notices; use the HTTP SDK, not a recorded MCP or code-mode call. */
+  anonymous_chat(input: Sdk.AnonymousChatRequest): Promise<Sdk.AnonymousChatResponse | StoredResult>;
   /** One embedding vector per input text, from the host's embedding model. */
   embed(input: Sdk.AiCallRequest): Promise<Sdk.AiAnswer | StoredResult>;
   /** One image out of the host's image model; reference images make it an edit. */
@@ -2643,17 +2652,17 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   agents: {
-    /** The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched. */
+    /** The owner creates an inert custom agent composition with an optional per-domain refusal dial, caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched. */
     create(input: Sdk.AgentDefinitionCreateRequest): Promise<Sdk.AgentDefinitionView | StoredResult>;
     /** An agent's travelling AgentPack folder, read through the caller's admission, with the born-with text the caller chose and a share receipt listing it and the knowledge kept home. */
     export_pack(input: Sdk.AgentPackExportRequest): Promise<Sdk.AgentPackExport | StoredResult>;
-    /** The owner reads one saved agent composition and its version and approval state. */
+    /** The owner reads one saved agent composition, including its declared refusal dial, version and approval state. */
     get(input: Sdk.AgentDefinitionRequest): Promise<Sdk.AgentDefinitionView | StoredResult>;
     spawn: {
       /** The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning. */
       get(input: Sdk.PlannedSpawnRead): Promise<Sdk.PlannedSpawnObservation | StoredResult>;
     };
-    /** The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision. */
+    /** The owner edits the expected definition version and optional refusal dial through the existing immutable-field and ceiling gates; refusal decisions read the live dial. */
     update(input: Sdk.AgentDefinitionUpdateRequest): Promise<Sdk.AgentDefinitionView | StoredResult>;
   };
   artifacts: {

@@ -216,9 +216,13 @@ impl Vault {
             ));
         }
 
-        let mut turn_refs: BTreeSet<_> = collect_claim_turn_evidence_refs(&claim_body).into_iter().collect();
+        let mut turn_refs: BTreeSet<_> = collect_claim_turn_evidence_refs(&claim_body)
+            .into_iter()
+            .collect();
         // The public claim writer records its typed evidence turns in the immutable birth.
-        if let Some(birth) = crate::provenance::birth::row_birth_in_txn(&self.store, wtxn, claim_id)? {
+        if let Some(birth) =
+            crate::provenance::birth::row_birth_in_txn(&self.store, wtxn, claim_id)?
+        {
             turn_refs.extend(birth.made_by.inputs.into_iter().map(|input| input.row));
         }
         let mut evidence_turns = Vec::new();

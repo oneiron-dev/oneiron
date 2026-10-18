@@ -6,7 +6,7 @@
 //! foreign admitter's edits only narrow on the owner's installs.
 use super::machine_identity::request_for;
 use super::owner_anchor::{YOURS, hosted_genesis, pin, profile, publish, signed};
-use super::support::ed_key;
+use super::support::{ed_key, owner_act};
 use super::world_privacy::settings;
 use super::*;
 use crate::HostingPrivacyPosture::Hosted;
@@ -46,7 +46,7 @@ pub(super) fn edit(
         seq,
         AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
             world,
-            owner: EntityId::now(),
+            act: owner_act(EntityId::now(), world),
             machine,
             settings: settings(read),
         }),

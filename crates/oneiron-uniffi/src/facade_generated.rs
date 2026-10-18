@@ -2096,6 +2096,11 @@ export_facade! {
     let output = client.ai_voice_close(&input)?;
     crate::codec::lift_record("ai.voice.close", &output)
 };
+"ai.anonymous_chat" => fn ai_anonymous_chat(&self, input: AnonymousChatRequest) -> AnonymousChatResponse = |client| {
+    let input: oneiron::task_verb::sdk::AnonymousChatRequest = crate::codec::lower_record("ai.anonymous_chat", input)?;
+    let output = client.ai_anonymous_chat(&input)?;
+    crate::codec::lift_record("ai.anonymous_chat", &output)
+};
 "ai.options" => fn ai_options(&self, input: AiOptionsRequest) -> AiOptions = |client| {
     let input: oneiron::task_verb::sdk::AiOptionsRequest = crate::codec::lower_record("ai.options", input)?;
     let output = client.ai_options(&input)?;
@@ -2925,6 +2930,11 @@ export_facade! {
     let input: oneiron::code_run::fold_api::FoldRunRequest = crate::codec::lower_record("self.folds", input)?;
     let output = client.self_folds(&input)?;
     crate::codec::lift_record("self.folds", &output)
+};
+"tasks.refuse" => fn tasks_refuse(&self, input: LiveRunRequestTaskRefuseInput) -> TaskRefuseOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::TaskRefuseInput> = crate::codec::lower_record("tasks.refuse", input)?;
+    let output = client.tasks_refuse(&input)?;
+    crate::codec::lift_record("tasks.refuse", &output)
 };
 "self.agents.spawn" => fn self_agents_spawn(&self, input: LiveRunRequestAgentSpawnInput) -> AgentSpawnOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::AgentSpawnInput> = crate::codec::lower_record("self.agents.spawn", input)?;

@@ -64,7 +64,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/ai/vision.rs` | src | m | 2 crate-vis | — | `POST /v1/ai/ask_image` (OF-329's `ask_image(handle, question)`): a small vision model in the Local-vision… |
 | `src/api/ai/voices.rs` | src | m | 11 crate-vis | — | The voice bank's provisioning door, the owner's alone: `POST /v1/ai/voices/{voice_id}/packs` banks a… |
 | `src/api/ai/waves.rs` | src | s | 3 crate-vis | — | Owner-authenticated admission and durable status for live wave planning |
-| `src/api/anonymous_chat.rs` | src | m | 1 crate-vis | — | A single memory-free turn on the house configuration or a plain model |
+| `src/api/anonymous_chat.rs` | src | m | 4 crate-vis | — | A single memory-free turn on the house configuration or a plain model |
 | `src/api/artifacts.rs` | src | m | 16 crate-vis | — | — |
 | `src/api/artifacts/host.rs` | src | s | 5 crate-vis | — | Vault subdomain hosts on the artifact listener: `<vault>.<domain>/<artifact>/…`, and one app on an origin of… |
 | `src/api/artifacts/route.rs` | src | m | 7 crate-vis | — | One typed codec for artifact bundle entry and canonical file URLs |
@@ -155,11 +155,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/esign/hold_worker.rs` | src | s | 2 crate-vis | — | The held sign act's worker (OF-415, ARCH-0064 D6, ARCH-0076 #roles-everywhere): every tick it asks each new… |
 | `src/api/esign/presentation.rs` | src | s | 9 crate-vis | — | Stateless field editor and capability-scoped ceremony presentation adapters |
 | `src/api/esign/seal_worker.rs` | src | m | 3 crate-vis | — | The seal task's worker (OF-415, ARCH-0064 section 7): every tick it seals the documents whose signing… |
-| `src/api/facade.rs` | src | XL | 32 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
+| `src/api/facade.rs` | src | XL | 33 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
 | `src/api/facade/action_routes.rs` | src | m | 14 crate-vis | — | OF-181: the app's one action layer over HTTP, for both its callers |
 | `src/api/facade/affect_doors.rs` | src | s | 3 crate-vis | — | Retrieval-prior setup and VAD consolidation on the caller's own owner proof |
 | `src/api/facade/agent_definition_doors.rs` | src | s | 11 crate-vis | — | Custom definitions, saved workflows and workspace onboarding, with the caller's own proof |
-| `src/api/facade/agent_verbs.rs` | src | m | 1 crate-vis | — | — |
+| `src/api/facade/agent_verbs.rs` | src | m | 2 crate-vis | — | — |
 | `src/api/facade/authority_history_doors.rs` | src | s | 2 crate-vis | — | Owner-authenticated signed authority history transfer |
 | `src/api/facade/booking_doors.rs` | src | s | 1 crate-vis | — | Owner discovery of the opaque address of an existing booking page |
 | `src/api/facade/budget_doors.rs` | src | s | 7 crate-vis | — | Credential-backed budget controls, beside the owner's held-run routes |
@@ -193,12 +193,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/gate_policy_doors.rs` | src | s | 4 crate-vis | — | Owner policy and checker host doors |
 | `src/api/facade/graph_ask_doors.rs` | src | m | 8 crate-vis | — | OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the… |
 | `src/api/facade/guest_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's guest revoke row (OF-232): `vault.guests.revoke` |
-| `src/api/facade/host_doors.rs` | src | XL | 111 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | XL | 112 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/hub_doors.rs` | src | m | 17 crate-vis | — | Owner-proof facade doors for configured hubs and pinned foreign imports |
 | `src/api/facade/learning_doors.rs` | src | s | 2 crate-vis | — | Read-only measured-learning doors under the vault owner's existing proof |
 | `src/api/facade/legal_hold_doors.rs` | src | s | 8 crate-vis | — | The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`… |
 | `src/api/facade/linear_doors.rs` | src | s | 1 crate-vis | — | The host door of `vault.tasks.linear.mapping.edit` (OF-427 C6) |
-| `src/api/facade/live_run_doors.rs` | src | s | 3 crate-vis | — | Public coordination doors over the caller's own live-run attachment |
+| `src/api/facade/live_run_doors.rs` | src | s | 4 crate-vis | — | Public coordination doors over the caller's own live-run attachment |
 | `src/api/facade/live_voice_doors.rs` | src | s | 8 crate-vis | — | Typed public live media doors |
 | `src/api/facade/merge_queue_doors.rs` | src | s | 7 crate-vis | — | Credential-bound host projections of the typed speculative merge queue doors (DOOR-132) |
 | `src/api/facade/model_step_doors.rs` | src | s | 2 crate-vis | — | Owner-proof model steps; HTTP, SDK and MCP reach the same typed door |
@@ -221,7 +221,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/shared_act_doors.rs` | src | m | 17 crate-vis | — | The host doors of the shared-vault rows (OF-158): the acts the shared preset waits on (`vault.shared.*`)… |
 | `src/api/facade/shared_member_doors.rs` | src | m | 15 crate-vis | — | The host doors of the shared-vault invitation rows (OF-531 / OF-158), beside `shared_act_doors`: an invitee… |
 | `src/api/facade/shared_policy_doors.rs` | src | s | 4 crate-vis | — | The host doors of the shared-act policy rows (DOOR-129), beside `shared_act_doors`: a live Owner reads every… |
-| `src/api/facade/skill_doors.rs` | src | s | 8 crate-vis | — | Selected-message conversion and the owner's skill library, through the same facade and MCP doors |
+| `src/api/facade/skill_doors.rs` | src | m | 8 crate-vis | — | Selected-message conversion and the owner's skill library, through the same facade and MCP doors |
 | `src/api/facade/skill_execution_doors.rs` | src | s | 4 crate-vis | — | Skill calls on the caller's attached run and owner-anchored pack outcomes |
 | `src/api/facade/slim_doors.rs` | src | s | 5 crate-vis | — | Owner-bound lifecycle doors; each transport reaches the same engine transaction |
 | `src/api/facade/summary_doors.rs` | src | s | 8 crate-vis | — | SUMMARY writes on the caller's own credential |
@@ -288,6 +288,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/off_record_rooms.rs` | src | m | 1 crate-vis | — | Off-record stretches for everyone in a room (ARCH-0052 D5, the notice model, owner ruling 2026-10-10) |
 | `src/api/openai_proxy/mod.rs` | src | m | 1 crate-vis | — | OF-445: the OpenAI-compatible memory-injection proxy, the integration lane for already-shipped apps… |
 | `src/api/openai_proxy/wire.rs` | src | s | 11 crate-vis | — | The OpenAI chat-completions wire the proxy speaks (OF-445): a closed request body, and the reply built from… |
+| `src/api/openapi/anonymous_chat_paths.rs` | src | s | 1 crate-vis | — | The standalone anonymous-chat routes: their schemas are the verb table's real request and reply/block types… |
 | `src/api/openapi/booking_schemas.rs` | src | s | 5 crate-vis | — | Booking schema blocks for the OpenAPI doc |
 | `src/api/openapi/descriptions.rs` | src | m | 1 crate-vis | — | Schema description-gap filler |
 | `src/api/openapi/endpoints_merge.rs` | src | m | 13 crate-vis | — | OpenAPI endpoint wiring and component merges |
@@ -674,7 +675,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/mcp/codec.rs` | src | m | 1 struct · 1 fn · 5 crate-vis | McpToolArguments | MCP argument codecs: parsed-value and raw-JSON integer normalization |
 | `src/mcp/endpoint_args.rs` | src | m | 9 struct · 1 enum · 4 fn · 3 crate-vis | McpCacheHint, McpExecuteCodeToolArgs, McpInvokeActionToolArgs, McpPageRequest, McpReadResultToolArgs, McpResultFacet, McpSetupToolArgs, McpVerbArguments +2 | Endpoint tool argument envelopes: setup, execute-code, paging, and verbs |
 | `src/mcp/endpoint_schema.rs` | src | m | 5 const · 8 crate-vis | — | JSON schemas for endpoint tools: setup, execute-code, paging, and verbs |
-| `src/mcp/exec_host.rs` | src | L | 3 struct · 1 enum · 2 trait · 7 fn · 2 type · 12 crate-vis | CodeRunLimits, McpCodeExecutionError, McpCodeExecutionHost, McpCodeExecutionRequest, McpCodeModeProvider, McpEngineNativeCodeHost | MCP code-execution host seam and the engine-native host binding |
+| `src/mcp/exec_host.rs` | src | L | 3 struct · 1 enum · 2 trait · 7 fn · 2 type · 14 crate-vis | CodeRunLimits, McpCodeExecutionError, McpCodeExecutionHost, McpCodeExecutionRequest, McpCodeModeProvider, McpEngineNativeCodeHost | MCP code-execution host seam and the engine-native host binding |
 | `src/mcp/exec_host/off_record_run.rs` | src | s | 2 crate-vis | — | Durable code-mode runs bound to an off-record session (DOOR-127): one entry of a run whose every row stays… |
 | `src/mcp/mod.rs` | src | s | 2 mod · 12 re-export · 8 crate-vis | — | MCP connector actor registry |
 | `src/mcp/oauth_client.rs` | src | s | 3 struct · 2 enum · 5 fn · 1 const | AuthorizationResponse, ClientApplication, OAuthClientError, OAuthTokenCache, TokenCacheKey | Issuer-bound OAuth client state and pinned client metadata (ARCH-0028) |
