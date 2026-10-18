@@ -3335,9 +3335,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/side_table/decls/mod.rs` | src | s | 6 crate-vis | — | The declaration list: every prefix a module keeps rows under in `vault_meta` or `sync_state`, one entry each |
 | `src/side_table/decls/sync_state.rs` | src | m | — | — | — |
 | `src/side_table/decls/vault_meta_a_c.rs` | src | m | — | — | — |
-| `src/side_table/decls/vault_meta_d_l.rs` | src | m | — | — | — |
+| `src/side_table/decls/vault_meta_d_e.rs` | src | m | — | — | — |
+| `src/side_table/decls/vault_meta_f_l.rs` | src | m | — | — | — |
 | `src/side_table/decls/vault_meta_m_r.rs` | src | m | — | — | — |
-| `src/side_table/decls/vault_meta_s_z.rs` | src | m | — | — | — |
+| `src/side_table/decls/vault_meta_s.rs` | src | m | — | — | — |
+| `src/side_table/decls/vault_meta_t_z.rs` | src | s | — | — | — |
 | `src/side_table/key.rs` | src | s | 3 crate-vis | — | Key types: what a table's key contributes after its declared prefix |
 | `src/side_table/mod.rs` | src | L | 43 crate-vis | — | One typed keyspace over the `vault_meta` and `sync_state` side tables |
 | `src/side_table/tests.rs` | test | L | — | — | — |
