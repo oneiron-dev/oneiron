@@ -3,6 +3,7 @@
 use super::validate::{validate_lease_owner, validate_transition_lease};
 use super::{AttemptId, AttemptQueue, AttemptRecord, AttemptState, decode_record};
 use crate::error::{Error, Result};
+use crate::llm::manifest::ModelRole;
 
 impl AttemptQueue<'_> {
     /// Binds the placed task type and team context, and appends actual-use
@@ -58,9 +59,10 @@ impl AttemptQueue<'_> {
     }
 
     /// Stamps what executes this attempt (OF-541): the model its run was
-    /// born on and, beside it, the template seat its host configured, in one
-    /// write. Each half is write-once, as `set_executor_model` is: repeating
-    /// the pair is safe, swapping either half is not.
+    /// born on and, beside it, the template seat its host configured and the
+    /// functional role it runs as (OF-578), in one write. Each part is
+    /// write-once, as `set_executor_model` is: repeating the stamp is safe,
+    /// swapping any part is not.
     pub fn set_executor_stamp(
         &self,
         id: AttemptId,
@@ -68,6 +70,7 @@ impl AttemptQueue<'_> {
         attempt_count: u32,
         model: &str,
         seat: &str,
+        role: ModelRole,
     ) -> Result<AttemptRecord> {
         if !valid_executor_id(model) || !valid_executor_id(seat) {
             return Err(Error::InvalidConfig(
@@ -89,12 +92,16 @@ impl AttemptQueue<'_> {
                 .executor_seat
                 .as_deref()
                 .is_some_and(|stamped| stamped != seat)
+            || record.executor_role.is_some_and(|stamped| stamped != role)
         {
             return Err(Error::InvalidConfig(
                 "executor model cannot be rebound".to_owned(),
             ));
         }
-        if record.executor_model.is_some() && record.executor_seat.is_some() {
+        if record.executor_model.is_some()
+            && record.executor_seat.is_some()
+            && record.executor_role.is_some()
+        {
             if matches!(record.state, AttemptState::Leased | AttemptState::Landing) {
                 validate_lease_owner(lease_owner)?;
                 validate_transition_lease(
@@ -115,6 +122,7 @@ impl AttemptQueue<'_> {
         validate_transition_lease(&record, lease_owner, attempt_count, "set_executor_stamp")?;
         record.executor_model = Some(model.to_owned());
         record.executor_seat = Some(seat.to_owned());
+        record.executor_role = Some(role);
         let encoded = self.encode_in_txn(&mut txn, &mut record)?;
         self.store
             .attempt_records
