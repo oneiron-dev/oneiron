@@ -19389,7 +19389,7 @@
      "path": "src/dreamer_consolidation/revert.rs",
      "purpose": "The owner's revert of any one Dreamer change (OF-023, owner ruling 10-18: \"autoapply + revert rather than…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 1,
       "struct": 4
@@ -27415,6 +27415,7 @@
      "path": "src/identity_topology/op_undo.rs",
      "purpose": "The undo door: a counter-event appended over an applied merge, split or facet, never a rewrite of the event…",
      "surface": {
+      "crate-vis": 1,
       "fn": 2
      }
     },
@@ -27447,7 +27448,7 @@
      "path": "src/identity_topology/proposal_resolution.rs",
      "purpose": "The ARCH-0055 r7 proposal-resolution lane: scope derivation, the amendment codec and its narrowing bounds…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 4
      }
     },
@@ -32706,7 +32707,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 16,
+      "mod": 17,
       "re-export": 47
      }
     },
@@ -33146,6 +33147,67 @@
       "crate-vis": 3,
       "fn": 14,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RevertRunOutcome",
+      "RevertRunRequest",
+      "RunAnsweredBy",
+      "RunChangeOutcome",
+      "RunChangeVerdict",
+      "RunCompensation",
+      "RunNotUndone",
+      "RunNotUndoneReason",
+      "RunReview",
+      "RunReviewChange",
+      "RunReviewExplainer",
+      "RunReviewRequest",
+      "RunSettleDecision",
+      "RunSettleRequest",
+      "RunSettlement",
+      "RunSettlementKind",
+      "RunSettlementReason",
+      "RunSettlementRequest"
+     ],
+     "path": "src/memory/run_review/mod.rs",
+     "purpose": "Typed cross-kind review settlements and run compensation (ARCH-0040)",
+     "surface": {
+      "enum": 7,
+      "fn": 2,
+      "struct": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/run_review/revert.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/run_review/settle.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/run_review/snapshot.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -34103,7 +34165,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 37,
+      "crate-vis": 38,
       "enum": 3,
       "fn": 4,
       "re-export": 15,
@@ -34525,7 +34587,7 @@
      "purpose": "Grant-routed fork bundles, atomic verdicts and durable head-move receipts",
      "surface": {
       "const": 1,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 3,
       "fn": 5,
       "struct": 3
@@ -34583,6 +34645,16 @@
      "purpose": "Typed NOTE projection of an already admitted opened-item read cache",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/run_review.rs",
+     "purpose": "Transaction-composable review and compensation over the existing NOTE door",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -51907,7 +51979,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 826
+      "fn": 830
      }
     },
     {
@@ -58684,7 +58756,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 190,
+     "files": 194,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58705,7 +58777,7 @@
      "purpose": "A budget check of untrusted MessagePack before it is decoded"
     },
     "note": {
-     "files": 47,
+     "files": 48,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -59365,7 +59437,7 @@
    },
    "over_bar": 197,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3623,
+   "source_files": 3628,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67898,7 +67970,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 795
+      "fn": 799
      }
     },
     {
@@ -68947,7 +69019,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 796
+      "fn": 800
      }
     },
     {
@@ -72370,7 +72442,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 134
+      "crate-vis": 135
      }
     },
     {
@@ -72601,6 +72673,16 @@
      "purpose": "Owner-only reads of committed run state (DOOR-141 A/B): a settled model step and a code run's checkpoints…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/run_review_doors.rs",
+     "purpose": "The owner's cross-kind review and run compensation, on the caller's own credential handle",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -80190,7 +80272,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 398,
+     "files": 399,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -80619,7 +80701,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 742,
+   "source_files": 743,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -82795,6 +82877,8 @@
       "RevealWaitAnswer",
       "RevealWaitRequest",
       "Reversibility",
+      "RevertRunOutcome",
+      "RevertRunRequest",
       "RevokeGrantRequest",
       "RoleHolder",
       "RoleRank",
@@ -82830,6 +82914,7 @@
       "RsiSettlement",
       "RsiSpendPurpose",
       "Run",
+      "RunAnsweredBy",
       "RunAsk",
       "RunAskAnswer",
       "RunAskAnswerKind",
@@ -82840,7 +82925,22 @@
       "RunBranchView",
       "RunBranchesRequest",
       "RunBranchesView",
+      "RunChangeOutcome",
+      "RunChangeVerdict",
+      "RunCompensation",
+      "RunNotUndone",
+      "RunNotUndoneReason",
+      "RunReview",
+      "RunReviewChange",
+      "RunReviewExplainer",
+      "RunReviewRequest",
       "RunRungSettlement",
+      "RunSettleDecision",
+      "RunSettleRequest",
+      "RunSettlement",
+      "RunSettlementKind",
+      "RunSettlementReason",
+      "RunSettlementRequest",
       "RunSettlementsRequest",
       "RunSettlementsView",
       "RunSignalKind",
@@ -83548,8 +83648,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 676,
-      "struct": 2055
+      "enum": 683,
+      "struct": 2066
      }
     },
     {
