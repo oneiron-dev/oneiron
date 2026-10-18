@@ -944,7 +944,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.artifacts.body.deck.export": { description: "Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection waits beside the artifact as a proposal for Keep.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.body.deck.gate": { description: "The deck export gate for a profile: open only on the deck oracle's clean all-pass receipt for the current projector.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.body.deck.oracle": { description: "Records the deck oracle's receipt for its export profile, replacing the earlier one; a receipt that does not pass closes the gate a pass opened.", scope: "Write", proposes: false, hostDoor: false, section: false },
-  "vault.artifacts.body.deck.preview": { description: "The asked slides of a deck's head as this host's review renderer draws the export it projects now: provisional images; nothing lands or is proposed.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.artifacts.body.deck.preview": { description: "The asked slides of a deck's head, or of an open fork's merge candidate, as this host's review renderer draws its export now: provisional images kept by export key; nothing lands or is proposed.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.artifacts.append": { description: "Appends one version of bytes to a blob artifact's append-only chain.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.read": { description: "Reads one version of a blob artifact's bytes.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.consolidation.enqueue": { description: "Enqueues one consolidation attempt and returns its durable job reference.", scope: "Write", proposes: false, hostDoor: false, section: false },
@@ -1519,7 +1519,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
             gate: (input: Facade.DeckGateRequest, options?: O): FacadeReturns<"vault.artifacts.body.deck.gate">[K] => invoke("vault.artifacts.body.deck.gate", input, options, newInvocation()),
             /** Records the deck oracle's receipt for its export profile, replacing the earlier one; a receipt that does not pass closes the gate a pass opened. */
             oracle: (input: Facade.DeckOracleRequest, options?: O): FacadeReturns<"vault.artifacts.body.deck.oracle">[K] => invoke("vault.artifacts.body.deck.oracle", input, options, newInvocation()),
-            /** The asked slides of a deck's head as this host's review renderer draws the export it projects now: provisional images; nothing lands or is proposed. */
+            /** The asked slides of a deck's head, or of an open fork's merge candidate, as this host's review renderer draws its export now: provisional images kept by export key; nothing lands or is proposed. */
             preview: (input: Facade.DeckPreviewRequest, options?: O): FacadeReturns<"vault.artifacts.body.deck.preview">[K] => invoke("vault.artifacts.body.deck.preview", input, options, newInvocation()),
           },
         },

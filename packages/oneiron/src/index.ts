@@ -739,7 +739,7 @@ export class Oneiron {
           gate: (request: Facade.DeckGateRequest): Facade.DeckGateView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyDeckGate(keyedJson(request))) as Facade.DeckGateView; return result }),
           /** Records the deck oracle's receipt for its export profile. */
           oracle: (request: Facade.DeckOracleRequest): Facade.DeckGateView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyDeckOracle(keyedJson(request))) as Facade.DeckGateView; return result }),
-          /** The asked slides of a deck's head, drawn by the host's review renderer (provisional). */
+          /** The asked slides of a deck's head or a fork's merge candidate, drawn by the host's review renderer (provisional). */
           preview: (request: Facade.DeckPreviewRequest): Facade.DeckPreview => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyDeckPreview(keyedJson(request))) as Facade.DeckPreview; return result }),
         },
       },

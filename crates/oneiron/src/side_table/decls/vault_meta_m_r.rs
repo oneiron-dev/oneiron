@@ -83,11 +83,6 @@ side_tables! {
     NOTE_TOMBSTONE_PROPOSAL: VaultMeta b"note_tombstone:v1:" Named;
     /// The last UTC calendar month the NOTE tombstone review ran (FIX 2419). Key: ().
     NOTE_TOMBSTONE_REVIEW: VaultMeta b"note_tombstone_review:v1" Named;
-    /// One live office body commit's receipt: peer, operation span and MadeBy. Key: id16 (artifact
-    /// or fork) + u64be (sequence).
-    OFFICE_BODY_COMMIT: VaultMeta b"office_body:commit:v1:" Named;
-    /// A live office body's or fork's Loro snapshot. Key: id16 (artifact or fork).
-    OFFICE_BODY_DOC: VaultMeta b"office_body:doc:v1:" Raw;
     /// The body frontier an office body export version projects. Key: id16 (artifact) + u64be
     /// (version).
     OFFICE_BODY_EXPORT: VaultMeta b"office_body:export:v1:" Named;

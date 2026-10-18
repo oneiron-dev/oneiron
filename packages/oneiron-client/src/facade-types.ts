@@ -2377,7 +2377,7 @@ export type DeckGateView = { profile: string; projector: string; open: boolean; 
 /** `oneiron::office_body::pptx::verbs::DeckOracleRequest` */
 export type DeckOracleRequest = { receipt: OracleReceipt }
 /** `oneiron::office_body::pptx::preview::DeckPreviewRequest` */
-export type DeckPreviewRequest = { artifact_ref: string; slides: number[] }
+export type DeckPreviewRequest = { artifact_ref: string; fork_ref?: string | null; slides: number[] }
 /** `oneiron::office_body::pptx::preview::DeckPreviewSlide` */
 export type DeckPreviewSlide = { slide: number; media_type: string; image_hash: string; content_base64: string }
 /** `oneiron::office_body::pptx::preview::DeckPreview` */

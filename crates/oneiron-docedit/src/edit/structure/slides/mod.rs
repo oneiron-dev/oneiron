@@ -10,7 +10,8 @@
 //! id above the caller's high-water mark and every id in the list, and fresh
 //! creation ids drawn from the caller's seed; its shape ids and timing ids
 //! are its source's. It goes after its source in the slide list and in its
-//! section; custom shows are not given it.
+//! section; custom shows are not given it. The app properties count it, list
+//! its source's title for it and recount the deck's words and paragraphs.
 //!
 //! A reorder is a permutation of the slide ids. It rewrites the order of
 //! `p:sldIdLst` and of each section's list, and refuses an order that splits
@@ -30,6 +31,8 @@ use crate::edit::{EditRefusal, Effect};
 use crate::ooxml::{Node, PACKAGE_RELATIONSHIPS, XmlTree};
 use crate::retained_opc::{Package, Relationship, rels_name};
 
+use app_props::Text;
+pub(crate) use app_props::recount_slide_text;
 pub(super) use app_props::slide_count;
 pub(super) use check::{duplicated, reordered};
 pub(super) use lifecycle::{add_blank, delete};
@@ -491,6 +494,21 @@ pub(super) fn duplicate(
         }
     }
     next.replace_xml_part(&lists.part, xml::splice(&lists.bytes, edits)?)?;
+    let index = lists
+        .slides
+        .iter()
+        .position(|&(at, _)| at == entry)
+        .ok_or(EditRefusal::Invalid("a slide id entry"))?;
+    app_props::slide_added(
+        next,
+        (index + 1, lists.slides.len()),
+        (
+            matches!(tree.nodes[0].attr("show"), Some("0" | "false")),
+            related(&input, slide, "notesSlide").is_ok_and(|notes| notes.is_some()),
+        ),
+        Some(index),
+        Text::of_deck(before).plus(Text::of_slide(view)),
+    )?;
 
     let mut effects = vec![Effect::SlideAdded {
         part: copy.clone(),
