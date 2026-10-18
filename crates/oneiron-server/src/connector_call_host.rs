@@ -34,7 +34,8 @@
 //!
 //! A `self.use` call (OF-560) presents the custody record its handle names
 //! in place of the route's own secret, through the same door for the same
-//! effector; the door rechecks the record's binding at each send.
+//! effector; the door rechecks the record's binding at each send. A call under
+//! a secret grant (FIX 4313) redeems the grant at its door at each send.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read};
@@ -50,6 +51,7 @@ use oneiron::outbound_consent::{
 use oneiron::outbound_intent_ledger::{
     FrozenOutboundCall, OutboundFailureKind, OutboundSendFailure, OutboundSendOutcome,
 };
+use oneiron::secret_lease::{SecretGrantRef, SecretGrantTarget};
 use oneiron::task_verb::sdk::ConnectorAnswerAction;
 use oneiron::{EntityId, Vault};
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
@@ -114,6 +116,8 @@ pub struct ServedConnectorCallHost {
     /// The custody record a `self.use` call presents, in place of the
     /// route's own secret.
     credential: Option<EntityId>,
+    /// The secret grant a lease-aware `self.use` call redeems at each send.
+    grant: Option<SecretGrantRef>,
     /// The server's live connector questions, shared by every host it
     /// builds and read by `connector.answer`.
     elicitations: Arc<ConnectorElicitationRegistry>,
@@ -163,6 +167,7 @@ impl ServedConnectorCallHost {
             client,
             reply: None,
             credential: None,
+            grant: None,
             elicitations,
             caller: None,
             awaiting: None,
@@ -200,16 +205,22 @@ impl ServedConnectorCallHost {
             sent = Some(exchange.run(Some(header)));
             Ok(())
         };
-        let _door = match (self.credential, route.secret_ref.as_deref()) {
-            (Some(custody), _) => {
+        let _door = match (self.grant, self.credential, route.secret_ref.as_deref()) {
+            (Some(grant), _, _) => {
+                let target = SecretGrantTarget::Connector { name: route.name };
                 self.vault
-                    .inject_secret_record_at_door(&custody, &effector, &mut present)
+                    .redeem_secret_grant_at_door(&grant, &target, &mut present)
+                    .map(drop)
             }
-            (None, Some(secret_ref)) => {
-                self.vault
-                    .inject_secret_at_door(secret_ref, &effector, &mut present)
-            }
-            (None, None) => return exchange.run(None),
+            (None, Some(custody), _) => self
+                .vault
+                .inject_secret_record_at_door(&custody, &effector, &mut present)
+                .map(drop),
+            (None, None, Some(secret_ref)) => self
+                .vault
+                .inject_secret_at_door(secret_ref, &effector, &mut present)
+                .map(drop),
+            (None, None, None) => return exchange.run(None),
         };
         // Once the exchange ran, what the connector said is the delivery
         // fact, whatever the door reports after it.
@@ -282,8 +293,13 @@ impl ConnectorCallHost for ServedConnectorCallHost {
         self.reply.take()
     }
 
-    fn present_credential(&mut self, credential: Option<EntityId>) -> bool {
+    fn present_credential(
+        &mut self,
+        credential: Option<EntityId>,
+        grant: Option<SecretGrantRef>,
+    ) -> bool {
         self.credential = credential;
+        self.grant = grant;
         true
     }
 
