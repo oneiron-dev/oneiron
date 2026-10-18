@@ -66,6 +66,7 @@ mod decision_band_doors;
 pub(super) mod decision_role_asks;
 mod dispatch;
 mod embedding_space_doors;
+mod eval_doors;
 mod extraction_doors;
 mod fanout_doors;
 mod federation_connect_doors;
