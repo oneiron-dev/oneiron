@@ -3734,12 +3734,39 @@ class Oneiron:
         def void(self, spec):
             """Withdraws a drafted or pending signing document unsealed and tells its recipients why, through the outbound gate, as the caller."""
             return json.loads(_translate(lambda: self._client.vault_esign_void(json.dumps(spec))))
+        @property
+        def signing(self) -> "Oneiron._VaultEsignSigningVerbs":
+            return Oneiron._VaultEsignSigningVerbs(self._client)
+        @property
+        def seal(self) -> "Oneiron._VaultEsignSealVerbs":
+            return Oneiron._VaultEsignSealVerbs(self._client)
     class _VaultEsignLinksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def issue(self, spec):
             """The vault owner mints the signing links of a drafted document and receives each new one once, to deliver to its recipient."""
             return json.loads(_translate(lambda: self._client.vault_esign_links_issue(json.dumps(spec))))
+    class _VaultEsignSigningVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def act(self, spec):
+            """One recipient ceremony act under the signing capability in the body: load the page, save a field, complete with consent, or reject; an agent caller makes Complete an automated sign act."""
+            return json.loads(_translate(lambda: self._client.vault_esign_signing_act(json.dumps(spec))))
+        def pdf(self, spec):
+            """One ceremony item under its signing capability, as base64 PDF bytes: the pinned original while signing, the hash-checked sealed output after sealing."""
+            return json.loads(_translate(lambda: self._client.vault_esign_signing_pdf(json.dumps(spec))))
+        def image(self, spec):
+            """Stores one signature image bound to the signing capability recipient and answers the ref a signature field value names."""
+            return json.loads(_translate(lambda: self._client.vault_esign_signing_image(json.dumps(spec))))
+        def signature(self, spec):
+            """Reads back one stored signature image under the signing capability that uploaded it, as base64 bytes."""
+            return json.loads(_translate(lambda: self._client.vault_esign_signing_signature(json.dumps(spec))))
+    class _VaultEsignSealVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """Where one signing document seal task stands: its folded status, every seal attempt receipt the queue holds for it, and its sealed manifest once one attempt sealed it."""
+            return json.loads(_translate(lambda: self._client.vault_esign_seal_get(json.dumps(spec))))
     class _VaultConsolidationVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

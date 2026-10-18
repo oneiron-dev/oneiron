@@ -24,7 +24,10 @@ mod ceremony;
 mod door;
 pub use door::{
     EsignCreateRequest, EsignDispatchRequest, EsignDispatchView, EsignDocumentView, EsignDraftView,
-    EsignGetRequest, EsignIssuedLink, EsignLinksIssueRequest, EsignLinksView, EsignVoidRequest,
+    EsignGetRequest, EsignIssuedLink, EsignLinksIssueRequest, EsignLinksView, EsignSealAttemptView,
+    EsignSealGetRequest, EsignSealView, EsignSealedItemView, EsignSealedView,
+    EsignSigningImageRequest, EsignSigningImageView, EsignSigningPdfRequest, EsignSigningPdfView,
+    EsignSigningRequest, EsignSigningSignatureRequest, EsignSigningSignatureView, EsignVoidRequest,
 };
 mod escalation;
 pub use escalation::{

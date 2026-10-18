@@ -776,6 +776,11 @@ pub enum AgentVerb {
     VaultEsignSendForSignature,
     VaultEsignRemind,
     VaultEsignVoid,
+    VaultEsignSigningAct,
+    VaultEsignSigningPdf,
+    VaultEsignSigningImage,
+    VaultEsignSigningSignature,
+    VaultEsignSealGet,
     VaultConversationsCreate,
     VaultConversationsTurnsCreate,
     VaultConversationsRecordsAppend,
@@ -1710,6 +1715,11 @@ impl AgentVerb {
         Self::VaultEsignSendForSignature,
         Self::VaultEsignRemind,
         Self::VaultEsignVoid,
+        Self::VaultEsignSigningAct,
+        Self::VaultEsignSigningPdf,
+        Self::VaultEsignSigningImage,
+        Self::VaultEsignSigningSignature,
+        Self::VaultEsignSealGet,
         Self::VaultConversationsCreate,
         Self::VaultConversationsTurnsCreate,
         Self::VaultConversationsRecordsAppend,
@@ -2665,6 +2675,11 @@ impl AgentVerb {
             Self::VaultEsignSendForSignature => "vault.esign.send_for_signature",
             Self::VaultEsignRemind => "vault.esign.remind",
             Self::VaultEsignVoid => "vault.esign.void",
+            Self::VaultEsignSigningAct => "vault.esign.signing.act",
+            Self::VaultEsignSigningPdf => "vault.esign.signing.pdf",
+            Self::VaultEsignSigningImage => "vault.esign.signing.image",
+            Self::VaultEsignSigningSignature => "vault.esign.signing.signature",
+            Self::VaultEsignSealGet => "vault.esign.seal.get",
             Self::VaultConversationsCreate => "vault.conversations.create",
             Self::VaultConversationsTurnsCreate => "vault.conversations.turns.create",
             Self::VaultConversationsRecordsAppend => "vault.conversations.records.append",
@@ -3582,6 +3597,11 @@ impl AgentVerb {
                 | Self::VaultEsignSendForSignature
                 | Self::VaultEsignRemind
                 | Self::VaultEsignVoid
+                | Self::VaultEsignSigningAct
+                | Self::VaultEsignSigningPdf
+                | Self::VaultEsignSigningImage
+                | Self::VaultEsignSigningSignature
+                | Self::VaultEsignSealGet
                 | Self::VaultConversationsCreate
                 | Self::VaultConversationsTurnsCreate
                 | Self::VaultConversationsRecordsAppend
@@ -4543,6 +4563,11 @@ impl AgentVerb {
                 | Self::VaultEsignSendForSignature
                 | Self::VaultEsignRemind
                 | Self::VaultEsignVoid
+                | Self::VaultEsignSigningAct
+                | Self::VaultEsignSigningPdf
+                | Self::VaultEsignSigningImage
+                | Self::VaultEsignSigningSignature
+                | Self::VaultEsignSealGet
                 | Self::VaultConversationsCreate
                 | Self::VaultConversationsTurnsCreate
                 | Self::VaultConversationsRecordsAppend
@@ -5585,6 +5610,11 @@ impl AgentVerb {
                 | Self::VaultEsignSendForSignature
                 | Self::VaultEsignRemind
                 | Self::VaultEsignVoid
+                | Self::VaultEsignSigningAct
+                | Self::VaultEsignSigningPdf
+                | Self::VaultEsignSigningImage
+                | Self::VaultEsignSigningSignature
+                | Self::VaultEsignSealGet
                 | Self::VaultConversationsCreate
                 | Self::VaultConversationsTurnsCreate
                 | Self::VaultConversationsRecordsAppend
@@ -6194,6 +6224,9 @@ impl AgentVerb {
                 | Self::VaultEsignSendForSignature
                 | Self::VaultEsignRemind
                 | Self::VaultEsignVoid
+                | Self::VaultEsignSigningAct
+                | Self::VaultEsignSigningPdf
+                | Self::VaultEsignSigningImage
                 | Self::VaultConversationsCreate
                 | Self::VaultConversationsTurnsCreate
                 | Self::VaultConversationsRecordsAppend
@@ -7103,6 +7136,11 @@ impl AgentVerb {
             Self::VaultEsignSendForSignature => &["spec"],
             Self::VaultEsignRemind => &["spec"],
             Self::VaultEsignVoid => &["spec"],
+            Self::VaultEsignSigningAct => &["spec"],
+            Self::VaultEsignSigningPdf => &["spec"],
+            Self::VaultEsignSigningImage => &["spec"],
+            Self::VaultEsignSigningSignature => &["spec"],
+            Self::VaultEsignSealGet => &["spec"],
             Self::VaultConversationsCreate => &["spec"],
             Self::VaultConversationsTurnsCreate => &["spec"],
             Self::VaultConversationsRecordsAppend => &["spec"],
@@ -8038,6 +8076,11 @@ impl AgentVerb {
             Self::VaultEsignSendForSignature => &["spec"],
             Self::VaultEsignRemind => &["spec"],
             Self::VaultEsignVoid => &["spec"],
+            Self::VaultEsignSigningAct => &["spec"],
+            Self::VaultEsignSigningPdf => &["spec"],
+            Self::VaultEsignSigningImage => &["spec"],
+            Self::VaultEsignSigningSignature => &["spec"],
+            Self::VaultEsignSealGet => &["spec"],
             Self::VaultConversationsCreate => &["spec"],
             Self::VaultConversationsTurnsCreate => &["spec"],
             Self::VaultConversationsRecordsAppend => &["spec"],
@@ -10429,6 +10472,21 @@ impl AgentVerb {
             }
             Self::VaultEsignVoid => {
                 "Withdraws a drafted or pending signing document unsealed and tells its recipients why, through the outbound gate, as the caller."
+            }
+            Self::VaultEsignSigningAct => {
+                "One recipient ceremony act under the signing capability in the body: load the page, save a field, complete with consent, or reject; an agent caller makes Complete an automated sign act."
+            }
+            Self::VaultEsignSigningPdf => {
+                "One ceremony item under its signing capability, as base64 PDF bytes: the pinned original while signing, the hash-checked sealed output after sealing."
+            }
+            Self::VaultEsignSigningImage => {
+                "Stores one signature image bound to the signing capability recipient and answers the ref a signature field value names."
+            }
+            Self::VaultEsignSigningSignature => {
+                "Reads back one stored signature image under the signing capability that uploaded it, as base64 bytes."
+            }
+            Self::VaultEsignSealGet => {
+                "Where one signing document seal task stands: its folded status, every seal attempt receipt the queue holds for it, and its sealed manifest once one attempt sealed it."
             }
             Self::VaultConversationsCreate => {
                 "Creates a conversation; a body naming members also authors its membership ledger, creator and role grants as the caller."

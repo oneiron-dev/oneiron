@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 908 facade rows, 3120 declarations.
-Inputs: 854 of 908 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 822 of 908 fully typed, 86 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 913 facade rows, 3137 declarations.
+Inputs: 859 of 913 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 827 of 913 fully typed, 86 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 102; unread shapes: 0.
 """
 
@@ -13217,6 +13217,115 @@ class EsignVoidRequest(TypedDict):
     reason: str
     on_behalf_of: NotRequired[str | None]
     idempotency_key: NotRequired[str | None]
+class SigningActionLoad(TypedDict):
+    action: Literal["load"]
+class SigningActionSaveField(TypedDict):
+    action: Literal["save_field"]
+    field: str
+    value: FieldValue
+class SigningActionComplete(TypedDict):
+    action: Literal["complete"]
+    consent: bool
+    next: NotRequired[str | None]
+class SigningActionReject(TypedDict):
+    action: Literal["reject"]
+    reason: str
+SigningAction = SigningActionLoad | SigningActionSaveField | SigningActionComplete | SigningActionReject
+class EsignSigningRequest(TypedDict):
+    token: str
+    action: SigningAction
+class FieldControlText(TypedDict):
+    kind: Literal["text"]
+    max_bytes: int
+    server_computed: bool
+class FieldControlCheckbox(TypedDict):
+    kind: Literal["checkbox"]
+class FieldControlSelect(TypedDict):
+    kind: Literal["select"]
+    options: list[str]
+class FieldControlSignature(TypedDict):
+    kind: Literal["signature"]
+FieldControl = FieldControlText | FieldControlCheckbox | FieldControlSelect | FieldControlSignature
+class FieldPresentation(TypedDict):
+    id: str
+    item: int
+    geometry: FieldGeometry
+    required: bool
+    control: FieldControl
+    value: NotRequired[FieldValue | None]
+class SigningPage(TypedDict):
+    item_count: int
+    title: str
+    recipient: str
+    fields: list[EsignField]
+    presentations: list[FieldPresentation]
+    values: dict[str, SignatureRow]
+class SigningOutcomePage(TypedDict):
+    outcome: Literal["page"]
+    data: SigningPage
+class SigningOutcomeNotYourTurn(TypedDict):
+    outcome: Literal["not_your_turn"]
+class SigningOutcomeTerminalContent(TypedDict):
+    status: DocumentStatus
+    item_count: int
+class SigningOutcomeTerminal(TypedDict):
+    outcome: Literal["terminal"]
+    data: SigningOutcomeTerminalContent
+class SigningOutcomeAwaitingSeal(TypedDict):
+    outcome: Literal["awaiting_seal"]
+class SigningOutcomeHeldForOwnerContent(TypedDict):
+    held_at: int
+class SigningOutcomeHeldForOwner(TypedDict):
+    outcome: Literal["held_for_owner"]
+    data: SigningOutcomeHeldForOwnerContent
+class SigningOutcomeConsentRequired(TypedDict):
+    outcome: Literal["consent_required"]
+SigningOutcome = SigningOutcomePage | SigningOutcomeNotYourTurn | SigningOutcomeTerminal | SigningOutcomeAwaitingSeal | SigningOutcomeHeldForOwner | SigningOutcomeConsentRequired
+class EsignSigningPdfRequest(TypedDict):
+    token: str
+    item: int
+class EsignSigningPdfView(TypedDict):
+    item: int
+    pdf_base64: str
+class EsignSigningImageRequest(TypedDict):
+    token: str
+    png_or_jpeg_base64: str
+class EsignSigningImageView(TypedDict):
+    image_ref: str
+class EsignSigningSignatureRequest(TypedDict):
+    token: str
+    image_ref: str
+class EsignSigningSignatureView(TypedDict):
+    image_ref: str
+    image_base64: str
+class EsignSealGetRequest(TypedDict):
+    document_ref: str
+class EsignSealAttemptView(TypedDict):
+    attempt_ref: str
+    kind: str
+    state: str
+    dedupe_key: NotRequired[str | None]
+    lease_owner: NotRequired[str | None]
+    attempt_count: int
+    created_at: int
+    updated_at: int
+    last_error: NotRequired[str | None]
+class EsignSealedItemView(TypedDict):
+    original_artifact: str
+    original_version: int
+    sealed_artifact: str
+    sealed_version: int
+    sha256: str
+class EsignSealedView(TypedDict):
+    attempt_ref: str
+    audit_chain_sha256: str
+    rejected: bool
+    items: list[EsignSealedItemView]
+class EsignSealView(TypedDict):
+    document_ref: str
+    status: DocumentStatus
+    attempts: list[EsignSealAttemptView]
+    sealed: NotRequired[EsignSealedView | None]
 class CoreWriteTextField(TypedDict):
     field: str
     value: str

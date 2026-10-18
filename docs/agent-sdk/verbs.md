@@ -758,6 +758,11 @@ both bindings and their export-census tests in one change.
 - `vault.esign.send_for_signature`
 - `vault.esign.remind`
 - `vault.esign.void`
+- `vault.esign.signing.act`
+- `vault.esign.signing.pdf`
+- `vault.esign.signing.image`
+- `vault.esign.signing.signature`
+- `vault.esign.seal.get`
 - `vault.conversations.create`
 - `vault.conversations.turns.create`
 - `vault.conversations.records.append`

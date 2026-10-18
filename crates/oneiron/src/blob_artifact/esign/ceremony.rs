@@ -8,7 +8,7 @@ use super::{
 use crate::{EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SigningAction {
     Load,
@@ -16,7 +16,7 @@ pub enum SigningAction {
     Complete { consent: bool, next: Option<String> },
     Reject { reason: String },
 }
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SigningPage {
     pub item_count: usize,
     pub title: String,
@@ -25,7 +25,7 @@ pub struct SigningPage {
     pub presentations: Vec<super::render::FieldPresentation>,
     pub values: BTreeMap<String, SignatureRow>,
 }
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "outcome", content = "data", rename_all = "snake_case")]
 pub enum SigningOutcome {
     Page(SigningPage),
