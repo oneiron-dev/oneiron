@@ -7,6 +7,11 @@ Names are stable: a new export or rename must update the engine catalog,
 both bindings and their export-census tests in one change.
 
 - `report`
+- `feedback.preview`
+- `feedback.send`
+- `vault.reports.disclosure`
+- `vault.reports.route`
+- `vault.reports.outbound`
 - `self.focus.scratchpad.recall`
 - `self.focus.scratchpad.append`
 - `self.focus.scratchpad.seal`
@@ -394,6 +399,7 @@ both bindings and their export-census tests in one change.
 - `vault.task_types.pin`
 - `vault.task_types.get`
 - `vault.agents.spawn.get`
+- `vault.agents.spawn`
 - `vault.tasks.cancel_force`
 - `vault.runs.branches.get`
 - `vault.consults.get`
@@ -503,6 +509,9 @@ both bindings and their export-census tests in one change.
 - `vault.questions.read`
 - `vault.questions.answers`
 - `vault.questions.refresh`
+- `vault.questions.outcomes`
+- `vault.questions.outcomes.project`
+- `vault.questions.schedule`
 - `vault.decisions.bands.read`
 - `vault.decisions.bands.learn`
 - `vault.decisions.bands.enforce`
@@ -529,6 +538,9 @@ both bindings and their export-census tests in one change.
 - `vault.calendar.freebusy`
 - `vault.calendar.transcript.ingest`
 - `vault.claims.list`
+- `vault.claims.demote`
+- `vault.claims.list_filtered`
+- `vault.claims.read_filtered`
 - `vault.claims.history`
 - `vault.delete`
 - `vault.writes.pending`
