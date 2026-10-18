@@ -25,7 +25,9 @@ pub(in crate::sync) use self::entity::{
 };
 pub(in crate::sync) use self::order::{authority_parent_order, is_authority_row};
 pub(in crate::sync) use self::peer_import::{
-    forget_peer_rows, peer_row_in_txn, peer_rows, record_peer_rows,
+    PEER_ORIGIN_MAP, admit_peer_origin_carrier, admit_peer_origin_map, carried_origin_in_txn,
+    carry_peer_rows, copy_peer_origins, forget_peer_origin, forget_peer_rows, peer_row_in_txn,
+    record_peer_rows,
 };
 pub(in crate::sync) use self::promotion::with_promotion;
 pub(in crate::sync) use self::tombstone::{TombstoneStep, classify_tombstone};

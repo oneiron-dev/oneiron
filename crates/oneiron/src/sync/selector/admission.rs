@@ -511,7 +511,7 @@ fn admit_window_update(
             )?,
             None => Vec::new(),
         };
-        let peer_rows = crate::sync::ingest::peer_rows(&admitted.get_map("entities"));
+        let peer_rows = crate::sync::ingest::carry_peer_rows(&admitted)?;
         let delivered = crate::sync::ingest::delivered_rows(&admitted.get_map("entities"));
         admitted.commit_with(CommitOptions::new().origin(role.origin()));
         let rows = admitted.get_map("entities").len() + admitted.get_map("edges").len();
