@@ -396,6 +396,8 @@ class Oneiron:
         @property
         def memory(self) -> "Oneiron._SelfMemoryVerbs": ...
         @property
+        def standing(self) -> "Oneiron._SelfStandingVerbs": ...
+        @property
         def identity(self) -> "Oneiron._SelfIdentityVerbs": ...
         @property
         def inbox(self) -> "Oneiron._SelfInboxVerbs": ...
@@ -423,6 +425,8 @@ class Oneiron:
         def folds(self) -> "Oneiron._SelfFoldsVerbs": ...
         def history(self, spec: Facade.FoldHistoryRequest) -> Facade.FoldHistory:
             """Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled."""
+        @property
+        def browser(self) -> "Oneiron._SelfBrowserVerbs": ...
         def fold(self, spec: Facade.FoldMarkRequest) -> Facade.FoldReply[Facade.FoldMarked]:
             """Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands."""
         def compact(self, spec: Facade.FoldCompactRequest) -> Facade.FoldReply[Facade.FoldCompactAsked]:
@@ -455,6 +459,13 @@ class Oneiron:
             """This agent's yes or no to a reader's reason for reading its diary; only the diary's own agent answers."""
         def query(self, spec: Facade.DiaryQueryRequest) -> Facade.DiaryQueryOutcome:
             """Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log."""
+    class _SelfStandingVerbs:
+        def get(self, spec: Facade.OwnStandingBlockRequest) -> Facade.StandingBlockView:
+            """This agent's configured standing block in one world: its handle, name and token floor."""
+        def list(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.StandingBlockView]:
+            """Every standing block configured for this agent, one per world, in world order."""
+        def edit(self, spec: Facade.StandingBlockEditRequest) -> Facade.StandingBlockEditReceipt:
+            """This agent proposes one persona field's new text for its standing block, as a Generated claim its gate settles; compiled text is never edited."""
     class _SelfIdentityVerbs:
         def answer(self, spec: Facade.IdentityAnswerRequest) -> Facade.IdentitySettled:
             """A vault owner's tap on an identity choice card: who a person named in their conversations is."""
@@ -513,6 +524,37 @@ class Oneiron:
             """Lists the attached run's landed folds, pending marks and outstanding compact ask."""
         def describe(self, spec: Facade.FoldUnfoldRequest) -> Facade.FoldReply[Facade.FoldDescription]:
             """Reads one pending mark or landed fold of the attached run, with its Generated stub, source ids and retained result handles."""
+    class _SelfBrowserVerbs:
+        def open(self, spec: Facade.LiveRunRequest[Facade.OpenInput]) -> Facade.ObservationPage:
+            """Opens a URL in the attached run's own browser session and observes the page; a long page's observation comes in pages, read on with observe and its next cursor."""
+        def observe(self, spec: Facade.LiveRunRequest[Facade.ObserveInput]) -> Facade.ObservationPage:
+            """Observes the current page of the attached run's browser session, in pages read on with observe and an answer's next cursor; the verbs follow a tab an act opens, or a closed tab's opener, and name the move as switched."""
+        def find(self, spec: Facade.LiveRunRequest[Facade.FindInput]) -> Facade.FindOutput:
+            """Finds the page rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page."""
+        def click(self, spec: Facade.LiveRunRequest[Facade.ClickInput]) -> Facade.ObservationPage:
+            """Clicks one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor."""
+        def click_at(self, spec: Facade.LiveRunRequest[Facade.PointInput]) -> Facade.ObservationPage:
+            """Clicks a point of a held screenshot, mapped onto the viewport; a long page's observation comes in pages, read on with observe and its next cursor."""
+        def type(self, spec: Facade.LiveRunRequest[Facade.TypeInput]) -> Facade.ObservationPage:
+            """Types text into one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor."""
+        def select(self, spec: Facade.LiveRunRequest[Facade.SelectInput]) -> Facade.ObservationPage:
+            """Picks the option of a select element by its label, text or value; a long page's observation comes in pages, read on with observe and its next cursor."""
+        def wait_for(self, spec: Facade.LiveRunRequest[Facade.WaitForInput]) -> Facade.WaitForOutput:
+            """Waits until a page row its refs name, or else some row matching a role and name, is there; many rows come in pages, read on with find and its next cursor."""
+        def expect(self, spec: Facade.LiveRunRequest[Facade.ExpectInput]) -> Facade.ExpectOutput:
+            """Checks that a page row is present or absent, and holds a given value."""
+        def screenshot(self, spec: Facade.LiveRunRequest[Facade.ScreenshotInput]) -> Facade.ScreenshotOutput:
+            """Takes a screenshot the session holds, by image ref and never captioned."""
+        def view(self, spec: Facade.LiveRunRequest[Facade.ViewInput]) -> Facade.ImageOutput:
+            """Reads back a held image by its ref."""
+        def crop(self, spec: Facade.LiveRunRequest[Facade.CropInput]) -> Facade.ImageOutput:
+            """Crops a held image to a rectangle."""
+        def zoom(self, spec: Facade.LiveRunRequest[Facade.ZoomInput]) -> Facade.ImageOutput:
+            """Zooms into a rectangle of a held image."""
+        def batch(self, spec: Facade.LiveRunRequest[Facade.BatchInput]) -> Facade.BatchOutput:
+            """Runs one batched program of browser steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor."""
+        def handover(self, spec: Facade.LiveRunRequest[Facade.HandoverInput]) -> Facade.HandoverOutput:
+            """Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record."""
     class _SelfAgentsVerbs:
         def spawn(self, spec: Facade.LiveRunRequest[Facade.AgentSpawnInput]) -> Facade.AgentSpawnOutput:
             """Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity."""
@@ -634,6 +676,8 @@ class Oneiron:
         def results(self) -> "Oneiron._VaultResultsVerbs": ...
         @property
         def agents(self) -> "Oneiron._VaultAgentsVerbs": ...
+        @property
+        def standing_blocks(self) -> "Oneiron._VaultStandingBlocksVerbs": ...
         @property
         def workflows(self) -> "Oneiron._VaultWorkflowsVerbs": ...
         @property
@@ -1234,8 +1278,8 @@ class Oneiron:
     class _VaultResearchVerbs:
         def create_child(self, spec: Facade.ResearchChildWire) -> Facade.ResearchChildReceipt:
             """The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave."""
-        def archive(self, spec: Facade.ResearchArchiveWire) -> Facade.ResearchArchive:
-            """Reads the complete retained campaign record, including every pruned, buggy and woven candidate, original search and held-out evidence, selection rounds and promotion receipts, under the controller gate."""
+        @property
+        def archive(self) -> "Oneiron._VaultResearchArchiveVerbs": ...
         def bind(self, spec: Facade.ResearchBindWire) -> Facade.ResearchBinding:
             """Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it."""
         def fork(self, spec: Facade.ResearchForkWire) -> Facade.ExperimentNode:
@@ -1268,6 +1312,21 @@ class Oneiron:
             """Refunds a work reservation nothing was spent on."""
         def record_benchmark(self, spec: Facade.ResearchBenchmarkWire) -> Facade.SelectionBenchmark:
             """Records an estimator version's held-out selection benchmark against the DGM parent formula, once per version; a win of at least 30 cases lets its information gain rank parents."""
+    class _VaultResearchArchiveVerbs:
+        def __call__(self, spec: Facade.ResearchArchiveWire) -> Facade.ResearchArchive:
+            """Reads the complete retained campaign record, including every pruned, buggy and woven candidate, original search and held-out evidence, selection rounds and promotion receipts, under the controller gate."""
+        def install(self, spec: Facade.CampaignArchiveInstall) -> Facade.CampaignArchiveView:
+            """Installs one immutable campaign output descriptor from a receipted Coach proposal under the current human goal; categorical axes and embedding clusters share the engine validator."""
+        def record(self, spec: Facade.CampaignArchiveOutput) -> Facade.CampaignArchiveView:
+            """Records original placement and quality receipts for one output revision; categorical judgment or pinned embedding placement competes only within its own cell."""
+        def get(self, spec: Facade.CampaignArchiveRequest) -> Facade.CampaignArchiveRecord:
+            """Reads the installed campaign output descriptor and every original placement and scoring receipt, including losing outputs, under the research controller gate."""
+        def best(self, spec: Facade.CampaignArchiveRequest) -> Facade.CampaignArchiveView:
+            """Rebuilds one best output per cell under the immutable descriptor revision and reports whether bunching warrants a new campaign proposal."""
+        def repropose(self, spec: Facade.CampaignArchiveReproposal) -> Facade.CampaignArchiveView:
+            """Installs a receipted descriptor proposal in a new bound campaign when the old archive is bunched; the old descriptor, goal and cell winners remain unchanged."""
+        def coverage(self, spec: Facade.CampaignArchiveCoverage) -> Facade.CampaignArchiveAdmission:
+            """Pins the incumbent and candidate replay output refs and projects the human goal coverage floor; promotion rechecks these receipts and rejects any lost incumbent cell."""
     class _VaultEvalsVerbs:
         def inventory(self, spec: Facade.EvalInventoryWire) -> Facade.EvalAuthoringInventory:
             """The owner reads the metadata-only eval-authoring inventory: real receipt families, grounded case candidates, date-cut cohorts and exposure counts. Pin its built_at and digest for cohort setup."""
@@ -1358,6 +1417,8 @@ class Oneiron:
     class _VaultConsentVerbs:
         def approve_once(self, spec: Facade.ApproveOnceRequest) -> Facade.ConsentActReceipt:
             """The owner approves exactly one engine-emitted effect digest; no standing grant is created."""
+        def deny(self, spec: Facade.DenyConsentRequest) -> Facade.ConsentActReceipt:
+            """The owner denies exactly one engine-emitted effect digest and records the refusal without granting authority."""
         def create_standing_grant(self, spec: Facade.CreateStandingGrantRequest) -> Facade.ConsentActReceipt:
             """The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision."""
         def registry(self, spec: Facade.ConsentRegistryQuery) -> Facade.ConsentRegistry:
@@ -1644,11 +1705,27 @@ class Oneiron:
         def update(self, spec: Facade.AgentDefinitionUpdateRequest) -> Facade.AgentDefinitionView:
             """The owner edits the expected definition version and optional refusal dial through the existing immutable-field and ceiling gates; refusal decisions read the live dial."""
         @property
+        def dreaming(self) -> "Oneiron._VaultAgentsDreamingVerbs": ...
+        @property
         def spawn(self) -> "Oneiron._VaultAgentsSpawnVerbs": ...
         def export_pack(self, request: Facade.AgentPackExportRequest) -> Facade.AgentPackExport: ...
+    class _VaultAgentsDreamingVerbs:
+        def get(self, spec: Facade.AgentDreamingRequest) -> Facade.AgentDreamingView:
+            """The owner reads one agent's dreaming choice: its stored mode, the mode in force and its own dreaming model slot."""
+        def set(self, spec: Facade.AgentDreamingSetRequest) -> Facade.AgentDreamingView:
+            """The owner sets one agent's dreaming choice on the revision read: its own model, the vault weaver's, or off; sharing a model never shares its diary."""
     class _VaultAgentsSpawnVerbs:
         def get(self, spec: Facade.PlannedSpawnRead) -> Facade.PlannedSpawnObservation:
             """The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning."""
+    class _VaultStandingBlocksVerbs:
+        def configure(self, spec: Facade.StandingBlockConfigureRequest) -> Facade.StandingBlockView:
+            """The owner configures one agent's standing block in one world with its name and token floor; reopening the same pair answers the stored handle."""
+        def reconfigure(self, spec: Facade.StandingBlockConfigureRequest) -> Facade.StandingBlockView:
+            """The owner gives a configured standing block a new name and token floor; an unconfigured pair is refused, never implicitly opened."""
+        def get(self, spec: Facade.StandingBlockRequest) -> Facade.StandingBlockView:
+            """The owner reads one agent's configured standing block in one world: its handle, name and token floor."""
+        def list(self, spec: Facade.StandingBlocksRequest) -> list[Facade.StandingBlockView]:
+            """The owner lists every standing block configured for one agent, one per world, in world order."""
     class _VaultWorkflowsVerbs:
         def save(self, spec: Facade.WorkflowSaveRequest) -> Facade.WorkflowView:
             """The owner saves an ordered composition of live AGENT_DEF steps at a new WORKFLOW id at revision 1; an occupied id is refused and no attempt is dispatched."""
@@ -1860,6 +1937,8 @@ class Oneiron:
         def answer(self, spec: Facade.DecisionAskAnswerRequest) -> Facade.DecisionAsk: ...
         def climb(self, spec: Facade.DecisionAskClimbRequest) -> Facade.ResolvedRole | None: ...
     class _VaultBookingVerbs:
+        def constraint_turn(self, spec: Facade.BookingConstraintTurnRequest) -> Facade.BookingConstraintTurnResponse:
+            """Parses one scheduling constraint on a live published booking page as the caller, returning public slot controls, an email continuation or a deflect; this never holds or confirms a booking."""
         def page_token(self, spec: Facade.BookingPageTokenRequest) -> Facade.BookingPageTokenResponse:
             """The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority."""
     class _VaultCalendarVerbs:

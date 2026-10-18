@@ -35,6 +35,21 @@ export_facade! {
     let output = client.self_memory_diary_review(&input)?;
     crate::codec::lift_record("self.memory.diary.review", &output)
 };
+"self.standing.get" => fn self_standing_get(&self, input: OwnStandingBlockRequest) -> StandingBlockView = |client| {
+    let input: oneiron::task_verb::sdk::OwnStandingBlockRequest = crate::codec::lower_record("self.standing.get", input)?;
+    let output = client.self_standing_get(&input)?;
+    crate::codec::lift_record("self.standing.get", &output)
+};
+"self.standing.list" => fn self_standing_list(&self) -> Vec<StandingBlockView> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("self.standing.list")?;
+    let output = client.self_standing_list(&input)?;
+    crate::codec::lift_record("self.standing.list", &output)
+};
+"self.standing.edit" => fn self_standing_edit(&self, input: StandingBlockEditRequest) -> StandingBlockEditReceipt = |client| {
+    let input: oneiron::task_verb::sdk::StandingBlockEditRequest = crate::codec::lower_record("self.standing.edit", input)?;
+    let output = client.self_standing_edit(&input)?;
+    crate::codec::lift_record("self.standing.edit", &output)
+};
 "self.identity.answer" => fn self_identity_answer(&self, input: IdentityAnswerRequest) -> IdentitySettled = |client| {
     let input: oneiron::dreamer_runner::maintenance::identity::IdentityAnswerRequest = crate::codec::lower_record("self.identity.answer", input)?;
     let output = client.self_identity_answer(&input)?;
@@ -1056,6 +1071,36 @@ export_facade! {
     let output = client.vault_research_archive(&input)?;
     crate::codec::lift_record("vault.research.archive", &output)
 };
+"vault.research.archive.install" => fn vault_research_archive_install(&self, input: CampaignArchiveInstall) -> CampaignArchiveView = |client| {
+    let input: oneiron::autoreason_campaign::archive::CampaignArchiveInstall = crate::codec::lower_record("vault.research.archive.install", input)?;
+    let output = client.vault_research_archive_install(&input)?;
+    crate::codec::lift_record("vault.research.archive.install", &output)
+};
+"vault.research.archive.record" => fn vault_research_archive_record(&self, input: CampaignArchiveOutput) -> CampaignArchiveView = |client| {
+    let input: oneiron::autoreason_campaign::archive::CampaignArchiveOutput = crate::codec::lower_record("vault.research.archive.record", input)?;
+    let output = client.vault_research_archive_record(&input)?;
+    crate::codec::lift_record("vault.research.archive.record", &output)
+};
+"vault.research.archive.get" => fn vault_research_archive_get(&self, input: CampaignArchiveRequest) -> CampaignArchiveRecord = |client| {
+    let input: oneiron::autoreason_campaign::archive::CampaignArchiveRequest = crate::codec::lower_record("vault.research.archive.get", input)?;
+    let output = client.vault_research_archive_get(&input)?;
+    crate::codec::lift_record("vault.research.archive.get", &output)
+};
+"vault.research.archive.best" => fn vault_research_archive_best(&self, input: CampaignArchiveRequest) -> CampaignArchiveView = |client| {
+    let input: oneiron::autoreason_campaign::archive::CampaignArchiveRequest = crate::codec::lower_record("vault.research.archive.best", input)?;
+    let output = client.vault_research_archive_best(&input)?;
+    crate::codec::lift_record("vault.research.archive.best", &output)
+};
+"vault.research.archive.repropose" => fn vault_research_archive_repropose(&self, input: CampaignArchiveReproposal) -> CampaignArchiveView = |client| {
+    let input: oneiron::autoreason_campaign::archive::CampaignArchiveReproposal = crate::codec::lower_record("vault.research.archive.repropose", input)?;
+    let output = client.vault_research_archive_repropose(&input)?;
+    crate::codec::lift_record("vault.research.archive.repropose", &output)
+};
+"vault.research.archive.coverage" => fn vault_research_archive_coverage(&self, input: CampaignArchiveCoverage) -> CampaignArchiveAdmission = |client| {
+    let input: oneiron::autoreason_campaign::archive::CampaignArchiveCoverage = crate::codec::lower_record("vault.research.archive.coverage", input)?;
+    let output = client.vault_research_archive_coverage(&input)?;
+    crate::codec::lift_record("vault.research.archive.coverage", &output)
+};
 "vault.evals.inventory" => fn vault_evals_inventory(&self, input: EvalInventoryWire) -> EvalAuthoringInventory = |client| {
     let input: oneiron::task_verb::sdk::EvalInventoryWire = crate::codec::lower_record("vault.evals.inventory", input)?;
     let output = client.vault_evals_inventory(&input)?;
@@ -1305,6 +1350,11 @@ export_facade! {
     let input: oneiron::consent::lifecycle::ApproveOnceRequest = crate::codec::lower_record("vault.consent.approve_once", input)?;
     let output = client.vault_consent_approve_once(&input)?;
     crate::codec::lift_record("vault.consent.approve_once", &output)
+};
+"vault.consent.deny" => fn vault_consent_deny(&self, input: DenyConsentRequest) -> ConsentActReceipt = |client| {
+    let input: oneiron::consent::lifecycle::DenyConsentRequest = crate::codec::lower_record("vault.consent.deny", input)?;
+    let output = client.vault_consent_deny(&input)?;
+    crate::codec::lift_record("vault.consent.deny", &output)
 };
 "vault.consent.create_standing_grant" => fn vault_consent_create_standing_grant(&self, input: CreateStandingGrantRequest) -> ConsentActReceipt = |client| {
     let input: oneiron::consent::lifecycle::CreateStandingGrantRequest = crate::codec::lower_record("vault.consent.create_standing_grant", input)?;
@@ -1805,6 +1855,36 @@ export_facade! {
     let input: oneiron::task_verb::sdk::AgentDefinitionUpdateRequest = crate::codec::lower_record("vault.agents.update", input)?;
     let output = client.vault_agents_update(&input)?;
     crate::codec::lift_record("vault.agents.update", &output)
+};
+"vault.agents.dreaming.get" => fn vault_agents_dreaming_get(&self, input: AgentDreamingRequest) -> AgentDreamingView = |client| {
+    let input: oneiron::task_verb::sdk::AgentDreamingRequest = crate::codec::lower_record("vault.agents.dreaming.get", input)?;
+    let output = client.vault_agents_dreaming_get(&input)?;
+    crate::codec::lift_record("vault.agents.dreaming.get", &output)
+};
+"vault.agents.dreaming.set" => fn vault_agents_dreaming_set(&self, input: AgentDreamingSetRequest) -> AgentDreamingView = |client| {
+    let input: oneiron::task_verb::sdk::AgentDreamingSetRequest = crate::codec::lower_record("vault.agents.dreaming.set", input)?;
+    let output = client.vault_agents_dreaming_set(&input)?;
+    crate::codec::lift_record("vault.agents.dreaming.set", &output)
+};
+"vault.standing_blocks.configure" => fn vault_standing_blocks_configure(&self, input: StandingBlockConfigureRequest) -> StandingBlockView = |client| {
+    let input: oneiron::task_verb::sdk::StandingBlockConfigureRequest = crate::codec::lower_record("vault.standing_blocks.configure", input)?;
+    let output = client.vault_standing_blocks_configure(&input)?;
+    crate::codec::lift_record("vault.standing_blocks.configure", &output)
+};
+"vault.standing_blocks.reconfigure" => fn vault_standing_blocks_reconfigure(&self, input: StandingBlockConfigureRequest) -> StandingBlockView = |client| {
+    let input: oneiron::task_verb::sdk::StandingBlockConfigureRequest = crate::codec::lower_record("vault.standing_blocks.reconfigure", input)?;
+    let output = client.vault_standing_blocks_reconfigure(&input)?;
+    crate::codec::lift_record("vault.standing_blocks.reconfigure", &output)
+};
+"vault.standing_blocks.get" => fn vault_standing_blocks_get(&self, input: StandingBlockRequest) -> StandingBlockView = |client| {
+    let input: oneiron::task_verb::sdk::StandingBlockRequest = crate::codec::lower_record("vault.standing_blocks.get", input)?;
+    let output = client.vault_standing_blocks_get(&input)?;
+    crate::codec::lift_record("vault.standing_blocks.get", &output)
+};
+"vault.standing_blocks.list" => fn vault_standing_blocks_list(&self, input: StandingBlocksRequest) -> Vec<StandingBlockView> = |client| {
+    let input: oneiron::task_verb::sdk::StandingBlocksRequest = crate::codec::lower_record("vault.standing_blocks.list", input)?;
+    let output = client.vault_standing_blocks_list(&input)?;
+    crate::codec::lift_record("vault.standing_blocks.list", &output)
 };
 "vault.workflows.save" => fn vault_workflows_save(&self, input: WorkflowSaveRequest) -> WorkflowView = |client| {
     let input: oneiron::task_verb::sdk::WorkflowSaveRequest = crate::codec::lower_record("vault.workflows.save", input)?;
@@ -2466,6 +2546,11 @@ export_facade! {
     let output = client.vault_forget(&input)?;
     Lift::lift(output)
 };
+"vault.booking.constraint_turn" => fn vault_booking_constraint_turn(&self, input: BookingConstraintTurnRequest) -> BookingConstraintTurnResponse = |client| {
+    let input: oneiron::task_verb::sdk::BookingConstraintTurnRequest = crate::codec::lower_record("vault.booking.constraint_turn", input)?;
+    let output = client.vault_booking_constraint_turn(&input)?;
+    crate::codec::lift_record("vault.booking.constraint_turn", &output)
+};
 "vault.booking.page_token" => fn vault_booking_page_token(&self, input: BookingPageTokenRequest) -> BookingPageTokenResponse = |client| {
     let input: oneiron::task_verb::sdk::BookingPageTokenRequest = crate::codec::lower_record("vault.booking.page_token", input)?;
     let output = client.vault_booking_page_token(&input)?;
@@ -3095,6 +3180,81 @@ export_facade! {
     let input: oneiron::code_run::fold_api::FoldHistoryRequest = crate::codec::lower_record("self.history", input)?;
     let output = client.self_history(&input)?;
     crate::codec::lift_record("self.history", &output)
+};
+"self.browser.open" => fn self_browser_open(&self, input: LiveRunRequestOpenInput) -> ObservationPage = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserOpenInput> = crate::codec::lower_record("self.browser.open", input)?;
+    let output = client.self_browser_open(&input)?;
+    crate::codec::lift_record("self.browser.open", &output)
+};
+"self.browser.observe" => fn self_browser_observe(&self, input: LiveRunRequestObserveInput) -> ObservationPage = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserObserveInput> = crate::codec::lower_record("self.browser.observe", input)?;
+    let output = client.self_browser_observe(&input)?;
+    crate::codec::lift_record("self.browser.observe", &output)
+};
+"self.browser.find" => fn self_browser_find(&self, input: LiveRunRequestFindInput) -> FindOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserFindInput> = crate::codec::lower_record("self.browser.find", input)?;
+    let output = client.self_browser_find(&input)?;
+    crate::codec::lift_record("self.browser.find", &output)
+};
+"self.browser.click" => fn self_browser_click(&self, input: LiveRunRequestClickInput) -> ObservationPage = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserClickInput> = crate::codec::lower_record("self.browser.click", input)?;
+    let output = client.self_browser_click(&input)?;
+    crate::codec::lift_record("self.browser.click", &output)
+};
+"self.browser.click_at" => fn self_browser_click_at(&self, input: LiveRunRequestPointInput) -> ObservationPage = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserPointInput> = crate::codec::lower_record("self.browser.click_at", input)?;
+    let output = client.self_browser_click_at(&input)?;
+    crate::codec::lift_record("self.browser.click_at", &output)
+};
+"self.browser.type" => fn self_browser_type(&self, input: LiveRunRequestTypeInput) -> ObservationPage = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserTypeInput> = crate::codec::lower_record("self.browser.type", input)?;
+    let output = client.self_browser_type(&input)?;
+    crate::codec::lift_record("self.browser.type", &output)
+};
+"self.browser.select" => fn self_browser_select(&self, input: LiveRunRequestSelectInput) -> ObservationPage = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserSelectInput> = crate::codec::lower_record("self.browser.select", input)?;
+    let output = client.self_browser_select(&input)?;
+    crate::codec::lift_record("self.browser.select", &output)
+};
+"self.browser.wait_for" => fn self_browser_wait_for(&self, input: LiveRunRequestWaitForInput) -> WaitForOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserWaitForInput> = crate::codec::lower_record("self.browser.wait_for", input)?;
+    let output = client.self_browser_wait_for(&input)?;
+    crate::codec::lift_record("self.browser.wait_for", &output)
+};
+"self.browser.expect" => fn self_browser_expect(&self, input: LiveRunRequestExpectInput) -> ExpectOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserExpectInput> = crate::codec::lower_record("self.browser.expect", input)?;
+    let output = client.self_browser_expect(&input)?;
+    crate::codec::lift_record("self.browser.expect", &output)
+};
+"self.browser.screenshot" => fn self_browser_screenshot(&self, input: LiveRunRequestScreenshotInput) -> ScreenshotOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserScreenshotInput> = crate::codec::lower_record("self.browser.screenshot", input)?;
+    let output = client.self_browser_screenshot(&input)?;
+    crate::codec::lift_record("self.browser.screenshot", &output)
+};
+"self.browser.view" => fn self_browser_view(&self, input: LiveRunRequestViewInput) -> ImageOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserViewInput> = crate::codec::lower_record("self.browser.view", input)?;
+    let output = client.self_browser_view(&input)?;
+    crate::codec::lift_record("self.browser.view", &output)
+};
+"self.browser.crop" => fn self_browser_crop(&self, input: LiveRunRequestCropInput) -> ImageOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserCropInput> = crate::codec::lower_record("self.browser.crop", input)?;
+    let output = client.self_browser_crop(&input)?;
+    crate::codec::lift_record("self.browser.crop", &output)
+};
+"self.browser.zoom" => fn self_browser_zoom(&self, input: LiveRunRequestZoomInput) -> ImageOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserZoomInput> = crate::codec::lower_record("self.browser.zoom", input)?;
+    let output = client.self_browser_zoom(&input)?;
+    crate::codec::lift_record("self.browser.zoom", &output)
+};
+"self.browser.batch" => fn self_browser_batch(&self, input: LiveRunRequestBatchInput) -> BatchOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserBatchInput> = crate::codec::lower_record("self.browser.batch", input)?;
+    let output = client.self_browser_batch(&input)?;
+    crate::codec::lift_record("self.browser.batch", &output)
+};
+"self.browser.handover" => fn self_browser_handover(&self, input: LiveRunRequestHandoverInput) -> HandoverOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserHandoverInput> = crate::codec::lower_record("self.browser.handover", input)?;
+    let output = client.self_browser_handover(&input)?;
+    crate::codec::lift_record("self.browser.handover", &output)
 };
 "vault.claims.supersede" => fn vault_claims_supersede(&self, input: LiveRunRequestMemorySupersedeInput) -> MemoryWriteOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::MemorySupersedeInput> = crate::codec::lower_record("vault.claims.supersede", input)?;

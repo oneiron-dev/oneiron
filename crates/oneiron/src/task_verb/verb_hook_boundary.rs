@@ -57,7 +57,15 @@ pub fn row_call(memory: &Memory<'_>, verb: &str) -> MemoryResult<VerbCall> {
 ///
 /// A hook's stop, as the refusal the caller reads; storage errors.
 pub fn row_pre(memory: &Memory<'_>, verb: &str, args: Value) -> MemoryResult<VerbHookPre> {
-    row_pre_resumable(memory, verb, args, None, None)?.map_err(stopped)
+    row_pre_resumable(memory, verb, args, None, None, validate_input)?.map_err(stopped)
+}
+
+/// The run-bound browser projection of a row uses its original browser input,
+/// not the facade's credential-bound live-run wrapper. All other hooks and
+/// rewrite admission stay the same as [`row_pre`].
+pub fn browser_row_pre(memory: &Memory<'_>, verb: &str, args: Value) -> MemoryResult<VerbHookPre> {
+    row_pre_resumable(memory, verb, args, None, None, crate::task_verb::sdk::validate_browser_input)?
+        .map_err(stopped)
 }
 
 /// [`row_pre`] with the stop as it is. `resume` is how settlement runs the
@@ -72,9 +80,10 @@ fn row_pre_resumable(
     args: Value,
     resume: Option<VerbResume>,
     credential: Option<VerbAskCredential>,
+    validate: fn(&str, &Value) -> MemoryResult<()>,
 ) -> MemoryResult<Result<VerbHookPre, VerbHookStop>> {
     let check = |args: &Value| {
-        validate_input(verb, args).map_err(|error| error.to_string())?;
+        validate(verb, args).map_err(|error| error.to_string())?;
         memory
             .rewrite_admit()
             .map_or(Ok(()), |admit| admit(verb, args))
@@ -151,7 +160,7 @@ pub fn row(
     // Bound on every call: a retry of a call an ask parked meets its saved
     // reference whether or not a hook takes the verb now.
     let credential = memory.verb_ask_credential();
-    let pre = match row_pre_resumable(memory, verb, args, resume, credential)? {
+    let pre = match row_pre_resumable(memory, verb, args, resume, credential, validate_input)? {
         Ok(pre) => pre,
         Err(stop) => return completed(verb, stop),
     };
@@ -181,7 +190,7 @@ where
     let args = encode(&input)?;
     // A typed door's own call may differ from the generated `invoke`'s, so
     // it saves no resume target: its caller's retry resumes it.
-    let pre = match row_pre_resumable(memory, verb, args.clone(), None, None)? {
+    let pre = match row_pre_resumable(memory, verb, args.clone(), None, None, validate_input)? {
         Ok(pre) => pre,
         Err(stop) => return completed(verb, stop),
     };

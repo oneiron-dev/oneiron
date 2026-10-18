@@ -32,6 +32,7 @@ mod artifact_hosting_doors;
 mod asr_doors;
 mod authority_history_doors;
 mod booking_doors;
+mod browser_doors;
 mod budget_doors;
 mod calendar_doors;
 mod call_context;
@@ -100,6 +101,7 @@ mod shared_policy_doors;
 mod skill_doors;
 mod skill_execution_doors;
 mod slim_doors;
+mod standing_doors;
 mod summary_doors;
 mod support_grant_doors;
 #[cfg(test)]
