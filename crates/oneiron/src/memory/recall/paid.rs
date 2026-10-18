@@ -164,7 +164,7 @@ pub struct RerankScores {
 
 /// What the rerank stage of a recall at high, xhigh or max did. Absent below
 /// high.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum RerankReport {
     /// The host's reranker scored the top block, and the block is in its
@@ -185,7 +185,7 @@ pub enum RerankReport {
 }
 
 /// Why a paid recall did not rerank.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RerankSkip {
     /// The server serves no reranker.

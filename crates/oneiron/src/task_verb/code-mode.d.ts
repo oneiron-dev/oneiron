@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 738 code-mode rows (717 host rows, 21 run rows), 2586 declarations.
-// Replies: 654 fully typed, 80 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 752 code-mode rows (731 host rows, 21 run rows), 2616 declarations.
+// Replies: 668 fully typed, 80 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 97; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -223,7 +223,8 @@ declare namespace Sdk {
   type TaskAskStatus = { Pending: { hold?: TaskAskHoldReason | null } } | { Changed: { voided: EntityId[]; generation: number } } | { Settled: TaskAskResult };
   type TaskStatusView = { handle: TaskHandle; task_ref?: EntityId | null; phase: TaskPhase; brief_current?: BriefStamp | null; brief_running?: BriefStamp | null; attempt?: AttemptView | null; pending: boolean; asks: [TaskAskHandle, TaskAskStatus][]; last_receipt?: string | null; observed: string };
   type TaskOutcome = { kind: "proposed"; decision_ref?: string | null; reason_codes: string[] } | { kind: "created"; route?: TaskRouteOutcome | null } | { kind: "accepted"; attempt?: AttemptHandle | null } | { kind: "held_by_other"; since: number } | { kind: "asked_up"; ask: TaskAskHandle } | { kind: "reported"; phase: TaskPhase } | (TaskStatusView & { kind: "snapshot" }) | { kind: "unchanged" } | { kind: "stale_fence" } | { kind: "wrong_node" } | { kind: "rejected"; decision_ref?: string | null };
-  type TaskLifecycleRecord = { call: string; outcome: string; occurred_at: number; actor: EntityId; on_behalf_of?: string | null; job_ref?: string | null; trigger_ref?: string | null; fields: Record<string, string> };
+  type TaskActor = string;
+  type TaskLifecycleRecord = { call: string; outcome: string; occurred_at: number; actor: TaskActor; on_behalf_of?: string | null; job_ref?: string | null; trigger_ref?: string | null; fields: Record<string, string> };
   type TaskCallReceipt = { handle: TaskHandle; related: TaskHandle[]; outcome: TaskOutcome; receipt_ref?: string | null; lifecycle?: TaskLifecycleRecord | null; idempotent_replay: boolean };
   type TaskDescription = (TasksSection & { kind: "tasks_section" }) | { kind: "task_card"; lines: string[] } | { kind: "self_card"; tail: string } | { kind: "vault_card"; card: ShapeCard } | { kind: "task_status"; receipt: TaskCallReceipt };
   type FoldReply<T> = T | { error: string };
@@ -1395,6 +1396,15 @@ declare namespace Sdk {
   type BornWith = Record<string, string>;
   type SharedBriefView = { share_ref: string; html: string; citations: SharedBriefCitation[]; born_with: BornWith };
   type HooksReplayRequest = { binding: string; since?: string | null; limit?: number | null };
+  type HookRegenBindingRequest = { binding: EntityId };
+  type HookContractStamp = { verb_table: string; sandbox: string };
+  type HookGoldenDiff = { cases: number; changed: string[] };
+  type HookRegenFailurePhase = "intent" | "generate" | "validate" | "golden_replay";
+  type HookRegenFailure = { phase: HookRegenFailurePhase; message: string };
+  type HookRegenOutcome = { outcome: "auto_adopt"; candidate: string; target: HookContractStamp; diff: HookGoldenDiff } | { outcome: "needs_human_stamp"; candidate: string; target: HookContractStamp; diff: HookGoldenDiff } | { outcome: "rolled_back"; failure: HookRegenFailure };
+  type HookRegenRecord = { body_hash: string; stamp: HookContractStamp; intent?: string | null; pending?: HookRegenOutcome | null };
+  type HookRegenView = { record: HookRegenRecord; candidate_hash?: string | null };
+  type HookRegenAdoptRequest = { binding: EntityId; candidate_hash: string };
   type ArtifactPointerChannel = "published" | "preview";
   type CodebaseForkHash = number[];
   type ArtifactExportRef = { ForkHash: CodebaseForkHash } | { BlobVersion: { artifact_id: EntityId; version: number } };
@@ -2133,6 +2143,20 @@ declare namespace Sdk {
   type BookingConstraintTurnResponse = { outcome: "slots"; card: GeneratedUiCard; flex_used: boolean; hold: BookingConstraintHoldContext } | { outcome: "continue_by_email"; continuation: ConstraintContinuation } | { outcome: "deflect"; card: GeneratedUiCard };
   type BookingPageTokenRequest = { page_ref: string };
   type BookingPageTokenResponse = { page_token: string };
+  type CalendarInviteSurfaceMethod = "REQUEST" | "CANCEL";
+  type CalendarInviteSurfaceInput = { method: CalendarInviteSurfaceMethod; uid: string; sequence: number; ics_blob_ref: string; recipient: string; mention?: MentionProvenance | null };
+  type OutboundIntentReceipt = { intent_ref: string; outcome: string; gate_outcome?: string | null; gate_decision_ref?: string | null; gate_reason_codes: string[]; deduped: boolean };
+  type CalendarConnectorSeatConfig = { seat_ref: string; secret_ref: string; system: string; calendar_ref: string; cadence_jitter_min_seconds: number; cadence_jitter_max_seconds: number };
+  type CalendarConnectorConfigureRequest = { config: CalendarConnectorSeatConfig; endpoint: string };
+  type CalendarConnectorKillSwitchState = { killed_at: number; verbs_revoked: boolean; polling_stopped: boolean; reason_ref: string };
+  type CalendarConnectorSeatState = { config: CalendarConnectorSeatConfig; cursor?: string | null; kill_switch?: CalendarConnectorKillSwitchState | null };
+  type CalendarSyncOutcome = { Reenqueued: { next_cursor?: string | null; next_not_before: number; applied: number; acknowledged: number; source_absences: number; status_cancellations: number } } | "Killed";
+  type CalendarConnectorRegistration = { endpoint: string; seat: CalendarConnectorSeatState; last_sync?: CalendarSyncOutcome | null };
+  type CalendarConnectorRequest = { seat_ref: string };
+  type CalendarConnectorWriteRequest = { seat_ref: string; event_ref: string };
+  type RemoteWriteReceipt = { href: string; etag?: string | null; uid: string; sequence: number; content_hash: number[] };
+  type CalendarConnectorKillRequest = { seat_ref: string; reason_ref: string };
+  type CalendarImipTransportConfig = { endpoint: string; secret_ref: string };
   type CalendarRangeDto = { start: number; end: number };
   type CalendarEventCreateRequest = { origin: "native"; summary: string; occurredAt: CalendarRangeDto } | { origin: "dreamer"; summary: string; occurredAt: CalendarRangeDto; evidenceTurnIds: string[]; sourceFrontiers: string[] };
   type CalendarEventCreated = { event_ref: string; origin: string; recorded_at: number };
@@ -2447,7 +2471,6 @@ declare namespace Sdk {
   type DeliveryWindowResolution = { observed: DeliveryWindowDecision; effective: DeliveryWindowDecision; matched: DeliveryWindowMatch[]; rung: DeliveryWindowLadderRung };
   type DeliveryWindowPreview = { policy_refs: EntityId[]; resolution: DeliveryWindowResolution };
   type OutboundScheduleRequest = { verb: string; channel: string; target: string; on_behalf_of?: string | null; content_ref?: string | null; idempotency_key?: string | null; dedupe_key?: string | null; trigger: string; trigger_ref: string; job_ref?: string | null; occurred_at?: number | null; mention?: MentionProvenance | null };
-  type OutboundIntentReceipt = { intent_ref: string; outcome: string; gate_outcome?: string | null; gate_decision_ref?: string | null; gate_reason_codes: string[]; deduped: boolean };
   type SummaryPath = "canonical" | { branch: string } | { branch_span: { after: string; through: string } } | { sub_session: string };
   type SummaryScope = { conversation_ref: string; path: SummaryPath; session?: string | null; include_forks?: boolean };
   type SummaryCreateRequest = { scope: SummaryScope; purpose?: string | null; land_on?: string | null; as_record?: boolean };
@@ -2480,6 +2503,13 @@ declare namespace Sdk {
   type SummaryMutationResult = { proposal: SummaryProposalView; read_refs: string[] };
   type SummaryRegenerateRequest = { summary_ref: string; base: number[]; keep: string; text: string; read_refs: string[] };
   type SummaryProposalRequest = { proposal_ref: string };
+  type NoteExtractionDefault = "disabled";
+  type NoteContextDefault = "relationship_scoped";
+  type NoteRetentionDefault = "durable";
+  type BriefKindStamp = { person_ref: string; extraction: NoteExtractionDefault; context: NoteContextDefault; retention: NoteRetentionDefault };
+  type BriefClaimCitation = { claim_ref: string; document_ref: string; start: number; end: number };
+  type AuthorBriefRequest = { markdown: string; citations: BriefClaimCitation[] };
+  type BriefCitationFollowRequest = { share_ref: string; claim_ref: string; narrowing?: ShareViewNarrowing | null };
   type AuthorTakeTarget = { subject: string } | { claim: string };
   type AuthorTakeRequest = { target: AuthorTakeTarget; markdown: string };
   type CreateNoteFromEntityRequest = { source_ref: string; kind: string };
@@ -2664,6 +2694,28 @@ declare const ai: {
 };
 /** Asks people or an authority a typed question and returns at admission with the ask's handle. */
 declare function ask(input: Sdk.TaskAskRequest): Promise<Sdk.TaskAskReceipt | StoredResult>;
+declare const calendar: {
+  connector: {
+    /** Installs one CalDAV seat under owner proof, with a custody reference, discovery endpoint and nonzero bounded poll cadence. */
+    configure(input: Sdk.CalendarConnectorConfigureRequest): Promise<Sdk.CalendarConnectorRegistration | StoredResult>;
+    /** Reads a configured CalDAV seat, its real provider cursor, kill switch and last sync observation under owner proof. */
+    get(input: Sdk.CalendarConnectorRequest): Promise<Sdk.CalendarConnectorRegistration | null | StoredResult>;
+    /** Kills a CalDAV seat under owner proof, revoking its advertised verbs and stopping further polling and writes without erasing calendar evidence. */
+    kill(input: Sdk.CalendarConnectorKillRequest): Promise<Sdk.CalendarConnectorRegistration | StoredResult>;
+    /** Pulls the configured CalDAV seat through the existing import gate and echo law, returning the real cursor and sync counters under owner proof. */
+    pull(input: Sdk.CalendarConnectorRequest): Promise<Sdk.CalendarSyncOutcome | StoredResult>;
+    /** Writes a readable EVENT to the owner-installed CalDAV seat through the durable conditional-write outbox, never a blind overwrite. */
+    write(input: Sdk.CalendarConnectorWriteRequest): Promise<Sdk.RemoteWriteReceipt | StoredResult>;
+  };
+  imip: {
+    /** Installs the host iMIP mail submission endpoint and custody name under owner proof; this configuration grants no invite consent or sending identity. */
+    configure(input: Sdk.CalendarImipTransportConfig): Promise<Sdk.CalendarImipTransportConfig | StoredResult>;
+    /** Reads the installed host iMIP submission endpoint and custody name under owner proof, never its credential value. */
+    get(input: Sdk.EmptyRequest): Promise<Sdk.CalendarImipTransportConfig | null | StoredResult>;
+  };
+  /** Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe. */
+  invite(input: Sdk.CalendarInviteSurfaceInput): Promise<Sdk.OutboundIntentReceipt | StoredResult>;
+};
 /** Read-only preflight of an ask: its recipients, faces and channels, without minting a TASK or scheduling anything. */
 declare function can(input: Sdk.TaskCanAskRequest): Promise<Sdk.TaskAskPreflight | StoredResult>;
 /** Cancels one TASK under the caller's own-scoped auto default, abandoning only unlanded work. */
@@ -3623,6 +3675,14 @@ declare const vault: Sdk.VaultHost & {
     checkin(input: Sdk.HabitCheckinInput): Promise<Sdk.EntityRefReceipt | StoredResult>;
   };
   hooks: {
+    regen: {
+      /** Adopt, as the authenticated owner and as their stamp, the regen candidate pending on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. Answers the pack put receipt; only an installed put advances the record. */
+      adopt(input: Sdk.HookRegenAdoptRequest): Promise<Sdk.PackPutReceipt | StoredResult>;
+      /** List, as the authenticated owner, the hook bindings of the vault's own packs whose verb table or sandbox contract changed since their last good body passed, with no regen waiting. Runs no regen. */
+      due(input: Sdk.EmptyRequest): Promise<Sdk.EntityId[] | StoredResult>;
+      /** Read one hook binding's regen record as the authenticated owner: its last good body hash, contract stamp, intent and pending decision, with the candidate_hash an adoption names. Null for a binding bound under no record. Changes nothing. */
+      get(input: Sdk.HookRegenBindingRequest): Promise<Sdk.HookRegenView | null | StoredResult>;
+    };
     /** The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands. */
     replay(input: Sdk.HooksReplayRequest): Promise<Sdk.HookReplayRow[] | StoredResult>;
   };
@@ -3716,8 +3776,12 @@ declare const vault: Sdk.VaultHost & {
   /** The weighted-edge neighbourhood of one entity, filtered by edge kind and minimum weight. */
   neighbors(input: Sdk.NeighborsRequest): Promise<Sdk.ScopedReadResult<Sdk.NeighborHit[]> | StoredResult>;
   notes: {
+    /** Authors markdown with supporting claim citations, capturing source NOTE pins and rechecking their live read authority in the brief write transaction. */
+    author_brief(input: Sdk.AuthorBriefRequest): Promise<Sdk.EntityRefReceipt | StoredResult>;
     /** Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target. */
     author_take(input: Sdk.AuthorTakeRequest): Promise<Sdk.EntityRefReceipt | StoredResult>;
+    /** A verified person stamps the brief kind policy seed; it grants no sharing or extraction authority. */
+    bless_brief_kind(input: Sdk.EmptyRequest): Promise<Sdk.BriefKindStamp | StoredResult>;
     /** Creates a NOTE of a registered kind, its first authored text as its birth. */
     create(input: Sdk.CreateNoteRequest): Promise<Sdk.EntityRefReceipt | StoredResult>;
     /** One NOTE's overrides and the extraction, context and retention defaults its gates read after them. */
@@ -3730,6 +3794,8 @@ declare const vault: Sdk.VaultHost & {
       /** Closes one live NOTE editor held by this caller; a binding id alone grants no authority. */
       close(input: Sdk.NoteEditorCloseRequest): Promise<Sdk.NoteEditorClosed | StoredResult>;
     };
+    /** Follows returned share and claim references under the caller live read scope; revocation stops resolution and hidden citations disclose no quote or lifecycle. */
+    follow_citation(input: Sdk.BriefCitationFollowRequest): Promise<Sdk.ScopedReadResult<Sdk.SharedBriefCitation | null> | StoredResult>;
     /** Forks one NOTE at the exact live-head version the caller read, retaining its edits or rewrite without moving the live head. */
     fork(input: Sdk.NoteForkRequest): Promise<Sdk.NoteForkView | StoredResult>;
     forks: {

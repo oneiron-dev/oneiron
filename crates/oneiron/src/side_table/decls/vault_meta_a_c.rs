@@ -260,10 +260,14 @@ side_tables! {
     BUILD_CACHE_RUNNING_RESERVATION: VaultMeta b"build_cache:running:v2:" Raw;
     /// Calendar connector write-outbox rows and remote object cursors. Key: `row:` or `obj:` +
     /// bytes32.
+    /// Owner-installed CalDAV seats, cursors and kill switches. Key: seat name.
+    CALENDAR_CONNECTOR_SEAT: VaultMeta b"calendar.connector-seat.v1:" Named;
     CALENDAR_CONNECTOR_WRITE: VaultMeta b"calendar.connector-write.v1:" LegacyJson Authored;
     /// Per-feed poll cursor. Key: bytes32.
     CALENDAR_ICS_FEED_CURSOR: VaultMeta b"calendar.ics-feed.v1:" LegacyJson Authored;
     /// UID-to-EVENT lookup cache. Key: bytes32.
+    /// Host-installed iMIP submission endpoint and custody name. Key: ().
+    CALENDAR_IMIP_TRANSPORT: VaultMeta b"calendar.imip-transport.v1" Named;
     CALENDAR_PASSPORT_UID_INDEX: VaultMeta b"calendar.passport.v1:" Raw;
     /// Marker that a derived EVENT's source was erased. Key: id16.
     CALENDAR_INVALIDATED_EVENT: VaultMeta b"calendar_invalid:v1:" Raw;

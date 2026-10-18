@@ -653,7 +653,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "self.budget.land",
@@ -665,7 +666,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.budgets.lease.open",
@@ -724,7 +726,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.budgets.hold.resume",
@@ -738,7 +741,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.budgets.local",
@@ -3656,7 +3660,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.off_record.notes.create",
@@ -3758,7 +3763,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.research.archive.install",
@@ -3850,7 +3856,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.evals.cohorts.setup",
@@ -5139,6 +5146,51 @@
         "validate": "input.limit()?;"
       },
       "section": false
+    },
+    {
+      "name": "vault.hooks.regen.due",
+      "description": "List, as the authenticated owner, the hook bindings of the vault's own packs whose verb table or sandbox contract changed since their last good body passed, with no regen waiting. Runs no regen.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::EntityId>",
+      "call": "memory.hooks_regen_due_as(&memory.embedded_owner(\"vault.hooks.regen.due\")?)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.hooks.regen.get",
+      "description": "Read one hook binding's regen record as the authenticated owner: its last good body hash, contract stamp, intent and pending decision, with the candidate_hash an adoption names. Null for a binding bound under no record. Changes nothing.",
+      "input": "crate::memory::hook_regen_doors::HookRegenBindingRequest",
+      "output": "Option<crate::memory::hook_regen_doors::HookRegenView>",
+      "call": "memory.hooks_regen_record_as(&memory.embedded_owner(\"vault.hooks.regen.get\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.hooks.regen.adopt",
+      "description": "Adopt, as the authenticated owner and as their stamp, the regen candidate pending on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. Answers the pack put receipt; only an installed put advances the record.",
+      "input": "crate::memory::hook_regen_doors::HookRegenAdoptRequest",
+      "output": "crate::task_verb::sdk::PackPutReceipt",
+      "call": "memory.hooks_regen_adopt_as(&memory.embedded_owner(\"vault.hooks.regen.adopt\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.artifacts.publish_approval",
@@ -9198,6 +9250,124 @@
       "openapi": true
     },
     {
+      "name": "calendar.invite",
+      "description": "Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe.",
+      "input": "crate::memory::CalendarInviteSurfaceInput",
+      "output": "crate::memory::OutboundIntentReceipt",
+      "call": "memory.calendar_invite(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "calendar.connector.configure",
+      "description": "Installs one CalDAV seat under owner proof, with a custody reference, discovery endpoint and nonzero bounded poll cadence.",
+      "input": "crate::calendar::connectors::door::CalendarConnectorConfigureRequest",
+      "output": "crate::calendar::connectors::door::CalendarConnectorRegistration",
+      "call": "crate::task_verb::sdk::host_only(memory, \"calendar.connector.configure\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "calendar.connector.get",
+      "description": "Reads a configured CalDAV seat, its real provider cursor, kill switch and last sync observation under owner proof.",
+      "input": "crate::calendar::connectors::door::CalendarConnectorRequest",
+      "output": "Option<crate::calendar::connectors::door::CalendarConnectorRegistration>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"calendar.connector.get\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "calendar.connector.pull",
+      "description": "Pulls the configured CalDAV seat through the existing import gate and echo law, returning the real cursor and sync counters under owner proof.",
+      "input": "crate::calendar::connectors::door::CalendarConnectorRequest",
+      "output": "crate::calendar::CalendarSyncOutcome",
+      "call": "crate::task_verb::sdk::host_only(memory, \"calendar.connector.pull\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "calendar.connector.write",
+      "description": "Writes a readable EVENT to the owner-installed CalDAV seat through the durable conditional-write outbox, never a blind overwrite.",
+      "input": "crate::calendar::connectors::door::CalendarConnectorWriteRequest",
+      "output": "crate::calendar::RemoteWriteReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"calendar.connector.write\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "calendar.connector.kill",
+      "description": "Kills a CalDAV seat under owner proof, revoking its advertised verbs and stopping further polling and writes without erasing calendar evidence.",
+      "input": "crate::calendar::connectors::door::CalendarConnectorKillRequest",
+      "output": "crate::calendar::connectors::door::CalendarConnectorRegistration",
+      "call": "crate::task_verb::sdk::host_only(memory, \"calendar.connector.kill\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "calendar.imip.configure",
+      "description": "Installs the host iMIP mail submission endpoint and custody name under owner proof; this configuration grants no invite consent or sending identity.",
+      "input": "crate::calendar::connectors::door::CalendarImipTransportConfig",
+      "output": "crate::calendar::connectors::door::CalendarImipTransportConfig",
+      "call": "crate::task_verb::sdk::host_only(memory, \"calendar.imip.configure\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "calendar.imip.get",
+      "description": "Reads the installed host iMIP submission endpoint and custody name under owner proof, never its credential value.",
+      "input": "EmptyRequest",
+      "output": "Option<crate::calendar::connectors::door::CalendarImipTransportConfig>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"calendar.imip.get\", &_input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.calendar.create",
       "description": "Creates a native or evidence-linked dreamer EVENT as the caller, with atomic projector-recorded origin and engine-stamped recorded time.",
       "input": "crate::calendar::door::CalendarEventCreateRequest",
@@ -11421,6 +11591,62 @@
       "host_door": true,
       "host_door_lists": true,
       "host_door_caller": true
+    },
+    {
+      "name": "vault.notes.bless_brief_kind",
+      "description": "A verified person stamps the brief kind policy seed; it grants no sharing or extraction authority.",
+      "input": "EmptyRequest",
+      "output": "crate::note::BriefKindStamp",
+      "call": "memory.bless_brief_kind()?.into()",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true
+    },
+    {
+      "name": "vault.notes.author_brief",
+      "description": "Authors markdown with supporting claim citations, capturing source NOTE pins and rechecking their live read authority in the brief write transaction.",
+      "prose_links": [
+        "/markdown"
+      ],
+      "input": "crate::note::AuthorBriefRequest",
+      "output": "crate::memory::EntityRefReceipt",
+      "call": "memory.author_citing_brief(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true,
+      "refs": [
+        "/citations/*/claim_ref",
+        "/citations/*/document_ref"
+      ]
+    },
+    {
+      "name": "vault.notes.follow_citation",
+      "description": "Follows returned share and claim references under the caller live read scope; revocation stops resolution and hidden citations disclose no quote or lifecycle.",
+      "input": "crate::task_verb::sdk::BriefCitationFollowRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::receipt::SharedBriefCitation>>",
+      "call": "crate::task_verb::sdk::follow_brief_citation_as_caller(memory, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.notes.create",

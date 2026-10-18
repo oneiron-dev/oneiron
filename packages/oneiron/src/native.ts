@@ -364,6 +364,9 @@ vaultSharesCreate(input: unknown): unknown
 vaultSharesRevoke(input: unknown): unknown
 vaultSharesView(input: unknown): unknown
 vaultHooksReplay(input: unknown): unknown
+vaultHooksRegenDue(input: unknown): unknown
+vaultHooksRegenGet(input: unknown): unknown
+vaultHooksRegenAdopt(input: unknown): unknown
 vaultArtifactsPublishApproval(input: unknown): unknown
 vaultArtifactsPublish(input: unknown): unknown
 vaultArtifactsRepoint(input: unknown): unknown
@@ -574,6 +577,14 @@ vaultClaimsRetract(input: unknown): unknown
 vaultForget(input: unknown): unknown
 vaultBookingConstraintTurn(input: unknown): unknown
 vaultBookingPageToken(input: unknown): unknown
+calendarInvite(input: unknown): unknown
+calendarConnectorConfigure(input: unknown): unknown
+calendarConnectorGet(input: unknown): unknown
+calendarConnectorPull(input: unknown): unknown
+calendarConnectorWrite(input: unknown): unknown
+calendarConnectorKill(input: unknown): unknown
+calendarImipConfigure(input: unknown): unknown
+calendarImipGet(input: unknown): unknown
 vaultCalendarCreate(input: unknown): unknown
 vaultCalendarIcsImport(input: unknown): unknown
 vaultCalendarOccurrences(input: unknown): unknown
@@ -675,6 +686,9 @@ vaultSummariesProposalsRead(input: unknown): unknown
 vaultSummariesProposalsMerge(input: unknown): unknown
 vaultSummariesProposalsSwitch(input: unknown): unknown
 vaultSummariesProposalsReject(input: unknown): unknown
+vaultNotesBlessBriefKind(input: unknown): unknown
+vaultNotesAuthorBrief(input: unknown): unknown
+vaultNotesFollowCitation(input: unknown): unknown
 vaultNotesCreate(input: unknown): unknown
 vaultNotesAuthorTake(input: unknown): unknown
 vaultNotesFromEntity(input: unknown): unknown
