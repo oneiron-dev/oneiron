@@ -28,17 +28,21 @@ pub(crate) fn opened_note_view(
             {
                 return Ok(None);
             }
-            let memory = vault.memory(actor.entity_ref(), actor.actor_class()).at(locality);
+            let memory = vault
+                .memory(actor.entity_ref(), actor.actor_class())
+                .at(locality);
             let memory = match proof {
                 Some(proof) => memory.with_read_proof(proof),
                 None => memory,
             };
-            Ok(memory.read_note(&NoteReadRequest {
-                note_ref: entity_id.to_hex(),
-                reason: reason.map(str::to_owned),
-                version: None,
-                spans: spans.to_vec(),
-            })?.value)
+            Ok(memory
+                .read_note(&NoteReadRequest {
+                    note_ref: entity_id.to_hex(),
+                    reason: reason.map(str::to_owned),
+                    version: None,
+                    spans: spans.to_vec(),
+                })?
+                .value)
         }
         OpenedItem::Thin(thin) => thin_note_view(vault, thin, actor, reason, spans),
     }
@@ -58,10 +62,15 @@ fn thin_note_view(
     }
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
     let core = super::decode_note_body_in_txn(
-        &vault.store, &txn, &thin.raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        &vault.store,
+        &txn,
+        &thin.raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
     )?;
     let private = super::overrides::note_context_in_txn(
-        &vault.store, &txn, &thin.entity_id, core.kind.as_str().as_ref(),
+        &vault.store,
+        &txn,
+        &thin.entity_id,
+        core.kind.as_str().as_ref(),
     )? == super::ContextDefault::OwnerOnly;
     // A cache has no independent grant authority. Another actor's private
     // note still requires its ordinary reasoned private-note door.
@@ -75,7 +84,9 @@ fn thin_note_view(
     if private || core.kind == super::NoteKind::Diary {
         crate::memory::DiaryReadGate::new(actor, reason.unwrap_or_default())?;
     }
-    let bytes = thin.document.strip_prefix(&[crate::sync::transport::TAG_DOCUMENT])
+    let bytes = thin
+        .document
+        .strip_prefix(&[crate::sync::transport::TAG_DOCUMENT])
         .ok_or_else(|| invalid("opened NOTE document frame"))?;
     let frame = crate::sync::transport::decode_document(bytes)
         .map_err(|_| invalid("opened NOTE document frame"))?;
@@ -84,12 +95,23 @@ fn thin_note_view(
     {
         return Err(invalid("opened NOTE requires its admitted state").into());
     }
-    let (head, rest) = frame.payload.split_at_checked(crate::entity_id::ENTITY_ID_LEN)
+    let (head, rest) = frame
+        .payload
+        .split_at_checked(crate::entity_id::ENTITY_ID_LEN)
         .ok_or_else(|| invalid("opened NOTE head"))?;
-    let (_, snapshot) = rest.split_at_checked(8).ok_or_else(|| invalid("opened NOTE head"))?;
-    let head = crate::EntityId::from_bytes(head.try_into().map_err(|_| invalid("opened NOTE head"))?)?;
+    let (_, snapshot) = rest
+        .split_at_checked(8)
+        .ok_or_else(|| invalid("opened NOTE head"))?;
+    let head =
+        crate::EntityId::from_bytes(head.try_into().map_err(|_| invalid("opened NOTE head"))?)?;
     let canonical = super::document::NoteDocument::load(thin.entity_id, snapshot)?;
-    Ok(Some(read_view(&NoteDocument {
-        note: thin.entity_id, head, doc: canonical.doc,
-    }, spans, NoteReadSource::Local)?))
+    Ok(Some(read_view(
+        &NoteDocument {
+            note: thin.entity_id,
+            head,
+            doc: canonical.doc,
+        },
+        spans,
+        NoteReadSource::Local,
+    )?))
 }
