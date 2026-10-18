@@ -3269,6 +3269,9 @@ impl OneironClient {
     /// it returns `MODEL_UNAVAILABLE`. `query_affect` (valence in -1..=1,
     /// arousal and dominance in 0..=1) ranks by emotion congruence, embedded
     /// and remote alike; out of range it returns `BAD_REQUEST`.
+    /// Explicit `scope.world_ref` recalls of retained foreign worlds carry
+    /// `MemoryItem::stale`: stale-since and age in seconds (when known), the
+    /// terminal reason and pact epoch. This selection grants no read authority.
     #[expect(
         clippy::too_many_arguments,
         reason = "one parameter per SDK argument of the verb"

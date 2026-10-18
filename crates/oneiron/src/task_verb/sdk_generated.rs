@@ -4497,6 +4497,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.budgets.hold.resume",
     "vault.budgets.local",
     "vault.budgets.settlements",
+    "vault.recall",
     "vault.retrieval.aging.get",
     "vault.retrieval.aging.configure",
     "vault.retrieval.weights.get",
@@ -4996,6 +4997,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.budgets.settlements" => crate::code_run::vault_read::request_schema::<
             crate::agent_dispatch::budget_doors::RunSettlementsView,
         >(),
+        "vault.recall" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::MemoryPack>()
+        }
         "vault.retrieval.aging.get" => crate::code_run::vault_read::request_schema::<
             crate::policy_manifest_doors::ClaimAgingProfilesView,
         >(),

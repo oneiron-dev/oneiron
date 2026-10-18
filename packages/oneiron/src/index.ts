@@ -412,6 +412,9 @@ export class Oneiron {
    * `queryAffect` (`{ valence, arousal, dominance }`: valence in -1..1,
    * arousal and dominance in 0..1) ranks by emotion congruence, embedded and
    * remote alike; out of range it returns `BAD_REQUEST`.
+   * Explicit `scope.worldRef` recalls of retained foreign worlds carry
+   * `item.stale`: `staleSince` and `ageSecs` (when known), `reason` and
+   * `pactEpoch`. This selection grants no read authority.
    */
     recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media, opts.queryAffect)),
     retrieval: {

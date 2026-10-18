@@ -398,6 +398,10 @@ class Oneiron:
             "dominance"}``: valence in -1..1, arousal and dominance in 0..1)
             ranks by emotion congruence, embedded and remote alike; out of range
             it raises ``BAD_REQUEST``.
+            
+            Explicit ``scope.world_ref`` recalls of retained foreign worlds carry
+            ``item["stale"]``: ``stale_since`` and ``age_secs`` (when known),
+            ``reason`` and ``pact_epoch``. This selection grants no read authority.
             """
             return json.loads(_translate(lambda: self._client.vault_recall(query, effort, json.dumps(scope) if scope is not None else None, limit, format, as_of, deadline_ms, json.dumps(media) if media is not None else None, json.dumps(query_affect) if query_affect is not None else None)))
         @property
