@@ -1091,6 +1091,21 @@ export_facade! {
     let output = client.vault_packs_remove(&input)?;
     crate::codec::lift_record("vault.packs.remove", &output)
 };
+"ai.chat.completions" => fn ai_chat_completions(&self, input: ChatCompletionRequest) -> ChatCompletionResponse = |client| {
+    let input: oneiron::task_verb::sdk::ChatCompletionRequest = crate::codec::lower_record("ai.chat.completions", input)?;
+    let output = client.ai_chat_completions(&input)?;
+    crate::codec::lift_record("ai.chat.completions", &output)
+};
+"vault.connectors.proxy.admit" => fn vault_connectors_proxy_admit(&self, input: ProxyConnectorAdmitRequest) -> ProxyConnectorRegistration = |client| {
+    let input: oneiron::task_verb::sdk::ProxyConnectorAdmitRequest = crate::codec::lower_record("vault.connectors.proxy.admit", input)?;
+    let output = client.vault_connectors_proxy_admit(&input)?;
+    crate::codec::lift_record("vault.connectors.proxy.admit", &output)
+};
+"vault.connectors.proxy.revoke_write" => fn vault_connectors_proxy_revoke_write(&self, input: ProxyConnectorRevokeWriteRequest) -> ProxyConnectorRegistration = |client| {
+    let input: oneiron::task_verb::sdk::ProxyConnectorRevokeWriteRequest = crate::codec::lower_record("vault.connectors.proxy.revoke_write", input)?;
+    let output = client.vault_connectors_proxy_revoke_write(&input)?;
+    crate::codec::lift_record("vault.connectors.proxy.revoke_write", &output)
+};
 "vault.connectors.subscriptions.put" => fn vault_connectors_subscriptions_put(&self, input: ChannelSubscriptionRequest) -> ChannelMessageSubscription = |client| {
     let input: oneiron::task_verb::sdk::ChannelSubscriptionRequest = crate::codec::lower_record("vault.connectors.subscriptions.put", input)?;
     let output = client.vault_connectors_subscriptions_put(&input)?;
