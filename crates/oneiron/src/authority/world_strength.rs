@@ -10,6 +10,10 @@
 //! the meet of its settings and of every edit it replaced, each judged the
 //! same way, so a chain of raced widens never widens. This install reads the
 //! world under `T(pin)` with its own holds, which only weaken.
+//!
+//! The frontier is generic over what an edit states, so a grant's signed
+//! travel choices keep the same register ([`super::grant_travel`], FIX
+//! 2998), judged by their own signer rule.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -20,43 +24,43 @@ use super::machine_standing::{InstallCounted, Mark, Standing, StandingView, Trus
 use super::world_privacy::{PrivacyMeet, edit_standing};
 use super::*;
 
-/// One accepted edit of a world.
+/// One accepted edit of a world, or of what else an edit states (`S`).
 #[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub(super) struct FrontierEdit {
-    settings: WorldPrivacy,
+pub(super) struct FrontierEdit<S = WorldPrivacy> {
+    pub(super) settings: S,
     pub(super) machine: EntityId,
     /// The install key that signed it.
-    key: [u8; 32],
+    pub(super) key: [u8; 32],
     /// The live edits at the edit's parents, which it replaced.
-    replaced: BTreeSet<AuthorityEntryHash>,
+    pub(super) replaced: BTreeSet<AuthorityEntryHash>,
     /// This install did not count the machine, under `T(pin)` with the edit's
     /// key, at the edit's parents.
-    narrow_only: bool,
+    pub(super) narrow_only: bool,
     /// Each chain that admitted the machine under the edit's key at its
     /// parents, with the mark the edit was signed under there.
-    marks: BTreeMap<MachineAdmitter, Mark>,
+    pub(super) marks: BTreeMap<MachineAdmitter, Mark>,
     /// Under which trust sets the machine was mine with the edit's key at its
     /// parents.
-    trusted_at: TrustedAt,
+    pub(super) trusted_at: TrustedAt,
     /// A later row of its signer reached this replica first, so it landed as
     /// restriction only: it never counts at full strength (Astra #1430).
-    restriction_only: bool,
+    pub(super) restriction_only: bool,
     /// Two copies of it disagreed on its marks, past, trust or what it
     /// replaced: it never counts at full strength, it meets the default as
     /// well (Sol P2 round 11), and no machine may edit its world.
-    disputed: bool,
+    pub(super) disputed: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub(super) struct WorldFrontier {
+pub(super) struct WorldFrontier<S = WorldPrivacy> {
     /// The edits no later edit of the world has seen.
-    pub(super) live: BTreeMap<AuthorityEntryHash, Arc<FrontierEdit>>,
+    pub(super) live: BTreeMap<AuthorityEntryHash, Arc<FrontierEdit<S>>>,
     /// Every edit a later edit replaced, kept so an edit that only narrows
     /// is judged against what it replaced.
-    pub(super) superseded: BTreeMap<AuthorityEntryHash, Arc<FrontierEdit>>,
+    pub(super) superseded: BTreeMap<AuthorityEntryHash, Arc<FrontierEdit<S>>>,
 }
 
-impl FrontierEdit {
+impl<S: Clone + PartialEq> FrontierEdit<S> {
     /// One edit folded twice (past a floor on one replica's pass, or crossed
     /// on another) keeps what both copies grant: either copy's restriction,
     /// what either replaced, the marks and past both saw, and no full
@@ -101,10 +105,10 @@ impl FrontierEdit {
     }
 }
 
-fn meet_copy(
-    edits: &mut BTreeMap<AuthorityEntryHash, Arc<FrontierEdit>>,
+fn meet_copy<S: Clone + PartialEq>(
+    edits: &mut BTreeMap<AuthorityEntryHash, Arc<FrontierEdit<S>>>,
     hash: AuthorityEntryHash,
-    edit: &Arc<FrontierEdit>,
+    edit: &Arc<FrontierEdit<S>>,
 ) {
     edits
         .entry(hash)
@@ -114,9 +118,9 @@ fn meet_copy(
 
 /// Joins two frontiers: an edit superseded on either side is superseded,
 /// and two copies of one edit meet.
-pub(super) fn merge_world_frontiers(
-    merged: &mut BTreeMap<EntityId, WorldFrontier>,
-    right: &BTreeMap<EntityId, WorldFrontier>,
+pub(super) fn merge_world_frontiers<S: Clone + PartialEq + Default>(
+    merged: &mut BTreeMap<EntityId, WorldFrontier<S>>,
+    right: &BTreeMap<EntityId, WorldFrontier<S>>,
 ) {
     for (world, frontier) in right {
         let into = merged.entry(*world).or_default();

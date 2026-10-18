@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 542 facade rows, 2013 declarations.
-Inputs: 491 of 542 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 485 of 542 fully typed, 57 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 89; unread shapes: 0.
+Census: 554 facade rows, 2096 declarations.
+Inputs: 503 of 554 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 492 of 554 fully typed, 62 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 90; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -1489,6 +1489,13 @@ class QueryAffect(TypedDict):
     valence: float
     arousal: float
     dominance: float
+class RetrievalTurn(TypedDict):
+    turn_id: list[int]
+    episode_id: list[int]
+    turn_idx: int
+class RecallTelemetry(TypedDict):
+    capture_trace: NotRequired[bool]
+    turn: NotRequired[RetrievalTurn | None]
 class RecallRequest(TypedDict):
     query: str
     effort: NotRequired[RecallEffort | None]
@@ -1499,6 +1506,7 @@ class RecallRequest(TypedDict):
     deadline_ms: NotRequired[int | None]
     media: NotRequired[ContextPackMediaQuery | None]
     query_affect: NotRequired[QueryAffect | None]
+    telemetry: NotRequired[RecallTelemetry | None]
 class MemoryProvenance(TypedDict):
     source: str
     source_revision_ids: list[str]
@@ -1579,6 +1587,8 @@ class ScopedReadReceipt(TypedDict):
     narrowed_axes: list[str]
     suppressed_count: int
     replan_hint: list[str]
+class RetrievalRunId(TypedDict):
+    bytes: list[int]
 class MemoryPack(TypedDict):
     items: list[MemoryItem]
     scope_honesty: ScopeHonesty
@@ -1586,6 +1596,152 @@ class MemoryPack(TypedDict):
     pack_version: int
     rendered: NotRequired[str | None]
     narrowing: ScopedReadReceipt
+    retrieval_run_id: NotRequired[RetrievalRunId | None]
+class RetrievalRunsRequest(TypedDict):
+    limit: NotRequired[int | None]
+RetrievalAction = Literal["pipeline", "context_pack", "vault_search", "graph_fs_coreutils", "speculative"]
+class RetrievalState(TypedDict):
+    top_score_norm: NotRequired[float]
+    score_gap_ratio: NotRequired[float]
+    mean_score_norm: NotRequired[float]
+    entity_coverage: NotRequired[float]
+    novelty_vs_prior: NotRequired[float]
+    signal_agreement: NotRequired[int]
+    result_count: NotRequired[int]
+    iteration: NotRequired[int]
+    budget_remaining: NotRequired[int]
+    frontier_size: NotRequired[int]
+    avg_edge_weight: NotRequired[float]
+    graph_degree: NotRequired[int]
+    temporal_spread: NotRequired[float]
+    hops: NotRequired[int]
+    last_action: NotRequired[int]
+    intent_class: NotRequired[int]
+class RetrievalPolicyIdentity(TypedDict):
+    user: EntityId
+    persona: NotRequired[EntityId | None]
+class RetrievalPolicyEnvelope(TypedDict):
+    max_steps: int
+    max_hops: int
+    temporal_rounds: int
+RetrievalPolicyAction = Literal["search", "expand", "widen_temporal", "stop", "abstain"]
+RetrievalPolicyTier = Literal["user", "persona", "global", "seed"]
+class RetrievalPolicyDecision(TypedDict):
+    state: RetrievalState
+    action: RetrievalPolicyAction
+    tier: RetrievalPolicyTier
+class RetrievalPolicyTrace(TypedDict):
+    identity: RetrievalPolicyIdentity
+    envelope: RetrievalPolicyEnvelope
+    bandit_enabled: bool
+    decisions: list[RetrievalPolicyDecision]
+class RetrievalReplayInputs(TypedDict):
+    query_ref: NotRequired[str | None]
+    config: Any
+    corpus_snapshot_ref: NotRequired[str | None]
+RetrievalSignal = Literal["vector", "text", "phonetic", "temporal", "ppr", "recency", "salience", "confidence", "gravity", "rerank", "hyde", "hyde_retry", "media_vector"]
+class RetrievalScoreComponent(TypedDict):
+    signal: RetrievalSignal
+    rank: int
+    score: float
+class RetrievalScoreBreakdown(TypedDict):
+    result_id: list[int]
+    final_rank: int
+    final_score: float
+    components: list[RetrievalScoreComponent]
+    access_factor: NotRequired[float | None]
+RetrievalTraceForkHash = list[int]
+RetrievalTraceStage = Literal["per_channel", "fused", "blended", "reranked", "final"]
+class RetrievalTraceChannelRecord(TypedDict):
+    stage: RetrievalTraceStage
+    signal: RetrievalSignal
+    candidates: list[RetrievalScoreBreakdown]
+class RetrievalTraceStageRecord(TypedDict):
+    stage: RetrievalTraceStage
+    candidates: list[RetrievalScoreBreakdown]
+class RetrievalTrace(TypedDict):
+    fork_hash: NotRequired[RetrievalTraceForkHash]
+    per_channel: list[RetrievalTraceChannelRecord]
+    fused: RetrievalTraceStageRecord
+    blended: RetrievalTraceStageRecord
+    reranked: RetrievalTraceStageRecord
+    final: RetrievalTraceStageRecord
+    fusion_list_length: NotRequired[int]
+class RetrievalRunRecord(TypedDict):
+    version: int
+    run_id: RetrievalRunId
+    action: RetrievalAction
+    started_at: int
+    elapsed_us: int
+    state: NotRequired[RetrievalState]
+    policy_trace: NotRequired[RetrievalPolicyTrace | None]
+    replay_inputs: NotRequired[RetrievalReplayInputs | None]
+    turn: NotRequired[RetrievalTurn | None]
+    signals: list[RetrievalSignal]
+    result_ids: list[list[int]]
+    score_breakdown: list[RetrievalScoreBreakdown]
+    total_in_scope: int
+    claims_suppressed: int
+    empty_reason: NotRequired[str | None]
+    trace: NotRequired[RetrievalTrace | None]
+    quality: NotRequired[RetrievalQuality | None]
+    degradation: NotRequired[list[RetrievalDegradation]]
+    confidence_adjustment: NotRequired[ConfidenceAdjustment | None]
+class RetrievalRewardEvidence(TypedDict):
+    retrievalRunIds: list[RetrievalRunId]
+    turn_id: list[int]
+    gate_score: float
+    confirmed_fact_hit: bool
+    latency_scale_us: int
+    cost_weight: float
+class RetrievalOutcomeRecord(TypedDict):
+    version: int
+    run_id: RetrievalRunId
+    key: str
+    reward: NotRequired[float | None]
+    accepted: NotRequired[bool | None]
+    metadata: dict[str, str]
+    updated_at: int
+    reward_evidence: NotRequired[RetrievalRewardEvidence | None]
+class RetrievalRunEvidence(TypedDict):
+    run: RetrievalRunRecord
+    outcomes: list[RetrievalOutcomeRecord]
+class RetrievalRunRequest(TypedDict):
+    run_id: RetrievalRunId
+class RetrievalTurnRequest(TypedDict):
+    turn_id: list[int]
+class RetrievalOutcome(TypedDict):
+    run_id: RetrievalRunId
+    key: str
+    reward: NotRequired[float | None]
+    accepted: NotRequired[bool | None]
+    metadata: dict[str, str]
+class RetrievalEndOutcome(TypedDict):
+    retrievalRunIds: list[RetrievalRunId]
+    key: str
+    turn_id: list[int]
+    gate_score: float
+    confirmed_fact_hit: bool
+    latency_scale_us: int
+    cost_weight: float
+    metadata: dict[str, str]
+class RetrievalTraceRequest(TypedDict):
+    fork_hash: list[int]
+class RetrievalDiagnosticRequest(TypedDict):
+    run_ids: list[RetrievalRunId]
+class RetrievalDiagnosticExport(TypedDict):
+    contract_version: str
+    runs: list[RetrievalRunEvidence]
+class RetrievalReplayRun(TypedDict):
+    source_run_id: RetrievalRunId
+    turn: NotRequired[RetrievalTurn | None]
+    state: RetrievalState
+    result_ids: list[list[int]]
+    pack: list[RetrievalScoreBreakdown]
+    trace: NotRequired[RetrievalTrace | None]
+class RetrievalDiagnosticReplay(TypedDict):
+    contract_version: str
+    runs: list[RetrievalReplayRun]
 class ExportOptions(TypedDict):
     format: NotRequired[str | None]
     include_secrets: NotRequired[bool | None]
@@ -1765,11 +1921,6 @@ class CallReceipt(TypedDict):
 class ExplainMemoryRequest(TypedDict):
     entity: str
     session_id: NotRequired[str | None]
-RetrievalSignal = Literal["vector", "text", "phonetic", "temporal", "ppr", "recency", "salience", "confidence", "gravity", "rerank", "hyde", "hyde_retry", "media_vector"]
-class RetrievalScoreComponent(TypedDict):
-    signal: RetrievalSignal
-    rank: int
-    score: float
 class ExplainScoreEvidence(TypedDict):
     result_id: str
     final_rank: int
@@ -5116,6 +5267,158 @@ class GateCheckerSet(TypedDict):
 class GateCheckerReceipt(TypedDict):
     binding: VerdictBinding
     receipt_ref: str
+MeasuredLearningPredicate = Literal["learning.reliability", "learning.edit_cost", "learning.retest_noise", "learning.setting"]
+class CellTypeRef(TypedDict):
+    node_id: str
+    tree_version: int
+class LearningCellKey(TypedDict):
+    subject: str
+    predicate: MeasuredLearningPredicate
+    executor: NotRequired[str | None]
+    typeRef: NotRequired[CellTypeRef | None]
+    axis: NotRequired[str | None]
+    consent_scope: NotRequired[str | None]
+    setting_key: NotRequired[str | None]
+class LearningReadRequest(TypedDict):
+    cell: LearningCellKey
+    project_ref: NotRequired[str | None]
+class LearningBetaValue(TypedDict):
+    alpha: float
+    beta: float
+class LearningMeanValue(TypedDict):
+    mean: float
+    spread: float
+class MeasuredLearningValueBeta(TypedDict):
+    form: Literal["beta"]
+    value: LearningBetaValue
+class MeasuredLearningValueMean(TypedDict):
+    form: Literal["mean"]
+    value: LearningMeanValue
+class MeasuredLearningValueCounts(TypedDict):
+    form: Literal["counts"]
+    value: dict[str, float]
+MeasuredLearningValue = MeasuredLearningValueBeta | MeasuredLearningValueMean | MeasuredLearningValueCounts
+PriorOrigin = Literal["shipped", "provenance", "carried", "parent", "model", "seed"]
+LearningPriorValue = LearningBetaValue | LearningMeanValue | dict[str, float]
+LearningPriorView = TypedDict("LearningPriorView", {"origin": PriorOrigin, "value": LearningPriorValue, "weight_runs": float, "from": NotRequired[str | None]})
+class EstimateLabels(TypedDict):
+    by_judge: NotRequired[dict[str, float]]
+    converted: NotRequired[float]
+    on_judge_model: NotRequired[float]
+    outcome_counts: NotRequired[dict[str, float] | None]
+class EstimateWindow(TypedDict):
+    half_life: int
+MeasuredLearningEstimate = dict[str, Any]
+class LearningHeadView(TypedDict):
+    claim_ref: str
+    at: int
+    evidence_receipts: list[str]
+    supersedes: list[str]
+class AnchorHeldOut(TypedDict):
+    kind: Literal["held_out"]
+class AnchorOwnerVerdict(TypedDict):
+    kind: Literal["owner_verdict"]
+class AnchorWorldOutcome(TypedDict):
+    kind: Literal["world_outcome"]
+class AnchorAudit(TypedDict):
+    kind: Literal["audit"]
+    rate: float
+class AnchorRetest(TypedDict):
+    kind: Literal["retest"]
+class AnchorFittingCheck(TypedDict):
+    kind: Literal["fitting_check"]
+Anchor = AnchorHeldOut | AnchorOwnerVerdict | AnchorWorldOutcome | AnchorAudit | AnchorRetest | AnchorFittingCheck
+class ObservationSuccess(TypedDict):
+    kind: Literal["success"]
+    v: bool
+class ObservationMagnitude(TypedDict):
+    kind: Literal["magnitude"]
+    v: float
+class ObservationCategory(TypedDict):
+    kind: Literal["category"]
+    v: str
+Observation = ObservationSuccess | ObservationMagnitude | ObservationCategory
+class ContributionCheck(TypedDict):
+    receipt: str
+    contributed: bool
+class SkillContribution(TypedDict):
+    skill: EntityId
+    check: ContributionCheck
+class UsedProvenanceEdge(TypedDict):
+    derived: EntityId
+    source: EntityId
+    check: NotRequired[ContributionCheck | None]
+class CreditOptions(TypedDict):
+    enabled: bool
+    depth_cap: NotRequired[int | None]
+    check_every_hop: bool
+class PackAttributionFields(TypedDict):
+    typeRef: CellTypeRef
+    executor: str
+    judge: str
+    pattern: EntityId
+    team_shape: list[str]
+    decider: EntityId
+    project: NotRequired[EntityId | None]
+    output: NotRequired[EntityId | None]
+    contributions: list[SkillContribution]
+    used_edges: list[UsedProvenanceEdge]
+    credit: CreditOptions
+class PackLearningContext(TypedDict):
+    attempt_receipt: str
+    outcome_receipt: str
+    attribution: PackAttributionFields
+class EvidenceRow(TypedDict):
+    at: int
+    anchor: Anchor
+    observation: Observation
+    weight: float
+    judge: NotRequired[str | None]
+    on_judge_model: NotRequired[bool]
+    outcome_label: NotRequired[str | None]
+    pack_attribution: NotRequired[PackLearningContext | None]
+    goal_revision: NotRequired[str | None]
+class LearningEvidenceView(TypedDict):
+    receipt: str
+    evidence: EvidenceRow
+class LearningProvenanceView(TypedDict):
+    cell: LearningCellKey
+    heads: list[LearningHeadView]
+    evidence: list[LearningEvidenceView]
+class MeasuredLearningView(TypedDict):
+    estimate: MeasuredLearningEstimate
+    own: bool
+    borrowed_from: NotRequired[LearningCellKey | None]
+    attributed_outcome_receipts: list[str]
+    provenance: LearningProvenanceView
+    prior_provenance: NotRequired[LearningProvenanceView | None]
+class LearningCellView(TypedDict):
+    cell: LearningCellKey
+    view: MeasuredLearningView
+class LearningProjectionRequest(TypedDict):
+    attempt_receipt: str
+    outcome_receipt: str
+    axis: str
+class LateCreditShare(TypedDict):
+    subject: EntityId
+    origin_skill: NotRequired[EntityId | None]
+    chain: list[UsedProvenanceEdge]
+    decay: float
+    weight: float
+class LateCreditReceipt(TypedDict):
+    receipt_id: str
+    attempt_receipt: str
+    outcome_receipt: str
+    anchor: Anchor
+    succeeded: bool
+    axis: str
+    at: int
+    goal_revision: NotRequired[str | None]
+    attribution: PackAttributionFields
+    direct_subjects: list[EntityId]
+    shares: list[LateCreditShare]
+class LearningProjectionView(TypedDict):
+    receipt: NotRequired[LateCreditReceipt | None]
 class LearningSettingsRequest(TypedDict):
     key: NotRequired[str | None]
 class LearningSettingSpecView(TypedDict):
@@ -6243,6 +6546,151 @@ class TaskTypeTreeReadReply(TypedDict):
     project_ref: NotRequired[EntityId | None]
     in_force_skill_ref: NotRequired[EntityId | None]
     tree: NotRequired[TaskTypeTreeView | None]
+class PlannedSpawnRead(TypedDict):
+    spawn_ref: EntityId
+SpawnPhase = Literal["reserved", "planned", "launched", "in_doubt"]
+CoordinationPatternView = Literal["solo", "ceo_decides", "committee", "vote", "market", "rotation"]
+class SkillRevisionView(TypedDict):
+    skill_ref: EntityId
+    version: str
+class ProviderPinView(TypedDict):
+    rung: DecisionRung
+    model: str
+    version: str
+class PlanObservation(TypedDict):
+    type_ref: TypeStamp
+    model: str
+    width: int
+    pattern: CoordinationPatternView
+    hard_cap_units: NotRequired[int | None]
+    expected_spend_units: int
+    available_units: NotRequired[int | None]
+    over_budget: bool
+    fitted_to_budget: bool
+    why: list[str]
+    team_shape: NotRequired[SkillRevisionView | None]
+    pattern_skill: NotRequired[SkillRevisionView | None]
+    rung_skill: NotRequired[SkillRevisionView | None]
+    rung_providers: list[ProviderPinView]
+class LaunchedMember(TypedDict):
+    attempt_ref: EntityId
+    state: str
+    type_ref: TypeStamp
+    team_ref: NotRequired[str | None]
+TeamAxis = Literal["converge", "diverge"]
+class ResolvedTeam(TypedDict):
+    type_ref: TypeStamp
+    pattern: CoordinationPatternView
+    width: int
+    model: str
+    axis: NotRequired[TeamAxis | None]
+    project_ref: NotRequired[EntityId | None]
+    root_attempt_ref: EntityId
+    member_attempt_refs: list[EntityId]
+    team_ref: NotRequired[str | None]
+class TeamBindingView(TypedDict):
+    team_ref: str
+    pattern: CoordinationPatternView
+    leader: EntityId
+    member_attempt_refs: list[EntityId]
+    proposal_refs: list[str]
+    root_task: NotRequired[str | None]
+    started_at: int
+class TeamReceiptView(TypedDict):
+    team_ref: str
+    type_ref: TypeStamp
+    pattern: CoordinationPatternView
+    pattern_skill: NotRequired[SkillRevisionView | None]
+    axis: TeamAxis
+    width: int
+    models: list[str]
+    outcome_receipt: NotRequired[str | None]
+RouteStampState = Literal["unstamped_before_s5", "stamped"]
+class RouteObservation(TypedDict):
+    run_ref: EntityId
+    type_ref: NotRequired[TypeStamp | None]
+    stamp_state: RouteStampState
+    model: str
+    effort: ReasoningEffort
+    why: str
+    reused: bool
+CriticAssociation = Literal["branch_attempt", "canonical_run_ref"]
+class CriticObservation(TypedDict):
+    run_ref: str
+    branch_attempt_ref: EntityId
+    association: CriticAssociation
+    artifact_id: str
+    target_ref: str
+    type_ref: TypeStamp
+    lens_ref: EntityId
+    lens_id: str
+    executor: str
+    axis: str
+    verdict: str
+class DoorsLearningCellView(TypedDict):
+    predicate: str
+    subject: EntityId
+    executor: str
+    type_ref: TypeStamp
+    axis: str
+class BorrowedCellView(TypedDict):
+    predicate: str
+    subject: EntityId
+    executor: NotRequired[str | None]
+    type_ref: NotRequired[TypeStamp | None]
+    axis: NotRequired[str | None]
+class DoorsLearningEvidenceView(TypedDict):
+    receipt_ref: str
+    at: int
+    anchor_kind: str
+    weight: float
+class LearningObservation(TypedDict):
+    cell: DoorsLearningCellView
+    mean: float
+    own: bool
+    own_runs: float
+    prior_origin: str
+    prior_weight_runs: float
+    borrowed_from: NotRequired[BorrowedCellView | None]
+    untested: bool
+    window_half_life_secs: int
+    estimator_version: int
+    evidence: list[DoorsLearningEvidenceView]
+class ObservationIssueStampMismatch(TypedDict):
+    kind: Literal["stamp_mismatch"]
+    consumer: str
+    reference: str
+    expected: TypeStamp
+    actual: TypeStamp
+class ObservationIssueMissingBinding(TypedDict):
+    kind: Literal["missing_binding"]
+    reference: str
+class ObservationIssueSeveralTeams(TypedDict):
+    kind: Literal["several_teams"]
+    team_refs: list[str]
+class ObservationIssueTeamMismatch(TypedDict):
+    kind: Literal["team_mismatch"]
+    member_ref: EntityId
+    expected: str
+    actual: NotRequired[str | None]
+class ObservationIssueUnavailable(TypedDict):
+    kind: Literal["unavailable"]
+    consumer: str
+    reason: str
+ObservationIssue = ObservationIssueStampMismatch | ObservationIssueMissingBinding | ObservationIssueSeveralTeams | ObservationIssueTeamMismatch | ObservationIssueUnavailable
+class PlannedSpawnObservation(TypedDict):
+    spawn_ref: EntityId
+    phase: SpawnPhase
+    type_ref: TypeStamp
+    plan: NotRequired[PlanObservation | None]
+    launched: list[LaunchedMember]
+    resolved: NotRequired[ResolvedTeam | None]
+    binding: NotRequired[TeamBindingView | None]
+    receipt: NotRequired[TeamReceiptView | None]
+    routes: list[RouteObservation]
+    critics: list[CriticObservation]
+    learning: list[LearningObservation]
+    issues: list[ObservationIssue]
 class WorkspaceRosterPreset(TypedDict):
     workspace_ref: str
     workspace_vault_id: str
@@ -6475,9 +6923,6 @@ class CritiqueProvenance(TypedDict):
     model_id: str
     model_revision: NotRequired[str | None]
 LearningPredicate = Literal["reliability", "edit_cost", "retest_noise", "setting"]
-class CellTypeRef(TypedDict):
-    node_id: str
-    tree_version: int
 class LearningCell(TypedDict):
     predicate: LearningPredicate
     subject: EntityId

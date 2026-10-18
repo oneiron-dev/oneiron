@@ -118,6 +118,11 @@ pub enum AuthorityOp {
     /// A machine's result for a residence directive, signed by the install
     /// key of the machine it names, with the directive among its parents.
     ResidenceResult(ResidenceResult),
+    /// One owner choice of the born-with text a federation grant's windows
+    /// carry to another vault, signed by the install key of a live machine
+    /// of the vault, in any role (OF-491, FIX 2998). A main-log entry, so
+    /// every machine the owner admits folds it.
+    GrantTravelSet(GrantTravelSet),
 }
 
 /// A canonical, signed AUTHORITY_LOG entry.
@@ -388,6 +393,7 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::OwnerHandover(handover) => handover.validate(),
         AuthorityOp::ResidenceDirective(directive) => directive.validate(),
         AuthorityOp::ResidenceResult(result) => result.validate(),
+        AuthorityOp::GrantTravelSet(set) => set.validate(),
     }
 }
 

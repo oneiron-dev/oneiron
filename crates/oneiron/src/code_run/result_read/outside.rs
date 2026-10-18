@@ -72,7 +72,9 @@ impl Vault {
                 let mut selected = None;
                 for output in outputs {
                     if crate::code_run::ResultOccurrence::owned(run_id, &output.path)?
-                        .id().to_hex() == occurrence
+                        .id()
+                        .to_hex()
+                        == occurrence
                     {
                         selected = Some((output.clone(), None));
                         break;

@@ -429,6 +429,28 @@ export class Oneiron {
    * remote alike; out of range it returns `BAD_REQUEST`.
    */
     recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media, opts.queryAffect)),
+    retrieval: {
+      /** Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle. */
+      recall: (input: Facade.RecallRequest): Facade.MemoryPack => this.#call(() => this.#client.vaultRetrievalRecall(input) as Facade.MemoryPack),
+      /** The owner reads finalized local retrieval runs and their independent outcome sidecars, newest first. */
+      runs: (input: Facade.RetrievalRunsRequest): Facade.RetrievalRunEvidence[] => this.#call(() => this.#client.vaultRetrievalRuns(input) as Facade.RetrievalRunEvidence[]),
+      /** The owner reads one finalized local serving run, its turn, policy state, trace and explicit outcomes; an unknown run reads as none. */
+      run: (input: Facade.RetrievalRunRequest): Facade.RetrievalRunEvidence | null => this.#call(() => this.#client.vaultRetrievalRun(input) as Facade.RetrievalRunEvidence | null),
+      /** The owner reads the independent finalized retrieval runs linked to one exact turn, in recorded order. */
+      turn: (input: Facade.RetrievalTurnRequest): Facade.RetrievalRunEvidence[] => this.#call(() => this.#client.vaultRetrievalTurn(input) as Facade.RetrievalRunEvidence[]),
+      outcomes: {
+        /** The owner attaches an explicit observation to one local serving run; raw reward stays telemetry, never a gated training label. */
+        put: (input: Facade.RetrievalOutcome): Facade.RetrievalOutcomeRecord[] => this.#call(() => this.#client.vaultRetrievalOutcomesPut(input) as Facade.RetrievalOutcomeRecord[]),
+        /** The owner records a gate-attributed turn outcome for its exact contributing retrievalRunIds; the engine validates the links and shapes the reward. */
+        end: (input: Facade.RetrievalEndOutcome): Facade.RetrievalRunEvidence[] => this.#call(() => this.#client.vaultRetrievalOutcomesEnd(input) as Facade.RetrievalRunEvidence[]),
+      },
+      /** The owner reads an opt-in trace by its vault-local keyed fork hash; hashes are never comparable across vaults. */
+      trace: (input: Facade.RetrievalTraceRequest): Facade.RetrievalTrace | null => this.#call(() => this.#client.vaultRetrievalTrace(input) as Facade.RetrievalTrace | null),
+      /** The owner exports finalized run evidence without query or pack text, raw frontier samples, trace keys or free-form outcome metadata. */
+      export: (input: Facade.RetrievalDiagnosticRequest): Facade.RetrievalDiagnosticExport => this.#call(() => this.#client.vaultRetrievalExport(input) as Facade.RetrievalDiagnosticExport),
+      /** The owner replays recorded state, ordered pack scores and trace from exact finalized runs; no fresh search, clock or outcome-derived feature is used. */
+      replay: (input: Facade.RetrievalDiagnosticRequest): Facade.RetrievalDiagnosticReplay => this.#call(() => this.#client.vaultRetrievalReplay(input) as Facade.RetrievalDiagnosticReplay),
+    },
     /** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */
     export: Object.assign((format?: string): MemoryExport => this.#call(() => this.#client.vaultExport({format: format}) as MemoryExport), {
       /** Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding. */
@@ -927,6 +949,12 @@ export class Oneiron {
         set: (input: Facade.GateCheckerSet): Facade.GateCheckerReceipt => this.#call(() => this.#client.vaultGateCheckerSet(input) as Facade.GateCheckerReceipt),
       },
     },
+    learning: {
+      /** The owner reads a measured learning cell, its explicit prior, derived UNTESTED mark, projector heads and anchored evidence; borrowed provenance stays separate from own runs. */
+      read: (input: Facade.LearningReadRequest): Facade.LearningCellView => this.#call(() => this.#client.vaultLearningRead(input) as Facade.LearningCellView),
+      /** The owner observes the stored projection receipt for an anchored attempt outcome; an absent receipt means projection has not committed, never a successful empty projection. */
+      projection: (input: Facade.LearningProjectionRequest): Facade.LearningProjectionView => this.#call(() => this.#client.vaultLearningProjection(input) as Facade.LearningProjectionView),
+    },
     settings: {
       /** The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type. */
       learning: Object.assign((input: Facade.LearningSettingsRequest): Facade.LearningSettingsView => this.#call(() => this.#client.vaultSettingsLearning(input) as Facade.LearningSettingsView), {
@@ -1174,6 +1202,10 @@ export class Oneiron {
       get: (input: Facade.AgentDefinitionRequest): Facade.AgentDefinitionView => this.#call(() => this.#client.vaultAgentsGet(input) as Facade.AgentDefinitionView),
       /** The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision. */
       update: (input: Facade.AgentDefinitionUpdateRequest): Facade.AgentDefinitionView => this.#call(() => this.#client.vaultAgentsUpdate(input) as Facade.AgentDefinitionView),
+      spawn: {
+        /** The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning. */
+        get: (input: Facade.PlannedSpawnRead): Facade.PlannedSpawnObservation => this.#call(() => this.#client.vaultAgentsSpawnGet(input) as Facade.PlannedSpawnObservation),
+      },
       /** The agent's travelling AgentPack folder (files base64) and what stayed home. */
       export_pack: (request: Facade.AgentPackExportRequest): Facade.AgentPackExport => this.#call(() => {  const result = JSON.parse(this.#client.vaultAgentsExportPack(keyedJson(request))) as Facade.AgentPackExport; return result }),
     },
