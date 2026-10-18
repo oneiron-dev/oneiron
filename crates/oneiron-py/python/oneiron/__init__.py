@@ -615,6 +615,9 @@ class Oneiron:
         def authority(self) -> "Oneiron._VaultAuthorityVerbs":
             return Oneiron._VaultAuthorityVerbs(self._client)
         @property
+        def slim(self) -> "Oneiron._VaultSlimVerbs":
+            return Oneiron._VaultSlimVerbs(self._client)
+        @property
         def mesh(self) -> "Oneiron._VaultMeshVerbs":
             return Oneiron._VaultMeshVerbs(self._client)
         @property
@@ -714,6 +717,12 @@ class Oneiron:
         def task_types(self) -> "Oneiron._VaultTaskTypesVerbs":
             return Oneiron._VaultTaskTypesVerbs(self._client)
         @property
+        def tasks(self) -> "Oneiron._VaultTasksVerbs":
+            return Oneiron._VaultTasksVerbs(self._client)
+        @property
+        def runs(self) -> "Oneiron._VaultRunsVerbs":
+            return Oneiron._VaultRunsVerbs(self._client)
+        @property
         def workspace(self) -> "Oneiron._VaultWorkspaceVerbs":
             return Oneiron._VaultWorkspaceVerbs(self._client)
         @property
@@ -810,11 +819,11 @@ class Oneiron:
         def delivery_window(self) -> "Oneiron._VaultDeliveryWindowVerbs":
             return Oneiron._VaultDeliveryWindowVerbs(self._client)
         @property
+        def summaries(self) -> "Oneiron._VaultSummariesVerbs":
+            return Oneiron._VaultSummariesVerbs(self._client)
+        @property
         def notes(self) -> "Oneiron._VaultNotesVerbs":
             return Oneiron._VaultNotesVerbs(self._client)
-        @property
-        def tasks(self) -> "Oneiron._VaultTasksVerbs":
-            return Oneiron._VaultTasksVerbs(self._client)
     class _VaultPeopleVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1223,9 +1232,45 @@ class Oneiron:
         def receipts(self, spec):
             """Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner."""
             return json.loads(_translate(lambda: self._client.vault_skills_receipts(json.dumps(spec))))
+        def convert(self, spec):
+            """Converts selected messages through the configured refiner; user initiation approves conversion, never admission."""
+            return json.loads(_translate(lambda: self._client.vault_skills_convert(json.dumps(spec))))
+        def get(self, spec):
+            """Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry."""
+            return json.loads(_translate(lambda: self._client.vault_skills_get(json.dumps(spec))))
+        def list(self, spec):
+            """Lists a page of the owner skill library, including inactive skills and their retained evidence."""
+            return json.loads(_translate(lambda: self._client.vault_skills_list(json.dumps(spec))))
+        def archive(self, spec):
+            """The owner soft-retires an active skill without deleting its body, source or receipts; running callable invocations are cancelled."""
+            return json.loads(_translate(lambda: self._client.vault_skills_archive(json.dumps(spec))))
+        def restore(self, spec):
+            """The owner restores an archived skill through the same admission gates; a hub restore prepares exact consent and reruns held-out scoring."""
+            return json.loads(_translate(lambda: self._client.vault_skills_restore(json.dumps(spec))))
+        def fork(self, spec):
+            """The owner forks a stored skill under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable."""
+            return json.loads(_translate(lambda: self._client.vault_skills_fork(json.dumps(spec))))
+        @property
+        def rules(self) -> "Oneiron._VaultSkillsRulesVerbs":
+            return Oneiron._VaultSkillsRulesVerbs(self._client)
+        @property
+        def code_auto_install(self) -> "Oneiron._VaultSkillsCodeAutoInstallVerbs":
+            return Oneiron._VaultSkillsCodeAutoInstallVerbs(self._client)
         @property
         def permissions(self) -> "Oneiron._VaultSkillsPermissionsVerbs":
             return Oneiron._VaultSkillsPermissionsVerbs(self._client)
+    class _VaultSkillsRulesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """The owner sets or clears a known-bad canonical skill hash rule, independently of advisory scanner prose."""
+            return json.loads(_translate(lambda: self._client.vault_skills_rules_set(json.dumps(spec))))
+    class _VaultSkillsCodeAutoInstallVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification."""
+            return json.loads(_translate(lambda: self._client.vault_skills_code_auto_install_set(json.dumps(spec))))
     class _VaultSkillsPermissionsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1280,6 +1325,24 @@ class Oneiron:
         def acknowledge(self, spec):
             """The owner acknowledges one saved handoff fork alarm."""
             return json.loads(_translate(lambda: self._client.vault_authority_handoff_alarms_acknowledge(json.dumps(spec))))
+    class _VaultSlimVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def policy(self, spec):
+            """Reads the serving host idle policy: the long outbound wait, no exit on idle and lazy heap rebuild."""
+            return json.loads(_translate(lambda: self._client.vault_slim_policy(json.dumps(spec))))
+        def state(self, spec):
+            """Observes FULL or SLIM atomically with this process id and the retained journaled resume pointer, without waking the vault."""
+            return json.loads(_translate(lambda: self._client.vault_slim_state(json.dumps(spec))))
+        def resume_step(self, spec):
+            """Reads a saved model checkpoint or outbound intent by its retained identity, including after FULL or restart, without reissuing it."""
+            return json.loads(_translate(lambda: self._client.vault_slim_resume_step(json.dumps(spec))))
+        def drop_heavy(self, spec):
+            """Drops rebuildable heap in process and returns the completed engine transition, drop counts or typed refusal; one journaled outbound step is required."""
+            return json.loads(_translate(lambda: self._client.vault_slim_drop_heavy(json.dumps(spec))))
+        def resume(self, spec):
+            """Resumes logical FULL in the same process and returns its completion receipt; indexes rebuild lazily and no saved outbound step is reissued."""
+            return json.loads(_translate(lambda: self._client.vault_slim_resume(json.dumps(spec))))
     class _VaultMeshVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1943,6 +2006,9 @@ class Oneiron:
         def ask(self, spec):
             """Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_ask(json.dumps(spec))))
+        def inspect_deck(self, spec):
+            """Inspects one PPTX version for native edit targets and comment identities without minting ids."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_inspect_deck(json.dumps(spec))))
         def propose_deck(self, request: dict[str, Any]) -> dict[str, Any]:
             """Runs one native deck transaction over the head and holds the proposal for Keep."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_propose_deck(json.dumps(request, allow_nan=False))))
@@ -2264,6 +2330,45 @@ class Oneiron:
         def get(self, spec):
             """The owner reads the task-type tree in force, or one kept tree version, for the vault or a project."""
             return json.loads(_translate(lambda: self._client.vault_task_types_get(json.dumps(spec))))
+    class _VaultTasksVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def cancel_force(self, spec):
+            """The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts."""
+            return json.loads(_translate(lambda: self._client.vault_tasks_cancel_force(json.dumps(spec))))
+        @property
+        def linear(self) -> "Oneiron._VaultTasksLinearVerbs":
+            return Oneiron._VaultTasksLinearVerbs(self._client)
+    class _VaultTasksLinearVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def mapping(self) -> "Oneiron._VaultTasksLinearMappingVerbs":
+            return Oneiron._VaultTasksLinearMappingVerbs(self._client)
+        def provenance(self, spec):
+            """One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts."""
+            return json.loads(_translate(lambda: self._client.vault_tasks_linear_provenance(json.dumps(spec))))
+    class _VaultTasksLinearMappingVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events."""
+            return json.loads(_translate(lambda: self._client.vault_tasks_linear_mapping(json.dumps(spec))))
+        def edit(self, spec):
+            """Links, unlinks or mirrors again one TASK's Linear issue, by the TASK's owner at the mapping revision the caller read, under an intent key."""
+            return json.loads(_translate(lambda: self._client.vault_tasks_linear_mapping_edit(json.dumps(spec))))
+    class _VaultRunsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def branches(self) -> "Oneiron._VaultRunsBranchesVerbs":
+            return Oneiron._VaultRunsBranchesVerbs(self._client)
+    class _VaultRunsBranchesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts."""
+            return json.loads(_translate(lambda: self._client.vault_runs_branches_get(json.dumps(spec))))
     class _VaultWorkspaceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2786,6 +2891,48 @@ class Oneiron:
         def retract(self, spec):
             """The owner retracts a delivery-window policy through the existing claim lifecycle door."""
             return json.loads(_translate(lambda: self._client.vault_delivery_window_policy_retract(json.dumps(spec))))
+    class _VaultSummariesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def create(self, request):
+            """Declares a readable source scope; only the configured Dreamer writes and source-links the SUMMARY birth."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_create(json.dumps(request))))
+        def read(self, request):
+            """Reads SUMMARY text, keep, derivation, covers and stable edit anchors in one caller-scoped snapshot."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_read(json.dumps(request))))
+        def status(self, request):
+            """Reads the calling principal's own summary declaration and its retained completion or failure."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_status(json.dumps(request))))
+        def keep(self, request):
+            """Edits the SUMMARY keep memo at the exact frontier read, under the caller's owner proof or entity-bound text grant."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_keep(json.dumps(request))))
+        def edit(self, request):
+            """Applies attributed anchored SUMMARY edits through existing grants; ungranted edits remain a typed review proposal."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_edit(json.dumps(request))))
+        def patch(self, request):
+            """Applies generated anchored SUMMARY operations after a keep fence and source admission; durable receipts name the sources read."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_patch(json.dumps(request))))
+        def regenerate(self, request):
+            """Retains generated SUMMARY text as a source-linked rewrite fork after reading keep; no head moves without explicit switch."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_regenerate(json.dumps(request))))
+        @property
+        def proposals(self) -> "Oneiron._VaultSummariesProposalsVerbs":
+            return Oneiron._VaultSummariesProposalsVerbs(self._client)
+    class _VaultSummariesProposalsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def read(self, request):
+            """Reads a SUMMARY proposal's fork provenance, retained text and durable receipts only when every member is readable."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_proposals_read(json.dumps(request))))
+        def merge(self, request):
+            """Merges the complete SUMMARY proposal under existing entity grants, preserving concurrent head edits and durable receipts."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_proposals_merge(json.dumps(request))))
+        def switch(self, request):
+            """Explicitly switches the complete SUMMARY proposal under existing entity grants; a stale causal base refuses the entire set."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_proposals_switch(json.dumps(request))))
+        def reject(self, request):
+            """Rejects the complete SUMMARY proposal under existing entity grants, dropping pending fork text without moving live heads."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_proposals_reject(json.dumps(request))))
     class _VaultNotesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2873,30 +3020,6 @@ class Oneiron:
         def close(self, spec):
             """Closes one live NOTE editor held by this caller; a binding id alone grants no authority."""
             return json.loads(_translate(lambda: self._client.vault_notes_editor_close(json.dumps(spec))))
-    class _VaultTasksVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        @property
-        def linear(self) -> "Oneiron._VaultTasksLinearVerbs":
-            return Oneiron._VaultTasksLinearVerbs(self._client)
-    class _VaultTasksLinearVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        @property
-        def mapping(self) -> "Oneiron._VaultTasksLinearMappingVerbs":
-            return Oneiron._VaultTasksLinearMappingVerbs(self._client)
-        def provenance(self, spec):
-            """One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts."""
-            return json.loads(_translate(lambda: self._client.vault_tasks_linear_provenance(json.dumps(spec))))
-    class _VaultTasksLinearMappingVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def __call__(self, spec):
-            """One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events."""
-            return json.loads(_translate(lambda: self._client.vault_tasks_linear_mapping(json.dumps(spec))))
-        def edit(self, spec):
-            """Links, unlinks or mirrors again one TASK's Linear issue, by the TASK's owner at the mapping revision the caller read, under an intent key."""
-            return json.loads(_translate(lambda: self._client.vault_tasks_linear_mapping_edit(json.dumps(spec))))
     class _TasksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

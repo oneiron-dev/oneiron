@@ -12,8 +12,8 @@
 use super::inspect::inspect;
 use super::opc;
 use super::{
-    EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditOp, EditOutcome, EditProposal, EditWarning,
-    MutationMode, OfficeFormat, RecalcStatus, ValidationCheck, ValidationReport, WarningCode,
+    EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditOp, EditProposal, EditWarning, MutationMode,
+    OfficeFormat, RecalcStatus, StructureSummary, ValidationCheck, ValidationReport, WarningCode,
 };
 use crate::blob_artifact::{BLOB_ARTIFACT_RUN_REF_MAX_BYTES, read_blob_artifact_head_in_txn};
 use crate::entity_id::EntityId;
@@ -21,7 +21,8 @@ use crate::error::{ArtifactError, Error, Result};
 use crate::side_table::{self, Named, SideTable};
 use oneiron_docedit::design_plan::MediaType;
 use oneiron_docedit::edit::transaction::{
-    AssetRef, Assets, DeckTransaction, DeckTransactionReport, IdMarks, run_transaction,
+    AssetRef, Assets, DeckTransaction, DeckTransactionReport, IdMarks, TransactionError,
+    run_transaction,
 };
 use oneiron_docedit::graphic::{AssetRecord, Origin};
 use oneiron_docedit::retained_opc::Limits;
@@ -50,7 +51,7 @@ const MAX_RENDERS: usize = 4_096;
 const MAX_RENDERER_BYTES: usize = 256;
 
 /// Which side of the diff a review image shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DeckRenderSide {
     /// The pinned base version.
@@ -62,7 +63,7 @@ pub enum DeckRenderSide {
 /// Host-rendered review evidence for one slide. The engine renders nothing;
 /// the renderer's identity is kept so LibreOffice evidence stays provisional
 /// beside the PowerPoint oracle.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DeckRender {
     pub side: DeckRenderSide,
     /// The slide part the image shows.
@@ -73,7 +74,7 @@ pub struct DeckRender {
 }
 
 /// Who made the operations and what they answer; kept with the receipt.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DeckEditContext {
     /// The actor the operations are attributed to (ARCH-0035 made_by).
     #[serde(default)]
@@ -107,6 +108,24 @@ fn invalid(message: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidEditManifest(message))
 }
 
+/// One deck transaction run: an uncommitted proposal, or the editor's
+/// refusal kept as its typed error.
+#[derive(Debug, Clone)]
+pub enum DeckEditOutcome {
+    Proposed(Box<EditProposal>),
+    Rejected(Box<DeckEditRejection>),
+}
+
+/// A refused deck transaction: the editor's typed refusal (its step, verb and
+/// canon name), and the inspection and gate report a rejection carries, the
+/// report's one failed check holding the refusal's message.
+#[derive(Debug, Clone)]
+pub struct DeckEditRejection {
+    pub inspection: StructureSummary,
+    pub report: ValidationReport,
+    pub refusal: TransactionError,
+}
+
 /// Run one deck transaction over `input` and return an uncommitted
 /// proposal, or a rejection naming the refused step. The transaction's marks
 /// are raised to `history` first, so new ids sit above managed history.
@@ -118,7 +137,7 @@ pub fn run_deck_transaction(
     history: &IdMarks,
     assets: &dyn Assets,
     context: DeckEditContext,
-) -> Result<EditOutcome> {
+) -> Result<DeckEditOutcome> {
     if run_ref.trim().is_empty() || run_ref.len() > BLOB_ARTIFACT_RUN_REF_MAX_BYTES {
         return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
             "run_ref must be non-empty and within the run-ref length bound",
@@ -133,10 +152,11 @@ pub fn run_deck_transaction(
     let (bytes, report) = match run_transaction(input, &transaction, limits, assets) {
         Ok(run) => run,
         Err(refusal) => {
-            return Ok(EditOutcome::Rejected {
+            return Ok(DeckEditOutcome::Rejected(Box::new(DeckEditRejection {
                 inspection,
                 report: ValidationReport::single_failure("deck_transaction", refusal.to_string()),
-            });
+                refusal,
+            })));
         }
     };
     let warnings = report
@@ -148,7 +168,7 @@ pub fn run_deck_transaction(
             )
         })
         .collect();
-    Ok(EditOutcome::Proposed(Box::new(EditProposal {
+    Ok(DeckEditOutcome::Proposed(Box::new(EditProposal {
         run_ref: run_ref.to_owned(),
         format: OfficeFormat::Pptx,
         new_bytes: bytes,
@@ -397,7 +417,7 @@ impl crate::Vault {
         transaction_json: &str,
         run_ref: &str,
         context: DeckEditContext,
-    ) -> Result<EditOutcome> {
+    ) -> Result<DeckEditOutcome> {
         let limits = self.docedit_package_limits()?;
         if let Some(thread) = context.thread {
             let open = self
@@ -435,7 +455,7 @@ impl crate::Vault {
             &assets,
             context,
         )?;
-        if let EditOutcome::Proposed(proposal) = &mut outcome {
+        if let DeckEditOutcome::Proposed(proposal) = &mut outcome {
             proposal.base_version = Some(head.version);
         }
         Ok(outcome)

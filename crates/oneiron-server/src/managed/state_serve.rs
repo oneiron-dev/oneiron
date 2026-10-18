@@ -564,7 +564,22 @@ async fn run_admitted_request(state: Arc<ManagedState>, request: Request, next: 
         // answered for — this gate cannot refuse a frame it never sees.
         state.admit_sync_upgrade();
     }
-    if let Err(error) = state.server.vault().resume_from_slim_on_inbound() {
+    // Observation does not wake the vault. Explicit lifecycle calls own their
+    // transition so their completion receipt reports what they actually did.
+    let lifecycle_observation = match (request.method().as_str(), request.uri().path()) {
+        ("GET", "/api/health") => true,
+        ("POST", path) => matches!(path,
+            "/v1/core/facade/vault.slim.policy"
+            | "/v1/core/facade/vault.slim.state"
+            | "/v1/core/facade/vault.slim.resume_step"
+            | "/v1/core/facade/vault.slim.drop_heavy"
+            | "/v1/core/facade/vault.slim.resume"
+        ),
+        _ => false,
+    };
+    if !lifecycle_observation
+        && let Err(error) = state.server.vault().resume_from_slim_on_inbound()
+    {
         return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
     }
     next.run(request).await

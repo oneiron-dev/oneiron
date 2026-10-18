@@ -97,7 +97,7 @@ impl schemars::JsonSchema for Digest {
 
 /// Native-id high-water marks in managed history: new ids go above them,
 /// never only above the ids that survive (ARCH-0077, "Identities").
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IdMarks {
     /// `p:sldId/@id`.
@@ -149,7 +149,7 @@ impl IdMarks {
 
 /// A shape as the caller read it: its slide part, `p:cNvPr/@id` and the
 /// content fingerprint, which plays the expected revision.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct StepTarget {
     pub slide: String,
@@ -168,7 +168,7 @@ impl StepTarget {
 }
 
 /// Declared local transform properties, in EMU and 60,000ths of a degree.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct StepXfrm {
     #[serde(default)]
@@ -184,7 +184,7 @@ pub struct StepXfrm {
 }
 
 /// The closed preset set `add_shape` writes, by its OOXML name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum StepPreset {
     Rect,
@@ -195,7 +195,7 @@ pub enum StepPreset {
 }
 
 /// A series sequence: its name, categories (or `c:xVal`), or values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum StepSequence {
     Name,
@@ -204,7 +204,7 @@ pub enum StepSequence {
 }
 
 /// One chart cell. A missing cell is not zero.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum StepCell {
     Missing,
@@ -235,7 +235,7 @@ pub struct AssetRef {
 }
 
 /// One checked verb (ARCH-0077, "Edit in place with passthrough").
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum DeckStep {
     SetText {
@@ -345,7 +345,7 @@ impl DeckStep {
 }
 
 /// One deck transaction: base, marks, seed and ordered steps.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DeckTransaction {
     pub schema: u32,

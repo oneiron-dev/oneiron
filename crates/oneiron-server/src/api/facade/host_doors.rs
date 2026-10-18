@@ -78,11 +78,13 @@ pub(crate) use super::courtesy_delete_doors::*;
 pub(crate) use super::federation_connect_doors::*;
 pub(crate) use super::guest_doors::*;
 pub(crate) use super::hub_doors::*;
+pub(crate) use super::skill_doors::*;
 // The owner's support grant doors (OF-606), as the guest ones are.
 pub(crate) use super::support_grant_doors::*;
 // The owner's residence doors (OF-534), likewise.
 pub(crate) use super::fold_doors::*;
 pub(crate) use super::note_doors::*;
+pub(crate) use super::summary_doors::*;
 pub(crate) use super::off_record_doors::*;
 pub(crate) use super::residence_doors::*;
 // The weave lens's human doors, likewise.
@@ -104,6 +106,7 @@ pub(crate) use super::fanout_doors::*;
 // The owner's learned-setting doors, likewise.
 pub(crate) use super::learning_doors::*;
 pub(crate) use super::setting_doors::*;
+pub(crate) use super::slim_doors::*;
 // The owner's historical secret lift sweep door (OF-067), likewise.
 pub(crate) use super::secret_lift_doors::*;
 // The owner's root wave door (OF-427), likewise.
@@ -121,7 +124,8 @@ pub(crate) use super::policy_doors::*;
 pub(crate) use super::origin_doors::*;
 // The owner's code snapshot doors (DOOR-118), likewise.
 pub(crate) use super::codebase_doors::*;
-// The owner's task-type tree doors (DOOR-111), likewise.
+// The owner's task-type tree doors (DOOR-111) and run doors (DOOR-100),
+// likewise.
 pub(crate) use super::coordination_doors::*;
 // The generic connector call's door (ONE-2510), likewise.
 pub(crate) use super::connector_call_doors::*;
@@ -1077,6 +1081,14 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.skills.import"
         | "vault.skills.sync"
         | "vault.skills.receipts"
+        | "vault.skills.convert"
+        | "vault.skills.get"
+        | "vault.skills.list"
+        | "vault.skills.archive"
+        | "vault.skills.restore"
+        | "vault.skills.fork"
+        | "vault.skills.rules.set"
+        | "vault.skills.code_auto_install.set"
         | "vault.skills.permissions.approve"
         | "vault.packs.hooks.bind"
         | "vault.packs.hooks.list"
@@ -1113,6 +1125,11 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.decisions.bands.read"
         | "vault.decisions.bands.learn"
         | "vault.decisions.bands.enforce"
+        | "vault.slim.policy"
+        | "vault.slim.state"
+        | "vault.slim.resume_step"
+        | "vault.slim.drop_heavy"
+        | "vault.slim.resume"
         | "vault.retrieval.recall"
         | "vault.retrieval.runs"
         | "vault.retrieval.run"
@@ -1152,6 +1169,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.task_types.pin"
         | "vault.task_types.get"
         | "vault.agents.spawn.get"
+        | "vault.tasks.cancel_force"
+        | "vault.runs.branches.get"
         | "vault.workspace.roster"
         | "vault.booking.page_token"
         | "vault.channel_identities.provision"

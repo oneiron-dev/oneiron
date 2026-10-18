@@ -1,11 +1,16 @@
 //! The owner's task-type tree doors (DOOR-111), with the owner's own proof:
 //! store an authored tree on an open team-shape fork as a candidate, and
 //! read the tree in force or one kept version; and the owner's read of one
-//! spawned agent by its attempt. `host_doors` re-exports them, so the
+//! spawned agent by its attempt; and the owner's run doors over one TASK's
+//! branches (DOOR-100): the unrefusable force-stop of every live branch,
+//! and the read of every branch. `host_doors` re-exports them, so the
 //! generated HTTP facade handler and the MCP dispatcher call them by the
 //! name every host door has.
 use std::sync::Arc;
 
+use oneiron::task_verb::run_doors::{
+    CancelForceReceipt, CancelForceRequest, RunBranchesRequest, RunBranchesView,
+};
 use oneiron::team::doors::{
     CriticAssociation, PlannedSpawnObservation, PlannedSpawnRead, TaskTypeTreePin,
     TaskTypeTreePinReceipt, TaskTypeTreeRead, TaskTypeTreeReadReply,
@@ -65,6 +70,44 @@ pub(crate) async fn vault_agents_spawn_get(
         owner_proof(auth, server, VERB),
         move |server, owner| oneiron::team::doors::observe_spawn_as(server.vault(), &owner, input),
         spawn_rows,
+    )
+    .await
+}
+
+/// A force names the TASK whose branches it stopped.
+pub(crate) async fn vault_tasks_cancel_force(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CancelForceRequest,
+) -> MaybeListed<CancelForceReceipt> {
+    const VERB: &str = "vault.tasks.cancel_force";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| {
+            oneiron::task_verb::run_doors::cancel_force_as(server.vault(), &owner, input)
+        },
+        |receipt| Some(vec![receipt.task_ref]),
+    )
+    .await
+}
+
+/// A branch read names the TASK whose branches it read.
+pub(crate) async fn vault_runs_branches_get(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: RunBranchesRequest,
+) -> MaybeListed<RunBranchesView> {
+    const VERB: &str = "vault.runs.branches.get";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| {
+            oneiron::task_verb::run_doors::read_branches_as(server.vault(), &owner, input)
+        },
+        |read| Some(vec![read.task_ref]),
     )
     .await
 }

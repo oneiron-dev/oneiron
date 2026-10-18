@@ -600,6 +600,26 @@ export class Oneiron {
       sync: (input: Facade.HubSkillRequest): Facade.HubSkillSyncReceipt => this.#call(() => this.#client.vaultSkillsSync(input) as Facade.HubSkillSyncReceipt),
       /** Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner. */
       receipts: (input: Facade.HubSkillRequest): Facade.HubSkillReceipts => this.#call(() => this.#client.vaultSkillsReceipts(input) as Facade.HubSkillReceipts),
+      /** Converts selected messages through the configured refiner; user initiation approves conversion, never admission. */
+      convert: (input: Facade.SkillConvertRequest): Facade.SkillConvertReceipt => this.#call(() => this.#client.vaultSkillsConvert(input) as Facade.SkillConvertReceipt),
+      /** Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry. */
+      get: (input: Facade.HubSkillRequest): Facade.SkillLibraryView => this.#call(() => this.#client.vaultSkillsGet(input) as Facade.SkillLibraryView),
+      /** Lists a page of the owner skill library, including inactive skills and their retained evidence. */
+      list: (input: Facade.SkillLibraryListRequest): Facade.SkillLibraryPage => this.#call(() => this.#client.vaultSkillsList(input) as Facade.SkillLibraryPage),
+      /** The owner soft-retires an active skill without deleting its body, source or receipts; running callable invocations are cancelled. */
+      archive: (input: Facade.HubSkillRequest): Facade.SkillLibraryView => this.#call(() => this.#client.vaultSkillsArchive(input) as Facade.SkillLibraryView),
+      /** The owner restores an archived skill through the same admission gates; a hub restore prepares exact consent and reruns held-out scoring. */
+      restore: (input: Facade.SkillLibraryRestoreRequest): Facade.SkillLibraryRestoreReceipt => this.#call(() => this.#client.vaultSkillsRestore(input) as Facade.SkillLibraryRestoreReceipt),
+      /** The owner forks a stored skill under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable. */
+      fork: (input: Facade.SkillLibraryForkRequest): Facade.SkillLibraryView => this.#call(() => this.#client.vaultSkillsFork(input) as Facade.SkillLibraryView),
+      rules: {
+        /** The owner sets or clears a known-bad canonical skill hash rule, independently of advisory scanner prose. */
+        set: (input: Facade.SkillHashRuleRequest): Facade.HubConsentReceipt => this.#call(() => this.#client.vaultSkillsRulesSet(input) as Facade.HubConsentReceipt),
+      },
+      code_auto_install: {
+        /** The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification. */
+        set: (input: Facade.SkillCodeAutoInstallRequest): Facade.HubConsentReceipt => this.#call(() => this.#client.vaultSkillsCodeAutoInstallSet(input) as Facade.HubConsentReceipt),
+      },
       permissions: {
         /** The owner answers one imported skill permission ask at its exact hub source. */
         approve: (input: Facade.HubSkillPermissionRequest): Facade.HubConsentReceipt => this.#call(() => this.#client.vaultSkillsPermissionsApprove(input) as Facade.HubConsentReceipt),
@@ -629,6 +649,18 @@ export class Oneiron {
         /** The owner acknowledges one saved handoff fork alarm. */
         acknowledge: (input: Facade.HandoffAlarmRequest): Facade.AuthorityHandoffAlarm => this.#call(() => this.#client.vaultAuthorityHandoffAlarmsAcknowledge(input) as Facade.AuthorityHandoffAlarm),
       }),
+    },
+    slim: {
+      /** Reads the serving host idle policy: the long outbound wait, no exit on idle and lazy heap rebuild. */
+      policy: (input: Facade.EmptyRequest): Facade.SlimIdlePolicy => this.#call(() => this.#client.vaultSlimPolicy(input) as Facade.SlimIdlePolicy),
+      /** Observes FULL or SLIM atomically with this process id and the retained journaled resume pointer, without waking the vault. */
+      state: (input: Facade.EmptyRequest): Facade.SlimStateSnapshot => this.#call(() => this.#client.vaultSlimState(input) as Facade.SlimStateSnapshot),
+      /** Reads a saved model checkpoint or outbound intent by its retained identity, including after FULL or restart, without reissuing it. */
+      resume_step: (input: Facade.SlimResumeStepRequest): Facade.SavedResumeStep => this.#call(() => this.#client.vaultSlimResumeStep(input) as Facade.SavedResumeStep),
+      /** Drops rebuildable heap in process and returns the completed engine transition, drop counts or typed refusal; one journaled outbound step is required. */
+      drop_heavy: (input: Facade.SlimDropRequest): Facade.SlimDropReceipt => this.#call(() => this.#client.vaultSlimDropHeavy(input) as Facade.SlimDropReceipt),
+      /** Resumes logical FULL in the same process and returns its completion receipt; indexes rebuild lazily and no saved outbound step is reissued. */
+      resume: (input: Facade.EmptyRequest): Facade.SlimResumeReceipt => this.#call(() => this.#client.vaultSlimResume(input) as Facade.SlimResumeReceipt),
     },
     mesh: {
       /** The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner. */
@@ -1040,6 +1072,8 @@ export class Oneiron {
       review_slides: (request: Facade.SlideReviewSubmit): Facade.SlideReviewOutcome => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsReviewSlides(keyedJson(request))) as Facade.SlideReviewOutcome; return result }),
       /** Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard. */
       ask: (input: Facade.ArtifactAskSubmit): Facade.ArtifactAskOutcome => this.#call(() => this.#client.vaultArtifactsAsk(input) as Facade.ArtifactAskOutcome),
+      /** Inspects one PPTX version for native edit targets and comment identities without minting ids. */
+      inspect_deck: (input: Facade.DeckInspectRequest): Facade.DeckInspectionView => this.#call(() => this.#client.vaultArtifactsInspectDeck(input) as Facade.DeckInspectionView),
       /** Runs one native deck transaction over the head and holds the proposal for Keep. */
       propose_deck: (request: Facade.DeckProposeRequest): Facade.DeckProposeOutcome => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsProposeDeck(keyedJson(request))) as Facade.DeckProposeOutcome; return result }),
       /** Offers one native organ result as the artifact's next version, held for Keep. */
@@ -1214,6 +1248,25 @@ export class Oneiron {
       pin: (input: Facade.TaskTypeTreePin): Facade.TaskTypeTreePinReceipt => this.#call(() => this.#client.vaultTaskTypesPin(input) as Facade.TaskTypeTreePinReceipt),
       /** The owner reads the task-type tree in force, or one kept tree version, for the vault or a project. */
       get: (input: Facade.TaskTypeTreeRead): Facade.TaskTypeTreeReadReply => this.#call(() => this.#client.vaultTaskTypesGet(input) as Facade.TaskTypeTreeReadReply),
+    },
+    tasks: {
+      /** The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts. */
+      cancel_force: (input: Facade.CancelForceRequest): Facade.CancelForceReceipt => this.#call(() => this.#client.vaultTasksCancelForce(input) as Facade.CancelForceReceipt),
+      linear: {
+        /** One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events. */
+        mapping: Object.assign((input: Facade.LinearMappingRequest): Facade.LinearMappingView => this.#call(() => this.#client.vaultTasksLinearMapping(input) as Facade.LinearMappingView), {
+          /** Links, unlinks or mirrors again one TASK's Linear issue, by the TASK's owner at the mapping revision the caller read, under an intent key. */
+          edit: (input: Facade.LinearMappingEdit): Facade.LinearMappingEditReceipt => this.#call(() => this.#client.vaultTasksLinearMappingEdit(input) as Facade.LinearMappingEditReceipt),
+        }),
+        /** One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts. */
+        provenance: (input: Facade.LinearProvenanceRequest): Facade.LinearProvenancePage => this.#call(() => this.#client.vaultTasksLinearProvenance(input) as Facade.LinearProvenancePage),
+      },
+    },
+    runs: {
+      branches: {
+        /** The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts. */
+        get: (input: Facade.RunBranchesRequest): Facade.RunBranchesView => this.#call(() => this.#client.vaultRunsBranchesGet(input) as Facade.RunBranchesView),
+      },
     },
     workspace: {
       /** The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted. */
@@ -1529,6 +1582,32 @@ export class Oneiron {
       /** Preview live delivery-window policy with the engine evaluator; the preview does not authorize or release an effect. */
       evaluate: (input: Facade.DeliveryWindowEvaluateRequest): Facade.DeliveryWindowPreview => this.#call(() => this.#client.vaultDeliveryWindowEvaluate(input) as Facade.DeliveryWindowPreview),
     },
+    summaries: {
+      /** Declares a readable source scope; only the configured Dreamer writes and source-links the SUMMARY birth. */
+      create: (request: Facade.SummaryCreateRequest): Facade.SummaryQueued => this.#call(() => this.#client.vaultSummariesCreate(request) as Facade.SummaryQueued),
+      /** Reads SUMMARY text, keep, derivation, covers and stable edit anchors in one caller-scoped snapshot. */
+      read: (request: Facade.SummaryReadRequest): Facade.ScopedReadResult<Facade.SummaryReadView | null> => this.#call(() => this.#client.vaultSummariesRead(request) as Facade.ScopedReadResult<Facade.SummaryReadView | null>),
+      /** Reads the calling principal's own summary declaration and its retained completion or failure. */
+      status: (request: Facade.SummaryStatusRequest): Facade.ScopeSummaryStatus => this.#call(() => this.#client.vaultSummariesStatus(request) as Facade.ScopeSummaryStatus),
+      /** Edits the SUMMARY keep memo at the exact frontier read, under the caller's owner proof or entity-bound text grant. */
+      keep: (request: Facade.SummaryKeepRequest): Facade.SummaryKeepResult => this.#call(() => this.#client.vaultSummariesKeep(request) as Facade.SummaryKeepResult),
+      /** Applies attributed anchored SUMMARY edits through existing grants; ungranted edits remain a typed review proposal. */
+      edit: (request: Facade.SummaryEditRequest): Facade.SummaryProposalView => this.#call(() => this.#client.vaultSummariesEdit(request) as Facade.SummaryProposalView),
+      /** Applies generated anchored SUMMARY operations after a keep fence and source admission; durable receipts name the sources read. */
+      patch: (request: Facade.SummaryPatchRequest): Facade.SummaryMutationResult => this.#call(() => this.#client.vaultSummariesPatch(request) as Facade.SummaryMutationResult),
+      /** Retains generated SUMMARY text as a source-linked rewrite fork after reading keep; no head moves without explicit switch. */
+      regenerate: (request: Facade.SummaryRegenerateRequest): Facade.SummaryMutationResult => this.#call(() => this.#client.vaultSummariesRegenerate(request) as Facade.SummaryMutationResult),
+      proposals: {
+        /** Reads a SUMMARY proposal's fork provenance, retained text and durable receipts only when every member is readable. */
+        read: (request: Facade.SummaryProposalRequest): Facade.SummaryProposalView => this.#call(() => this.#client.vaultSummariesProposalsRead(request) as Facade.SummaryProposalView),
+        /** Merges the complete SUMMARY proposal under existing entity grants, preserving concurrent head edits and durable receipts. */
+        merge: (request: Facade.SummaryProposalRequest): Facade.SummaryProposalView => this.#call(() => this.#client.vaultSummariesProposalsMerge(request) as Facade.SummaryProposalView),
+        /** Explicitly switches the complete SUMMARY proposal under existing entity grants; a stale causal base refuses the entire set. */
+        switch: (request: Facade.SummaryProposalRequest): Facade.SummaryProposalView => this.#call(() => this.#client.vaultSummariesProposalsSwitch(request) as Facade.SummaryProposalView),
+        /** Rejects the complete SUMMARY proposal under existing entity grants, dropping pending fork text without moving live heads. */
+        reject: (request: Facade.SummaryProposalRequest): Facade.SummaryProposalView => this.#call(() => this.#client.vaultSummariesProposalsReject(request) as Facade.SummaryProposalView),
+      },
+    },
     notes: {
       /** Creates a NOTE of a registered kind, its first authored text as its birth. */
       create: (input: Facade.CreateNoteRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesCreate(input) as Facade.EntityRefReceipt),
@@ -1580,17 +1659,6 @@ export class Oneiron {
       set_overrides: (request: Facade.SetNoteOverridesRequest): Facade.NoteDefaultsView => this.#call(() => {  const result = JSON.parse(this.#client.vaultNotesSetOverrides(keyedJson(request))) as Facade.NoteDefaultsView; return result }),
       /** One NOTE's overrides and the defaults its gates read after them. */
       defaults: (request: Facade.NoteRefRequest): Facade.NoteDefaultsView => this.#call(() => {  const result = JSON.parse(this.#client.vaultNotesDefaults(keyedJson(request))) as Facade.NoteDefaultsView; return result }),
-    },
-    tasks: {
-      linear: {
-        /** One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events. */
-        mapping: Object.assign((input: Facade.LinearMappingRequest): Facade.LinearMappingView => this.#call(() => this.#client.vaultTasksLinearMapping(input) as Facade.LinearMappingView), {
-          /** Links, unlinks or mirrors again one TASK's Linear issue, by the TASK's owner at the mapping revision the caller read, under an intent key. */
-          edit: (input: Facade.LinearMappingEdit): Facade.LinearMappingEditReceipt => this.#call(() => this.#client.vaultTasksLinearMappingEdit(input) as Facade.LinearMappingEditReceipt),
-        }),
-        /** One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts. */
-        provenance: (input: Facade.LinearProvenanceRequest): Facade.LinearProvenancePage => this.#call(() => this.#client.vaultTasksLinearProvenance(input) as Facade.LinearProvenancePage),
-      },
     },
   }
   /** Cancels one task under the ladder's `auto` default. The receipt says what stopped and what became a proposal instead. */
