@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "area": "retrieval",
+  "assets": [
+    {
+      "id": "retrieval-scenarios",
+      "path": "scenarios.json",
+      "source": {
+        "uri": "independent-oracle:owner-retrieval-e2e-20261018",
+        "revision": "1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "1c7c51c22da3cbbfd496d8202d4087c7b696227e76b62a9392e9111dfb332474",
+      "expectedFacts": {
+        "scenarioCount": 12,
+        "executableIds": [
+          "RETRIEVAL-06"
+        ],
+        "blockedIds": [
+          "RETRIEVAL-01",
+          "RETRIEVAL-02",
+          "RETRIEVAL-03",
+          "RETRIEVAL-04",
+          "RETRIEVAL-05",
+          "RETRIEVAL-07",
+          "RETRIEVAL-08",
+          "RETRIEVAL-09",
+          "RETRIEVAL-10",
+          "RETRIEVAL-11",
+          "RETRIEVAL-12"
+        ],
+        "authoredContent": true,
+        "oracle": "Canon and hand-labeled content/geometry, not engine output. Per-ID facts, source pins, and prerequisites are in scenarios.json.",
+        "engineConstantsChanged": false
+      },
+      "scenarios": [
+        "RETRIEVAL-01",
+        "RETRIEVAL-02",
+        "RETRIEVAL-03",
+        "RETRIEVAL-04",
+        "RETRIEVAL-05",
+        "RETRIEVAL-06",
+        "RETRIEVAL-07",
+        "RETRIEVAL-08",
+        "RETRIEVAL-09",
+        "RETRIEVAL-10",
+        "RETRIEVAL-11",
+        "RETRIEVAL-12"
+      ],
+      "requires": [
+        "typed five-channel query inputs for phonetic codes/PPR seeds and fixed-rank trace replay",
+        "typed HTTP/SDK phonetic query input for cross-script and misheard names",
+        "typed bitemporal anchor, sigma and adaptive-widening controls/results",
+        "typed stale-claim fixture producer and caller read-filter controls across read doors",
+        "typed host HyDE/expansion configuration with a public completion receipt",
+        "typed class-aging profile setup/readback and fixed-time rank control",
+        "public CLI SLIM/drop-heavy and resume with completion receipts",
+        "typed affect/arousal/community weight controls and VAD evidence setup",
+        "typed MCP clustering proposal and gated merge/split settlement",
+        "typed generated-claim vetting producer and consolidation/effector evidence results",
+        "typed MRL fast_dims setup and voice prefix-only search with refinement evidence"
+      ]
+    },
+    {
+      "id": "retrieval-evidence",
+      "path": "evidence.json",
+      "source": {
+        "uri": "independent-oracle:retrieval-orthogonal-and-near-tie-vectors-20261018",
+        "revision": "1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "9ca3666f4752bcfd6484a5f2bb1cac3b00afbb90d76de2d5a441983b312a3b2c",
+      "expectedFacts": {
+        "claimCount": 4,
+        "dimensions": 4,
+        "confidence": 0.875,
+        "weak": "abstain",
+        "anomalous": "abstain",
+        "strongLabels": [
+          "strong-a",
+          "strong-b"
+        ],
+        "originalClaimBodiesAndConfidenceUnchanged": true,
+        "noExpectedNumericScores": true
+      },
+      "scenarios": [
+        "RETRIEVAL-06"
+      ],
+      "requires": [
+        "vault.claims.upsert",
+        "vault.claims.list",
+        "vault.hydrate",
+        "vault.search.bm25",
+        "POST /v1/core/context-pack",
+        "GET /api/search/vector",
+        "public endpoint embedder"
+      ]
+    }
+  ]
+}

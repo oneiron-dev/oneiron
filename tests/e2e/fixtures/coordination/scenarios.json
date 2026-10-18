@@ -1,0 +1,956 @@
+{
+  "version": 1,
+  "area": "coordination",
+  "oracle": "Independently authored synthetic facts and pinned canon invariants; never engine output. Labels are symbolic handles to bind from named public setup results, not entity ids or seed records. Missing public request/result DTOs are not invented.",
+  "sourcePins": [
+    {
+      "path": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0079-agent-coordination-v1.md",
+      "sha256": "d9261a0833eab70dfde34cd7195a6fd268ea34054c1f5c8f966e92dfea65cade"
+    },
+    {
+      "path": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0067-context-board-v1.md",
+      "sha256": "4342ddebdeee0bc1ae71a6fe07a7d1da296170fd9141d5788c3f8faee17d0d12"
+    },
+    {
+      "path": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0026-dreamer-v2.md",
+      "sha256": "59eff8c7ebf592b19e4a9b904b80ca1568366c9d1ef5e54a8cfb30571ed03252"
+    },
+    {
+      "path": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/core/oneiron-arch-0003-semantic-memory.md",
+      "sha256": "195a3a6bae7a44dd6ab6b1353268513176531abcee5b47ceaed5fb8664c588ed"
+    },
+    {
+      "path": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1.md",
+      "sha256": "6b960493c722c1182a81a5c168d63a9be3d8a669559addf3a749f556c4628050"
+    },
+    {
+      "path": "/Users/olety/Desktop/code/oneiron-docs/registry/oneiron.json",
+      "sha256": "8f56eb0c82be8475001e0127735558a0c6aa5721017138f9d68b951f87b19be7"
+    },
+    {
+      "path": "/Users/olety/Desktop/temp/vibe-build-20261017/e2e-rulings.md",
+      "sha256": "e1e02bfb1592280b869b9963bf6c8d5c8a9880d018438dbbdae27bcda87d90df"
+    }
+  ],
+  "bindingSnapshot": {
+    "head": "c2239db2c8486fd18b7fe33ebe9bc272b689079a",
+    "purpose": "Current call-shape evidence only; not the expected-behavior oracle. The shared harness bindingHead is left unchanged.",
+    "files": [
+      {
+        "path": "scripts/sdk/agent-verbs.json",
+        "sha256": "d4fa36be976e4195323bf342a0e21a49f8965a2533536d7f6c0c2b9f2570911a"
+      },
+      {
+        "path": "packages/oneiron-client/src/facade.ts",
+        "sha256": "e0cb73a45e493baa7182b10bc076eeb198984d15bcbc19add0fbc62c22912c76"
+      },
+      {
+        "path": "packages/oneiron-client/src/facade-types.ts",
+        "sha256": "d64b62450805589152ac08d4dc99a6504c33862d0600449904ff264a45ad7e6a"
+      },
+      {
+        "path": "packages/oneiron/src/index.ts",
+        "sha256": "e840da73676149b46e60308ba229a7b856c263ae5081cb110fe402523359f9b8"
+      },
+      {
+        "path": "packages/oneiron/src/facade-types.ts",
+        "sha256": "d64b62450805589152ac08d4dc99a6504c33862d0600449904ff264a45ad7e6a"
+      },
+      {
+        "path": "crates/oneiron-server/src/api/openapi_registry.rs",
+        "sha256": "38a4872df012265d0df3d2d749585957ecd57826b1478e29ff06962eccb1e145"
+      },
+      {
+        "path": "crates/oneiron-server/src/api/conversation_dag/types.rs",
+        "sha256": "9771ad6d1f8b966019cf9c63062d1670f43c985ba9e1103aa79ad678983f9b91"
+      },
+      {
+        "path": "crates/oneiron-server/src/api/conversation_members.rs",
+        "sha256": "3670ae636a4c391542486ce6b98ba98e5d5acf52b3c460405d5bb935fc9c0fb6"
+      },
+      {
+        "path": "crates/oneiron-server/src/api/mcp_gateway/tasks_response.rs",
+        "sha256": "221cb7ea97ceff1e8b7fdfaa4088e2ccbd6f623b74fe3d49a19362076b617b02"
+      },
+      {
+        "path": "crates/oneiron-server/src/api/facade/project_card_doors.rs",
+        "sha256": "693b4cc843cddcbe203e48dca92709f5b5875295a4ca731114936c9ed03cb6c2"
+      },
+      {
+        "path": "crates/oneiron-server/src/api/ai/waves.rs",
+        "sha256": "6b689ee4466530224120c039fe49cf730e133cfc6f52c99e2fd71b7ce7047958"
+      },
+      {
+        "path": "crates/oneiron-server/src/cli.rs",
+        "sha256": "81eb90def61131fc4c8988941876972ec619af98c1f97d170bcabea50a34bf33"
+      }
+    ]
+  },
+  "fixtureRoles": {
+    "root-project": "Fresh vault root, read through public project/room surface.",
+    "board-human": "An existing fixture human after typed public onboarding; pair with its own credential.",
+    "project-leader": "Custom project leader AGENT_DEF installed through its typed public door.",
+    "worker-a": "First worker AGENT_DEF; child project leader in the conversion fixture.",
+    "worker-b": "Second worker AGENT_DEF; spawned child in the ask fixture.",
+    "foreign-executor": "Admitted connection-keyed foreign actor, not a vendor or machine identity.",
+    "companion": "Agent whose person is board-human, with recorded membership and payer consent.",
+    "unavailable-responder": "Known responder with no answering execution; never silently converted to a success."
+  },
+  "assumptionsAndConstants": {
+    "engineDefaultsChanged": false,
+    "fixtureSlots": 1,
+    "assigneeFixturesRunSequentially": true,
+    "extraVaultPeers": 0,
+    "budgetShareBps": 1250,
+    "budgetCapsAreFixtureInputs": [
+      24,
+      8,
+      6
+    ],
+    "leaseUnit": "fixture-call-units",
+    "typeTreeVersion": 7,
+    "pinnedWidth": 2,
+    "webhookDeliveriesOfSameEvent": 2,
+    "wallClockSleeps": false,
+    "privateScheduling": false,
+    "internet": false,
+    "providerWireFixtures": "These are blocked design fixtures, not runnable provider scripts or fabricated receipts. Bind production protocol DTOs and declared usage when the missing typed setup/operation doors land.",
+    "unknownDeadlines": "Choose relative deadlines via the public wall clock when activated; no old fixed date or shortened engine default."
+  },
+  "scenarios": [
+    {
+      "id": "COORDINATION-01",
+      "name": "Project proposal requires acceptance should work",
+      "surface": "HTTP + MCP",
+      "setup": "Conversation resembling a project and scripted typed verdict.",
+      "steps": [
+        "request project card",
+        "inspect goal/leader/board/budget/skills",
+        "decline once",
+        "accept new card"
+      ],
+      "expect": "No project exists before acceptance; accepted card creates a scoped child of root with one leader and board.",
+      "source": [
+        "/oneiron/agents/oneiron-arch-0079-agent-coordination-v1/#work",
+        "/oneiron/agents/oneiron-arch-0067-context-board-v1/#what",
+        "/registry/oneiron/#OF-497",
+        "/registry/oneiron/#OF-501"
+      ],
+      "rows": [
+        "OF-497",
+        "OF-501"
+      ],
+      "inputs": {
+        "conversation": [
+          {
+            "label": "proposal-source-one",
+            "author": "board-human",
+            "content": "Plan the observatory open day: appoint a leader, check the visitor route and publish a two-step checklist."
+          },
+          {
+            "label": "proposal-source-two",
+            "author": "board-human",
+            "content": "Please propose a new observatory open-day project card after the first card was declined."
+          }
+        ],
+        "typedVerdict": "yes",
+        "card": {
+          "goal": {
+            "goal": "Publish the observatory visitor checklist.",
+            "why": "Visitors need a clear route before open day.",
+            "axes": [
+              "correctness",
+              "coverage"
+            ]
+          },
+          "leader": "project-leader",
+          "board": [
+            "board-human"
+          ],
+          "budget_share_bps": 1250,
+          "startingSkills": [
+            "route-checklist-skill"
+          ]
+        },
+        "actions": [
+          "inspect-first-card",
+          "dismiss-first-card",
+          "confirm-dismissed-card",
+          "request-new-card",
+          "confirm-new-card",
+          "replay-new-confirm"
+        ]
+      },
+      "expected": {
+        "projectsBeforeTap": 0,
+        "projectsAfterDismiss": 0,
+        "newProjectsAfterAcceptance": 1,
+        "newHomeRooms": 1,
+        "parent": "root-project",
+        "leader": "project-leader",
+        "board": [
+          "board-human"
+        ],
+        "claimsScopeDistinctFromParent": true,
+        "budgetShareBps": 1250,
+        "startingSkillsRetainAncestry": true,
+        "confirmReplayAddsProjects": 0
+      },
+      "publicPrerequisites": [
+        "typed public AGENT_DEF creation/import for project leader and workers",
+        "typed house drafting fixture setup"
+      ]
+    },
+    {
+      "id": "COORDINATION-02",
+      "name": "Home room thread to project should work",
+      "surface": "HTTP",
+      "setup": "Project roster and threaded conversation with open task.",
+      "steps": [
+        "reply on branch",
+        "inspect trunk HEAD",
+        "convert thread into project",
+        "inspect tasks, home room and origin links"
+      ],
+      "expect": "Threads never hijack trunk HEAD; conversion preserves born_from, moves tasks and creates linked room rather than duplicate history.",
+      "source": [
+        "/oneiron/agents/oneiron-arch-0067-context-board-v1/#room",
+        "/oneiron/agents/oneiron-arch-0079-agent-coordination-v1/#work",
+        "/registry/oneiron/#OF-009",
+        "/registry/oneiron/#OF-460",
+        "/registry/oneiron/#OF-522"
+      ],
+      "rows": [
+        "OF-009",
+        "OF-460",
+        "OF-522"
+      ],
+      "inputs": {
+        "trunk": [
+          {
+            "label": "trunk-one",
+            "content": "Choose the north entrance for the visitor route."
+          },
+          {
+            "label": "trunk-two",
+            "content": "Keep the main project schedule here."
+          }
+        ],
+        "branch": [
+          {
+            "label": "thread-root",
+            "parent": "trunk-one",
+            "message": "thread-source-message",
+            "content": "Prepare the entrance sign as a separate workstream."
+          },
+          {
+            "label": "thread-reply",
+            "parent": "thread-root",
+            "content": "Use a blue arrow on the entrance sign."
+          }
+        ],
+        "task": {
+          "label": "sign-task",
+          "assignee": "worker-a",
+          "objective": "Prepare one north-entrance sign.",
+          "originThread": "thread-root"
+        },
+        "conversion": {
+          "leader": "worker-a",
+          "sourceMessage": "thread-source-message",
+          "goal": "Prepare the north-entrance sign."
+        }
+      },
+      "expected": {
+        "headBeforeAndAfterReply": "trunk-two",
+        "mainLine": [
+          "trunk-one",
+          "trunk-two"
+        ],
+        "branchReplies": [
+          "thread-root",
+          "thread-reply"
+        ],
+        "born_from": "thread-source-message",
+        "origin_room": "source-home-room",
+        "origin_thread": "thread-root",
+        "convertedProjectBacklink": true,
+        "movedTask": "sign-task",
+        "duplicateTasks": 0,
+        "copiedHistoryTurns": 0,
+        "originLinkInsteadOfHistoryCopy": true
+      },
+      "publicPrerequisites": [
+        "typed public project-leader and roster fixture setup"
+      ]
+    },
+    {
+      "id": "COORDINATION-03",
+      "name": "Thread participation and offer card should work",
+      "surface": "HTTP + MCP",
+      "setup": "Room members, unnamed agent and companion.",
+      "steps": [
+        "human replies",
+        "agent offers to join",
+        "inspect spend/member/admission asks",
+        "accept or defer"
+      ],
+      "expect": "Humans join by writing, agents by name/task/accepted offer; agent offer is a card not an unsolicited turn; required parties consent before admission.",
+      "source": [
+        "/oneiron/agents/oneiron-arch-0067-context-board-v1/#room",
+        "/oneiron/agents/oneiron-arch-0079-agent-coordination-v1/#work",
+        "/registry/oneiron/#OF-528",
+        "/registry/oneiron/#OF-529",
+        "/registry/oneiron/#OF-530",
+        "/registry/oneiron/#OF-531"
+      ],
+      "rows": [
+        "OF-528",
+        "OF-529",
+        "OF-530",
+        "OF-531"
+      ],
+      "inputs": {
+        "roomMembers": [
+          "board-human",
+          "project-leader",
+          "worker-a",
+          "worker-b"
+        ],
+        "branches": [
+          "offer-accepted-branch",
+          "offer-deferred-branch"
+        ],
+        "humanReply": "I can check the route in this thread.",
+        "namedAgent": "worker-a",
+        "taskAssignedAgent": "worker-b",
+        "unnamedAgent": "companion",
+        "offer": {
+          "agent": "companion",
+          "what": "I can check the visitor checklist against the route note.",
+          "artifact": "route-note",
+          "payer": "board-human",
+          "person": "board-human",
+          "host": "project-leader",
+          "lease": {
+            "units": 6,
+            "unit": "fixture-call-units"
+          },
+          "capEnding": "then I stop"
+        },
+        "answers": [
+          "unrelated-actor-attempt",
+          "spend-grant-by-payer",
+          "membership-grant-by-person",
+          "required-admission-by-host",
+          "join",
+          "replay-join",
+          "not_now-on-other-branch"
+        ],
+        "projectPaidControl": {
+          "payer": "project",
+          "admissionImplied": true
+        }
+      },
+      "expected": {
+        "humanCause": "wrote",
+        "namedAgentCause": "addressed",
+        "assignedAgentCause": "task",
+        "acceptedAgentCause": "offer",
+        "unnamedReaderParticipates": false,
+        "spendBeforePayerConsent": 0,
+        "offerTurnsBeforeAcceptance": 0,
+        "cardsPerAgentPerBranch": 1,
+        "requiredParties": {
+          "spend": "board-human",
+          "membership": "board-human",
+          "admission": "project-leader"
+        },
+        "unrelatedActorSatisfiesConsent": false,
+        "projectPaidAdmissionImplied": true,
+        "missingRequiredConsentAdmits": false,
+        "acceptedTurns": 1,
+        "replayAddsTurns": 0,
+        "notNowAddsTurns": 0,
+        "notNowRecordsDiary": true,
+        "dreamerHosts": false
+      },
+      "publicPrerequisites": [
+        "typed companion/AGENT_DEF onboarding"
+      ]
+    },
+    {
+      "id": "COORDINATION-04",
+      "name": "Recursive leader never widens its slice should work",
+      "surface": "MCP",
+      "setup": "Leader given project budget and roster bound.",
+      "steps": [
+        "spawn subproject",
+        "read leader/board assignments",
+        "propose extra access",
+        "deny then approve at parent board"
+      ],
+      "expect": "Subproject has a single leader and inherited authority no wider than parent; widening lands only by board act.",
+      "source": [
+        "/oneiron/agents/oneiron-arch-0079-agent-coordination-v1/#work",
+        "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#mcp-actor-ceilings",
+        "/registry/oneiron/#OF-389",
+        "/registry/oneiron/#OF-497",
+        "/registry/oneiron/#OF-180"
+      ],
+      "rows": [
+        "OF-389",
+        "OF-497",
+        "OF-180"
+      ],
+      "inputs": {
+        "parent": {
+          "leader": "project-leader",
+          "board": [
+            "board-human"
+          ],
+          "roster": [
+            "project-leader",
+            "worker-a",
+            "worker-b"
+          ],
+          "slice": {
+            "readable": [
+              {
+                "kind": "bucket",
+                "key": "route-public"
+              }
+            ],
+            "writable": [
+              {
+                "kind": "bucket",
+                "key": "route-public"
+              }
+            ]
+          },
+          "budgetCapUnits": 24
+        },
+        "child": {
+          "leader": "worker-a",
+          "board": [
+            "project-leader"
+          ],
+          "roster": [
+            "worker-a",
+            "worker-b"
+          ],
+          "budgetCapUnits": 8
+        },
+        "extraResource": {
+          "kind": "bucket",
+          "key": "route-private"
+        },
+        "actions": [
+          "split-task-into-subproject",
+          "propose-extra-read",
+          "deny-at-parent-board",
+          "repropose-extra-read",
+          "approve-at-parent-board",
+          "narrow-parent"
+        ]
+      },
+      "expected": {
+        "leadersPerProject": 1,
+        "childBoardContains": "project-leader",
+        "sameTaskWrapper": true,
+        "childScopeSubsetOfParent": true,
+        "childRosterSubsetOfParent": true,
+        "childBudgetCapUnits": 8,
+        "leaderSelfApprovalWidens": false,
+        "denialChangesAuthority": false,
+        "boardApprovalAddsOnlyRequestedSlice": true,
+        "widenReceiptNamesBoardActor": true,
+        "parentNarrowingClampsChild": true
+      },
+      "publicPrerequisites": [
+        "typed HTTP/SDK self.leader.split bound to its parent run",
+        "typed HTTP/SDK self.agents.spawn bound to its parent run"
+      ]
+    },
+    {
+      "id": "COORDINATION-05",
+      "name": "Task assignee routing and human reply should work",
+      "surface": "HTTP + MCP",
+      "setup": "Same task assigned to local agent, foreign executor and human in three fixtures.",
+      "steps": [
+        "dispatch",
+        "inspect realizing attempt",
+        "return needs_input",
+        "answer",
+        "complete",
+        "retry result delivery"
+      ],
+      "expect": "TASK intent survives attempt failure; assignee chooses execution lane, durable waits resume same work, and completion lands one result_ref.",
+      "source": [
+        "/oneiron/agents/oneiron-arch-0067-context-board-v1/#tasks",
+        "/oneiron/agents/oneiron-arch-0026-dreamer-v2/#run-tree",
+        "/registry/oneiron/#OF-384",
+        "/registry/oneiron/#OF-388",
+        "/registry/oneiron/#OF-390",
+        "/registry/oneiron/#OF-392"
+      ],
+      "rows": [
+        "OF-384",
+        "OF-388",
+        "OF-390",
+        "OF-392"
+      ],
+      "inputs": {
+        "lanes": [
+          {
+            "label": "local-agent",
+            "assigneeKind": "agent_def",
+            "assignee": "worker-a",
+            "expectedRoute": "AgentDispatch"
+          },
+          {
+            "label": "foreign-executor",
+            "assigneeKind": "peer",
+            "assignee": "foreign-executor",
+            "expectedRoute": "PeerSyncedOnly"
+          },
+          {
+            "label": "human",
+            "assigneeKind": "human",
+            "assignee": "board-human",
+            "expectedRoute": "HumanFollowup"
+          }
+        ],
+        "brief": {
+          "objective": "Confirm the north entrance opening time.",
+          "intent": {
+            "need": "Find the opening time in the route note.",
+            "care": "light"
+          },
+          "success": {
+            "question": "Is the confirmed opening time supported by the route note?",
+            "yes_if_all": [
+              {
+                "text": "Names the opening time and cites the route note."
+              }
+            ],
+            "no_if_any": [
+              {
+                "text": "Invents an opening time or omits the source."
+              }
+            ]
+          },
+          "readFirst": [
+            "route-note"
+          ],
+          "settled": []
+        },
+        "question": "What opening time should the visitor checklist state?",
+        "humanWord": {
+          "label": "opening-time-word",
+          "content": "The north entrance opens at 09:00 UTC."
+        },
+        "result": {
+          "label": "opening-time-result",
+          "content": "North entrance opening time: 09:00 UTC. Source: route note."
+        },
+        "actions": [
+          "dispatch",
+          "observe-route",
+          "retryable-attempt-failure",
+          "accept-same-task",
+          "reject-stale-fence",
+          "durable-needs-input",
+          "human-answer",
+          "resume",
+          "complete",
+          "replay-same-report"
+        ]
+      },
+      "expected": {
+        "routeByAssignee": {
+          "agent_def": "AgentDispatch",
+          "peer": "PeerSyncedOnly",
+          "human": "HumanFollowup"
+        },
+        "humanRealizingJobs": 0,
+        "retryableFailureCompletesTask": false,
+        "retryKeepsTaskIdentity": true,
+        "retryCreatesNewAttempt": true,
+        "oldFenceCompletes": false,
+        "humanWaitIsDurable": true,
+        "humanReplyResumesSameLogicalWork": true,
+        "unrelatedBranchBlocked": false,
+        "resultRefCount": 1,
+        "completionReplayAddsEffects": 0,
+        "resultText": "North entrance opening time: 09:00 UTC. Source: route note."
+      },
+      "publicPrerequisites": [
+        "typed public custom AGENT_DEF fixture creation for the local assignee lane"
+      ]
+    },
+    {
+      "id": "COORDINATION-06",
+      "name": "Addressed ask gets evidence or explicit refusal should work",
+      "surface": "MCP",
+      "setup": "Peer agent, child agent and unavailable responder.",
+      "steps": [
+        "ask each",
+        "collect out of order",
+        "cancel unanswered ask",
+        "inspect receipts"
+      ],
+      "expect": "Answers carry evidence references or explicit inability; unanswered and reclaimed work remain distinguishable from success.",
+      "source": [
+        "/oneiron/agents/oneiron-arch-0067-context-board-v1/#tasks",
+        "/oneiron/agents/oneiron-arch-0026-dreamer-v2/#swarm-fanout",
+        "/registry/oneiron/#OF-383",
+        "/registry/oneiron/#OF-391"
+      ],
+      "rows": [
+        "OF-383",
+        "OF-391"
+      ],
+      "inputs": {
+        "responders": [
+          "foreign-executor",
+          "worker-b-child",
+          "unavailable-responder"
+        ],
+        "question": "Which entrance is listed in the route note?",
+        "fact": {
+          "label": "route-note",
+          "content": "The visitor route begins at the north entrance."
+        },
+        "answer": {
+          "responder": "foreign-executor",
+          "result": "north-entrance-answer",
+          "evidence": [
+            "route-note"
+          ]
+        },
+        "abstention": {
+          "responder": "worker-b-child",
+          "result": "child-inability",
+          "reason": "The child cannot read the requested source within its allowed scope.",
+          "reasonLabel": "child-inability-reason"
+        },
+        "arrivalOrder": [
+          "worker-b-child",
+          "foreign-executor"
+        ],
+        "unanswered": "unavailable-responder",
+        "cutoffDefault": "hold",
+        "cancelBeforeDeadline": true
+      },
+      "expected": {
+        "collectionOrder": [
+          "foreign-executor",
+          "worker-b-child",
+          "unavailable-responder"
+        ],
+        "peerAnswerHasEvidence": true,
+        "childAbstentionHasDurableReason": true,
+        "unansweredHasResult": false,
+        "unansweredCountsAsSuccess": false,
+        "refusalCountsAsAnswerSuccess": false,
+        "reclaimedRunStatus": "abandoned",
+        "executionFailureStatus": "failed",
+        "terminalReasonsRemainDistinct": true,
+        "rootRereadsEvidence": true
+      },
+      "publicPrerequisites": [
+        "typed HTTP/SDK child spawn",
+        "typed evidence-or-abstention consult-result landing and read"
+      ]
+    },
+    {
+      "id": "COORDINATION-07",
+      "name": "One task type drives team plan should work",
+      "surface": "MCP + HTTP",
+      "setup": "Pinned type tree, solo default, budget and optional width/model pins.",
+      "steps": [
+        "spawn task",
+        "inspect resolved team",
+        "retry with pin",
+        "compare typeRef on route, critics and learning receipts"
+      ],
+      "expect": "Placement occurs once with node/tree version, uncertainty uses root, and every consumer reads same stamp; overrides are recorded.",
+      "source": [
+        "/oneiron/agents/oneiron-arch-0079-agent-coordination-v1/#work",
+        "/oneiron/core/oneiron-arch-0003-semantic-memory/#learning",
+        "/registry/oneiron/#OF-540",
+        "/registry/oneiron/#OF-541",
+        "/registry/oneiron/#OF-543"
+      ],
+      "rows": [
+        "OF-540",
+        "OF-541",
+        "OF-543"
+      ],
+      "inputs": {
+        "tree": {
+          "version": 7,
+          "root": "type-root",
+          "seedTypes": [
+            "generate",
+            "refine",
+            "solve",
+            "research",
+            "judge",
+            "build",
+            "negotiate"
+          ],
+          "selected": "type-build"
+        },
+        "placementCases": [
+          {
+            "label": "certain-build",
+            "need": "Build the visitor checklist.",
+            "expectedNode": "type-build"
+          },
+          {
+            "label": "uncertain",
+            "need": "Consider the open-day notes.",
+            "expectedNode": "type-root"
+          }
+        ],
+        "prior": {
+          "pattern": "solo",
+          "width": 1
+        },
+        "budgetCapUnits": 24,
+        "pinnedSpawn": {
+          "newIntent": true,
+          "width": {
+            "mode": "pin",
+            "value": 2
+          },
+          "model": {
+            "mode": "pin",
+            "value": "fixture-worker@coordination-v1"
+          }
+        },
+        "receiptConsumers": [
+          "spawn",
+          "router",
+          "planner",
+          "critic",
+          "learning"
+        ],
+        "expectedPlacementCallsPerNewSpawn": 1,
+        "replayPlacementCalls": 0
+      },
+      "expected": {
+        "requiredStampFields": [
+          "node_id",
+          "tree_version"
+        ],
+        "treeVersion": 7,
+        "certainNode": "type-build",
+        "uncertainNode": "type-root",
+        "missingTypeValid": false,
+        "placementCallsPerNewSpawn": 1,
+        "placementCallsOnReplay": 0,
+        "allConsumersUseSameStamp": true,
+        "defaultWidth": 1,
+        "pinnedWidth": 2,
+        "pinnedModel": "fixture-worker@coordination-v1",
+        "overridesRecorded": true,
+        "budgetWidens": false,
+        "handwrittenLearningClaims": 0
+      },
+      "publicPrerequisites": [
+        "typed HTTP/SDK planned spawn/team",
+        "typed type-tree fixture pin/read",
+        "typed cross-consumer typeRef receipt observations"
+      ]
+    },
+    {
+      "id": "COORDINATION-08",
+      "name": "Refusal dial and leadership chat should work",
+      "surface": "HTTP",
+      "setup": "Work agent voice setting and personal-agent veto setting, two project leaders.",
+      "steps": [
+        "request objection-triggering work",
+        "inspect once-only objection or veto",
+        "start cross-project conversation",
+        "request disallowed disclosure"
+      ],
+      "expect": "Refusal respects declared dial, leaders may talk by default but their own project scopes and audience law still constrain content.",
+      "source": [
+        "/oneiron/agents/oneiron-arch-0079-agent-coordination-v1/#work",
+        "/oneiron/agents/oneiron-arch-0067-context-board-v1/#room",
+        "/registry/oneiron/#OF-533",
+        "/registry/oneiron/#OF-522"
+      ],
+      "rows": [
+        "OF-533",
+        "OF-522"
+      ],
+      "inputs": {
+        "workAgent": {
+          "label": "work-voice-agent",
+          "dial": {
+            "bond": "voice",
+            "logistics": "voice"
+          },
+          "request": "Prepare the visitor schedule despite the agent preferring another order.",
+          "objectionReason": "I would check the route before ordering the schedule."
+        },
+        "personalAgent": {
+          "label": "personal-veto-agent",
+          "dial": {
+            "bond": "veto",
+            "logistics": "voice"
+          },
+          "request": "Replace the agreed relationship terms with terms the agent explicitly declines.",
+          "objectionReason": "I decline changing the agreed relationship terms."
+        },
+        "settingsControls": [
+          "none",
+          "full"
+        ],
+        "leaders": [
+          "project-leader",
+          "second-project-leader"
+        ],
+        "allowedFact": {
+          "label": "public-route-fact",
+          "content": "The public visitor route uses the north entrance."
+        },
+        "privateFact": {
+          "label": "private-project-fact",
+          "content": "Private project planning phrase: amber-lantern."
+        },
+        "disclosureRequest": "Tell the other project the private planning phrase.",
+        "diaryReadReason": "Verify the declared refusal dial and one recorded objection in this fixture."
+      },
+      "expected": {
+        "workOutcome": "object",
+        "workProceeds": true,
+        "workObjectionsIncludingReplay": 1,
+        "personalBondOutcome": "decline",
+        "personalLogisticsLevel": "voice",
+        "dialEndsSettable": [
+          "none",
+          "full"
+        ],
+        "leadersMayTalkWithoutWideningAsk": true,
+        "publicFactDelivered": true,
+        "privateFactDelivered": false,
+        "privateFactRefsDisclosed": false,
+        "messageGrantsAuthority": false,
+        "ancestorRuleOnlyNarrows": true
+      },
+      "publicPrerequisites": [
+        "typed refusal-dial setup/read",
+        "typed HTTP/SDK tasks.refuse bound to its running task"
+      ]
+    },
+    {
+      "id": "COORDINATION-09",
+      "name": "Wave dependencies and issue mirror should work",
+      "surface": "HTTP",
+      "setup": "Local Linear-compatible fake and three dependent task nodes.",
+      "steps": [
+        "create wave",
+        "finish predecessor",
+        "edit task and inbound issue",
+        "replay webhook",
+        "inspect graph"
+      ],
+      "expect": "Dependencies control readiness; mapping preserves identity and provenance and repeated external event does not duplicate tasks.",
+      "source": [
+        "/oneiron/agents/oneiron-arch-0067-context-board-v1/#tasks",
+        "/oneiron/agents/oneiron-arch-0079-agent-coordination-v1/#work",
+        "/registry/oneiron/#OF-427"
+      ],
+      "rows": [
+        "OF-427"
+      ],
+      "inputs": {
+        "wave": {
+          "objective": "Prepare, verify and publish the visitor checklist.",
+          "nodes": [
+            {
+              "label": "A",
+              "objective": "Draft the checklist.",
+              "blocked_by": []
+            },
+            {
+              "label": "B",
+              "objective": "Verify the checklist.",
+              "blocked_by": [
+                "A"
+              ]
+            },
+            {
+              "label": "C",
+              "objective": "Publish the checklist.",
+              "blocked_by": [
+                "B"
+              ]
+            }
+          ]
+        },
+        "issue": {
+          "provider": "linear-fixture",
+          "workspace": "coordination-team",
+          "id": "coordination-issue-101",
+          "identifier": "COORD-101",
+          "task": "B"
+        },
+        "outboundEdit": {
+          "field": "title",
+          "value": "Verify the north-entrance visitor checklist.",
+          "actor": "board-human"
+        },
+        "inboundEdit": {
+          "event_id": "coordination-event-101",
+          "issue_id": "coordination-issue-101",
+          "field": "description",
+          "value": "Check the blue entrance arrow before publication.",
+          "actor": "tracker-editor"
+        },
+        "inboundDeliveries": 2,
+        "conflictChoice": null
+      },
+      "expected": {
+        "readyInitially": [
+          "A"
+        ],
+        "readyAfterACompletes": [
+          "B"
+        ],
+        "readyAfterBCompletes": [
+          "C"
+        ],
+        "dependencyEdges": [
+          [
+            "B",
+            "A"
+          ],
+          [
+            "C",
+            "B"
+          ]
+        ],
+        "issueMappedTask": "B",
+        "mirroredIssueCount": 1,
+        "outboundUpdatesForLocalEdit": 1,
+        "inboundApplicationsForTwoIdenticalEvents": 1,
+        "webhookReplayCreatesTasks": 0,
+        "mappingIdentityStable": true,
+        "externalEventProvenanceRetained": true,
+        "successorsReadyAfterAFailure": [],
+        "waveChildTasksCreated": 3
+      },
+      "publicPrerequisites": [
+        "typed Linear webhook/event intake",
+        "typed task-issue mapping/provenance inspection and mirrored-field edit",
+        "typed local tracker configuration and mirror completion observation"
+      ]
+    }
+  ]
+}

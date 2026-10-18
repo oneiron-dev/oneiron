@@ -1,0 +1,800 @@
+{
+  "version": 1,
+  "area": "Durable agents and Dreamer",
+  "authoredFor": "RUNS-01 through RUNS-09; source-only design fixtures, not a fake engine or executable fallback",
+  "ownerRulings": {
+    "G01": "A designed verb waits for its typed HTTP and SDK call; no generic escape hatch."
+  },
+  "sourcePins": [
+    {
+      "uri": "/oneiron/agents/oneiron-arch-0026-dreamer-v2/",
+      "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0026-dreamer-v2.md",
+      "sha256": "59eff8c7ebf592b19e4a9b904b80ca1568366c9d1ef5e54a8cfb30571ed03252"
+    },
+    {
+      "uri": "/oneiron/agents/oneiron-arch-0067-context-board-v1/",
+      "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0067-context-board-v1.md",
+      "sha256": "4342ddebdeee0bc1ae71a6fe07a7d1da296170fd9141d5788c3f8faee17d0d12"
+    },
+    {
+      "uri": "/oneiron/agents/oneiron-arch-0079-agent-coordination-v1/",
+      "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0079-agent-coordination-v1.md",
+      "sha256": "d9261a0833eab70dfde34cd7195a6fd268ea34054c1f5c8f966e92dfea65cade"
+    }
+  ],
+  "registryPin": {
+    "path": "/Users/olety/Desktop/code/oneiron-docs/registry/oneiron.json",
+    "sha256": "8f56eb0c82be8475001e0127735558a0c6aa5721017138f9d68b951f87b19be7",
+    "rows": [
+      "OF-052",
+      "OF-179",
+      "OF-187",
+      "OF-191",
+      "OF-193",
+      "OF-194",
+      "OF-195",
+      "OF-203",
+      "OF-204",
+      "OF-210",
+      "OF-216",
+      "OF-218",
+      "OF-239",
+      "OF-290",
+      "OF-361",
+      "OF-390",
+      "OF-391",
+      "OF-392",
+      "OF-393",
+      "OF-419",
+      "OF-498",
+      "OF-532"
+    ]
+  },
+  "bindingAudit": {
+    "engineHead": "6f2446660ef09f823131d6faaa7e586a75df0b72",
+    "scope": "Checked-in OpenAPI assembly/route DTOs, CLI and generated SDK catalog; no runtime or builds were run.",
+    "files": [
+      "crates/oneiron-server/src/api/openapi_registry.rs",
+      "crates/oneiron-server/src/api/openapi/owner_paths.rs",
+      "crates/oneiron-server/src/api/run_tree.rs",
+      "crates/oneiron-server/src/cli.rs",
+      "scripts/sdk/agent-verbs.json",
+      "packages/oneiron-client/src/facade.ts",
+      "packages/oneiron-client/src/facade-types.ts",
+      "packages/oneiron/src/agent-verbs.ts",
+      "packages/oneiron/README.md",
+      "crates/oneiron-server/src/api/owner_routes/commitment_routes.rs",
+      "crates/oneiron-server/src/api/owner_routes/steer_routes.rs"
+    ]
+  },
+  "assumptionsAndConstants": {
+    "freshVaultPerFlow": true,
+    "authenticated": true,
+    "slots": 1,
+    "normalFlowDeadlineMs": 30000,
+    "wallClockFlowDeadlineMs": 200000,
+    "canonWakeCeilingMs": 180000,
+    "ownerCadenceFixtureMs": 1000,
+    "ownerNearFutureDueOffsetMs": 2000,
+    "providerHeldTimeoutFixtureMs": 190000,
+    "fanoutWidthProbes": [
+      3,
+      26
+    ],
+    "capAllowanceShareFixtureBps": 1000,
+    "engineDefaultsChanged": false,
+    "notes": "Short cadence/due/lease settings are explicit owner fixtures, never engine defaults. Symbolic labels resolve only from public receipts, never fabricated live ids. No extra build asset required by these design-only data."
+  },
+  "scenarios": [
+    {
+      "id": "RUNS-01",
+      "surface": [
+        "CLI",
+        "HTTP"
+      ],
+      "inputs": {
+        "turn": "Please carry the two labelled parcels through the authorized loopback route.",
+        "program": [
+          "send first parcel",
+          "checkpoint first result",
+          "await next provider response",
+          "send second parcel",
+          "finish"
+        ],
+        "effects": [
+          {
+            "key": "runs-01-first",
+            "body": "first parcel",
+            "ack": "first accepted"
+          },
+          {
+            "key": "runs-01-second",
+            "body": "second parcel",
+            "ack": "second accepted"
+          }
+        ]
+      },
+      "orderedActions": [
+        "Configure the real Dreamer with the publicly admitted two-step program and authorized local sink.",
+        "Wake by witnessing the incoming turn; capture the root identity through its typed public receipt.",
+        "Observe the first sink ACK, then separately await the public settled-step receipt recording that effect and its exact result.",
+        "Hold the next provider response at an external barrier, then kill only the owned server process.",
+        "Restart the same vault and release the next response; allow reconnect for that unsettled call, never replay of step one.",
+        "Read the final run, checkpoint injection, effect receipts and sink attempt history."
+      ],
+      "expected": {
+        "rootRunCount": 1,
+        "rootIdentityUnchanged": true,
+        "firstResultInjected": "first accepted",
+        "attemptedEffectKeys": [
+          "runs-01-first",
+          "runs-01-second"
+        ],
+        "acceptedEffectKeys": [
+          "runs-01-first",
+          "runs-01-second"
+        ],
+        "eachEffectKeyOccurrences": 1,
+        "finalOutcome": "completed"
+      },
+      "existingDoors": [
+        "vault.witness",
+        "vault.consolidation.status",
+        "GET /v1/core/run-tree"
+      ],
+      "missingDoors": [
+        "typed turn-woken Dreamer workflow/program admission",
+        "typed settled-step receipt and checkpoint/injected-result reads"
+      ],
+      "externalFixtureNeeds": [
+        "Scripted provider with a barrier after the first settled effect.",
+        "Loopback sink recording every request before its idempotency cache; ACK alone never claims engine durability."
+      ],
+      "name": "Dreamer survives a kill should work",
+      "rows": [
+        "OF-193",
+        "OF-195",
+        "OF-210",
+        "OF-392"
+      ],
+      "source": [
+        "/oneiron/agents/oneiron-arch-0026-dreamer-v2/#run-tree",
+        "/oneiron/agents/oneiron-arch-0026-dreamer-v2/#wake-model",
+        "/registry/oneiron/#OF-193",
+        "/registry/oneiron/#OF-195",
+        "/registry/oneiron/#OF-210",
+        "/registry/oneiron/#OF-392"
+      ],
+      "deadlineMs": 30000,
+      "status": "BLOCKED: test.todo until its typed public prerequisites exist"
+    },
+    {
+      "id": "RUNS-02",
+      "surface": [
+        "HTTP"
+      ],
+      "inputs": {
+        "children": [
+          "needs-permission",
+          "independent-worker"
+        ],
+        "consentOption": "permit-labelled-action",
+        "matchingReplyKey": "runs-02-consent-once",
+        "mismatchedReplyKey": "runs-02-other-wait",
+        "effects": [
+          {
+            "key": "runs-02-waiting-child",
+            "body": "permission branch finished"
+          },
+          {
+            "key": "runs-02-independent-child",
+            "body": "independent branch finished"
+          }
+        ]
+      },
+      "orderedActions": [
+        "Admit two child branches of one live run through the typed public branch door.",
+        "Read the first child waiting on its identity-bound human consent signal and the sibling still running.",
+        "Finish the sibling and observe its effect while the first remains parked.",
+        "Restart and re-read the same durable wait and child identities.",
+        "Submit a mismatched reply and verify it cannot release the wait.",
+        "Submit the matching authorized reply, retry that same reply, and read both settled outcomes."
+      ],
+      "expected": {
+        "waitClass": "human",
+        "waitSurvivesRestart": true,
+        "siblingFinishesBeforeReply": true,
+        "mismatchedReplyResumes": 0,
+        "matchingReplyResumes": 1,
+        "eachEffectKeyOccurrences": 1,
+        "childIdentitiesUnchanged": true,
+        "modelPollingWhileWaiting": 0,
+        "wordAloneAuthorizesEffect": false
+      },
+      "existingDoors": [
+        "ask",
+        "wait",
+        "tasks.answer",
+        "GET /v1/core/run-tree"
+      ],
+      "missingDoors": [
+        "typed live child-branch admission",
+        "typed branch Query wait class/checkpoint/result projection",
+        "typed matching branch-consent Signal settlement/retry projection"
+      ],
+      "externalFixtureNeeds": [
+        "Independent provider origins/barriers for both children.",
+        "Sink checks both per-branch effects, not independent root calls."
+      ],
+      "name": "Only waiting branch pauses should work",
+      "rows": [
+        "OF-203",
+        "OF-390",
+        "OF-391"
+      ],
+      "source": [
+        "/oneiron/agents/oneiron-arch-0026-dreamer-v2/#run-tree",
+        "/registry/oneiron/#OF-203",
+        "/registry/oneiron/#OF-390",
+        "/registry/oneiron/#OF-391"
+      ],
+      "deadlineMs": 30000,
+      "status": "BLOCKED: test.todo until its typed public prerequisites exist"
+    },
+    {
+      "id": "RUNS-03",
+      "surface": [
+        "HTTP"
+      ],
+      "inputs": {
+        "steerInstruction": "Preserve the partial ledger and label the remaining work amber.",
+        "steerKey": "runs-03-steer-once",
+        "cancelRefusal": "The receipt for the accepted parcel must land first.",
+        "partialResult": "parcel one is durably acknowledged; parcel two remains unstarted",
+        "actors": [
+          "owner",
+          "distinct unauthorized caller"
+        ],
+        "branches": [
+          "cooperative-cancel",
+          "owner-force",
+          "execution-failure",
+          "lease-reclaimed",
+          "completed"
+        ]
+      },
+      "orderedActions": [
+        "Start publicly admitted multi-step branches and pair the already-created unauthorized caller.",
+        "Attempt unauthorized controls; inspect refusal and unchanged work.",
+        "Owner steers the live branch; inspect its receipt pending then consumed at the next safe breakpoint.",
+        "Pause only that branch, query progress and typed wait, then resume.",
+        "Request graceful cancel, inspect one reasoned refusal, request again and read its saved landing result/resume point.",
+        "Exercise explicit owner force on the other live branch; it cannot be refused by that agent.",
+        "Read completion, failure and reclaimed-lease status distinctly; retry terminal control and inspect no repeated work."
+      ],
+      "expected": {
+        "unauthorizedControlsMutate": false,
+        "steerConsumedAtSafeBreakpoint": true,
+        "gracefulRefusalReceipted": true,
+        "ownerForceRefusable": false,
+        "partialResultPreserved": true,
+        "terminalRetryEffects": 0,
+        "agentSuccessfulFlow": [
+          "spawned",
+          "working",
+          "needs_input",
+          "delivered",
+          "archived"
+        ],
+        "agentFailure": "failed",
+        "agentLeaseReclaimed": "abandoned",
+        "cancellationSeparateFromSuccessfulFlow": true
+      },
+      "existingDoors": [
+        "POST /v1/core/run-tree/intervene",
+        "steer",
+        "POST /v1/owner/steer",
+        "cancel",
+        "describe"
+      ],
+      "missingDoors": [
+        "typed explicit owner cancel.force",
+        "typed landing/partial-result/resume-point receipts",
+        "typed full branch lifecycle/AgentRunStatus reads"
+      ],
+      "externalFixtureNeeds": [
+        "Held live calls so pause, resume, safe-breakpoint steer and force have an observable boundary.",
+        "Declared short owner lease for the reclaim case, never direct mutation of a lease."
+      ],
+      "name": "Steer pause resume and cancel should work",
+      "rows": [
+        "OF-203",
+        "OF-239",
+        "OF-419",
+        "OF-391"
+      ],
+      "source": [
+        "/oneiron/agents/oneiron-arch-0026-dreamer-v2/#run-tree",
+        "/registry/oneiron/#OF-203",
+        "/registry/oneiron/#OF-239",
+        "/registry/oneiron/#OF-419",
+        "/registry/oneiron/#OF-391"
+      ],
+      "deadlineMs": 30000,
+      "status": "BLOCKED: test.todo until its typed public prerequisites exist"
+    },
+    {
+      "id": "RUNS-04",
+      "surface": [
+        "HTTP"
+      ],
+      "deadlineMs": 200000,
+      "inputs": {
+        "wakeCeilingMs": 180000,
+        "heldCallMinimumProviderTimeoutMs": 190000,
+        "steps": [
+          "already-leased-call",
+          "pending-continuation"
+        ],
+        "timeSource": "real monotonic wall time"
+      },
+      "orderedActions": [
+        "Read the standard 180-second policy and start a real wake with two eligible steps.",
+        "Observe typed wake admission identity/start/deadline and hold the first leased provider call.",
+        "After the actual 180-second ceiling inspect new-call admission and the still-running leased call.",
+        "Complete the held response and await its settled receipt.",
+        "Inspect the pending step parked durably; observe it admitted only in a separately identified later wake."
+      ],
+      "expected": {
+        "ceilingMs": 180000,
+        "newCallsAfterCeilingInOriginalWake": 0,
+        "leasedCallKilledAtCeiling": false,
+        "leasedResultMaySettle": true,
+        "unfinishedWorkRetained": true,
+        "laterCallHasDifferentWakeIdentity": true
+      },
+      "existingDoors": [
+        "vault.witness",
+        "vault.consolidation.status",
+        "GET /v1/core/run-tree"
+      ],
+      "missingDoors": [
+        "typed wake identity/admitted monotonic deadline read",
+        "typed parked work and later-wake continuation read"
+      ],
+      "externalFixtureNeeds": [
+        "Provider-held response lasting across the full canon ceiling.",
+        "A declared public provider timeout longer than 180 seconds; the normal HTTP client request timeout is not the model call timeout."
+      ],
+      "name": "Wake stops at its wall-clock ceiling should work",
+      "rows": [
+        "OF-179"
+      ],
+      "source": [
+        "/oneiron/agents/oneiron-arch-0026-dreamer-v2/#wake-model",
+        "/oneiron/agents/oneiron-arch-0026-dreamer-v2/#run-tree",
+        "/registry/oneiron/#OF-179"
+      ],
+      "status": "BLOCKED: test.todo until its typed public prerequisites exist"
+    },
+    {
+      "id": "RUNS-05",
+      "surface": [
+        "HTTP"
+      ],
+      "inputs": {
+        "ownerCadenceMs": 1000,
+        "novelTurn": "Mira and Rowan will review the amber observatory plan on 2026-11-02.",
+        "sourceEventKey": "runs-05-novel-event",
+        "duplicateEventKey": "runs-05-novel-event",
+        "sameTextDifferentEventIsNotDuplicate": true,
+        "residents": [
+          "Dreamer",
+          "Coach"
+        ]
+      },
+      "orderedActions": [
+        "Create/enable Dreamer and Coach through their public doors and set the explicit short owner cadence.",
+        "Witness the novel source event; let the scripted sieve and intended workers settle and read their conclusion/recipe receipts.",
+        "Replay the same event identity rather than witnessing a second turn with the same words.",
+        "Await one publicly observed cadence boundary and compare conclusion identities and exact provider request history.",
+        "Observe a durable human wait through an entire idle cadence and inspect no model-poll requests for either resident."
+      ],
+      "expected": {
+        "schedulerCount": 1,
+        "duplicateEventNewConclusions": 0,
+        "duplicateEventNewEvidence": 0,
+        "idleWaitModelRequests": 0,
+        "unchangedProjectionWrites": 0,
+        "novelSourceProcessedOnce": true,
+        "checksBothResidentsOnSameScheduler": true
+      },
+      "existingDoors": [
+        "vault.witness",
+        "vault.rooms.speak",
+        "vault.settings.wake_policy.set"
+      ],
+      "missingDoors": [
+        "typed identity-preserving evidence/event replay",
+        "typed sieve/Coach recipe settlement and cadence-boundary read"
+      ],
+      "externalFixtureNeeds": [
+        "Declared finite provider scripts for sieve decisions, Dreamer work and Coach work.",
+        "Unexpected/extra provider calls fail; no catch-all empty conclusion response."
+      ],
+      "name": "Changed evidence wakes once and idle stays idle should work",
+      "rows": [
+        "OF-191",
+        "OF-194",
+        "OF-218",
+        "OF-361",
+        "OF-498"
+      ],
+      "source": [
+        "/oneiron/agents/oneiron-arch-0026-dreamer-v2/#wake-model",
+        "/registry/oneiron/#OF-191",
+        "/registry/oneiron/#OF-194",
+        "/registry/oneiron/#OF-218",
+        "/registry/oneiron/#OF-361",
+        "/registry/oneiron/#OF-498"
+      ],
+      "deadlineMs": 30000,
+      "status": "BLOCKED: test.todo until its typed public prerequisites exist"
+    },
+    {
+      "id": "RUNS-06",
+      "surface": [
+        "HTTP"
+      ],
+      "inputs": {
+        "spans": [
+          {
+            "label": "high",
+            "text": "Mira signs the amber delivery on 2026-11-02.",
+            "priority": "highest"
+          },
+          {
+            "label": "medium",
+            "text": "Rowan reviews the observatory plan on 2026-11-03.",
+            "priority": "middle"
+          },
+          {
+            "label": "low",
+            "text": "Jun checks the spare lens on 2026-11-04.",
+            "priority": "lowest"
+          }
+        ],
+        "initialBudgetWorkUnits": 1,
+        "refillBudgetWorkUnits": 2,
+        "priorityPolicy": "An explicit owner-authored ranking fixture; no implementation score formula is asserted."
+      },
+      "orderedActions": [
+        "Ingest the three interesting spans through public turn intake and observe their interest handles.",
+        "Set an owner-authorized lease sufficient for only the first unit and await the cadence settlement.",
+        "Inspect high consumed and medium/low still pending with original source/range handles.",
+        "Restart the same vault without reseeding and read the same pending memberships/identities.",
+        "Refill the budget publicly, process the retained two spans and observe a later weave cite retained evidence."
+      ],
+      "expected": {
+        "firstConsumed": [
+          "high"
+        ],
+        "pendingBeforeRestart": [
+          "medium",
+          "low"
+        ],
+        "pendingAfterRestart": [
+          "medium",
+          "low"
+        ],
+        "laterConsumed": [
+          "medium",
+          "low"
+        ],
+        "eachSpanConsumedOnce": true,
+        "lowerPriorityDropped": false,
+        "laterWeaveUsesOriginalSources": true
+      },
+      "existingDoors": [
+        "vault.witness",
+        "vault.settings.wake_policy.set",
+        "vault.consolidation.status"
+      ],
+      "missingDoors": [
+        "typed sieve interest-queue handles/page read",
+        "typed owner lease replenishment",
+        "typed consumed-span and weave evidence receipts"
+      ],
+      "externalFixtureNeeds": [
+        "Finite script with one first-pass unit and two later-pass units.",
+        "Public owner policy binding for ranking/budget; do not obtain private sieve handles by opening a vault."
+      ],
+      "name": "Sieve queue retains lower-priority work should work",
+      "rows": [
+        "OF-498",
+        "OF-216"
+      ],
+      "source": [
+        "/oneiron/agents/oneiron-arch-0026-dreamer-v2/#wake-model",
+        "/registry/oneiron/#OF-498",
+        "/registry/oneiron/#OF-216"
+      ],
+      "deadlineMs": 30000,
+      "status": "BLOCKED: test.todo until its typed public prerequisites exist"
+    },
+    {
+      "id": "RUNS-07",
+      "surface": [
+        "HTTP"
+      ],
+      "inputs": {
+        "bucketAxes": [
+          "subject",
+          "predicate_root",
+          "world",
+          "facet",
+          "relationship",
+          "project"
+        ],
+        "sources": [
+          {
+            "label": "source-a",
+            "project": "amber",
+            "sourceClass": "user_stated",
+            "text": "The observatory uses the amber lens."
+          },
+          {
+            "label": "summary-a",
+            "project": "amber",
+            "sourceClass": "generated",
+            "recites": [
+              "source-a"
+            ],
+            "text": "A summary of the amber lens statement."
+          },
+          {
+            "label": "foreign-tool",
+            "project": "amber",
+            "sourceClass": "tool_output",
+            "text": "The lens inventory lists amber."
+          },
+          {
+            "label": "other-project",
+            "project": "bronze",
+            "sourceClass": "user_stated",
+            "text": "The observatory uses the amber lens."
+          }
+        ],
+        "childReferences": [
+          [
+            "source-a"
+          ],
+          [
+            "source-a",
+            "summary-a"
+          ],
+          [
+            "foreign-tool"
+          ],
+          [
+            "other-project"
+          ]
+        ],
+        "completionOrder": [
+          2,
+          0,
+          3,
+          1
+        ],
+        "postPinSourceEdit": "The live head now says cobalt; this is not the wake's pinned evidence.",
+        "invalidChildMetadata": {
+          "hash": "child-supplied-hash-is-not-authority",
+          "trust": "user_stated"
+        }
+      },
+      "orderedActions": [
+        "Create fixture sources, generated lineage and distinct projects through their typed public authoring doors.",
+        "Wake grouped by all six axes and observe the root pin before children finish.",
+        "Edit source-a after that pin; complete siblings in the authored out-of-order sequence.",
+        "Inspect root read/accounting receipts against the single original frontier, then settled claims and their corroboration.",
+        "Submit the invalid child metadata variant; inspect an integrity refusal/signal and no trust/hash influence."
+      ],
+      "expected": {
+        "rootPinnedRevisionCount": 1,
+        "amberIndependentSources": [
+          "source-a",
+          "foreign-tool"
+        ],
+        "amberIndependentCount": 2,
+        "summaryAddsIndependentSignals": 0,
+        "duplicateCitationAddsSignals": 0,
+        "amberTaintNoStrongerThan": "tool_output",
+        "bronzeIndependentSources": [
+          "other-project"
+        ],
+        "crossProjectMerge": false,
+        "livePostPinEditUsedByOldWake": false,
+        "childComputedHashTrusted": false,
+        "childComputedTrustTrusted": false,
+        "provenanceRetainsMostRestrictiveAncestor": true
+      },
+      "existingDoors": [
+        "vault.witness",
+        "vault.consolidation.enqueue",
+        "vault.consolidation.status"
+      ],
+      "missingDoors": [
+        "typed reference-carrying parallel consolidation admission/results",
+        "typed single-revision root evidence read",
+        "typed deduplicated corroboration/taint/provenance accounting receipt"
+      ],
+      "externalFixtureNeeds": [
+        "Reference-only child judgements with independent out-of-order barriers.",
+        "Generated lineage must be created by real authorized generation, not caller-forged source metadata."
+      ],
+      "name": "Parallel consolidation preserves evidence trust should work",
+      "rows": [
+        "OF-052",
+        "OF-204",
+        "OF-216"
+      ],
+      "source": [
+        "/oneiron/agents/oneiron-arch-0026-dreamer-v2/#swarm-fanout",
+        "/oneiron/agents/oneiron-arch-0026-dreamer-v2/#wake-model",
+        "/registry/oneiron/#OF-052",
+        "/registry/oneiron/#OF-204",
+        "/registry/oneiron/#OF-216"
+      ],
+      "deadlineMs": 30000,
+      "status": "BLOCKED: test.todo until its typed public prerequisites exist"
+    },
+    {
+      "id": "RUNS-08",
+      "surface": [
+        "MCP",
+        "HTTP"
+      ],
+      "inputs": {
+        "widths": [
+          3,
+          26
+        ],
+        "approvalMode": "manual",
+        "completionOrder": "reverse input slots",
+        "failingSlot": 1,
+        "structuralFailure": "scripted child schema failure",
+        "hardCapAllowanceShareBps": 1000,
+        "variants": [
+          "budget fits declared work",
+          "shared budget exhausted during children"
+        ],
+        "costUnits": "Expected dollars and an owner allowance-share cap; declared provider usage/rates supply independent actual-cost facts."
+      },
+      "orderedActions": [
+        "Discover the real tool-first MCP tools and admit the typed batch plan.",
+        "Read the held launch by HTTP before any child runs; inspect counts, per-peer breakdown, expected dollars and one hard cap.",
+        "Approve exactly the displayed plan_digest as owner, not a caller-modified plan.",
+        "Release children in reverse slot order with a structural error in slot one.",
+        "Read results in input slot order, failure isolation and shared reserve/spend/refund receipts.",
+        "Repeat the constrained-budget variant; read cap errors/holds without dropping successful partial results."
+      ],
+      "expected": {
+        "resultsStayInInputSlots": true,
+        "failureConfinedToSlot": 1,
+        "unrelatedSiblingsContinue": true,
+        "countAloneCausesRefusal": false,
+        "finiteWidthProbesProveUnboundedness": false,
+        "planStatesDollarsAndCapBeforeLaunch": true,
+        "enforcedBudgetScopes": 1,
+        "capMultipliedByWidth": false,
+        "settledPlusReservedNeverExceedsCap": true,
+        "unusedReservationsRefunded": true,
+        "budgetExhaustionIsSlotErrorOrDurableHold": true,
+        "allSlotsMustCompleteWhenCapExhausted": false
+      },
+      "existingDoors": [
+        "tasks.wave",
+        "vault.fanout.launch",
+        "vault.fanout.resume",
+        "vault.fanout.resume_as",
+        "vault.fanout.ack"
+      ],
+      "missingDoors": [
+        "typed batched child admission/result slots over MCP and HTTP/SDK",
+        "typed shared parent lease reserve/spend/refund read"
+      ],
+      "externalFixtureNeeds": [
+        "Declared usage and pricing fixtures for independent actual spend, with one failure and controlled reverse completion.",
+        "No huge fanout/load measurement; do not invent per-agent calibration or equate a TaskAskResult with child slots."
+      ],
+      "name": "Fanout preserves slots and cap should work",
+      "rows": [
+        "OF-393",
+        "OF-290",
+        "OF-532"
+      ],
+      "source": [
+        "/oneiron/agents/oneiron-arch-0026-dreamer-v2/#swarm-fanout",
+        "/oneiron/agents/oneiron-arch-0079-agent-coordination-v1/#work",
+        "/registry/oneiron/#OF-393",
+        "/registry/oneiron/#OF-290",
+        "/registry/oneiron/#OF-532"
+      ],
+      "deadlineMs": 30000,
+      "status": "BLOCKED: test.todo until its typed public prerequisites exist"
+    },
+    {
+      "id": "RUNS-09",
+      "surface": [
+        "HTTP"
+      ],
+      "inputs": {
+        "commitment": {
+          "obligor": "fixture owner",
+          "beneficiary": "fixture beneficiary",
+          "content": "Send the amber observatory reminder.",
+          "strength": "commitment",
+          "status": "open",
+          "schedule": {
+            "kind": "once",
+            "dueOffsetFromDeclarationMs": 2000
+          }
+        },
+        "occurrence": "2026-10-17T00:00:00Z",
+        "learning": "actual runtime declaration, separately recorded",
+        "outboundKey": "runs-09-reminder-once",
+        "reminderText": "Please review the amber observatory plan.",
+        "fulfilmentEvidence": "The amber observatory review is complete.",
+        "connector": "loopback fixture only; no real accounts, addresses or delivery"
+      },
+      "orderedActions": [
+        "Set the owner-selected loopback reminder route and publicly create the indexed bitemporal promise.",
+        "Use the declared near-future due date and wait for the real due event without changing any clock.",
+        "Read the proposal and links to commitment/birth provenance; inspect zero outbound attempts before authorization.",
+        "Authorize that reminder, deliver to the fake connector, repeat authorization and inspect one delivery/receipt.",
+        "Witness fulfilment evidence and explicitly confirm fulfilment through the typed lifecycle door.",
+        "Read closed obligation with its evidence/receipt and observe no later due/cadence reminder for it."
+      ],
+      "expected": {
+        "temporalOrdering": "occurrence < learning < declared due",
+        "beforeConsentOutboundAttempts": 0,
+        "promiseAloneAuthorizesOutbound": false,
+        "authorizedReminderAttempts": 1,
+        "authorizedReminderEffects": 1,
+        "replayedAuthorizationAddsEffects": 0,
+        "finalCommitmentStatus": "fulfilled",
+        "fulfilmentRequiresExplicitConfirmation": true,
+        "fulfilmentEvidenceRetained": true,
+        "proposalAndDeliveryTraceToBirth": true,
+        "closedObligationLaterReminders": 0
+      },
+      "existingDoors": [
+        "GET /v1/owner/commitments/reminder-route",
+        "PUT /v1/owner/commitments/reminder-route",
+        "POST /v1/owner/runs/approve"
+      ],
+      "missingDoors": [
+        "typed indexed commitment series/instance creation",
+        "typed due-proposal observation",
+        "typed evidence-backed explicit fulfilment lifecycle"
+      ],
+      "externalFixtureNeeds": [
+        "Protocol-correct fake outbound connector recording attempts and idempotency keys.",
+        "Real due timer with a short declared due date, not a private scheduler tick or arbitrary generic commitment claim."
+      ],
+      "name": "Proactive commitment waits for authorization should work",
+      "rows": [
+        "OF-187",
+        "OF-194"
+      ],
+      "source": [
+        "/oneiron/agents/oneiron-arch-0026-dreamer-v2/#wake-model",
+        "/oneiron/agents/oneiron-arch-0067-context-board-v1/#tasks",
+        "/registry/oneiron/#OF-187",
+        "/registry/oneiron/#OF-194"
+      ],
+      "deadlineMs": 30000,
+      "status": "BLOCKED: test.todo until its typed public prerequisites exist"
+    }
+  ]
+}

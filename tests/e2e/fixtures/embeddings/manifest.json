@@ -1,0 +1,158 @@
+{
+  "version": 1,
+  "area": "embeddings",
+  "assets": [
+    {
+      "id": "embeddings-scenarios",
+      "path": "scenarios.json",
+      "source": {
+        "uri": "independent-oracle:owner-authored-embeddings-e2e",
+        "revision": "v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "5a5dc2b60f87ab93c1afb36b10cef9a8d8aa251150be9ddd15ea6264b3112af6",
+      "expectedFacts": {
+        "ids": [
+          "EMBEDDINGS-01",
+          "EMBEDDINGS-02",
+          "EMBEDDINGS-03",
+          "EMBEDDINGS-04",
+          "EMBEDDINGS-05",
+          "EMBEDDINGS-06",
+          "EMBEDDINGS-07"
+        ],
+        "vectorDimensions": 4,
+        "vectors": "authored orthogonal unit vectors; no engine-generated expected answers",
+        "firstRunModes": [
+          "none",
+          "endpoint"
+        ],
+        "optionalLocalModel": "not selected; no download permitted",
+        "pendingDurability": "acknowledgment before held fill; one successful row after restart; upstream replay permitted",
+        "egressAllowedIds": [
+          "allowed",
+          "remote-failure"
+        ],
+        "egressLocalIds": [
+          "denied",
+          "undecided",
+          "remote-failure",
+          "after-failure"
+        ],
+        "taggerClaims": 0,
+        "identityAmbiguousMerges": 0,
+        "rulings": {
+          "G01": "typed call or wait",
+          "G06": "paired same probes; per-kind interval against retest noise; unknown blocks auto-swap"
+        },
+        "sourcePins": [
+          {
+            "page": "/oneiron/extraction/oneiron-arch-0036-model-families-v1/",
+            "sha256": "f1d847a24975aa46e00bc43f8ec6ce52d53f806045b587772e71380a3670372c"
+          },
+          {
+            "page": "/oneiron/retrieval/oneiron-arch-0004-retrieval-graph/",
+            "sha256": "b214b7c1dd31851c0feae51a9c79a3e913ff7aab3f7ddd5021f46b36be7ae740"
+          },
+          {
+            "page": "/oneiron/core/oneiron-arch-0019-oneiron-db-v1/",
+            "sha256": "99a775e2b95d0e7fcf1c5f7bd138882a4c0b7920239ce020e26382e718544483"
+          },
+          {
+            "page": "/oneiron/core/oneiron-arch-0003-semantic-memory/",
+            "sha256": "195a3a6bae7a44dd6ab6b1353268513176531abcee5b47ceaed5fb8664c588ed"
+          },
+          {
+            "page": "/oneiron/gate/oneiron-arch-0069-secret-custody-v1/",
+            "sha256": "a4c8df15efb88100eaaaef8ba4b90560074dd605bb5fa96a866d406f869d3b83"
+          },
+          {
+            "page": "/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1/",
+            "sha256": "dcfa341d856a48d1c5f4f02de932d3af6ff573890c53b8f7b5ea5c7506e02f76"
+          }
+        ],
+        "registry": {
+          "sha256": "8f56eb0c82be8475001e0127735558a0c6aa5721017138f9d68b951f87b19be7",
+          "rows": [
+            "OF-022",
+            "OF-035",
+            "OF-061",
+            "OF-113",
+            "OF-114",
+            "OF-119",
+            "OF-124",
+            "OF-128",
+            "OF-135",
+            "OF-138",
+            "OF-329",
+            "OF-370",
+            "OF-443",
+            "OF-463",
+            "OF-539"
+          ]
+        },
+        "runtimePolicy": {
+          "leaseMs": 1000,
+          "idleIntervalMs": 25,
+          "batchSize": 1
+        },
+        "policyScope": "fixture public TOML only; no engine default changed; loopback remote fake uses third-party locality policy, not a TLS proof"
+      },
+      "scenarios": [
+        "EMBEDDINGS-01",
+        "EMBEDDINGS-02",
+        "EMBEDDINGS-03",
+        "EMBEDDINGS-04",
+        "EMBEDDINGS-05",
+        "EMBEDDINGS-06",
+        "EMBEDDINGS-07"
+      ],
+      "requires": []
+    },
+    {
+      "id": "embeddings-red-triangle",
+      "path": "red-triangle.png",
+      "source": {
+        "uri": "independent-oracle:owner-authored-geometric-image",
+        "revision": "v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "1e05e5abcb4f8682c50f5c63c8fedc1dbe11048d6785dbea87b08ed06ad5303b",
+      "expectedFacts": {
+        "mime": "image/png",
+        "width": 16,
+        "height": 16,
+        "description": "red triangle on white background",
+        "embeddingKind": "image"
+      },
+      "scenarios": [
+        "EMBEDDINGS-04"
+      ],
+      "requires": []
+    },
+    {
+      "id": "embeddings-three-pulses",
+      "path": "three-pulses.wav",
+      "source": {
+        "uri": "independent-oracle:owner-authored-pcm-pulses",
+        "revision": "v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "6c7cd028b9e0f7c9477a31a30936286948deed141860f411a3a3be391f00c852",
+      "expectedFacts": {
+        "mime": "audio/wav",
+        "sampleRate": 8000,
+        "channels": 1,
+        "sampleWidthBytes": 2,
+        "frames": 3200,
+        "pulseCount": 3,
+        "description": "three short rectangular pulses, no speech",
+        "embeddingKind": "audio"
+      },
+      "scenarios": [
+        "EMBEDDINGS-04"
+      ],
+      "requires": []
+    }
+  ]
+}
