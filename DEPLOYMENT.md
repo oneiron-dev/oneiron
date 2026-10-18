@@ -171,6 +171,8 @@ import_xlsx_live_cells = 200000   # cells one workbook import writes into a live
 pack_script_output_bytes = 65536 # bytes of one foreign pack script run's typed output; past it the row asks and the output is read whole (up to the sandbox's 1 MiB file bound)
 pack_script_output_rows = 16      # inbound events, verbs or connector events one foreign pack script run emits; past it the row asks and every row is served
 judge_rubric_bytes = 8192         # bytes of the judge rubric (the judge skill's text) one judgment or label re-check reads; past it the rubric is read whole and the row asks
+judge_instructions_bytes = 8192   # bytes of skill instructions one held-out replay judgment reads; past it they are read whole and the row asks
+judge_replay_text_bytes = 40000   # bytes of replay text (runs' tasks and responses) one replay judgment's state carries; past it the replays ride whole and the row asks
 ```
 
 The push door scans a push one blob at a time, so `git_scan_blob_bytes` is

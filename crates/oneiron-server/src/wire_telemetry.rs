@@ -168,6 +168,8 @@ impl LimitRow {
         Self::Engine(EngineLimit::PackScriptOutputBytes),
         Self::Engine(EngineLimit::PackScriptOutputRows),
         Self::Engine(EngineLimit::JudgeRubricBytes),
+        Self::Engine(EngineLimit::JudgeInstructionsBytes),
+        Self::Engine(EngineLimit::JudgeReplayTextBytes),
     ];
     /// The config key that sets the row, or, for the memory the embedder
     /// endpoint sizes for its one model, the name it asks under.

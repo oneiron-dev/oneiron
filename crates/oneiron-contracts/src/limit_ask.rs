@@ -117,6 +117,13 @@ pub enum EngineLimit {
     /// Bytes of the judge's rubric (the active shared `judge` skill's text)
     /// one judgment or label re-check reads. Past it the rubric is read whole.
     JudgeRubricBytes,
+    /// Bytes of the skill instructions one held-out replay judgment reads.
+    /// Past it the instructions are read whole.
+    JudgeInstructionsBytes,
+    /// Bytes of replay text (runs' tasks and responses) one held-out replay
+    /// judgment's state carries. Past it the replays are read whole, cut only
+    /// where the decision ladder's state bound would refuse the call.
+    JudgeReplayTextBytes,
 }
 
 impl EngineLimit {
@@ -149,6 +156,8 @@ impl EngineLimit {
         Self::PackScriptOutputBytes,
         Self::PackScriptOutputRows,
         Self::JudgeRubricBytes,
+        Self::JudgeInstructionsBytes,
+        Self::JudgeReplayTextBytes,
     ];
 
     /// The config key that sets the row.
@@ -181,6 +190,8 @@ impl EngineLimit {
             Self::PackScriptOutputBytes => "limits.pack_script_output_bytes",
             Self::PackScriptOutputRows => "limits.pack_script_output_rows",
             Self::JudgeRubricBytes => "limits.judge_rubric_bytes",
+            Self::JudgeInstructionsBytes => "limits.judge_instructions_bytes",
+            Self::JudgeReplayTextBytes => "limits.judge_replay_text_bytes",
         }
     }
 
@@ -217,6 +228,10 @@ impl EngineLimit {
             // The shipped rubric is about 1 KiB; the judgment's state holds
             // at most 64 KiB in all.
             Self::JudgeRubricBytes => 8_192,
+            // The shares the judge cut to before Rule 5: 8 KiB of
+            // instructions and 40,000 bytes of replay text.
+            Self::JudgeInstructionsBytes => 8_192,
+            Self::JudgeReplayTextBytes => 40_000,
         }
     }
 }

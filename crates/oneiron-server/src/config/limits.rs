@@ -264,6 +264,8 @@ impl LimitsConfig {
             pack_script_output_bytes,
             pack_script_output_rows,
             judge_rubric_bytes,
+            judge_instructions_bytes,
+            judge_replay_text_bytes,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -329,6 +331,11 @@ impl LimitsConfig {
             (EngineLimit::PackScriptOutputBytes, pack_script_output_bytes),
             (EngineLimit::PackScriptOutputRows, pack_script_output_rows),
             (EngineLimit::JudgeRubricBytes, judge_rubric_bytes),
+            (
+                EngineLimit::JudgeInstructionsBytes,
+                judge_instructions_bytes,
+            ),
+            (EngineLimit::JudgeReplayTextBytes, judge_replay_text_bytes),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
@@ -464,4 +471,6 @@ pub(super) struct LimitsConfigOverride {
     pub(super) pack_script_output_bytes: Option<u64>,
     pub(super) pack_script_output_rows: Option<u64>,
     pub(super) judge_rubric_bytes: Option<u64>,
+    pub(super) judge_instructions_bytes: Option<u64>,
+    pub(super) judge_replay_text_bytes: Option<u64>,
 }
