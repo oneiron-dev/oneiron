@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use super::contract::{VaultReadAdapterKind, VaultReadMethod, VaultReadResponse, VaultReadWireOp};
+use super::contract::{VaultReadMethod, VaultReadResponse, VaultReadWireOp};
 use super::error::{VaultReadError, VaultReadErrorExt, VaultReadResult, response_arm_mismatch};
 use super::sealed;
 
@@ -115,10 +115,24 @@ impl sealed::Backend for WireTransportVaultReadAdapter {
     }
 }
 
-/// Cloud placeholder exposing the identical Rust surface while cloud execution
-/// remains unimplemented.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct CloudVaultReadAdapter;
+/// Cloud adapter: a hosted engine is read over the same wire contract as any
+/// other, through the transport the host authenticated to it. Where the vault
+/// runs never changes what a read answers or who may make it; the transport's
+/// construction context carries the caller's own credential and Grant.
+pub struct CloudVaultReadAdapter {
+    wire: WireTransportVaultReadAdapter,
+}
+
+impl CloudVaultReadAdapter {
+    /// Binds the adapter to the host's authenticated transport to a hosted
+    /// engine.
+    #[must_use]
+    pub fn new(transport: Arc<dyn WireTransport>) -> Self {
+        Self {
+            wire: WireTransportVaultReadAdapter::new(transport),
+        }
+    }
+}
 
 impl sealed::Backend for CloudVaultReadAdapter {
     fn dispatch_validated(
@@ -127,9 +141,6 @@ impl sealed::Backend for CloudVaultReadAdapter {
     ) -> VaultReadResult<VaultReadResponse> {
         // Runtime peers never arrive here: their absence is runtime-wide, not
         // cloud-specific, so the shared wrapper answers them first.
-        Err(VaultReadError::Unimplemented {
-            adapter: VaultReadAdapterKind::Cloud,
-            method: request.into_inner().method(),
-        })
+        self.wire.dispatch_validated(request)
     }
 }
