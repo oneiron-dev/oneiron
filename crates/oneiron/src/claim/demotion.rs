@@ -183,8 +183,11 @@ impl Vault {
                 });
             }
             ClaimDemotionAction::MarkStale => {
-                if rung != Some(ClaimDemotionRung::Weakened) {
-                    return Err(Error::InvalidClaimBody("stale requires weakened rung"));
+                // Stale is the terminal rung: an authorized caller may
+                // reach it directly, skipping decay and weaken, but a
+                // claim already stale has nowhere forward to go.
+                if rung == Some(ClaimDemotionRung::Stale) {
+                    return Err(Error::InvalidClaimBody("claim is already stale"));
                 }
                 body.stale = true;
                 (

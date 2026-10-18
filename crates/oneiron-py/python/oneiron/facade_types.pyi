@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 669 facade rows, 2447 declarations.
-Inputs: 617 of 669 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 598 of 669 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 672 facade rows, 2453 declarations.
+Inputs: 620 of 672 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 599 of 672 fully typed, 73 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 94; unread shapes: 0.
 """
 
@@ -10199,6 +10199,39 @@ class ClaimListFilter(TypedDict):
     predicate: NotRequired[str | None]
     lifecycle: NotRequired[str | None]
     limit: int
+class ClaimDemoteActionInputDecay(TypedDict):
+    kind: Literal["decay"]
+    new_claim_of_weight: float
+class ClaimDemoteActionInputWeaken(TypedDict):
+    kind: Literal["weaken"]
+    new_confidence: float
+class ClaimDemoteActionInputStale(TypedDict):
+    kind: Literal["stale"]
+ClaimDemoteActionInput = ClaimDemoteActionInputDecay | ClaimDemoteActionInputWeaken | ClaimDemoteActionInputStale
+class ClaimDemoteRequest(TypedDict):
+    claim_ref: str
+    action: ClaimDemoteActionInput
+class ClaimDemoteView(TypedDict):
+    claim_ref: str
+    short_ref: NotRequired[str | None]
+    rung: str
+    stale: bool
+    receipt_ref: str
+class ReadFilterInput(TypedDict):
+    entity_types: NotRequired[list[int] | None]
+    max_sensitivity_band: NotRequired[int | None]
+    include_stale: NotRequired[bool | None]
+    min_confidence: NotRequired[float | None]
+    min_salience: NotRequired[float | None]
+class ClaimFilteredListRequest(TypedDict):
+    subject_ref: NotRequired[str | None]
+    predicate: NotRequired[str | None]
+    lifecycle: NotRequired[str | None]
+    limit: int
+    filter: NotRequired[ReadFilterInput | None]
+class ClaimFilteredReadRequest(TypedDict):
+    claim_ref: str
+    filter: NotRequired[ReadFilterInput | None]
 SafeDeleteReason = Literal["user_delete", "user_hard_delete", "gdpr_delete", "policy_delete"]
 class SafeDeleteRequest(TypedDict):
     entity_ref: str

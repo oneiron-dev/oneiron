@@ -60,7 +60,11 @@ pub(super) fn demotion_body(
             }
             "decayed"
         }
-        (Some(ClaimDemotionRung::Weakened), Some(ClaimDemotionRung::Stale), []) => {
+        (
+            None | Some(ClaimDemotionRung::Decayed | ClaimDemotionRung::Weakened),
+            Some(ClaimDemotionRung::Stale),
+            [],
+        ) => {
             expected.stale = true;
             "stale"
         }

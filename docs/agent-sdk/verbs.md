@@ -535,6 +535,9 @@ both bindings and their export-census tests in one change.
 - `vault.calendar.freebusy`
 - `vault.calendar.transcript.ingest`
 - `vault.claims.list`
+- `vault.claims.demote`
+- `vault.claims.list_filtered`
+- `vault.claims.read_filtered`
 - `vault.claims.history`
 - `vault.delete`
 - `vault.writes.pending`

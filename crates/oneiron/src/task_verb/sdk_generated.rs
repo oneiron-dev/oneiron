@@ -2964,6 +2964,22 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::ClaimListFilter>(),
             ),
             (
+                "vault.claims.demote",
+                crate::code_run::vault_read::request_schema::<crate::memory::ClaimDemoteRequest>(),
+            ),
+            (
+                "vault.claims.list_filtered",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::ClaimFilteredListRequest,
+                >(),
+            ),
+            (
+                "vault.claims.read_filtered",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::ClaimFilteredReadRequest,
+                >(),
+            ),
+            (
                 "vault.claims.history",
                 crate::code_run::vault_read::request_schema::<ClaimRefRequest>(),
             ),
@@ -4026,6 +4042,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.calendar.read",
     "vault.calendar.search",
     "vault.calendar.freebusy",
+    "vault.claims.demote",
+    "vault.claims.list_filtered",
+    "vault.claims.read_filtered",
     "vault.search.hybrid",
     "vault.search.temporal",
     "vault.productivity.create",
@@ -4827,6 +4846,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.calendar.freebusy" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<crate::memory::CalendarFreebusyDto>,
+        >(),
+        "vault.claims.demote" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::ClaimDemoteView>()
+        }
+        "vault.claims.list_filtered" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Vec<crate::memory::ClaimView>>,
+        >(),
+        "vault.claims.read_filtered" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Option<crate::memory::ClaimView>>,
         >(),
         "vault.search.hybrid" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Vec<crate::memory::HybridSearchHit>>,
@@ -8820,6 +8848,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.claims.demote" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.claims.list_filtered" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.claims.read_filtered" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.claims.history" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -11613,6 +11662,16 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let input: crate::memory::ClaimListFilter = decode(value.clone())?;
             crate::memory::caps::check_limit_nonzero(input.limit)?;
         }
+        "vault.claims.demote" => {
+            let _input: crate::memory::ClaimDemoteRequest = decode(value.clone())?;
+        }
+        "vault.claims.list_filtered" => {
+            let input: crate::memory::ClaimFilteredListRequest = decode(value.clone())?;
+            crate::memory::caps::check_limit_nonzero(input.limit)?;
+        }
+        "vault.claims.read_filtered" => {
+            let _input: crate::memory::ClaimFilteredReadRequest = decode(value.clone())?;
+        }
         "vault.claims.history" => {
             let _input: ClaimRefRequest = decode(value.clone())?;
         }
@@ -13126,6 +13185,9 @@ pub fn invoke(
             encode(vault_calendar_transcript_ingest(memory, decode(value)?)?)
         }
         "vault.claims.list" => encode(vault_claims_list(memory, decode(value)?)?),
+        "vault.claims.demote" => encode(vault_claims_demote(memory, decode(value)?)?),
+        "vault.claims.list_filtered" => encode(vault_claims_list_filtered(memory, decode(value)?)?),
+        "vault.claims.read_filtered" => encode(vault_claims_read_filtered(memory, decode(value)?)?),
         "vault.claims.history" => encode(vault_claims_history(memory, decode(value)?)?),
         "vault.delete" => encode(vault_delete(memory, decode(value)?)?),
         "vault.writes.pending" => encode(vault_writes_pending(memory, decode(value)?)?),
@@ -18073,6 +18135,31 @@ pub fn vault_claims_list(
 ) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::memory::ClaimView>>> {
     crate::memory::caps::check_limit_nonzero(input.limit)?;
     memory.claim_list(&input)
+}
+pub fn vault_claims_demote(
+    memory: &Memory<'_>,
+    input: crate::memory::ClaimDemoteRequest,
+) -> MemoryResult<crate::memory::ClaimDemoteView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.claims.demote",
+        &input,
+        &["/claim_ref"],
+    )?;
+    memory.claim_demote(&input)
+}
+pub fn vault_claims_list_filtered(
+    memory: &Memory<'_>,
+    input: crate::memory::ClaimFilteredListRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::memory::ClaimView>>> {
+    crate::memory::caps::check_limit_nonzero(input.limit)?;
+    memory.claim_list_filtered(&input)
+}
+pub fn vault_claims_read_filtered(
+    memory: &Memory<'_>,
+    input: crate::memory::ClaimFilteredReadRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::memory::ClaimView>>> {
+    memory.claim_read_filtered(&input)
 }
 pub fn vault_claims_history(
     memory: &Memory<'_>,

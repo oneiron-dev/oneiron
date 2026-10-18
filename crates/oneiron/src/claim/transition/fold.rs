@@ -208,13 +208,13 @@ impl ClaimTransitionProjection {
                 self.demotion_rung = Some(ClaimDemotionRung::Weakened);
             }
             (ClaimTransitionKind::Stale, TransitionDelta::None)
-                if !self.stale && self.demotion_rung == Some(ClaimDemotionRung::Weakened) =>
+                if !self.stale && self.demotion_rung != Some(ClaimDemotionRung::Stale) =>
             {
                 self.stale = true;
                 self.demotion_rung = Some(ClaimDemotionRung::Stale);
             }
             (ClaimTransitionKind::Stale, TransitionDelta::ScopeBand(band))
-                if !self.stale && self.demotion_rung == Some(ClaimDemotionRung::Weakened) =>
+                if !self.stale && self.demotion_rung != Some(ClaimDemotionRung::Stale) =>
             {
                 // The source scope stays unchanged. The read surface applies
                 // max(original band, effective floor) and must fail closed on
