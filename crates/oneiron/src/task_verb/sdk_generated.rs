@@ -1510,6 +1510,83 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.artifacts.publish_approval",
+                crate::code_run::vault_read::request_schema::<
+                    crate::artifact_hosting::door_types::ArtifactPublishRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.publish",
+                crate::code_run::vault_read::request_schema::<
+                    crate::artifact_hosting::door_types::ArtifactPublishRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.repoint",
+                crate::code_run::vault_read::request_schema::<
+                    crate::artifact_hosting::door_types::ArtifactPublishRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.pointer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::artifact_hosting::door_types::ArtifactPointerRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.unpublish",
+                crate::code_run::vault_read::request_schema::<
+                    crate::artifact_hosting::door_types::ArtifactPointerRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.link_token",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
+                "vault.artifacts.live_preview.register",
+                crate::code_run::vault_read::request_schema::<
+                    crate::artifact_hosting::door_types::ArtifactPreviewRegisterRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.live_preview.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::artifact_hosting::door_types::ArtifactPreviewRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.live_preview.close",
+                crate::code_run::vault_read::request_schema::<
+                    crate::artifact_hosting::door_types::ArtifactPreviewRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.live_preview.invite",
+                crate::code_run::vault_read::request_schema::<
+                    crate::artifact_hosting::door_types::ArtifactPreviewInviteRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.live_preview.revoke_invite",
+                crate::code_run::vault_read::request_schema::<
+                    crate::artifact_hosting::door_types::ArtifactPreviewInviteRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.live_preview.share",
+                crate::code_run::vault_read::request_schema::<
+                    crate::artifact_hosting::door_types::ArtifactPreviewRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.live_preview.revoke_share",
+                crate::code_run::vault_read::request_schema::<
+                    crate::artifact_hosting::door_types::ArtifactPreviewRequest,
+                >(),
+            ),
+            (
                 "vault.artifacts.view",
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::ArtifactRefRequest,
@@ -3451,6 +3528,19 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.learning.projection",
     "vault.claims.review",
     "vault.claims.settle",
+    "vault.artifacts.publish_approval",
+    "vault.artifacts.publish",
+    "vault.artifacts.repoint",
+    "vault.artifacts.pointer",
+    "vault.artifacts.unpublish",
+    "vault.artifacts.link_token",
+    "vault.artifacts.live_preview.register",
+    "vault.artifacts.live_preview.read",
+    "vault.artifacts.live_preview.close",
+    "vault.artifacts.live_preview.invite",
+    "vault.artifacts.live_preview.revoke_invite",
+    "vault.artifacts.live_preview.share",
+    "vault.artifacts.live_preview.revoke_share",
     "vault.artifacts.units",
     "vault.artifacts.anchors.pin",
     "vault.artifacts.threads.open",
@@ -3897,6 +3987,49 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.claims.settle" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ClaimSettlement>()
+        }
+        "vault.artifacts.publish_approval" => crate::code_run::vault_read::request_schema::<
+            crate::artifact_hosting::door_types::ArtifactPublishApproval,
+        >(),
+        "vault.artifacts.publish" => crate::code_run::vault_read::request_schema::<
+            crate::artifact_hosting::door_types::ArtifactPublishView,
+        >(),
+        "vault.artifacts.repoint" => crate::code_run::vault_read::request_schema::<
+            crate::artifact_hosting::door_types::ArtifactPublishView,
+        >(),
+        "vault.artifacts.pointer" => crate::code_run::vault_read::request_schema::<
+            Option<crate::artifact_hosting::ArtifactPointer>,
+        >(),
+        "vault.artifacts.unpublish" => crate::code_run::vault_read::request_schema::<
+            crate::artifact_hosting::door_types::ArtifactUnpublished,
+        >(),
+        "vault.artifacts.link_token" => crate::code_run::vault_read::request_schema::<
+            crate::artifact_hosting::door_types::ArtifactLinkToken,
+        >(),
+        "vault.artifacts.live_preview.register" => crate::code_run::vault_read::request_schema::<
+            crate::artifact_hosting::door_types::ArtifactPreviewView,
+        >(),
+        "vault.artifacts.live_preview.read" => crate::code_run::vault_read::request_schema::<
+            Option<crate::artifact_hosting::door_types::ArtifactPreviewView>,
+        >(),
+        "vault.artifacts.live_preview.close" => crate::code_run::vault_read::request_schema::<
+            crate::artifact_hosting::door_types::ArtifactPreviewClosed,
+        >(),
+        "vault.artifacts.live_preview.invite" => crate::code_run::vault_read::request_schema::<
+            crate::artifact_hosting::door_types::ArtifactPreviewInvitation,
+        >(),
+        "vault.artifacts.live_preview.revoke_invite" => {
+            crate::code_run::vault_read::request_schema::<
+                crate::artifact_hosting::door_types::ArtifactPreviewInvitation,
+            >()
+        }
+        "vault.artifacts.live_preview.share" => crate::code_run::vault_read::request_schema::<
+            crate::artifact_hosting::door_types::ArtifactPreviewShare,
+        >(),
+        "vault.artifacts.live_preview.revoke_share" => {
+            crate::code_run::vault_read::request_schema::<
+                crate::artifact_hosting::door_types::ArtifactPreviewShare,
+            >()
         }
         "vault.artifacts.units" => crate::code_run::vault_read::request_schema::<
             crate::anchored_annotation::ArtifactUnitsView,
@@ -6280,6 +6413,97 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.hooks.replay" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.publish_approval" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.publish" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.repoint" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.pointer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.unpublish" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.link_token" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.live_preview.register" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.live_preview.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.live_preview.close" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.live_preview.invite" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.live_preview.revoke_invite" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.live_preview.share" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.live_preview.revoke_share" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -9360,6 +9584,57 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let input: crate::task_verb::sdk::HooksReplayRequest = decode(value.clone())?;
             input.limit()?;
         }
+        "vault.artifacts.publish_approval" => {
+            let _input: crate::artifact_hosting::door_types::ArtifactPublishRequest =
+                decode(value.clone())?;
+        }
+        "vault.artifacts.publish" => {
+            let _input: crate::artifact_hosting::door_types::ArtifactPublishRequest =
+                decode(value.clone())?;
+        }
+        "vault.artifacts.repoint" => {
+            let _input: crate::artifact_hosting::door_types::ArtifactPublishRequest =
+                decode(value.clone())?;
+        }
+        "vault.artifacts.pointer" => {
+            let _input: crate::artifact_hosting::door_types::ArtifactPointerRequest =
+                decode(value.clone())?;
+        }
+        "vault.artifacts.unpublish" => {
+            let _input: crate::artifact_hosting::door_types::ArtifactPointerRequest =
+                decode(value.clone())?;
+        }
+        "vault.artifacts.link_token" => {
+            let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.live_preview.register" => {
+            let _input: crate::artifact_hosting::door_types::ArtifactPreviewRegisterRequest =
+                decode(value.clone())?;
+        }
+        "vault.artifacts.live_preview.read" => {
+            let _input: crate::artifact_hosting::door_types::ArtifactPreviewRequest =
+                decode(value.clone())?;
+        }
+        "vault.artifacts.live_preview.close" => {
+            let _input: crate::artifact_hosting::door_types::ArtifactPreviewRequest =
+                decode(value.clone())?;
+        }
+        "vault.artifacts.live_preview.invite" => {
+            let _input: crate::artifact_hosting::door_types::ArtifactPreviewInviteRequest =
+                decode(value.clone())?;
+        }
+        "vault.artifacts.live_preview.revoke_invite" => {
+            let _input: crate::artifact_hosting::door_types::ArtifactPreviewInviteRequest =
+                decode(value.clone())?;
+        }
+        "vault.artifacts.live_preview.share" => {
+            let _input: crate::artifact_hosting::door_types::ArtifactPreviewRequest =
+                decode(value.clone())?;
+        }
+        "vault.artifacts.live_preview.revoke_share" => {
+            let _input: crate::artifact_hosting::door_types::ArtifactPreviewRequest =
+                decode(value.clone())?;
+        }
         "vault.artifacts.view" => {
             let _input: crate::blob_artifact::ArtifactRefRequest = decode(value.clone())?;
         }
@@ -10971,6 +11246,36 @@ pub fn invoke(
         "vault.shares.revoke" => encode(vault_shares_revoke(memory, decode(value)?)?),
         "vault.shares.view" => encode(vault_shares_view(memory, decode(value)?)?),
         "vault.hooks.replay" => encode(vault_hooks_replay(memory, decode(value)?)?),
+        "vault.artifacts.publish_approval" => {
+            encode(vault_artifacts_publish_approval(memory, decode(value)?)?)
+        }
+        "vault.artifacts.publish" => encode(vault_artifacts_publish(memory, decode(value)?)?),
+        "vault.artifacts.repoint" => encode(vault_artifacts_repoint(memory, decode(value)?)?),
+        "vault.artifacts.pointer" => encode(vault_artifacts_pointer(memory, decode(value)?)?),
+        "vault.artifacts.unpublish" => encode(vault_artifacts_unpublish(memory, decode(value)?)?),
+        "vault.artifacts.link_token" => encode(vault_artifacts_link_token(memory, decode(value)?)?),
+        "vault.artifacts.live_preview.register" => encode(vault_artifacts_live_preview_register(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.artifacts.live_preview.read" => {
+            encode(vault_artifacts_live_preview_read(memory, decode(value)?)?)
+        }
+        "vault.artifacts.live_preview.close" => {
+            encode(vault_artifacts_live_preview_close(memory, decode(value)?)?)
+        }
+        "vault.artifacts.live_preview.invite" => {
+            encode(vault_artifacts_live_preview_invite(memory, decode(value)?)?)
+        }
+        "vault.artifacts.live_preview.revoke_invite" => encode(
+            vault_artifacts_live_preview_revoke_invite(memory, decode(value)?)?,
+        ),
+        "vault.artifacts.live_preview.share" => {
+            encode(vault_artifacts_live_preview_share(memory, decode(value)?)?)
+        }
+        "vault.artifacts.live_preview.revoke_share" => encode(
+            vault_artifacts_live_preview_revoke_share(memory, decode(value)?)?,
+        ),
         "vault.artifacts.view" => encode(vault_artifacts_view(memory, decode(value)?)?),
         "vault.artifacts.units" => encode(vault_artifacts_units(memory, decode(value)?)?),
         "vault.artifacts.anchors.pin" => {
@@ -13996,6 +14301,84 @@ pub fn vault_hooks_replay(
 ) -> MemoryResult<Vec<crate::task_verb::sdk::HookReplayRow>> {
     input.limit()?;
     crate::task_verb::sdk::host_only(memory, "vault.hooks.replay", &input)
+}
+pub fn vault_artifacts_publish_approval(
+    memory: &Memory<'_>,
+    input: crate::artifact_hosting::door_types::ArtifactPublishRequest,
+) -> MemoryResult<crate::artifact_hosting::door_types::ArtifactPublishApproval> {
+    crate::task_verb::sdk::host_only(memory, "vault.artifacts.publish_approval", &input)
+}
+pub fn vault_artifacts_publish(
+    memory: &Memory<'_>,
+    input: crate::artifact_hosting::door_types::ArtifactPublishRequest,
+) -> MemoryResult<crate::artifact_hosting::door_types::ArtifactPublishView> {
+    crate::task_verb::sdk::host_only(memory, "vault.artifacts.publish", &input)
+}
+pub fn vault_artifacts_repoint(
+    memory: &Memory<'_>,
+    input: crate::artifact_hosting::door_types::ArtifactPublishRequest,
+) -> MemoryResult<crate::artifact_hosting::door_types::ArtifactPublishView> {
+    crate::task_verb::sdk::host_only(memory, "vault.artifacts.repoint", &input)
+}
+pub fn vault_artifacts_pointer(
+    memory: &Memory<'_>,
+    input: crate::artifact_hosting::door_types::ArtifactPointerRequest,
+) -> MemoryResult<Option<crate::artifact_hosting::ArtifactPointer>> {
+    crate::task_verb::sdk::host_only(memory, "vault.artifacts.pointer", &input)
+}
+pub fn vault_artifacts_unpublish(
+    memory: &Memory<'_>,
+    input: crate::artifact_hosting::door_types::ArtifactPointerRequest,
+) -> MemoryResult<crate::artifact_hosting::door_types::ArtifactUnpublished> {
+    crate::task_verb::sdk::host_only(memory, "vault.artifacts.unpublish", &input)
+}
+pub fn vault_artifacts_link_token(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<crate::artifact_hosting::door_types::ArtifactLinkToken> {
+    crate::task_verb::sdk::host_only(memory, "vault.artifacts.link_token", &input)
+}
+pub fn vault_artifacts_live_preview_register(
+    memory: &Memory<'_>,
+    input: crate::artifact_hosting::door_types::ArtifactPreviewRegisterRequest,
+) -> MemoryResult<crate::artifact_hosting::door_types::ArtifactPreviewView> {
+    crate::task_verb::sdk::host_only(memory, "vault.artifacts.live_preview.register", &input)
+}
+pub fn vault_artifacts_live_preview_read(
+    memory: &Memory<'_>,
+    input: crate::artifact_hosting::door_types::ArtifactPreviewRequest,
+) -> MemoryResult<Option<crate::artifact_hosting::door_types::ArtifactPreviewView>> {
+    crate::task_verb::sdk::host_only(memory, "vault.artifacts.live_preview.read", &input)
+}
+pub fn vault_artifacts_live_preview_close(
+    memory: &Memory<'_>,
+    input: crate::artifact_hosting::door_types::ArtifactPreviewRequest,
+) -> MemoryResult<crate::artifact_hosting::door_types::ArtifactPreviewClosed> {
+    crate::task_verb::sdk::host_only(memory, "vault.artifacts.live_preview.close", &input)
+}
+pub fn vault_artifacts_live_preview_invite(
+    memory: &Memory<'_>,
+    input: crate::artifact_hosting::door_types::ArtifactPreviewInviteRequest,
+) -> MemoryResult<crate::artifact_hosting::door_types::ArtifactPreviewInvitation> {
+    crate::task_verb::sdk::host_only(memory, "vault.artifacts.live_preview.invite", &input)
+}
+pub fn vault_artifacts_live_preview_revoke_invite(
+    memory: &Memory<'_>,
+    input: crate::artifact_hosting::door_types::ArtifactPreviewInviteRequest,
+) -> MemoryResult<crate::artifact_hosting::door_types::ArtifactPreviewInvitation> {
+    crate::task_verb::sdk::host_only(memory, "vault.artifacts.live_preview.revoke_invite", &input)
+}
+pub fn vault_artifacts_live_preview_share(
+    memory: &Memory<'_>,
+    input: crate::artifact_hosting::door_types::ArtifactPreviewRequest,
+) -> MemoryResult<crate::artifact_hosting::door_types::ArtifactPreviewShare> {
+    crate::task_verb::sdk::host_only(memory, "vault.artifacts.live_preview.share", &input)
+}
+pub fn vault_artifacts_live_preview_revoke_share(
+    memory: &Memory<'_>,
+    input: crate::artifact_hosting::door_types::ArtifactPreviewRequest,
+) -> MemoryResult<crate::artifact_hosting::door_types::ArtifactPreviewShare> {
+    crate::task_verb::sdk::host_only(memory, "vault.artifacts.live_preview.revoke_share", &input)
 }
 pub fn vault_artifacts_view(
     memory: &Memory<'_>,

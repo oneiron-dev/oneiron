@@ -32,6 +32,8 @@ use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 use crate::store::GateDecisionId;
 use crate::write_envelope::WriteActor;
 
+/// Typed requests and replies for publication and live-preview host doors.
+pub mod door_types;
 mod pointer_rows;
 /// Lease-bound live process previews, separate from pinned artifact pointers.
 pub mod preview;
@@ -158,7 +160,8 @@ const ARTIFACT_POINTERS: SideTable<ArtifactPointerRowKey, ArtifactPointerRow, Ra
 const ARTIFACT_POINTER_STALE_OVERRIDE_STAMP: u8 = 0x01;
 const ARTIFACT_POINTER_BLOB_TAG: u8 = 0x02;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ArtifactPointerChannel {
     #[default]
@@ -218,14 +221,14 @@ impl Default for ArtifactSnapshotSelector {
 }
 
 /// Exactly one immutable export, owned by the artifact in the route.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[non_exhaustive]
 pub enum ArtifactExportRef {
     ForkHash(CodebaseForkHash),
     BlobVersion { artifact_id: EntityId, version: u64 },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[non_exhaustive]
 pub struct ArtifactPointer {
     pub artifact: String,
@@ -319,7 +322,8 @@ impl ArtifactPublishVerbRequest {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ArtifactPublishVerbStatus {
     Proposed,
@@ -490,7 +494,7 @@ impl Vault {
         })
     }
 
-    fn resolve_export_owner(
+    pub(crate) fn resolve_export_owner(
         &self,
         artifact: &str,
         export: ArtifactExportRef,

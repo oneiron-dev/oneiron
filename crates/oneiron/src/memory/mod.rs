@@ -27,6 +27,7 @@ mod answer_boundary;
 pub mod affect;
 mod archive_purge;
 mod asset_resolve;
+mod artifact_hosting_doors;
 mod authorship;
 mod birth_position;
 mod booking;
