@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 883 facade rows, 3038 declarations.
-Inputs: 831 of 883 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 799 of 883 fully typed, 84 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 890 facade rows, 3058 declarations.
+Inputs: 838 of 890 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 806 of 890 fully typed, 84 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 101; unread shapes: 0.
 """
 
@@ -9076,6 +9076,88 @@ class CheckoutTornDownRetained(TypedDict):
     epoch: int
     reason: CheckoutRetention
 CheckoutTornDown = CheckoutTornDownCollected | CheckoutTornDownRetained
+class VisibleFilePolicy(TypedDict):
+    version: int
+    include_prefixes: list[str]
+    exclude_prefixes: list[str]
+class CodeViewMaterializeRequest(TypedDict):
+    repo: EntityId
+    tested: EntityId
+    account: EntityId
+    policy: VisibleFilePolicy
+class CodeDocumentFrontier(TypedDict):
+    document_id: list[int]
+    repo: str
+    path: str
+    version: list[tuple[int, int]]
+    op_fold: list[int]
+    text_hash: list[int]
+class CodeViewFile(TypedDict):
+    path: str
+    content_hash_blake3: str
+    frontier: CodeDocumentFrontier
+    text_sha256: str
+class CodeWorkingView(TypedDict):
+    view: EntityId
+    repo: EntityId
+    base: EntityId
+    account: EntityId
+    fork_hash: str
+    files: list[CodeViewFile]
+    receipt: EntityId
+    host_path: str
+class CodeViewRequest(TypedDict):
+    view: EntityId
+    repo: EntityId
+    tested: EntityId
+    account: EntityId
+class CodeViewReadRequest(TypedDict):
+    view: CodeViewRequest
+    path: str
+class CodeViewFileBytes(TypedDict):
+    path: str
+    bytes: list[int]
+    sha256: str
+class CodeSecretTaintRef(TypedDict):
+    secret_ref: str
+    rotation_generation: int
+CodeBuildClass = Literal["build", "verify"]
+CodeBuildSpec = TypedDict("CodeBuildSpec", {"argv": list[str], "env_allowlist": dict[str, str], "platform": dict[str, str], "declared_outputs": list[str], "secret_taint_refs": list[CodeSecretTaintRef], "class": CodeBuildClass})
+class CodeViewActionRequest(TypedDict):
+    view: CodeViewRequest
+    spec: CodeBuildSpec
+class CodeActionDigest(TypedDict):
+    hash: str
+    size_bytes: int
+class CodeViewAction(TypedDict):
+    action_digest: CodeActionDigest
+    command_bytes: list[int]
+    input_root_digest: CodeActionDigest
+class CodeViewBuildRequest(TypedDict):
+    view: CodeViewRequest
+    spec: CodeBuildSpec
+    action_digest: CodeActionDigest
+CodeCacheState = Literal["hit", "miss", "denied"]
+class CodeBuildOutput(TypedDict):
+    artifact_ref: str
+    output_sha256: str
+class CodeBuildEntry(TypedDict):
+    action_digest: CodeActionDigest
+    account: EntityId
+    exit_code: int
+    outputs: dict[str, CodeBuildOutput]
+    stdout_ref: NotRequired[str | None]
+    stderr_ref: NotRequired[str | None]
+    secret_taint_refs: list[CodeSecretTaintRef]
+    reusable: bool
+    receipt: str
+class CodeCacheOutcome(TypedDict):
+    state: CodeCacheState
+    entry: NotRequired[CodeBuildEntry | None]
+    receipt: NotRequired[str | None]
+class CodeCacheReadRequest(TypedDict):
+    account: EntityId
+    action_digest: CodeActionDigest
 class CodeRepoPointer(TypedDict):
     local_folder: str
     commit: str

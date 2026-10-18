@@ -514,6 +514,13 @@ pub enum AgentVerb {
     VaultCodeCheckoutPublish,
     VaultCodeCheckoutSettle,
     VaultCodeCheckoutTeardown,
+    VaultCodeViewsMaterialize,
+    VaultCodeViewsGet,
+    VaultCodeViewsRead,
+    VaultCodeViewsAction,
+    VaultCodeViewsBuild,
+    VaultCodeCacheGet,
+    VaultCodeCacheReuse,
     VaultCodeSnapshotsIngest,
     VaultCodeSnapshotsGet,
     VaultCodeSnapshotsRead,
@@ -1423,6 +1430,13 @@ impl AgentVerb {
         Self::VaultCodeCheckoutPublish,
         Self::VaultCodeCheckoutSettle,
         Self::VaultCodeCheckoutTeardown,
+        Self::VaultCodeViewsMaterialize,
+        Self::VaultCodeViewsGet,
+        Self::VaultCodeViewsRead,
+        Self::VaultCodeViewsAction,
+        Self::VaultCodeViewsBuild,
+        Self::VaultCodeCacheGet,
+        Self::VaultCodeCacheReuse,
         Self::VaultCodeSnapshotsIngest,
         Self::VaultCodeSnapshotsGet,
         Self::VaultCodeSnapshotsRead,
@@ -2353,6 +2367,13 @@ impl AgentVerb {
             Self::VaultCodeCheckoutPublish => "vault.code.checkout.publish",
             Self::VaultCodeCheckoutSettle => "vault.code.checkout.settle",
             Self::VaultCodeCheckoutTeardown => "vault.code.checkout.teardown",
+            Self::VaultCodeViewsMaterialize => "vault.code.views.materialize",
+            Self::VaultCodeViewsGet => "vault.code.views.get",
+            Self::VaultCodeViewsRead => "vault.code.views.read",
+            Self::VaultCodeViewsAction => "vault.code.views.action",
+            Self::VaultCodeViewsBuild => "vault.code.views.build",
+            Self::VaultCodeCacheGet => "vault.code.cache.get",
+            Self::VaultCodeCacheReuse => "vault.code.cache.reuse",
             Self::VaultCodeSnapshotsIngest => "vault.code.snapshots.ingest",
             Self::VaultCodeSnapshotsGet => "vault.code.snapshots.get",
             Self::VaultCodeSnapshotsRead => "vault.code.snapshots.read",
@@ -3265,6 +3286,13 @@ impl AgentVerb {
                 | Self::VaultCodeCheckoutPublish
                 | Self::VaultCodeCheckoutSettle
                 | Self::VaultCodeCheckoutTeardown
+                | Self::VaultCodeViewsMaterialize
+                | Self::VaultCodeViewsGet
+                | Self::VaultCodeViewsRead
+                | Self::VaultCodeViewsAction
+                | Self::VaultCodeViewsBuild
+                | Self::VaultCodeCacheGet
+                | Self::VaultCodeCacheReuse
                 | Self::VaultCodeSnapshotsIngest
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
@@ -4201,6 +4229,13 @@ impl AgentVerb {
                 | Self::VaultCodeCheckoutPublish
                 | Self::VaultCodeCheckoutSettle
                 | Self::VaultCodeCheckoutTeardown
+                | Self::VaultCodeViewsMaterialize
+                | Self::VaultCodeViewsGet
+                | Self::VaultCodeViewsRead
+                | Self::VaultCodeViewsAction
+                | Self::VaultCodeViewsBuild
+                | Self::VaultCodeCacheGet
+                | Self::VaultCodeCacheReuse
                 | Self::VaultCodeSnapshotsIngest
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
@@ -5220,6 +5255,13 @@ impl AgentVerb {
                 | Self::VaultCodeCheckoutPublish
                 | Self::VaultCodeCheckoutSettle
                 | Self::VaultCodeCheckoutTeardown
+                | Self::VaultCodeViewsMaterialize
+                | Self::VaultCodeViewsGet
+                | Self::VaultCodeViewsRead
+                | Self::VaultCodeViewsAction
+                | Self::VaultCodeViewsBuild
+                | Self::VaultCodeCacheGet
+                | Self::VaultCodeCacheReuse
                 | Self::VaultCodeSnapshotsIngest
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
@@ -5898,6 +5940,9 @@ impl AgentVerb {
                 | Self::VaultCodeCheckoutPublish
                 | Self::VaultCodeCheckoutSettle
                 | Self::VaultCodeCheckoutTeardown
+                | Self::VaultCodeViewsMaterialize
+                | Self::VaultCodeViewsBuild
+                | Self::VaultCodeCacheReuse
                 | Self::VaultCodeSnapshotsIngest
                 | Self::VaultCodeMergeQueueEnqueue
                 | Self::VaultCodeMergeQueueStage
@@ -6673,6 +6718,13 @@ impl AgentVerb {
             Self::VaultCodeCheckoutPublish => &["spec"],
             Self::VaultCodeCheckoutSettle => &["spec"],
             Self::VaultCodeCheckoutTeardown => &["spec"],
+            Self::VaultCodeViewsMaterialize => &["spec"],
+            Self::VaultCodeViewsGet => &["spec"],
+            Self::VaultCodeViewsRead => &["spec"],
+            Self::VaultCodeViewsAction => &["spec"],
+            Self::VaultCodeViewsBuild => &["spec"],
+            Self::VaultCodeCacheGet => &["spec"],
+            Self::VaultCodeCacheReuse => &["spec"],
             Self::VaultCodeSnapshotsIngest => &["spec"],
             Self::VaultCodeSnapshotsGet => &["spec"],
             Self::VaultCodeSnapshotsRead => &["spec"],
@@ -7583,6 +7635,13 @@ impl AgentVerb {
             Self::VaultCodeCheckoutPublish => &["spec"],
             Self::VaultCodeCheckoutSettle => &["spec"],
             Self::VaultCodeCheckoutTeardown => &["spec"],
+            Self::VaultCodeViewsMaterialize => &["spec"],
+            Self::VaultCodeViewsGet => &["spec"],
+            Self::VaultCodeViewsRead => &["spec"],
+            Self::VaultCodeViewsAction => &["spec"],
+            Self::VaultCodeViewsBuild => &["spec"],
+            Self::VaultCodeCacheGet => &["spec"],
+            Self::VaultCodeCacheReuse => &["spec"],
             Self::VaultCodeSnapshotsIngest => &["spec"],
             Self::VaultCodeSnapshotsGet => &["spec"],
             Self::VaultCodeSnapshotsRead => &["spec"],
@@ -9481,6 +9540,27 @@ impl AgentVerb {
             }
             Self::VaultCodeCheckoutTeardown => {
                 "Collect the caller's checkout only with a matching durable pushed-head receipt and clear custody; retain dirty or uncertain trees."
+            }
+            Self::VaultCodeViewsMaterialize => {
+                "Materialize a private linked working view from verified tested file frontiers in the authenticated owner account."
+            }
+            Self::VaultCodeViewsGet => {
+                "Read one working view and its immutable tested base under the authenticated owner account."
+            }
+            Self::VaultCodeViewsRead => {
+                "Read the current bytes of one selected input in the authenticated owner working view."
+            }
+            Self::VaultCodeViewsAction => {
+                "Freeze current view input identities and return the REAPI action digest with its exact command bytes and input root digest."
+            }
+            Self::VaultCodeViewsBuild => {
+                "Run a pinned native owner build or verify leg, reusing clean account-local results and retaining secret-consuming exhaust as tainted."
+            }
+            Self::VaultCodeCacheGet => {
+                "Read one clean immutable account-local build result by action key without executing a command."
+            }
+            Self::VaultCodeCacheReuse => {
+                "Reuse an authorized clean action result into another matching working view without dispatching a cold build."
             }
             Self::VaultCodeSnapshotsIngest => {
                 "Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt."

@@ -2551,6 +2551,41 @@ export_facade! {
     let output = client.vault_code_checkout_teardown(&input)?;
     crate::codec::lift_record("vault.code.checkout.teardown", &output)
 };
+"vault.code.views.materialize" => fn vault_code_views_materialize(&self, input: CodeViewMaterializeRequest) -> CodeWorkingView = |client| {
+    let input: oneiron::memory::code_view_doors::CodeViewMaterializeRequest = crate::codec::lower_record("vault.code.views.materialize", input)?;
+    let output = client.vault_code_views_materialize(&input)?;
+    crate::codec::lift_record("vault.code.views.materialize", &output)
+};
+"vault.code.views.get" => fn vault_code_views_get(&self, input: CodeViewRequest) -> CodeWorkingView = |client| {
+    let input: oneiron::memory::code_view_doors::CodeViewRequest = crate::codec::lower_record("vault.code.views.get", input)?;
+    let output = client.vault_code_views_get(&input)?;
+    crate::codec::lift_record("vault.code.views.get", &output)
+};
+"vault.code.views.read" => fn vault_code_views_read(&self, input: CodeViewReadRequest) -> CodeViewFileBytes = |client| {
+    let input: oneiron::memory::code_view_doors::CodeViewReadRequest = crate::codec::lower_record("vault.code.views.read", input)?;
+    let output = client.vault_code_views_read(&input)?;
+    crate::codec::lift_record("vault.code.views.read", &output)
+};
+"vault.code.views.action" => fn vault_code_views_action(&self, input: CodeViewActionRequest) -> CodeViewAction = |client| {
+    let input: oneiron::memory::code_view_doors::CodeViewActionRequest = crate::codec::lower_record("vault.code.views.action", input)?;
+    let output = client.vault_code_views_action(&input)?;
+    crate::codec::lift_record("vault.code.views.action", &output)
+};
+"vault.code.views.build" => fn vault_code_views_build(&self, input: CodeViewBuildRequest) -> CodeCacheOutcome = |client| {
+    let input: oneiron::memory::code_view_doors::CodeViewBuildRequest = crate::codec::lower_record("vault.code.views.build", input)?;
+    let output = client.vault_code_views_build(&input)?;
+    crate::codec::lift_record("vault.code.views.build", &output)
+};
+"vault.code.cache.get" => fn vault_code_cache_get(&self, input: CodeCacheReadRequest) -> CodeCacheOutcome = |client| {
+    let input: oneiron::memory::code_view_doors::CodeCacheReadRequest = crate::codec::lower_record("vault.code.cache.get", input)?;
+    let output = client.vault_code_cache_get(&input)?;
+    crate::codec::lift_record("vault.code.cache.get", &output)
+};
+"vault.code.cache.reuse" => fn vault_code_cache_reuse(&self, input: CodeViewBuildRequest) -> CodeCacheOutcome = |client| {
+    let input: oneiron::memory::code_view_doors::CodeViewBuildRequest = crate::codec::lower_record("vault.code.cache.reuse", input)?;
+    let output = client.vault_code_cache_reuse(&input)?;
+    crate::codec::lift_record("vault.code.cache.reuse", &output)
+};
 "vault.code.snapshots.ingest" => fn vault_code_snapshots_ingest(&self, input: CodeSnapshotIngestRequest) -> CodeSnapshotView = |client| {
     let input: oneiron::memory::codebase_doors::CodeSnapshotIngestRequest = crate::codec::lower_record("vault.code.snapshots.ingest", input)?;
     let output = client.vault_code_snapshots_ingest(&input)?;

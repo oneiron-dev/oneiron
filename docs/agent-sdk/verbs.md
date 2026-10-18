@@ -516,6 +516,13 @@ both bindings and their export-census tests in one change.
 - `vault.code.checkout.publish`
 - `vault.code.checkout.settle`
 - `vault.code.checkout.teardown`
+- `vault.code.views.materialize`
+- `vault.code.views.get`
+- `vault.code.views.read`
+- `vault.code.views.action`
+- `vault.code.views.build`
+- `vault.code.cache.get`
+- `vault.code.cache.reuse`
 - `vault.code.snapshots.ingest`
 - `vault.code.snapshots.get`
 - `vault.code.snapshots.read`

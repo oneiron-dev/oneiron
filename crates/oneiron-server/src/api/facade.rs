@@ -50,6 +50,7 @@ mod coach_offer_doors;
 mod code_doors;
 mod code_run_doors;
 mod code_wait_doors;
+mod code_view_doors;
 mod codebase_doors;
 mod compliance_doors;
 mod connector_call_doors;

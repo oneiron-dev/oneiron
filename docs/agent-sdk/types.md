@@ -2355,6 +2355,10 @@ class Oneiron:
         @property
         def checkout(self) -> "Oneiron._VaultCodeCheckoutVerbs": ...
         @property
+        def views(self) -> "Oneiron._VaultCodeViewsVerbs": ...
+        @property
+        def cache(self) -> "Oneiron._VaultCodeCacheVerbs": ...
+        @property
         def snapshots(self) -> "Oneiron._VaultCodeSnapshotsVerbs": ...
         @property
         def merge_queue(self) -> "Oneiron._VaultCodeMergeQueueVerbs": ...
@@ -2401,6 +2405,22 @@ class Oneiron:
             """Consume one published checkout result at its epoch as select, apply, release or discard; an identical retry returns its receipt."""
         def teardown(self, spec: Facade.CheckoutTeardownInput) -> Facade.CheckoutTornDown:
             """Collect the caller's checkout only with a matching durable pushed-head receipt and clear custody; retain dirty or uncertain trees."""
+    class _VaultCodeViewsVerbs:
+        def materialize(self, spec: Facade.CodeViewMaterializeRequest) -> Facade.CodeWorkingView:
+            """Materialize a private linked working view from verified tested file frontiers in the authenticated owner account."""
+        def get(self, spec: Facade.CodeViewRequest) -> Facade.CodeWorkingView:
+            """Read one working view and its immutable tested base under the authenticated owner account."""
+        def read(self, spec: Facade.CodeViewReadRequest) -> Facade.CodeViewFileBytes:
+            """Read the current bytes of one selected input in the authenticated owner working view."""
+        def action(self, spec: Facade.CodeViewActionRequest) -> Facade.CodeViewAction:
+            """Freeze current view input identities and return the REAPI action digest with its exact command bytes and input root digest."""
+        def build(self, spec: Facade.CodeViewBuildRequest) -> Facade.CodeCacheOutcome:
+            """Run a pinned native owner build or verify leg, reusing clean account-local results and retaining secret-consuming exhaust as tainted."""
+    class _VaultCodeCacheVerbs:
+        def get(self, spec: Facade.CodeCacheReadRequest) -> Facade.CodeCacheOutcome:
+            """Read one clean immutable account-local build result by action key without executing a command."""
+        def reuse(self, spec: Facade.CodeViewBuildRequest) -> Facade.CodeCacheOutcome:
+            """Reuse an authorized clean action result into another matching working view without dispatching a cold build."""
     class _VaultCodeSnapshotsVerbs:
         def ingest(self, spec: Facade.CodeSnapshotIngestRequest) -> Facade.CodeSnapshotView:
             """Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt."""
