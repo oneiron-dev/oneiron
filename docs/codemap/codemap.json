@@ -19797,7 +19797,7 @@
      "path": "src/dreamer_wake/mod.rs",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 11
      }
     },
@@ -19847,7 +19847,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ProjectorPolicy"
@@ -19855,7 +19855,7 @@
      "path": "src/dreamer_wake/projector.rs",
      "purpose": "The projector's surprise check (ARCH-0026 RD-26): a due wake writes only when its material is new to the…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 2,
       "struct": 1
      }
@@ -19967,7 +19967,7 @@
      "path": "src/dreamer_wake/sieve/mod.rs",
      "purpose": "The continuous sieve (ARCH-0026, the Continuous recipe): the cheap check that tags what is new on the local…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 4,
       "fn": 2,
       "re-export": 3,
@@ -43695,7 +43695,7 @@
      "path": "src/store/local_replica.rs",
      "purpose": "Local-only removal of one canonical window's replica (OF-534 demotion)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -46482,7 +46482,7 @@
      "path": "src/tagging/mod.rs",
      "purpose": "The tagging marker and its drain: the write path's outbox rule applied to the Oneironer slot (ARCH-0036…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 8
      }
     },
@@ -46508,7 +46508,7 @@
      "path": "src/tagging/provisional.rs",
      "purpose": "Provisional entities: what a save mints when the identity key names nothing (ARCH-0055 §10), for the Dreamer…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "fn": 5,
       "struct": 1
      }
@@ -46548,7 +46548,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DerivationEnvelope",
@@ -46562,7 +46562,7 @@
      "path": "src/tagging/tags.rs",
      "purpose": "The saved tag sets: what save mode keeps for a tagged turn, the index of the entities they name, and the…",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "enum": 2,
       "fn": 7,
       "struct": 5
@@ -54484,7 +54484,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 185,
+   "over_bar": 187,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3311,
    "test_files": 902
