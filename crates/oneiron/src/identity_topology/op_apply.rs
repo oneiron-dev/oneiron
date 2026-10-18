@@ -15,6 +15,7 @@ use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
 
 use super::MAX_IDENTITY_TOPOLOGY_EVENT_FACETS;
+use super::act_admission::{EngineCause, ResolvedSeal, TopologySeal, resolve_seal_in_txn};
 use super::distinct_claim::distinct_pair_key;
 use super::encode_identity_topology_event_body;
 use super::lifecycle_state::EntityLifecycleState;
@@ -136,14 +137,40 @@ impl Vault {
     /// `proposal_scope_target` is
     /// unarmed for this op kind, so
     /// [`Vault::resolve_identity_proposal`] can never reach the park.
+    ///
+    /// This door names no deciding authority: its seal is an engine seal
+    /// under [`EngineCause::Unattributed`], admitted as today. A decision by
+    /// the owner or an agent within its Grant goes through
+    /// [`Vault::apply_identity_topology_op_as`].
     pub fn apply_identity_topology_op(
         &self,
         op: &IdentityTopologyOp,
         write: &IdentityOpWrite,
         now: u64,
     ) -> Result<IdentityOpOutcome> {
+        self.apply_identity_topology_op_as(
+            op,
+            write,
+            &TopologySeal::engine(EngineCause::Unattributed),
+            now,
+        )
+    }
+
+    /// [`Vault::apply_identity_topology_op`] under the seal context `seal`
+    /// (mesh PR2-topology): a decision by the owner or an agent within its
+    /// Grant, whose seal carries its owner act and holds on every replica,
+    /// or the engine's own bookkeeping under a named cause. The authority is
+    /// validated in the writing transaction before any local effect; a stale
+    /// `seen` is a typed conflict.
+    pub fn apply_identity_topology_op_as(
+        &self,
+        op: &IdentityTopologyOp,
+        write: &IdentityOpWrite,
+        seal: &TopologySeal,
+        now: u64,
+    ) -> Result<IdentityOpOutcome> {
         let mut wtxn = self.store.env.write_txn()?;
-        let outcome = self.apply_identity_topology_op_in_txn(&mut wtxn, op, write, now)?;
+        let outcome = self.apply_identity_topology_op_as_in_txn(&mut wtxn, op, write, seal, now)?;
         wtxn.commit()?;
         Ok(outcome)
     }
@@ -154,6 +181,45 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         op: &IdentityTopologyOp,
         write: &IdentityOpWrite,
+        now: u64,
+    ) -> Result<IdentityOpOutcome> {
+        self.apply_identity_topology_op_as_in_txn(
+            wtxn,
+            op,
+            write,
+            &TopologySeal::engine(EngineCause::Unattributed),
+            now,
+        )
+    }
+
+    /// Transaction-composable [`Vault::apply_identity_topology_op_as`].
+    pub(crate) fn apply_identity_topology_op_as_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        op: &IdentityTopologyOp,
+        write: &IdentityOpWrite,
+        seal: &TopologySeal,
+        now: u64,
+    ) -> Result<IdentityOpOutcome> {
+        if write.approval == ClaimApprovalStatus::Rejected {
+            return Ok(IdentityOpOutcome::Noop);
+        }
+        // The deciding authority stands in this transaction before any local
+        // effect (FACET mints, distinct CLAIM writes); the op's event is
+        // minted here, so its revision is zero.
+        let seal = resolve_seal_in_txn(self, wtxn, seal, None)?;
+        self.apply_identity_topology_op_resolved_in_txn(wtxn, op, write, &seal, now)
+    }
+
+    /// [`Vault::apply_identity_topology_op_as_in_txn`] under a seal context
+    /// its caller already validated in this transaction: an approving
+    /// ruling's applied op shares its ruling's.
+    pub(super) fn apply_identity_topology_op_resolved_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        op: &IdentityTopologyOp,
+        write: &IdentityOpWrite,
+        seal: &ResolvedSeal,
         now: u64,
     ) -> Result<IdentityOpOutcome> {
         if write.approval == ClaimApprovalStatus::Rejected {
@@ -253,6 +319,7 @@ impl Vault {
                     wtxn,
                     event_id,
                     write,
+                    seal,
                     now,
                     action,
                     Some(merge.evidence.clone()),
@@ -297,6 +364,7 @@ impl Vault {
                     wtxn,
                     event_id,
                     write,
+                    seal,
                     now,
                     action,
                     Some(split.evidence.clone()),
@@ -347,6 +415,7 @@ impl Vault {
                     wtxn,
                     event_id,
                     write,
+                    seal,
                     now,
                     action,
                     Some(facet.evidence.clone()),
@@ -374,6 +443,7 @@ impl Vault {
                     wtxn,
                     event_id,
                     write,
+                    seal,
                     now,
                     StoredIdentityOpAction::AssertDistinct {
                         a: pair.0,
@@ -464,6 +534,7 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         event_id: EntityId,
         write: &IdentityOpWrite,
+        seal: &ResolvedSeal,
         now: u64,
         action: StoredIdentityOpAction,
         evidence: Option<IdentityOpEvidence>,
@@ -502,16 +573,18 @@ impl Vault {
         ops.extend(effects);
         // The signed disposition is a separate immutable type-76 event. A
         // receiver can replay the two rows in either order and bind by digest.
+        // Its one signature covers the carrier and who decided: the owner act
+        // of a decision, or the engine's cause (mesh PR2-topology).
         let disposition_id = self.store.clock.entity_id()?;
-        let disposition = super::AdmissionDisposition::seal(
-            self,
-            wtxn,
-            disposition_id,
+        let disposition = super::AdmissionDisposition::signed(
+            seal,
             event_id,
             &record,
             super::AdmissionVerdict::Validated,
             None,
+            seal.authority_for_fresh(event_id),
         )?;
+        disposition.record_sealed_here(self, wtxn, disposition_id)?;
         let disposition_record = StoredIdentityOpEvent {
             seq: self.next_identity_topology_seq_in_txn(wtxn)?,
             validated_at_write: false,

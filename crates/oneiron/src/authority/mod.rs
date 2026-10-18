@@ -203,8 +203,11 @@ pub use machine_profile::{
 pub use machine_write::machine_claim_transcript;
 pub use mesh_machine::{MeshMachineAddress, MeshMachineAddressEnvelope};
 pub use observation_policy::*;
-pub use owner_act::KeyWork;
-pub(crate) use owner_act::owner_act_signer_admits;
+pub use owner_act::{ActAuthority, GrantedAct, KeyWork};
+pub(crate) use owner_act::{
+    GrantStanding, authority_refusal_as, authority_refused, grant_standing_in_txn,
+    owner_act_signer_admits, owner_live_in_fold,
+};
 pub(crate) use owner_roots::anchor_signed_entry;
 pub use owner_roots::{AwaitedRoot, OwnerRootView};
 pub use recover_many::{
