@@ -31,19 +31,21 @@ pub(super) async fn ask_turn(rpc: &mut ResidenceRpc, leave: bool) -> Result<bool
 }
 
 /// Runs `work` off the runtime and asks for the turn again every
-/// [`RENEW_SECS`] until it ends.
+/// [`RENEW_SECS`] until it ends. A renewal that fails stops the renewals, not
+/// the work: the upload after it finds out whether the turn held.
 pub(super) async fn renewing_turn<T: Send + 'static>(
     rpc: &mut ResidenceRpc,
     work: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, TransportError> {
     let mut work = tokio::task::spawn_blocking(work);
+    let mut renewing = true;
     loop {
         tokio::select! {
             done = &mut work => {
                 return done.map_err(|error| TransportError::Storage(error.to_string()));
             }
-            () = tokio::time::sleep(Duration::from_secs(RENEW_SECS)) => {
-                ask_turn(rpc, false).await?;
+            () = tokio::time::sleep(Duration::from_secs(RENEW_SECS)), if renewing => {
+                renewing = ask_turn(rpc, false).await.is_ok();
             }
         }
     }
