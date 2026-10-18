@@ -1985,6 +1985,7 @@
       "output": "crate::task_verb::sdk::EmbeddingSpaceMoveChecked",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.embedding_spaces.move_check\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -2385,6 +2386,7 @@
       "output": "Vec<crate::task_verb::sdk::HookReplayRow>",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.hooks.replay\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true,

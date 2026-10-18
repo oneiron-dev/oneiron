@@ -886,11 +886,26 @@ pub(crate) async fn ai_verdict(
 /// saved verb runs, under the proof `/v1/owner` takes from the request, on
 /// the hook sandbox serve runs its hooks on. A dry run: nothing lands. A fact
 /// no run pinned previews a generative hook's verdicts on serve's own ladder.
+/// Beside it, the binding, its body's source, each entry's fact and every
+/// row a replayed read served ([`oneiron::Vault::hooks_replay_listing`]);
+/// `None` once an entry asked a verdict, whose evidence it does not list.
 pub(crate) async fn vault_hooks_replay(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: HooksReplayRequest,
-) -> MemoryResult<Vec<HookReplayRow>> {
+) -> MaybeListed<Vec<HookReplayRow>> {
+    match vault_hooks_replay_answer(server, auth, input).await {
+        Ok((replayed, rows)) => (Ok(replayed), rows),
+        Err(refusal) => (Err(refusal), Some(Vec::new())),
+    }
+}
+
+/// [`vault_hooks_replay`]'s answer, beside its listing.
+async fn vault_hooks_replay_answer(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: HooksReplayRequest,
+) -> MemoryResult<(Vec<HookReplayRow>, Option<Vec<EntityId>>)> {
     let owner = owner_proof(auth, server, "vault.hooks.replay")?;
     let Some(runtime) = server.hook_runtime.get().cloned() else {
         return Err(MemoryError::new(
@@ -902,7 +917,7 @@ pub(crate) async fn vault_hooks_replay(
     let verdict = replay_verdict(server);
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || {
-        oneiron::task_verb::sdk::replay_hooks_as_owner(
+        oneiron::task_verb::sdk::replay_hooks_as_owner_listing(
             server.vault(),
             &owner,
             runtime.as_ref(),
