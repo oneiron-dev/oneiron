@@ -18453,7 +18453,7 @@
      "path": "src/deletion/receipt_completion.rs",
      "purpose": "The linked REDACTION_AUDIT completion row (OF-470, ARCH-0038 step 10)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -18473,7 +18473,7 @@
      "path": "src/deletion/sweep_queue.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "fn": 1
      }
     },
@@ -32456,6 +32456,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RecordEraseSweep",
+      "RecordEraseSweepRequest"
+     ],
+     "path": "src/memory/erase_sweep.rs",
+     "purpose": "Owner-bound historical erasure timing from the immutable redaction receipt",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -32767,7 +32781,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 18,
+      "mod": 19,
       "re-export": 47
      }
     },
@@ -52069,7 +52083,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 858
+      "fn": 859
      }
     },
     {
@@ -58878,7 +58892,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 195,
+     "files": 196,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59559,7 +59573,7 @@
    },
    "over_bar": 198,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3633,
+   "source_files": 3634,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68092,7 +68106,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 827
+      "fn": 828
      }
     },
     {
@@ -69141,7 +69155,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 828
+      "fn": 829
      }
     },
     {
@@ -72924,7 +72938,7 @@
      "path": "src/api/facade/shared_member_doors.rs",
      "purpose": "The host doors of the shared-vault invitation rows (OF-531 / OF-158), beside `shared_act_doors`: an invitee…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -82942,6 +82956,8 @@
       "RecordEraseOutcome",
       "RecordErasePreview",
       "RecordEraseRequest",
+      "RecordEraseSweep",
+      "RecordEraseSweepRequest",
       "RecordLinks",
       "RecordLinksRequest",
       "RecordPosition",
@@ -83916,7 +83932,7 @@
      "purpose": "—",
      "surface": {
       "enum": 695,
-      "struct": 2139
+      "struct": 2141
      }
     },
     {
