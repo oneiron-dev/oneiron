@@ -66,6 +66,9 @@ impl Memory<'_> {
     /// task highway (OF-220), which owns its idempotency, settlement and
     /// receipts. A brief-less create is the engine-internal minters' door.
     pub fn tasks_create(&self, spec: &TaskCreateSpec) -> MemoryResult<TaskCreateReceipt> {
+        if !self.has_task_work_turn() {
+            return self.task_work_memory().tasks_create(spec);
+        }
         if spec.brief.is_some() || spec.intent_key.is_some() {
             return self.post_create_spec(spec);
         }
@@ -527,9 +530,18 @@ impl Memory<'_> {
                 if let Some(origin) = origin {
                     require_creator_in_txn(self, &*wtxn, origin)?;
                 }
-                let budget = super::wire_decode::task_verb_body_in(self.vault(), &*wtxn, task_ref)?
+                let brief = super::wire_decode::task_verb_body_in(self.vault(), &*wtxn, task_ref)?
                     .and_then(|body| body.brief)
-                    .and_then(|stored| stored.brief.constraints.pins.budget);
+                    .map(|stored| stored.brief);
+                let budget = brief
+                    .as_ref()
+                    .and_then(|brief| brief.constraints.pins.budget);
+                // OF-544: the agent confesses against its brief's done-means;
+                // a TASK with no brief leaves the runner to infer its own.
+                let objectives = brief
+                    .as_ref()
+                    .map(super::brief::QueueTaskBrief::confession_objectives)
+                    .filter(|rows| !rows.is_empty());
                 // OF-540: a TASK a team's leader creates works in that team.
                 let team = match origin.and_then(TaskCreateOrigin::parent_attempt) {
                     Some(parent) => crate::team::team_spawn_context_for_attempt_in_txn(
@@ -557,6 +569,7 @@ impl Memory<'_> {
                         budget,
                         origin_conversation: origin.and_then(TaskCreateOrigin::origin_conversation),
                         team,
+                        objectives,
                         ..AgentSpawnContext::default()
                     },
                 )?;

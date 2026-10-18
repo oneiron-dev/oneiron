@@ -733,7 +733,10 @@ A call on any other door that names an anonymous session in its `x-oneiron-sessi
 no call or refusal receipt only when its caller is in that session: the person who entered it,
 or a member of its room. Every door acts inside the session its request names (facade rows, host
 doors, the context board, MCP), and the SDK handles do too (`inOffRecordSession` /
-`in_off_record_session`; embedded, the app host's actor is the caller). A credential that names
+`in_off_record_session`; embedded, the app host's actor is the caller). The raw native vaults
+(the C ABI, Kotlin `EmbeddedVault`, the raw Node vault) write as the host unless bound: a bound
+one (`oneiron_vault_bind`, Swift `Vault.bound`, Kotlin and Node `bound`) writes as the actor it
+names, or the embedded owner, inside the session it names, if any. A credential that names
 no person (the host root, the shared secret) binds no session, and a stretch entered without a
 person binds no caller, so those calls are receipted as usual.
 
@@ -1370,18 +1373,22 @@ like this:
 
 A handle has no expiry time. It holds while the run keeps its lease, and a run parked on a
 durable wait keeps its handle. Once the run ends or takes a new lease, attach again. One
-credential attaches per lease: the same credential gets the same handle back, and another
-credential is refused. The run's record keeps the attachment, so a handle still works after a
-restart once the runner holds the same lease again. An action and the run's own step never run
-at once: an attach or action waits up to 5 seconds for the current step or action to end, and
-then runs before the run's next step. Refusals carry these codes:
+credential is attached per lease: the same credential gets the same handle back, and another
+credential is refused. To move the run to another credential paired to the same agent (a
+rotated slip, or another harness), attach with that credential and the body `{"rebind": true}`.
+It gets a new handle, and the old handle stops working (`live_run_unavailable`). The run's
+record keeps the attachment, so a handle still works after a restart once the runner holds the
+same lease again. An action and the run's own step never run at once: an attach or action waits
+up to 5 seconds for the current step or action to end, and then runs before the run's next
+step. Refusals carry these codes:
 - 400 `live_run_required`: a live-run action named no handle.
 - 400 `live_run_invalid`: the handle is malformed.
 - 403 `live_run_unavailable`: an unknown run, a credential or agent that is not the attached
   one, or a run with no attachment. All of these get the same answer.
 - 409 `live_run_stale`: the run's lease moved on.
 - 409 `code_run_busy`: the run stayed mid-step or mid-action for those 5 seconds. Retry.
-- 409 `live_run_attached`: another credential is attached to this lease.
+- 409 `live_run_attached`: another credential is attached to this lease, and the attach did not
+  ask to rebind.
 
 An MCP client runs these actions with the `invoke_action` tool, on either MCP endpoint. Its
 arguments are `verb`, `args`, `idempotencyKey` and `liveRun`, the same fields as the HTTP body,

@@ -11,7 +11,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::note::{COMPACTION_INTENT_NOTE_KIND, NoteBody, NoteKind, encode_note_body};
-use crate::provenance::birth::{MAX_BIRTH_INPUTS, RowBirth};
+use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::{MadeByClass, MadeByInputRole, MadeByTrigger};
 use crate::registry::ENTITY_TYPE_NOTE;
 use crate::store::ManifestDbs;
@@ -81,8 +81,8 @@ pub(super) fn intent_note_body(
 /// The epoch's birth (Rule A): `intent` first, as its Prompt; then every
 /// record the window was read from; then, for a conversation, each window
 /// message and its turn (a host log's per-step ids name no row). Ids are
-/// deduplicated before the first `MAX_BIRTH_INPUTS` are kept, so a repeat
-/// takes no slot. The input hash is over the window's text as summarized.
+/// deduplicated and every distinct one is kept (Rule 5). The input hash is
+/// over the window's text as summarized.
 pub(super) fn epoch_birth(
     request: &CompactionRequest,
     byline: WriteActor,
@@ -100,7 +100,6 @@ pub(super) fn epoch_birth(
         .chain(request.sources.iter().copied())
         .chain(window)
         .filter(|id| seen.insert(*id))
-        .take(MAX_BIRTH_INPUTS)
         .collect();
     let read: Vec<&[u8]> = request
         .window

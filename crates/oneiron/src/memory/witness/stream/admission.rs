@@ -182,6 +182,7 @@ impl Memory<'_> {
             thread_audience,
             saved: String::new(),
             assertions: turn.assertions.clone(),
+            quote: message.quote.clone(),
         };
         let handle = MessageStreamHandle {
             message: id,
@@ -238,6 +239,11 @@ impl Memory<'_> {
                     if state.seed.continuation && !state.raw.is_empty() {
                         return Err(MessageStreamError::InvalidRequest(
                             "continuation starts with empty content",
+                        ));
+                    }
+                    if state.seed.continuation && state.seed.quote.is_some() {
+                        return Err(MessageStreamError::InvalidRequest(
+                            "a continuation keeps its MESSAGE's birth quote",
                         ));
                     }
                     if state.base.len() > MAX_MESSAGE_STREAM_BYTES {
