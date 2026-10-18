@@ -55,7 +55,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_def/doors.rs` | src | m | 1 enum · 10 fn · 6 crate-vis | AgentDefinitionPutDisposition | Vault CRUD doors over the generic entity/batch machinery |
 | `src/agent_def/id_pin.rs` | src | m | 14 crate-vis | — | The pin an agent id keeps (H215): the widest ceiling a row at the id may hold, and the fork lineage it was… |
 | `src/agent_def/manifest.rs` | src | m | 10 crate-vis | — | Embedded sys.* roster manifest, legacy compat, and seeding/reconciliation |
-| `src/agent_def/mod.rs` | src | s | 1 mod · 5 re-export · 16 crate-vis | — | AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334) |
+| `src/agent_def/mod.rs` | src | s | 1 mod · 6 re-export · 17 crate-vis | — | AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334) |
+| `src/agent_def/models.rs` | src | m | 1 struct · 4 fn · 7 crate-vis | AgentModel | The owner's per-agent model list (FIX 4472): the models an agent may run on, each with the owner's own words… |
 | `src/agent_def/optional_memory.rs` | src | m | 1 struct · 1 enum · 4 fn · 2 const · 2 crate-vis | OptionalMemory, OptionalMemoryProfile | How much optional recall a reader takes, per task family (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget) |
 | `src/agent_def/portable.rs` | src | s | 10 crate-vis | — | Canonical, inert AGENT_PACK facets derived from real definitions and selected rows |
 | `src/agent_def/portable_binding.rs` | src | s | 3 crate-vis | — | Frozen source tree identity at genuine local birth |
@@ -64,7 +65,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_def/portable_source/tests.rs` | test | m | — | — | Actual birth capture and replay retain bytes without granting authority |
 | `src/agent_def/refusal.rs` | src | s | 1 struct · 4 enum · 12 fn · 1 const · 4 crate-vis | RefusalDial, RefusalDomain, RefusalLevel, RefusalOutcome, VaultKind | The refusal dial (OF-533): an agent's own disposition to object to, or decline, what she is asked to do, set… |
 | `src/agent_def/tests.rs` | test | XL | — | — | AGENT_DEF (ONE-1443) tests |
-| `src/agent_def/types.rs` | src | m | 4 struct · 5 enum · 24 fn · 13 const · 55 crate-vis | AgentCeiling, AgentDefinition, AgentScope, AgentWakeCadence, CompactionOwnership, ContextBudgetSplit, DreamingMode, McpRef +1 | AgentDefinition domain types, key/limit consts, and constructors |
+| `src/agent_def/types.rs` | src | m | 4 struct · 5 enum · 26 fn · 14 const · 59 crate-vis | AgentCeiling, AgentDefinition, AgentScope, AgentWakeCadence, CompactionOwnership, ContextBudgetSplit, DreamingMode, McpRef +1 | AgentDefinition domain types, key/limit consts, and constructors |
 | `src/agent_def/widening.rs` | src | s | 1 crate-vis | — | Which puts hand an agent definition back authority it gave up |
 | `src/agent_def/workflow.rs` | src | s | 1 struct · 9 fn · 1 crate-vis | WorkflowDefinition | Saved ordered agent compositions |
 | `src/agent_def/workflow/tests.rs` | test | s | — | — | — |
@@ -2335,7 +2336,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/model_trials.rs` | src | m | 9 fn · 1 re-export | — | Per-question held-out trials nominated by external benchmark scores |
 | `src/llm/model_trials/evidence.rs` | src | s | 4 crate-vis | — | Freeze the question's own labels, check backend reads and bind the sufficiency card |
 | `src/llm/model_trials/types.rs` | src | s | 15 struct · 3 enum | BackendQualityPin, FrozenTrialCase, HeldOutSelection, ModelTrial, ModelTrialAction, ModelTrialPolicy, ModelTrialReceipt, ModelTrialRequest +10 | The held-out selection and sufficiency card are supplied by eval authoring |
-| `src/llm/registry.rs` | src | m | 5 struct · 1 enum · 14 fn · 2 re-export · 4 crate-vis | CatalogSeed, ModelRegistryRow, ModelScoreDiff, ModelWireFormat, ScoreObservation, ScoreSnapshot | Vault-persisted, priced model catalogs |
+| `src/llm/registry.rs` | src | m | 5 struct · 1 enum · 16 fn · 2 re-export · 4 crate-vis | CatalogSeed, ModelRegistryRow, ModelScoreDiff, ModelWireFormat, ScoreObservation, ScoreSnapshot | Vault-persisted, priced model catalogs |
 | `src/llm/registry/backend.rs` | src | s | 3 struct · 5 fn | ModelBackendPin, ModelCostReceipt, PricedModelBackend | Backend-specific serving identities and prices |
 | `src/llm/registry/description.rs` | src | s | 2 struct · 1 enum · 1 fn · 1 crate-vis | DescriptionClass, DescriptionContribution, ModelDescription | Ranked, source-attributed model descriptions; absent evidence stays absent |
 | `src/llm/registry/installed_pack.rs` | src | s | 2 fn · 2 crate-vis | — | The shipped catalog is read from an installed first-party hub pack |
