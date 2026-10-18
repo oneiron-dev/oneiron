@@ -46,6 +46,11 @@ pub fn dreamer_grant(grant: DreamerGrantArgs) -> anyhow::Result<()> {
         reach.ready(),
         "the vault's policy still keeps the Dreamer out ({reach:?}); an owner row naming the Dreamer may narrow it"
     );
+    // The Coach's offer-ask reach (OF-577) shipped after many vaults were
+    // seeded; the same grant adds it, and a refusal is reported, not fatal.
+    let coach = vault
+        .grant_coach_offer_reach(&owner, vault.now_recorded_at())
+        .and_then(|changed| Ok((changed, vault.coach_offer_reach()?)));
     let routed = match grant.extraction_route {
         Some(locality) => crate::ai_host::route_dreamer_extraction(&vault, locality)?,
         None => false,
@@ -57,6 +62,11 @@ pub fn dreamer_grant(grant: DreamerGrantArgs) -> anyhow::Result<()> {
             "dreamer": "granted",
             "policy_changed": granted,
             "extraction_route_changed": routed,
+            "coach_offer_reach": match &coach {
+                Ok((_, reach)) => serde_json::json!(reach),
+                Err(error) => serde_json::json!(error.to_string()),
+            },
+            "coach_policy_changed": matches!(coach, Ok((true, _))),
         })
     )?;
     Ok(())
