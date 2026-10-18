@@ -535,13 +535,13 @@ declare namespace Sdk {
   type EraseAskStatus = "open" | { erased: { by: string; act?: string | null } } | { declined: { by: string } };
   type SharedEraseAsk = { id: string; vault_id: string; kind: EraseAskKind; asker: string; record: string; asked_at: number; status: EraseAskStatus; closed_at?: number | null };
   type SharedEraseAskCloseRequest = { ask_id: string; erased: boolean; act_id?: string | null };
-  type GuestRevokeRequest = { grant_ref: EntityId };
+  type GuestRevokeRequest = { grant_ref: EntityId; peer?: string | null };
   type GuestPactStanding = "unpacted" | "active" | "suspended" | "promoted" | "disconnected" | "dissolved";
   type NotRecallable = boolean;
   type GuestCopyState = "unknown";
   type GuestDeletionRequestStatus = "not_requested" | "queued" | "sent";
   type GuestRevokeDisclosure = { copied_bytes_recallable: NotRecallable; recipient_copy_state: GuestCopyState; deletion_request_status: GuestDeletionRequestStatus };
-  type GuestRevokeCourtesyTargetView = { pact: string; peer_vault_id: string; epoch_cutoff: number };
+  type GuestRevokeCourtesyTargetView = { pact: string; peer_vault_id: string; epoch_cutoff: number; deletion_request_status: GuestDeletionRequestStatus; request?: string | null; error?: string | null };
   type GuestRevokeResponse = { grant_ref: EntityId; guest_ref: EntityId; changed: boolean; revoked_at: number; revoked_slip_refs?: string[]; pact_standing: GuestPactStanding; disclosure: GuestRevokeDisclosure; courtesy_targets?: GuestRevokeCourtesyTargetView[] };
   type GuestSlipMintRequest = { grant_ref: EntityId; holder_key: string; expires_at: number };
   type GuestSlipMinted = { slip_id: string; slip: string; expires_at: number };

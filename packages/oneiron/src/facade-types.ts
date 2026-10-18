@@ -1029,7 +1029,7 @@ export type SharedEraseAsk = { id: string; vault_id: string; kind: EraseAskKind;
 /** `oneiron::task_verb::sdk_shared_members::SharedEraseAskCloseRequest` */
 export type SharedEraseAskCloseRequest = { ask_id: string; erased: boolean; act_id?: string | null }
 /** `oneiron::task_verb::sdk_guest_revoke::GuestRevokeRequest` */
-export type GuestRevokeRequest = { grant_ref: EntityId }
+export type GuestRevokeRequest = { grant_ref: EntityId; peer?: string | null }
 /** `oneiron::receipt::guest_revoke::GuestPactStanding` */
 export type GuestPactStanding = "unpacted" | "active" | "suspended" | "promoted" | "disconnected" | "dissolved"
 /** `oneiron::receipt::guest_revoke::NotRecallable` */
@@ -1041,7 +1041,7 @@ export type GuestDeletionRequestStatus = "not_requested" | "queued" | "sent"
 /** `oneiron::receipt::guest_revoke::GuestRevokeDisclosure` */
 export type GuestRevokeDisclosure = { copied_bytes_recallable: NotRecallable; recipient_copy_state: GuestCopyState; deletion_request_status: GuestDeletionRequestStatus }
 /** `oneiron::receipt::guest_revoke::GuestRevokeCourtesyTargetView` */
-export type GuestRevokeCourtesyTargetView = { pact: string; peer_vault_id: string; epoch_cutoff: number }
+export type GuestRevokeCourtesyTargetView = { pact: string; peer_vault_id: string; epoch_cutoff: number; deletion_request_status: GuestDeletionRequestStatus; request?: string | null; error?: string | null }
 /** `oneiron::receipt::guest_revoke::GuestRevokeResponse` */
 export type GuestRevokeResponse = { grant_ref: EntityId; guest_ref: EntityId; changed: boolean; revoked_at: number; revoked_slip_refs?: string[]; pact_standing: GuestPactStanding; disclosure: GuestRevokeDisclosure; courtesy_targets?: GuestRevokeCourtesyTargetView[] }
 /** `oneiron::task_verb::sdk_shared_members::GuestSlipMintRequest` */

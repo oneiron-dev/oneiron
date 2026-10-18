@@ -7455,6 +7455,8 @@ pub struct SharedEraseAskCloseRequest {
 pub struct GuestRevokeRequest {
     #[serde(rename = "grant_ref")]
     pub grant_ref: String,
+    #[serde(rename = "peer", default, skip_serializing_if = "Option::is_none")]
+    pub peer: Option<String>,
 }
 
 /// `oneiron::receipt::guest_revoke::GuestPactStanding`.
@@ -7514,6 +7516,12 @@ pub struct GuestRevokeCourtesyTargetView {
     pub peer_vault_id: String,
     #[serde(rename = "epoch_cutoff")]
     pub epoch_cutoff: u64,
+    #[serde(rename = "deletion_request_status")]
+    pub deletion_request_status: GuestDeletionRequestStatus,
+    #[serde(rename = "request", default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<String>,
+    #[serde(rename = "error", default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// `oneiron::receipt::guest_revoke::GuestRevokeResponse`.

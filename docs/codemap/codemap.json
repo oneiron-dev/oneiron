@@ -24300,7 +24300,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gate/policy_manifest_doors/mod.rs",

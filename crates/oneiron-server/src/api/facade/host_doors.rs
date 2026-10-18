@@ -60,8 +60,8 @@ pub(crate) use super::courtesy_delete_doors::*;
 pub(crate) use super::guest_doors::*;
 pub(crate) use super::hub_doors::*;
 // The owner's residence doors (OF-534), likewise.
-pub(crate) use super::residence_doors::*;
 pub(crate) use super::note_doors::*;
+pub(crate) use super::residence_doors::*;
 // The weave lens's human doors, likewise.
 pub(crate) use super::weave_doors::*;
 // The graph ask and standing-question doors (OF-506), likewise.
@@ -87,8 +87,8 @@ pub(crate) use super::widen_proposal_doors::*;
 // The owner's craft-candidate review doors (OF-490), likewise.
 pub(crate) use super::craft_candidate_doors::*;
 // The app's policy-action doors (OF-181), likewise.
-pub(crate) use super::policy_doors::*;
 pub(crate) use super::gate_policy_doors::*;
+pub(crate) use super::policy_doors::*;
 // The generic connector call's door (ONE-2510), likewise.
 pub(crate) use super::connector_call_doors::*;
 // The secret use door, whose connector.call sends (OF-560), likewise.
