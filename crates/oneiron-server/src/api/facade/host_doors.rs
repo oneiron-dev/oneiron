@@ -55,6 +55,7 @@ pub(crate) use super::booking_doors::*;
 pub(crate) use super::browser_doors::*;
 pub(crate) use super::calendar_doors::*;
 pub(crate) use super::campaign_doors::*;
+pub(crate) use super::compliance_doors::*;
 pub(crate) use super::credential_doors::*;
 pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 
@@ -118,6 +119,7 @@ pub(crate) use super::budget_doors::*;
 pub(crate) use super::fanout_doors::*;
 // The owner's learned-setting doors, likewise.
 pub(crate) use super::learning_doors::*;
+pub(crate) use super::seal_doors::*;
 pub(crate) use super::setting_doors::*;
 pub(crate) use super::slim_doors::*;
 // The owner's historical secret lift sweep door (OF-067), likewise.
@@ -131,6 +133,7 @@ pub(crate) use super::craft_candidate_doors::*;
 // The app's policy-action doors (OF-181), likewise.
 pub(crate) use super::channel_doors::*;
 pub(crate) use super::consent_doors::*;
+pub(crate) use super::graduation_doors::*;
 pub(crate) use super::content_policy_doors::*;
 pub(crate) use super::gate_policy_doors::*;
 pub(crate) use super::policy_doors::*;
@@ -1083,7 +1086,11 @@ fn owner_grade(auth: &CoreAuth, message: &str) -> MemoryResult<()> {
 /// proof it acts under. A row whose door has no such check passes.
 pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<()> {
     match verb {
-        "vault.booking.constraint_turn" => {
+        "vault.booking.constraint_turn"
+        | "vault.booking.availability"
+        | "vault.booking.book"
+        | "vault.booking.reschedule"
+        | "vault.booking.cancel" => {
             crate::api::host_action::require_host_owner_act(server, auth)
                 .map(drop)
                 .map_err(|error| super::FacadeApiError::from(error).into_memory_error())
@@ -1102,6 +1109,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "calendar.imip.get"
         | "vault.calendar.ics.import"
         | "vault.calendar.instances.move"
+        | "vault.campaign.compliance.install"
+        | "vault.campaign.compliance.approve"
+        | "vault.campaign.compliance.reject"
+        | "vault.campaign.compliance.verify"
         | "vault.companions.access_requests.answer"
         | "vault.personas.preview"
         | "vault.personas.export"
@@ -1189,6 +1200,13 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.retrieval.weights.get"
         | "vault.retrieval.weights.configure"
         | "vault.affect.claims.consolidate"
+        | "vault.affect.coping.record"
+        | "vault.affect.coping.update"
+        | "vault.affect.coping.aggregate"
+        | "vault.affect.wellness.policy.get"
+        | "vault.affect.wellness.policy.configure"
+        | "vault.affect.wellness.derive"
+        | "vault.affect.wellness.get"
         | "vault.slim.policy"
         | "vault.slim.state"
         | "vault.slim.resume_step"
@@ -1205,6 +1223,12 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.retrieval.replay"
         | "vault.learning.read"
         | "vault.learning.projection"
+        | "vault.seal.confess"
+        | "vault.seal.audit"
+        | "vault.seal.receipt"
+        | "vault.seal.pending"
+        | "vault.seal.run"
+        | "vault.seal.complete"
         | "vault.settings.learning"
         | "vault.settings.learning.put"
         | "vault.settings.learning.clear"
@@ -1275,6 +1299,16 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.consent.create_standing_grant"
         | "vault.consent.registry"
         | "vault.consent.revoke"
+        | "vault.consent.graduation.policy"
+        | "vault.consent.graduation.policy.set"
+        | "vault.consent.graduation.policy.clear"
+        | "vault.consent.graduation.stats"
+        | "vault.consent.graduation.outcome"
+        | "vault.consent.graduation.offers"
+        | "vault.consent.graduation.answer"
+        | "vault.consent.graduation.trust_table"
+        | "vault.consent.graduation.settings.unpin"
+        | "vault.consent.graduation.demote"
         | "vault.gate.policy.get"
         | "vault.gate.policy.put"
         | "vault.gate.checker.get"

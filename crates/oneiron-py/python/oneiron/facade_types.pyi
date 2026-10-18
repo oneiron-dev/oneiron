@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 757 facade rows, 2666 declarations.
-Inputs: 705 of 757 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 677 of 757 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 791 facade rows, 2755 declarations.
+Inputs: 739 of 791 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 711 of 791 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 99; unread shapes: 0.
 """
 
@@ -2115,6 +2115,83 @@ class AffectClaimConsolidation(TypedDict):
     active_state_ref: NotRequired[str | None]
     created_state_ref: NotRequired[str | None]
     superseded_state_refs: list[str]
+CopingStrategy = Literal["SitSel", "SitMod", "AttDep", "CogChg", "ResMod", "ERFlex"]
+class CopingOutcomeRecordRequest(TypedDict):
+    affected_person_ref: str
+    baseline_turn_ref: str
+    later_turn_ref: str
+    strategy: CopingStrategy
+    confidence: float
+    scope: ClaimScope
+    sensitivity: NotRequired[int | None]
+class CopingVadDelta(TypedDict):
+    valence: float
+    arousal: float
+    dominance: float
+class CopingOutcomeView(TypedDict):
+    claim_ref: str
+    affected_person_ref: str
+    strategy_ref: str
+    strategy: CopingStrategy
+    vad_delta: CopingVadDelta
+    confidence: float
+    successful: bool
+    observed_n: int
+    scope: ClaimScope
+    approval: str
+    source: NotRequired[str | None]
+    valid_from: NotRequired[int | None]
+    valid_to: NotRequired[int | None]
+    evidence_refs: list[str]
+    made_by: NotRequired[MadeBy | None]
+class CopingOutcomeReceipt(TypedDict):
+    outcome: CopingOutcomeView
+    superseded_claim_refs: list[str]
+    receipt_ref: str
+class CopingOutcomeUpdateRequest(TypedDict):
+    prior_claim_ref: str
+    baseline_turn_ref: str
+    later_turn_ref: str
+    confidence: float
+class CopingAggregateRequest(TypedDict):
+    affected_person_ref: str
+    scope: NotRequired[ClaimScope | None]
+class CopingAggregate(TypedDict):
+    affected_person_ref: str
+    outcomes: list[CopingOutcomeView]
+    observed_n: int
+class StateWindow(TypedDict):
+    window_secs: int
+    expected_goal_completions: int
+    expected_engaged_days: int
+class ActionModeRule(TypedDict):
+    mode: str
+    min_index: float
+    max_index: float
+class ActionModePolicy(TypedDict):
+    window: StateWindow
+    rules: list[ActionModeRule]
+class WellnessPolicyConfigureRequest(TypedDict):
+    policy: NotRequired[ActionModePolicy | None]
+class WellnessPersonRequest(TypedDict):
+    affected_person_ref: str
+class ModeGateInputs(TypedDict):
+    affect: float
+    goal_velocity: float
+    engagement: float
+class StateIndex(TypedDict):
+    value: float
+    inputs: NotRequired[ModeGateInputs | None]
+    claim: NotRequired[str | None]
+    observed_at: NotRequired[int | None]
+class WellnessProjection(TypedDict):
+    affected_person_ref: str
+    policy: NotRequired[ActionModePolicy | None]
+    state_index: StateIndex
+    mode: NotRequired[ActionModeRule | None]
+    coping: CopingAggregate
+    source_refs: list[str]
+    receipt_ref: NotRequired[str | None]
 class RetrievalRunsRequest(TypedDict):
     limit: NotRequired[int | None]
 RetrievalAction = Literal["pipeline", "context_pack", "vault_search", "graph_fs_coreutils", "speculative"]
@@ -2497,6 +2574,72 @@ class KeyValueNamespaces(TypedDict):
     max_depth: NotRequired[int | None]
     limit: NotRequired[int]
     offset: NotRequired[int]
+UnknownJurisdictionDefault = Literal["strict_pole"]
+ComplianceExemptionEvidence = Literal["legal_form", "publication_context"]
+class ConditionalExemptionEvidence(TypedDict):
+    jurisdiction: str
+    evidence: ComplianceExemptionEvidence
+ComplianceRuleKind = Literal["consent_class", "sender_id", "physical_address", "optout_mechanism", "optout_deadline", "content_marking", "records", "source_hygiene"]
+B2bExemption = Literal["yes", "no", "conditional"]
+class ComplianceSource(TypedDict):
+    citation: str
+    url: str
+class ComplianceRuleRow(TypedDict):
+    jurisdiction: str
+    channel: str
+    rule_kind: ComplianceRuleKind
+    requirement: str
+    b2b_exemption: B2bExemption
+    source: ComplianceSource
+    verified_at: int
+    version: int
+    penalty_note: str
+class CompliancePack(TypedDict):
+    pack_id: str
+    pack_version: int
+    min_engine_version: str
+    verified_at_max_age_secs: int
+    unknown_jurisdiction_default: UnknownJurisdictionDefault
+    strict_pole_jurisdiction: str
+    jurisdiction_confidence_floor_millis: int
+    prohibited_list_provenance_classes: list[str]
+    conditional_exemption_evidence: list[ConditionalExemptionEvidence]
+    warning: str
+    rows: list[ComplianceRuleRow]
+class ComplianceAmendRequest(TypedDict):
+    prior_version: int
+    pack: CompliancePack
+ComplianceOperation = Literal["install", "amend", "approve", "reject", "verify"]
+ComplianceDisposition = Literal["applied", "pending_owner_stamp", "rejected"]
+ComplianceAmendmentClass = Literal["Tightening", "MetadataRefresh", "LooseningOrAmbiguous"]
+class ComplianceOwnerStamp(TypedDict):
+    owner_ref: str
+    proposal_hash: str
+    recorded_at: int
+ComplianceReceipt = TypedDict("ComplianceReceipt", {"receipt_ref": str, "operation": ComplianceOperation, "disposition": ComplianceDisposition, "prior_version": int, "effective_version": int, "proposed_version": int, "class": NotRequired[ComplianceAmendmentClass | None], "proposal_hash": str, "actor_ref": str, "owner_stamp": NotRequired[ComplianceOwnerStamp | None], "notice": NotRequired[str | None], "reason_codes": list[str], "recorded_at": int})
+class ComplianceApprovalRequest(TypedDict):
+    prior_version: int
+    proposal_hash: str
+class ComplianceRowVerification(TypedDict):
+    jurisdiction: str
+    channel: str
+    rule_kind: ComplianceRuleKind
+    expected_row_version: int
+    source: ComplianceSource
+    verified_at: int
+class ComplianceVerifyRequest(TypedDict):
+    prior_version: int
+    rows: list[ComplianceRowVerification]
+class ComplianceResultRequest(TypedDict):
+    receipt_ref: NotRequired[str | None]
+class CompliancePendingProposal(TypedDict):
+    pack: CompliancePack
+    proposal_hash: str
+class ComplianceResult(TypedDict):
+    active: CompliancePack
+    pending: NotRequired[CompliancePendingProposal | None]
+    notices: list[str]
+    receipts: list[ComplianceReceipt]
 class CampaignMemberChannelSpec(TypedDict):
     channel: str
     basis_evidence: str
@@ -6432,6 +6575,76 @@ class ConsentRegistry(TypedDict):
     rows: list[ConsentRegistryRow]
 class RevokeGrantRequest(TypedDict):
     grant: str
+class GraduationScope(TypedDict):
+    op_kind: str
+    target_class: str
+    actor: str
+class GraduationPolicyRequest(TypedDict):
+    scope: NotRequired[GraduationScope | None]
+class GraduationPolicy(TypedDict):
+    scope_pattern: str
+    required_streak: int
+    posterior_guard: float
+    snooze_backoff_seconds: list[int]
+class GraduationPolicies(TypedDict):
+    rows: list[GraduationPolicy]
+    effective: NotRequired[GraduationPolicy | None]
+class GraduationPolicySetRequest(TypedDict):
+    policy: GraduationPolicy
+class GraduationChanged(TypedDict):
+    changed: bool
+class GraduationPolicyClearRequest(TypedDict):
+    scope_pattern: str
+class GraduationScopeRequest(TypedDict):
+    scope: GraduationScope
+GraduationOutcome = Literal["approved_untouched", "approved_amended", "rejected"]
+GraduationMode = Literal["propose", "offered", "auto"]
+class GraduationStats(TypedDict):
+    scope: GraduationScope
+    untouched_streak: int
+    amended: int
+    rejected: int
+    last_outcome: NotRequired[GraduationOutcome | None]
+    updated_at: int
+    state: GraduationMode
+class GraduationOutcomeRequest(TypedDict):
+    scope: GraduationScope
+    outcome: GraduationOutcome
+class GraduationOffer(TypedDict):
+    scope: GraduationScope
+    stats: GraduationStats
+    threshold: GraduationPolicy
+    reach: ShapePlanReach
+GraduationAnswer = Literal["auto", "not-now", "manual_pinned"]
+class GraduationAnswerRequest(TypedDict):
+    scope: GraduationScope
+    answer: GraduationAnswer
+class GraduationSnoozeNone(TypedDict):
+    state: Literal["none"]
+class GraduationSnoozeSnoozed(TypedDict):
+    state: Literal["snoozed"]
+    count: int
+    next_eligible_at: int
+class GraduationSnoozeManualPinned(TypedDict):
+    state: Literal["manual_pinned"]
+GraduationSnooze = GraduationSnoozeNone | GraduationSnoozeSnoozed | GraduationSnoozeManualPinned
+class GraduationAnswerReceipt(TypedDict):
+    scope: GraduationScope
+    answer: GraduationAnswer
+    grant: NotRequired[ConsentActReceipt | None]
+    snooze: GraduationSnooze
+class GraduationTrustRow(TypedDict):
+    scope: GraduationScope
+    stats: GraduationStats
+    threshold: GraduationPolicy
+    snooze: GraduationSnooze
+    grant_ref: NotRequired[str | None]
+    offer_is_earned: bool
+    offer_reach: NotRequired[str | None]
+GraduationDemotionReason = Literal["rejected", "amended", "agent_judgment"]
+class GraduationDemoteRequest(TypedDict):
+    scope: GraduationScope
+    reason: GraduationDemotionReason
 class PolicyManifestRead(TypedDict):
     manifest_ref: NotRequired[str | None]
 PolicyCriticality = Literal["normal", "critical"]
@@ -6662,6 +6875,69 @@ class LateCreditReceipt(TypedDict):
     shares: list[LateCreditShare]
 class LearningProjectionView(TypedDict):
     receipt: NotRequired[LateCreditReceipt | None]
+class ObjectiveConfession(TypedDict):
+    objective: str
+    met: bool
+    flaw: NotRequired[str | None]
+    uncertainty: NotRequired[str | None]
+class AttemptConfession(TypedDict):
+    attempt: AttemptId
+    subject: EntityId
+    type_ref: CellTypeRef
+    objectives: list[ObjectiveConfession]
+class AuditDraw(TypedDict):
+    rate: float
+    sample: float
+    at: int
+SealCheckKind = Literal["confession_recheck", "random_audit"]
+class SealCheckRequest(TypedDict):
+    reference: str
+    attempt: AttemptId
+    kind: SealCheckKind
+    result_ref: str
+    objectives: list[ObjectiveConfession]
+    rate: float
+    created_at: int
+class ObjectiveFinding(TypedDict):
+    objective: str
+    flaw_present: bool
+    evidence_ref: str
+class SealCheckOutcome(TypedDict):
+    judge_revision: str
+    checked_at: int
+    findings: list[ObjectiveFinding]
+class SealCheckReceipt(TypedDict):
+    request: SealCheckRequest
+    outcome: NotRequired[SealCheckOutcome | None]
+class SealedAttemptReceipt(TypedDict):
+    confession: AttemptConfession
+    executor: str
+    result_ref: str
+    sealed_at: int
+    passing: bool
+    draw: NotRequired[AuditDraw | None]
+    checks: list[SealCheckReceipt]
+class SealAssessment(TypedDict):
+    weighted_flaws: float
+    weighted_hidden_flaws: float
+    confirmed_confessions: int
+    false_confessions: int
+class SealReceiptView(TypedDict):
+    receipt: SealedAttemptReceipt
+    assessment: SealAssessment
+    honesty_reward: float
+class SealAttemptRequest(TypedDict):
+    attempt: AttemptId
+class SealPendingRequest(TypedDict):
+    attempt: NotRequired[AttemptId | None]
+class SealRunRequest(TypedDict):
+    ...
+class SealRunReceipt(TypedDict):
+    job: AttemptId
+class SealCompleteRequest(TypedDict):
+    attempt: AttemptId
+    kind: SealCheckKind
+    outcome: SealCheckOutcome
 class LearningSettingsRequest(TypedDict):
     key: NotRequired[str | None]
 class LearningSettingSpecView(TypedDict):
@@ -10834,6 +11110,129 @@ class ForgetPredicateRequest(TypedDict):
     predicate: str
 ForgetRequest = ClaimRefRequest | ForgetPredicateRequest
 EventTypeKey = str
+class TimeRangeWire(TypedDict):
+    start: int
+    end: int
+ConstraintWeekday = Literal["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+class LocalMinuteWindow(TypedDict):
+    start_minute: int
+    end_minute: int
+class ConstraintTimeRangeWire(TypedDict):
+    start: int
+    end: int
+class ConstraintObject(TypedDict):
+    schema_version: int
+    weekdays: NotRequired[list[ConstraintWeekday]]
+    local_time_windows: NotRequired[list[LocalMinuteWindow]]
+    utc_window: NotRequired[ConstraintTimeRangeWire | None]
+    allow_flex_pool: bool
+class BookingConstraintInputObject(TypedDict):
+    kind: Literal["object"]
+    value: ConstraintObject
+class BookingConstraintInputFreeText(TypedDict):
+    kind: Literal["free_text"]
+    value: str
+BookingConstraintInput = BookingConstraintInputObject | BookingConstraintInputFreeText
+class BookingAvailabilityInput(TypedDict):
+    event_type: EventTypeKey
+    window: TimeRangeWire
+    visitor_tz: str
+    constraint: NotRequired[BookingConstraintInput | None]
+    session_ref: str
+class BookingAvailabilityRequest(TypedDict):
+    op: Literal["availability"]
+    page_token: str
+    input: BookingAvailabilityInput
+class RankedSlot(TypedDict):
+    start_utc: int
+    end_utc: int
+    rank: float
+class SelectedSlot(TypedDict):
+    start_utc: int
+    end_utc: int
+class BookingBookResultHeldContent(TypedDict):
+    hold_token: str
+    selected_slot: SelectedSlot
+    expires_at: int
+class BookingBookResultHeld(TypedDict):
+    stage: Literal["held"]
+    result: BookingBookResultHeldContent
+class BookingBookResultConfirmedContent(TypedDict):
+    reschedule_token: str
+    cancel_token: str
+class BookingBookResultConfirmed(TypedDict):
+    stage: Literal["confirmed"]
+    result: BookingBookResultConfirmedContent
+class BookingBookResultSlotTakenContent(TypedDict):
+    alternatives: list[RankedSlot]
+class BookingBookResultSlotTaken(TypedDict):
+    stage: Literal["slot_taken"]
+    result: BookingBookResultSlotTakenContent
+BookingBookResult = BookingBookResultHeld | BookingBookResultConfirmed | BookingBookResultSlotTaken
+class BookingOperationResponseAvailabilityContent(TypedDict):
+    slots: list[RankedSlot]
+    flex_used: bool
+class BookingOperationResponseAvailability(TypedDict):
+    op: Literal["availability"]
+    result: BookingOperationResponseAvailabilityContent
+class BookingOperationResponseBook(TypedDict):
+    op: Literal["book"]
+    result: BookingBookResult
+class BookingOperationResponseRescheduleContent(TypedDict):
+    reschedule_token: str
+class BookingOperationResponseReschedule(TypedDict):
+    op: Literal["reschedule"]
+    result: BookingOperationResponseRescheduleContent
+class BookingOperationResponseCancelContent(TypedDict):
+    cancel_token: str
+class BookingOperationResponseCancel(TypedDict):
+    op: Literal["cancel"]
+    result: BookingOperationResponseCancelContent
+BookingOperationResponse = BookingOperationResponseAvailability | BookingOperationResponseBook | BookingOperationResponseReschedule | BookingOperationResponseCancel
+class BookingHoldInput(TypedDict):
+    event_type: EventTypeKey
+    selected_slot: SelectedSlot
+    visitor_tz: str
+    constraint: NotRequired[ConstraintObject | None]
+    session_ref: str
+    checkout_lease_token: NotRequired[str | None]
+    idempotency_key: str
+class BookingIntakeAnswer(TypedDict):
+    field_key: str
+    value: str
+class BookingConfirmInput(TypedDict):
+    hold_token: str
+    booker_email: str
+    intake: list[BookingIntakeAnswer]
+    session_ref: str
+    idempotency_key: str
+class BookingBookInputHold(TypedDict):
+    stage: Literal["hold"]
+    input: BookingHoldInput
+class BookingBookInputConfirm(TypedDict):
+    stage: Literal["confirm"]
+    input: BookingConfirmInput
+BookingBookInput = BookingBookInputHold | BookingBookInputConfirm
+class BookingBookRequest(TypedDict):
+    op: Literal["book"]
+    page_token: str
+    input: BookingBookInput
+class BookingRescheduleInput(TypedDict):
+    reschedule_token: str
+    selected_slot: SelectedSlot
+    visitor_tz: str
+    idempotency_key: str
+class BookingRescheduleRequest(TypedDict):
+    op: Literal["reschedule"]
+    page_token: str
+    input: BookingRescheduleInput
+class BookingCancelInput(TypedDict):
+    cancel_token: str
+    idempotency_key: str
+class BookingCancelRequest(TypedDict):
+    op: Literal["cancel"]
+    page_token: str
+    input: BookingCancelInput
 class BookingConstraintTurnWindow(TypedDict):
     start: int
     end: int
@@ -10847,19 +11246,6 @@ class BookingConstraintTurnRequest(TypedDict):
     page_token: str
     turn: BookingConstraintTurnInput
 GeneratedUiCard = TypedDict("GeneratedUiCard", {"protocolVersion": int, "catalog": GeneratedUiCatalog, "cardId": str, "tree": GeneratedLens, "actions": list[GeneratedUiActionDeclaration], "$state": GeneratedUiStateSnapshot})
-ConstraintWeekday = Literal["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
-class LocalMinuteWindow(TypedDict):
-    start_minute: int
-    end_minute: int
-class TimeRangeWire(TypedDict):
-    start: int
-    end: int
-class ConstraintObject(TypedDict):
-    schema_version: int
-    weekdays: NotRequired[list[ConstraintWeekday]]
-    local_time_windows: NotRequired[list[LocalMinuteWindow]]
-    utc_window: NotRequired[TimeRangeWire | None]
-    allow_flex_pool: bool
 class BookingConstraintHoldContext(TypedDict):
     event_type: EventTypeKey
     visitor_tz: str

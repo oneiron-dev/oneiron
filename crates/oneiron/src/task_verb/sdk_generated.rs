@@ -395,6 +395,46 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.affect.coping.record",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::coping_doors::CopingOutcomeRecordRequest,
+                >(),
+            ),
+            (
+                "vault.affect.coping.update",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::coping_doors::CopingOutcomeUpdateRequest,
+                >(),
+            ),
+            (
+                "vault.affect.coping.aggregate",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::coping_doors::CopingAggregateRequest,
+                >(),
+            ),
+            (
+                "vault.affect.wellness.policy.get",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.affect.wellness.policy.configure",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::wellness_doors::WellnessPolicyConfigureRequest,
+                >(),
+            ),
+            (
+                "vault.affect.wellness.derive",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::wellness_doors::WellnessPersonRequest,
+                >(),
+            ),
+            (
+                "vault.affect.wellness.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::wellness_doors::WellnessPersonRequest,
+                >(),
+            ),
+            (
                 "vault.retrieval.recall",
                 crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::RecallRequest>(
                 ),
@@ -511,6 +551,42 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.kv.namespaces",
                 crate::code_run::vault_read::request_schema::<crate::memory::KeyValueNamespaces>(),
+            ),
+            (
+                "vault.campaign.compliance.install",
+                crate::code_run::vault_read::request_schema::<
+                    crate::campaign::compliance::ComplianceAmendRequest,
+                >(),
+            ),
+            (
+                "vault.campaign.compliance.amend",
+                crate::code_run::vault_read::request_schema::<
+                    crate::campaign::compliance::ComplianceAmendRequest,
+                >(),
+            ),
+            (
+                "vault.campaign.compliance.approve",
+                crate::code_run::vault_read::request_schema::<
+                    crate::campaign::compliance::ComplianceApprovalRequest,
+                >(),
+            ),
+            (
+                "vault.campaign.compliance.reject",
+                crate::code_run::vault_read::request_schema::<
+                    crate::campaign::compliance::ComplianceApprovalRequest,
+                >(),
+            ),
+            (
+                "vault.campaign.compliance.verify",
+                crate::code_run::vault_read::request_schema::<
+                    crate::campaign::compliance::ComplianceVerifyRequest,
+                >(),
+            ),
+            (
+                "vault.campaign.compliance.result",
+                crate::code_run::vault_read::request_schema::<
+                    crate::campaign::compliance::ComplianceResultRequest,
+                >(),
             ),
             (
                 "vault.campaign.enroll",
@@ -1705,6 +1781,70 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.consent.graduation.policy",
+                crate::code_run::vault_read::request_schema::<
+                    crate::consent_graduation::api::GraduationPolicyRequest,
+                >(),
+            ),
+            (
+                "vault.consent.graduation.policy.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::consent_graduation::api::GraduationPolicySetRequest,
+                >(),
+            ),
+            (
+                "vault.consent.graduation.policy.clear",
+                crate::code_run::vault_read::request_schema::<
+                    crate::consent_graduation::api::GraduationPolicyClearRequest,
+                >(),
+            ),
+            (
+                "vault.consent.graduation.stats",
+                crate::code_run::vault_read::request_schema::<
+                    crate::consent_graduation::api::GraduationScopeRequest,
+                >(),
+            ),
+            (
+                "vault.consent.graduation.outcome",
+                crate::code_run::vault_read::request_schema::<
+                    crate::consent_graduation::api::GraduationOutcomeRequest,
+                >(),
+            ),
+            (
+                "vault.consent.graduation.offers",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
+                "vault.consent.graduation.answer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::consent_graduation::api::GraduationAnswerRequest,
+                >(),
+            ),
+            (
+                "vault.consent.graduation.trust_table",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
+                "vault.consent.graduation.settings.unpin",
+                crate::code_run::vault_read::request_schema::<
+                    crate::consent_graduation::api::GraduationScopeRequest,
+                >(),
+            ),
+            (
+                "vault.consent.graduation.demote",
+                crate::code_run::vault_read::request_schema::<
+                    crate::consent_graduation::api::GraduationDemoteRequest,
+                >(),
+            ),
+            (
+                "self.consent.graduation.demote",
+                crate::code_run::vault_read::request_schema::<
+                    crate::consent_graduation::api::GraduationScopeRequest,
+                >(),
+            ),
+            (
                 "vault.gate.policy.get",
                 crate::code_run::vault_read::request_schema::<
                     crate::policy_manifest_doors::PolicyManifestRead,
@@ -1742,6 +1882,42 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.learning.projection",
                 crate::code_run::vault_read::request_schema::<
                     crate::learning::doors::LearningProjectionRequest,
+                >(),
+            ),
+            (
+                "vault.seal.confess",
+                crate::code_run::vault_read::request_schema::<
+                    crate::self_heal::audit::AttemptConfession,
+                >(),
+            ),
+            (
+                "vault.seal.audit",
+                crate::code_run::vault_read::request_schema::<
+                    crate::self_heal::audit::doors::SealAttemptRequest,
+                >(),
+            ),
+            (
+                "vault.seal.receipt",
+                crate::code_run::vault_read::request_schema::<
+                    crate::self_heal::audit::doors::SealAttemptRequest,
+                >(),
+            ),
+            (
+                "vault.seal.pending",
+                crate::code_run::vault_read::request_schema::<
+                    crate::self_heal::audit::doors::SealPendingRequest,
+                >(),
+            ),
+            (
+                "vault.seal.run",
+                crate::code_run::vault_read::request_schema::<
+                    crate::self_heal::audit::doors::SealRunRequest,
+                >(),
+            ),
+            (
+                "vault.seal.complete",
+                crate::code_run::vault_read::request_schema::<
+                    crate::self_heal::audit::doors::SealCompleteRequest,
                 >(),
             ),
             (
@@ -3192,6 +3368,30 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<ForgetRequest>(),
             ),
             (
+                "vault.booking.availability",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::BookingAvailabilityRequest,
+                >(),
+            ),
+            (
+                "vault.booking.book",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::BookingBookRequest,
+                >(),
+            ),
+            (
+                "vault.booking.reschedule",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::BookingRescheduleRequest,
+                >(),
+            ),
+            (
+                "vault.booking.cancel",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::BookingCancelRequest,
+                >(),
+            ),
+            (
                 "vault.booking.constraint_turn",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::BookingConstraintTurnRequest,
@@ -4307,6 +4507,13 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.tagging.history",
     "vault.tagging.mentions",
     "vault.affect.claims.consolidate",
+    "vault.affect.coping.record",
+    "vault.affect.coping.update",
+    "vault.affect.coping.aggregate",
+    "vault.affect.wellness.policy.get",
+    "vault.affect.wellness.policy.configure",
+    "vault.affect.wellness.derive",
+    "vault.affect.wellness.get",
     "vault.retrieval.runs",
     "vault.retrieval.run",
     "vault.retrieval.turn",
@@ -4319,6 +4526,12 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.scope.position",
     "vault.scope.ceiling",
     "vault.export.scoped",
+    "vault.campaign.compliance.install",
+    "vault.campaign.compliance.amend",
+    "vault.campaign.compliance.approve",
+    "vault.campaign.compliance.reject",
+    "vault.campaign.compliance.verify",
+    "vault.campaign.compliance.result",
     "vault.campaign.enroll",
     "vault.campaign.stage.evidence",
     "vault.campaign.unsubscribe",
@@ -4446,6 +4659,17 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.consent.create_standing_grant",
     "vault.consent.registry",
     "vault.consent.revoke",
+    "vault.consent.graduation.policy",
+    "vault.consent.graduation.policy.set",
+    "vault.consent.graduation.policy.clear",
+    "vault.consent.graduation.stats",
+    "vault.consent.graduation.outcome",
+    "vault.consent.graduation.offers",
+    "vault.consent.graduation.answer",
+    "vault.consent.graduation.trust_table",
+    "vault.consent.graduation.settings.unpin",
+    "vault.consent.graduation.demote",
+    "self.consent.graduation.demote",
     "vault.gate.policy.get",
     "vault.gate.policy.put",
     "vault.gate.policy.propose",
@@ -4453,6 +4677,12 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.gate.checker.set",
     "vault.learning.read",
     "vault.learning.projection",
+    "vault.seal.confess",
+    "vault.seal.audit",
+    "vault.seal.receipt",
+    "vault.seal.pending",
+    "vault.seal.run",
+    "vault.seal.complete",
     "vault.claims.review",
     "vault.claims.settle",
     "self.secrets.materialize",
@@ -4566,6 +4796,10 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.decisions.bands.read",
     "vault.decisions.bands.learn",
     "vault.decisions.bands.enforce",
+    "vault.booking.availability",
+    "vault.booking.book",
+    "vault.booking.reschedule",
+    "vault.booking.cancel",
     "vault.booking.constraint_turn",
     "vault.booking.page_token",
     "calendar.invite",
@@ -4792,6 +5026,27 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.affect.claims.consolidate" => crate::code_run::vault_read::request_schema::<
             crate::memory::affect::AffectClaimConsolidation,
         >(),
+        "vault.affect.coping.record" => crate::code_run::vault_read::request_schema::<
+            crate::memory::coping_doors::CopingOutcomeReceipt,
+        >(),
+        "vault.affect.coping.update" => crate::code_run::vault_read::request_schema::<
+            crate::memory::coping_doors::CopingOutcomeReceipt,
+        >(),
+        "vault.affect.coping.aggregate" => crate::code_run::vault_read::request_schema::<
+            crate::memory::coping_doors::CopingAggregate,
+        >(),
+        "vault.affect.wellness.policy.get" => crate::code_run::vault_read::request_schema::<
+            Option<crate::dreamer_runner::maintenance::action_mode::ActionModePolicy>,
+        >(),
+        "vault.affect.wellness.policy.configure" => crate::code_run::vault_read::request_schema::<
+            Option<crate::dreamer_runner::maintenance::action_mode::ActionModePolicy>,
+        >(),
+        "vault.affect.wellness.derive" => crate::code_run::vault_read::request_schema::<
+            crate::memory::wellness_doors::WellnessProjection,
+        >(),
+        "vault.affect.wellness.get" => crate::code_run::vault_read::request_schema::<
+            crate::memory::wellness_doors::WellnessProjection,
+        >(),
         "vault.retrieval.runs" => crate::code_run::vault_read::request_schema::<
             Vec<crate::task_verb::sdk::RetrievalRunEvidence>,
         >(),
@@ -4828,6 +5083,24 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.export.scoped" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ScopedExport>()
         }
+        "vault.campaign.compliance.install" => crate::code_run::vault_read::request_schema::<
+            crate::campaign::compliance::ComplianceReceipt,
+        >(),
+        "vault.campaign.compliance.amend" => crate::code_run::vault_read::request_schema::<
+            crate::campaign::compliance::ComplianceReceipt,
+        >(),
+        "vault.campaign.compliance.approve" => crate::code_run::vault_read::request_schema::<
+            crate::campaign::compliance::ComplianceReceipt,
+        >(),
+        "vault.campaign.compliance.reject" => crate::code_run::vault_read::request_schema::<
+            crate::campaign::compliance::ComplianceReceipt,
+        >(),
+        "vault.campaign.compliance.verify" => crate::code_run::vault_read::request_schema::<
+            crate::campaign::compliance::ComplianceReceipt,
+        >(),
+        "vault.campaign.compliance.result" => crate::code_run::vault_read::request_schema::<
+            crate::campaign::compliance::ComplianceResult,
+        >(),
         "vault.campaign.enroll" => crate::code_run::vault_read::request_schema::<
             crate::campaign::surface::CampaignEnrollmentReceipt,
         >(),
@@ -5219,6 +5492,39 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.consent.revoke" => crate::code_run::vault_read::request_schema::<
             crate::consent::lifecycle::ConsentActReceipt,
         >(),
+        "vault.consent.graduation.policy" => crate::code_run::vault_read::request_schema::<
+            crate::consent_graduation::api::GraduationPolicies,
+        >(),
+        "vault.consent.graduation.policy.set" => crate::code_run::vault_read::request_schema::<
+            crate::consent_graduation::api::GraduationChanged,
+        >(),
+        "vault.consent.graduation.policy.clear" => crate::code_run::vault_read::request_schema::<
+            crate::consent_graduation::api::GraduationChanged,
+        >(),
+        "vault.consent.graduation.stats" => crate::code_run::vault_read::request_schema::<
+            Option<crate::consent_graduation::api::GraduationStats>,
+        >(),
+        "vault.consent.graduation.outcome" => crate::code_run::vault_read::request_schema::<
+            crate::consent_graduation::api::GraduationStats,
+        >(),
+        "vault.consent.graduation.offers" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::consent_graduation::api::GraduationOffer>,
+        >(),
+        "vault.consent.graduation.answer" => crate::code_run::vault_read::request_schema::<
+            crate::consent_graduation::api::GraduationAnswerReceipt,
+        >(),
+        "vault.consent.graduation.trust_table" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::consent_graduation::api::GraduationTrustRow>,
+        >(),
+        "vault.consent.graduation.settings.unpin" => crate::code_run::vault_read::request_schema::<
+            crate::consent_graduation::api::GraduationChanged,
+        >(),
+        "vault.consent.graduation.demote" => crate::code_run::vault_read::request_schema::<
+            crate::consent_graduation::api::GraduationChanged,
+        >(),
+        "self.consent.graduation.demote" => crate::code_run::vault_read::request_schema::<
+            crate::consent_graduation::api::GraduationChanged,
+        >(),
         "vault.gate.policy.get" => crate::code_run::vault_read::request_schema::<
             crate::policy_manifest_doors::PolicyManifestsView,
         >(),
@@ -5239,6 +5545,24 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.learning.projection" => crate::code_run::vault_read::request_schema::<
             crate::learning::doors::LearningProjectionView,
+        >(),
+        "vault.seal.confess" => crate::code_run::vault_read::request_schema::<
+            crate::self_heal::audit::doors::SealReceiptView,
+        >(),
+        "vault.seal.audit" => crate::code_run::vault_read::request_schema::<
+            crate::self_heal::audit::doors::SealReceiptView,
+        >(),
+        "vault.seal.receipt" => crate::code_run::vault_read::request_schema::<
+            Option<crate::self_heal::audit::doors::SealReceiptView>,
+        >(),
+        "vault.seal.pending" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::self_heal::audit::SealCheckRequest>,
+        >(),
+        "vault.seal.run" => crate::code_run::vault_read::request_schema::<
+            crate::self_heal::audit::doors::SealRunReceipt,
+        >(),
+        "vault.seal.complete" => crate::code_run::vault_read::request_schema::<
+            crate::self_heal::audit::doors::SealReceiptView,
         >(),
         "vault.claims.review" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ClaimProposalReview>()
@@ -5583,6 +5907,18 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.decisions.bands.enforce" => {
             crate::code_run::vault_read::request_schema::<crate::llm::decision::LearnedBand>()
         }
+        "vault.booking.availability" => crate::code_run::vault_read::request_schema::<
+            crate::booking::agent_api::BookingOperationResponse,
+        >(),
+        "vault.booking.book" => crate::code_run::vault_read::request_schema::<
+            crate::booking::agent_api::BookingOperationResponse,
+        >(),
+        "vault.booking.reschedule" => crate::code_run::vault_read::request_schema::<
+            crate::booking::agent_api::BookingOperationResponse,
+        >(),
+        "vault.booking.cancel" => crate::code_run::vault_read::request_schema::<
+            crate::booking::agent_api::BookingOperationResponse,
+        >(),
         "vault.booking.constraint_turn" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::BookingConstraintTurnResponse,
         >(),
@@ -6533,6 +6869,55 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.affect.coping.record" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.affect.coping.update" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.affect.coping.aggregate" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.affect.wellness.policy.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.affect.wellness.policy.configure" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.affect.wellness.derive" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.affect.wellness.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.retrieval.recall" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -6695,6 +7080,48 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.kv.namespaces" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.campaign.compliance.install" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.campaign.compliance.amend" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.campaign.compliance.approve" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.campaign.compliance.reject" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.campaign.compliance.verify" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.campaign.compliance.result" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -8202,6 +8629,83 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.consent.graduation.policy" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.graduation.policy.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.graduation.policy.clear" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.graduation.stats" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.graduation.outcome" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.graduation.offers" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.graduation.answer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.graduation.trust_table" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.graduation.settings.unpin" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.graduation.demote" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.consent.graduation.demote" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.gate.policy.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -8245,6 +8749,48 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.learning.projection" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.seal.confess" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.seal.audit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.seal.receipt" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.seal.pending" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.seal.run" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.seal.complete" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -10020,6 +10566,34 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.booking.availability" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.booking.book" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.booking.reschedule" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.booking.cancel" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.booking.constraint_turn" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -11563,6 +12137,33 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::affect::AffectClaimConsolidateRequest =
                 decode(value.clone())?;
         }
+        "vault.affect.coping.record" => {
+            let _input: crate::memory::coping_doors::CopingOutcomeRecordRequest =
+                decode(value.clone())?;
+        }
+        "vault.affect.coping.update" => {
+            let _input: crate::memory::coping_doors::CopingOutcomeUpdateRequest =
+                decode(value.clone())?;
+        }
+        "vault.affect.coping.aggregate" => {
+            let _input: crate::memory::coping_doors::CopingAggregateRequest =
+                decode(value.clone())?;
+        }
+        "vault.affect.wellness.policy.get" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.affect.wellness.policy.configure" => {
+            let _input: crate::memory::wellness_doors::WellnessPolicyConfigureRequest =
+                decode(value.clone())?;
+        }
+        "vault.affect.wellness.derive" => {
+            let _input: crate::memory::wellness_doors::WellnessPersonRequest =
+                decode(value.clone())?;
+        }
+        "vault.affect.wellness.get" => {
+            let _input: crate::memory::wellness_doors::WellnessPersonRequest =
+                decode(value.clone())?;
+        }
         "vault.retrieval.recall" => {
             let _input: crate::task_verb::sdk::RecallRequest = decode(value.clone())?;
         }
@@ -11640,6 +12241,30 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.kv.namespaces" => {
             let _input: crate::memory::KeyValueNamespaces = decode(value.clone())?;
+        }
+        "vault.campaign.compliance.install" => {
+            let _input: crate::campaign::compliance::ComplianceAmendRequest =
+                decode(value.clone())?;
+        }
+        "vault.campaign.compliance.amend" => {
+            let _input: crate::campaign::compliance::ComplianceAmendRequest =
+                decode(value.clone())?;
+        }
+        "vault.campaign.compliance.approve" => {
+            let _input: crate::campaign::compliance::ComplianceApprovalRequest =
+                decode(value.clone())?;
+        }
+        "vault.campaign.compliance.reject" => {
+            let _input: crate::campaign::compliance::ComplianceApprovalRequest =
+                decode(value.clone())?;
+        }
+        "vault.campaign.compliance.verify" => {
+            let _input: crate::campaign::compliance::ComplianceVerifyRequest =
+                decode(value.clone())?;
+        }
+        "vault.campaign.compliance.result" => {
+            let _input: crate::campaign::compliance::ComplianceResultRequest =
+                decode(value.clone())?;
         }
         "vault.campaign.enroll" => {
             let _input: crate::campaign::surface::CampaignEnrollRequest = decode(value.clone())?;
@@ -12350,6 +12975,48 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.consent.revoke" => {
             let _input: crate::consent::lifecycle::RevokeGrantRequest = decode(value.clone())?;
         }
+        "vault.consent.graduation.policy" => {
+            let _input: crate::consent_graduation::api::GraduationPolicyRequest =
+                decode(value.clone())?;
+        }
+        "vault.consent.graduation.policy.set" => {
+            let _input: crate::consent_graduation::api::GraduationPolicySetRequest =
+                decode(value.clone())?;
+        }
+        "vault.consent.graduation.policy.clear" => {
+            let _input: crate::consent_graduation::api::GraduationPolicyClearRequest =
+                decode(value.clone())?;
+        }
+        "vault.consent.graduation.stats" => {
+            let _input: crate::consent_graduation::api::GraduationScopeRequest =
+                decode(value.clone())?;
+        }
+        "vault.consent.graduation.outcome" => {
+            let _input: crate::consent_graduation::api::GraduationOutcomeRequest =
+                decode(value.clone())?;
+        }
+        "vault.consent.graduation.offers" => {
+            let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+        }
+        "vault.consent.graduation.answer" => {
+            let _input: crate::consent_graduation::api::GraduationAnswerRequest =
+                decode(value.clone())?;
+        }
+        "vault.consent.graduation.trust_table" => {
+            let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+        }
+        "vault.consent.graduation.settings.unpin" => {
+            let _input: crate::consent_graduation::api::GraduationScopeRequest =
+                decode(value.clone())?;
+        }
+        "vault.consent.graduation.demote" => {
+            let _input: crate::consent_graduation::api::GraduationDemoteRequest =
+                decode(value.clone())?;
+        }
+        "self.consent.graduation.demote" => {
+            let _input: crate::consent_graduation::api::GraduationScopeRequest =
+                decode(value.clone())?;
+        }
         "vault.gate.policy.get" => {
             let _input: crate::policy_manifest_doors::PolicyManifestRead = decode(value.clone())?;
         }
@@ -12371,6 +13038,25 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.learning.projection" => {
             let _input: crate::learning::doors::LearningProjectionRequest = decode(value.clone())?;
+        }
+        "vault.seal.confess" => {
+            let _input: crate::self_heal::audit::AttemptConfession = decode(value.clone())?;
+        }
+        "vault.seal.audit" => {
+            let _input: crate::self_heal::audit::doors::SealAttemptRequest = decode(value.clone())?;
+        }
+        "vault.seal.receipt" => {
+            let _input: crate::self_heal::audit::doors::SealAttemptRequest = decode(value.clone())?;
+        }
+        "vault.seal.pending" => {
+            let _input: crate::self_heal::audit::doors::SealPendingRequest = decode(value.clone())?;
+        }
+        "vault.seal.run" => {
+            let _input: crate::self_heal::audit::doors::SealRunRequest = decode(value.clone())?;
+        }
+        "vault.seal.complete" => {
+            let _input: crate::self_heal::audit::doors::SealCompleteRequest =
+                decode(value.clone())?;
         }
         "vault.settings.learning" => {
             let _input: crate::learning_setting_doors::LearningSettingsRequest =
@@ -13251,6 +13937,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.forget" => {
             let _input: ForgetRequest = decode(value.clone())?;
+        }
+        "vault.booking.availability" => {
+            let _input: crate::task_verb::sdk::BookingAvailabilityRequest = decode(value.clone())?;
+        }
+        "vault.booking.book" => {
+            let _input: crate::task_verb::sdk::BookingBookRequest = decode(value.clone())?;
+        }
+        "vault.booking.reschedule" => {
+            let _input: crate::task_verb::sdk::BookingRescheduleRequest = decode(value.clone())?;
+        }
+        "vault.booking.cancel" => {
+            let _input: crate::task_verb::sdk::BookingCancelRequest = decode(value.clone())?;
         }
         "vault.booking.constraint_turn" => {
             let _input: crate::task_verb::sdk::BookingConstraintTurnRequest =
@@ -14137,6 +14835,22 @@ pub fn invoke(
         "vault.affect.claims.consolidate" => {
             encode(vault_affect_claims_consolidate(memory, decode(value)?)?)
         }
+        "vault.affect.coping.record" => encode(vault_affect_coping_record(memory, decode(value)?)?),
+        "vault.affect.coping.update" => encode(vault_affect_coping_update(memory, decode(value)?)?),
+        "vault.affect.coping.aggregate" => {
+            encode(vault_affect_coping_aggregate(memory, decode(value)?)?)
+        }
+        "vault.affect.wellness.policy.get" => {
+            encode(vault_affect_wellness_policy_get(memory, decode(value)?)?)
+        }
+        "vault.affect.wellness.policy.configure" => encode(vault_affect_wellness_policy_configure(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.affect.wellness.derive" => {
+            encode(vault_affect_wellness_derive(memory, decode(value)?)?)
+        }
+        "vault.affect.wellness.get" => encode(vault_affect_wellness_get(memory, decode(value)?)?),
         "vault.retrieval.recall" => encode(vault_retrieval_recall(memory, decode(value)?)?),
         "vault.retrieval.runs" => encode(vault_retrieval_runs(memory, decode(value)?)?),
         "vault.retrieval.run" => encode(vault_retrieval_run(memory, decode(value)?)?),
@@ -14165,6 +14879,24 @@ pub fn invoke(
         "vault.kv.delete" => encode(vault_kv_delete(memory, decode(value)?)?),
         "vault.kv.search" => encode(vault_kv_search(memory, decode(value)?)?),
         "vault.kv.namespaces" => encode(vault_kv_namespaces(memory, decode(value)?)?),
+        "vault.campaign.compliance.install" => {
+            encode(vault_campaign_compliance_install(memory, decode(value)?)?)
+        }
+        "vault.campaign.compliance.amend" => {
+            encode(vault_campaign_compliance_amend(memory, decode(value)?)?)
+        }
+        "vault.campaign.compliance.approve" => {
+            encode(vault_campaign_compliance_approve(memory, decode(value)?)?)
+        }
+        "vault.campaign.compliance.reject" => {
+            encode(vault_campaign_compliance_reject(memory, decode(value)?)?)
+        }
+        "vault.campaign.compliance.verify" => {
+            encode(vault_campaign_compliance_verify(memory, decode(value)?)?)
+        }
+        "vault.campaign.compliance.result" => {
+            encode(vault_campaign_compliance_result(memory, decode(value)?)?)
+        }
         "vault.campaign.enroll" => encode(vault_campaign_enroll(memory, decode(value)?)?),
         "vault.campaign.stage.evidence" => {
             encode(vault_campaign_stage_evidence(memory, decode(value)?)?)
@@ -14625,6 +15357,41 @@ pub fn invoke(
         }
         "vault.consent.registry" => encode(vault_consent_registry(memory, decode(value)?)?),
         "vault.consent.revoke" => encode(vault_consent_revoke(memory, decode(value)?)?),
+        "vault.consent.graduation.policy" => {
+            encode(vault_consent_graduation_policy(memory, decode(value)?)?)
+        }
+        "vault.consent.graduation.policy.set" => {
+            encode(vault_consent_graduation_policy_set(memory, decode(value)?)?)
+        }
+        "vault.consent.graduation.policy.clear" => encode(vault_consent_graduation_policy_clear(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.consent.graduation.stats" => {
+            encode(vault_consent_graduation_stats(memory, decode(value)?)?)
+        }
+        "vault.consent.graduation.outcome" => {
+            encode(vault_consent_graduation_outcome(memory, decode(value)?)?)
+        }
+        "vault.consent.graduation.offers" => {
+            encode(vault_consent_graduation_offers(memory, decode(value)?)?)
+        }
+        "vault.consent.graduation.answer" => {
+            encode(vault_consent_graduation_answer(memory, decode(value)?)?)
+        }
+        "vault.consent.graduation.trust_table" => encode(vault_consent_graduation_trust_table(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.consent.graduation.settings.unpin" => encode(
+            vault_consent_graduation_settings_unpin(memory, decode(value)?)?,
+        ),
+        "vault.consent.graduation.demote" => {
+            encode(vault_consent_graduation_demote(memory, decode(value)?)?)
+        }
+        "self.consent.graduation.demote" => {
+            encode(self_consent_graduation_demote(memory, decode(value)?)?)
+        }
         "vault.gate.policy.get" => encode(vault_gate_policy_get(memory, decode(value)?)?),
         "vault.gate.policy.put" => encode(vault_gate_policy_put(memory, decode(value)?)?),
         "vault.gate.policy.propose" => encode(vault_gate_policy_propose(memory, decode(value)?)?),
@@ -14632,6 +15399,12 @@ pub fn invoke(
         "vault.gate.checker.set" => encode(vault_gate_checker_set(memory, decode(value)?)?),
         "vault.learning.read" => encode(vault_learning_read(memory, decode(value)?)?),
         "vault.learning.projection" => encode(vault_learning_projection(memory, decode(value)?)?),
+        "vault.seal.confess" => encode(vault_seal_confess(memory, decode(value)?)?),
+        "vault.seal.audit" => encode(vault_seal_audit(memory, decode(value)?)?),
+        "vault.seal.receipt" => encode(vault_seal_receipt(memory, decode(value)?)?),
+        "vault.seal.pending" => encode(vault_seal_pending(memory, decode(value)?)?),
+        "vault.seal.run" => encode(vault_seal_run(memory, decode(value)?)?),
+        "vault.seal.complete" => encode(vault_seal_complete(memory, decode(value)?)?),
         "vault.settings.learning" => encode(vault_settings_learning(memory, decode(value)?)?),
         "vault.settings.learning.put" => {
             encode(vault_settings_learning_put(memory, decode(value)?)?)
@@ -15019,6 +15792,10 @@ pub fn invoke(
         "vault.remember" => encode(vault_remember(memory, decode(value)?)?),
         "vault.claims.retract" => encode(vault_claims_retract(memory, decode(value)?)?),
         "vault.forget" => encode(vault_forget(memory, decode(value)?)?),
+        "vault.booking.availability" => encode(vault_booking_availability(memory, decode(value)?)?),
+        "vault.booking.book" => encode(vault_booking_book(memory, decode(value)?)?),
+        "vault.booking.reschedule" => encode(vault_booking_reschedule(memory, decode(value)?)?),
+        "vault.booking.cancel" => encode(vault_booking_cancel(memory, decode(value)?)?),
         "vault.booking.constraint_turn" => {
             encode(vault_booking_constraint_turn(memory, decode(value)?)?)
         }
@@ -16226,6 +17003,63 @@ pub fn vault_affect_claims_consolidate(
         &input,
     )
 }
+pub fn vault_affect_coping_record(
+    memory: &Memory<'_>,
+    input: crate::memory::coping_doors::CopingOutcomeRecordRequest,
+) -> MemoryResult<crate::memory::coping_doors::CopingOutcomeReceipt> {
+    memory.coping_outcome_record_as_owner(
+        &memory.embedded_owner("vault.affect.coping.record")?,
+        &input,
+    )
+}
+pub fn vault_affect_coping_update(
+    memory: &Memory<'_>,
+    input: crate::memory::coping_doors::CopingOutcomeUpdateRequest,
+) -> MemoryResult<crate::memory::coping_doors::CopingOutcomeReceipt> {
+    memory.coping_outcome_update_as_owner(
+        &memory.embedded_owner("vault.affect.coping.update")?,
+        &input,
+    )
+}
+pub fn vault_affect_coping_aggregate(
+    memory: &Memory<'_>,
+    input: crate::memory::coping_doors::CopingAggregateRequest,
+) -> MemoryResult<crate::memory::coping_doors::CopingAggregate> {
+    memory.coping_aggregate_as_owner(
+        &memory.embedded_owner("vault.affect.coping.aggregate")?,
+        &input,
+    )
+}
+pub fn vault_affect_wellness_policy_get(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Option<crate::dreamer_runner::maintenance::action_mode::ActionModePolicy>> {
+    memory.wellness_policy_as_owner(&memory.embedded_owner("vault.affect.wellness.policy.get")?)
+}
+pub fn vault_affect_wellness_policy_configure(
+    memory: &Memory<'_>,
+    input: crate::memory::wellness_doors::WellnessPolicyConfigureRequest,
+) -> MemoryResult<Option<crate::dreamer_runner::maintenance::action_mode::ActionModePolicy>> {
+    memory.wellness_policy_configure_as_owner(
+        &memory.embedded_owner("vault.affect.wellness.policy.configure")?,
+        &input,
+    )
+}
+pub fn vault_affect_wellness_derive(
+    memory: &Memory<'_>,
+    input: crate::memory::wellness_doors::WellnessPersonRequest,
+) -> MemoryResult<crate::memory::wellness_doors::WellnessProjection> {
+    memory.wellness_derive_as_owner(
+        &memory.embedded_owner("vault.affect.wellness.derive")?,
+        &input,
+    )
+}
+pub fn vault_affect_wellness_get(
+    memory: &Memory<'_>,
+    input: crate::memory::wellness_doors::WellnessPersonRequest,
+) -> MemoryResult<crate::memory::wellness_doors::WellnessProjection> {
+    memory.wellness_get_as_owner(&memory.embedded_owner("vault.affect.wellness.get")?, &input)
+}
 pub fn vault_retrieval_recall(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::RecallRequest,
@@ -16415,6 +17249,54 @@ pub fn vault_kv_namespaces(
     input: crate::memory::KeyValueNamespaces,
 ) -> MemoryResult<Vec<Vec<String>>> {
     memory.key_value_namespaces(&input)
+}
+pub fn vault_campaign_compliance_install(
+    memory: &Memory<'_>,
+    input: crate::campaign::compliance::ComplianceAmendRequest,
+) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
+    memory.compliance_install_as(
+        &memory.embedded_owner("vault.campaign.compliance.install")?,
+        &input,
+    )
+}
+pub fn vault_campaign_compliance_amend(
+    memory: &Memory<'_>,
+    input: crate::campaign::compliance::ComplianceAmendRequest,
+) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
+    memory.compliance_amend(&input)
+}
+pub fn vault_campaign_compliance_approve(
+    memory: &Memory<'_>,
+    input: crate::campaign::compliance::ComplianceApprovalRequest,
+) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
+    memory.compliance_approve_as(
+        &memory.embedded_owner("vault.campaign.compliance.approve")?,
+        &input,
+    )
+}
+pub fn vault_campaign_compliance_reject(
+    memory: &Memory<'_>,
+    input: crate::campaign::compliance::ComplianceApprovalRequest,
+) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
+    memory.compliance_reject_as(
+        &memory.embedded_owner("vault.campaign.compliance.reject")?,
+        &input,
+    )
+}
+pub fn vault_campaign_compliance_verify(
+    memory: &Memory<'_>,
+    input: crate::campaign::compliance::ComplianceVerifyRequest,
+) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
+    memory.compliance_verify_as(
+        &memory.embedded_owner("vault.campaign.compliance.verify")?,
+        &input,
+    )
+}
+pub fn vault_campaign_compliance_result(
+    memory: &Memory<'_>,
+    input: crate::campaign::compliance::ComplianceResultRequest,
+) -> MemoryResult<crate::campaign::compliance::ComplianceResult> {
+    memory.compliance_result(&input)
 }
 pub fn vault_campaign_enroll(
     memory: &Memory<'_>,
@@ -18255,6 +19137,110 @@ pub fn vault_consent_revoke(
         input,
     )
 }
+pub fn vault_consent_graduation_policy(
+    memory: &Memory<'_>,
+    input: crate::consent_graduation::api::GraduationPolicyRequest,
+) -> MemoryResult<crate::consent_graduation::api::GraduationPolicies> {
+    crate::consent_graduation::api::policies(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.graduation.policy")?,
+        input,
+    )
+}
+pub fn vault_consent_graduation_policy_set(
+    memory: &Memory<'_>,
+    input: crate::consent_graduation::api::GraduationPolicySetRequest,
+) -> MemoryResult<crate::consent_graduation::api::GraduationChanged> {
+    crate::consent_graduation::api::set_policy(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.graduation.policy.set")?,
+        input,
+    )
+}
+pub fn vault_consent_graduation_policy_clear(
+    memory: &Memory<'_>,
+    input: crate::consent_graduation::api::GraduationPolicyClearRequest,
+) -> MemoryResult<crate::consent_graduation::api::GraduationChanged> {
+    crate::consent_graduation::api::clear_policy(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.graduation.policy.clear")?,
+        input,
+    )
+}
+pub fn vault_consent_graduation_stats(
+    memory: &Memory<'_>,
+    input: crate::consent_graduation::api::GraduationScopeRequest,
+) -> MemoryResult<Option<crate::consent_graduation::api::GraduationStats>> {
+    crate::consent_graduation::api::stats(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.graduation.stats")?,
+        input,
+    )
+}
+pub fn vault_consent_graduation_outcome(
+    memory: &Memory<'_>,
+    input: crate::consent_graduation::api::GraduationOutcomeRequest,
+) -> MemoryResult<crate::consent_graduation::api::GraduationStats> {
+    crate::consent_graduation::api::record_outcome(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.graduation.outcome")?,
+        input,
+    )
+}
+pub fn vault_consent_graduation_offers(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<Vec<crate::consent_graduation::api::GraduationOffer>> {
+    crate::consent_graduation::api::offers(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.graduation.offers")?,
+    )
+}
+pub fn vault_consent_graduation_answer(
+    memory: &Memory<'_>,
+    input: crate::consent_graduation::api::GraduationAnswerRequest,
+) -> MemoryResult<crate::consent_graduation::api::GraduationAnswerReceipt> {
+    crate::consent_graduation::api::answer(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.graduation.answer")?,
+        input,
+    )
+}
+pub fn vault_consent_graduation_trust_table(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<Vec<crate::consent_graduation::api::GraduationTrustRow>> {
+    crate::consent_graduation::api::trust_table(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.graduation.trust_table")?,
+    )
+}
+pub fn vault_consent_graduation_settings_unpin(
+    memory: &Memory<'_>,
+    input: crate::consent_graduation::api::GraduationScopeRequest,
+) -> MemoryResult<crate::consent_graduation::api::GraduationChanged> {
+    crate::consent_graduation::api::unpin(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.graduation.settings.unpin")?,
+        input,
+    )
+}
+pub fn vault_consent_graduation_demote(
+    memory: &Memory<'_>,
+    input: crate::consent_graduation::api::GraduationDemoteRequest,
+) -> MemoryResult<crate::consent_graduation::api::GraduationChanged> {
+    crate::consent_graduation::api::demote(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.graduation.demote")?,
+        input,
+    )
+}
+pub fn self_consent_graduation_demote(
+    memory: &Memory<'_>,
+    input: crate::consent_graduation::api::GraduationScopeRequest,
+) -> MemoryResult<crate::consent_graduation::api::GraduationChanged> {
+    crate::consent_graduation::api::demote_own(memory, input)
+}
 pub fn vault_gate_policy_get(
     memory: &Memory<'_>,
     input: crate::policy_manifest_doors::PolicyManifestRead,
@@ -18322,6 +19308,72 @@ pub fn vault_learning_projection(
     crate::learning::doors::learning_projection_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.learning.projection")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_seal_confess(
+    memory: &Memory<'_>,
+    input: crate::self_heal::audit::AttemptConfession,
+) -> MemoryResult<crate::self_heal::audit::doors::SealReceiptView> {
+    crate::self_heal::audit::doors::confess_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.seal.confess")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_seal_audit(
+    memory: &Memory<'_>,
+    input: crate::self_heal::audit::doors::SealAttemptRequest,
+) -> MemoryResult<crate::self_heal::audit::doors::SealReceiptView> {
+    crate::self_heal::audit::doors::audit_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.seal.audit")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_seal_receipt(
+    memory: &Memory<'_>,
+    input: crate::self_heal::audit::doors::SealAttemptRequest,
+) -> MemoryResult<Option<crate::self_heal::audit::doors::SealReceiptView>> {
+    crate::self_heal::audit::doors::receipt_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.seal.receipt")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_seal_pending(
+    memory: &Memory<'_>,
+    input: crate::self_heal::audit::doors::SealPendingRequest,
+) -> MemoryResult<Vec<crate::self_heal::audit::SealCheckRequest>> {
+    crate::self_heal::audit::doors::pending_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.seal.pending")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_seal_run(
+    memory: &Memory<'_>,
+    input: crate::self_heal::audit::doors::SealRunRequest,
+) -> MemoryResult<crate::self_heal::audit::doors::SealRunReceipt> {
+    crate::self_heal::audit::doors::run_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.seal.run")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_seal_complete(
+    memory: &Memory<'_>,
+    input: crate::self_heal::audit::doors::SealCompleteRequest,
+) -> MemoryResult<crate::self_heal::audit::doors::SealReceiptView> {
+    crate::self_heal::audit::doors::complete_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.seal.complete")?,
         &input,
     )
     .map_err(crate::memory::MemoryError::from)
@@ -20374,6 +21426,30 @@ pub fn vault_forget(
         &["/claim_ref"],
     )?;
     memory_requests::forget_claims(memory, input)
+}
+pub fn vault_booking_availability(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::BookingAvailabilityRequest,
+) -> MemoryResult<crate::booking::agent_api::BookingOperationResponse> {
+    crate::task_verb::sdk::host_only(memory, "vault.booking.availability", &input)
+}
+pub fn vault_booking_book(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::BookingBookRequest,
+) -> MemoryResult<crate::booking::agent_api::BookingOperationResponse> {
+    crate::task_verb::sdk::host_only(memory, "vault.booking.book", &input)
+}
+pub fn vault_booking_reschedule(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::BookingRescheduleRequest,
+) -> MemoryResult<crate::booking::agent_api::BookingOperationResponse> {
+    crate::task_verb::sdk::host_only(memory, "vault.booking.reschedule", &input)
+}
+pub fn vault_booking_cancel(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::BookingCancelRequest,
+) -> MemoryResult<crate::booking::agent_api::BookingOperationResponse> {
+    crate::task_verb::sdk::host_only(memory, "vault.booking.cancel", &input)
 }
 pub fn vault_booking_constraint_turn(
     memory: &Memory<'_>,

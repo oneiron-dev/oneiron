@@ -367,7 +367,7 @@
      "purpose": "—",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 18,
       "struct": 3
@@ -419,7 +419,7 @@
      "path": "src/affect/state_inputs.rs",
      "purpose": "The composite state index's inputs, measured from the subject's own records (OF-335)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "struct": 1
      }
     },
@@ -1001,7 +1001,7 @@
      "path": "src/agent_dispatch/planner_live.rs",
      "purpose": "The live spawn planner (ARCH-0079 #planner, OF-541): the one vault-backed service a spawn door and the CEO's…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 5,
       "struct": 3
      }
@@ -1011,9 +1011,20 @@
      "kind": "src",
      "notable": [],
      "path": "src/agent_dispatch/planner_live/intent.rs",
-     "purpose": "The reserved spawn intent (DOOR-111 S2): the owner's planned spawn, durable under its intent key",
+     "purpose": "The reserved spawn intent (DOOR-111 S2, S4c-1): a planned spawn, durable under its asker's intent key",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 13,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/planner_live/intent/child.rs",
+     "purpose": "The leased child's planned spawn (DOOR-111 S4c-1): a leased agent's `self.agents.spawn` with an ask…",
+     "surface": {
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -1032,7 +1043,17 @@
      "kind": "src",
      "notable": [],
      "path": "src/agent_dispatch/planner_live/team_launch.rs",
-     "purpose": "The owner's planned launch (DOOR-111 S4a): a planned intent's plan, launched at the root as one group",
+     "purpose": "The planned launch (DOOR-111 S4a, S4c-2): a planned intent's plan, launched as one group, at the root for…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/planner_live/team_launch/child.rs",
+     "purpose": "The leased child's planned launch (DOOR-111 S4c-2, S4c-3): a leased agent's planned intent, launched under…",
      "surface": {
       "fn": 1
      }
@@ -3108,7 +3129,7 @@
      "path": "src/authority/owner_work.rs",
      "purpose": "Folds the owner's work requests and their results: which install is to do the key, custody or root work an…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -8914,6 +8935,7 @@
      "path": "src/campaign/compliance/amend.rs",
      "purpose": "Propose/stamp amendment transaction: classification, activation, notices, proposal hash",
      "surface": {
+      "crate-vis": 5,
       "enum": 2,
       "fn": 6
      }
@@ -8926,6 +8948,39 @@
      "purpose": "Claim-store readers, comm-party mirror, and the msgpack value toolkit",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ComplianceAmendRequest",
+      "ComplianceApprovalRequest",
+      "ComplianceDisposition",
+      "ComplianceOperation",
+      "ComplianceOwnerStamp",
+      "CompliancePendingProposal",
+      "ComplianceReceipt",
+      "ComplianceResult",
+      "ComplianceResultRequest",
+      "ComplianceRowVerification",
+      "ComplianceVerifyRequest"
+     ],
+     "path": "src/campaign/compliance/contracts.rs",
+     "purpose": "Typed compliance-pack amendments, owner decisions and source verification",
+     "surface": {
+      "enum": 2,
+      "struct": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/campaign/compliance/doors.rs",
+     "purpose": "Caller-bound doors over the existing compliance classifier and stamp writer",
+     "surface": {
+      "fn": 6
      }
     },
     {
@@ -8965,7 +9020,7 @@
      "purpose": "CA-06's compliance pack: versioned, vault-resident legal rule rows and the dispatch gate that enforces them",
      "surface": {
       "crate-vis": 2,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -15647,6 +15702,39 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [
+      "GraduationAnswer",
+      "GraduationAnswerReceipt",
+      "GraduationAnswerRequest",
+      "GraduationChanged",
+      "GraduationDemoteRequest",
+      "GraduationDemotionReason",
+      "GraduationMode",
+      "GraduationOffer",
+      "GraduationOutcome",
+      "GraduationOutcomeRequest",
+      "GraduationPolicies",
+      "GraduationPolicy",
+      "GraduationPolicyClearRequest",
+      "GraduationPolicyRequest",
+      "GraduationPolicySetRequest",
+      "GraduationScope",
+      "GraduationScopeRequest",
+      "GraduationSnooze",
+      "GraduationStats",
+      "GraduationTrustRow"
+     ],
+     "path": "src/consent_graduation/api.rs",
+     "purpose": "Typed consent-graduation public door",
+     "surface": {
+      "enum": 5,
+      "fn": 11,
+      "struct": 15
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
      "path": "src/consent_graduation/doors.rs",
      "purpose": "Public Vault doors plus the shared accept-offer txn helper used by ED-05",
@@ -15662,7 +15750,7 @@
      "path": "src/consent_graduation/fold.rs",
      "purpose": "Txn-level counters projection, incremental maintenance, and CID-7 rebuild fold",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -15673,6 +15761,7 @@
      "purpose": "DEC-0006 consent-graduation ramp (ARCH-0055 r7 / ONE-1748, MS-06): the per-scope outcome statistics that…",
      "surface": {
       "crate-vis": 3,
+      "mod": 1,
       "re-export": 3
      }
     },
@@ -20045,15 +20134,16 @@
      "kind": "src",
      "notable": [
       "ActionModePolicy",
+      "ActionModeProjection",
       "ActionModeRule"
      ],
      "path": "src/dreamer_runner/maintenance/action_mode.rs",
      "purpose": "Action modes (OF-335): the owner's bands over the composite state index, each naming a mode in the owner's…",
      "surface": {
       "const": 2,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -20574,7 +20664,7 @@
      "purpose": "The seal's checks, run (ARCH-0079 #stuck-confession-and-the-seal, OF-544, OF-420): \"A confession triggers a…",
      "surface": {
       "enum": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 1,
       "trait": 1
      }
@@ -21612,9 +21702,9 @@
      "path": "src/edit_distance/graduation/answers.rs",
      "purpose": "Offer answers and the snooze-state machine",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "enum": 3,
-      "fn": 5
+      "fn": 7
      }
     },
     {
@@ -21678,9 +21768,9 @@
      "path": "src/edit_distance/graduation/threshold_policy.rs",
      "purpose": "Threshold rows and graduation-policy resolution",
      "surface": {
-      "const": 1,
+      "const": 2,
       "crate-vis": 4,
-      "fn": 7,
+      "fn": 9,
       "struct": 1
      }
     },
@@ -31796,7 +31886,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AllRelationships",
@@ -31808,7 +31898,7 @@
      "path": "src/memory/claim_admission.rs",
      "purpose": "Explicit claim positions on the public door; the ordinary candidate writer still owns the write",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 2,
       "struct": 3
@@ -32187,6 +32277,26 @@
      "path": "src/memory/conversation_list/tests.rs",
      "purpose": "The conversation list is what its reader may read of the vault (ARCH-0006a, DEC-0005): only the…",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CopingAggregate",
+      "CopingAggregateRequest",
+      "CopingOutcomeReceipt",
+      "CopingOutcomeRecordRequest",
+      "CopingOutcomeUpdateRequest",
+      "CopingOutcomeView",
+      "CopingVadDelta"
+     ],
+     "path": "src/memory/coping_doors.rs",
+     "purpose": "Typed coping observations and per-person aggregates over the engine's coping ledger",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 3,
+      "struct": 7
+     }
     },
     {
      "bucket": "s",
@@ -32596,7 +32706,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 14,
+      "mod": 16,
       "re-export": 47
      }
     },
@@ -33628,6 +33738,21 @@
      "path": "src/memory/transcript/tests.rs",
      "purpose": "A conversation's transcript is what its reader may read of it, in order: never an erased message, never one…",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WellnessPersonRequest",
+      "WellnessPolicyConfigureRequest",
+      "WellnessProjection"
+     ],
+     "path": "src/memory/wellness_doors.rs",
+     "purpose": "Per-person wellness projections reuse the measured state index and configured action modes",
+     "surface": {
+      "fn": 4,
+      "struct": 3
+     }
     },
     {
      "bucket": "m",
@@ -42881,10 +43006,29 @@
      "path": "src/self_heal/audit.rs",
      "purpose": "OF-544: immutable attempt confessions, directed rechecks and random audit draws",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 7,
+      "mod": 1,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SealAttemptRequest",
+      "SealCompleteRequest",
+      "SealPendingRequest",
+      "SealReceiptView",
+      "SealRunReceipt",
+      "SealRunRequest"
+     ],
+     "path": "src/self_heal/audit/doors.rs",
+     "purpose": "Typed owner doors for the seal's existing receipts and check lifecycle",
+     "surface": {
+      "fn": 6,
+      "struct": 6
      }
     },
     {
@@ -44225,7 +44369,7 @@
      "path": "src/skill/pack_load.rs",
      "purpose": "Attempt-bound pack reads stamp their actual revision in the same transaction",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 7,
       "struct": 1
      }
@@ -51382,6 +51526,9 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "BookingAvailabilityRequest",
+      "BookingBookRequest",
+      "BookingCancelRequest",
       "BookingConstraintHoldContext",
       "BookingConstraintTurnInput",
       "BookingConstraintTurnRequest",
@@ -51389,12 +51536,13 @@
       "BookingConstraintTurnWindow",
       "BookingPageTokenRequest",
       "BookingPageTokenResponse",
+      "BookingRescheduleRequest",
       "CalendarFreebusyRequest"
      ],
      "path": "src/task_verb/sdk_calendar.rs",
-     "purpose": "Typed booking-page discovery and calendar occupancy inputs",
+     "purpose": "Typed booking-page discovery, public lifecycle calls and calendar occupancy inputs",
      "surface": {
-      "enum": 1,
+      "enum": 5,
       "struct": 7
      }
     },
@@ -51720,7 +51868,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 788
+      "fn": 822
      }
     },
     {
@@ -53056,6 +53204,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "LeasedSpawnRequest",
       "PlannedIntentView",
       "PlannedSpawnHost",
       "PlannedSpawnRequest",
@@ -53065,7 +53214,7 @@
      "purpose": "The owner's planned spawn under an intent key (DOOR-111): what the owner asks, what the host serves the ask…",
      "surface": {
       "enum": 1,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -56446,7 +56595,7 @@
      "purpose": "The world kit ceremony (OF-173): issue, confirm by re-entering pieces, restore, and the public inventory of…",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 8,
       "fn": 5,
       "struct": 6
      }
@@ -56474,7 +56623,7 @@
      "surface": {
       "crate-vis": 12,
       "fn": 3,
-      "re-export": 18,
+      "re-export": 19,
       "struct": 2
      }
     },
@@ -56491,7 +56640,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 2,
-      "fn": 1,
+      "fn": 2,
       "re-export": 1,
       "struct": 1
      }
@@ -56636,7 +56785,7 @@
      "path": "src/world_keys/root_doors.rs",
      "purpose": "The root doors (contract §4-§5): activating a kit's root, anchoring a machine with the kit's seed, restoring…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 4,
       "struct": 3
@@ -56654,6 +56803,32 @@
       "crate-vis": 2,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/root_work/execute.rs",
+     "purpose": "The target's door for a root request and the material its change needs ([`Vault::run_root_request`]): the…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RootMaterial",
+      "RootSecret",
+      "RootWorkDone"
+     ],
+     "path": "src/world_keys/root_work/mod.rs",
+     "purpose": "Root work (WILL L04 row 02): the owner decides a change to one install's recovery root on any surface he is…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 3,
+      "fn": 3
      }
     },
     {
@@ -57628,7 +57803,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 48,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57754,7 +57929,7 @@
      "purpose": "Calendar module home (CAL-00)"
     },
     "campaign": {
-     "files": 48,
+     "files": 50,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -57964,7 +58139,7 @@
      "purpose": "DEC-0006 unified consent-mode — bounded standing grants"
     },
     "consent_graduation": {
-     "files": 8,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -58454,7 +58629,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 187,
+     "files": 189,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58790,7 +58965,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 34,
+     "files": 35,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -59119,7 +59294,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 29,
+     "files": 31,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -59135,7 +59310,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3609,
+   "source_files": 3619,
    "test_files": 902
   },
   "oneiron-android": {
@@ -59151,13 +59326,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/lib.rs",
      "purpose": "Minimal JNI/Kotlin ownership adapter",
      "surface": {
-      "fn": 5,
+      "fn": 10,
       "mod": 1
      }
     }
@@ -59384,15 +59559,16 @@
       "OwnerWorkRefusal",
       "OwnerWorkRequest",
       "OwnerWorkResult",
+      "RootChange",
       "WorldKeyMode"
      ],
      "path": "src/authority/owner_work.rs",
      "purpose": "The owner's work requests and their results, and their wire codec: the key, custody or root work an owner…",
      "surface": {
-      "const": 2,
+      "const": 3,
       "crate-vis": 6,
-      "enum": 5,
-      "fn": 12,
+      "enum": 6,
+      "fn": 14,
       "struct": 2
      }
     },
@@ -65349,7 +65525,7 @@
      "path": "src/lib/parse.rs",
      "purpose": "ID/enum/limit/query/format parsing and validation helpers",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -67667,7 +67843,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 757
+      "fn": 791
      }
     },
     {
@@ -68716,7 +68892,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 758
+      "fn": 792
      }
     },
     {
@@ -71619,7 +71795,7 @@
      "path": "src/api/facade/affect_doors.rs",
      "purpose": "Retrieval-prior setup and VAD consolidation on the caller's own owner proof",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 10
      }
     },
     {
@@ -71687,9 +71863,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/booking_doors.rs",
-     "purpose": "Typed booking-page discovery and the published constraint front",
+     "purpose": "Typed booking-page discovery, published lifecycle and constraint front",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 6
      }
     },
     {
@@ -71838,6 +72014,16 @@
      "notable": [],
      "path": "src/api/facade/codebase_doors.rs",
      "purpose": "Credential-bound host projections of the typed code snapshot doors (DOOR-118)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/compliance_doors.rs",
+     "purpose": "Compliance owner decisions use the request's owner proof and its own Memory",
      "surface": {
       "crate-vis": 4
      }
@@ -72073,6 +72259,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/graduation_doors.rs",
+     "purpose": "Consent-graduation host doors, under the consent lifecycle's owner proof",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -72109,7 +72305,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 130
+      "crate-vis": 133
      }
     },
     {
@@ -72340,6 +72536,16 @@
      "purpose": "Owner-only reads of committed run state (DOOR-141 A/B): a settled model step and a code run's checkpoints…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/seal_doors.rs",
+     "purpose": "Owner-authorized seal lifecycle, shared by generated HTTP, SDK and MCP calls",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -79898,7 +80104,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 393,
+     "files": 396,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -80327,7 +80533,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 736,
+   "source_files": 739,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -80529,6 +80735,8 @@
       "ActExecution",
       "ActionBoundRequest",
       "ActionEnvelopeRequest",
+      "ActionModePolicy",
+      "ActionModeRule",
       "ActorCeiling",
       "AdmissionBasis",
       "AdmissionConsent",
@@ -80690,6 +80898,7 @@
       "AttemptCancelReceiptKind",
       "AttemptCancelState",
       "AttemptCancellation",
+      "AttemptConfession",
       "AttemptHandle",
       "AttemptId",
       "AttemptLanding",
@@ -80697,6 +80906,7 @@
       "AttemptResumePoint",
       "AttemptState",
       "AttemptView",
+      "AuditDraw",
       "AuthorBriefRequest",
       "AuthorTakeRequest",
       "AuthorTakeTarget",
@@ -80709,6 +80919,7 @@
       "AuthorityHandoffAlarm",
       "AuthorityHandoffAlarmAck",
       "AuthorityHistoryImported",
+      "B2bExemption",
       "BandMode",
       "BatchInput",
       "BatchOutput",
@@ -80724,13 +80935,27 @@
       "BodyConflict",
       "BodyFormat",
       "BodyName",
+      "BookingAvailabilityInput",
+      "BookingAvailabilityRequest",
+      "BookingBookInput",
+      "BookingBookRequest",
+      "BookingBookResult",
+      "BookingCancelInput",
+      "BookingCancelRequest",
+      "BookingConfirmInput",
       "BookingConstraintHoldContext",
+      "BookingConstraintInput",
       "BookingConstraintTurnInput",
       "BookingConstraintTurnRequest",
       "BookingConstraintTurnResponse",
       "BookingConstraintTurnWindow",
+      "BookingHoldInput",
+      "BookingIntakeAnswer",
+      "BookingOperationResponse",
       "BookingPageTokenRequest",
       "BookingPageTokenResponse",
+      "BookingRescheduleInput",
+      "BookingRescheduleRequest",
       "BornFromArtifact",
       "BornFromRequest",
       "BornFromSource",
@@ -81015,6 +81240,23 @@
       "CompanionSharingStored",
       "CompanionSharingTarget",
       "CompanionSharingView",
+      "ComplianceAmendRequest",
+      "ComplianceAmendmentClass",
+      "ComplianceApprovalRequest",
+      "ComplianceDisposition",
+      "ComplianceExemptionEvidence",
+      "ComplianceOperation",
+      "ComplianceOwnerStamp",
+      "CompliancePack",
+      "CompliancePendingProposal",
+      "ComplianceReceipt",
+      "ComplianceResult",
+      "ComplianceResultRequest",
+      "ComplianceRowVerification",
+      "ComplianceRuleKind",
+      "ComplianceRuleRow",
+      "ComplianceSource",
+      "ComplianceVerifyRequest",
       "ComposerStamp",
       "ComputeDestination",
       "ConcernCardRequest",
@@ -81024,6 +81266,7 @@
       "ConcernMoveRequest",
       "ConcernOutcome",
       "ConcernOutcomeRequest",
+      "ConditionalExemptionEvidence",
       "ConfidenceBand",
       "ConfirmationReceipt",
       "Conflict",
@@ -81099,6 +81342,7 @@
       "ConsolidationRejection",
       "ConstraintContinuation",
       "ConstraintObject",
+      "ConstraintTimeRangeWire",
       "ConstraintWeekday",
       "ConsultDisposition",
       "ConsultInspection",
@@ -81122,6 +81366,14 @@
       "CooperativeDeletionDispositionKind",
       "CoordinationPattern",
       "CoordinationPatternView",
+      "CopingAggregate",
+      "CopingAggregateRequest",
+      "CopingOutcomeReceipt",
+      "CopingOutcomeRecordRequest",
+      "CopingOutcomeUpdateRequest",
+      "CopingOutcomeView",
+      "CopingStrategy",
+      "CopingVadDelta",
       "CoreBatchEntityInput",
       "CoreBatchEntityReceipt",
       "CoreBatchWriteInput",
@@ -81464,6 +81716,26 @@
       "GeneratedUiResultSetSelectAll",
       "GeometryProps",
       "GoalPreference",
+      "GraduationAnswer",
+      "GraduationAnswerReceipt",
+      "GraduationAnswerRequest",
+      "GraduationChanged",
+      "GraduationDemoteRequest",
+      "GraduationDemotionReason",
+      "GraduationMode",
+      "GraduationOffer",
+      "GraduationOutcome",
+      "GraduationOutcomeRequest",
+      "GraduationPolicies",
+      "GraduationPolicy",
+      "GraduationPolicyClearRequest",
+      "GraduationPolicyRequest",
+      "GraduationPolicySetRequest",
+      "GraduationScope",
+      "GraduationScopeRequest",
+      "GraduationSnooze",
+      "GraduationStats",
+      "GraduationTrustRow",
       "GrantAskReceipt",
       "GrantAskRequest",
       "GrantAskScope",
@@ -81823,6 +82095,7 @@
       "MetricRole",
       "MetricSet",
       "MintConnectGrant",
+      "ModeGateInputs",
       "ModelLocality",
       "ModelSlot",
       "ModelStepCheckpoint",
@@ -81887,6 +82160,8 @@
       "NotificationPage",
       "NotificationRow",
       "NotificationSource",
+      "ObjectiveConfession",
+      "ObjectiveFinding",
       "Observation",
       "Observation2",
       "ObservationIssue",
@@ -82224,6 +82499,7 @@
       "QuoteReplyGroup",
       "QuoteReplyStrip",
       "QuoteStripStatus",
+      "RankedSlot",
       "ReadFilterInput",
       "Reasoning",
       "ReasoningCause",
@@ -82539,8 +82815,19 @@
       "ScreenshotOutput",
       "ScreenshotTrigger",
       "ScrollDirection",
+      "SealAssessment",
       "SealAtom",
+      "SealAttemptRequest",
+      "SealCheckKind",
+      "SealCheckOutcome",
+      "SealCheckReceipt",
+      "SealCheckRequest",
+      "SealCompleteRequest",
       "SealLevel",
+      "SealPendingRequest",
+      "SealReceiptView",
+      "SealRunReceipt",
+      "SealedAttemptReceipt",
       "SearchAxis",
       "SearchEvidence",
       "SeatInventory",
@@ -82570,6 +82857,7 @@
       "SegmentedControl",
       "SelectControl",
       "SelectInput",
+      "SelectedSlot",
       "SelectionBenchmark",
       "SelectionRanking",
       "SelectionReceipt",
@@ -82812,6 +83100,8 @@
       "StandingBlocksRequest",
       "StandingGrantBound",
       "StateFamilyRef",
+      "StateIndex",
+      "StateWindow",
       "StatusDotAtom",
       "SteerReceipt",
       "SteerRequest",
@@ -83022,6 +83312,7 @@
       "UndoneKeep",
       "UnitAbstention",
       "UnitRefusal",
+      "UnknownJurisdictionDefault",
       "UnknownReason",
       "UnsupportedCapability",
       "UpdateCampaignProgramRequest",
@@ -83080,6 +83371,9 @@
       "WeaveSectionView",
       "WeaveWrongItemRequest",
       "WeaveWrongLinkRequest",
+      "WellnessPersonRequest",
+      "WellnessPolicyConfigureRequest",
+      "WellnessProjection",
       "WidenProposalAnswer",
       "WidenProposalState",
       "WidenProposalView",
@@ -83156,8 +83450,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 650,
-      "struct": 1981
+      "enum": 672,
+      "struct": 2047
      }
     },
     {

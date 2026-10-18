@@ -503,6 +503,8 @@ class Oneiron:
         @property
         def learning(self) -> "Oneiron._VaultLearningVerbs": ...
         @property
+        def seal(self) -> "Oneiron._VaultSealVerbs": ...
+        @property
         def settings(self) -> "Oneiron._VaultSettingsVerbs": ...
         @property
         def secrets(self) -> "Oneiron._VaultSecretsVerbs": ...
@@ -788,12 +790,35 @@ class Oneiron:
         def annotations(self) -> "Oneiron._VaultAffectAnnotationsVerbs": ...
         @property
         def claims(self) -> "Oneiron._VaultAffectClaimsVerbs": ...
+        @property
+        def coping(self) -> "Oneiron._VaultAffectCopingVerbs": ...
+        @property
+        def wellness(self) -> "Oneiron._VaultAffectWellnessVerbs": ...
     class _VaultAffectAnnotationsVerbs:
         def put(self, spec: Facade.AffectAnnotationPut) -> Facade.CommitReceipt:
             """Writes one sourced TURN VAD annotation through ordinary scoped claim admission and the caller credential; the receipt states its approval."""
     class _VaultAffectClaimsVerbs:
         def consolidate(self, spec: Facade.AffectClaimConsolidateRequest) -> Facade.AffectClaimConsolidation:
             """The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction."""
+    class _VaultAffectCopingVerbs:
+        def record(self, spec: Facade.CopingOutcomeRecordRequest) -> Facade.CopingOutcomeReceipt:
+            """Records a first coping outcome from two stored VAD-annotated turns for one person, with scoped claim admission and caller attribution; no factual claim is superseded."""
+        def update(self, spec: Facade.CopingOutcomeUpdateRequest) -> Facade.CopingOutcomeReceipt:
+            """Updates an active coping aggregate from its strategy turn and a later annotated turn through the existing engine transaction, preserving scope and both evidence refs."""
+        def aggregate(self, spec: Facade.CopingAggregateRequest) -> Facade.CopingAggregate:
+            """Reads all admitted active coping aggregates for one person and optional exact scope, including unsuccessful outcomes and their attribution and evidence refs."""
+    class _VaultAffectWellnessVerbs:
+        @property
+        def policy(self) -> "Oneiron._VaultAffectWellnessPolicyVerbs": ...
+        def derive(self, spec: Facade.WellnessPersonRequest) -> Facade.WellnessProjection:
+            """Derives one person's non-clinical wellness projection using the existing state measurements and configured mode bands, with a routed receipt and source refs."""
+        def get(self, spec: Facade.WellnessPersonRequest) -> Facade.WellnessProjection:
+            """Reads one person's measured wellness state, configured advisory mode and coping aggregates with source refs, without refreshing or revising factual claims."""
+    class _VaultAffectWellnessPolicyVerbs:
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.ActionModePolicy | None:
+            """Reads the configured non-clinical wellness window, targets and advisory mode bands as the owner; absent policy stays absent."""
+        def configure(self, spec: Facade.WellnessPolicyConfigureRequest) -> Facade.ActionModePolicy | None:
+            """Configures or clears the existing action-mode policy as the owner; no universal wellness cutoff or diagnostic label is supplied by the engine."""
     class _VaultTaggingVerbs:
         def status(self, spec: Facade.TaggingTurnRequest) -> Facade.TaggingStatusView:
             """Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker and failure reason."""
@@ -832,6 +857,8 @@ class Oneiron:
         def search(self, request: KeyValueSearch) -> list[KeyValueItem]: ...
         def namespaces(self, request: KeyValueNamespaces) -> list[list[str]]: ...
     class _VaultCampaignVerbs:
+        @property
+        def compliance(self) -> "Oneiron._VaultCampaignComplianceVerbs": ...
         def enroll(self, spec: Facade.CampaignEnrollRequest) -> Facade.CampaignEnrollmentReceipt:
             """Enrolls a person in a campaign the caller owns, with evidence-backed channels and sticky senders. Writes no earned stage and sends nothing."""
         @property
@@ -840,6 +867,19 @@ class Oneiron:
             """Immediately honors an unsubscribe with a channel-scoped enforcement claim and every suppressed membership head in one transaction."""
         @property
         def program(self) -> "Oneiron._VaultCampaignProgramVerbs": ...
+    class _VaultCampaignComplianceVerbs:
+        def install(self, spec: Facade.ComplianceAmendRequest) -> Facade.ComplianceReceipt:
+            """The owner installs cited compliance rows through the versioned amendment classifier; a loosening still waits for an exact-hash owner approval."""
+        def amend(self, spec: Facade.ComplianceAmendRequest) -> Facade.ComplianceReceipt:
+            """Proposes cited compliance rows against the active version. Tightening activates with a notice only within the caller ceiling; loosening waits for the owner stamp."""
+        def approve(self, spec: Facade.ComplianceApprovalRequest) -> Facade.ComplianceReceipt:
+            """The owner approves the exact pending compliance proposal hash against the active version, with a durable authority receipt."""
+        def reject(self, spec: Facade.ComplianceApprovalRequest) -> Facade.ComplianceReceipt:
+            """The owner rejects the exact pending compliance proposal hash without changing the effective rules."""
+        def verify(self, spec: Facade.ComplianceVerifyRequest) -> Facade.ComplianceReceipt:
+            """The owner records cited verification dates for existing compliance rows, including an explicitly stale date, without changing requirements or freshness policy."""
+        def result(self, spec: Facade.ComplianceResultRequest) -> Facade.ComplianceResult:
+            """Reads the active compliance pack, exact pending proposal, activation notices and amendment or owner-verification receipts from one snapshot."""
     class _VaultCampaignStageVerbs:
         def evidence(self, spec: Facade.CampaignStageEvidenceRequest) -> Facade.CampaignStageEvidenceReceipt:
             """Records earned-stage evidence under an authored ladder transition, in AUTO or propose mode. Owner-attested evidence requires the request owner proof; elapsed time earns nothing."""
@@ -1414,6 +1454,35 @@ class Oneiron:
             """The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants."""
         def revoke(self, spec: Facade.RevokeGrantRequest) -> Facade.ConsentActReceipt:
             """The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted."""
+        @property
+        def graduation(self) -> "Oneiron._VaultConsentGraduationVerbs": ...
+    class _VaultConsentGraduationVerbs:
+        @property
+        def policy(self) -> "Oneiron._VaultConsentGraduationPolicyVerbs": ...
+        def stats(self, spec: Facade.GraduationScopeRequest) -> Facade.GraduationStats | None:
+            """Reads one exact graduation scope outcome history and current consent posture."""
+        def outcome(self, spec: Facade.GraduationOutcomeRequest) -> Facade.GraduationStats:
+            """The owner records an untouched, amended or rejected proposal ruling, receipted and folded through the existing ramp."""
+        def offers(self, spec: Facade.EmptyRequest) -> list[Facade.GraduationOffer]:
+            """Reads earned, unsuppressed graduation offers with thresholds, streaks and before/after reach; reading grants nothing."""
+        def answer(self, spec: Facade.GraduationAnswerRequest) -> Facade.GraduationAnswerReceipt:
+            """The owner answers auto, not-now or manual_pinned; only auto mints the existing standing grant, and not-now resets the streak."""
+        def trust_table(self, spec: Facade.EmptyRequest) -> list[Facade.GraduationTrustRow]:
+            """Reads the owner trust table: scope, counts, effective threshold, snooze or manual pin, live grant and offer reach."""
+        @property
+        def settings(self) -> "Oneiron._VaultConsentGraduationSettingsVerbs": ...
+        def demote(self, spec: Facade.GraduationDemoteRequest) -> Facade.GraduationChanged:
+            """The owner demotes an exact scope to propose, revoking its live grant and recording the existing durable demotion receipt."""
+    class _VaultConsentGraduationPolicyVerbs:
+        def __call__(self, spec: Facade.GraduationPolicyRequest) -> Facade.GraduationPolicies:
+            """Reads runtime consent-graduation policy rows and the effective row for an optional exact scope."""
+        def set(self, spec: Facade.GraduationPolicySetRequest) -> Facade.GraduationChanged:
+            """The owner sets a scope-pattern streak, posterior guard and two snooze backoffs; zero-second backoff is supported."""
+        def clear(self, spec: Facade.GraduationPolicyClearRequest) -> Facade.GraduationChanged:
+            """The owner clears one runtime graduation policy row; scopes fall back to the next matching policy."""
+    class _VaultConsentGraduationSettingsVerbs:
+        def unpin(self, spec: Facade.GraduationScopeRequest) -> Facade.GraduationChanged:
+            """The owner reopens a pinned or snoozed graduation scope in settings; no grant is created."""
     class _VaultGateVerbs:
         @property
         def policy(self) -> "Oneiron._VaultGatePolicyVerbs": ...
@@ -1436,6 +1505,19 @@ class Oneiron:
             """The owner reads a measured learning cell, its explicit prior, derived UNTESTED mark, projector heads and anchored evidence; borrowed provenance stays separate from own runs."""
         def projection(self, spec: Facade.LearningProjectionRequest) -> Facade.LearningProjectionView:
             """The owner observes the stored projection receipt for an anchored attempt outcome; an absent receipt means projection has not committed, never a successful empty projection."""
+    class _VaultSealVerbs:
+        def confess(self, spec: Facade.AttemptConfession) -> Facade.SealReceiptView:
+            """Confess an attempt's objectives without changing any score; named flaws and uncertainty create durable directed rechecks."""
+        def audit(self, spec: Facade.SealAttemptRequest) -> Facade.SealReceiptView:
+            """Draw a passing sealed attempt once at the current audit rate, saving the rate and selection before any checker runs."""
+        def receipt(self, spec: Facade.SealAttemptRequest) -> Facade.SealReceiptView | None:
+            """Read a sealed attempt, its stamped audit draw, directed and random check completions, weighted findings and separate honesty reward."""
+        def pending(self, spec: Facade.SealPendingRequest) -> list[Facade.SealCheckRequest]:
+            """Read pending directed rechecks and random audits, optionally for one attempt, without executing a checker."""
+        def run(self, spec: Facade.SealRunRequest) -> Facade.SealRunReceipt:
+            """Queue the existing Coach seal checker under its ordinary lease, Grant and budget; the returned job never grants extra authority."""
+        def complete(self, spec: Facade.SealCompleteRequest) -> Facade.SealReceiptView:
+            """Attest an independent external seal check as the owner; admit immutable findings and project them using the request's stamped rate."""
     class _VaultSettingsVerbs:
         @property
         def learning(self) -> "Oneiron._VaultSettingsLearningVerbs": ...
@@ -1970,6 +2052,14 @@ class Oneiron:
         def answer(self, spec: Facade.DecisionAskAnswerRequest) -> Facade.DecisionAsk: ...
         def climb(self, spec: Facade.DecisionAskClimbRequest) -> Facade.ResolvedRole | None: ...
     class _VaultBookingVerbs:
+        def availability(self, spec: Facade.BookingAvailabilityRequest) -> Facade.BookingOperationResponse:
+            """Lists ranked public slots on a live published booking page as the caller, through the shared booking admission and solver without exposing busy sources."""
+        def book(self, spec: Facade.BookingBookRequest) -> Facade.BookingOperationResponse:
+            """Holds or confirms a real slot on a live published booking page as the caller, through the shared admission and home-node lifecycle with opaque session-bound tokens."""
+        def reschedule(self, spec: Facade.BookingRescheduleRequest) -> Facade.BookingOperationResponse:
+            """Moves a booking on a live published page using its reschedule token, preserving EVENT and UID and replaying without another passport revision."""
+        def cancel(self, spec: Facade.BookingCancelRequest) -> Facade.BookingOperationResponse:
+            """Cancels a booking on a live published page using its cancel token, preserving EVENT and UID and replaying without another passport revision."""
         def constraint_turn(self, spec: Facade.BookingConstraintTurnRequest) -> Facade.BookingConstraintTurnResponse:
             """Parses one scheduling constraint on a live published booking page as the caller, returning public slot controls, an email continuation or a deflect; this never holds or confirms a booking."""
         def page_token(self, spec: Facade.BookingPageTokenRequest) -> Facade.BookingPageTokenResponse:
@@ -2235,6 +2325,8 @@ class Oneiron:
         def credential(self) -> "Oneiron._SelfCredentialVerbs": ...
         @property
         def off_record(self) -> "Oneiron._SelfOffRecordVerbs": ...
+        @property
+        def consent(self) -> "Oneiron._SelfConsentVerbs": ...
         def use(self, spec: Facade.SecretUseRequest) -> Facade.SecretUseAnswer:
             """Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value."""
         @property
@@ -2324,6 +2416,12 @@ class Oneiron:
     class _SelfOffRecordVerbs:
         def execute(self, spec: Facade.OffRecordExecuteRequest) -> Facade.OffRecordExecuted:
             """The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""
+    class _SelfConsentVerbs:
+        @property
+        def graduation(self) -> "Oneiron._SelfConsentGraduationVerbs": ...
+    class _SelfConsentGraduationVerbs:
+        def demote(self, spec: Facade.GraduationScopeRequest) -> Facade.GraduationChanged:
+            """The bound actor transparently gives up only its own ramp scope authority, with the existing durable demotion receipt."""
     class _SelfSecretsVerbs:
         def materialize(self, spec: Facade.LiveRunRequest[Facade.SecretGrantMintRequest]) -> Facade.SecretGrantView:
             """Mints a value-free grant on a secret for this credential's attached run, to one purpose: an operation or connector (door), a host destination (leased) or a declared file (local); the answer never holds the value."""

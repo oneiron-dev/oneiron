@@ -362,6 +362,41 @@ export_facade! {
     let output = client.vault_affect_claims_consolidate(&input)?;
     crate::codec::lift_record("vault.affect.claims.consolidate", &output)
 };
+"vault.affect.coping.record" => fn vault_affect_coping_record(&self, input: CopingOutcomeRecordRequest) -> CopingOutcomeReceipt = |client| {
+    let input: oneiron::memory::coping_doors::CopingOutcomeRecordRequest = crate::codec::lower_record("vault.affect.coping.record", input)?;
+    let output = client.vault_affect_coping_record(&input)?;
+    crate::codec::lift_record("vault.affect.coping.record", &output)
+};
+"vault.affect.coping.update" => fn vault_affect_coping_update(&self, input: CopingOutcomeUpdateRequest) -> CopingOutcomeReceipt = |client| {
+    let input: oneiron::memory::coping_doors::CopingOutcomeUpdateRequest = crate::codec::lower_record("vault.affect.coping.update", input)?;
+    let output = client.vault_affect_coping_update(&input)?;
+    crate::codec::lift_record("vault.affect.coping.update", &output)
+};
+"vault.affect.coping.aggregate" => fn vault_affect_coping_aggregate(&self, input: CopingAggregateRequest) -> CopingAggregate = |client| {
+    let input: oneiron::memory::coping_doors::CopingAggregateRequest = crate::codec::lower_record("vault.affect.coping.aggregate", input)?;
+    let output = client.vault_affect_coping_aggregate(&input)?;
+    crate::codec::lift_record("vault.affect.coping.aggregate", &output)
+};
+"vault.affect.wellness.policy.get" => fn vault_affect_wellness_policy_get(&self) -> Option<ActionModePolicy> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.affect.wellness.policy.get")?;
+    let output = client.vault_affect_wellness_policy_get(&input)?;
+    crate::codec::lift_record("vault.affect.wellness.policy.get", &output)
+};
+"vault.affect.wellness.policy.configure" => fn vault_affect_wellness_policy_configure(&self, input: WellnessPolicyConfigureRequest) -> Option<ActionModePolicy> = |client| {
+    let input: oneiron::memory::wellness_doors::WellnessPolicyConfigureRequest = crate::codec::lower_record("vault.affect.wellness.policy.configure", input)?;
+    let output = client.vault_affect_wellness_policy_configure(&input)?;
+    crate::codec::lift_record("vault.affect.wellness.policy.configure", &output)
+};
+"vault.affect.wellness.derive" => fn vault_affect_wellness_derive(&self, input: WellnessPersonRequest) -> WellnessProjection = |client| {
+    let input: oneiron::memory::wellness_doors::WellnessPersonRequest = crate::codec::lower_record("vault.affect.wellness.derive", input)?;
+    let output = client.vault_affect_wellness_derive(&input)?;
+    crate::codec::lift_record("vault.affect.wellness.derive", &output)
+};
+"vault.affect.wellness.get" => fn vault_affect_wellness_get(&self, input: WellnessPersonRequest) -> WellnessProjection = |client| {
+    let input: oneiron::memory::wellness_doors::WellnessPersonRequest = crate::codec::lower_record("vault.affect.wellness.get", input)?;
+    let output = client.vault_affect_wellness_get(&input)?;
+    crate::codec::lift_record("vault.affect.wellness.get", &output)
+};
 "vault.retrieval.recall" => fn vault_retrieval_recall(&self, input: RecallRequest) -> MemoryPack = |client| {
     let input: oneiron::task_verb::sdk::RecallRequest = crate::codec::lower_record("vault.retrieval.recall", input)?;
     let output = client.vault_retrieval_recall(&input)?;
@@ -480,6 +515,36 @@ export_facade! {
     let input: oneiron::memory::KeyValueNamespaces = crate::codec::lower_record("vault.kv.namespaces", input)?;
     let output = client.vault_kv_namespaces(&input)?;
     crate::codec::lift_record("vault.kv.namespaces", &output)
+};
+"vault.campaign.compliance.install" => fn vault_campaign_compliance_install(&self, input: ComplianceAmendRequest) -> ComplianceReceipt = |client| {
+    let input: oneiron::campaign::compliance::ComplianceAmendRequest = crate::codec::lower_record("vault.campaign.compliance.install", input)?;
+    let output = client.vault_campaign_compliance_install(&input)?;
+    crate::codec::lift_record("vault.campaign.compliance.install", &output)
+};
+"vault.campaign.compliance.amend" => fn vault_campaign_compliance_amend(&self, input: ComplianceAmendRequest) -> ComplianceReceipt = |client| {
+    let input: oneiron::campaign::compliance::ComplianceAmendRequest = crate::codec::lower_record("vault.campaign.compliance.amend", input)?;
+    let output = client.vault_campaign_compliance_amend(&input)?;
+    crate::codec::lift_record("vault.campaign.compliance.amend", &output)
+};
+"vault.campaign.compliance.approve" => fn vault_campaign_compliance_approve(&self, input: ComplianceApprovalRequest) -> ComplianceReceipt = |client| {
+    let input: oneiron::campaign::compliance::ComplianceApprovalRequest = crate::codec::lower_record("vault.campaign.compliance.approve", input)?;
+    let output = client.vault_campaign_compliance_approve(&input)?;
+    crate::codec::lift_record("vault.campaign.compliance.approve", &output)
+};
+"vault.campaign.compliance.reject" => fn vault_campaign_compliance_reject(&self, input: ComplianceApprovalRequest) -> ComplianceReceipt = |client| {
+    let input: oneiron::campaign::compliance::ComplianceApprovalRequest = crate::codec::lower_record("vault.campaign.compliance.reject", input)?;
+    let output = client.vault_campaign_compliance_reject(&input)?;
+    crate::codec::lift_record("vault.campaign.compliance.reject", &output)
+};
+"vault.campaign.compliance.verify" => fn vault_campaign_compliance_verify(&self, input: ComplianceVerifyRequest) -> ComplianceReceipt = |client| {
+    let input: oneiron::campaign::compliance::ComplianceVerifyRequest = crate::codec::lower_record("vault.campaign.compliance.verify", input)?;
+    let output = client.vault_campaign_compliance_verify(&input)?;
+    crate::codec::lift_record("vault.campaign.compliance.verify", &output)
+};
+"vault.campaign.compliance.result" => fn vault_campaign_compliance_result(&self, input: ComplianceResultRequest) -> ComplianceResult = |client| {
+    let input: oneiron::campaign::compliance::ComplianceResultRequest = crate::codec::lower_record("vault.campaign.compliance.result", input)?;
+    let output = client.vault_campaign_compliance_result(&input)?;
+    crate::codec::lift_record("vault.campaign.compliance.result", &output)
 };
 "vault.campaign.enroll" => fn vault_campaign_enroll(&self, input: CampaignEnrollRequest) -> CampaignEnrollmentReceipt = |client| {
     let input: oneiron::campaign::surface::CampaignEnrollRequest = crate::codec::lower_record("vault.campaign.enroll", input)?;
@@ -1596,6 +1661,61 @@ export_facade! {
     let output = client.vault_consent_revoke(&input)?;
     crate::codec::lift_record("vault.consent.revoke", &output)
 };
+"vault.consent.graduation.policy" => fn vault_consent_graduation_policy(&self, input: GraduationPolicyRequest) -> GraduationPolicies = |client| {
+    let input: oneiron::consent_graduation::api::GraduationPolicyRequest = crate::codec::lower_record("vault.consent.graduation.policy", input)?;
+    let output = client.vault_consent_graduation_policy(&input)?;
+    crate::codec::lift_record("vault.consent.graduation.policy", &output)
+};
+"vault.consent.graduation.policy.set" => fn vault_consent_graduation_policy_set(&self, input: GraduationPolicySetRequest) -> GraduationChanged = |client| {
+    let input: oneiron::consent_graduation::api::GraduationPolicySetRequest = crate::codec::lower_record("vault.consent.graduation.policy.set", input)?;
+    let output = client.vault_consent_graduation_policy_set(&input)?;
+    crate::codec::lift_record("vault.consent.graduation.policy.set", &output)
+};
+"vault.consent.graduation.policy.clear" => fn vault_consent_graduation_policy_clear(&self, input: GraduationPolicyClearRequest) -> GraduationChanged = |client| {
+    let input: oneiron::consent_graduation::api::GraduationPolicyClearRequest = crate::codec::lower_record("vault.consent.graduation.policy.clear", input)?;
+    let output = client.vault_consent_graduation_policy_clear(&input)?;
+    crate::codec::lift_record("vault.consent.graduation.policy.clear", &output)
+};
+"vault.consent.graduation.stats" => fn vault_consent_graduation_stats(&self, input: GraduationScopeRequest) -> Option<GraduationStats> = |client| {
+    let input: oneiron::consent_graduation::api::GraduationScopeRequest = crate::codec::lower_record("vault.consent.graduation.stats", input)?;
+    let output = client.vault_consent_graduation_stats(&input)?;
+    crate::codec::lift_record("vault.consent.graduation.stats", &output)
+};
+"vault.consent.graduation.outcome" => fn vault_consent_graduation_outcome(&self, input: GraduationOutcomeRequest) -> GraduationStats = |client| {
+    let input: oneiron::consent_graduation::api::GraduationOutcomeRequest = crate::codec::lower_record("vault.consent.graduation.outcome", input)?;
+    let output = client.vault_consent_graduation_outcome(&input)?;
+    crate::codec::lift_record("vault.consent.graduation.outcome", &output)
+};
+"vault.consent.graduation.offers" => fn vault_consent_graduation_offers(&self) -> Vec<GraduationOffer> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.consent.graduation.offers")?;
+    let output = client.vault_consent_graduation_offers(&input)?;
+    crate::codec::lift_record("vault.consent.graduation.offers", &output)
+};
+"vault.consent.graduation.answer" => fn vault_consent_graduation_answer(&self, input: GraduationAnswerRequest) -> GraduationAnswerReceipt = |client| {
+    let input: oneiron::consent_graduation::api::GraduationAnswerRequest = crate::codec::lower_record("vault.consent.graduation.answer", input)?;
+    let output = client.vault_consent_graduation_answer(&input)?;
+    crate::codec::lift_record("vault.consent.graduation.answer", &output)
+};
+"vault.consent.graduation.trust_table" => fn vault_consent_graduation_trust_table(&self) -> Vec<GraduationTrustRow> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.consent.graduation.trust_table")?;
+    let output = client.vault_consent_graduation_trust_table(&input)?;
+    crate::codec::lift_record("vault.consent.graduation.trust_table", &output)
+};
+"vault.consent.graduation.settings.unpin" => fn vault_consent_graduation_settings_unpin(&self, input: GraduationScopeRequest) -> GraduationChanged = |client| {
+    let input: oneiron::consent_graduation::api::GraduationScopeRequest = crate::codec::lower_record("vault.consent.graduation.settings.unpin", input)?;
+    let output = client.vault_consent_graduation_settings_unpin(&input)?;
+    crate::codec::lift_record("vault.consent.graduation.settings.unpin", &output)
+};
+"vault.consent.graduation.demote" => fn vault_consent_graduation_demote(&self, input: GraduationDemoteRequest) -> GraduationChanged = |client| {
+    let input: oneiron::consent_graduation::api::GraduationDemoteRequest = crate::codec::lower_record("vault.consent.graduation.demote", input)?;
+    let output = client.vault_consent_graduation_demote(&input)?;
+    crate::codec::lift_record("vault.consent.graduation.demote", &output)
+};
+"self.consent.graduation.demote" => fn self_consent_graduation_demote(&self, input: GraduationScopeRequest) -> GraduationChanged = |client| {
+    let input: oneiron::consent_graduation::api::GraduationScopeRequest = crate::codec::lower_record("self.consent.graduation.demote", input)?;
+    let output = client.self_consent_graduation_demote(&input)?;
+    crate::codec::lift_record("self.consent.graduation.demote", &output)
+};
 "vault.gate.policy.get" => fn vault_gate_policy_get(&self, input: PolicyManifestRead) -> PolicyManifestsView = |client| {
     let input: oneiron::policy_manifest_doors::PolicyManifestRead = crate::codec::lower_record("vault.gate.policy.get", input)?;
     let output = client.vault_gate_policy_get(&input)?;
@@ -1630,6 +1750,36 @@ export_facade! {
     let input: oneiron::learning::doors::LearningProjectionRequest = crate::codec::lower_record("vault.learning.projection", input)?;
     let output = client.vault_learning_projection(&input)?;
     crate::codec::lift_record("vault.learning.projection", &output)
+};
+"vault.seal.confess" => fn vault_seal_confess(&self, input: AttemptConfession) -> SealReceiptView = |client| {
+    let input: oneiron::self_heal::audit::AttemptConfession = crate::codec::lower_record("vault.seal.confess", input)?;
+    let output = client.vault_seal_confess(&input)?;
+    crate::codec::lift_record("vault.seal.confess", &output)
+};
+"vault.seal.audit" => fn vault_seal_audit(&self, input: SealAttemptRequest) -> SealReceiptView = |client| {
+    let input: oneiron::self_heal::audit::doors::SealAttemptRequest = crate::codec::lower_record("vault.seal.audit", input)?;
+    let output = client.vault_seal_audit(&input)?;
+    crate::codec::lift_record("vault.seal.audit", &output)
+};
+"vault.seal.receipt" => fn vault_seal_receipt(&self, input: SealAttemptRequest) -> Option<SealReceiptView> = |client| {
+    let input: oneiron::self_heal::audit::doors::SealAttemptRequest = crate::codec::lower_record("vault.seal.receipt", input)?;
+    let output = client.vault_seal_receipt(&input)?;
+    crate::codec::lift_record("vault.seal.receipt", &output)
+};
+"vault.seal.pending" => fn vault_seal_pending(&self, input: SealPendingRequest) -> Vec<SealCheckRequest> = |client| {
+    let input: oneiron::self_heal::audit::doors::SealPendingRequest = crate::codec::lower_record("vault.seal.pending", input)?;
+    let output = client.vault_seal_pending(&input)?;
+    crate::codec::lift_record("vault.seal.pending", &output)
+};
+"vault.seal.run" => fn vault_seal_run(&self) -> SealRunReceipt = |client| {
+    let input: oneiron::self_heal::audit::doors::SealRunRequest = crate::codec::lower_empty("vault.seal.run")?;
+    let output = client.vault_seal_run(&input)?;
+    crate::codec::lift_record("vault.seal.run", &output)
+};
+"vault.seal.complete" => fn vault_seal_complete(&self, input: SealCompleteRequest) -> SealReceiptView = |client| {
+    let input: oneiron::self_heal::audit::doors::SealCompleteRequest = crate::codec::lower_record("vault.seal.complete", input)?;
+    let output = client.vault_seal_complete(&input)?;
+    crate::codec::lift_record("vault.seal.complete", &output)
 };
 "vault.settings.learning" => fn vault_settings_learning(&self, input: LearningSettingsRequest) -> LearningSettingsView = |client| {
     let input: oneiron::learning_setting_doors::LearningSettingsRequest = crate::codec::lower_record("vault.settings.learning", input)?;
@@ -2875,6 +3025,26 @@ export_facade! {
     let input: oneiron::task_verb::sdk::ForgetRequest = selector.lower()?;
     let output = client.vault_forget(&input)?;
     Lift::lift(output)
+};
+"vault.booking.availability" => fn vault_booking_availability(&self, input: BookingAvailabilityRequest) -> BookingOperationResponse = |client| {
+    let input: oneiron::task_verb::sdk::BookingAvailabilityRequest = crate::codec::lower_record("vault.booking.availability", input)?;
+    let output = client.vault_booking_availability(&input)?;
+    crate::codec::lift_record("vault.booking.availability", &output)
+};
+"vault.booking.book" => fn vault_booking_book(&self, input: BookingBookRequest) -> BookingOperationResponse = |client| {
+    let input: oneiron::task_verb::sdk::BookingBookRequest = crate::codec::lower_record("vault.booking.book", input)?;
+    let output = client.vault_booking_book(&input)?;
+    crate::codec::lift_record("vault.booking.book", &output)
+};
+"vault.booking.reschedule" => fn vault_booking_reschedule(&self, input: BookingRescheduleRequest) -> BookingOperationResponse = |client| {
+    let input: oneiron::task_verb::sdk::BookingRescheduleRequest = crate::codec::lower_record("vault.booking.reschedule", input)?;
+    let output = client.vault_booking_reschedule(&input)?;
+    crate::codec::lift_record("vault.booking.reschedule", &output)
+};
+"vault.booking.cancel" => fn vault_booking_cancel(&self, input: BookingCancelRequest) -> BookingOperationResponse = |client| {
+    let input: oneiron::task_verb::sdk::BookingCancelRequest = crate::codec::lower_record("vault.booking.cancel", input)?;
+    let output = client.vault_booking_cancel(&input)?;
+    crate::codec::lift_record("vault.booking.cancel", &output)
 };
 "vault.booking.constraint_turn" => fn vault_booking_constraint_turn(&self, input: BookingConstraintTurnRequest) -> BookingConstraintTurnResponse = |client| {
     let input: oneiron::task_verb::sdk::BookingConstraintTurnRequest = crate::codec::lower_record("vault.booking.constraint_turn", input)?;

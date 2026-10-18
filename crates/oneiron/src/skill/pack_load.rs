@@ -1,6 +1,6 @@
 //! Attempt-bound pack reads stamp their actual revision in the same transaction.
 
-use super::{SkillLifecycle, SkillRecord};
+use super::{SkillLifecycle, SkillRecord, SkillRole};
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ManifestEntry, ManifestKind};
 use crate::claim::{ClaimApprovalStatus, ClaimBody, claim_surfaceable, encode_claim_body};
 use crate::{EntityId, Error, Result, Vault};
@@ -236,6 +236,106 @@ impl Vault {
             (!stamped).then_some(executor),
             at,
         )
+    }
+
+    /// Loads the exact revision a frozen plan names, in the caller's own
+    /// lease generation (DOOR-111 S4c-3): `skill` itself at `version`, read
+    /// as [`Self::exact_workflow_pack_in_txn`] reads it. No exploration
+    /// trial routes it and no other arm stands in; a revision that moved or
+    /// is gone refuses. The first executor stamps the attempt, as the
+    /// callable door's does. Its manifest row lands once: a row of the same
+    /// kind, skill and revision already on the attempt stands for this load.
+    pub(crate) fn load_leased_exact_skill_pack(
+        &self,
+        leased: &AttemptRecord,
+        skill: &EntityId,
+        version: &str,
+        executor: &str,
+        at: u64,
+    ) -> Result<LoadedSkillPack> {
+        let lease_owner = leased
+            .lease_owner
+            .as_deref()
+            .ok_or(Error::InvalidClaimBody(
+                "an exact pack load requires the caller's live attempt lease",
+            ))?;
+        self.with_write_txn_grouped(|txn| {
+            let loaded = self.exact_workflow_pack_in_txn(txn, skill, version)?;
+            let queue = AttemptQueue::new(self);
+            queue.require_skill_load_lease_in_txn(
+                txn,
+                leased.id,
+                lease_owner,
+                leased.attempt_count,
+            )?;
+            let live = queue
+                .get_in_txn(txn, leased.id)?
+                .ok_or(Error::EntityNotFound)?;
+            if live.executor_model.is_none() {
+                queue.set_executor_model_in_txn(
+                    txn,
+                    leased.id,
+                    lease_owner,
+                    leased.attempt_count,
+                    executor,
+                )?;
+            }
+            let entry = ManifestEntry::new(
+                ManifestKind::Skill,
+                &loaded.record.skill_id,
+                &loaded.record.version,
+                at,
+            );
+            let recorded = live.manifest().iter().any(|row| {
+                row.kind == entry.kind
+                    && row.reference == entry.reference
+                    && row.version == entry.version
+            });
+            if !recorded {
+                queue.append_manifest_entry_in_txn(txn, leased.id, entry)?;
+            }
+            Ok(loaded)
+        })
+    }
+
+    /// One exact workflow revision as its admitted package, on the caller's
+    /// snapshot: `skill` live, no resident's, an active approved workflow
+    /// skill at `version`, its instructions the runtime package the hub
+    /// verified against the record. No exploration trial routes it, and
+    /// nothing is stamped.
+    pub(crate) fn exact_workflow_pack_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        skill: &EntityId,
+        version: &str,
+    ) -> Result<LoadedSkillPack> {
+        if !crate::vault::live_entity_row_in_txn(&self.store, txn, skill)?.is_live() {
+            return Err(Error::EntityNotFound);
+        }
+        let record = self.read_skill_record_in_txn(txn, skill)?;
+        if super::resident_of(&record)?.is_some() {
+            return Err(Error::InvalidClaimBody(
+                "an exact pack load reads shared skills, not a resident's",
+            ));
+        }
+        if !skill_loadable(&record) || record.role != SkillRole::Workflow {
+            return Err(Error::InvalidClaimBody(
+                "an exact pack load runs an active approved workflow skill",
+            ));
+        }
+        if record.version != version {
+            return Err(Error::InvalidClaimBody(
+                "the skill moved off the exact revision asked for",
+            ));
+        }
+        let source_files = self
+            .runtime_skill_package_in_txn(txn, skill, &record)?
+            .map(|package| package.files);
+        Ok(LoadedSkillPack {
+            entity: *skill,
+            record,
+            source_files,
+        })
     }
 
     /// Pick a resident's best version with the shared UCB bandit and stamp

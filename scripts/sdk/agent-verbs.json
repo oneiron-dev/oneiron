@@ -1265,6 +1265,111 @@
       "openapi": true
     },
     {
+      "name": "vault.affect.coping.record",
+      "description": "Records a first coping outcome from two stored VAD-annotated turns for one person, with scoped claim admission and caller attribution; no factual claim is superseded.",
+      "input": "crate::memory::coping_doors::CopingOutcomeRecordRequest",
+      "output": "crate::memory::coping_doors::CopingOutcomeReceipt",
+      "call": "memory.coping_outcome_record_as_owner(&memory.embedded_owner(\"vault.affect.coping.record\")?, &input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.affect.coping.update",
+      "description": "Updates an active coping aggregate from its strategy turn and a later annotated turn through the existing engine transaction, preserving scope and both evidence refs.",
+      "input": "crate::memory::coping_doors::CopingOutcomeUpdateRequest",
+      "output": "crate::memory::coping_doors::CopingOutcomeReceipt",
+      "call": "memory.coping_outcome_update_as_owner(&memory.embedded_owner(\"vault.affect.coping.update\")?, &input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.affect.coping.aggregate",
+      "description": "Reads all admitted active coping aggregates for one person and optional exact scope, including unsuccessful outcomes and their attribution and evidence refs.",
+      "input": "crate::memory::coping_doors::CopingAggregateRequest",
+      "output": "crate::memory::coping_doors::CopingAggregate",
+      "call": "memory.coping_aggregate_as_owner(&memory.embedded_owner(\"vault.affect.coping.aggregate\")?, &input)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.affect.wellness.policy.get",
+      "description": "Reads the configured non-clinical wellness window, targets and advisory mode bands as the owner; absent policy stays absent.",
+      "input": "EmptyRequest",
+      "output": "Option<crate::dreamer_runner::maintenance::action_mode::ActionModePolicy>",
+      "call": "memory.wellness_policy_as_owner(&memory.embedded_owner(\"vault.affect.wellness.policy.get\")?)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.affect.wellness.policy.configure",
+      "description": "Configures or clears the existing action-mode policy as the owner; no universal wellness cutoff or diagnostic label is supplied by the engine.",
+      "input": "crate::memory::wellness_doors::WellnessPolicyConfigureRequest",
+      "output": "Option<crate::dreamer_runner::maintenance::action_mode::ActionModePolicy>",
+      "call": "memory.wellness_policy_configure_as_owner(&memory.embedded_owner(\"vault.affect.wellness.policy.configure\")?, &input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.affect.wellness.derive",
+      "description": "Derives one person's non-clinical wellness projection using the existing state measurements and configured mode bands, with a routed receipt and source refs.",
+      "input": "crate::memory::wellness_doors::WellnessPersonRequest",
+      "output": "crate::memory::wellness_doors::WellnessProjection",
+      "call": "memory.wellness_derive_as_owner(&memory.embedded_owner(\"vault.affect.wellness.derive\")?, &input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.affect.wellness.get",
+      "description": "Reads one person's measured wellness state, configured advisory mode and coping aggregates with source refs, without refreshing or revising factual claims.",
+      "input": "crate::memory::wellness_doors::WellnessPersonRequest",
+      "output": "crate::memory::wellness_doors::WellnessProjection",
+      "call": "memory.wellness_get_as_owner(&memory.embedded_owner(\"vault.affect.wellness.get\")?, &input)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.retrieval.recall",
       "description": "Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle.",
       "input": "crate::task_verb::sdk::RecallRequest",
@@ -1737,6 +1842,96 @@
           "py": "Exact actor-owned worldless keyed memory; typed engine errors pass through."
         }
       }
+    },
+    {
+      "name": "vault.campaign.compliance.install",
+      "description": "The owner installs cited compliance rows through the versioned amendment classifier; a loosening still waits for an exact-hash owner approval.",
+      "input": "crate::campaign::compliance::ComplianceAmendRequest",
+      "output": "crate::campaign::compliance::ComplianceReceipt",
+      "call": "memory.compliance_install_as(&memory.embedded_owner(\"vault.campaign.compliance.install\")?, &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.campaign.compliance.amend",
+      "description": "Proposes cited compliance rows against the active version. Tightening activates with a notice only within the caller ceiling; loosening waits for the owner stamp.",
+      "input": "crate::campaign::compliance::ComplianceAmendRequest",
+      "output": "crate::campaign::compliance::ComplianceReceipt",
+      "call": "memory.compliance_amend(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.campaign.compliance.approve",
+      "description": "The owner approves the exact pending compliance proposal hash against the active version, with a durable authority receipt.",
+      "input": "crate::campaign::compliance::ComplianceApprovalRequest",
+      "output": "crate::campaign::compliance::ComplianceReceipt",
+      "call": "memory.compliance_approve_as(&memory.embedded_owner(\"vault.campaign.compliance.approve\")?, &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.campaign.compliance.reject",
+      "description": "The owner rejects the exact pending compliance proposal hash without changing the effective rules.",
+      "input": "crate::campaign::compliance::ComplianceApprovalRequest",
+      "output": "crate::campaign::compliance::ComplianceReceipt",
+      "call": "memory.compliance_reject_as(&memory.embedded_owner(\"vault.campaign.compliance.reject\")?, &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.campaign.compliance.verify",
+      "description": "The owner records cited verification dates for existing compliance rows, including an explicitly stale date, without changing requirements or freshness policy.",
+      "input": "crate::campaign::compliance::ComplianceVerifyRequest",
+      "output": "crate::campaign::compliance::ComplianceReceipt",
+      "call": "memory.compliance_verify_as(&memory.embedded_owner(\"vault.campaign.compliance.verify\")?, &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.campaign.compliance.result",
+      "description": "Reads the active compliance pack, exact pending proposal, activation notices and amendment or owner-verification receipts from one snapshot.",
+      "input": "crate::campaign::compliance::ComplianceResultRequest",
+      "output": "crate::campaign::compliance::ComplianceResult",
+      "call": "memory.compliance_result(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.campaign.enroll",
@@ -4946,6 +5141,166 @@
       "openapi": true
     },
     {
+      "name": "vault.consent.graduation.policy",
+      "description": "Reads runtime consent-graduation policy rows and the effective row for an optional exact scope.",
+      "input": "crate::consent_graduation::api::GraduationPolicyRequest",
+      "output": "crate::consent_graduation::api::GraduationPolicies",
+      "call": "crate::consent_graduation::api::policies(memory.vault(), &memory.embedded_owner(\"vault.consent.graduation.policy\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.graduation.policy.set",
+      "description": "The owner sets a scope-pattern streak, posterior guard and two snooze backoffs; zero-second backoff is supported.",
+      "input": "crate::consent_graduation::api::GraduationPolicySetRequest",
+      "output": "crate::consent_graduation::api::GraduationChanged",
+      "call": "crate::consent_graduation::api::set_policy(memory.vault(), &memory.embedded_owner(\"vault.consent.graduation.policy.set\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.graduation.policy.clear",
+      "description": "The owner clears one runtime graduation policy row; scopes fall back to the next matching policy.",
+      "input": "crate::consent_graduation::api::GraduationPolicyClearRequest",
+      "output": "crate::consent_graduation::api::GraduationChanged",
+      "call": "crate::consent_graduation::api::clear_policy(memory.vault(), &memory.embedded_owner(\"vault.consent.graduation.policy.clear\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.graduation.stats",
+      "description": "Reads one exact graduation scope outcome history and current consent posture.",
+      "input": "crate::consent_graduation::api::GraduationScopeRequest",
+      "output": "Option<crate::consent_graduation::api::GraduationStats>",
+      "call": "crate::consent_graduation::api::stats(memory.vault(), &memory.embedded_owner(\"vault.consent.graduation.stats\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.graduation.outcome",
+      "description": "The owner records an untouched, amended or rejected proposal ruling, receipted and folded through the existing ramp.",
+      "input": "crate::consent_graduation::api::GraduationOutcomeRequest",
+      "output": "crate::consent_graduation::api::GraduationStats",
+      "call": "crate::consent_graduation::api::record_outcome(memory.vault(), &memory.embedded_owner(\"vault.consent.graduation.outcome\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.graduation.offers",
+      "description": "Reads earned, unsuppressed graduation offers with thresholds, streaks and before/after reach; reading grants nothing.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "Vec<crate::consent_graduation::api::GraduationOffer>",
+      "call": "crate::consent_graduation::api::offers(memory.vault(), &memory.embedded_owner(\"vault.consent.graduation.offers\")?)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.graduation.answer",
+      "description": "The owner answers auto, not-now or manual_pinned; only auto mints the existing standing grant, and not-now resets the streak.",
+      "input": "crate::consent_graduation::api::GraduationAnswerRequest",
+      "output": "crate::consent_graduation::api::GraduationAnswerReceipt",
+      "call": "crate::consent_graduation::api::answer(memory.vault(), &memory.embedded_owner(\"vault.consent.graduation.answer\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.graduation.trust_table",
+      "description": "Reads the owner trust table: scope, counts, effective threshold, snooze or manual pin, live grant and offer reach.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "Vec<crate::consent_graduation::api::GraduationTrustRow>",
+      "call": "crate::consent_graduation::api::trust_table(memory.vault(), &memory.embedded_owner(\"vault.consent.graduation.trust_table\")?)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.graduation.settings.unpin",
+      "description": "The owner reopens a pinned or snoozed graduation scope in settings; no grant is created.",
+      "input": "crate::consent_graduation::api::GraduationScopeRequest",
+      "output": "crate::consent_graduation::api::GraduationChanged",
+      "call": "crate::consent_graduation::api::unpin(memory.vault(), &memory.embedded_owner(\"vault.consent.graduation.settings.unpin\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.graduation.demote",
+      "description": "The owner demotes an exact scope to propose, revoking its live grant and recording the existing durable demotion receipt.",
+      "input": "crate::consent_graduation::api::GraduationDemoteRequest",
+      "output": "crate::consent_graduation::api::GraduationChanged",
+      "call": "crate::consent_graduation::api::demote(memory.vault(), &memory.embedded_owner(\"vault.consent.graduation.demote\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "self.consent.graduation.demote",
+      "description": "The bound actor transparently gives up only its own ramp scope authority, with the existing durable demotion receipt.",
+      "input": "crate::consent_graduation::api::GraduationScopeRequest",
+      "output": "crate::consent_graduation::api::GraduationChanged",
+      "call": "crate::consent_graduation::api::demote_own(memory, input)?",
+      "scope": "Write",
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.gate.policy.get",
       "description": "The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions.",
       "input": "crate::policy_manifest_doors::PolicyManifestRead",
@@ -5043,6 +5398,96 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.seal.confess",
+      "description": "Confess an attempt's objectives without changing any score; named flaws and uncertainty create durable directed rechecks.",
+      "input": "crate::self_heal::audit::AttemptConfession",
+      "output": "crate::self_heal::audit::doors::SealReceiptView",
+      "call": "crate::self_heal::audit::doors::confess_as_owner(memory.vault(), &memory.embedded_owner(\"vault.seal.confess\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.seal.audit",
+      "description": "Draw a passing sealed attempt once at the current audit rate, saving the rate and selection before any checker runs.",
+      "input": "crate::self_heal::audit::doors::SealAttemptRequest",
+      "output": "crate::self_heal::audit::doors::SealReceiptView",
+      "call": "crate::self_heal::audit::doors::audit_as_owner(memory.vault(), &memory.embedded_owner(\"vault.seal.audit\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.seal.receipt",
+      "description": "Read a sealed attempt, its stamped audit draw, directed and random check completions, weighted findings and separate honesty reward.",
+      "input": "crate::self_heal::audit::doors::SealAttemptRequest",
+      "output": "Option<crate::self_heal::audit::doors::SealReceiptView>",
+      "call": "crate::self_heal::audit::doors::receipt_as_owner(memory.vault(), &memory.embedded_owner(\"vault.seal.receipt\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.seal.pending",
+      "description": "Read pending directed rechecks and random audits, optionally for one attempt, without executing a checker.",
+      "input": "crate::self_heal::audit::doors::SealPendingRequest",
+      "output": "Vec<crate::self_heal::audit::SealCheckRequest>",
+      "call": "crate::self_heal::audit::doors::pending_as_owner(memory.vault(), &memory.embedded_owner(\"vault.seal.pending\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.seal.run",
+      "description": "Queue the existing Coach seal checker under its ordinary lease, Grant and budget; the returned job never grants extra authority.",
+      "input": "crate::self_heal::audit::doors::SealRunRequest",
+      "output": "crate::self_heal::audit::doors::SealRunReceipt",
+      "call": "crate::self_heal::audit::doors::run_as_owner(memory.vault(), &memory.embedded_owner(\"vault.seal.run\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.seal.complete",
+      "description": "Attest an independent external seal check as the owner; admit immutable findings and project them using the request's stamped rate.",
+      "input": "crate::self_heal::audit::doors::SealCompleteRequest",
+      "output": "crate::self_heal::audit::doors::SealReceiptView",
+      "call": "crate::self_heal::audit::doors::complete_as_owner(memory.vault(), &memory.embedded_owner(\"vault.seal.complete\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -9703,6 +10148,62 @@
         "native": "agent_verb",
         "request": true
       }
+    },
+    {
+      "name": "vault.booking.availability",
+      "description": "Lists ranked public slots on a live published booking page as the caller, through the shared booking admission and solver without exposing busy sources.",
+      "input": "crate::task_verb::sdk::BookingAvailabilityRequest",
+      "output": "crate::booking::agent_api::BookingOperationResponse",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.availability\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.booking.book",
+      "description": "Holds or confirms a real slot on a live published booking page as the caller, through the shared admission and home-node lifecycle with opaque session-bound tokens.",
+      "input": "crate::task_verb::sdk::BookingBookRequest",
+      "output": "crate::booking::agent_api::BookingOperationResponse",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.book\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.booking.reschedule",
+      "description": "Moves a booking on a live published page using its reschedule token, preserving EVENT and UID and replaying without another passport revision.",
+      "input": "crate::task_verb::sdk::BookingRescheduleRequest",
+      "output": "crate::booking::agent_api::BookingOperationResponse",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.reschedule\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.booking.cancel",
+      "description": "Cancels a booking on a live published page using its cancel token, preserving EVENT and UID and replaying without another passport revision.",
+      "input": "crate::task_verb::sdk::BookingCancelRequest",
+      "output": "crate::booking::agent_api::BookingOperationResponse",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.cancel\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.booking.constraint_turn",
