@@ -10775,7 +10775,7 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 36,
+      "crate-vis": 38,
       "enum": 1,
       "fn": 9,
       "struct": 1
@@ -12084,7 +12084,7 @@
      "path": "src/code_run/dispatcher/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 9,
       "re-export": 2,
       "struct": 1,
@@ -15256,7 +15256,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 31,
-      "fn": 25,
+      "fn": 26,
       "struct": 2
      }
     },
@@ -20803,7 +20803,7 @@
      "path": "src/dreamer_wake/policy.rs",
      "purpose": "Row-backed wake admission",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 5,
       "fn": 8,
       "struct": 8
@@ -37717,13 +37717,17 @@
      "notable": [
       "InferenceDefaultsReplaceRequest",
       "PolicyActionOutcome",
+      "PolicySetting",
+      "PolicySettingActReceipt",
       "WakePolicySetRequest"
      ],
      "path": "src/policy_setting_doors.rs",
      "purpose": "The app's policy actions as host verbs (OF-181)",
      "surface": {
-      "fn": 8,
-      "struct": 3
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 11,
+      "struct": 4
      }
     },
     {
@@ -49208,7 +49212,7 @@
       "const": 6,
       "crate-vis": 10,
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -49220,7 +49224,7 @@
      "purpose": "The tagging marker and its drain: the write path's outbox rule applied to the Oneironer slot (ARCH-0036…",
      "surface": {
       "crate-vis": 9,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -49329,6 +49333,39 @@
       "crate-vis": 2,
       "enum": 4,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DerivationEnvelopeView",
+      "MentionLinkView",
+      "MentionReferenceView",
+      "MergeEvidenceView",
+      "TaggedMentionView",
+      "TaggingFailureView",
+      "TaggingHistoryView",
+      "TaggingMarkerState",
+      "TaggingMarkerView",
+      "TaggingMentionHitView",
+      "TaggingMentionsRequest",
+      "TaggingMentionsView",
+      "TaggingOutcomeView",
+      "TaggingSpeakerTarget",
+      "TaggingStatusView",
+      "TaggingTagsView",
+      "TaggingTraceView",
+      "TaggingTurnRequest",
+      "TaggingVadView",
+      "TurnTagsView"
+     ],
+     "path": "src/tagging/verbs.rs",
+     "purpose": "Typed public reads of the tagging marker and the saved tag sets: the `vault.tagging.*` doors over…",
+     "surface": {
+      "enum": 5,
+      "fn": 4,
+      "struct": 15
      }
     },
     {
@@ -50902,7 +50939,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 672
+      "fn": 676
      }
     },
     {
@@ -57635,7 +57672,7 @@
     },
     "policy_setting_doors": {
      "files": 1,
-     "impl_vault": false,
+     "impl_vault": true,
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "The app's policy actions as host verbs (OF-181)"
@@ -57998,7 +58035,7 @@
      "purpose": "CRDT sync layer for Oneiron"
     },
     "tagging": {
-     "files": 14,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58189,7 +58226,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3551,
+   "source_files": 3552,
    "test_files": 902
   },
   "oneiron-android": {
@@ -66719,7 +66756,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 622
+      "fn": 626
      }
     },
     {
@@ -67768,7 +67805,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 623
+      "fn": 627
      }
     },
     {
@@ -71172,6 +71209,16 @@
      "purpose": "Credential-bound host projections of the typed origin and checkout doors (DOOR-139)",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/owner_binding.rs",
+     "purpose": "WILL-PLAN L13 row 01: one revalidated binding for a managed vault's attested owner, shared by the policy…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -78749,7 +78796,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 379,
+     "files": 380,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -79171,7 +79218,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 716,
+   "source_files": 717,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -79974,6 +80021,7 @@
       "DeliveryWindowRule",
       "DeliveryWindowTimeWindow",
       "DeliveryWindowVerbClass",
+      "DerivationEnvelopeView",
       "DerivationKind",
       "DeterministicFallback",
       "DiaryEntryReceipt",
@@ -80435,7 +80483,10 @@
       "MemoryProjection",
       "MemorySupersedeInput",
       "MemoryWriteOutput",
+      "MentionLinkView",
+      "MentionReferenceView",
       "MergeCrossover",
+      "MergeEvidenceView",
       "MergeQueueBatchRequest",
       "MergeQueueBatchView",
       "MergeQueueEnqueueRequest",
@@ -81365,6 +81416,21 @@
       "SupportGrantStatus",
       "SupportGrantView",
       "SupportHolderClass",
+      "TaggedMentionView",
+      "TaggingFailureView",
+      "TaggingHistoryView",
+      "TaggingMarkerState",
+      "TaggingMarkerView",
+      "TaggingMentionHitView",
+      "TaggingMentionsRequest",
+      "TaggingMentionsView",
+      "TaggingOutcomeView",
+      "TaggingSpeakerTarget",
+      "TaggingStatusView",
+      "TaggingTagsView",
+      "TaggingTraceView",
+      "TaggingTurnRequest",
+      "TaggingVadView",
       "TaskAccept",
       "TaskAnswerRequest",
       "TaskAskAnswer",
@@ -81500,6 +81566,7 @@
       "TurnAction",
       "TurnActionReceipt",
       "TurnActionRequest",
+      "TurnTagsView",
       "TwoClocksAtom",
       "TypeByteFamily",
       "TypeRef",
@@ -81629,8 +81696,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 589,
-      "struct": 1671
+      "enum": 594,
+      "struct": 1686
      }
     },
     {
