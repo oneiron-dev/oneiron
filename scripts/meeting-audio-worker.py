@@ -52,8 +52,7 @@ class Port:
                     "model_execution": False}, b""
         if self.stage == "alignment" and operation == "align_words":
             if (set(options) != {"transcript", "language"} or not isinstance(options["transcript"], str)
-                    or not options["transcript"].strip() or len(options["transcript"].encode()) > 65536
-                    or not body or len(body) % 2 or len(body) > 16000 * 2 * 120):
+                    or not options["transcript"].strip() or not body or len(body) % 2):
                 raise bridge.Refusal("InvalidAlignmentRequest")
             import numpy as np
             audio = np.frombuffer(body, dtype="<i2").astype(np.float32) / 32768.0

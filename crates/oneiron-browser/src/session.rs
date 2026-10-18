@@ -30,7 +30,9 @@
 //! sees every tab: a popup or a tab a link opens (an OAuth sign-in window)
 //! is followed, comes to the front at their next look, and can be named to
 //! the screen and input; the tab they leave in front is the one the agent
-//! reads after.
+//! reads after. The agent's own verbs follow the tabs too: a tab its act
+//! opens comes to the front, and a front tab that closes gives way to its
+//! opener, and the next answer names the move.
 //!
 //! A long outline is answered in pages (Rule 5): each answer carries as
 //! many rows as fit one page, and `next` names the cursor `observe` reads
@@ -47,8 +49,8 @@ use crate::{
     LibraryRetiredOutput, LibraryRunInput, LibraryRunOutput, NoDecider, Observation,
     ObservationPage, ObserveInput, OpenInput, PointInput, PressMode, ProposeInput, ProposeOutput,
     ReceiptEvidenceSink, RoutineDecider, Row, ScreenshotInput, ScreenshotOutput, ScreenshotTrigger,
-    SelectInput, SendPolicy, Takeover, TakeoverRecord, TypeInput, ViewInput, WaitForInput,
-    WaitForOutput, WorkflowLibrary, ZoomInput, site_of,
+    SelectInput, SendPolicy, TabSwitch, Takeover, TakeoverRecord, TypeInput, ViewInput,
+    WaitForInput, WaitForOutput, WorkflowLibrary, ZoomInput, site_of,
 };
 use oneiron_container::{
     EgressRelay, GuestLimits, SessionLease, SessionManifest, SessionTransport,
@@ -374,8 +376,11 @@ impl BrowserSession {
         self.driver.forget_observations();
         // The agent reads the tab the person left in front; a front tab that
         // closed gives way here. A guest that no longer answers refuses the
-        // agent's next call itself.
+        // agent's next call itself. The takeover's record covers where the
+        // person left it: no tab they opened, and no move from before,
+        // counts as the agent's.
         let _ = self.driver.tabs(false);
+        self.driver.know_tabs();
         self.returned = Some(record.clone());
         Ok(record)
     }
@@ -401,6 +406,13 @@ impl BrowserSession {
     /// The takeover that ended since the agent's last answer, once.
     pub fn take_returned(&mut self) -> Option<TakeoverRecord> {
         self.returned.take()
+    }
+
+    /// The agent's move to another tab since its last answer, once: a tab
+    /// its act opened came to the front, or the tab it drove closed. The
+    /// host's door names it on that answer as `switched`.
+    pub fn take_switched(&mut self) -> Option<TabSwitch> {
+        self.driver.take_switched()
     }
 
     /// Ends a takeover still asked or held as the browser goes away, with
@@ -437,9 +449,14 @@ impl BrowserSession {
     }
 
     /// An agent verb's entry: the agent has the browser and the guest runs.
+    /// Its verbs follow the tabs first: a tab opened since its last call
+    /// (a popup a script opened late) comes to the front, and a front tab
+    /// that closed gives way to its opener. A look at the tabs that fails
+    /// leaves the front where it was, for the verb's own answer.
     fn live(&mut self) -> Result<&mut CdpDriver, BrowserError> {
         self.agent_has()?;
         self.guest_up()?;
+        let _ = self.driver.follow();
         Ok(&mut self.driver)
     }
 

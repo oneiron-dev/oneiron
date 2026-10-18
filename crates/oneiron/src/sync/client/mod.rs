@@ -57,7 +57,7 @@ pub use self::base::SyncClient;
 pub use self::federated::ImportTier;
 pub use self::residence::{
     OpenedItem, ResidenceHit, ResidenceIndexWindow, ResidenceSearch, SealedBundleRelay,
-    SearchSource, ThinItem,
+    SearchSource, ThinItem, fetch_sealed_bundle_with_kit,
 };
 pub(crate) use self::residence::{
     catch_up_authority, pinned_checkpoint_pending, relay_sealed_bundle, retry_refused_retains,

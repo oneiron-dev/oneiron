@@ -103,6 +103,8 @@ pub(crate) use self::esign::seal_worker::spawn_admitted as spawn_esign_seal_work
 mod off_record_rooms;
 mod org_admin;
 mod pairing;
+// FIX 922: the kit door to the sealed cloud bundle.
+mod recovery_bundle;
 mod sessions;
 mod slip_renewal;
 // ONE-1441 [WIRE-P1]: the bounded HTTP projection of the engine memory
@@ -112,10 +114,12 @@ mod slip_renewal;
 // crate's closed `ErrorCode`.
 mod facade;
 // OF-489: the held socket runs every facade verb through the facade's one
-// generated dispatch, under the credential its connection bound.
+// generated dispatch, under the credential its connection bound, and claims
+// the invocation a call names as the HTTP facade does (FIX 2059).
 pub(crate) use self::facade::{
-    FacadeApiError, FacadeCall, ai_speech_for_run, call_verb as facade_call_verb,
-    connector_call_as, self_use_as,
+    DoorClaim, FacadeApiError, FacadeCall, INVOCATION_CONFLICT, INVOCATION_IN_FLIGHT,
+    ai_speech_for_run, call_verb as facade_call_verb, claim_door_invocation, connector_call_as,
+    invocation_body, self_use_as,
 };
 mod feedback_inbox;
 pub(crate) use self::feedback_inbox::FloodCap;
@@ -136,6 +140,8 @@ mod memory;
 // depth cost gate, the extractive answer for the model-free tiers, and the
 // citation gate over whatever a host composer returns.
 pub(crate) mod memory_reason;
+// FIX 365: the result a MESSAGE carries, read on its transcript's read lane.
+mod message_result;
 // OF-445: the OpenAI-compatible memory-injection proxy.
 mod openai_proxy;
 mod openapi;
@@ -350,6 +356,11 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             "/conversations/{conversation_id}/transcript",
             get(conversation_transcript::get_core_conversation_transcript),
         )
+        // A read with a POST body, so it stays out of the idempotency layer.
+        .route(
+            "/messages/{message}/result",
+            post(message_result::read_core_message_result),
+        )
         .route(
             "/conversations/{conversation_id}/scope",
             post(resolve_core_scope),
@@ -501,6 +512,9 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // OF-273: a former peer's signed courtesy deletion ask and answer.
         // Keyless; the signed body authenticates against the pinned pact key.
         .merge(self::cooperative_deletion::routes())
+        // FIX 922: a kit-only restore's read of the sealed cloud bundle.
+        // Keyless; each request is signed with the kit's owner anchor.
+        .merge(self::recovery_bundle::routes())
         // ARCH-0052 D5: everyone in a room keeps their own copy of an
         // off-record talk. Its own nest, outside the idempotency layer and
         // the wire receipts: nothing of the stretch may outlive it. The
