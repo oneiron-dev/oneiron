@@ -9,8 +9,14 @@ use crate::lens::{
 };
 use crate::{EntityId, Result, Vault};
 
+/// The derivation domain of the id a shared view gives a citation it
+/// redacts in place of the claim's.
+const REDACTED_CITATION: &[u8] = b"oneiron.note.brief.redacted_citation.v1";
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct BriefCitationView {
+    /// The cited CLAIM; for one a shared view redacts, the one fixed id every
+    /// such citation carries, so the view names no claim it withholds.
     pub claim: EntityId,
     pub stale: bool,
     pub drifted: bool,
@@ -131,7 +137,11 @@ impl Vault {
                 // A redacted reference reveals neither current lifecycle nor
                 // whether hidden evidence was edited or erased.
                 citations.push(BriefCitationView {
-                    claim: pin.claim,
+                    claim: if visible.is_some() {
+                        EntityId::derive(REDACTED_CITATION, &[])?
+                    } else {
+                        pin.claim
+                    },
                     stale: false,
                     drifted: false,
                     redacted: true,
