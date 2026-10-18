@@ -91,6 +91,11 @@ impl Vault {
             .ok_or_else(|| invalid_body("connector slate missing"))?;
         let next_slate = read_connector_slate_in_txn(self, &wtxn, next_slate_ref)?
             .ok_or_else(|| invalid_body("connector replacement slate missing"))?;
+        if old_slate.slate_manifest().pack_source.is_some()
+            && next_slate.slate_manifest().pack_source.is_none()
+        {
+            return Err(invalid_body("a connector pack update must retain its source binding"));
+        }
         // A pending, not-yet-consented expansion cannot be washed away by
         // another revision that makes no further expansion.
         let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
@@ -160,6 +165,7 @@ impl Vault {
                 .ok_or_else(|| invalid_body("connector slate required"))?;
             let slate = read_connector_slate_in_txn(self, &txn, slate_id)?
                 .ok_or_else(|| invalid_body("connector slate missing"))?;
+            require_pack_qualification(self, &txn, &record, &slate, expected_revision)?;
             if record.consent_required
                 && (slate.owner_actor().is_none() || slate.revision() == 0 || !slate.stamp_holds())
             {
@@ -190,6 +196,7 @@ impl Vault {
         }
         let slate = read_connector_slate_in_txn(self, &wtxn, expected_slate_id)?
             .ok_or_else(|| invalid_body("connector slate missing"))?;
+        require_pack_qualification(self, &wtxn, &record, &slate, expected_revision)?;
         if record.consent_required
             && (slate.owner_actor().is_none() || slate.revision() == 0 || !slate.stamp_holds())
             || slate.revision() != stamped_revision
@@ -297,4 +304,37 @@ impl Vault {
         wtxn.commit()?;
         Ok(adopted)
     }
+}
+
+/// A pack's catalog route cannot activate on another source's qualification.
+fn require_pack_qualification(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    record: &ConnectorKeyRecord,
+    slate: &super::super::slate::ConnectorGrantSlate,
+    revision: &str,
+) -> Result<()> {
+    let Some(binding) = &slate.slate_manifest().pack_source else {
+        return Ok(());
+    };
+    let source_id = EntityId::from_hex(&binding.source_ref)?;
+    let source = vault.pack_source_in_txn(txn, &source_id)?
+        .ok_or_else(|| invalid_body("connector pack source missing"))?;
+    let installed = vault.installed_pack_in_txn(txn, &source.manifest().name)?
+        .ok_or_else(|| invalid_body("connector pack has not qualified"))?;
+    let qualification = installed.connector_qualification.as_ref()
+        .ok_or_else(|| invalid_body("connector pack has not qualified"))?;
+    let manifest = record.pending_manifest.as_ref().map(|pending| &pending.manifest)
+        .or(record.retained_manifest.as_ref())
+        .ok_or_else(|| invalid_body("connector pack manifest has not qualified"))?;
+    if source.content_hash().to_hex() != binding.content_hash
+        || installed.source_id != binding.source_ref
+        || installed.content_hash != binding.content_hash
+        || qualification.source_hash != binding.content_hash
+        || qualification.qualification.protocol_revision != revision
+        || qualification.qualification.manifest_hash != manifest.hash()?
+    {
+        return Err(invalid_body("connector pack qualification basis changed"));
+    }
+    Ok(())
 }

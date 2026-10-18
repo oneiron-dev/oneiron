@@ -96,28 +96,28 @@ struct SetupQuery {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct AcceptRequest {
-    connector: String,
+pub(crate) struct AcceptRequest {
+    pub(crate) connector: String,
     /// The slate revision the owner reviewed.
-    revision: u64,
+    pub(crate) revision: u64,
     /// The owner's setting per row: `always_allow`, `auto`, `always_ask` or
     /// `never_allow`. A row left out keeps its drafted setting. Rows go by
     /// tool name; `@elicitation` names the elicitation row.
     #[serde(default)]
-    rows: BTreeMap<String, SlateDisposition>,
+    pub(crate) rows: BTreeMap<String, SlateDisposition>,
     /// The facets the grant reaches, as 32 hex each; none: every facet.
     #[serde(default)]
-    facets: Option<Vec<String>>,
+    pub(crate) facets: Option<Vec<String>>,
     /// Every row `always ask`; a `never allow` row stays removed.
     #[serde(default)]
-    all_manual: bool,
+    pub(crate) all_manual: bool,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct QualifyRequest {
-    connector: String,
-    kit: QualificationKit,
+pub(crate) struct QualifyRequest {
+    pub(crate) connector: String,
+    pub(crate) kit: QualificationKit,
 }
 
 #[derive(Debug, Deserialize)]
@@ -178,7 +178,7 @@ struct Registered {
 }
 
 #[derive(Debug, Serialize)]
-struct SlateView {
+pub(crate) struct SlateView {
     id: String,
     revision: u64,
     /// An owner stamp whose manifest and grant still hold.
@@ -227,7 +227,7 @@ struct Setup {
 }
 
 #[derive(Debug, Serialize)]
-struct KeyView {
+pub(crate) struct KeyView {
     id: String,
     status: &'static str,
     secret_ref: Option<String>,
@@ -303,7 +303,7 @@ fn installed_endpoint(server: &SyncServer, name: &str) -> Option<String> {
 }
 
 /// The connector's name as the engine stores it, and its installed endpoint.
-fn installed(server: &SyncServer, connector: &str) -> OwnerResult<(String, String)> {
+pub(crate) fn installed(server: &SyncServer, connector: &str) -> OwnerResult<(String, String)> {
     let name = normalize_name(connector);
     let endpoint = installed_endpoint(server, &name).ok_or_else(|| {
         OwnerError::Invalid("this host installed no transport for the connector".to_owned())
@@ -348,7 +348,7 @@ fn slate_of(
 /// Drafts with the model drafter `[models.decisions.connector_slate]` binds,
 /// asked up to the Big rung within the row's budget. Without that row, the
 /// rule rung drafts every row from the owner's past rulings.
-fn with_slate_drafter<T>(
+pub(crate) fn with_slate_drafter<T>(
     server: &SyncServer,
     draft: impl FnOnce(Option<&ConnectorSlateDrafter<'_>>) -> T,
 ) -> T {
@@ -513,14 +513,15 @@ async fn accept(
 ) -> OwnerReply<SlateView> {
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
-    let reply = blocking(move || accept_slate(server.vault(), &owner, request)).await?;
+    let reply = blocking(move || accept_slate(server.vault(), &owner, request, None)).await?;
     Ok(Json(reply))
 }
 
-fn accept_slate(
+pub(crate) fn accept_slate(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     request: AcceptRequest,
+    expected_slate: Option<EntityId>,
 ) -> OwnerResult<SlateView> {
     let catalog = catalog(vault, &normalize_name(&request.connector))?;
     let admitted = match catalog.record.status {
@@ -529,6 +530,9 @@ fn accept_slate(
         ConnectorKeyStatus::Revoked => return Err(removed()),
     };
     let (id, current) = slate_of(vault, &catalog.record)?;
+    if expected_slate.is_some_and(|expected| expected != id) {
+        return Err(OwnerError::Changed("the connector slate changed since review".to_owned()));
+    }
     if request.all_manual && (!request.rows.is_empty() || request.facets.is_some()) {
         return Err(OwnerError::Invalid(
             "an all-manual accept takes no rows or facets".to_owned(),
@@ -591,7 +595,7 @@ async fn qualify(
     Ok(Json(reply))
 }
 
-fn qualify_connector(
+pub(crate) fn qualify_connector(
     server: &SyncServer,
     owner: &AuthenticatedOwner,
     request: &QualifyRequest,

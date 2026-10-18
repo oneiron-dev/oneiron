@@ -104,6 +104,7 @@ pub(crate) use super::policy_doors::*;
 pub(crate) use super::origin_doors::*;
 // The generic connector call's door (ONE-2510), likewise.
 pub(crate) use super::connector_call_doors::*;
+pub(crate) use super::connector_pack_doors::*;
 // The secret use door, whose connector.call sends (OF-560), likewise.
 pub(crate) use super::secret_use_doors::*;
 // The message reaction door (OF-181), likewise.
@@ -1015,6 +1016,13 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         "vault.calendar.ics.import"
         | "vault.calendar.instances.move"
         | "vault.packs.put"
+        | "vault.packs.connector.prepare"
+        | "vault.packs.connector.get"
+        | "vault.packs.connector.qualify"
+        | "vault.packs.connector.accept"
+        | "vault.packs.connector.update"
+        | "vault.packs.connector.grants.get"
+        | "vault.packs.connector.grants.put"
         | "vault.packs.remove"
         | "vault.skill_hubs.put"
         | "vault.skill_hubs.get"

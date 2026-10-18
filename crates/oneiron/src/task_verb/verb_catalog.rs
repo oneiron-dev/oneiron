@@ -90,6 +90,13 @@ pub enum AgentVerb {
     VaultPacksHooksList,
     VaultPacksHooksQualify,
     VaultPacksPut,
+    VaultPacksConnectorPrepare,
+    VaultPacksConnectorGet,
+    VaultPacksConnectorQualify,
+    VaultPacksConnectorAccept,
+    VaultPacksConnectorUpdate,
+    VaultPacksConnectorGrantsGet,
+    VaultPacksConnectorGrantsPut,
     VaultPacksRemove,
     VaultConnectorsSubscriptionsPut,
     VaultConnectorsSubscriptionsList,
@@ -544,6 +551,13 @@ impl AgentVerb {
         Self::VaultPacksHooksList,
         Self::VaultPacksHooksQualify,
         Self::VaultPacksPut,
+        Self::VaultPacksConnectorPrepare,
+        Self::VaultPacksConnectorGet,
+        Self::VaultPacksConnectorQualify,
+        Self::VaultPacksConnectorAccept,
+        Self::VaultPacksConnectorUpdate,
+        Self::VaultPacksConnectorGrantsGet,
+        Self::VaultPacksConnectorGrantsPut,
         Self::VaultPacksRemove,
         Self::VaultConnectorsSubscriptionsPut,
         Self::VaultConnectorsSubscriptionsList,
@@ -1001,6 +1015,13 @@ impl AgentVerb {
             Self::VaultPacksHooksList => "vault.packs.hooks.list",
             Self::VaultPacksHooksQualify => "vault.packs.hooks.qualify",
             Self::VaultPacksPut => "vault.packs.put",
+            Self::VaultPacksConnectorPrepare => "vault.packs.connector.prepare",
+            Self::VaultPacksConnectorGet => "vault.packs.connector.get",
+            Self::VaultPacksConnectorQualify => "vault.packs.connector.qualify",
+            Self::VaultPacksConnectorAccept => "vault.packs.connector.accept",
+            Self::VaultPacksConnectorUpdate => "vault.packs.connector.update",
+            Self::VaultPacksConnectorGrantsGet => "vault.packs.connector.grants.get",
+            Self::VaultPacksConnectorGrantsPut => "vault.packs.connector.grants.put",
             Self::VaultPacksRemove => "vault.packs.remove",
             Self::VaultConnectorsSubscriptionsPut => "vault.connectors.subscriptions.put",
             Self::VaultConnectorsSubscriptionsList => "vault.connectors.subscriptions.list",
@@ -1462,6 +1483,13 @@ impl AgentVerb {
                 | Self::VaultPacksHooksList
                 | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
+                | Self::VaultPacksConnectorPrepare
+                | Self::VaultPacksConnectorGet
+                | Self::VaultPacksConnectorQualify
+                | Self::VaultPacksConnectorAccept
+                | Self::VaultPacksConnectorUpdate
+                | Self::VaultPacksConnectorGrantsGet
+                | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
                 | Self::VaultConnectorsSubscriptionsPut
                 | Self::VaultConnectorsSubscriptionsList
@@ -1923,6 +1951,13 @@ impl AgentVerb {
                 | Self::VaultPacksHooksList
                 | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
+                | Self::VaultPacksConnectorPrepare
+                | Self::VaultPacksConnectorGet
+                | Self::VaultPacksConnectorQualify
+                | Self::VaultPacksConnectorAccept
+                | Self::VaultPacksConnectorUpdate
+                | Self::VaultPacksConnectorGrantsGet
+                | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
                 | Self::VaultConnectorsSubscriptionsPut
                 | Self::VaultConnectorsSubscriptionsList
@@ -2424,6 +2459,13 @@ impl AgentVerb {
                 | Self::VaultPacksHooksList
                 | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
+                | Self::VaultPacksConnectorPrepare
+                | Self::VaultPacksConnectorGet
+                | Self::VaultPacksConnectorQualify
+                | Self::VaultPacksConnectorAccept
+                | Self::VaultPacksConnectorUpdate
+                | Self::VaultPacksConnectorGrantsGet
+                | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
                 | Self::VaultConnectorsSubscriptionsPut
                 | Self::VaultConnectorsSubscriptionsList
@@ -2824,6 +2866,11 @@ impl AgentVerb {
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
+                | Self::VaultPacksConnectorPrepare
+                | Self::VaultPacksConnectorQualify
+                | Self::VaultPacksConnectorAccept
+                | Self::VaultPacksConnectorUpdate
+                | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
                 | Self::VaultConnectorsSubscriptionsPut
                 | Self::VaultConnectorsSubscriptionsRevoke
@@ -3164,6 +3211,13 @@ impl AgentVerb {
             Self::VaultPacksHooksList => &["spec"],
             Self::VaultPacksHooksQualify => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultPacksConnectorPrepare => &["spec"],
+            Self::VaultPacksConnectorGet => &["spec"],
+            Self::VaultPacksConnectorQualify => &["spec"],
+            Self::VaultPacksConnectorAccept => &["spec"],
+            Self::VaultPacksConnectorUpdate => &["spec"],
+            Self::VaultPacksConnectorGrantsGet => &["spec"],
+            Self::VaultPacksConnectorGrantsPut => &["spec"],
             Self::VaultPacksRemove => &["spec"],
             Self::VaultConnectorsSubscriptionsPut => &["spec"],
             Self::VaultConnectorsSubscriptionsList => &["spec"],
@@ -3619,6 +3673,13 @@ impl AgentVerb {
             Self::VaultPacksHooksList => &["spec"],
             Self::VaultPacksHooksQualify => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultPacksConnectorPrepare => &["spec"],
+            Self::VaultPacksConnectorGet => &["spec"],
+            Self::VaultPacksConnectorQualify => &["spec"],
+            Self::VaultPacksConnectorAccept => &["spec"],
+            Self::VaultPacksConnectorUpdate => &["spec"],
+            Self::VaultPacksConnectorGrantsGet => &["spec"],
+            Self::VaultPacksConnectorGrantsPut => &["spec"],
             Self::VaultPacksRemove => &["spec"],
             Self::VaultConnectorsSubscriptionsPut => &["spec"],
             Self::VaultConnectorsSubscriptionsList => &["spec"],
@@ -4238,6 +4299,27 @@ impl AgentVerb {
             }
             Self::VaultPacksPut => {
                 "The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks."
+            }
+            Self::VaultPacksConnectorPrepare => {
+                "Prepares an immutable connector pack admission, comparing the resolved declaration with the installed transport and drafting an ungranted slate."
+            }
+            Self::VaultPacksConnectorGet => {
+                "Reads a connector pack source, resolved manifest, advisory evidence, qualification and owner-stampable capability rows."
+            }
+            Self::VaultPacksConnectorQualify => {
+                "Runs the real connector probes bound to the exact pack source and protocol; qualification grants nothing without the owner slate and actor grant."
+            }
+            Self::VaultPacksConnectorAccept => {
+                "Stamps the exact connector pack manifest and grant rows once, or revokes a row; qualification stays independent."
+            }
+            Self::VaultPacksConnectorUpdate => {
+                "Holds a connector pack at its new immutable source and protocol, carrying narrow rows and re-asking only for expanded capabilities."
+            }
+            Self::VaultPacksConnectorGrantsGet => {
+                "Reads current per-capability authority for one actor on the reviewed connector pack source."
+            }
+            Self::VaultPacksConnectorGrantsPut => {
+                "Grants declared connector pack rows to one actor through the existing owner consent gate and installed endpoint."
             }
             Self::VaultPacksRemove => {
                 "The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate."

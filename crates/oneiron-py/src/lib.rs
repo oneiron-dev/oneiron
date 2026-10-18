@@ -983,6 +983,75 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_packs_connector_prepare(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.packs.connector.prepare")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.packs.connector.prepare", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_packs_connector_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.packs.connector.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.packs.connector.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_packs_connector_qualify(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.packs.connector.qualify")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.packs.connector.qualify", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_packs_connector_accept(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.packs.connector.accept")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.packs.connector.accept", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_packs_connector_update(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.packs.connector.update")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.packs.connector.update", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_packs_connector_grants_get(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.packs.connector.grants.get")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.packs.connector.grants.get", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_packs_connector_grants_put(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.packs.connector.grants.put")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.packs.connector.grants.put", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_packs_remove(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.packs.remove")?;
         let output = py

@@ -311,6 +311,27 @@ impl OneironClient {
                 "vault.packs.put" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::PackPutReceipt,
                 >(client, verb, &input),
+                "vault.packs.connector.prepare" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ConnectorPackView,
+                >(client, verb, &input),
+                "vault.packs.connector.get" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ConnectorPackView,
+                >(client, verb, &input),
+                "vault.packs.connector.qualify" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ConnectorPackView,
+                >(client, verb, &input),
+                "vault.packs.connector.accept" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ConnectorPackView,
+                >(client, verb, &input),
+                "vault.packs.connector.update" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ConnectorPackDelta,
+                >(client, verb, &input),
+                "vault.packs.connector.grants.get" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ConnectorPackGrants,
+                >(client, verb, &input),
+                "vault.packs.connector.grants.put" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ConnectorPackGrants,
+                >(client, verb, &input),
                 "vault.packs.remove" => remote_agent_verb_output::<
                     oneiron::skill_hub::pack_catalog::PackInstallReceipt,
                 >(client, verb, &input),
@@ -2440,6 +2461,90 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.packs.put", value)
+    }
+    pub fn vault_packs_connector_prepare(
+        &self,
+        input: &oneiron::task_verb::sdk::ConnectorPackPrepareRequest,
+    ) -> Result<oneiron::task_verb::sdk::ConnectorPackView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.packs.connector.prepare", value)
+    }
+    pub fn vault_packs_connector_get(
+        &self,
+        input: &oneiron::task_verb::sdk::ConnectorPackGetRequest,
+    ) -> Result<oneiron::task_verb::sdk::ConnectorPackView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.packs.connector.get", value)
+    }
+    pub fn vault_packs_connector_qualify(
+        &self,
+        input: &oneiron::task_verb::sdk::ConnectorPackQualifyRequest,
+    ) -> Result<oneiron::task_verb::sdk::ConnectorPackView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.packs.connector.qualify", value)
+    }
+    pub fn vault_packs_connector_accept(
+        &self,
+        input: &oneiron::task_verb::sdk::ConnectorPackAcceptRequest,
+    ) -> Result<oneiron::task_verb::sdk::ConnectorPackView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.packs.connector.accept", value)
+    }
+    pub fn vault_packs_connector_update(
+        &self,
+        input: &oneiron::task_verb::sdk::ConnectorPackUpdateRequest,
+    ) -> Result<oneiron::task_verb::sdk::ConnectorPackDelta, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.packs.connector.update", value)
+    }
+    pub fn vault_packs_connector_grants_get(
+        &self,
+        input: &oneiron::task_verb::sdk::ConnectorPackGrantsGetRequest,
+    ) -> Result<oneiron::task_verb::sdk::ConnectorPackGrants, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.packs.connector.grants.get", value)
+    }
+    pub fn vault_packs_connector_grants_put(
+        &self,
+        input: &oneiron::task_verb::sdk::ConnectorPackGrantsPutRequest,
+    ) -> Result<oneiron::task_verb::sdk::ConnectorPackGrants, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.packs.connector.grants.put", value)
     }
     pub fn vault_packs_remove(
         &self,
