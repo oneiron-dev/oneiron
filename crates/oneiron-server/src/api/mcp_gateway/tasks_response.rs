@@ -1039,6 +1039,14 @@ fn mcp_agent_verb_input(
         "vault.shares.view" => a.spec.clone().ok_or_else(invalid),
         "vault.hooks.replay" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.view" => a.spec.clone().ok_or_else(invalid),
+        "vault.artifacts.units" => a.spec.clone().ok_or_else(invalid),
+        "vault.artifacts.anchors.pin" => a.spec.clone().ok_or_else(invalid),
+        "vault.artifacts.threads.open" => a.spec.clone().ok_or_else(invalid),
+        "vault.artifacts.threads.comment" => a.spec.clone().ok_or_else(invalid),
+        "vault.artifacts.threads.read" => a.spec.clone().ok_or_else(invalid),
+        "vault.artifacts.threads.list" => a.spec.clone().ok_or_else(invalid),
+        "vault.artifacts.threads.assign" => a.spec.clone().ok_or_else(invalid),
+        "vault.artifacts.threads.state" => a.spec.clone().ok_or_else(invalid),
         "vault.code.diff" => a.spec.clone().ok_or_else(invalid),
         "vault.code.blame" => a.spec.clone().ok_or_else(invalid),
         "vault.code.proposal_view" => a.spec.clone().ok_or_else(invalid),
@@ -2044,6 +2052,30 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.artifacts.view" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.artifacts.units" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.artifacts.anchors.pin" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.artifacts.threads.open" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.artifacts.threads.comment" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.artifacts.threads.read" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.artifacts.threads.list" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.artifacts.threads.assign" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.artifacts.threads.state" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.diff" => {
@@ -6240,6 +6272,70 @@ async fn execute_agent_verb_row(
             let input: oneiron::blob_artifact::ArtifactRefRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_artifacts_view(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.artifacts.units" => {
+            let input: oneiron::anchored_annotation::ArtifactUnitsRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_artifacts_units(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.artifacts.anchors.pin" => {
+            let input: oneiron::anchored_annotation::AnnotationPinRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_artifacts_anchors_pin(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.artifacts.threads.open" => {
+            let input: oneiron::anchored_annotation::AnnotationThreadOpenRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_artifacts_threads_open(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.artifacts.threads.comment" => {
+            let input: oneiron::anchored_annotation::AnnotationCommentRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_artifacts_threads_comment(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.artifacts.threads.read" => {
+            let input: oneiron::anchored_annotation::AnnotationThreadRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_artifacts_threads_read(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.artifacts.threads.list" => {
+            let input: oneiron::blob_artifact::ArtifactRefRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_artifacts_threads_list(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.artifacts.threads.assign" => {
+            let input: oneiron::anchored_annotation::AnnotationAssignRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_artifacts_threads_assign(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.artifacts.threads.state" => {
+            let input: oneiron::anchored_annotation::AnnotationStateRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_artifacts_threads_state(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

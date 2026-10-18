@@ -836,6 +836,26 @@ export class Oneiron {
     artifacts: {
       /** One artifact's kind, head and versions, each with its made_by and born-from. */
       view: (request: Facade.ArtifactRefRequest): Facade.ArtifactView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsView(keyedJson(request))) as Facade.ArtifactView | null; return result === null ? null : result }),
+      /** Inspects real DOCX blocks, XLSX cells and PPTX shapes in one version; other kinds explicitly report no annotation unit adapter. */
+      units: (input: Facade.ArtifactUnitsRequest): Facade.ArtifactUnitsView => this.#call(() => this.#client.vaultArtifactsUnits(input) as Facade.ArtifactUnitsView),
+      anchors: {
+        /** Pins an exact readable locator and quote in an artifact version; opening a thread makes the pin durable. */
+        pin: (input: Facade.AnnotationPinRequest): Facade.AnnotationAnchorView => this.#call(() => this.#client.vaultArtifactsAnchorsPin(input) as Facade.AnnotationAnchorView),
+      },
+      threads: {
+        /** Opens an anchored thread with its first comment as the caller, retaining its exact version, locator and quote. */
+        open: (input: Facade.AnnotationThreadOpenRequest): Facade.AnnotationThreadView => this.#call(() => this.#client.vaultArtifactsThreadsOpen(input) as Facade.AnnotationThreadView),
+        /** Appends a comment as the caller; returns its first stored part, with every part available through threads.read. */
+        comment: (input: Facade.AnnotationCommentRequest): Facade.AnnotationCommentView => this.#call(() => this.#client.vaultArtifactsThreadsComment(input) as Facade.AnnotationCommentView),
+        /** Reads a thread, its opening quote, current anchor, explicit pinned, mapped or drifted disposition, comments and assignment. */
+        read: (input: Facade.AnnotationThreadRequest): Facade.AnnotationThreadView | null => this.#call(() => this.#client.vaultArtifactsThreadsRead(input) as Facade.AnnotationThreadView | null),
+        /** Lists an artifact's readable threads with their opening pins, current anchors, drift, comments and assignments. */
+        list: (input: Facade.ArtifactRefRequest): Facade.AnnotationThreadView[] => this.#call(() => this.#client.vaultArtifactsThreadsList(input) as Facade.AnnotationThreadView[]),
+        /** Assigns an anchored thread into a durable task brief with its anchor and transcript; an agent-definition assignee dispatches through the engine. */
+        assign: (input: Facade.AnnotationAssignRequest): Facade.AnnotationBriefView => this.#call(() => this.#client.vaultArtifactsThreadsAssign(input) as Facade.AnnotationBriefView),
+        /** Opens or resolves a thread through its existing claim gate, preserving its anchor, comments and drift. */
+        state: (input: Facade.AnnotationStateRequest): Facade.AnnotationThreadView => this.#call(() => this.#client.vaultArtifactsThreadsState(input) as Facade.AnnotationThreadView),
+      },
       /** One version's export file (base64), with its pinned name and media type. */
       export: (request: Facade.ArtifactExportRequest): Facade.ArtifactExportFile | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsExport(keyedJson(request))) as Facade.ArtifactExportFile | null; return result === null ? null : result }),
       /** The artifacts and versions a task, ask, run, skill or agent run produced. */

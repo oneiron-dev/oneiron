@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 415 facade rows, 1537 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 5; generated in and out: 383.
+// UniFFI census: 423 facade rows, 1554 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 5; generated in and out: 391.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -13876,6 +13876,258 @@ pub struct ArtifactView {
     pub head: Option<u64>,
     #[serde(rename = "versions")]
     pub versions: Vec<ArtifactVersionView>,
+}
+
+/// `oneiron::anchored_annotation::wire::ArtifactUnitsRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactUnitsRequest {
+    #[serde(rename = "artifact_ref")]
+    pub artifact_ref: String,
+    #[serde(rename = "version", default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<u64>,
+}
+
+/// `oneiron::anchored_annotation::wire::AnnotationLocator`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "format")]
+#[serde(deny_unknown_fields)]
+pub enum AnnotationLocator {
+    #[serde(rename = "xlsx")]
+    Xlsx {
+        #[serde(rename = "sheet")]
+        sheet: String,
+        #[serde(rename = "range")]
+        range: String,
+    },
+    #[serde(rename = "docx")]
+    Docx {
+        #[serde(rename = "para_path")]
+        para_path: String,
+        #[serde(rename = "char_start")]
+        char_start: u64,
+        #[serde(rename = "char_end")]
+        char_end: u64,
+    },
+    #[serde(rename = "pptx")]
+    Pptx {
+        #[serde(rename = "slide")]
+        slide: u64,
+        #[serde(rename = "shape_id")]
+        shape_id: String,
+    },
+}
+
+/// `oneiron::anchored_annotation::wire::ArtifactUnitView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ArtifactUnitView {
+    #[serde(rename = "locator")]
+    pub locator: AnnotationLocator,
+    #[serde(rename = "quote", default, skip_serializing_if = "Option::is_none")]
+    pub quote: Option<String>,
+}
+
+/// `oneiron::anchored_annotation::wire::ArtifactUnitsView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "status")]
+pub enum ArtifactUnitsView {
+    #[serde(rename = "supported")]
+    Supported {
+        #[serde(rename = "artifact_id")]
+        artifact_id: String,
+        #[serde(rename = "version")]
+        version: u64,
+        #[serde(rename = "content_hash")]
+        content_hash: String,
+        #[serde(rename = "kind")]
+        kind: ArtifactKind,
+        #[serde(rename = "units")]
+        units: Vec<ArtifactUnitView>,
+    },
+    #[serde(rename = "unsupported")]
+    Unsupported {
+        #[serde(rename = "artifact_id")]
+        artifact_id: String,
+        #[serde(rename = "kind")]
+        kind: ArtifactKind,
+        #[serde(rename = "reason")]
+        reason: String,
+    },
+}
+
+/// `oneiron::anchored_annotation::wire::AnnotationPinRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AnnotationPinRequest {
+    #[serde(rename = "artifact_ref")]
+    pub artifact_ref: String,
+    #[serde(rename = "version", default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<u64>,
+    #[serde(rename = "locator")]
+    pub locator: AnnotationLocator,
+}
+
+/// `oneiron::anchored_annotation::wire::AnnotationAnchorView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AnnotationAnchorView {
+    #[serde(rename = "artifact_id")]
+    pub artifact_id: String,
+    #[serde(rename = "version")]
+    pub version: u64,
+    #[serde(rename = "locator")]
+    pub locator: AnnotationLocator,
+    #[serde(rename = "quote", default, skip_serializing_if = "Option::is_none")]
+    pub quote: Option<String>,
+}
+
+/// `oneiron::anchored_annotation::wire::AnnotationThreadOpenRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AnnotationThreadOpenRequest {
+    #[serde(rename = "artifact_ref")]
+    pub artifact_ref: String,
+    #[serde(rename = "version")]
+    pub version: u64,
+    #[serde(rename = "locator")]
+    pub locator: AnnotationLocator,
+    #[serde(rename = "text")]
+    pub text: String,
+}
+
+/// `oneiron::anchored_annotation::wire::AnnotationResolution`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AnnotationResolution {
+    #[serde(rename = "pinned")]
+    Pinned,
+    #[serde(rename = "mapped")]
+    Mapped,
+    #[serde(rename = "drifted")]
+    Drifted,
+}
+
+/// `oneiron::anchored_annotation::wire::AnnotationDriftView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AnnotationDriftView {
+    #[serde(rename = "drifted_at_version")]
+    pub drifted_at_version: u64,
+    #[serde(rename = "pinned_version")]
+    pub pinned_version: u64,
+}
+
+/// `oneiron::anchored_annotation::wire::AnnotationThreadState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AnnotationThreadState {
+    #[serde(rename = "open")]
+    Open,
+    #[serde(rename = "resolved")]
+    Resolved,
+}
+
+/// `oneiron::anchored_annotation::wire::AnnotationCommentView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AnnotationCommentView {
+    #[serde(rename = "thread_id")]
+    pub thread_id: String,
+    #[serde(rename = "author")]
+    pub author: String,
+    #[serde(rename = "text")]
+    pub text: String,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(rename = "claim_id")]
+    pub claim_id: String,
+}
+
+/// `oneiron::anchored_annotation::wire::AnnotationBriefView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AnnotationBriefView {
+    #[serde(rename = "brief_ref")]
+    pub brief_ref: String,
+    #[serde(rename = "task_id")]
+    pub task_id: String,
+    #[serde(rename = "thread_id")]
+    pub thread_id: String,
+    #[serde(rename = "anchor")]
+    pub anchor: AnnotationAnchorView,
+    #[serde(rename = "artifact_version")]
+    pub artifact_version: u64,
+    #[serde(rename = "thread_text")]
+    pub thread_text: String,
+    #[serde(rename = "assignee", default, skip_serializing_if = "Option::is_none")]
+    pub assignee: Option<String>,
+}
+
+/// `oneiron::anchored_annotation::wire::AnnotationThreadView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AnnotationThreadView {
+    #[serde(rename = "thread_id")]
+    pub thread_id: String,
+    #[serde(rename = "origin")]
+    pub origin: AnnotationAnchorView,
+    #[serde(rename = "anchor")]
+    pub anchor: AnnotationAnchorView,
+    #[serde(rename = "resolution")]
+    pub resolution: AnnotationResolution,
+    #[serde(rename = "drift", default, skip_serializing_if = "Option::is_none")]
+    pub drift: Option<AnnotationDriftView>,
+    #[serde(rename = "state")]
+    pub state: AnnotationThreadState,
+    #[serde(rename = "head_claim_id")]
+    pub head_claim_id: String,
+    #[serde(rename = "comments")]
+    pub comments: Vec<AnnotationCommentView>,
+    #[serde(rename = "brief", default, skip_serializing_if = "Option::is_none")]
+    pub brief: Option<AnnotationBriefView>,
+}
+
+/// `oneiron::anchored_annotation::wire::AnnotationCommentRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AnnotationCommentRequest {
+    #[serde(rename = "artifact_ref")]
+    pub artifact_ref: String,
+    #[serde(rename = "thread_ref")]
+    pub thread_ref: String,
+    #[serde(rename = "text")]
+    pub text: String,
+}
+
+/// `oneiron::anchored_annotation::wire::AnnotationThreadRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AnnotationThreadRequest {
+    #[serde(rename = "artifact_ref")]
+    pub artifact_ref: String,
+    #[serde(rename = "thread_ref")]
+    pub thread_ref: String,
+}
+
+/// `oneiron::anchored_annotation::wire::AnnotationAssignRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AnnotationAssignRequest {
+    #[serde(rename = "artifact_ref")]
+    pub artifact_ref: String,
+    #[serde(rename = "thread_ref")]
+    pub thread_ref: String,
+    #[serde(
+        rename = "assignee_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub assignee_ref: Option<String>,
+}
+
+/// `oneiron::anchored_annotation::wire::AnnotationStateRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AnnotationStateRequest {
+    #[serde(rename = "artifact_ref")]
+    pub artifact_ref: String,
+    #[serde(rename = "thread_ref")]
+    pub thread_ref: String,
+    #[serde(rename = "state")]
+    pub state: AnnotationThreadState,
 }
 
 /// `oneiron::code_document::verbs::CodeStateRequest`.

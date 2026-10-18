@@ -1565,6 +1565,15 @@ class Oneiron:
         def view(self, request: dict[str, Any]) -> dict[str, Any] | None:
             """One artifact's kind, head and versions, each with its made_by and born-from."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_view(json.dumps(request, allow_nan=False))))
+        def units(self, spec):
+            """Inspects real DOCX blocks, XLSX cells and PPTX shapes in one version; other kinds explicitly report no annotation unit adapter."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_units(json.dumps(spec))))
+        @property
+        def anchors(self) -> "Oneiron._VaultArtifactsAnchorsVerbs":
+            return Oneiron._VaultArtifactsAnchorsVerbs(self._client)
+        @property
+        def threads(self) -> "Oneiron._VaultArtifactsThreadsVerbs":
+            return Oneiron._VaultArtifactsThreadsVerbs(self._client)
         def export(self, request: dict[str, Any]) -> dict[str, Any] | None:
             """One version's export file (base64), with its pinned name and media type."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_export(json.dumps(request, allow_nan=False))))
@@ -1616,6 +1625,33 @@ class Oneiron:
         def read(self, input: dict[str, Any]) -> Any:
             """Reads one version of a blob artifact's bytes."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_read(json.dumps(input, allow_nan=False))))
+    class _VaultArtifactsAnchorsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def pin(self, spec):
+            """Pins an exact readable locator and quote in an artifact version; opening a thread makes the pin durable."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_anchors_pin(json.dumps(spec))))
+    class _VaultArtifactsThreadsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def open(self, spec):
+            """Opens an anchored thread with its first comment as the caller, retaining its exact version, locator and quote."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_threads_open(json.dumps(spec))))
+        def comment(self, spec):
+            """Appends a comment as the caller; returns its first stored part, with every part available through threads.read."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_threads_comment(json.dumps(spec))))
+        def read(self, spec):
+            """Reads a thread, its opening quote, current anchor, explicit pinned, mapped or drifted disposition, comments and assignment."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_threads_read(json.dumps(spec))))
+        def list(self, spec):
+            """Lists an artifact's readable threads with their opening pins, current anchors, drift, comments and assignments."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_threads_list(json.dumps(spec))))
+        def assign(self, spec):
+            """Assigns an anchored thread into a durable task brief with its anchor and transcript; an agent-definition assignee dispatches through the engine."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_threads_assign(json.dumps(spec))))
+        def state(self, spec):
+            """Opens or resolves a thread through its existing claim gate, preserving its anchor, comments and drift."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_threads_state(json.dumps(spec))))
     class _VaultArtifactsBodyVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
