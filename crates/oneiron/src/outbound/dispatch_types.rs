@@ -5,7 +5,7 @@ use super::capability::{OutboundVerbContract, UnsupportedOutboundCapability};
 use super::intent::OutboundIntent;
 use crate::calendar::invite::{CalendarInviteMimePart, CalendarInvitePayload};
 use crate::campaign::send_hygiene::ListUnsubscribeTarget;
-use crate::connector_key::EffectorBudgetRead;
+use crate::connector_key::{EffectorBudgetRead, EffectorPoolCharge};
 use crate::delivery_window::{
     DeliveryWindowApnsInterruptionLevel, DeliveryWindowContextCondition,
     DeliveryWindowEvaluationContext, DeliveryWindowEvaluator, DeliveryWindowPolicyClaim,
@@ -485,6 +485,11 @@ pub struct OutboundDispatchResult {
     /// Effector-meter ladder events fired by this dispatch, for the host's
     /// one steering queue (same contract as `BudgetAdmission.ladder_events`).
     pub budget_ladder_events: Vec<BudgetLadderEvent>,
+    /// A per-grant key's catalog pool side of this dispatch's charge
+    /// (ONE-1794): its debit, matched rows and ladder events for the same
+    /// steering queue, under the catalog key's ref. The pool's post-debit
+    /// read rides `effector_budget.pool`.
+    pub budget_pool: Option<EffectorPoolCharge>,
 }
 
 #[derive(Debug, thiserror::Error)]

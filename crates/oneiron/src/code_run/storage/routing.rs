@@ -1,7 +1,7 @@
 //! Where one run's reads and writes land: the canonical vault or a bound off-record session.
 
 use crate::claim::{ClaimReadStatus, ScopedReadActorKey};
-use crate::memory::WitnessReceipt;
+use crate::memory::{MessageResultAttachment, WitnessReceipt};
 use crate::off_record::{ExecutorUtterance, OffRecordMode, OffRecordSession, SessionWriteRoute};
 use crate::session_overlay::RouteTarget;
 use crate::vault::VaultId;
@@ -18,7 +18,8 @@ use super::records::{
     replay_generation_matches,
 };
 use super::speech_identity::{
-    canonical_witness_executor_turn, executor_speech_message_id_for_run, executor_speech_turn_id,
+    ResultSpeech, canonical_witness_executor_turn, executor_speech_message_id_for_run,
+    executor_speech_turn_id,
 };
 use crate::limit_ask::{EngineLimit, LimitWatch};
 use crate::result_memory::ResultShare;
@@ -77,6 +78,7 @@ impl SessionBinding<'_> {
         &self,
         kind: ExecutorUtterance,
         text: &str,
+        result: Option<ResultSpeech<'_>>,
         occurred_at: u64,
         order: u32,
         message_id: EntityId,
@@ -93,6 +95,7 @@ impl SessionBinding<'_> {
                 &self.container,
                 kind,
                 text,
+                result,
                 occurred_at,
                 order,
                 message_id,
@@ -535,6 +538,57 @@ impl<'a> ExecutorStorage<'a> {
         order: u32,
         actor: WriteActor,
     ) -> Result<WitnessReceipt> {
+        self.witness_executor_message(run_ref, run_id, kind, text, None, occurred_at, order, actor)
+    }
+
+    /// A run's answer said as a typed result (FIX 365): one visible MESSAGE
+    /// at the same derived identity a spoken bubble takes, its text empty,
+    /// its attachment the preview and the facets, its hold on the body in
+    /// the transaction that lands it.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "run ref/id, attachment, served rows, order, and actor are distinct host-owned witness axes"
+    )]
+    pub(crate) fn witness_executor_result(
+        &self,
+        run_ref: &str,
+        run_id: EntityId,
+        attachment: &MessageResultAttachment,
+        served_rows: Option<&[EntityId]>,
+        occurred_at: u64,
+        order: u32,
+        actor: WriteActor,
+    ) -> Result<WitnessReceipt> {
+        self.witness_executor_message(
+            run_ref,
+            Some(run_id),
+            ExecutorUtterance::Speak,
+            "",
+            Some(ResultSpeech {
+                attachment,
+                served_rows,
+            }),
+            occurred_at,
+            order,
+            actor,
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "run ref/id, utterance envelope, result, order, and actor are distinct host-owned witness axes"
+    )]
+    fn witness_executor_message(
+        &self,
+        run_ref: &str,
+        run_id: Option<EntityId>,
+        kind: ExecutorUtterance,
+        text: &str,
+        result: Option<ResultSpeech<'_>>,
+        occurred_at: u64,
+        order: u32,
+        actor: WriteActor,
+    ) -> Result<WitnessReceipt> {
         // HOST-derived, on both arms: durable executors bind the replay run id
         // as well as the dispatcher ref, while standalone callers retain the
         // legacy ref-only family. A step re-run after a failed replay-record
@@ -549,6 +603,7 @@ impl<'a> ExecutorStorage<'a> {
                 run_id,
                 kind,
                 text,
+                result,
                 occurred_at,
                 order,
                 message_id,
@@ -557,6 +612,7 @@ impl<'a> ExecutorStorage<'a> {
             Self::Session(binding) => binding.witness_executor_turn(
                 kind,
                 text,
+                result,
                 occurred_at,
                 order,
                 message_id,

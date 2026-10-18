@@ -1078,6 +1078,7 @@
       "output": "crate::task_verb::sdk::PackPutReceipt",
       "call": "crate::task_verb::sdk::put_pack_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -1091,6 +1092,7 @@
       "output": "crate::skill_hub::pack_catalog::PackInstallReceipt",
       "call": "crate::task_verb::sdk::remove_pack_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -1104,6 +1106,7 @@
       "output": "crate::connector_key::ChannelMessageSubscription",
       "call": "crate::task_verb::sdk::subscribe_channel_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -1117,6 +1120,7 @@
       "output": "crate::task_verb::sdk::ChannelSubscriptions",
       "call": "crate::task_verb::sdk::channel_subscriptions_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -1130,6 +1134,7 @@
       "output": "crate::task_verb::sdk::ChannelSubscriptionRevoked",
       "call": "crate::task_verb::sdk::revoke_channel_subscription_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -1143,6 +1148,7 @@
       "output": "crate::task_verb::sdk::PackSetupReceipt",
       "call": "crate::task_verb::sdk::prepare_pack_setup_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -1156,6 +1162,7 @@
       "output": "crate::task_verb::sdk::PackSetupReceipt",
       "call": "crate::task_verb::sdk::pack_setup_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -1169,6 +1176,7 @@
       "output": "crate::task_verb::sdk::PackSetupReceipt",
       "call": "crate::task_verb::sdk::answer_pack_setup_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -1182,6 +1190,7 @@
       "output": "crate::task_verb::sdk::PackSetupReceipt",
       "call": "crate::task_verb::sdk::verify_pack_setup_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -1195,6 +1204,7 @@
       "output": "crate::receipt::AuthorityAuditPage",
       "call": "crate::receipt::authority_audit_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1206,6 +1216,7 @@
       "output": "Vec<crate::sync::mesh_path::MeshPathReceipt>",
       "call": "crate::task_verb::sdk::mesh_path_receipts_as_owner(memory, &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1227,6 +1238,7 @@
       "output": "crate::federation::PendingAuthorityAct",
       "call": "crate::task_verb::sdk::propose_shared_delete(memory.vault(), &memory.embedded_owner(\"vault.shared.propose_delete\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1238,6 +1250,7 @@
       "output": "crate::federation::PendingAuthorityAct",
       "call": "crate::task_verb::sdk::propose_shared_transfer(memory.vault(), &memory.embedded_owner(\"vault.shared.propose_transfer\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1249,6 +1262,7 @@
       "output": "crate::federation::PendingAuthorityAct",
       "call": "crate::task_verb::sdk::propose_shared_remove_owner(memory.vault(), &memory.embedded_owner(\"vault.shared.propose_remove_owner\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1272,6 +1286,7 @@
       "output": "crate::federation::SharedActExecutionReceipt",
       "call": "crate::task_verb::sdk::read_shared_receipt(memory.vault(), &memory.embedded_owner(\"vault.shared.receipt\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1283,6 +1298,7 @@
       "output": "Vec<crate::federation::SharedActOutcome>",
       "call": "crate::task_verb::sdk::read_shared_outcomes(memory.vault(), &memory.embedded_owner(\"vault.shared.outcomes\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1294,6 +1310,7 @@
       "output": "Option<crate::federation::SharedVaultDeletion>",
       "call": "crate::task_verb::sdk::read_shared_deletion(memory.vault())?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "mcp_fields": {},
       "admission": {"unrestricted_record_scope": true},
@@ -1306,6 +1323,7 @@
       "output": "crate::task_verb::sdk::SharedMemberInvited",
       "call": "crate::task_verb::sdk::add_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.add\")?, None, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1317,6 +1335,7 @@
       "output": "crate::task_verb::sdk::InvitationSlip",
       "call": "crate::task_verb::sdk::mint_invitation_slip_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1328,6 +1347,7 @@
       "output": "crate::federation::SharedActExecutionReceipt",
       "call": "crate::task_verb::sdk::change_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.change\")?, None, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1339,6 +1359,7 @@
       "output": "crate::federation::SharedActExecutionReceipt",
       "call": "crate::task_verb::sdk::remove_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.remove\")?, None, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1350,6 +1371,7 @@
       "output": "crate::federation::SharedActExecutionReceipt",
       "call": "crate::task_verb::sdk::leave_shared_vault_as(memory.vault(), &memory.embedded_owner(\"vault.members.leave\")?, None, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1361,6 +1383,7 @@
       "output": "Vec<crate::federation::SharedInvitation>",
       "call": "crate::task_verb::sdk::read_shared_invitations(memory.vault(), &memory.embedded_owner(\"vault.members.invitations\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1372,6 +1395,7 @@
       "output": "crate::federation::SharedActExecutionReceipt",
       "call": "crate::task_verb::sdk::accept_shared_invitation_as(memory.vault(), &memory.embedded_owner(\"vault.members.accept\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1383,6 +1407,7 @@
       "output": "crate::federation::SharedActExecutionReceipt",
       "call": "crate::task_verb::sdk::decline_shared_invitation_as(memory.vault(), &memory.embedded_owner(\"vault.members.decline\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1394,6 +1419,7 @@
       "output": "crate::federation::SharedActExecutionReceipt",
       "call": "crate::task_verb::sdk::withdraw_shared_invitation_as(memory.vault(), &memory.embedded_owner(\"vault.members.withdraw_invitation\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1405,6 +1431,7 @@
       "output": "crate::federation::PendingAuthorityAct",
       "call": "crate::task_verb::sdk::object_to_shared_act(memory.vault(), &memory.embedded_owner(\"vault.shared.object\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1416,6 +1443,7 @@
       "output": "crate::federation::PendingAuthorityAct",
       "call": "crate::task_verb::sdk::withdraw_shared_act_objection(memory.vault(), &memory.embedded_owner(\"vault.shared.withdraw_objection\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1427,6 +1455,7 @@
       "output": "Vec<crate::federation::PendingActStarted>",
       "call": "crate::task_verb::sdk::read_shared_act_started(memory.vault(), &memory.embedded_owner(\"vault.shared.started\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1438,6 +1467,7 @@
       "output": "Vec<crate::federation::PendingActMatured>",
       "call": "crate::task_verb::sdk::read_shared_act_matured(memory.vault(), &memory.embedded_owner(\"vault.shared.matured\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1449,6 +1479,7 @@
       "output": "crate::federation::SharedEraseAsk",
       "call": "crate::task_verb::sdk::ask_shared_erase_as(memory.vault(), &memory.embedded_owner(\"vault.shared.erase_ask\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1460,6 +1491,7 @@
       "output": "Vec<crate::federation::SharedEraseAsk>",
       "call": "crate::task_verb::sdk::read_shared_erase_asks(memory.vault(), &memory.embedded_owner(\"vault.shared.erase_asks\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1471,6 +1503,7 @@
       "output": "crate::federation::SharedEraseAsk",
       "call": "crate::task_verb::sdk::close_shared_erase_ask_as(memory.vault(), &memory.embedded_owner(\"vault.shared.close_erase_ask\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1481,6 +1514,7 @@
       "output": "crate::receipt::GuestRevokeResponse",
       "call": "crate::task_verb::sdk::revoke_guest_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1492,6 +1526,7 @@
       "output": "crate::task_verb::sdk::GuestSlipMinted",
       "call": "crate::task_verb::sdk::mint_guest_slip_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1503,6 +1538,7 @@
       "output": "crate::task_verb::sdk::ResidenceModeChanged",
       "call": "crate::task_verb::sdk::residence_host_only(memory, \"vault.residence.mode\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1514,6 +1550,7 @@
       "output": "crate::task_verb::sdk::ResidenceOpened",
       "call": "crate::task_verb::sdk::residence_host_only(memory, \"vault.residence.open\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1525,6 +1562,7 @@
       "output": "crate::task_verb::sdk::ResidenceIndex",
       "call": "crate::task_verb::sdk::residence_host_only(memory, \"vault.residence.index\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1536,6 +1574,7 @@
       "output": "crate::task_verb::sdk::ResidencePruned",
       "call": "crate::task_verb::sdk::residence_host_only(memory, \"vault.residence.prune\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1732,6 +1771,7 @@
       "output": "Vec<crate::authority::AuthorityHandoffAlarm>",
       "call": "crate::task_verb::sdk::read_handoff_alarms(memory.vault(), &memory.embedded_owner(\"vault.authority.handoff_alarms\")?)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "mcp_fields": {},
       "admission": {"unrestricted_record_scope": true},
@@ -1744,6 +1784,7 @@
       "output": "crate::authority::AuthorityHandoffAlarm",
       "call": "crate::task_verb::sdk::acknowledge_handoff_alarm(memory.vault(), &memory.embedded_owner(\"vault.authority.handoff_alarms.acknowledge\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1755,6 +1796,7 @@
       "output": "crate::deletion::LegalHold",
       "call": "crate::task_verb::sdk::place_legal_hold_as(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.place\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1766,6 +1808,7 @@
       "output": "crate::deletion::LegalHold",
       "call": "crate::task_verb::sdk::widen_legal_hold_as(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.widen\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1777,6 +1820,7 @@
       "output": "Vec<crate::deletion::LegalHold>",
       "call": "crate::task_verb::sdk::read_legal_holds(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.list\")?)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "mcp_fields": {},
       "admission": {"unrestricted_record_scope": true},
@@ -1789,6 +1833,7 @@
       "output": "Vec<crate::deletion::LegalHoldEvent>",
       "call": "crate::task_verb::sdk::read_legal_hold_log(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.log\")?)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "mcp_fields": {},
       "admission": {"unrestricted_record_scope": true},
@@ -1801,6 +1846,7 @@
       "output": "crate::task_verb::sdk::LegalHoldLiftAndErased",
       "call": "crate::task_verb::sdk::lift_legal_hold_and_erase_as(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.lift_and_erase\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1812,6 +1858,7 @@
       "output": "crate::task_verb::sdk::CourtesyDeleteSent",
       "call": "crate::task_verb::sdk::courtesy_delete_host_only(memory, \"vault.courtesy_delete.send\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1823,6 +1870,7 @@
       "output": "Vec<crate::task_verb::sdk::CourtesyDeleteSent>",
       "call": "crate::task_verb::sdk::courtesy_delete_host_only(memory, \"vault.courtesy_delete.sent\", &EmptyRequest {})?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "mcp_fields": {},
       "admission": {"unrestricted_record_scope": true},
@@ -1835,6 +1883,7 @@
       "output": "Vec<crate::task_verb::sdk::CourtesyDeleteIncoming>",
       "call": "crate::task_verb::sdk::courtesy_delete_host_only(memory, \"vault.courtesy_delete.incoming\", &EmptyRequest {})?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "mcp_fields": {},
       "admission": {"unrestricted_record_scope": true},
@@ -1847,6 +1896,7 @@
       "output": "crate::task_verb::sdk::CourtesyDeleteIncoming",
       "call": "crate::task_verb::sdk::courtesy_delete_host_only(memory, \"vault.courtesy_delete.answer\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1858,6 +1908,7 @@
       "output": "crate::task_verb::sdk::EmbeddingSpacesView",
       "call": "crate::task_verb::sdk::read_embedding_spaces(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.list\")?)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "mcp_fields": {},
       "admission": {"unrestricted_record_scope": true},
@@ -1870,6 +1921,7 @@
       "output": "crate::task_verb::sdk::EmbeddingSpacesView",
       "call": "crate::task_verb::sdk::declare_embedding_space_as(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.declare\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1881,6 +1933,7 @@
       "output": "crate::task_verb::sdk::EmbeddingSpacesView",
       "call": "crate::task_verb::sdk::bind_embedding_slot_as(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.bind\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1892,6 +1945,7 @@
       "output": "crate::task_verb::sdk::EmbeddingSpacesView",
       "call": "crate::task_verb::sdk::bind_one_embedding_space_as(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.one_space\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1903,6 +1957,7 @@
       "output": "crate::task_verb::sdk::EmbeddingSpacesView",
       "call": "crate::task_verb::sdk::retire_embedding_space_as(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.retire\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1914,6 +1969,7 @@
       "output": "crate::embed::SpaceMove",
       "call": "crate::task_verb::sdk::begin_embedding_space_move_as(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.move\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1936,6 +1992,7 @@
       "output": "crate::task_verb::sdk::EmbeddingSpacesView",
       "call": "crate::task_verb::sdk::approve_embedding_space_move_as(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.move_approve\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1947,6 +2004,7 @@
       "output": "crate::task_verb::sdk::EmbeddingSpacesView",
       "call": "crate::task_verb::sdk::undo_embedding_space_move_as(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.move_undo\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1958,6 +2016,7 @@
       "output": "crate::task_verb::sdk::EmbeddingSpacesView",
       "call": "crate::task_verb::sdk::abandon_embedding_space_move_as(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.move_abandon\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1969,6 +2028,7 @@
       "output": "crate::task_verb::sdk::EmbeddingSpaceProbes",
       "call": "crate::task_verb::sdk::read_embedding_space_probes(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.probes.list\")?)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "mcp_fields": {},
       "admission": {"unrestricted_record_scope": true},
@@ -1981,6 +2041,7 @@
       "output": "crate::task_verb::sdk::EmbeddingSpaceProbe",
       "call": "crate::task_verb::sdk::put_embedding_space_probe_as(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.probes.put\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1992,6 +2053,7 @@
       "output": "crate::task_verb::sdk::EmbeddingSpaceProbeDeleted",
       "call": "crate::task_verb::sdk::delete_embedding_space_probe_as(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.probes.delete\")?, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -2003,6 +2065,7 @@
       "output": "crate::learning_setting_doors::LearningSettingsView",
       "call": "crate::learning_setting_doors::learning_settings_as_owner(memory.vault(), &memory.embedded_owner(\"vault.settings.learning\")?, &input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -2014,6 +2077,7 @@
       "output": "crate::learning_setting_doors::LearningSettingsView",
       "call": "crate::learning_setting_doors::put_learning_setting_as_owner(memory.vault(), &memory.embedded_owner(\"vault.settings.learning.put\")?, input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -2025,6 +2089,7 @@
       "output": "crate::learning_setting_doors::LearningSettingsView",
       "call": "crate::learning_setting_doors::clear_learning_setting_as_owner(memory.vault(), &memory.embedded_owner(\"vault.settings.learning.clear\")?, input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -2036,6 +2101,7 @@
       "output": "crate::policy_model::SecretLiftStatus",
       "call": "crate::policy_model::secret_lift_as_owner(memory.vault(), &memory.embedded_owner(\"vault.secrets.lift_history\")?, &input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -2047,6 +2113,7 @@
       "output": "crate::agent_dispatch::widen_doors::WidenProposalsView",
       "call": "crate::agent_dispatch::widen_doors::widen_proposals_as_owner(memory.vault(), &memory.embedded_owner(\"vault.widen_proposals\")?, &input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -2058,6 +2125,7 @@
       "output": "crate::agent_dispatch::widen_doors::WidenProposalView",
       "call": "crate::agent_dispatch::widen_doors::approve_widen_proposal_as_owner(memory.vault(), &memory.embedded_owner(\"vault.widen_proposals.approve\")?, &input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -2069,6 +2137,7 @@
       "output": "crate::agent_dispatch::widen_doors::WidenProposalView",
       "call": "crate::agent_dispatch::widen_doors::decline_widen_proposal_as_owner(memory.vault(), &memory.embedded_owner(\"vault.widen_proposals.decline\")?, &input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -2127,6 +2196,7 @@
       "output": "crate::receipt::LensActivationReceipt",
       "call": "crate::lens::activate_lens_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -2140,6 +2210,7 @@
       "output": "crate::receipt::LensActivationReceipt",
       "call": "crate::lens::deactivate_lens_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -3719,6 +3790,7 @@
       "output": "crate::llm::decision::DecisionAsk",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.decisions.asks.answer\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -3729,6 +3801,7 @@
       "output": "Option<crate::llm::decision::ResolvedRole>",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.decisions.asks.climb\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -3739,6 +3812,7 @@
       "output": "Vec<crate::llm::decision::DecisionAsk>",
       "call": "crate::task_verb::sdk::host_only(memory, \"self.decisions.asks\", &EmptyRequest {})?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -3816,7 +3890,7 @@
     },
     {
       "name": "self.browser.observe",
-      "description": "Observes the current page of the run's browser session, in pages: an answer with next goes on, and observe with that cursor reads the next page.",
+      "description": "Observes the current page of the run's browser session, in pages read on with observe and an answer's next cursor; the verbs follow a tab an act opens, or a closed tab's opener, and name the move as switched.",
       "input": "oneiron_browser::ObserveInput",
       "output": "oneiron_browser::ObservationPage",
       "call": "driver.observe_page(input)?",
@@ -4036,7 +4110,7 @@
     },
     {
       "name": "self.desktop.observe",
-      "description": "Observes the current window of the run's desktop guest, in pages: an answer with next goes on, and observe with that cursor reads the next page.",
+      "description": "Observes the current window of the run's desktop guest, in pages read on with observe and an answer's next cursor; a tree walk cut short answers partial, and its last page's next walks the window again.",
       "input": "oneiron_browser::ObserveInput",
       "output": "oneiron_browser::ObservationPage",
       "call": "driver.observe_page(input)?",

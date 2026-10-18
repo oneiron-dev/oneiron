@@ -69,8 +69,14 @@ pub struct TranscriptMessage {
     /// What it says, as plain text; `vault.refs.links` with `texts` reads
     /// its `oneiron://` links as spans for the reader.
     pub text: String,
-    /// The metadata its writer gave it (an imported message's provenance).
+    /// The metadata its writer gave it (an imported message's provenance),
+    /// less the result it carries.
     pub metadata: Option<serde_json::Value>,
+    /// The result it carries in place of an answer too large to say (FIX
+    /// 365), as its own hold on the body backs it: a preview of the body,
+    /// withheld while the body is not clean for the reader, and the facets
+    /// [`Memory::read_message_result`] reads the rest by.
+    pub result: Option<MessageResultAttachment>,
     /// A reply whose latest generation ended without finishing its answer
     /// (cut off, failed, cancelled or recovered after a crash): what it says
     /// is all that was saved, and Continue or Retry act on it.
@@ -105,6 +111,8 @@ fn sort_key(key: &TurnKey) -> (u64, [u8; 16]) {
 /// A readable MESSAGE view as a transcript message, with its completion;
 /// `None` for one that is hidden. An empty message stays, complete or not:
 /// Continue and Retry act on it, and a history leaves its empty text out.
+/// Its result is as the MESSAGE says it, which the page admits again before
+/// it is served; a reserved value that is no result is none.
 fn transcript_message(
     view: &EntityView,
     completion: impl FnOnce() -> MemoryResult<MessageCompletion>,
@@ -122,6 +130,17 @@ fn transcript_message(
         .get("order")
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(0);
+    let metadata = body
+        .get("metadata")
+        .filter(|value| !value.is_null())
+        .cloned();
+    let (metadata, result) = match MessageResultAttachment::from_metadata(metadata.as_ref()) {
+        Ok(None) => (metadata, None),
+        decoded => (
+            MessageResultAttachment::strip_metadata(metadata),
+            decoded.ok().flatten(),
+        ),
+    };
     Ok(Some((
         order,
         TranscriptMessage {
@@ -131,10 +150,8 @@ fn transcript_message(
             message_type: field("type").map(str::to_owned),
             occurred: view.occurred_start,
             text: text.to_owned(),
-            metadata: body
-                .get("metadata")
-                .filter(|value| !value.is_null())
-                .cloned(),
+            metadata,
+            result,
             incomplete: completion.incomplete,
             generating: completion.generating,
         },
@@ -275,7 +292,9 @@ impl Memory<'_> {
 
     /// Up to `limit` readable turns of `turns`, in order, and the cursor of
     /// the page after them; `None` when a listed turn's time no longer is
-    /// what the listing saw. `receipt` takes each read's narrowing.
+    /// what the listing saw. `receipt` takes each read's narrowing. Each
+    /// result a message carries is admitted again once the page's snapshots
+    /// have closed ([`Self::admit_results`]).
     fn transcript_page(
         &self,
         lane: &ScopedRead<'_>,
@@ -285,7 +304,8 @@ impl Memory<'_> {
     ) -> MemoryResult<Option<(Vec<TranscriptTurn>, Option<String>)>> {
         let mut page = Vec::new();
         let mut last = None;
-        for chunk in turns.chunks(limit) {
+        let mut next = None;
+        'chunks: for chunk in turns.chunks(limit) {
             let members = self.transcript_members(chunk)?;
             let targets: Vec<ReadTargetSlot> = chunk
                 .iter()
@@ -322,7 +342,8 @@ impl Memory<'_> {
                     continue;
                 }
                 if page.len() == limit {
-                    return Ok(Some((page, last.as_ref().map(cursor))));
+                    next = last.as_ref().map(cursor);
+                    break 'chunks;
                 }
                 messages.sort_by(|(left, a), (right, b)| left.cmp(right).then(a.id.cmp(&b.id)));
                 page.push(TranscriptTurn {
@@ -334,7 +355,20 @@ impl Memory<'_> {
                 last = Some(*key);
             }
         }
-        Ok(Some((page, None)))
+        self.admit_results(&mut page)?;
+        Ok(Some((page, next)))
+    }
+
+    /// Each result `page`'s messages carry, as [`Self::shown_result`] shows
+    /// it to this reader now. Called once the page's snapshots have closed.
+    fn admit_results(&self, page: &mut [TranscriptTurn]) -> MemoryResult<()> {
+        for message in page.iter_mut().flat_map(|turn| turn.messages.iter_mut()) {
+            if let Some(result) = message.result.take() {
+                let id = EntityId::from_hex(&message.id)?;
+                message.result = self.shown_result(id, result)?;
+            }
+        }
+        Ok(())
     }
 
     /// The conversation's turns after `after`, in transcript order, each by
