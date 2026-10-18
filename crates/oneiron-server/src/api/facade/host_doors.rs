@@ -97,6 +97,7 @@ pub(crate) use super::support_grant_doors::*;
 pub(crate) use super::fold_doors::*;
 pub(crate) use super::note_doors::*;
 pub(crate) use super::off_record_doors::*;
+pub(crate) use super::persona_doors::*;
 pub(crate) use super::residence_doors::*;
 pub(crate) use super::summary_doors::*;
 // The weave lens's human doors, likewise.
@@ -167,6 +168,8 @@ pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
 pub(crate) use super::claim_settle_doors::*;
 pub(crate) use super::consolidation_doors::*;
+// The owner's sieve interest-queue, policy and lease doors (DOOR-130), likewise.
+pub(crate) use super::sieve_doors::*;
 // The owner's standing-block and dreaming-choice doors (DOOR-134), likewise.
 pub(crate) use super::standing_doors::*;
 // The owner's symbol lease, proposal submit and oplog doors (DOOR-137), likewise.
@@ -1098,6 +1101,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "calendar.imip.get"
         | "vault.calendar.ics.import"
         | "vault.calendar.instances.move"
+        | "vault.companions.access_requests.answer"
+        | "vault.personas.preview"
+        | "vault.personas.export"
+        | "vault.personas.edit"
         | "vault.packs.put"
         | "vault.packs.connector.prepare"
         | "vault.packs.connector.get"
@@ -1168,6 +1175,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.residence.open"
         | "vault.residence.index"
         | "vault.residence.prune"
+        | "vault.residence.directives"
         | "vault.courtesy_delete.send"
         | "vault.courtesy_delete.sent"
         | "vault.courtesy_delete.incoming"
@@ -1217,6 +1225,15 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.claims.vetting"
         | "vault.consolidation.promote"
         | "vault.consolidation.evidence"
+        | "vault.sieve.queue"
+        | "vault.sieve.retained"
+        | "vault.sieve.receipts"
+        | "vault.sieve.policy"
+        | "vault.sieve.policy.set"
+        | "vault.sieve.recipe_policy"
+        | "vault.sieve.recipe_policy.set"
+        | "vault.sieve.lease"
+        | "vault.sieve.lease.refill"
         | "vault.settings.wake_policy.set"
         | "vault.agents.create"
         | "vault.agents.update"
@@ -1298,6 +1315,14 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.projects.confirm"
         | "vault.weave.owner.link.wrong"
         | "vault.weave.owner.item.wrong"
+        | "vault.weave.enqueue"
+        | "vault.weave.schedules.list"
+        | "vault.weave.schedules.put"
+        | "vault.weave.schedules.clear"
+        | "vault.weave.owner.digest.render"
+        | "vault.inbox.concerns.review"
+        | "vault.inbox.lens"
+        | "vault.inbox.groups"
         | "vault.budgets.lease.open"
         | "vault.budgets.lease"
         | "vault.budgets.lease.top_up"
@@ -1313,6 +1338,12 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.symbols.renew"
         | "vault.code.symbols.release"
         | "vault.code.proposal_submit"
+        | "vault.code.conflict_record"
+        | "vault.code.conflict_view"
+        | "vault.code.proposal_resolve"
+        | "vault.code.proposal_review"
+        | "vault.code.proposal_settle"
+        | "vault.code.proposal_settlement"
         | "vault.code.oplog"
         | "vault.results.status"
         | "vault.results.recover"

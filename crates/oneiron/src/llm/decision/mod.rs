@@ -4,6 +4,7 @@ mod answer_actor;
 pub use answer_actor::AnswerActor;
 pub(crate) use answer_actor::{erase_ask_actor_in_txn, erase_rule_actor_in_txn};
 mod asks;
+pub(crate) use asks::WORLD_PRIVACY_ASK_QUEUE;
 pub use asks::{AskAnswer, AskPrior, DecisionAsk, DecisionAsks};
 pub mod catalogue;
 mod codec;
