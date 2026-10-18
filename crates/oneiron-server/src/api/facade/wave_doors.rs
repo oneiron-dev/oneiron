@@ -2,20 +2,36 @@
 //! for a wave to run under, so its wave is root and the owner's, admitted as
 //! `POST /v1/ai/waves` admits one; a pumped run's wave is served on its own
 //! host door, bound to its lease. The generated HTTP facade handler and the
-//! MCP dispatcher both call this through `host_doors`.
+//! MCP dispatcher both call this through `host_doors`. Beside its receipt,
+//! the door lists the epic and the planner it planned from
+//! (`host_door_lists`); the planning attempt lives in the attempt queue,
+//! which holds no row.
 use std::sync::Arc;
 
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{TaskWaveReceipt, TaskWaveRequest};
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 
-use super::host_doors::internal;
+use super::host_doors::{Listed, hex_rows, internal, naming};
 use crate::auth::CoreAuth;
 use crate::server::{SyncServer, wave_plan, wave_receipt};
 
 /// `tasks.wave`: the owner's root wave, planned for the credential's
-/// principal, or the vault's own owner for one that names none.
+/// principal, or the vault's own owner for one that names none. Beside it,
+/// the epic TASK and the planner definition the wave was checked and
+/// planned from.
 pub(crate) async fn tasks_wave(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: TaskWaveRequest,
+) -> Listed<TaskWaveReceipt> {
+    let named = [input.epic_task_ref.clone(), input.planner_ref.clone()];
+    naming(tasks_wave_answer(server, auth, input).await, |_| {
+        hex_rows(&named)
+    })
+}
+
+async fn tasks_wave_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: TaskWaveRequest,
