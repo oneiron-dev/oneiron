@@ -553,16 +553,34 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
     })
 }
 
+/// The code-mode run one call is made in (`execute_code`): the host origin
+/// its writes are made under, and the run itself, the creating run of the
+/// live lens cards the call renders (OF-181, FIX 2612 (a)).
+pub(crate) struct McpCodeRun {
+    pub(crate) origin: oneiron::memory::HostWriteOrigin,
+    pub(crate) run_id: oneiron::EntityId,
+}
+
 /// What one MCP row's credential surface is built from beside its call
 /// context: where its TASKs are born, the invocation its hooks cross under,
-/// and a code-mode call's host origin.
+/// and a code-mode call's run.
 struct McpRowSurface {
     position: oneiron::federation::record_scope::BirthPosition,
     invocation: oneiron::runtime_hooks::InvocationId,
-    origin: Option<oneiron::memory::HostWriteOrigin>,
+    run: Option<McpCodeRun>,
 }
 
 impl McpRowSurface {
+    /// Who owns the live lens card `verb` renders for `request` on this
+    /// row: a code-mode call's run, for that request's own subscription.
+    /// A direct tool call, or a hook's resumed one, carries no run, so its
+    /// card is held unowned (FIX 2612 (c)).
+    fn lens_owner(&self, verb: &str, request: &Value) -> Option<crate::lens_frames::CardOwner> {
+        self.run
+            .as_ref()
+            .map(|run| crate::lens_frames::CardOwner::run_request(run.run_id, verb, request))
+    }
+
     /// The caller's surface for one row: its credential at its locality,
     /// born at this position, under this invocation and host origin, in the
     /// off-record session the request named, its reads listed in `producers`.
@@ -582,8 +600,8 @@ impl McpRowSurface {
         .with_birth_position(self.position)
         .listing_producers(producers)
         .with_invocation(self.invocation);
-        let memory = match self.origin.clone() {
-            Some(origin) => memory.with_host_origin(origin),
+        let memory = match &self.run {
+            Some(run) => memory.with_host_origin(run.origin.clone()),
             None => memory,
         };
         // OF-063: the off-record session the request named; inside an anonymous
@@ -2242,7 +2260,8 @@ pub(crate) fn mcp_agent_verb_arguments(
 /// Runs one verb from its whole typed input, with the actor ceiling and
 /// gate every other door applies. Every MCP door reaches the verb table here.
 /// The input names only fields the verb's advertised closed schema lists, and
-/// a code-mode call's claims are written under its run's host `origin`.
+/// a code-mode call's claims are written under its `run`'s host origin, the
+/// live lens cards it renders held for that run.
 /// Every row the result was derived from is listed in `served`: those its
 /// input names, and those the verb's reads picked themselves. A board read
 /// leaves the hook blocks its answer shows in `board_hooks`; the caller spends
@@ -2252,7 +2271,7 @@ pub(crate) async fn execute_agent_verb_input(
     tool: &str,
     input: Value,
     actor: &McpCallContext,
-    origin: Option<oneiron::memory::HostWriteOrigin>,
+    run: Option<McpCodeRun>,
     served: &mut Vec<oneiron::EntityId>,
     board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
 ) -> Result<
@@ -2270,7 +2289,7 @@ pub(crate) async fn execute_agent_verb_input(
         tool,
         input,
         actor,
-        origin,
+        run,
         &producers,
         served,
         board_hooks,
@@ -2289,7 +2308,7 @@ async fn execute_agent_verb_listing(
     tool: &str,
     input: Value,
     actor: &McpCallContext,
-    origin: Option<oneiron::memory::HostWriteOrigin>,
+    run: Option<McpCodeRun>,
     producers: &oneiron::memory::ProducerRows,
     served: &mut Vec<oneiron::EntityId>,
     board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
@@ -2333,7 +2352,7 @@ async fn execute_agent_verb_listing(
     let surface = McpRowSurface {
         position,
         invocation,
-        origin,
+        run,
     };
     // The direct caller's own proof, on the rows whose HTTP door binds it
     // outside a room turn (OF-417, OF-365).
@@ -3065,10 +3084,11 @@ async fn execute_agent_verb_row(
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             oneiron::task_verb::sdk::validate_input("vault.weave.lens", &input)
                 .map_err(mcp_facade_error)?;
+            let owner = surface.lens_owner("vault.weave.lens", &input);
             let input: oneiron::claim::WeaveReportRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
-                crate::api::facade::host_doors::vault_weave_lens(server, auth, input).await;
+                crate::api::facade::host_doors::vault_weave_lens(server, auth, owner, input).await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)
@@ -4337,10 +4357,12 @@ async fn execute_agent_verb_row(
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             oneiron::task_verb::sdk::validate_input("vault.lenses.default", &input)
                 .map_err(mcp_facade_error)?;
+            let owner = surface.lens_owner("vault.lenses.default", &input);
             let input: oneiron::lens::LensDefaultRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
-                crate::api::facade::host_doors::vault_lenses_default(server, auth, input).await;
+                crate::api::facade::host_doors::vault_lenses_default(server, auth, owner, input)
+                    .await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)

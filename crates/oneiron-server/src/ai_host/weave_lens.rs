@@ -160,10 +160,6 @@ pub(crate) async fn render_live_weave_lens_listing(
 /// so a successful render replaces the card the same run rendered for the
 /// same subscription, a failed one keeps the last good card, and the run's
 /// end closes them all.
-#[allow(
-    dead_code,
-    reason = "L13 threads the creating run and subscription from the facade call (FIX 2612)"
-)]
 pub(crate) async fn render_live_weave_lens_for_run(
     server: &Arc<SyncServer>,
     caller: WeaveLensCaller,

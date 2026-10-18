@@ -71,7 +71,8 @@ pub use status::{
     AiHealth, AiStatus, CompactionState, CompactionStatus, IdleReason, WorkState, WorkStatus,
 };
 pub(crate) use weave_lens::{
-    WeaveLensCaller, render_live_weave_lens, render_live_weave_lens_listing,
+    WeaveLensCaller, render_live_weave_lens, render_live_weave_lens_for_run,
+    render_live_weave_lens_listing,
 };
 
 use dreamer::{DreamerHost, DreamerStart};
