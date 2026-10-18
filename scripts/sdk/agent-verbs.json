@@ -2693,6 +2693,186 @@
       "openapi": true
     },
     {
+      "name": "vault.projects.goal.intake.complete",
+      "description": "Completes the witnessed human goal-intake interview with the full confirmed record; no agent proposal can write the effective goal.",
+      "input": "ProjectGoalIntakeCompleteRequest",
+      "output": "crate::task_verb::sdk::ProjectGoalIntakeReceipt",
+      "call": "crate::task_verb::sdk::project_goal_intake_complete_as_owner(memory.vault(), &memory.embedded_owner(\"vault.projects.goal.intake.complete\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.projects.goal.get",
+      "description": "Reads the full effective goal record and its claim together; interview drafts and loop proposals never replace it.",
+      "input": "ProjectRefRequest",
+      "output": "crate::task_verb::sdk::ProjectGoalView",
+      "call": "crate::task_verb::sdk::project_goal_get_as_owner(memory.vault(), &memory.embedded_owner(\"vault.projects.goal.get\")?, crate::EntityId::from_hex(&input.project_ref)?)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.optimize.propose",
+      "description": "Submits one explicit optimizer candidate against a fixed baseline version and a real drafting attempt; ordinary held-out admission still rules.",
+      "input": "SkillOptimizeProposeRequest",
+      "output": "crate::task_verb::sdk::SkillOptimizeProposalReceipt",
+      "call": "crate::task_verb::sdk::skill_optimize_propose_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.propose\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.optimize.measure",
+      "description": "Judges held-out floors before any online slice, then measures the proposal on the effective goal with the registered judge and bounded live arms.",
+      "input": "SkillOptimizeMeasureRequest",
+      "output": "crate::task_verb::sdk::SkillOptimizeMeasurement",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.skills.optimize.measure\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.optimize.score",
+      "description": "Rules on the submitted proposal through the existing held-out vector gate, floors and tradeoff ladder, without activating it.",
+      "input": "SkillOptimizeProposalRequest",
+      "output": "crate::task_verb::sdk::SkillOptimizeResultView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.skills.optimize.score\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.optimize.admit",
+      "description": "Admits only a standing gate acceptance and supersedes its incumbent atomically, with current body, evidence, tier, goal and owner checks.",
+      "input": "SkillOptimizeProposalRequest",
+      "output": "crate::task_verb::sdk::SkillOptimizeResultView",
+      "call": "crate::task_verb::sdk::skill_optimize_admit_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.admit\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.optimize.goal.get",
+      "description": "Reads the optimizer goal identity, effective axes, revision and joined project goal claim.",
+      "input": "SkillOptimizeGoalRequest",
+      "output": "crate::task_verb::sdk::SkillOptimizeGoalView",
+      "call": "crate::task_verb::sdk::skill_optimize_goal_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.goal.get\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.optimize.goal.bind",
+      "description": "Joins a skill goal to the human project goal record, or unbinds with null; every join changes its admission revision.",
+      "input": "SkillOptimizeGoalBindRequest",
+      "output": "crate::task_verb::sdk::SkillOptimizeGoalRevision",
+      "call": "crate::task_verb::sdk::skill_optimize_goal_bind_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.goal.bind\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.optimize.preferences.get",
+      "description": "Reads authored and learned goal tradeoff rules and the typed judgment band, without changing authority.",
+      "input": "SkillOptimizeGoalRequest",
+      "output": "Option<crate::skill_optimize::SkillTradeoffPreferences>",
+      "call": "crate::task_verb::sdk::skill_optimize_preferences_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.preferences.get\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.optimize.preferences.set",
+      "description": "The responsible owner sets authored tradeoff rules and the typed judgment band, retaining learned picks and every admission clamp.",
+      "input": "SkillOptimizePreferencesSetRequest",
+      "output": "crate::task_verb::sdk::SkillOptimizeGoalRevision",
+      "call": "crate::task_verb::sdk::skill_optimize_preferences_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.preferences.set\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.optimize.tradeoff_asks",
+      "description": "Lists the exact pending optimizer tradeoffs that have reached a role the caller holds, including bound typed judgment evidence.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::task_verb::sdk::SkillOptimizeTradeoffAskView>",
+      "call": "crate::task_verb::sdk::skill_optimize_tradeoff_asks_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.tradeoff_asks\")?)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.optimize.tradeoff_asks.pick",
+      "description": "Approves or rejects the exact shown tradeoff; the attributed pick becomes a preference and a proposed project revision, never a Grant.",
+      "input": "SkillOptimizeTradeoffPickRequest",
+      "output": "crate::task_verb::sdk::SkillOptimizeResultView",
+      "call": "crate::task_verb::sdk::skill_optimize_tradeoff_pick_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.tradeoff_asks.pick\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.skills.governance.get",
       "description": "Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it.",
       "input": "HubSkillRequest",

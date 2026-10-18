@@ -169,6 +169,21 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.skills.permissions.approve", post(facade_route))
         .route("/vault.skills.optimize.start", post(facade_route))
         .route("/vault.skills.optimize.result", post(facade_route))
+        .route("/vault.projects.goal.intake.complete", post(facade_route))
+        .route("/vault.projects.goal.get", post(facade_route))
+        .route("/vault.skills.optimize.propose", post(facade_route))
+        .route("/vault.skills.optimize.measure", post(facade_route))
+        .route("/vault.skills.optimize.score", post(facade_route))
+        .route("/vault.skills.optimize.admit", post(facade_route))
+        .route("/vault.skills.optimize.goal.get", post(facade_route))
+        .route("/vault.skills.optimize.goal.bind", post(facade_route))
+        .route("/vault.skills.optimize.preferences.get", post(facade_route))
+        .route("/vault.skills.optimize.preferences.set", post(facade_route))
+        .route("/vault.skills.optimize.tradeoff_asks", post(facade_route))
+        .route(
+            "/vault.skills.optimize.tradeoff_asks.pick",
+            post(facade_route),
+        )
         .route("/vault.skills.governance.get", post(facade_route))
         .route("/vault.skills.governance.set", post(facade_route))
         .route("/vault.packs.hooks.bind", post(facade_route))

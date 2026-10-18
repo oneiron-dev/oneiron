@@ -151,6 +151,10 @@ mod project_goal;
 mod tradeoff;
 mod verdict;
 
+pub(crate) use decision::score_gate_skill_edit_as_owner;
+pub(crate) use live::measure_skill_edit_goal_axes_as_owner;
+pub(crate) use preflight::preflight_skill_edit_offline_floors_as_owner;
+
 pub use admission::{
     admit_optimized_skill_revision, resolve_skill_edit_tradeoff,
     resolve_skill_edit_tradeoff_in_cycle,

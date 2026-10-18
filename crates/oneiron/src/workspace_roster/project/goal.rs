@@ -46,7 +46,7 @@ fn decode_goal_claim(body: &ClaimBody, project: EntityId) -> Result<GoalRecord> 
 mod tests;
 
 /// A named observation that can be checked against receipts or a held-out trial.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GoalAxis {
     pub name: String,
@@ -55,7 +55,7 @@ pub struct GoalAxis {
 }
 
 /// One tradeoff the human actually chose; the loop may propose, not invent, these.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GoalPreference {
     pub prefer: String,
@@ -66,7 +66,7 @@ pub struct GoalPreference {
 /// A goal's soft exploration share, not a grant or a vault budget lease.
 /// Spend and the slice are counted in `unit`; a skill trial is charged
 /// against the slice only when its run's launch estimate is in that unit.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GoalExplorationBudget {
     pub max_spend: u64,
@@ -76,7 +76,7 @@ pub struct GoalExplorationBudget {
 }
 
 /// Typed data for a project's admission target; never an agent prompt or authority grant.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GoalRecord {
     pub goal: String,

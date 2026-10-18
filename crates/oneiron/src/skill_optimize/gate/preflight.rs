@@ -44,7 +44,7 @@ struct PreflightRow {
 }
 
 /// A proposal's offline preflight on its current basis.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SkillEditPreflight {
     /// No floor regressed, the honesty floor included.
     pub passed: bool,
@@ -119,6 +119,25 @@ pub fn preflight_skill_edit_offline_floors(
     proposal: &EntityId,
     scorer: &dyn HeldOutReplayNotes,
 ) -> Result<SkillEditPreflight> {
+    preflight_with_owner(vault, proposal, scorer, None)
+}
+
+pub(crate) fn preflight_skill_edit_offline_floors_as_owner(
+    vault: &Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    proposal: &EntityId,
+    scorer: &dyn HeldOutReplayNotes,
+) -> Result<SkillEditPreflight> {
+    owner.revalidate(vault)?;
+    preflight_with_owner(vault, proposal, scorer, Some(owner))
+}
+
+fn preflight_with_owner(
+    vault: &Vault,
+    proposal: &EntityId,
+    scorer: &dyn HeldOutReplayNotes,
+    owner: Option<&crate::consent::AuthenticatedOwner>,
+) -> Result<SkillEditPreflight> {
     let txn = vault.store.env.read_txn()?;
     let staged = vault.read_skill_record_in_txn(&txn, proposal)?;
     require_open_optimizer_proposal(&staged)?;
@@ -183,6 +202,9 @@ pub fn preflight_skill_edit_offline_floors(
         passed,
     };
     vault.with_write_txn_grouped(|txn| {
+        if let Some(owner) = owner {
+            owner.revalidate_in_txn(vault, txn)?;
+        }
         let staged_now = vault.read_skill_record_in_txn(txn, proposal)?;
         let current_now = vault.read_skill_record_in_txn(txn, &target)?;
         let (now, _, _) = basis_in_txn(vault, txn, &staged_now, &target, &current_now)?;
