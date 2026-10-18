@@ -1398,14 +1398,14 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.residence.open": { description: "Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors. A machine this host does not reach answers state queued, naming the directive.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.residence.index": { description: "The thin index one of the owner's machines holds, window by window: what exists, never a body. A machine this host does not reach answers state queued, naming the directive.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.residence.prune": { description: "Drops the opened-item caches one of the owner's machines last touched before a time. A machine this host does not reach answers state queued, naming the directive.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.off_record.start": { description: "The owner enters an off-record session, off record or anonymous, as the owner route does; nothing of it reaches the vault unless the owner promotes or saves it.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.off_record.status": { description: "The owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "vault.off_record.witness": { description: "The owner witnesses one turn into an off-record session; it stays in the room until promoted or dropped at close.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.off_record.discard": { description: "The owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.off_record.recall": { description: "The owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "vault.off_record.notes.create": { description: "The owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.off_record.claims.upsert": { description: "The owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "self.off_record.execute": { description: "The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.off_record.start": { description: "The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous; nothing of it reaches the vault unless the owner promotes or saves it.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.off_record.status": { description: "The session's creator or the vault's owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing; a room's member reads what their membership shows.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.off_record.witness": { description: "The session's creator or the vault's owner witnesses one turn into an off-record session, or a member into a room's; it stays in the room until promoted or dropped at close.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.off_record.discard": { description: "The session's creator or the vault's owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.off_record.recall": { description: "The session's creator or the vault's owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.off_record.notes.create": { description: "The session's creator or the vault's owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.off_record.claims.upsert": { description: "The session's creator or the vault's owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "self.off_record.execute": { description: "The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.records.erase_preview": { description: "What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.records.erase_confirm": { description: "Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.research.create_child": { description: "The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -1920,7 +1920,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         attenuate: (input: Facade.CredentialAttenuationRequest, options?: O): FacadeReturns<"self.credential.attenuate">[K] => invoke("self.credential.attenuate", input, options, newInvocation()),
       },
       off_record: {
-        /** The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
+        /** The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
         execute: (input: Facade.OffRecordExecuteRequest, options?: O): FacadeReturns<"self.off_record.execute">[K] => invoke("self.off_record.execute", input, options, newInvocation()),
       },
       /** Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value. */
@@ -2440,22 +2440,22 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         prune: (input: Facade.ResidencePruneRequest, options?: O): FacadeReturns<"vault.residence.prune">[K] => invoke("vault.residence.prune", input, options, newInvocation()),
       },
       off_record: {
-        /** The owner enters an off-record session, off record or anonymous, as the owner route does; nothing of it reaches the vault unless the owner promotes or saves it. */
+        /** The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous; nothing of it reaches the vault unless the owner promotes or saves it. */
         start: (input: Facade.OffRecordStartRequest, options?: O): FacadeReturns<"vault.off_record.start">[K] => invoke("vault.off_record.start", input, options, newInvocation()),
-        /** The owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing. */
+        /** The session's creator or the vault's owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing; a room's member reads what their membership shows. */
         status: (input: Facade.OffRecordSessionRequest, options?: O): FacadeReturns<"vault.off_record.status">[K] => invoke("vault.off_record.status", input, options, newInvocation()),
-        /** The owner witnesses one turn into an off-record session; it stays in the room until promoted or dropped at close. */
+        /** The session's creator or the vault's owner witnesses one turn into an off-record session, or a member into a room's; it stays in the room until promoted or dropped at close. */
         witness: (input: Facade.OffRecordWitnessRequest, options?: O): FacadeReturns<"vault.off_record.witness">[K] => invoke("vault.off_record.witness", input, options, newInvocation()),
-        /** The owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay. */
+        /** The session's creator or the vault's owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay. */
         discard: (input: Facade.OffRecordSessionRequest, options?: O): FacadeReturns<"vault.off_record.discard">[K] => invoke("vault.off_record.discard", input, options, newInvocation()),
-        /** The owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike. */
+        /** The session's creator or the vault's owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike. */
         recall: (input: Facade.OffRecordRecallRequest, options?: O): FacadeReturns<"vault.off_record.recall">[K] => invoke("vault.off_record.recall", input, options, newInvocation()),
         notes: {
-          /** The owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it. */
+          /** The session's creator or the vault's owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it. */
           create: (input: Facade.OffRecordNoteRequest, options?: O): FacadeReturns<"vault.off_record.notes.create">[K] => invoke("vault.off_record.notes.create", input, options, newInvocation()),
         },
         claims: {
-          /** The owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it. */
+          /** The session's creator or the vault's owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it. */
           upsert: (input: Facade.OffRecordClaimRequest, options?: O): FacadeReturns<"vault.off_record.claims.upsert">[K] => invoke("vault.off_record.claims.upsert", input, options, newInvocation()),
         },
       },

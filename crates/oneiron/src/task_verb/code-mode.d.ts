@@ -2594,7 +2594,7 @@ declare namespace self {
   /** Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use. */
   const message: (input: Sdk.MessagePersonRequest) => Promise<Sdk.MessagePersonReceipt | StoredResult>;
   const off_record: {
-    /** The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
+    /** The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
     execute(input: Sdk.OffRecordExecuteRequest): Promise<Sdk.OffRecordExecuted | StoredResult>;
   };
   const run: {
@@ -3360,22 +3360,22 @@ declare const vault: Sdk.VaultHost & {
   };
   off_record: {
     claims: {
-      /** The owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it. */
+      /** The session's creator or the vault's owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it. */
       upsert(input: Sdk.OffRecordClaimRequest): Promise<Sdk.CommitReceipt | StoredResult>;
     };
-    /** The owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay. */
+    /** The session's creator or the vault's owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay. */
     discard(input: Sdk.OffRecordSessionRequest): Promise<Sdk.OffRecordClosed | StoredResult>;
     notes: {
-      /** The owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it. */
+      /** The session's creator or the vault's owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it. */
       create(input: Sdk.OffRecordNoteRequest): Promise<Sdk.EntityRefReceipt | StoredResult>;
     };
-    /** The owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike. */
+    /** The session's creator or the vault's owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike. */
     recall(input: Sdk.OffRecordRecallRequest): Promise<Sdk.MemoryPack | StoredResult>;
-    /** The owner enters an off-record session, off record or anonymous, as the owner route does; nothing of it reaches the vault unless the owner promotes or saves it. */
+    /** The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous; nothing of it reaches the vault unless the owner promotes or saves it. */
     start(input: Sdk.OffRecordStartRequest): Promise<Sdk.OffRecordSessionView | StoredResult>;
-    /** The owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing. */
+    /** The session's creator or the vault's owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing; a room's member reads what their membership shows. */
     status(input: Sdk.OffRecordSessionRequest): Promise<Sdk.OffRecordSessionView | StoredResult>;
-    /** The owner witnesses one turn into an off-record session; it stays in the room until promoted or dropped at close. */
+    /** The session's creator or the vault's owner witnesses one turn into an off-record session, or a member into a room's; it stays in the room until promoted or dropped at close. */
     witness(input: Sdk.OffRecordWitnessRequest): Promise<Sdk.WitnessReceipt | StoredResult>;
   };
   packs: {
