@@ -77,11 +77,11 @@ impl HousekeepingPasses {
         HousekeepingBudget::within(time).stop_when(Arc::clone(&self.stop))
     }
 
-    fn stopping(&self) -> bool {
+    pub(super) fn stopping(&self) -> bool {
         self.stop.load(Ordering::Acquire)
     }
 
-    fn hold(&self, pass: JoinHandle<()>) {
+    pub(super) fn hold(&self, pass: JoinHandle<()>) {
         let mut running = self.running.lock().unwrap_or_else(PoisonError::into_inner);
         running.retain(|pass| !pass.is_finished());
         running.push(pass);

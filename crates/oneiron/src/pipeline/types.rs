@@ -250,6 +250,7 @@ pub(super) struct PipelineFilterConfig<'a> {
 
 #[derive(Default)]
 pub(super) struct EntityMetadataCache {
+    pub(super) temporal_report: Option<super::TemporalSearchReport>,
     entries: HashMap<EntityId, Option<EntityMetadata>>,
     /// Unique evaluated candidates rejected by read authority or D19. Not telemetry.
     pub(super) read_suppressed: std::collections::HashSet<EntityId>,
@@ -311,6 +312,7 @@ pub(crate) struct PipelineOutput {
     pub(crate) signals: Vec<RetrievalSignal>,
     /// Temporal phrases read from the query and what the run did with each.
     pub(crate) temporal_hints: Vec<crate::temporal::TemporalHintReport>,
+    pub(crate) temporal_report: Option<super::TemporalSearchReport>,
 }
 
 #[derive(Debug, Clone)]

@@ -4511,6 +4511,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_search_temporal(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.search.temporal", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_search_bm25(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.search.bm25", input)
@@ -5446,6 +5455,15 @@ impl NativeClient {
     pub fn vault_notes_create(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.notes.create", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_notes_author_take(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.author_take", input)
             .map_err(facade_error)
     }
     #[napi]
