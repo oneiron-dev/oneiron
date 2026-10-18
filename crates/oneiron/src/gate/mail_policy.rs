@@ -102,6 +102,22 @@ impl MailPolicy {
             .iter()
             .all(|touch| self.known.contains(touch))
     }
+    /// Whether `after`, standing in for this row, only narrows every reader
+    /// (ARCH-0070 vault shape). Its scope, known first touches and cold hold
+    /// stay, so no recipient's class or cold-risk selector moves; its rates
+    /// go no higher and its earned tiers keep to this row's.
+    pub(crate) fn narrows_in_place(&self, after: &Self) -> bool {
+        let within = |after: &[String], before: &[String]| after.iter().all(|v| before.contains(v));
+        after.scope == self.scope
+            && after.known.len() == self.known.len()
+            && after.known.iter().all(|touch| self.known.contains(touch))
+            && after.hold_cold == self.hold_cold
+            && after.max_complaint_rate <= self.max_complaint_rate
+            && after.max_bounce_rate <= self.max_bounce_rate
+            && after.max_spam_labels <= self.max_spam_labels
+            && within(&after.attestation, &self.attestation)
+            && within(&after.warmup, &self.warmup)
+    }
     fn restrict(&mut self, other: &Self) {
         self.known.retain(|v| other.known.contains(v));
         self.hold_cold |= other.hold_cold;
