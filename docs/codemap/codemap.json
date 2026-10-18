@@ -42412,7 +42412,15 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/side_table/decls/vault_meta_d_l.rs",
+     "path": "src/side_table/decls/vault_meta_d_e.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/side_table/decls/vault_meta_f_l.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -42428,7 +42436,15 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/side_table/decls/vault_meta_s_z.rs",
+     "path": "src/side_table/decls/vault_meta_s.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/side_table/decls/vault_meta_t_z.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -56443,7 +56459,7 @@
      "purpose": "What travels with a body when it leaves the vault (OF-491)"
     },
     "side_table": {
-     "files": 10,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56739,7 +56755,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3457,
+   "source_files": 3459,
    "test_files": 902
   },
   "oneiron-android": {
