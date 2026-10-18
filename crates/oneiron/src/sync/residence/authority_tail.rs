@@ -21,7 +21,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::Vault;
 use crate::authority::{
     AuthorityCheckpointAttestation, AuthorityEntryHash, AuthorityHistoryFetch,
-    AuthorityHistoryPage, PeerMachine, authority_entry_hash, decode_authority_log_entry_body,
+    AuthorityHistoryPage, PeerMachine, WorldPrivacyView, authority_entry_hash,
+    decode_authority_log_entry_body, side_world,
 };
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::error::{Error, Result, SyncProtocolValidation};
@@ -135,10 +136,17 @@ pub fn held_authority_history(vault: &Vault) -> Result<Vec<Vec<u8>>> {
     Ok(history)
 }
 
+/// FIX 922 item 11 call: the tail and range leave out, for a machine that may not read a world,
+/// that world's whole side branch (settings edits and key wraps); every main-log row still goes.
+const ITEM11_AUTHORITY_FILTER_SCOPE: bool = true;
+
 /// The signed entries this home holds and `held` lacks, parents first, at most
 /// `limit`, for a machine of the owner's whose proof stands here. Each entry's
 /// parents are in `held` or earlier in the page, so the page imports whole.
 /// Refused for any other peer: the log names grants, machines and settings.
+/// The side branch of a world that may not be readable on the machine is left
+/// out before the page is counted, so a short page is still the last: no
+/// main-log row, and no other world's row, names one of its rows.
 ///
 /// # Errors
 ///
@@ -151,9 +159,21 @@ pub fn authority_tail_for(
 ) -> Result<Vec<Vec<u8>>> {
     require_owner_machine(vault, peer)?;
     let limit = limit.clamp(1, AUTHORITY_TAIL_PAGE_MAX);
+    let history = held_authority_history(vault)?;
+    // Read after the history, so a settings edit it holds is judged too.
+    let withheld = if ITEM11_AUTHORITY_FILTER_SCOPE {
+        let txn = vault.store.env.read_txn()?;
+        WorldPrivacyView::load_in(vault, &txn)?.withheld_for_peer(peer)?
+    } else {
+        BTreeSet::new()
+    };
     let mut page = Vec::new();
-    for bytes in held_authority_history(vault)? {
-        let hash = authority_entry_hash(&decode_authority_log_entry_body(&bytes)?)?;
+    for bytes in history {
+        let entry = decode_authority_log_entry_body(&bytes)?;
+        if side_world(&entry.op).is_some_and(|world| withheld.contains(&world)) {
+            continue;
+        }
+        let hash = authority_entry_hash(&entry)?;
         if !held.contains(&hash) {
             page.push(bytes);
             if page.len() == limit {
@@ -165,9 +185,11 @@ pub fn authority_tail_for(
 }
 
 /// The page of `fetch` this home serves a machine of the owner's whose proof
-/// stands here ([`Vault::authority_history_page`]): the exact rows it names
-/// and, with parent closure, their ancestors down to what the machine holds,
-/// parents first. Refused for any other peer, as the tail is.
+/// stands here ([`Vault::authority_history_page_for_peer`]): the exact rows it
+/// names and, with parent closure, their ancestors down to what the machine
+/// holds, parents first, less the side branch of each world that may not be
+/// readable on the machine, as the tail leaves it out. Refused for any other
+/// peer, as the tail is.
 ///
 /// # Errors
 ///
@@ -178,7 +200,11 @@ pub fn authority_range_for(
     fetch: &AuthorityHistoryFetch,
 ) -> Result<AuthorityHistoryPage> {
     require_owner_machine(vault, peer)?;
-    vault.authority_history_page(fetch)
+    if ITEM11_AUTHORITY_FILTER_SCOPE {
+        vault.authority_history_page_for_peer(fetch, peer)
+    } else {
+        vault.authority_history_page(fetch)
+    }
 }
 
 /// One slice of a kept checkpoint image ([`authority_checkpoint_part_for`]).

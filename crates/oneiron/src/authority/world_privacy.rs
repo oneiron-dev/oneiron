@@ -483,7 +483,7 @@ pub(super) fn policy_revision(state: &FoldState, world: EntityId) -> PolicyRevis
 }
 
 /// The world a per-world side entry belongs to; `None` for a main-log entry.
-pub(super) fn side_world(op: &AuthorityOp) -> Option<EntityId> {
+pub(crate) fn side_world(op: &AuthorityOp) -> Option<EntityId> {
     match op {
         AuthorityOp::WorldPrivacy(edit) => Some(edit.world),
         AuthorityOp::WorldKeyWraps(record) => Some(record.key.world),

@@ -247,6 +247,11 @@ impl SyncClient {
             if self.config.residence_mode == SyncResidenceMode::Opened
                 && self.config.federation_peer.is_none()
             {
+                // A home that may not read the window's world is not asked to
+                // promote it, nor for its vector (FIX 922 item 11).
+                if !self.home_may_promote(&key) {
+                    continue;
+                }
                 let selector = self.config.residence_selector.as_ref().ok_or(
                     TransportError::InvalidPayload("promoted window has no selector"),
                 )?;
@@ -264,6 +269,11 @@ impl SyncClient {
                 if self.setup_catch_up(key.as_str()) {
                     continue;
                 }
+            }
+            // No vector request names a world window to a home that may not
+            // read the world (FIX 922 item 11).
+            if !self.home_may_request(&key) {
+                continue;
             }
             if key.world().is_some() {
                 // The server sends root first, but initial frames are already
@@ -401,6 +411,11 @@ impl SyncClient {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .contains(&key)
             {
+                continue;
+            }
+            // Judged again as the deferred keys drain: the home may no longer
+            // read the world (FIX 922 item 11).
+            if !self.home_may_request(&key) {
                 continue;
             }
             let vv = self
