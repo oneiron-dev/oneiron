@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 446 facade rows, 1643 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 9; generated in and out: 410.
+// UniFFI census: 450 facade rows, 1653 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 9; generated in and out: 414.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -15336,6 +15336,135 @@ pub struct CheckoutDoorBinding {
     pub checkout_path: String,
     #[serde(rename = "remote_url")]
     pub remote_url: String,
+}
+
+/// `oneiron::memory::codebase_doors::types::CodeRepoPointer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeRepoPointer {
+    #[serde(rename = "local_folder")]
+    pub local_folder: String,
+    #[serde(rename = "commit")]
+    pub commit: String,
+}
+
+/// `oneiron::memory::codebase_doors::types::CodeSnapshotIngestRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeSnapshotIngestRequest {
+    #[serde(rename = "project_id")]
+    pub project_id: String,
+    #[serde(rename = "pointer")]
+    pub pointer: CodeRepoPointer,
+}
+
+/// `oneiron::memory::codebase_doors::types::CodeSnapshotFile`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeSnapshotFile {
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "content_hash_blake3")]
+    pub content_hash_blake3: String,
+    #[serde(rename = "size_bytes")]
+    pub size_bytes: u64,
+}
+
+/// `oneiron::memory::codebase_doors::types::CodeSnapshotView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeSnapshotView {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "repo_ref")]
+    pub repo_ref: String,
+    #[serde(rename = "project_id")]
+    pub project_id: String,
+    #[serde(rename = "commit", default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
+    #[serde(rename = "snapshot")]
+    pub snapshot: String,
+    #[serde(rename = "scope_key")]
+    pub scope_key: String,
+    #[serde(rename = "files")]
+    pub files: Vec<CodeSnapshotFile>,
+}
+
+/// `oneiron::memory::codebase_doors::types::CodeSnapshotRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeSnapshotRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "snapshot")]
+    pub snapshot: String,
+}
+
+/// `oneiron::memory::codebase_doors::types::CodeSnapshotReadRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeSnapshotReadRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "snapshot")]
+    pub snapshot: String,
+    #[serde(rename = "path")]
+    pub path: String,
+}
+
+/// `oneiron::memory::codebase_doors::types::CodeSnapshotPinnedFile`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeSnapshotPinnedFile {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "snapshot")]
+    pub snapshot: String,
+    #[serde(rename = "file")]
+    pub file: CodeSnapshotFile,
+    #[serde(rename = "content")]
+    pub content: String,
+    #[serde(rename = "text_sha256")]
+    pub text_sha256: String,
+}
+
+/// `oneiron::memory::codebase_doors::types::CodeSnapshotDefinitionsRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeSnapshotDefinitionsRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "snapshot")]
+    pub snapshot: String,
+    #[serde(rename = "name")]
+    pub name: String,
+}
+
+/// `oneiron::memory::codebase_doors::types::CodeSnapshotDefinition`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeSnapshotDefinition {
+    #[serde(rename = "symbol")]
+    pub symbol: String,
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "kind")]
+    pub kind: String,
+    #[serde(rename = "fingerprint")]
+    pub fingerprint: String,
+    #[serde(rename = "start_line")]
+    pub start_line: u32,
+    #[serde(rename = "end_line")]
+    pub end_line: u32,
+}
+
+/// `oneiron::memory::codebase_doors::types::CodeSnapshotDefinitionsView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeSnapshotDefinitionsView {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "snapshot")]
+    pub snapshot: String,
+    #[serde(rename = "definitions")]
+    pub definitions: Vec<CodeSnapshotDefinition>,
 }
 
 /// `oneiron::blob_artifact::verbs::ArtifactExportRequest`.

@@ -248,6 +248,10 @@ pub enum AgentVerb {
     VaultCodeOriginAuthoritySet,
     VaultCodeOriginPublications,
     VaultCodeCheckoutBind,
+    VaultCodeSnapshotsIngest,
+    VaultCodeSnapshotsGet,
+    VaultCodeSnapshotsRead,
+    VaultCodeSymbolsDefinitions,
     VaultArtifactsExport,
     VaultAgentsCreate,
     VaultAgentsGet,
@@ -740,6 +744,10 @@ impl AgentVerb {
         Self::VaultCodeOriginAuthoritySet,
         Self::VaultCodeOriginPublications,
         Self::VaultCodeCheckoutBind,
+        Self::VaultCodeSnapshotsIngest,
+        Self::VaultCodeSnapshotsGet,
+        Self::VaultCodeSnapshotsRead,
+        Self::VaultCodeSymbolsDefinitions,
         Self::VaultArtifactsExport,
         Self::VaultAgentsCreate,
         Self::VaultAgentsGet,
@@ -1239,6 +1247,10 @@ impl AgentVerb {
             Self::VaultCodeOriginAuthoritySet => "vault.code.origin.authority.set",
             Self::VaultCodeOriginPublications => "vault.code.origin.publications",
             Self::VaultCodeCheckoutBind => "vault.code.checkout.bind",
+            Self::VaultCodeSnapshotsIngest => "vault.code.snapshots.ingest",
+            Self::VaultCodeSnapshotsGet => "vault.code.snapshots.get",
+            Self::VaultCodeSnapshotsRead => "vault.code.snapshots.read",
+            Self::VaultCodeSymbolsDefinitions => "vault.code.symbols.definitions",
             Self::VaultArtifactsExport => "vault.artifacts.export",
             Self::VaultAgentsCreate => "vault.agents.create",
             Self::VaultAgentsGet => "vault.agents.get",
@@ -1734,6 +1746,10 @@ impl AgentVerb {
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
                 | Self::VaultCodeCheckoutBind
+                | Self::VaultCodeSnapshotsIngest
+                | Self::VaultCodeSnapshotsGet
+                | Self::VaultCodeSnapshotsRead
+                | Self::VaultCodeSymbolsDefinitions
                 | Self::VaultArtifactsExport
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
@@ -2233,6 +2249,10 @@ impl AgentVerb {
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
                 | Self::VaultCodeCheckoutBind
+                | Self::VaultCodeSnapshotsIngest
+                | Self::VaultCodeSnapshotsGet
+                | Self::VaultCodeSnapshotsRead
+                | Self::VaultCodeSymbolsDefinitions
                 | Self::VaultArtifactsExport
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
@@ -2773,6 +2793,10 @@ impl AgentVerb {
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
                 | Self::VaultCodeCheckoutBind
+                | Self::VaultCodeSnapshotsIngest
+                | Self::VaultCodeSnapshotsGet
+                | Self::VaultCodeSnapshotsRead
+                | Self::VaultCodeSymbolsDefinitions
                 | Self::VaultArtifactsExport
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
@@ -3157,6 +3181,7 @@ impl AgentVerb {
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeCheckoutBind
+                | Self::VaultCodeSnapshotsIngest
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsUpdate
                 | Self::VaultWorkspaceEstablish
@@ -3574,6 +3599,10 @@ impl AgentVerb {
             Self::VaultCodeOriginAuthoritySet => &["spec"],
             Self::VaultCodeOriginPublications => &["spec"],
             Self::VaultCodeCheckoutBind => &["spec"],
+            Self::VaultCodeSnapshotsIngest => &["spec"],
+            Self::VaultCodeSnapshotsGet => &["spec"],
+            Self::VaultCodeSnapshotsRead => &["spec"],
+            Self::VaultCodeSymbolsDefinitions => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultAgentsCreate => &["spec"],
             Self::VaultAgentsGet => &["spec"],
@@ -4067,6 +4096,10 @@ impl AgentVerb {
             Self::VaultCodeOriginAuthoritySet => &["spec"],
             Self::VaultCodeOriginPublications => &["spec"],
             Self::VaultCodeCheckoutBind => &["spec"],
+            Self::VaultCodeSnapshotsIngest => &["spec"],
+            Self::VaultCodeSnapshotsGet => &["spec"],
+            Self::VaultCodeSnapshotsRead => &["spec"],
+            Self::VaultCodeSymbolsDefinitions => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultAgentsCreate => &["spec"],
             Self::VaultAgentsGet => &["spec"],
@@ -5016,6 +5049,18 @@ impl AgentVerb {
             }
             Self::VaultCodeCheckoutBind => {
                 "Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential."
+            }
+            Self::VaultCodeSnapshotsIngest => {
+                "Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt."
+            }
+            Self::VaultCodeSnapshotsGet => {
+                "Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant."
+            }
+            Self::VaultCodeSnapshotsRead => {
+                "Read one UTF-8 file and its SHA-256 from the frozen blobs of a pinned code snapshot, never from the folder on disk. Owner only."
+            }
+            Self::VaultCodeSymbolsDefinitions => {
+                "Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language."
             }
             Self::VaultArtifactsExport => {
                 "One artifact version's export file, with the born-with text the caller chose and a share receipt listing it."
