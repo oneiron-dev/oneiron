@@ -1030,9 +1030,11 @@ impl MediaRuntime {
 impl super::ModelRuntime {
     /// Every row of the `ai.*` family that serves `operation` (every one
     /// when `None`) over `inputs`: each available rung of each text seat,
-    /// each model the mesh discovered, then each media row. Only a rung that can take a call now is listed
-    /// (FIX 2942): one whose provider is down, whose one probation request
-    /// is out, or that a limit holds is left out until it is back.
+    /// each model the mesh discovered, then each media row. Only a rung that
+    /// can take a call now is listed (FIX 2942): one whose provider is down,
+    /// whose one probation request is out, or that a limit holds is left out
+    /// until it is back. A text row's inputs are what a call naming its own
+    /// id reaches: that rung's route alone, else its seat's.
     #[must_use]
     pub fn ai_options(
         &self,
@@ -1045,22 +1047,7 @@ impl super::ModelRuntime {
                 if *role == oneiron::llm::manifest::ModelRole::Reranker {
                     continue;
                 }
-                let mut caps = MediaCaps::for_operation(AiOperation::Text);
-                if seat
-                    .ladder
-                    .supports(&seat.model, &oneiron::LlmCapability::ImageInput)
-                {
-                    caps.inputs.insert(Modality::Image);
-                }
-                if seat
-                    .ladder
-                    .supports(&seat.model, &oneiron::LlmCapability::AudioInput)
-                {
-                    caps.inputs.insert(Modality::Audio);
-                }
-                if !inputs.is_subset(&caps.inputs) {
-                    continue;
-                }
+                let seat_caps = text_caps(&seat.ladder, &seat.model);
                 let status = self
                     .status
                     .seats
@@ -1077,6 +1064,17 @@ impl super::ModelRuntime {
                     else {
                         continue;
                     };
+                    // A call naming the rung's id takes its own route.
+                    let caps = ModelId::new(model.clone())
+                        .ok()
+                        .and_then(|id| {
+                            let (_, ladder) = self.raw_router.served(&id)?;
+                            Some(text_caps(&ladder, &id))
+                        })
+                        .unwrap_or_else(|| seat_caps.clone());
+                    if !inputs.is_subset(&caps.inputs) {
+                        continue;
+                    }
                     rows.push(MediaRow {
                         operation: AiOperation::Text,
                         model,
@@ -1084,8 +1082,8 @@ impl super::ModelRuntime {
                         provider: rung.provider.clone(),
                         wire_model: rung.model.clone(),
                         locality: rung.locality,
-                        inputs: caps.inputs.clone(),
-                        outputs: caps.outputs.clone(),
+                        inputs: caps.inputs,
+                        outputs: caps.outputs,
                         native_rates: Vec::new(),
                         max_references: 0,
                         peer: None,
@@ -1095,15 +1093,7 @@ impl super::ModelRuntime {
             // Each model the mesh discovered that can take a call now, by
             // its own id on the raw routes (FIX 3229).
             for (model, peer, ladder) in self.raw_router.discovered_routes() {
-                let mut caps = MediaCaps::for_operation(AiOperation::Text);
-                for (capability, modality) in [
-                    (oneiron::LlmCapability::ImageInput, Modality::Image),
-                    (oneiron::LlmCapability::AudioInput, Modality::Audio),
-                ] {
-                    if ladder.supports(&model, &capability) {
-                        caps.inputs.insert(modality);
-                    }
-                }
+                let caps = text_caps(&ladder, &model);
                 let health = ladder.health();
                 if !inputs.is_subset(&caps.inputs)
                     || health.is_empty()
@@ -1134,6 +1124,21 @@ impl super::ModelRuntime {
         );
         rows
     }
+}
+
+/// What a text call of `model` on `ladder` takes and gives: text, and an
+/// image or audio input when every rung of the ladder takes one.
+fn text_caps(ladder: &OfferLadder, model: &ModelId) -> MediaCaps {
+    let mut caps = MediaCaps::for_operation(AiOperation::Text);
+    for (capability, modality) in [
+        (oneiron::LlmCapability::ImageInput, Modality::Image),
+        (oneiron::LlmCapability::AudioInput, Modality::Audio),
+    ] {
+        if ladder.supports(model, &capability) {
+            caps.inputs.insert(modality);
+        }
+    }
+    caps
 }
 
 /// One media client per provider some media seat names, each serving the
