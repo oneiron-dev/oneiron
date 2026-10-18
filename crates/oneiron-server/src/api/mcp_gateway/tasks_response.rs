@@ -425,7 +425,11 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
         _ => None,
     };
     if let Some(kind) = kind {
-        return McpGatewayError::new(code, kind, error.message);
+        // A model that did not answer says when to call again (FIX 3194).
+        return McpGatewayError {
+            retry_after: error.retry_after,
+            ..McpGatewayError::new(code, kind, error.message)
+        };
     }
     // A facade refusal carrying a successor keeps the same stable kind and
     // typed data the engine-error path emits (ONE-1936) — one vocabulary for
@@ -542,6 +546,11 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
     {
         object.insert("hook".to_owned(), json!(*stop));
     }
+    if let Some(retry_after) = error.retry_after
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("retry_after".to_owned(), json!(retry_after));
+    }
     json!({
         "jsonrpc": "2.0",
         "id": id,
@@ -572,7 +581,7 @@ impl McpRowSurface {
         actor: &McpCallContext,
         producers: &'a oneiron::memory::ProducerRows,
     ) -> oneiron::Memory<'a> {
-        let memory = crate::api::credential_memory(
+        let memory = crate::api::mcp_credential_memory(
             &server.vault,
             actor.auth.as_ref(),
             actor.actor_ref,
@@ -1081,6 +1090,14 @@ fn mcp_agent_verb_input(
             }
             Ok(input)
         }
+        "vault.rooms.invite" => {
+            let mut input = a.spec.clone().ok_or_else(invalid)?;
+            let map = input.as_object_mut().ok_or_else(invalid)?;
+            if a.room_ref.as_deref() != map.get("room").and_then(Value::as_str) {
+                return Err(invalid());
+            }
+            Ok(input)
+        }
         "vault.rooms.consent" => a.spec.clone().ok_or_else(invalid),
         "vault.rooms.offer" => {
             let mut input = a.spec.clone().ok_or_else(invalid)?;
@@ -1169,6 +1186,11 @@ fn mcp_agent_verb_input(
         "vault.claims.admit" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.create" => a.spec.clone().ok_or_else(invalid),
         "vault.esign.create" => a.spec.clone().ok_or_else(invalid),
+        "vault.esign.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.esign.links.issue" => a.spec.clone().ok_or_else(invalid),
+        "vault.esign.send_for_signature" => a.spec.clone().ok_or_else(invalid),
+        "vault.esign.remind" => a.spec.clone().ok_or_else(invalid),
+        "vault.esign.void" => a.spec.clone().ok_or_else(invalid),
         "vault.conversations.create" => a.spec.clone().ok_or_else(invalid),
         "vault.conversations.turns.create" => a.spec.clone().ok_or_else(invalid),
         "vault.conversations.records.append" => a.spec.clone().ok_or_else(invalid),
@@ -1920,6 +1942,12 @@ pub(crate) fn mcp_agent_verb_arguments(
                 arguments.insert("room_ref".to_owned(), value.clone());
             }
         }
+        "vault.rooms.invite" => {
+            arguments.insert("spec".to_owned(), input.clone());
+            if let Some(value) = input.get("room") {
+                arguments.insert("room_ref".to_owned(), value.clone());
+            }
+        }
         "vault.rooms.consent" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -2125,6 +2153,21 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.esign.create" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.esign.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.esign.links.issue" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.esign.send_for_signature" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.esign.remind" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.esign.void" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.conversations.create" => {
@@ -4884,6 +4927,14 @@ async fn execute_agent_verb_row(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "vault.rooms.invite" => {
+            let input: oneiron::workspace_roster::JoinRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_rooms_invite(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "vault.rooms.consent" => {
             let input: oneiron::workspace_roster::ConsentAnswer =
                 serde_json::from_value(input).map_err(|_| invalid())?;
@@ -5548,6 +5599,46 @@ async fn execute_agent_verb_row(
             let input: oneiron::blob_artifact::esign::EsignCreateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_esign_create(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.esign.get" => {
+            let input: oneiron::blob_artifact::esign::EsignGetRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_esign_get(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.esign.links.issue" => {
+            let input: oneiron::blob_artifact::esign::EsignLinksIssueRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_esign_links_issue(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.esign.send_for_signature" => {
+            let input: oneiron::blob_artifact::esign::EsignDispatchRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_esign_send_for_signature(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.esign.remind" => {
+            let input: oneiron::blob_artifact::esign::EsignDispatchRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_esign_remind(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.esign.void" => {
+            let input: oneiron::blob_artifact::esign::EsignVoidRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_esign_void(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

@@ -2042,6 +2042,12 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_rooms_invite(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.rooms.invite", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_rooms_consent(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.rooms.consent", input)
@@ -2537,6 +2543,42 @@ impl NativeClient {
     pub fn vault_esign_create(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.esign.create", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_esign_get(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.esign.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_esign_links_issue(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.esign.links.issue", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_esign_send_for_signature(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.esign.send_for_signature", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_esign_remind(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.esign.remind", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_esign_void(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.esign.void", input)
             .map_err(facade_error)
     }
     #[napi]

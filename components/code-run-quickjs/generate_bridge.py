@@ -34,6 +34,16 @@ def release(ty, value):
 def first_party(row):
     return row['js'].startswith(('self.', 'vault.')) or row['js'] == 'ask'
 
+# The streamed file-proposal imports are the foreign projection's alone: the
+# first-party build links none of them, so their callers are foreign only.
+def foreign_only(row):
+    return row['js'].startswith('oneiron.propose.')
+
+def guard(row):
+    if first_party(row): return '#ifndef ONEIRON_FOREIGN'
+    if foreign_only(row): return '#ifdef ONEIRON_FOREIGN'
+    return None
+
 def reachable(ty, out):
     if ty in out or ty == "proposal-delta":
         return
@@ -147,14 +157,13 @@ def emit(ty):
 for row in schema['imports']:
     for p in row['params']: emit(p['type'])
     emit(row['result'])
-emit('file-proposal')
 emit('file-delete-proposal')
 emit('file-rename-proposal')
 # Claim input is generated in both tiers: the foreign output uses it for proposals.
 emit('claim-input')
 
 for row in schema['imports']:
-    if first_party(row): parts.append('#ifndef ONEIRON_FOREIGN')
+    if guard(row): parts.append(guard(row))
     name, result = snake(row['wit']), row['result']
     lines = [f'static JSValue call_{name}(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv) {{',
              '(void)this_val;', f'if (argc != {len(row["params"])}) return JS_ThrowTypeError(ctx, "wrong_host_argument_count");']
@@ -176,12 +185,12 @@ for row in schema['imports']:
                      ['if (!ok) { JSValue thrown = JS_NewStringLen(ctx, (char *)error.ptr, error.len); guest_string_free(&error); return JS_Throw(ctx, thrown); }',
                       f'JSValue value = to_{token(result)}(ctx, &result);', release(result, 'result'), 'return value;'])
     parts.append('\n'.join(lines + ['}']))
-    if first_party(row): parts.append('#endif')
+    if guard(row): parts.append('#endif')
 parts.append('static JSValue make_abi(JSContext *ctx) {\n JSValue abi = JS_NewObject(ctx);')
 for row in schema['imports']:
-    if first_party(row): parts.append('#ifndef ONEIRON_FOREIGN')
+    if guard(row): parts.append(guard(row))
     name = snake(row['wit'])
     parts.append(f'JS_SetPropertyStr(ctx, abi, "{row["wit"]}", JS_NewCFunction(ctx, call_{name}, "{row["wit"]}", {len(row["params"])}));')
-    if first_party(row): parts.append('#endif')
+    if guard(row): parts.append('#endif')
 parts.append('return abi;\n}')
 Path(sys.argv[2]).write_text('\n\n'.join(parts) + '\n')

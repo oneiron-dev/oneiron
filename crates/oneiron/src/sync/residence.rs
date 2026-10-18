@@ -11,7 +11,6 @@ mod bundle_payload;
 mod discover;
 mod policy;
 mod prune;
-mod sealed;
 pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
 pub use authority_tail::{
     AUTHORITY_CHECKPOINT_PART_MAX, AUTHORITY_TAIL_PAGE_MAX, AuthorityCheckpointPart,
@@ -35,13 +34,6 @@ pub use policy::{
 pub(crate) use prune::demote_resident_window;
 pub(crate) use prune::record_item_touch_in_txn;
 pub use prune::{WindowDemotion, prune_thin_items, record_item_touch};
-pub(crate) use sealed::drop_sealed_labels_in_txn;
-pub use sealed::{
-    SEALED_PUT_PART_MAX, SEALED_READ_PART_MAX, SEALED_SHELF_PAGE_MAX, SealedShelfEntry,
-    sealed_shelf_after, sealed_shelf_packet_part, shelve_sealed_window,
-    shelve_staged_sealed_window, stage_sealed_part, want_sealed_replacement,
-    wanted_sealed_replacements,
-};
 
 #[cfg(test)]
 use loro::ExportMode;
@@ -483,8 +475,9 @@ pub fn promotion_covers_full_window(
 /// machine of this vault's that proved itself also covers the window's
 /// custody transitions (OF-422), each sealed to the owner's machines, its
 /// room turn rows (OF-522), its room side rows (FIX 1794), its document
-/// quote pins (FIX 853), this vault's embedding setup rows (OF-370) and its
-/// withdrawn cutoffs (OF-013); the selector copies none of them. Any other
+/// quote pins and MESSAGE documents (FIX 853), this vault's embedding setup
+/// rows (OF-370) and its withdrawn cutoffs (OF-013); the selector copies
+/// none of them. Any other
 /// destination does not, so a window that carries one is not promoted to it.
 pub fn promotion_covers_full_window_for(
     vault: &Vault,
@@ -507,6 +500,7 @@ pub fn promotion_covers_full_window_for(
             super::room_turns::ROOM_TURNS_MAP,
             super::room_facts::ROOM_FACTS_MAP,
             super::document_pins::DOCUMENT_PINS_MAP,
+            super::message_docs::MESSAGE_DOCS_MAP,
             super::withdrawn_cutoffs::WITHDRAWN_CUTOFFS_MAP,
         ] {
             super::loro_support::copy_binary_root_map(source, &selected, name)?;
