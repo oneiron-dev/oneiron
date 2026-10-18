@@ -47,8 +47,13 @@
 | `close_lens_frame(card_id: String) -> WireJson` | `client.closeLensFrame(cardId:)` | closes that card and frees its frame; answers `{closed}` |
 
 The two lens-card methods are routes outside the facade (OF-181), not verbs. A
-card's frame lives only on the server that rendered it (`vault.lenses.default`),
-so an embedded handle fails `BAD_REQUEST`. Their JSON keeps the wire's camelCase.
+card's frame lives only on the served host that rendered it
+(`vault.lenses.default`). In an app that runs its engine in process, render the
+lens through a handle from `EmbeddedEngine.client(key:)` and send its events and
+close on that same handle; otherwise use a handle connected to the server. A
+handle from `open` (or `EmbeddedEngine.localClient()`) keeps no frame and fails
+`BAD_REQUEST`; a card it rendered is rendered again through the served handle.
+Their JSON keeps the wire's camelCase.
 
 Errors cross as one `OneironError.Failure(code, message, suggestions,
 attempted, replacement, schemaRef, pending)`: the engine's `MEMORY_CODE_*`

@@ -54,8 +54,8 @@ pub const READER_SLOTS: u32 = 1024;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HostingPrivacyPosture {
-    /// Operator-hosted and host-readable. Must be paired with
-    /// [`VaultDataKeyCustody::HostManagedKms`] and opted into explicitly.
+    /// Operator-hosted and host-readable: the hosting process holds the data
+    /// key, whichever custody supplies it. Opted into explicitly.
     #[serde(rename = "managed")]
     Hosted,
     /// Blind relay: the host holds no owner key and mints no authority.
@@ -138,18 +138,21 @@ impl fmt::Debug for VaultDataKeyCustody {
     }
 }
 
-/// Refusal text for a hosted deployment whose host-managed key reference is
-/// missing or blank.
-const HOSTED_REQUIRES_KEY_REF: &str =
-    "hosted privacy posture requires a non-empty host-managed KMS key reference";
-/// Refusal text for a hosted deployment paired with an owner-held local key.
-const HOSTED_REQUIRES_HOST_CUSTODY: &str =
-    "hosted privacy posture requires host-managed KMS key custody, not an owner-held local key";
-/// Refusal text for a self-hosted deployment carrying a host-managed key.
-const SELF_HOST_REJECTS_HOST_CUSTODY: &str =
-    "self-host and relay postures reject host-managed KMS key custody; use an owner-held key";
+/// Refusal text for KMS custody whose key reference is missing or blank.
+const KMS_REQUIRES_KEY_REF: &str = "KMS key custody requires a non-empty key reference";
+/// Refusal text for a blind relay carrying a KMS key: a relay holds no data
+/// key, so a key reference would make it a keyholder. This is what a relay
+/// is, not a hosting ban: the same key is accepted on a hosted or self-hosted
+/// keyholder.
+const RELAY_HOLDS_NO_KEY: &str =
+    "a blind relay holds no data key; use the hosted or self-host posture for a KMS key";
 
 /// The deployment posture together with the key custody it is paired with.
+///
+/// Where the key may sit is the owner's choice of placement; custody says who
+/// supplies it. Placement never vetoes a supported custody (owner, 10-19:
+/// a hosted-only refusal stays only for law, provider terms or capacity, and
+/// none applies here). CALLS: HOSTED_OWNER_KEY_SUPPORT.
 ///
 /// The pairing is enforced — not merely documented — by [`Self::validate`],
 /// which every vault opener runs before the storage environment is mapped:
@@ -157,11 +160,12 @@ const SELF_HOST_REJECTS_HOST_CUSTODY: &str =
 /// | posture | custody | outcome |
 /// |---|---|---|
 /// | `Hosted` | `HostManagedKms` with a non-empty reference | valid, host-readable |
-/// | `Hosted` | `OwnerHeldLocal` | rejected |
+/// | `Hosted` | `OwnerHeldLocal` | valid, host-readable with the owner's key |
 /// | `SelfHostLocal` | `OwnerHeldLocal` | valid, owner-held key |
-/// | `SelfHostLocal` | `HostManagedKms` | rejected |
+/// | `SelfHostLocal` | `HostManagedKms` with a non-empty reference | valid, the owner's own KMS |
 /// | `Relay` | `OwnerHeldLocal` | valid, blind relay |
-/// | `Relay` | `HostManagedKms` | rejected |
+/// | `Relay` | `HostManagedKms` | rejected: a relay holds no key |
+/// | any | `HostManagedKms` with a blank reference | rejected |
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VaultPrivacyConfig {
     /// Deployment posture. Defaults to [`HostingPrivacyPosture::SelfHostLocal`].
@@ -183,57 +187,60 @@ impl Default for VaultPrivacyConfig {
 }
 
 impl VaultPrivacyConfig {
-    /// Rejects every posture/custody pairing outside the three supported
-    /// deployments, with no fallback between them.
-    ///
-    /// Hosted requires a host-managed reference that is non-empty after
-    /// trimming; self-host/local requires that no host-managed reference
-    /// exists. An invalid pairing is [`crate::Error::InvalidConfig`], raised
-    /// before any storage environment is opened.
+    /// Rejects the pairings no deployment can run, with no fallback between
+    /// them: a KMS reference blank after trimming, and a KMS key on a blind
+    /// relay. Any placement takes either supported custody otherwise. An
+    /// invalid pairing is [`crate::Error::InvalidConfig`], raised before any
+    /// storage environment is opened. Configuration is not proof a KMS backend
+    /// exists: the opener that needs the key still fails if none answers.
     pub fn validate(&self) -> Result<(), crate::error::Error> {
         use crate::error::Error;
 
         match (self.posture, &self.data_key_custody) {
-            (HostingPrivacyPosture::Hosted, VaultDataKeyCustody::HostManagedKms { key_ref }) => {
-                if key_ref.trim().is_empty() {
-                    return Err(Error::InvalidConfig(HOSTED_REQUIRES_KEY_REF.to_owned()));
-                }
-                Ok(())
+            (_, VaultDataKeyCustody::HostManagedKms { key_ref }) if key_ref.trim().is_empty() => {
+                Err(Error::InvalidConfig(KMS_REQUIRES_KEY_REF.to_owned()))
+            }
+            (HostingPrivacyPosture::Relay, VaultDataKeyCustody::HostManagedKms { .. }) => {
+                Err(Error::InvalidConfig(RELAY_HOLDS_NO_KEY.to_owned()))
             }
             (
-                HostingPrivacyPosture::SelfHostLocal | HostingPrivacyPosture::Relay,
-                VaultDataKeyCustody::OwnerHeldLocal,
-            ) => Ok(()),
-            (HostingPrivacyPosture::Hosted, VaultDataKeyCustody::OwnerHeldLocal) => Err(
-                Error::InvalidConfig(HOSTED_REQUIRES_HOST_CUSTODY.to_owned()),
-            ),
-            (
-                HostingPrivacyPosture::SelfHostLocal | HostingPrivacyPosture::Relay,
+                HostingPrivacyPosture::Hosted | HostingPrivacyPosture::SelfHostLocal,
                 VaultDataKeyCustody::HostManagedKms { .. },
-            ) => Err(Error::InvalidConfig(
-                SELF_HOST_REJECTS_HOST_CUSTODY.to_owned(),
-            )),
+            )
+            | (_, VaultDataKeyCustody::OwnerHeldLocal) => Ok(()),
         }
     }
 
     /// True when the hosting operator can read this vault.
     ///
-    /// Hosted deployments are host-readable and say so; self-host/local ones
-    /// have no host in the loop.
+    /// A hosted deployment is host-readable whoever supplies its key: the
+    /// hosting process holds it to decrypt. Self-host/local has no operator
+    /// in the loop.
     #[must_use]
     pub const fn host_readable(&self) -> bool {
         matches!(self.posture, HostingPrivacyPosture::Hosted)
     }
 
-    /// Short, honest description of who holds the key: `host-readable` for
-    /// hosted, `owner-held-key` for self-host/local. Neither label claims a
-    /// host cannot read what it stores.
+    /// Short, honest description of who holds the key. An owner-supplied key
+    /// on a hosted deployment is still `host-readable`: supplying it does not
+    /// make the host blind. No label claims a host cannot read what it
+    /// stores.
     #[must_use]
     pub const fn honest_label(&self) -> &'static str {
-        match self.posture {
-            HostingPrivacyPosture::Hosted => "host-readable",
-            HostingPrivacyPosture::Relay => "blind-relay-owner-held-key",
-            HostingPrivacyPosture::SelfHostLocal => "owner-held-key",
+        match (self.posture, &self.data_key_custody) {
+            (HostingPrivacyPosture::Hosted, VaultDataKeyCustody::HostManagedKms { .. }) => {
+                "host-readable"
+            }
+            (HostingPrivacyPosture::Hosted, VaultDataKeyCustody::OwnerHeldLocal) => {
+                "host-readable-owner-supplied-key"
+            }
+            (HostingPrivacyPosture::Relay, _) => "blind-relay-owner-held-key",
+            (HostingPrivacyPosture::SelfHostLocal, VaultDataKeyCustody::OwnerHeldLocal) => {
+                "owner-held-key"
+            }
+            (HostingPrivacyPosture::SelfHostLocal, VaultDataKeyCustody::HostManagedKms { .. }) => {
+                "owner-kms-key"
+            }
         }
     }
 }
