@@ -10,7 +10,8 @@
 //! arm (`Vault::is_signed_tripwire`). It reads no diary. A card's recipient
 //! settles it (`self.inbox.concern.outcome`), as the owner does through
 //! `/v1/owner/inbox/concern/outcome`, and may ask the Coach for a proposal
-//! (`self.inbox.concern.move`, `ask`).
+//! (`self.inbox.concern.move`, `ask`). The owner alone applies the Coach's
+//! skill edit (`/v1/owner/inbox/concern/apply`, `apply`).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -48,10 +49,15 @@ use crate::self_heal::{
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 
+mod apply;
 mod ask;
 mod check_repeat;
 mod duplicate;
 mod run_loop;
+pub use apply::{
+    AgentHealthApplicationState, AgentHealthCoachApplication, ConcernApplyOutcome,
+    ConcernApplyRequest,
+};
 pub use ask::{
     AgentHealthCoachAnswer, AgentHealthCoachAsk, AgentHealthCoachDraft, AgentHealthCoachRoute,
     AgentHealthPadRead, COACH_AGENT_HEALTH_ASK_FACET, CoachHealthBrief, CoachHealthHost,

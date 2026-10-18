@@ -67,6 +67,11 @@ impl Memory<'_> {
         call: TaskCall,
         decisions: Option<&TaskDecisions<'_>>,
     ) -> MemoryResult<TaskCallReceipt> {
+        if !self.has_task_work_turn() {
+            return self
+                .task_work_memory()
+                .tasks_highway_with_decisions(via, call, decisions);
+        }
         let decisions = decisions.or_else(|| self.task_decisions());
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         match call {

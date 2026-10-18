@@ -165,6 +165,8 @@ impl LimitRow {
         Self::Engine(EngineLimit::SignatureDecodeBytes),
         Self::Engine(EngineLimit::PptxCommentPatches),
         Self::Engine(EngineLimit::ImportXlsxLiveCells),
+        Self::Engine(EngineLimit::PackScriptOutputBytes),
+        Self::Engine(EngineLimit::PackScriptOutputRows),
         Self::Engine(EngineLimit::JudgeRubricBytes),
         Self::Engine(EngineLimit::MaintenanceRowItems),
         Self::Engine(EngineLimit::MaintenanceTextBytes),

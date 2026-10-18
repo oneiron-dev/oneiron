@@ -1,13 +1,17 @@
 //! Minimal JNI/Kotlin ownership adapter. The Java instance owns one engine vault,
 //! or a share of the one its `EmbeddedEngine` serves (`engine`, behind the
 //! `engine` feature).
-//! No engine state lives in process-global native storage.
+//! No engine state lives in process-global native storage. A bound vault
+//! (`EmbeddedVault.bound`) holds its own caller, its principal and session,
+//! and writes as that caller (OF-063); every other vault writes as the host.
 use jni::{
     JNIEnv,
     objects::{JByteArray, JObject, JString},
     sys::{jbyteArray, jint, jlong},
 };
-use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::{
+    EdgeActorClass, EntityId, Memory, RawEntityPut, TimeRange, Vault, VaultConfig, parse_actor_key,
+};
 use std::sync::{Arc, MutexGuard};
 
 // Public so its JNI exports are reachable items, as this file's are.
@@ -16,25 +20,86 @@ pub mod engine;
 
 struct NativeVault {
     vault: Arc<Vault>,
+    /// The caller a bound vault writes as; `None` writes as the host.
+    binding: Option<Binding>,
+}
+/// The principal a bound vault's app host named, and the off-record
+/// session, if any: this vault's alone, never process or engine state.
+struct Binding {
+    actor: EntityId,
+    actor_class: EdgeActorClass,
+    session: Option<String>,
 }
 impl NativeVault {
+    /// A vault over `vault` that writes as the host.
+    fn unbound(vault: Arc<Vault>) -> Self {
+        Self {
+            vault,
+            binding: None,
+        }
+    }
+    /// A NEW vault over this one's same open vault that writes as the caller
+    /// `actor_key` names (core `parse_actor_key`), or the embedded owner when
+    /// it is `None`, inside the off-record session `session` names, if any.
+    fn bound(&self, actor_key: Option<&str>, session: Option<&str>) -> Result<Self, String> {
+        let session = session.map(str::trim);
+        if session.is_some_and(str::is_empty) {
+            return Err("invalid off-record session reference".to_owned());
+        }
+        let (actor, actor_class) = match actor_key {
+            Some(key) => parse_actor_key(&self.vault, key).map_err(display)?,
+            None => (
+                self.vault.ensure_embedded_owner_actor().map_err(display)?,
+                EdgeActorClass::Human,
+            ),
+        };
+        Ok(Self {
+            vault: Arc::clone(&self.vault),
+            binding: Some(Binding {
+                actor,
+                actor_class,
+                session: session.map(str::to_owned),
+            }),
+        })
+    }
+    /// The bound caller's memory surface, its session bound.
+    fn bound_memory(&self) -> Option<Memory<'_>> {
+        self.binding.as_ref().map(|binding| {
+            let memory = self.vault.memory(binding.actor, binding.actor_class);
+            match binding.session.as_deref() {
+                Some(session) => memory.in_off_record_session(session),
+                None => memory,
+            }
+        })
+    }
     fn open(path: &str) -> Result<Self, String> {
         // Crash output never carries world text: the engine's hook goes in before
         // any vault opens (owner ruling 2026-10-14, fix 6).
         oneiron::panic_report::install_panic_hook();
         Vault::open(path, VaultConfig::device())
-            .map(|vault| Self {
-                vault: Arc::new(vault),
-            })
+            .map(|vault| Self::unbound(Arc::new(vault)))
             .map_err(display)
     }
     fn put(&self, id: &str, kind: jint, at: jlong, body: &[u8]) -> Result<(), String> {
         let id = EntityId::from_hex(id).map_err(display)?;
         let kind = u8::try_from(kind).map_err(display)?;
         let at = u64::try_from(at).map_err(display)?;
-        self.vault
-            .put_entity(&id, kind, TimeRange { start: at, end: at }, at, body)
-            .map_err(display)
+        let occurred = TimeRange { start: at, end: at };
+        match self.bound_memory() {
+            Some(memory) => memory
+                .raw_put_entity(RawEntityPut {
+                    id,
+                    entity_type: kind,
+                    occurred,
+                    learned_at: at,
+                    data: body,
+                })
+                .map_err(display),
+            None => self
+                .vault
+                .put_entity(&id, kind, occurred, at, body)
+                .map_err(display),
+        }
     }
     fn get(&self, id: &str) -> Result<Option<Vec<u8>>, String> {
         self.vault
@@ -77,7 +142,41 @@ pub extern "system" fn Java_org_oneiron_EmbeddedVault_openNative(
         unsafe { env.set_rust_field(&object, "nativeHandle", vault) }.map_err(display)
     });
 }
-/// JNI implementation of the typed engine put door; no storage bypass.
+/// JNI implementation of the Kotlin `EmbeddedVault.bound`: a NEW vault over
+/// `source`'s same open vault that writes as the caller its app host names.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_oneiron_EmbeddedVault_bindNative(
+    mut env: JNIEnv<'_>,
+    object: JObject<'_>,
+    source: JObject<'_>,
+    actor_key: JString<'_>,
+    session: JString<'_>,
+) {
+    run(&mut env, |env| {
+        let actor_key: Option<String> = if actor_key.is_null() {
+            None
+        } else {
+            Some(env.get_string(&actor_key).map_err(display)?.into())
+        };
+        let session: Option<String> = if session.is_null() {
+            None
+        } else {
+            Some(env.get_string(&session).map_err(display)?.into())
+        };
+        let vault = {
+            // SAFETY: `source` is a live Kotlin `EmbeddedVault`, whose
+            // synchronized instance alone owns this private field.
+            let source: MutexGuard<'_, NativeVault> =
+                unsafe { env.get_rust_field(&source, "nativeHandle") }.map_err(display)?;
+            source.bound(actor_key.as_deref(), session.as_deref())?
+        };
+        // SAFETY: Kotlin owns the private long field, initialized to zero.
+        // All native hooks execute under that instance's synchronized monitor.
+        unsafe { env.set_rust_field(&object, "nativeHandle", vault) }.map_err(display)
+    });
+}
+/// JNI implementation of the typed engine put door; no storage bypass. A
+/// bound vault puts as its caller (OF-063).
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_oneiron_EmbeddedVault_putNative(
     mut env: JNIEnv<'_>,
