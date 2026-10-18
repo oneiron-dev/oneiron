@@ -8914,6 +8914,7 @@
      "path": "src/campaign/compliance/amend.rs",
      "purpose": "Propose/stamp amendment transaction: classification, activation, notices, proposal hash",
      "surface": {
+      "crate-vis": 5,
       "enum": 2,
       "fn": 6
      }
@@ -8926,6 +8927,39 @@
      "purpose": "Claim-store readers, comm-party mirror, and the msgpack value toolkit",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ComplianceAmendRequest",
+      "ComplianceApprovalRequest",
+      "ComplianceDisposition",
+      "ComplianceOperation",
+      "ComplianceOwnerStamp",
+      "CompliancePendingProposal",
+      "ComplianceReceipt",
+      "ComplianceResult",
+      "ComplianceResultRequest",
+      "ComplianceRowVerification",
+      "ComplianceVerifyRequest"
+     ],
+     "path": "src/campaign/compliance/contracts.rs",
+     "purpose": "Typed compliance-pack amendments, owner decisions and source verification",
+     "surface": {
+      "enum": 2,
+      "struct": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/campaign/compliance/doors.rs",
+     "purpose": "Caller-bound doors over the existing compliance classifier and stamp writer",
+     "surface": {
+      "fn": 6
      }
     },
     {
@@ -8965,7 +8999,7 @@
      "purpose": "CA-06's compliance pack: versioned, vault-resident legal rule rows and the dispatch gate that enforces them",
      "surface": {
       "crate-vis": 2,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -51720,7 +51754,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 788
+      "fn": 794
      }
     },
     {
@@ -57754,7 +57788,7 @@
      "purpose": "Calendar module home (CAL-00)"
     },
     "campaign": {
-     "files": 48,
+     "files": 50,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -59135,7 +59169,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3609,
+   "source_files": 3611,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67667,7 +67701,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 757
+      "fn": 763
      }
     },
     {
@@ -68716,7 +68750,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 758
+      "fn": 764
      }
     },
     {
@@ -71846,6 +71880,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/compliance_doors.rs",
+     "purpose": "Compliance owner decisions use the request's owner proof and its own Memory",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/connector_call_doors.rs",
      "purpose": "The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's…",
      "surface": {
@@ -72109,7 +72153,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 130
+      "crate-vis": 131
      }
     },
     {
@@ -79898,7 +79942,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 393,
+     "files": 394,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -80327,7 +80371,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 736,
+   "source_files": 737,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -80709,6 +80753,7 @@
       "AuthorityHandoffAlarm",
       "AuthorityHandoffAlarmAck",
       "AuthorityHistoryImported",
+      "B2bExemption",
       "BandMode",
       "BatchInput",
       "BatchOutput",
@@ -81015,6 +81060,23 @@
       "CompanionSharingStored",
       "CompanionSharingTarget",
       "CompanionSharingView",
+      "ComplianceAmendRequest",
+      "ComplianceAmendmentClass",
+      "ComplianceApprovalRequest",
+      "ComplianceDisposition",
+      "ComplianceExemptionEvidence",
+      "ComplianceOperation",
+      "ComplianceOwnerStamp",
+      "CompliancePack",
+      "CompliancePendingProposal",
+      "ComplianceReceipt",
+      "ComplianceResult",
+      "ComplianceResultRequest",
+      "ComplianceRowVerification",
+      "ComplianceRuleKind",
+      "ComplianceRuleRow",
+      "ComplianceSource",
+      "ComplianceVerifyRequest",
       "ComposerStamp",
       "ComputeDestination",
       "ConcernCardRequest",
@@ -81024,6 +81086,7 @@
       "ConcernMoveRequest",
       "ConcernOutcome",
       "ConcernOutcomeRequest",
+      "ConditionalExemptionEvidence",
       "ConfidenceBand",
       "ConfirmationReceipt",
       "Conflict",
@@ -83022,6 +83085,7 @@
       "UndoneKeep",
       "UnitAbstention",
       "UnitRefusal",
+      "UnknownJurisdictionDefault",
       "UnknownReason",
       "UnsupportedCapability",
       "UpdateCampaignProgramRequest",
@@ -83156,8 +83220,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 650,
-      "struct": 1981
+      "enum": 657,
+      "struct": 1994
      }
     },
     {
