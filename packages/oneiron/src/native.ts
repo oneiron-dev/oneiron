@@ -135,6 +135,7 @@ vaultResearchFork(input: unknown): unknown
 vaultResearchWeave(input: unknown): unknown
 vaultResearchMeasureSearch(input: unknown): unknown
 vaultResearchMeasureHeldOut(input: unknown): unknown
+vaultResearchEvaluateSplit(input: unknown): unknown
 vaultResearchMarkInvalid(input: unknown): unknown
 vaultResearchPrune(input: unknown): unknown
 vaultResearchSelect(input: unknown): unknown
