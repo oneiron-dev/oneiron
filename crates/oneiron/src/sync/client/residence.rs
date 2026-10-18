@@ -4,10 +4,12 @@
 mod authority;
 mod bundle;
 mod index;
+mod kit_fetch;
 pub(crate) use authority::{catch_up_authority, pinned_checkpoint_pending};
 pub use bundle::SealedBundleRelay;
 pub(crate) use bundle::relay_sealed_bundle;
 pub use index::ResidenceIndexWindow;
+pub use kit_fetch::fetch_sealed_bundle_with_kit;
 
 use std::collections::HashSet;
 use std::time::Duration;

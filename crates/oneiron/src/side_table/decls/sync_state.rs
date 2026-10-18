@@ -278,9 +278,13 @@ side_tables! {
     /// window doc. Key: yyyy-mm ":" hex32 (entity id).
     SYNC_REASSERT_MARKER: SyncState b"ra:w:" Raw;
     /// One generation of the vault's sealed cloud bundle the home keeps (FIX 922): u64be bundle
-    /// length ‖ bundle digest (32) ‖ u64be pad object length ‖ pad object digest (32). Key: hex48
+    /// length ‖ bundle digest (32) ‖ u64be pad object length ‖ pad object digest (32), then, when
+    /// its publisher named a recovery root, the root id (32) ‖ its anchor key (32). Key: hex48
     /// (the generation).
     SYNC_RESIDENCE_BUNDLE_GENERATION: SyncState b"rb:g:" Raw;
+    /// A nonce the home's kit door took from a signed bundle fetch (FIX 922), kept a day past
+    /// its signed time (empty marker). Key: u64hex16 (the signed time) ":" hex64 (the nonce).
+    SYNC_RESIDENCE_BUNDLE_FETCH_NONCE: SyncState b"rb:n:" Raw;
     /// One stored part of a kept generation's bundle ("b") or pad object ("k"). Key: hex48 (the
     /// generation) ":" b|k ":" hex16 (offset).
     SYNC_RESIDENCE_BUNDLE_PART: SyncState b"rb:p:" Raw;

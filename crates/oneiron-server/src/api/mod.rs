@@ -103,6 +103,8 @@ pub(crate) use self::esign::seal_worker::spawn_admitted as spawn_esign_seal_work
 mod off_record_rooms;
 mod org_admin;
 mod pairing;
+// FIX 922: the kit door to the sealed cloud bundle.
+mod recovery_bundle;
 mod sessions;
 mod slip_renewal;
 // ONE-1441 [WIRE-P1]: the bounded HTTP projection of the engine memory
@@ -501,6 +503,9 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // OF-273: a former peer's signed courtesy deletion ask and answer.
         // Keyless; the signed body authenticates against the pinned pact key.
         .merge(self::cooperative_deletion::routes())
+        // FIX 922: a kit-only restore's read of the sealed cloud bundle.
+        // Keyless; each request is signed with the kit's owner anchor.
+        .merge(self::recovery_bundle::routes())
         // ARCH-0052 D5: everyone in a room keeps their own copy of an
         // off-record talk. Its own nest, outside the idempotency layer and
         // the wire receipts: nothing of the stretch may outlive it. The

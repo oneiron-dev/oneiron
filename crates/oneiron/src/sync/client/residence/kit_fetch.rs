@@ -1,0 +1,132 @@
+//! A restore's read of the sealed cloud bundle from the home with the kit
+//! alone (FIX 922): no session, slip or machine of the vault's, only the kit's
+//! rebuilt seed. Each slice request is signed with the seed's owner anchor
+//! ([`KitBundleFetch`]), and the home's kit door serves the generations a
+//! publisher named the kit's root for. The bytes are checked as a machine's
+//! read checks them (`bundle::fetch_generation`).
+
+use ed25519_dalek::SigningKey;
+use serde_json::{Value, json};
+
+use super::bundle::{PartSource, fetch_generation};
+use crate::sync::residence::{
+    KIT_BUNDLE_FETCH_NONCE_BYTES, KIT_BUNDLE_FETCH_PATH, KitBundleFetch, SealedBundleObject,
+    sealed_digest_hex, sealed_generation_hex,
+};
+use crate::sync::transport::TransportError;
+use crate::world_keys::{
+    RecoveryRootId, RecoveryRootSeed, SealedBundleGeneration, SealedKeyPads, SealedVaultBundle,
+};
+
+/// The home's kit door, and what each request to it is signed with.
+pub(super) struct KitHome {
+    client: reqwest::Client,
+    url: reqwest::Url,
+    /// The home's address as the requests name it.
+    origin: String,
+    vault_id: [u8; 32],
+    root: RecoveryRootId,
+    anchor: SigningKey,
+}
+
+impl KitHome {
+    /// One slice of a kept object from `offset`, as the home sends it:
+    /// `generation` names one, `None` the newest named for the kit's root. A
+    /// refused or missing slice is `InvalidPayload`.
+    pub(super) async fn part(
+        &self,
+        generation: Option<SealedBundleGeneration>,
+        object: SealedBundleObject,
+        offset: u64,
+    ) -> Result<Value, TransportError> {
+        let mut nonce = [0u8; KIT_BUNDLE_FETCH_NONCE_BYTES];
+        crate::world_keys::os_fill(&mut nonce)
+            .map_err(|error| TransportError::Storage(error.to_string()))?;
+        let fetch = KitBundleFetch {
+            vault_id: self.vault_id,
+            root: self.root,
+            origin: self.origin.clone(),
+            generation,
+            object,
+            offset,
+            timestamp: crate::unix_seconds_now(),
+            nonce,
+        };
+        let signature: String = fetch
+            .sign(&self.anchor)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let response = self
+            .client
+            .post(self.url.clone())
+            .json(&json!({
+                "vaultId": sealed_digest_hex(&fetch.vault_id),
+                "root": sealed_digest_hex(&fetch.root.0),
+                "generation": generation.as_ref().map(sealed_generation_hex),
+                "object": object.name(),
+                "offset": offset,
+                "timestamp": fetch.timestamp,
+                "nonce": sealed_digest_hex(&fetch.nonce),
+                "signature": signature,
+            }))
+            .send()
+            .await
+            .map_err(|e| TransportError::Storage(format!("kit fetch request failed: {e}")))?;
+        if !response.status().is_success() {
+            return Err(TransportError::InvalidPayload(
+                "the home refused the kit fetch",
+            ));
+        }
+        response
+            .json()
+            .await
+            .map_err(|_| TransportError::InvalidPayload("the kit fetch answer does not decode"))
+    }
+}
+
+/// One generation's bundle and pad object as the home at `home` keeps them,
+/// read with the kit alone, for a restore on an install that is no machine of
+/// the vault's: `seed` is the kit's, rebuilt for the vault `vault_id`.
+/// `generation` names one, `None` the newest the home keeps for the kit's root.
+/// `None` when the home keeps no such generation for the root, or refused the
+/// kit. `home` is the home's address, as `https`, `http`, `wss` or `ws`.
+pub async fn fetch_sealed_bundle_with_kit(
+    home: &str,
+    vault_id: &[u8; 32],
+    seed: &RecoveryRootSeed,
+    generation: Option<SealedBundleGeneration>,
+) -> Result<Option<(SealedVaultBundle, SealedKeyPads)>, TransportError> {
+    let http = if let Some(rest) = home.strip_prefix("wss://") {
+        format!("https://{rest}")
+    } else if let Some(rest) = home.strip_prefix("ws://") {
+        format!("http://{rest}")
+    } else {
+        home.to_owned()
+    };
+    let mut url = reqwest::Url::parse(&http)
+        .map_err(|_| TransportError::InvalidPayload("the home's address does not parse"))?;
+    let host = url.host_str().ok_or(TransportError::InvalidPayload(
+        "the home's address names no host",
+    ))?;
+    let origin = match url.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_owned(),
+    }
+    .to_ascii_lowercase();
+    url.set_path(KIT_BUNDLE_FETCH_PATH);
+    url.set_query(None);
+    let root = seed
+        .public(vault_id)
+        .map_err(|error| TransportError::Storage(error.to_string()))?
+        .id;
+    let home = KitHome {
+        client: reqwest::Client::new(),
+        url,
+        origin,
+        vault_id: *vault_id,
+        root,
+        anchor: seed.anchor(),
+    };
+    fetch_generation(&mut PartSource::Kit(&home), generation).await
+}

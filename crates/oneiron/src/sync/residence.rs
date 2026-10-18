@@ -10,6 +10,7 @@ mod bundle;
 mod bundle_payload;
 mod directives;
 mod discover;
+mod kit_fetch;
 mod policy;
 mod prune;
 pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
@@ -20,10 +21,11 @@ pub use authority_tail::{
     import_authority_page,
 };
 pub use bundle::{
-    SEALED_BUNDLE_PUT_PART_MAX, SEALED_BUNDLE_READ_PART_MAX, SealedBundleEntry, SealedBundleObject,
-    SealedBundleStage, commit_sealed_bundle, replace_sealed_bundle_pads, sealed_bundle_generations,
-    sealed_bundle_part, sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex,
-    sealed_generation_hex, stage_sealed_bundle_part,
+    SEALED_BUNDLE_PUT_PART_MAX, SEALED_BUNDLE_READ_PART_MAX, SealedBundleEntry,
+    SealedBundleKitRoot, SealedBundleObject, SealedBundleStage, commit_sealed_bundle,
+    replace_sealed_bundle_pads, sealed_bundle_generations, sealed_bundle_part,
+    sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex, sealed_generation_hex,
+    stage_sealed_bundle_part,
 };
 pub use bundle_payload::SealedBundleTake;
 pub use bundle_payload::SealedKitRestore;
@@ -32,6 +34,10 @@ pub(crate) use directives::{
     finish_residence_directive_in_txn, pending_residence_directives, residence_refusal_reason,
 };
 pub use discover::discover_local_window_keys;
+pub use kit_fetch::{
+    KIT_BUNDLE_FETCH_MAX_AGE_SECS, KIT_BUNDLE_FETCH_NONCE_BYTES, KIT_BUNDLE_FETCH_PATH,
+    KitBundleFetch, kit_sealed_bundle_part,
+};
 pub(crate) use policy::set_device_sync_preference_in_txn;
 pub use policy::{
     DeviceSyncPreference, effective_residence_mode, load_device_sync_preference,
