@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 539 facade rows, 2026 declarations.
+Census: 539 facade rows, 2027 declarations.
 Inputs: 488 of 539 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 482 of 539 fully typed, 57 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 89; unread shapes: 0.
@@ -9228,22 +9228,23 @@ class OfficeBodyForkOpenRequest(TypedDict):
     artifact_ref: str
     run_root_ref: NotRequired[str | None]
     proposal_ref: NotRequired[str | None]
+BodyActor = str
 class ForkStateOpen(TypedDict):
     state: Literal["open"]
 class ForkStateMerged(TypedDict):
     state: Literal["merged"]
-    by: EntityId
+    by: BodyActor
     at: int
     head: list[int]
 class ForkStateDiscarded(TypedDict):
     state: Literal["discarded"]
-    by: EntityId
+    by: BodyActor
     at: int
 ForkState = ForkStateOpen | ForkStateMerged | ForkStateDiscarded
 class OfficeBodyFork(TypedDict):
     id: EntityId
     artifact: EntityId
-    opener: EntityId
+    opener: BodyActor
     base: list[int]
     commits: int
     opened_at: int
@@ -9283,13 +9284,13 @@ class OfficeBodyProposalRequest(TypedDict):
 class ProposalHeader(TypedDict):
     proposal: EntityId
     artifact: EntityId
-    opener: EntityId
+    opener: BodyActor
     run_root: NotRequired[EntityId | None]
     opened_at: int
 MemberVerdict = Literal["waiting", "landed", "rejected", "let_go"]
 class AnsweringAuthorityWord(TypedDict):
     kind: Literal["word"]
-    person: EntityId
+    person: BodyActor
 class AnsweringAuthorityGrant(TypedDict):
     kind: Literal["grant"]
     grant_ref: str
@@ -9297,14 +9298,14 @@ class AnsweringAuthorityGrant(TypedDict):
 AnsweringAuthority = AnsweringAuthorityWord | AnsweringAuthorityGrant
 class MemberAnswer(TypedDict):
     by: AnsweringAuthority
-    caller: EntityId
+    caller: BodyActor
     head: list[int]
     fork_head: list[int]
     landed: NotRequired[list[int] | None]
     at: int
 class ProposalMember(TypedDict):
     fork: EntityId
-    opener: EntityId
+    opener: BodyActor
     run_root: NotRequired[EntityId | None]
     verdict: MemberVerdict
     answer: NotRequired[MemberAnswer | None]
@@ -9358,7 +9359,7 @@ class OfficeBodyExportRecord(TypedDict):
     version: int
     frontier: list[int]
     source_version: int
-    actor: EntityId
+    actor: BodyActor
     author: str
     at: int
     changes: int

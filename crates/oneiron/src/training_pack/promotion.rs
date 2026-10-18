@@ -13,7 +13,7 @@ use crate::skill_optimize::{EvalExposure, EvalExposureKind, EvalSeat};
 use super::custody::read_pin;
 use super::{
     HeldOutResult, PinnedCheckpoint, ROLES, RUNS, RoleSwapReceipt, SWAPS, SourcePin, SplitSide,
-    SwapChoice, TrainingRun, TrainingState, hash_json, invalid, run_in_txn,
+    SwapChoice, TrainingOwner, TrainingRun, TrainingState, hash_json, invalid, run_in_txn,
 };
 
 #[derive(Debug)]
@@ -380,7 +380,7 @@ impl Vault {
         let receipt = RoleSwapReceipt {
             id: self.store.clock.entity_id()?,
             run: *id,
-            owner: actor,
+            owner: TrainingOwner::Actor(actor),
             at: self.store.clock.now_recorded_at(),
             role,
             previous,
