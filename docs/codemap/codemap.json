@@ -43060,7 +43060,7 @@
      "purpose": "A publisher is a foreign actor with an owner-minted, revocable offer-only grant",
      "surface": {
       "crate-vis": 3,
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -48537,7 +48537,7 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 29,
+      "re-export": 30,
       "struct": 36
      }
     },
@@ -48749,7 +48749,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 402
+      "fn": 418
      }
     },
     {
@@ -48810,6 +48810,41 @@
       "enum": 6,
       "fn": 25,
       "struct": 27
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HubConsentOutcome",
+      "HubConsentReceipt",
+      "HubHookBindRequest",
+      "HubHookBindingRow",
+      "HubHookQualificationReceipt",
+      "HubHookQualifyRequest",
+      "HubHookReplay",
+      "HubImportRequest",
+      "HubPackRequest",
+      "HubRefRequest",
+      "HubRefSetRequest",
+      "HubSkillImported",
+      "HubSkillPermissionRequest",
+      "HubSkillReceipts",
+      "HubSkillRequest",
+      "HubSkillSyncOutcome",
+      "HubSkillSyncReceipt",
+      "SkillHubConfigured",
+      "SkillHubPutRequest",
+      "SkillHubRequest",
+      "SkillPublisherAdmission",
+      "SkillPublisherRequest"
+     ],
+     "path": "src/task_verb/sdk_hub.rs",
+     "purpose": "Typed owner doors over configured hubs, foreign publishers and pinned imports",
+     "surface": {
+      "enum": 2,
+      "fn": 17,
+      "struct": 20
      }
     },
     {
@@ -55289,7 +55324,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 139,
+     "files": 140,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -55459,7 +55494,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3377,
+   "source_files": 3378,
    "test_files": 902
   },
   "oneiron-android": {
@@ -63854,7 +63889,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 353
+      "fn": 369
      }
     },
     {
@@ -64902,7 +64937,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 354
+      "fn": 370
      }
     },
     {
@@ -67935,7 +67970,17 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 73
+      "crate-vis": 74
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/hub_doors.rs",
+     "purpose": "Owner-proof facade doors for configured hubs and pinned foreign imports",
+     "surface": {
+      "crate-vis": 16
      }
     },
     {
@@ -75200,7 +75245,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 327,
+     "files": 328,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -75615,7 +75660,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 649,
+   "source_files": 650,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -76291,16 +76336,43 @@
       "HeldOutCall",
       "HeldOutEvidence",
       "HolderKind",
+      "HookActorClass",
+      "HookAuthor",
+      "HookOutcomeKind",
       "HookPhase",
+      "HookRenderClass",
       "HookReplayCase",
       "HookReplayCompare",
       "HookReplayOutcome",
       "HookReplayRow",
+      "HookSelector",
       "HooksReplayRequest",
       "HostPin",
       "HostPinKind",
       "HostRuleRef",
       "HostingPrivacyPosture",
+      "HubAdmissionReceipt",
+      "HubConsentOutcome",
+      "HubConsentReceipt",
+      "HubHookBindRequest",
+      "HubHookBindingRow",
+      "HubHookQualificationReceipt",
+      "HubHookQualifyRequest",
+      "HubHookReplay",
+      "HubImportReceipt",
+      "HubImportRequest",
+      "HubPackRequest",
+      "HubPin",
+      "HubRef",
+      "HubRefRequest",
+      "HubRefSetRequest",
+      "HubSkillImported",
+      "HubSkillPermissionRequest",
+      "HubSkillReceipts",
+      "HubSkillRequest",
+      "HubSkillSyncOutcome",
+      "HubSkillSyncReceipt",
+      "HubSyncPolicy",
       "HumanAskReason",
       "IdentityActNow",
       "IdentityActNowRequest",
@@ -76319,6 +76391,9 @@
       "InspectionResolved",
       "InspectionState",
       "InspectorAtom",
+      "InstallDisposition",
+      "InstallHoldReason",
+      "InstallLifecycle",
       "InvalidReceipt",
       "InvitationSlip",
       "InvitationSlipRequest",
@@ -76545,6 +76620,7 @@
       "PackCandidateReason",
       "PackConnectorReceipt",
       "PackFileInput",
+      "PackHookBinding",
       "PackInstallReceipt",
       "PackInstallStatus",
       "PackKind",
@@ -76926,6 +77002,14 @@
       "SigningStatus",
       "SkillAuthoringReceipt",
       "SkillForkRequest",
+      "SkillHubConfigured",
+      "SkillHubKind",
+      "SkillHubPutRequest",
+      "SkillHubRecord",
+      "SkillHubRequest",
+      "SkillHubTrustTier",
+      "SkillPublisherAdmission",
+      "SkillPublisherRequest",
       "SkillSaveRequest",
       "SkillSourceFile",
       "SlideRender",
@@ -77044,6 +77128,7 @@
       "ThreadPassportsView",
       "ThrobberAtom",
       "ToggleControl",
+      "TrackedHubRef",
       "TravelChoice",
       "TurnAction",
       "TurnActionReceipt",
@@ -77127,8 +77212,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 371,
-      "struct": 944
+      "enum": 384,
+      "struct": 971
      }
     },
     {
