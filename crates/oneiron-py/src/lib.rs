@@ -2637,6 +2637,86 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_code_merge_queue_enqueue(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.merge_queue.enqueue")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.merge_queue.enqueue", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_merge_queue_stage(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.merge_queue.stage")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.merge_queue.stage", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_merge_queue_observe(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.merge_queue.observe")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.merge_queue.observe", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_merge_queue_requeue_survivors(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(input_json, "vault.code.merge_queue.requeue_survivors")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.merge_queue.requeue_survivors", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_merge_queue_land_reviewed(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.merge_queue.land_reviewed")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.merge_queue.land_reviewed", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_merge_queue_settle_slow(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.merge_queue.settle_slow")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.merge_queue.settle_slow", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_merge_queue_recover(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.merge_queue.recover")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.merge_queue.recover", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_artifacts_export(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(request_json, "vault.artifacts.export")?;
         let output = py
@@ -4259,6 +4339,41 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.notes.history")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.notes.history", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_notes_history_purge(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.notes.history_purge")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.notes.history_purge", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_notes_history_purge_execute(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.notes.history_purge_execute")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.notes.history_purge_execute", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_notes_history_purge_receipts(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.notes.history_purge_receipts")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.notes.history_purge_receipts", input)
+            })
             .map_err(raise)?;
         encode(&output)
     }

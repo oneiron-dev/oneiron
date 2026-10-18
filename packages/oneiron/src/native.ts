@@ -301,6 +301,13 @@ vaultCodeSnapshotsIngest(input: unknown): unknown
 vaultCodeSnapshotsGet(input: unknown): unknown
 vaultCodeSnapshotsRead(input: unknown): unknown
 vaultCodeSymbolsDefinitions(input: unknown): unknown
+vaultCodeMergeQueueEnqueue(input: unknown): unknown
+vaultCodeMergeQueueStage(input: unknown): unknown
+vaultCodeMergeQueueObserve(input: unknown): unknown
+vaultCodeMergeQueueRequeueSurvivors(input: unknown): unknown
+vaultCodeMergeQueueLandReviewed(input: unknown): unknown
+vaultCodeMergeQueueSettleSlow(input: unknown): unknown
+vaultCodeMergeQueueRecover(input: unknown): unknown
 vaultArtifactsExport(requestJson: string): string
 vaultAgentsCreate(input: unknown): unknown
 vaultAgentsGet(input: unknown): unknown
@@ -492,6 +499,9 @@ vaultNotesCreate(input: unknown): unknown
 vaultNotesFromEntity(input: unknown): unknown
 vaultNotesRead(input: unknown): unknown
 vaultNotesHistory(input: unknown): unknown
+vaultNotesHistoryPurge(input: unknown): unknown
+vaultNotesHistoryPurgeExecute(input: unknown): unknown
+vaultNotesHistoryPurgeReceipts(input: unknown): unknown
 vaultNotesEditorBind(input: unknown): unknown
 vaultNotesEditorClose(input: unknown): unknown
 vaultNotesEdit(input: unknown): unknown

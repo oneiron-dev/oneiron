@@ -293,6 +293,7 @@ mod sdk_hub;
 mod sdk_legal_hold;
 mod sdk_live_run;
 mod sdk_mesh;
+mod sdk_note_history;
 mod sdk_off_record;
 mod sdk_record_erase;
 mod sdk_reply;

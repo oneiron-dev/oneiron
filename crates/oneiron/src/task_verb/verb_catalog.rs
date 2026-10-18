@@ -275,6 +275,13 @@ pub enum AgentVerb {
     VaultCodeSnapshotsGet,
     VaultCodeSnapshotsRead,
     VaultCodeSymbolsDefinitions,
+    VaultCodeMergeQueueEnqueue,
+    VaultCodeMergeQueueStage,
+    VaultCodeMergeQueueObserve,
+    VaultCodeMergeQueueRequeueSurvivors,
+    VaultCodeMergeQueueLandReviewed,
+    VaultCodeMergeQueueSettleSlow,
+    VaultCodeMergeQueueRecover,
     VaultArtifactsExport,
     VaultAgentsCreate,
     VaultAgentsGet,
@@ -506,6 +513,9 @@ pub enum AgentVerb {
     VaultNotesFromEntity,
     VaultNotesRead,
     VaultNotesHistory,
+    VaultNotesHistoryPurge,
+    VaultNotesHistoryPurgeExecute,
+    VaultNotesHistoryPurgeReceipts,
     VaultNotesEditorBind,
     VaultNotesEditorClose,
     VaultNotesEdit,
@@ -803,6 +813,13 @@ impl AgentVerb {
         Self::VaultCodeSnapshotsGet,
         Self::VaultCodeSnapshotsRead,
         Self::VaultCodeSymbolsDefinitions,
+        Self::VaultCodeMergeQueueEnqueue,
+        Self::VaultCodeMergeQueueStage,
+        Self::VaultCodeMergeQueueObserve,
+        Self::VaultCodeMergeQueueRequeueSurvivors,
+        Self::VaultCodeMergeQueueLandReviewed,
+        Self::VaultCodeMergeQueueSettleSlow,
+        Self::VaultCodeMergeQueueRecover,
         Self::VaultArtifactsExport,
         Self::VaultAgentsCreate,
         Self::VaultAgentsGet,
@@ -1034,6 +1051,9 @@ impl AgentVerb {
         Self::VaultNotesFromEntity,
         Self::VaultNotesRead,
         Self::VaultNotesHistory,
+        Self::VaultNotesHistoryPurge,
+        Self::VaultNotesHistoryPurgeExecute,
+        Self::VaultNotesHistoryPurgeReceipts,
         Self::VaultNotesEditorBind,
         Self::VaultNotesEditorClose,
         Self::VaultNotesEdit,
@@ -1340,6 +1360,13 @@ impl AgentVerb {
             Self::VaultCodeSnapshotsGet => "vault.code.snapshots.get",
             Self::VaultCodeSnapshotsRead => "vault.code.snapshots.read",
             Self::VaultCodeSymbolsDefinitions => "vault.code.symbols.definitions",
+            Self::VaultCodeMergeQueueEnqueue => "vault.code.merge_queue.enqueue",
+            Self::VaultCodeMergeQueueStage => "vault.code.merge_queue.stage",
+            Self::VaultCodeMergeQueueObserve => "vault.code.merge_queue.observe",
+            Self::VaultCodeMergeQueueRequeueSurvivors => "vault.code.merge_queue.requeue_survivors",
+            Self::VaultCodeMergeQueueLandReviewed => "vault.code.merge_queue.land_reviewed",
+            Self::VaultCodeMergeQueueSettleSlow => "vault.code.merge_queue.settle_slow",
+            Self::VaultCodeMergeQueueRecover => "vault.code.merge_queue.recover",
             Self::VaultArtifactsExport => "vault.artifacts.export",
             Self::VaultAgentsCreate => "vault.agents.create",
             Self::VaultAgentsGet => "vault.agents.get",
@@ -1575,6 +1602,9 @@ impl AgentVerb {
             Self::VaultNotesFromEntity => "vault.notes.from_entity",
             Self::VaultNotesRead => "vault.notes.read",
             Self::VaultNotesHistory => "vault.notes.history",
+            Self::VaultNotesHistoryPurge => "vault.notes.history_purge",
+            Self::VaultNotesHistoryPurgeExecute => "vault.notes.history_purge_execute",
+            Self::VaultNotesHistoryPurgeReceipts => "vault.notes.history_purge_receipts",
             Self::VaultNotesEditorBind => "vault.notes.editor.bind",
             Self::VaultNotesEditorClose => "vault.notes.editor.close",
             Self::VaultNotesEdit => "vault.notes.edit",
@@ -1871,6 +1901,13 @@ impl AgentVerb {
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
                 | Self::VaultCodeSymbolsDefinitions
+                | Self::VaultCodeMergeQueueEnqueue
+                | Self::VaultCodeMergeQueueStage
+                | Self::VaultCodeMergeQueueObserve
+                | Self::VaultCodeMergeQueueRequeueSurvivors
+                | Self::VaultCodeMergeQueueLandReviewed
+                | Self::VaultCodeMergeQueueSettleSlow
+                | Self::VaultCodeMergeQueueRecover
                 | Self::VaultArtifactsExport
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
@@ -2062,6 +2099,9 @@ impl AgentVerb {
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesRead
                 | Self::VaultNotesHistory
+                | Self::VaultNotesHistoryPurge
+                | Self::VaultNotesHistoryPurgeExecute
+                | Self::VaultNotesHistoryPurgeReceipts
                 | Self::VaultNotesEditorBind
                 | Self::VaultNotesEditorClose
                 | Self::VaultNotesEdit
@@ -2406,6 +2446,13 @@ impl AgentVerb {
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
                 | Self::VaultCodeSymbolsDefinitions
+                | Self::VaultCodeMergeQueueEnqueue
+                | Self::VaultCodeMergeQueueStage
+                | Self::VaultCodeMergeQueueObserve
+                | Self::VaultCodeMergeQueueRequeueSurvivors
+                | Self::VaultCodeMergeQueueLandReviewed
+                | Self::VaultCodeMergeQueueSettleSlow
+                | Self::VaultCodeMergeQueueRecover
                 | Self::VaultArtifactsExport
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
@@ -2597,6 +2644,9 @@ impl AgentVerb {
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesRead
                 | Self::VaultNotesHistory
+                | Self::VaultNotesHistoryPurge
+                | Self::VaultNotesHistoryPurgeExecute
+                | Self::VaultNotesHistoryPurgeReceipts
                 | Self::VaultNotesEditorBind
                 | Self::VaultNotesEditorClose
                 | Self::VaultNotesEdit
@@ -2685,6 +2735,7 @@ impl AgentVerb {
                 | Self::VaultWritesPending
                 | Self::VaultArtifactsBodyCommits
                 | Self::VaultClaimsSeed
+                | Self::VaultNotesHistoryPurgeReceipts
                 | Self::VaultTasksLinearProvenance
         )
     }
@@ -2985,6 +3036,13 @@ impl AgentVerb {
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
                 | Self::VaultCodeSymbolsDefinitions
+                | Self::VaultCodeMergeQueueEnqueue
+                | Self::VaultCodeMergeQueueStage
+                | Self::VaultCodeMergeQueueObserve
+                | Self::VaultCodeMergeQueueRequeueSurvivors
+                | Self::VaultCodeMergeQueueLandReviewed
+                | Self::VaultCodeMergeQueueSettleSlow
+                | Self::VaultCodeMergeQueueRecover
                 | Self::VaultArtifactsExport
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
@@ -3199,6 +3257,9 @@ impl AgentVerb {
                 | Self::ConnectorOutboundSchedule
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
+                | Self::VaultNotesHistoryPurge
+                | Self::VaultNotesHistoryPurgeExecute
+                | Self::VaultNotesHistoryPurgeReceipts
                 | Self::VaultNotesEdit
                 | Self::VaultNotesSeal
                 | Self::VaultNotesLifecycle
@@ -3396,6 +3457,12 @@ impl AgentVerb {
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeCheckoutBind
                 | Self::VaultCodeSnapshotsIngest
+                | Self::VaultCodeMergeQueueEnqueue
+                | Self::VaultCodeMergeQueueStage
+                | Self::VaultCodeMergeQueueRequeueSurvivors
+                | Self::VaultCodeMergeQueueLandReviewed
+                | Self::VaultCodeMergeQueueSettleSlow
+                | Self::VaultCodeMergeQueueRecover
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsUpdate
                 | Self::VaultWorkspaceEstablish
@@ -3528,6 +3595,8 @@ impl AgentVerb {
                 | Self::ConnectorOutboundSchedule
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
+                | Self::VaultNotesHistoryPurge
+                | Self::VaultNotesHistoryPurgeExecute
                 | Self::VaultNotesEdit
                 | Self::VaultNotesSeal
                 | Self::VaultNotesSetOverrides
@@ -3846,6 +3915,13 @@ impl AgentVerb {
             Self::VaultCodeSnapshotsGet => &["spec"],
             Self::VaultCodeSnapshotsRead => &["spec"],
             Self::VaultCodeSymbolsDefinitions => &["spec"],
+            Self::VaultCodeMergeQueueEnqueue => &["spec"],
+            Self::VaultCodeMergeQueueStage => &["spec"],
+            Self::VaultCodeMergeQueueObserve => &["spec"],
+            Self::VaultCodeMergeQueueRequeueSurvivors => &["spec"],
+            Self::VaultCodeMergeQueueLandReviewed => &["spec"],
+            Self::VaultCodeMergeQueueSettleSlow => &["spec"],
+            Self::VaultCodeMergeQueueRecover => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultAgentsCreate => &["spec"],
             Self::VaultAgentsGet => &["spec"],
@@ -4077,6 +4153,9 @@ impl AgentVerb {
             Self::VaultNotesFromEntity => &["spec"],
             Self::VaultNotesRead => &["spec"],
             Self::VaultNotesHistory => &["spec"],
+            Self::VaultNotesHistoryPurge => &["spec"],
+            Self::VaultNotesHistoryPurgeExecute => &["spec"],
+            Self::VaultNotesHistoryPurgeReceipts => &["spec"],
             Self::VaultNotesEditorBind => &["spec"],
             Self::VaultNotesEditorClose => &["spec"],
             Self::VaultNotesEdit => &["spec"],
@@ -4375,6 +4454,13 @@ impl AgentVerb {
             Self::VaultCodeSnapshotsGet => &["spec"],
             Self::VaultCodeSnapshotsRead => &["spec"],
             Self::VaultCodeSymbolsDefinitions => &["spec"],
+            Self::VaultCodeMergeQueueEnqueue => &["spec"],
+            Self::VaultCodeMergeQueueStage => &["spec"],
+            Self::VaultCodeMergeQueueObserve => &["spec"],
+            Self::VaultCodeMergeQueueRequeueSurvivors => &["spec"],
+            Self::VaultCodeMergeQueueLandReviewed => &["spec"],
+            Self::VaultCodeMergeQueueSettleSlow => &["spec"],
+            Self::VaultCodeMergeQueueRecover => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultAgentsCreate => &["spec"],
             Self::VaultAgentsGet => &["spec"],
@@ -4606,6 +4692,9 @@ impl AgentVerb {
             Self::VaultNotesFromEntity => &["spec"],
             Self::VaultNotesRead => &["spec"],
             Self::VaultNotesHistory => &["spec"],
+            Self::VaultNotesHistoryPurge => &["spec"],
+            Self::VaultNotesHistoryPurgeExecute => &["spec"],
+            Self::VaultNotesHistoryPurgeReceipts => &["spec"],
             Self::VaultNotesEditorBind => &["spec"],
             Self::VaultNotesEditorClose => &["spec"],
             Self::VaultNotesEdit => &["spec"],
@@ -5415,6 +5504,27 @@ impl AgentVerb {
             Self::VaultCodeSymbolsDefinitions => {
                 "Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language."
             }
+            Self::VaultCodeMergeQueueEnqueue => {
+                "Queue stored repository proposals as one batch on the queue green commit, one to six per call, with no batching window. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed."
+            }
+            Self::VaultCodeMergeQueueStage => {
+                "Materialize every nonempty subset of one queued batch as a journaled detached speculative worktree. Owner only. Head and green do not move."
+            }
+            Self::VaultCodeMergeQueueObserve => {
+                "Read the queue head and green Git commits, the named batches in request order and the stored contract verdicts they name. Owner only. It never recovers or settles, and a verdict is no check execution receipt."
+            }
+            Self::VaultCodeMergeQueueRequeueSurvivors => {
+                "Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. No durable parent or child link is written."
+            }
+            Self::VaultCodeMergeQueueLandReviewed => {
+                "Advance the fast-tested head by one ready batch through reviewed-stack admission alone. Owner only. Each proposal still needs unanimous critic approval and exact bytes and base; the owner proof approves nothing."
+            }
+            Self::VaultCodeMergeQueueSettleSlow => {
+                "Settle stored slow results in landing order: green advances past passing ones, and a red one rolls the ungreen suffix back. Owner only. The caller names no commit or result."
+            }
+            Self::VaultCodeMergeQueueRecover => {
+                "Reconcile an interrupted landing or rollback with its persisted mutation receipts. Owner only. Unreceipted divergence refuses; nothing is approved or rebased."
+            }
             Self::VaultArtifactsExport => {
                 "One artifact version's export file, with the born-with text the caller chose and a share receipt listing it."
             }
@@ -6043,6 +6153,15 @@ impl AgentVerb {
             }
             Self::VaultNotesHistory => {
                 "Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented."
+            }
+            Self::VaultNotesHistoryPurge => {
+                "The owner explicitly erases a NOTE's safe history, or opens its shared-vault erase veto window; no grant names this action."
+            }
+            Self::VaultNotesHistoryPurgeExecute => {
+                "Executes the exact history erase this owner started after its veto window closes without objection; retries return its durable receipt."
+            }
+            Self::VaultNotesHistoryPurgeReceipts => {
+                "The owner reads a NOTE's durable history-purge receipts, including each requested and retained causal frontier."
             }
             Self::VaultNotesEditorBind => {
                 "Binds a live NOTE editor to the caller and returns its typed text and base version; close the binding when the editor leaves."

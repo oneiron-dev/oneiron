@@ -38,7 +38,7 @@ pub(super) async fn configure(
     headers: HeaderMap,
     Json(policy): Json<OrgAdminPolicy>,
 ) -> Result<Json<serde_json::Value>, EnvelopedApiError> {
-    super::check_api_auth(&headers, &server)?;
+    super::check_api_owner_act(&headers, &server)?;
     if policy.org_ref() != id(&org)? {
         return Err(ApiError::bad_request("setup organization mismatch", Some("org_ref")).into());
     }

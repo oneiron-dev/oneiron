@@ -474,8 +474,8 @@ impl HumanDecisionQueue for NoPerson {
     }
 }
 
-/// The caller the call spends for: the credential's principal, or the
-/// embedded owner for an owner-grade credential that names none.
+/// The caller the call spends for: the credential's principal, or the owner
+/// a self-hosted root or the dev mode acts as (FIX 2222).
 fn principal(
     auth: &CoreAuth,
     vault: &oneiron::Vault,
@@ -487,11 +487,21 @@ fn principal(
             "ask_image spends for an authenticated principal",
         )
     };
+    // A self-hosted root or the dev mode spends as the owner its host action
+    // names; a hosted operator's root spends for no one (FIX 2222).
+    if let Some(action) = crate::api::host_action::host_action_of(vault, auth) {
+        let actor = action
+            .map_err(|error| match error {
+                oneiron::Error::HostActionRequiresSupportGrant => {
+                    crate::api::host_action::host_action_refusal(error).into_response()
+                }
+                _ => denied(),
+            })?
+            .actor();
+        return Ok((actor.entity_ref(), actor.actor_class()));
+    }
     let actor = match auth.principal_ref() {
         Some(reference) => EntityId::from_hex(reference).map_err(|_| denied())?,
-        None if auth.is_owner_grade() => {
-            vault.ensure_embedded_owner_actor().map_err(|_| denied())?
-        }
         None => return Err(denied()),
     };
     let class = match auth.actor_class() {

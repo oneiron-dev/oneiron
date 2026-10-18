@@ -1973,6 +1973,9 @@ class Oneiron:
         @property
         def snapshots(self) -> "Oneiron._VaultCodeSnapshotsVerbs":
             return Oneiron._VaultCodeSnapshotsVerbs(self._client)
+        @property
+        def merge_queue(self) -> "Oneiron._VaultCodeMergeQueueVerbs":
+            return Oneiron._VaultCodeMergeQueueVerbs(self._client)
     class _VaultCodeSymbolsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2024,6 +2027,30 @@ class Oneiron:
         def read(self, spec):
             """Read one UTF-8 file and its SHA-256 from the frozen blobs of a pinned code snapshot, never from the folder on disk. Owner only."""
             return json.loads(_translate(lambda: self._client.vault_code_snapshots_read(json.dumps(spec))))
+    class _VaultCodeMergeQueueVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def enqueue(self, spec):
+            """Queue stored repository proposals as one batch on the queue green commit, one to six per call, with no batching window. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed."""
+            return json.loads(_translate(lambda: self._client.vault_code_merge_queue_enqueue(json.dumps(spec))))
+        def stage(self, spec):
+            """Materialize every nonempty subset of one queued batch as a journaled detached speculative worktree. Owner only. Head and green do not move."""
+            return json.loads(_translate(lambda: self._client.vault_code_merge_queue_stage(json.dumps(spec))))
+        def observe(self, spec):
+            """Read the queue head and green Git commits, the named batches in request order and the stored contract verdicts they name. Owner only. It never recovers or settles, and a verdict is no check execution receipt."""
+            return json.loads(_translate(lambda: self._client.vault_code_merge_queue_observe(json.dumps(spec))))
+        def requeue_survivors(self, spec):
+            """Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. No durable parent or child link is written."""
+            return json.loads(_translate(lambda: self._client.vault_code_merge_queue_requeue_survivors(json.dumps(spec))))
+        def land_reviewed(self, spec):
+            """Advance the fast-tested head by one ready batch through reviewed-stack admission alone. Owner only. Each proposal still needs unanimous critic approval and exact bytes and base; the owner proof approves nothing."""
+            return json.loads(_translate(lambda: self._client.vault_code_merge_queue_land_reviewed(json.dumps(spec))))
+        def settle_slow(self, spec):
+            """Settle stored slow results in landing order: green advances past passing ones, and a red one rolls the ungreen suffix back. Owner only. The caller names no commit or result."""
+            return json.loads(_translate(lambda: self._client.vault_code_merge_queue_settle_slow(json.dumps(spec))))
+        def recover(self, spec):
+            """Reconcile an interrupted landing or rollback with its persisted mutation receipts. Owner only. Unreceipted divergence refuses; nothing is approved or rebased."""
+            return json.loads(_translate(lambda: self._client.vault_code_merge_queue_recover(json.dumps(spec))))
     class _VaultAgentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2561,6 +2588,15 @@ class Oneiron:
         def history(self, input: dict[str, Any]) -> Any:
             """Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented."""
             return json.loads(_translate(lambda: self._client.vault_notes_history(json.dumps(input, allow_nan=False))))
+        def history_purge(self, spec):
+            """The owner explicitly erases a NOTE's safe history, or opens its shared-vault erase veto window; no grant names this action."""
+            return json.loads(_translate(lambda: self._client.vault_notes_history_purge(json.dumps(spec))))
+        def history_purge_execute(self, spec):
+            """Executes the exact history erase this owner started after its veto window closes without objection; retries return its durable receipt."""
+            return json.loads(_translate(lambda: self._client.vault_notes_history_purge_execute(json.dumps(spec))))
+        def history_purge_receipts(self, spec):
+            """The owner reads a NOTE's durable history-purge receipts, including each requested and retained causal frontier."""
+            return json.loads(_translate(lambda: self._client.vault_notes_history_purge_receipts(json.dumps(spec))))
         @property
         def editor(self) -> "Oneiron._VaultNotesEditorVerbs":
             return Oneiron._VaultNotesEditorVerbs(self._client)

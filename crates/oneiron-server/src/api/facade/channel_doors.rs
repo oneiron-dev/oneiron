@@ -34,7 +34,8 @@ async fn as_owner<T: Send + 'static>(
 ) -> Listed<T> {
     let admitted = || {
         let owner = owner_proof(server, auth, verb)?;
-        let caller = super::facade_actor(auth).map_err(FacadeApiError::into_memory_error)?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
         Ok::<_, MemoryError>((owner, caller))
     };
     let (owner, caller) = match admitted() {
@@ -167,7 +168,8 @@ pub(crate) async fn vault_channel_identities_selection_update(
     input: ChannelSelectionUpdateRequest,
 ) -> Listed<ChannelIdentitySelectionRuleSet> {
     const VERB: &str = "vault.channel_identities.selection.update";
-    let caller = match super::facade_actor(auth).map_err(FacadeApiError::into_memory_error) {
+    let caller = match super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)
+    {
         Ok(caller) => caller,
         Err(error) => return (Err(error), Vec::new()),
     };

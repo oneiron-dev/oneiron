@@ -7,6 +7,16 @@ use axum::extract::rejection::QueryRejection;
 use oneiron::ErrorKind;
 
 pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) -> ApiError {
+    // FIX 2222: the owner refusal a read key or a host action carries (a
+    // self-hosted root that binds no live owner under its key, a broken
+    // owner check) answers as the facade's `From<MemoryError>` does: a 403
+    // or a 409 with the engine's own words, never this plane's 500.
+    if let oneiron::Error::Claim(oneiron::error::ClaimError::ScopedReadOwnerNotLive(refusal)) =
+        &error
+        && let Some(answer) = owner_refusal(refusal)
+    {
+        return answer;
+    }
     // A held first write names the consents it waits on and the join that
     // files them; the generic conversation-state answer would drop both.
     if matches!(
@@ -164,6 +174,29 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
         ),
         _ => ApiError::internal_server_error(message),
     }
+}
+
+/// The carried owner refusal's answer: `OWNER_BINDING_REQUIRED` and
+/// `FORBIDDEN` are the 403 refusal shape the support-grant refusal uses,
+/// naming the owner as what the act requires; `INVALID_STATE` is a 409. Any
+/// other code stays the caller's 500.
+fn owner_refusal(refusal: &oneiron::MemoryError) -> Option<ApiError> {
+    let details = match refusal.code.as_str() {
+        oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED | oneiron::MEMORY_CODE_FORBIDDEN => {
+            ApiErrorDetails::Forbidden {
+                required_scope: Some("owner".to_owned()),
+            }
+        }
+        oneiron::MEMORY_CODE_INVALID_STATE => ApiErrorDetails::InvalidState {
+            state: Some("owner_check".to_owned()),
+        },
+        _ => return None,
+    };
+    Some(ApiError::new(
+        refusal.message.clone(),
+        details,
+        refusal.suggestions.clone(),
+    ))
 }
 
 pub(super) fn query_rejection_error(rejection: QueryRejection) -> ApiError {

@@ -334,6 +334,9 @@ pub(crate) async fn core_memory_verb(
     payload: Result<Json<CoreMemoryVerbRequest>, JsonRejection>,
 ) -> Result<Json<CoreMemoryVerbResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Write)?;
+    // Every named verb writes or erases vault content: an owner act, so a
+    // hosted operator's root is refused before any of them (FIX 2222).
+    crate::api::host_action::require_host_owner_act(&server, &auth)?;
     let verb = oneiron::NamedMemoryVerb::parse(&verb_name).map_err(memory_verb_refusal)?;
     let req = json_payload(payload)?;
     let operation = core_memory_operation_kind(verb.operation_kind());
@@ -357,7 +360,7 @@ pub(crate) async fn core_memory_verb(
                 &entity.body,
                 entity.text.as_deref(),
             )?;
-            commit_core_batch(&auth, batch).map_err(|error| {
+            commit_core_batch(&server, &auth, batch).map_err(|error| {
                 tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory remember failed");
                 core_engine_error("core memory remember failed", error)
             })?;

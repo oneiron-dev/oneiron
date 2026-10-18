@@ -2446,6 +2446,69 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_code_merge_queue_enqueue(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.merge_queue.enqueue", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_merge_queue_stage(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.merge_queue.stage", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_merge_queue_observe(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.merge_queue.observe", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_merge_queue_requeue_survivors(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.merge_queue.requeue_survivors", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_merge_queue_land_reviewed(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.merge_queue.land_reviewed", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_merge_queue_settle_slow(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.merge_queue.settle_slow", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_merge_queue_recover(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.merge_queue.recover", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_artifacts_export(&self, request_json: String) -> napi::Result<String> {
         let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
             facade_error(oneiron::memory::MemoryError {
@@ -4396,6 +4459,33 @@ impl NativeClient {
     pub fn vault_notes_history(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.notes.history", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_notes_history_purge(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.history_purge", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_notes_history_purge_execute(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.history_purge_execute", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_notes_history_purge_receipts(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.history_purge_receipts", input)
             .map_err(facade_error)
     }
     #[napi]

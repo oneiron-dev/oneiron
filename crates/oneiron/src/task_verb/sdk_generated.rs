@@ -1465,6 +1465,48 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.merge_queue.enqueue",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::merge_queue_doors::MergeQueueEnqueueRequest,
+                >(),
+            ),
+            (
+                "vault.code.merge_queue.stage",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::merge_queue_doors::MergeQueueBatchRequest,
+                >(),
+            ),
+            (
+                "vault.code.merge_queue.observe",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::merge_queue_doors::MergeQueueObserveRequest,
+                >(),
+            ),
+            (
+                "vault.code.merge_queue.requeue_survivors",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::merge_queue_doors::MergeQueueBatchRequest,
+                >(),
+            ),
+            (
+                "vault.code.merge_queue.land_reviewed",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::merge_queue_doors::MergeQueueBatchRequest,
+                >(),
+            ),
+            (
+                "vault.code.merge_queue.settle_slow",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::merge_queue_doors::MergeQueueRepoRequest,
+                >(),
+            ),
+            (
+                "vault.code.merge_queue.recover",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::merge_queue_doors::MergeQueueRepoRequest,
+                >(),
+            ),
+            (
                 "vault.artifacts.export",
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::ArtifactExportRequest,
@@ -2615,6 +2657,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::note::NoteAccessRequest>(),
             ),
             (
+                "vault.notes.history_purge",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::NoteHistoryPurgeRequest,
+                >(),
+            ),
+            (
+                "vault.notes.history_purge_execute",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::NoteHistoryPurgeExecuteRequest,
+                >(),
+            ),
+            (
+                "vault.notes.history_purge_receipts",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::NoteHistoryPurgeRequest,
+                >(),
+            ),
+            (
                 "vault.notes.editor.bind",
                 crate::code_run::vault_read::request_schema::<crate::note::NoteAccessRequest>(),
             ),
@@ -2922,6 +2982,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.delivery_window.evaluate",
     "vault.notes.read",
     "vault.notes.history",
+    "vault.notes.history_purge",
+    "vault.notes.history_purge_execute",
+    "vault.notes.history_purge_receipts",
     "vault.notes.editor.bind",
     "vault.notes.editor.close",
     "vault.tasks.linear.mapping",
@@ -3341,6 +3404,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.notes.history" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Option<crate::note::NoteHistoryView>>,
+        >(),
+        "vault.notes.history_purge" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::NoteHistoryPurgeOutcome,
+        >(),
+        "vault.notes.history_purge_execute" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::NoteHistoryPurgeReceipt,
+        >(),
+        "vault.notes.history_purge_receipts" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::task_verb::sdk::NoteHistoryPurgeReceipt>,
         >(),
         "vault.notes.editor.bind" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Option<crate::note::NoteEditorBinding>>,
@@ -5292,6 +5364,55 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.merge_queue.enqueue" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.merge_queue.stage" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.merge_queue.observe" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.merge_queue.requeue_survivors" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.merge_queue.land_reviewed" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.merge_queue.settle_slow" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.merge_queue.recover" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.artifacts.export" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -6661,6 +6782,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.notes.history_purge" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.notes.history_purge_execute" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.notes.history_purge_receipts" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.notes.editor.bind" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -7699,6 +7841,34 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::codebase_doors::CodeSnapshotDefinitionsRequest =
                 decode(value.clone())?;
         }
+        "vault.code.merge_queue.enqueue" => {
+            let _input: crate::memory::merge_queue_doors::MergeQueueEnqueueRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.merge_queue.stage" => {
+            let _input: crate::memory::merge_queue_doors::MergeQueueBatchRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.merge_queue.observe" => {
+            let _input: crate::memory::merge_queue_doors::MergeQueueObserveRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.merge_queue.requeue_survivors" => {
+            let _input: crate::memory::merge_queue_doors::MergeQueueBatchRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.merge_queue.land_reviewed" => {
+            let _input: crate::memory::merge_queue_doors::MergeQueueBatchRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.merge_queue.settle_slow" => {
+            let _input: crate::memory::merge_queue_doors::MergeQueueRepoRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.merge_queue.recover" => {
+            let _input: crate::memory::merge_queue_doors::MergeQueueRepoRequest =
+                decode(value.clone())?;
+        }
         "vault.artifacts.export" => {
             let _input: crate::blob_artifact::ArtifactExportRequest = decode(value.clone())?;
         }
@@ -8437,6 +8607,16 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.notes.history" => {
             let _input: crate::note::NoteAccessRequest = decode(value.clone())?;
         }
+        "vault.notes.history_purge" => {
+            let _input: crate::task_verb::sdk::NoteHistoryPurgeRequest = decode(value.clone())?;
+        }
+        "vault.notes.history_purge_execute" => {
+            let _input: crate::task_verb::sdk::NoteHistoryPurgeExecuteRequest =
+                decode(value.clone())?;
+        }
+        "vault.notes.history_purge_receipts" => {
+            let _input: crate::task_verb::sdk::NoteHistoryPurgeRequest = decode(value.clone())?;
+        }
         "vault.notes.editor.bind" => {
             let _input: crate::note::NoteAccessRequest = decode(value.clone())?;
         }
@@ -8993,6 +9173,28 @@ pub fn invoke(
         "vault.code.symbols.definitions" => {
             encode(vault_code_symbols_definitions(memory, decode(value)?)?)
         }
+        "vault.code.merge_queue.enqueue" => {
+            encode(vault_code_merge_queue_enqueue(memory, decode(value)?)?)
+        }
+        "vault.code.merge_queue.stage" => {
+            encode(vault_code_merge_queue_stage(memory, decode(value)?)?)
+        }
+        "vault.code.merge_queue.observe" => {
+            encode(vault_code_merge_queue_observe(memory, decode(value)?)?)
+        }
+        "vault.code.merge_queue.requeue_survivors" => encode(
+            vault_code_merge_queue_requeue_survivors(memory, decode(value)?)?,
+        ),
+        "vault.code.merge_queue.land_reviewed" => encode(vault_code_merge_queue_land_reviewed(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.code.merge_queue.settle_slow" => {
+            encode(vault_code_merge_queue_settle_slow(memory, decode(value)?)?)
+        }
+        "vault.code.merge_queue.recover" => {
+            encode(vault_code_merge_queue_recover(memory, decode(value)?)?)
+        }
         "vault.artifacts.export" => encode(vault_artifacts_export(memory, decode(value)?)?),
         "vault.agents.create" => encode(vault_agents_create(memory, decode(value)?)?),
         "vault.agents.get" => encode(vault_agents_get(memory, decode(value)?)?),
@@ -9315,6 +9517,13 @@ pub fn invoke(
         "vault.notes.from_entity" => encode(vault_notes_from_entity(memory, decode(value)?)?),
         "vault.notes.read" => encode(vault_notes_read(memory, decode(value)?)?),
         "vault.notes.history" => encode(vault_notes_history(memory, decode(value)?)?),
+        "vault.notes.history_purge" => encode(vault_notes_history_purge(memory, decode(value)?)?),
+        "vault.notes.history_purge_execute" => {
+            encode(vault_notes_history_purge_execute(memory, decode(value)?)?)
+        }
+        "vault.notes.history_purge_receipts" => {
+            encode(vault_notes_history_purge_receipts(memory, decode(value)?)?)
+        }
         "vault.notes.editor.bind" => encode(vault_notes_editor_bind(memory, decode(value)?)?),
         "vault.notes.editor.close" => encode(vault_notes_editor_close(memory, decode(value)?)?),
         "vault.notes.edit" => encode(vault_notes_edit(memory, decode(value)?)?),
@@ -11742,6 +11951,69 @@ pub fn vault_code_symbols_definitions(
         input,
     )
 }
+pub fn vault_code_merge_queue_enqueue(
+    memory: &Memory<'_>,
+    input: crate::memory::merge_queue_doors::MergeQueueEnqueueRequest,
+) -> MemoryResult<crate::memory::merge_queue_doors::MergeQueueBatchView> {
+    memory.merge_queue_enqueue_as(
+        &memory.embedded_owner("vault.code.merge_queue.enqueue")?,
+        input,
+    )
+}
+pub fn vault_code_merge_queue_stage(
+    memory: &Memory<'_>,
+    input: crate::memory::merge_queue_doors::MergeQueueBatchRequest,
+) -> MemoryResult<crate::memory::merge_queue_doors::MergeQueueBatchView> {
+    memory.merge_queue_stage_as(
+        &memory.embedded_owner("vault.code.merge_queue.stage")?,
+        input,
+    )
+}
+pub fn vault_code_merge_queue_observe(
+    memory: &Memory<'_>,
+    input: crate::memory::merge_queue_doors::MergeQueueObserveRequest,
+) -> MemoryResult<crate::memory::merge_queue_doors::MergeQueueObservation> {
+    memory.merge_queue_observe_as(
+        &memory.embedded_owner("vault.code.merge_queue.observe")?,
+        input,
+    )
+}
+pub fn vault_code_merge_queue_requeue_survivors(
+    memory: &Memory<'_>,
+    input: crate::memory::merge_queue_doors::MergeQueueBatchRequest,
+) -> MemoryResult<crate::memory::merge_queue_doors::MergeQueueRequeueView> {
+    memory.merge_queue_requeue_survivors_as(
+        &memory.embedded_owner("vault.code.merge_queue.requeue_survivors")?,
+        input,
+    )
+}
+pub fn vault_code_merge_queue_land_reviewed(
+    memory: &Memory<'_>,
+    input: crate::memory::merge_queue_doors::MergeQueueBatchRequest,
+) -> MemoryResult<crate::memory::merge_queue_doors::MergeQueueBatchView> {
+    memory.merge_queue_land_reviewed_as(
+        &memory.embedded_owner("vault.code.merge_queue.land_reviewed")?,
+        input,
+    )
+}
+pub fn vault_code_merge_queue_settle_slow(
+    memory: &Memory<'_>,
+    input: crate::memory::merge_queue_doors::MergeQueueRepoRequest,
+) -> MemoryResult<crate::memory::merge_queue_doors::MergeQueuePointersView> {
+    memory.merge_queue_settle_slow_as(
+        &memory.embedded_owner("vault.code.merge_queue.settle_slow")?,
+        input,
+    )
+}
+pub fn vault_code_merge_queue_recover(
+    memory: &Memory<'_>,
+    input: crate::memory::merge_queue_doors::MergeQueueRepoRequest,
+) -> MemoryResult<crate::memory::merge_queue_doors::MergeQueuePointersView> {
+    memory.merge_queue_recover_as(
+        &memory.embedded_owner("vault.code.merge_queue.recover")?,
+        input,
+    )
+}
 pub fn vault_artifacts_export(
     memory: &Memory<'_>,
     input: crate::blob_artifact::ArtifactExportRequest,
@@ -13583,6 +13855,36 @@ pub fn vault_notes_history(
     input: crate::note::NoteAccessRequest,
 ) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::note::NoteHistoryView>>> {
     memory.note_history(&input)
+}
+pub fn vault_notes_history_purge(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::NoteHistoryPurgeRequest,
+) -> MemoryResult<crate::task_verb::sdk::NoteHistoryPurgeOutcome> {
+    crate::task_verb::sdk::purge_note_history_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.notes.history_purge")?,
+        input,
+    )
+}
+pub fn vault_notes_history_purge_execute(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::NoteHistoryPurgeExecuteRequest,
+) -> MemoryResult<crate::task_verb::sdk::NoteHistoryPurgeReceipt> {
+    crate::task_verb::sdk::execute_note_history_purge_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.notes.history_purge_execute")?,
+        input,
+    )
+}
+pub fn vault_notes_history_purge_receipts(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::NoteHistoryPurgeRequest,
+) -> MemoryResult<Vec<crate::task_verb::sdk::NoteHistoryPurgeReceipt>> {
+    crate::task_verb::sdk::note_history_purge_receipts_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.notes.history_purge_receipts")?,
+        input,
+    )
 }
 pub fn vault_notes_editor_bind(
     memory: &Memory<'_>,

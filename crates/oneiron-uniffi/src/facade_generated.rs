@@ -1356,6 +1356,41 @@ export_facade! {
     let output = client.vault_code_symbols_definitions(&input)?;
     crate::codec::lift_record("vault.code.symbols.definitions", &output)
 };
+"vault.code.merge_queue.enqueue" => fn vault_code_merge_queue_enqueue(&self, input: MergeQueueEnqueueRequest) -> MergeQueueBatchView = |client| {
+    let input: oneiron::memory::merge_queue_doors::MergeQueueEnqueueRequest = crate::codec::lower_record("vault.code.merge_queue.enqueue", input)?;
+    let output = client.vault_code_merge_queue_enqueue(&input)?;
+    crate::codec::lift_record("vault.code.merge_queue.enqueue", &output)
+};
+"vault.code.merge_queue.stage" => fn vault_code_merge_queue_stage(&self, input: MergeQueueBatchRequest) -> MergeQueueBatchView = |client| {
+    let input: oneiron::memory::merge_queue_doors::MergeQueueBatchRequest = crate::codec::lower_record("vault.code.merge_queue.stage", input)?;
+    let output = client.vault_code_merge_queue_stage(&input)?;
+    crate::codec::lift_record("vault.code.merge_queue.stage", &output)
+};
+"vault.code.merge_queue.observe" => fn vault_code_merge_queue_observe(&self, input: MergeQueueObserveRequest) -> MergeQueueObservation = |client| {
+    let input: oneiron::memory::merge_queue_doors::MergeQueueObserveRequest = crate::codec::lower_record("vault.code.merge_queue.observe", input)?;
+    let output = client.vault_code_merge_queue_observe(&input)?;
+    crate::codec::lift_record("vault.code.merge_queue.observe", &output)
+};
+"vault.code.merge_queue.requeue_survivors" => fn vault_code_merge_queue_requeue_survivors(&self, input: MergeQueueBatchRequest) -> MergeQueueRequeueView = |client| {
+    let input: oneiron::memory::merge_queue_doors::MergeQueueBatchRequest = crate::codec::lower_record("vault.code.merge_queue.requeue_survivors", input)?;
+    let output = client.vault_code_merge_queue_requeue_survivors(&input)?;
+    crate::codec::lift_record("vault.code.merge_queue.requeue_survivors", &output)
+};
+"vault.code.merge_queue.land_reviewed" => fn vault_code_merge_queue_land_reviewed(&self, input: MergeQueueBatchRequest) -> MergeQueueBatchView = |client| {
+    let input: oneiron::memory::merge_queue_doors::MergeQueueBatchRequest = crate::codec::lower_record("vault.code.merge_queue.land_reviewed", input)?;
+    let output = client.vault_code_merge_queue_land_reviewed(&input)?;
+    crate::codec::lift_record("vault.code.merge_queue.land_reviewed", &output)
+};
+"vault.code.merge_queue.settle_slow" => fn vault_code_merge_queue_settle_slow(&self, input: MergeQueueRepoRequest) -> MergeQueuePointersView = |client| {
+    let input: oneiron::memory::merge_queue_doors::MergeQueueRepoRequest = crate::codec::lower_record("vault.code.merge_queue.settle_slow", input)?;
+    let output = client.vault_code_merge_queue_settle_slow(&input)?;
+    crate::codec::lift_record("vault.code.merge_queue.settle_slow", &output)
+};
+"vault.code.merge_queue.recover" => fn vault_code_merge_queue_recover(&self, input: MergeQueueRepoRequest) -> MergeQueuePointersView = |client| {
+    let input: oneiron::memory::merge_queue_doors::MergeQueueRepoRequest = crate::codec::lower_record("vault.code.merge_queue.recover", input)?;
+    let output = client.vault_code_merge_queue_recover(&input)?;
+    crate::codec::lift_record("vault.code.merge_queue.recover", &output)
+};
 "vault.artifacts.export" => fn vault_artifacts_export(&self, input: ArtifactExportRequest) -> Option<ArtifactExportFile> = |client| {
     let input: oneiron::blob_artifact::ArtifactExportRequest = crate::codec::lower_record("vault.artifacts.export", input)?;
     let output = client.vault_artifacts_export(&input)?;
@@ -2310,6 +2345,21 @@ export_facade! {
     let input: oneiron::note::NoteAccessRequest = crate::codec::lower_record("vault.notes.history", input)?;
     let output = client.vault_notes_history(&input)?;
     crate::codec::lift_record("vault.notes.history", &output)
+};
+"vault.notes.history_purge" => fn vault_notes_history_purge(&self, input: NoteHistoryPurgeRequest) -> NoteHistoryPurgeOutcome = |client| {
+    let input: oneiron::task_verb::sdk::NoteHistoryPurgeRequest = crate::codec::lower_record("vault.notes.history_purge", input)?;
+    let output = client.vault_notes_history_purge(&input)?;
+    crate::codec::lift_record("vault.notes.history_purge", &output)
+};
+"vault.notes.history_purge_execute" => fn vault_notes_history_purge_execute(&self, input: NoteHistoryPurgeExecuteRequest) -> NoteHistoryPurgeReceipt = |client| {
+    let input: oneiron::task_verb::sdk::NoteHistoryPurgeExecuteRequest = crate::codec::lower_record("vault.notes.history_purge_execute", input)?;
+    let output = client.vault_notes_history_purge_execute(&input)?;
+    crate::codec::lift_record("vault.notes.history_purge_execute", &output)
+};
+"vault.notes.history_purge_receipts" => fn vault_notes_history_purge_receipts(&self, input: NoteHistoryPurgeRequest) -> Vec<NoteHistoryPurgeReceipt> = |client| {
+    let input: oneiron::task_verb::sdk::NoteHistoryPurgeRequest = crate::codec::lower_record("vault.notes.history_purge_receipts", input)?;
+    let output = client.vault_notes_history_purge_receipts(&input)?;
+    crate::codec::lift_record("vault.notes.history_purge_receipts", &output)
 };
 "vault.notes.editor.bind" => fn vault_notes_editor_bind(&self, input: NoteAccessRequest) -> ScopedReadResultOptionalNoteEditorBinding = |client| {
     let input: oneiron::note::NoteAccessRequest = crate::codec::lower_record("vault.notes.editor.bind", input)?;
