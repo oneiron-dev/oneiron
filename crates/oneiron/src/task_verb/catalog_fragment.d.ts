@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 370 code-mode rows (350 host rows, 20 run rows), 1321 declarations.
-// Replies: 317 fully typed, 49 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 378 code-mode rows (358 host rows, 20 run rows), 1343 declarations.
+// Replies: 325 fully typed, 49 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 79; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -532,9 +532,10 @@ declare namespace Sdk {
   type CandidateRef = { config_ref: string; config_sha256: string };
   type PriorRung = "user" | "persona" | "global";
   type PriorSeed = { rung: PriorRung; alpha: number; beta: number; source_ref: string };
-  type ResearchBindWire = { root: EntityId; config: CampaignConfig; target: ResearchTarget; holder?: string | null; confirmation?: ResearchConfirmationSeat | null; share?: string | null; incumbent: CandidateRef; prior_ladder?: PriorSeed[] };
+  type ResearchExecution = { experimenter: EntityId; scorer: EntityId; referee?: EntityId | null; experiment_units: number; measure_units: number; confirm_units: number };
+  type ResearchBindWire = { root: EntityId; config: CampaignConfig; target: ResearchTarget; holder?: string | null; confirmation?: ResearchConfirmationSeat | null; share?: string | null; incumbent: CandidateRef; prior_ladder?: PriorSeed[]; execution?: ResearchExecution | null };
   type ResearchGoalPin = { goal_id: EntityId; revision: string; project?: [EntityId, EntityId] | null };
-  type ResearchBinding = { root: AttemptId; run_id: string; config: CampaignConfig; config_sha256: string; target: ResearchTarget; goal?: ResearchGoalPin | null; holder?: string | null; policy_digest: string; confirmation?: ResearchConfirmationSeat | null; share?: string | null; prior_ladder: PriorSeed[]; bound_at: number };
+  type ResearchBinding = { root: AttemptId; run_id: string; config: CampaignConfig; config_sha256: string; target: ResearchTarget; goal?: ResearchGoalPin | null; holder?: string | null; policy_digest: string; confirmation?: ResearchConfirmationSeat | null; share?: string | null; prior_ladder: PriorSeed[]; execution?: ResearchExecution | null; bound_at: number };
   type ForkKind = "variation" | "debug";
   type ResearchForkWire = { root: EntityId; parent: EntityId; child: EntityId; kind: ForkKind; candidate: CandidateRef };
   type ExperimentKind = "root" | "variation" | "debug" | "weave";
@@ -1041,7 +1042,8 @@ declare namespace Sdk {
   type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; effect_class?: string | null; press: string; screenshot?: string | null; screenshot_evidence?: ReceiptEvidence | null };
   type LibraryCard = { workflow: string; site: string; subgoal: string; params: string[]; runs: number; failures: number };
   type Observation = { seq: number; url: string; title: string; full: boolean; rows: Row[]; removed?: string[]; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean };
-  type ObserveInput = { since?: number | null };
+  type ObservationPage = Observation & { next?: string | null };
+  type ObserveInput = { since?: number | null; cursor?: string | null };
   type FindInput = { role?: string | null; name?: string | null };
   type FindOutput = { rows: Row[] };
   type ClickInput = { ref: string };
@@ -1061,10 +1063,10 @@ declare namespace Sdk {
   type ZoomInput = { image: string; x: number; y: number; width: number; height: number; scale?: number | null };
   type ScrollDirection = "up" | "down" | "left" | "right";
   type DecideStep = { question: string; targets?: string[]; role?: string | null; name?: string | null; locate?: boolean; text?: string | null; clear?: boolean; option?: string | null };
-  type BatchStep = { step: "open"; url: string } | { step: "click"; ref: string } | { step: "type"; ref: string; text: string; clear?: boolean } | { step: "select"; ref: string; option: string } | { step: "wait_for"; role?: string | null; name?: string | null; timeout_ms?: number | null } | { step: "expect"; ref?: string | null; role?: string | null; name?: string | null; value?: string | null; absent?: boolean } | { step: "screenshot"; trigger: ScreenshotTrigger } | { step: "key"; key: string; modifiers?: string[]; ref?: string | null } | { step: "hotkey"; keys: string[] } | { step: "scroll"; direction: ScrollDirection; amount?: number | null; ref?: string | null } | (DecideStep & { step: "decide" });
+  type BatchStep = { step: "open"; url: string } | { step: "click"; ref: string } | { step: "type"; ref: string; text: string; clear?: boolean } | { step: "select"; ref: string; option: string } | { step: "wait_for"; targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null } | { step: "expect"; ref?: string | null; role?: string | null; name?: string | null; value?: string | null; absent?: boolean } | { step: "screenshot"; trigger: ScreenshotTrigger } | { step: "key"; key: string; modifiers?: string[]; ref?: string | null } | { step: "hotkey"; keys: string[] } | { step: "scroll"; direction: ScrollDirection; amount?: number | null; ref?: string | null } | (DecideStep & { step: "decide" });
   type BatchInput = { subgoal?: string | null; steps: BatchStep[]; until_ms?: number | null; no_model?: boolean };
   type SubgoalStatus = "done" | "NEEDS_AGENT" | "NEEDS_YOU";
-  type BatchOutput = { status: SubgoalStatus; completed: number; failed_step?: number | null; error?: string | null; observation?: Observation | null; receipts?: EffectReceipt[]; decisions?: unknown[]; until_ms?: number | null };
+  type BatchOutput = { status: SubgoalStatus; completed: number; failed_step?: number | null; error?: string | null; observation?: Observation | null; receipts?: EffectReceipt[]; decisions?: unknown[]; until_ms?: number | null; next?: string | null };
   type LibraryFindInput = { site?: string | null; subgoal?: string | null };
   type LibraryFindOutput = { site: string; workflows: LibraryCard[] };
   type ProposeInput = { subgoal: string; params?: string[]; steps: BatchStep[]; postcondition: ExpectInput[]; args?: Record<string, string> };
@@ -1072,8 +1074,13 @@ declare namespace Sdk {
   type ProposeOutput = { admitted: boolean; workflow?: string | null; refused_by?: WorkflowCheck | null; unmet?: number[]; replay?: BatchOutput | null };
   type LibraryRetireInput = { workflow: string; reason?: string | null };
   type LibraryRetireOutput = { retired: LibraryCard };
+  type LibraryRetiredInput = { site?: string | null };
+  type RetiredCard = { card: LibraryCard; retired_at: number; reason?: string | null };
+  type LibraryRetiredOutput = { site: string; retired: RetiredCard[] };
   type LibraryRunInput = { workflow: string; args?: Record<string, string> };
   type LibraryRunOutput = { workflow: string; status: SubgoalStatus; unmet?: number[]; batch: BatchOutput };
+  type HandoverInput = { reason: string };
+  type HandoverOutput = { reason: string; asked_at_ms: number };
   type KeyInput = { key: string; modifiers?: string[]; ref?: string | null };
   type HotkeyInput = { keys: string[] };
   type ScrollInput = { direction: ScrollDirection; amount?: number | null; ref?: string | null };
@@ -1081,8 +1088,6 @@ declare namespace Sdk {
   type DesktopWindow = { window: string; app: string; title: string; current: boolean; front: boolean };
   type WindowsOutput = { windows: DesktopWindow[] };
   type WindowInput = { window: string };
-  type HandoverInput = { reason: string };
-  type HandoverOutput = { reason: string; asked_at_ms: number };
   type CommitRequest = { claims: ClaimInput[] };
   type RefusalReason = "INVENTED_REFERENCE" | "GATE_REFUSED";
   type RecordRefusal = { reason: RefusalReason; code: string; message: string; suggestions: string[]; field: string };
@@ -1128,6 +1133,23 @@ declare namespace Sdk {
   type EsignCreateRequest = { document_ref: string; draft: EsignDocument };
   type DocumentStatus = "draft" | "pending" | "completed" | "rejected" | "voided" | "expired";
   type EsignDraftView = { document_ref: string; status: DocumentStatus; title: string; expires_at: number; project_ref?: string | null; recipients: string[]; fields: number };
+  type EsignGetRequest = { document_ref: string };
+  type DeliveryStatus = "unsent" | "sent" | "viewed";
+  type SigningStatus = "waiting" | "ready" | "completed" | "rejected";
+  type AccessStatus = "unverified" | "verified";
+  type RecipientState = { delivery: DeliveryStatus; signing: SigningStatus; access: AccessStatus; expires_at: number };
+  type FieldValue = { kind: "text"; value: string } | { kind: "checked"; value: boolean } | { kind: "signature"; value: { image_ref: string } };
+  type SignatureRow = { field: string; recipient: string; value: FieldValue; at: number };
+  type EsignEvent = { event: "drafted"; document: EsignDocument } | { event: "sent" } | { event: "viewed"; recipient: string } | { event: "field_saved"; signature: SignatureRow } | { event: "signed"; recipient: string; next?: string | null } | { event: "declined"; recipient: string; reason: string } | { event: "voided"; reason: string } | { event: "expired"; recipient?: string | null } | { event: "reminded"; recipient: string; rung: number } | { event: "sealed"; rejected: boolean; item_sha256: number[][] } | { event: "reseal_requested"; owner: string; authority: string };
+  type EsignAuditActor = { actor: string; ip?: string | null; user_agent?: string | null };
+  type EsignEventRow = { sequence: number; previous_sha256: number[]; event: EsignEvent; actor: EsignAuditActor; at: number };
+  type EsignDocumentView = { document_ref: string; status: DocumentStatus; awaits_owner_answer: boolean; document: EsignDocument; recipients: Record<string, RecipientState>; signatures: SignatureRow[]; rejection?: string | null; sealed_sha256: string[]; audit: EsignEventRow[] };
+  type EsignLinksIssueRequest = { document_ref: string; rotate?: boolean };
+  type EsignIssuedLink = { recipient: string; email: string; capability: string };
+  type EsignLinksView = { document_ref: string; issued: EsignIssuedLink[]; unchanged: string[] };
+  type EsignDispatchRequest = { document_ref: string; recipient_count: number; on_behalf_of?: string | null; idempotency_key?: string | null };
+  type EsignDispatchView = { document_ref: string; verb: string; intent_ref: string; outcome: string; gate_outcome: string; gate_decision_ref?: string | null; gate_reason_codes: string[] };
+  type EsignVoidRequest = { document_ref: string; recipient_count: number; reason: string; on_behalf_of?: string | null; idempotency_key?: string | null };
   type CoreWriteTextField = { field: string; value: string };
   type ConversationCreateInput = { id?: string | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: CoreWriteTextField[] | null };
   type CoreEntityWriteReceipt = { id: string; entity_type: number; learned_at: number; body: unknown };
@@ -1256,7 +1278,7 @@ declare namespace Sdk {
   type OracleReceipt = { profile: string; powerpoint_version: string; macos_version: string; font_versions: string[]; steps: StepOutcome[]; clean: boolean };
   type DeckGateView = { profile: string; projector: string; open: boolean; receipt?: OracleReceipt | null };
   type DeckOracleRequest = { receipt: OracleReceipt };
-  type DeckPreviewRequest = { artifact_ref: string; slides: number[] };
+  type DeckPreviewRequest = { artifact_ref: string; fork_ref?: string | null; slides: number[] };
   type DeckPreviewSlide = { slide: number; media_type: string; image_hash: string; content_base64: string };
   type DeckPreview = { frontier: number[]; profile: string; projector: string; export_key: string; renderer: string; provisional: boolean; slides: DeckPreviewSlide[] };
   type AppendBlobVersionRequest = { artifact_ref: string; content_base64: string; run_ref?: string | null; occurred_at: number; learned_at?: number | null };
@@ -1400,18 +1422,20 @@ declare namespace self {
     spawn(input: Sdk.AgentSpawnInput): Promise<Sdk.AgentSpawnOutput | StoredResult>;
   };
   const browser: {
-    /** Runs one batched program of browser steps for a subgoal, stopping at the first step that fails. */
+    /** Runs one batched program of browser steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor. */
     batch(input: Sdk.BatchInput): Promise<Sdk.BatchOutput | StoredResult>;
-    /** Clicks one page target and observes the result. */
-    click(input: Sdk.ClickInput): Promise<Sdk.Observation | StoredResult>;
-    /** Clicks a point of a held screenshot, mapped onto the viewport. */
-    click_at(input: Sdk.PointInput): Promise<Sdk.Observation | StoredResult>;
+    /** Clicks one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor. */
+    click(input: Sdk.ClickInput): Promise<Sdk.ObservationPage | StoredResult>;
+    /** Clicks a point of a held screenshot, mapped onto the viewport; a long page's observation comes in pages, read on with observe and its next cursor. */
+    click_at(input: Sdk.PointInput): Promise<Sdk.ObservationPage | StoredResult>;
     /** Crops a held image to a rectangle. */
     crop(input: Sdk.CropInput): Promise<Sdk.ImageOutput | StoredResult>;
     /** Checks that a page row is present or absent, and holds a given value. */
     expect(input: Sdk.ExpectInput): Promise<Sdk.ExpectOutput | StoredResult>;
     /** Finds the page rows whose role and name match. */
     find(input: Sdk.FindInput): Promise<Sdk.FindOutput | StoredResult>;
+    /** Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record. */
+    handover(input: Sdk.HandoverInput): Promise<Sdk.HandoverOutput | StoredResult>;
     library: {
       /** The replay library's programs for a site, or for the open page's site. */
       find(input: Sdk.LibraryFindInput): Promise<Sdk.LibraryFindOutput | StoredResult>;
@@ -1419,19 +1443,21 @@ declare namespace self {
       propose(input: Sdk.ProposeInput): Promise<Sdk.ProposeOutput | StoredResult>;
       /** Takes a program out of the replay library for every later run, and returns the card it had. */
       retire(input: Sdk.LibraryRetireInput): Promise<Sdk.LibraryRetireOutput | StoredResult>;
+      /** The programs retires took out of the replay library for a site, or for the open page's site, the newest first, each with when and why. */
+      retired(input: Sdk.LibraryRetiredInput): Promise<Sdk.LibraryRetiredOutput | StoredResult>;
       /** Runs a replay library program live with its arguments; a missed postcondition goes back to the planner. */
       run(input: Sdk.LibraryRunInput): Promise<Sdk.LibraryRunOutput | StoredResult>;
     };
-    /** Observes the current page of the run's browser session. */
-    observe(input: Sdk.ObserveInput): Promise<Sdk.Observation | StoredResult>;
-    /** Opens a URL in the run's own browser session and observes the page. */
-    open(input: Sdk.OpenInput): Promise<Sdk.Observation | StoredResult>;
+    /** Observes the current page of the run's browser session, in pages: an answer with next goes on, and observe with that cursor reads the next page. */
+    observe(input: Sdk.ObserveInput): Promise<Sdk.ObservationPage | StoredResult>;
+    /** Opens a URL in the run's own browser session and observes the page; a long page's observation comes in pages, read on with observe and its next cursor. */
+    open(input: Sdk.OpenInput): Promise<Sdk.ObservationPage | StoredResult>;
     /** Takes a screenshot the session holds, by image ref and never captioned. */
     screenshot(input: Sdk.ScreenshotInput): Promise<Sdk.ScreenshotOutput | StoredResult>;
-    /** Picks the option of a select element by its label, text or value. */
-    select(input: Sdk.SelectInput): Promise<Sdk.Observation | StoredResult>;
-    /** Types text into one page target and observes the result. */
-    type(input: Sdk.TypeInput): Promise<Sdk.Observation | StoredResult>;
+    /** Picks the option of a select element by its label, text or value; a long page's observation comes in pages, read on with observe and its next cursor. */
+    select(input: Sdk.SelectInput): Promise<Sdk.ObservationPage | StoredResult>;
+    /** Types text into one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor. */
+    type(input: Sdk.TypeInput): Promise<Sdk.ObservationPage | StoredResult>;
     /** Reads back a held image by its ref. */
     view(input: Sdk.ViewInput): Promise<Sdk.ImageOutput | StoredResult>;
     /** Waits until a page row its refs name, or else some row matching a role and name, is there. */
@@ -1602,7 +1628,7 @@ declare const vault: Sdk.VaultHost & {
         merge(input: Sdk.DeckForkMergeRequest): Promise<Sdk.LandingReceipt | StoredResult>;
         /** Records the deck oracle's receipt for its export profile, replacing the earlier one; a receipt that does not pass closes the gate a pass opened. */
         oracle(input: Sdk.DeckOracleRequest): Promise<Sdk.DeckGateView | StoredResult>;
-        /** The asked slides of a deck's head as this host's review renderer draws the export it projects now: provisional images; nothing lands or is proposed. */
+        /** The asked slides of a deck's head, or of an open fork's merge candidate, as this host's review renderer draws its export now: provisional images kept by export key; nothing lands or is proposed. */
         preview(input: Sdk.DeckPreviewRequest): Promise<Sdk.DeckPreview | StoredResult>;
         /** A deck fork's merge preflight against the live head: the three-way diff with its conflicts, the stale units, and the head a merge names. */
         review(input: Sdk.OfficeBodyForkRequest): Promise<Sdk.DeckReviewView | StoredResult>;
@@ -1824,6 +1850,18 @@ declare const vault: Sdk.VaultHost & {
   esign: {
     /** Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act. */
     create(input: Sdk.EsignCreateRequest): Promise<Sdk.EsignDraftView | StoredResult>;
+    /** Reads one signing document as its trail folds: its status, recipients, filled fields and its hash-chained audit trail. */
+    get(input: Sdk.EsignGetRequest): Promise<Sdk.EsignDocumentView | StoredResult>;
+    links: {
+      /** The vault owner mints the signing links of a drafted document and receives each new one once, to deliver to its recipient. */
+      issue(input: Sdk.EsignLinksIssueRequest): Promise<Sdk.EsignLinksView | StoredResult>;
+    };
+    /** Reminds the recipients whose turn it is to sign a pending document, through the outbound gate, as the caller. */
+    remind(input: Sdk.EsignDispatchRequest): Promise<Sdk.EsignDispatchView | StoredResult>;
+    /** Sends a drafted signing document to its recipients through the outbound gate, as the caller; an agent sends only within its principal envelope. */
+    send_for_signature(input: Sdk.EsignDispatchRequest): Promise<Sdk.EsignDispatchView | StoredResult>;
+    /** Withdraws a drafted or pending signing document unsealed and tells its recipients why, through the outbound gate, as the caller. */
+    void(input: Sdk.EsignVoidRequest): Promise<Sdk.EsignDispatchView | StoredResult>;
   };
   explain: {
     /** Why a write needed approval: the gate decision behind one gate receipt, its outcome, reason codes and cited policy rows; none when the caller may not read it. */
@@ -2086,6 +2124,8 @@ declare const vault: Sdk.VaultHost & {
       /** Pins an agent as a room's host, or clears the stored host, pin or handoff. */
       pin(input: Sdk.RoomHostPin): Promise<Sdk.RoomStanding | StoredResult>;
     };
+    /** The vault's owner invites a person into an ordinary room: files her join with the owner's admission yes, which holds until she answers yes through vault.rooms.consent. */
+    invite(input: Sdk.JoinRequest): Promise<Sdk.JoinOutcome | StoredResult>;
     /** Files and decides a request to take part in a room or one of its threads. */
     join(input: Sdk.JoinRequest): Promise<Sdk.JoinOutcome | StoredResult>;
     /** The caller's rooms its own grants admit; inside a room turn, only that room. */

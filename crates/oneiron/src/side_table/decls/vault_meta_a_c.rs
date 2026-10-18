@@ -132,6 +132,10 @@ side_tables! {
     /// One bound autoresearch campaign: its ruler, goal pin, policy digest, cohort and budget
     /// share, written once. Key: id16 (root attempt).
     AUTORESEARCH_BINDING: VaultMeta b"autoresearch:binding:v1:" Named;
+    /// One autoresearch host continuation (FIX 886): the bootstrap measure or one selection
+    /// round's work, its pending tasks, the run in flight with its reservation, and the runs it
+    /// dispatched. Key: id16 (root attempt) + u64be (0 bootstrap, n + 1 round n).
+    AUTORESEARCH_CONTINUATION: VaultMeta b"autoresearch:continuation:v1:" Named;
     /// One held-out selection benchmark of an autoresearch parent-selection estimator version
     /// against the DGM formula, recorded once. Key: string (estimator version).
     AUTORESEARCH_ESTIMATOR: VaultMeta b"autoresearch:estimator:v1:" Named;
@@ -393,6 +397,11 @@ side_tables! {
     /// Node-local executor coverage bound to a minted epoch SUMMARY (fixed 73-byte frame). Key:
     /// id16(run) + id16(summary).
     CODE_RUN_COMPACTION: VaultMeta b"code_run:compaction:v1:" Raw;
+    /// One contribution check's matched-fork rows (FIX 3028): each fork's receipt (the capsule it
+    /// regenerated, its request hash, model, seed, response body ref, anchor hash and score), or
+    /// why the pair is unavailable for good. Key: hash32(attempt receipt, skill, axis) +
+    /// string(row: `with_skill`, `without_skill` or `unavailable`).
+    CODE_RUN_CONTRIBUTION_FORK: VaultMeta b"code_run:contribution_fork:v1:" Named Engine;
     /// Which executor run's fold a fold-words dependent stands for: the dependency walk reaches
     /// it when a record the fold's summary came from is withdrawn (fixed 24-byte frame: id16(run)
     /// + fold u64 BE). Key: id16(dependent).
@@ -430,6 +439,10 @@ side_tables! {
     CODE_RUN_READER_WAIT: VaultMeta b"code_run:reader_wait:v1:" Raw Authored;
     /// A code run's replay record, keyed by run id. Key: id16.
     CODE_RUN_REPLAY: VaultMeta b"code_run:replay:v1:" Raw Authored;
+    /// A canonical attempt's step replay capsule (FIX 3028): the request the step sent by its body
+    /// ref and hash, each skill exposure in it, its seed and the rung that answered it. Key:
+    /// id16(attempt) + be64(lease generation) + be64(step).
+    CODE_RUN_REPLAY_CAPSULE: VaultMeta b"code_run:replay_capsule:v1:" Named Authored;
     /// A summary a code run's `summarize` made: its task and its text's occurrence (JSON). Key:
     /// bytes32(memo: BLAKE3 of the members' occurrences and ranges, and the recipe).
     CODE_RUN_SUMMARY_MEMO: VaultMeta b"code_run:summary_memo:v1:" Raw Authored;

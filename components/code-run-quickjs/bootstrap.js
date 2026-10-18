@@ -220,6 +220,10 @@
   // so no step result is held whole here and none has a size budget.
   delete sdk.oneiron.output;
   const sendText = abi["output-text"], sendBytes = abi["output-bytes"];
+  // A proposed file streams the same way (foreign builds only), so no
+  // proposed file is held whole here either.
+  delete sdk.oneiron.propose;
+  const openFile = abi["proposal-open"], sendFile = abi["proposal-chunk"], closeFile = abi["proposal-close"];
   const nativeStringify = JSON.stringify;
   const string = String;
   const proposals = [];
@@ -303,14 +307,16 @@
   }}));
   // Each finish replaces the answer; the last one is the step's result.
   set("finish", value => { done = true; sendFramed("finish", text(value), true); });
+  const byteView = (bytes, message) => {
+    if (bytes instanceof Uint8Array) return bytes;
+    bytes = Array.from(bytes);
+    if (!bytes.every(n => Number.isInteger(n) && n >= 0 && n <= 255)) throw new TypeError(message);
+    return new Uint8Array(bytes);
+  };
   // Appends to the step's file at `path`, so a large file is written in pieces.
   set("writeOutput", (path, bytes) => {
     path = outputPath(path);
-    if (!(bytes instanceof Uint8Array)) {
-      bytes = Array.from(bytes);
-      if (!bytes.every(n => Number.isInteger(n) && n >= 0 && n <= 255)) throw new TypeError("invalid output bytes");
-      bytes = new Uint8Array(bytes);
-    }
+    bytes = byteView(bytes, "invalid output bytes");
     let at = 0;
     do {
       sendBytes(path, subarray(bytes, at, at + BYTE_FRAME));
@@ -318,10 +324,21 @@
     } while (at < bytes.length);
   });
   if (!sdk.self) set("propose", Object.freeze({
-    file(path, bytes) {
-      path = outputPath(path, true); bytes = Array.from(bytes);
-      if (!bytes.every(n => Number.isInteger(n) && n >= 0 && n <= 255)) throw new TypeError("invalid proposal bytes");
-      proposals.push({tag:"file-write", val:{path, bytes}});
+    // `chunks` is one buffer (a Uint8Array or byte array) or any iterable of
+    // them, read lazily: each piece goes to the host in frames as it is
+    // yielded, so a file of any size is never held whole. A file whose
+    // chunks throw stays open, and the step fails with it.
+    file(path, chunks) {
+      path = outputPath(path, true);
+      const pieces = chunks instanceof Uint8Array || Array.isArray(chunks) && chunks.every(n => typeof n === "number")
+        ? [chunks] : chunks;
+      if (pieces == null || typeof pieces[Symbol.iterator] !== "function") throw new TypeError("invalid proposal bytes");
+      const id = openFile(path);
+      for (const piece of pieces) {
+        const bytes = byteView(piece, "invalid proposal bytes");
+        for (let at = 0; at < bytes.length; at += BYTE_FRAME) sendFile(id, subarray(bytes, at, at + BYTE_FRAME));
+      }
+      closeFile(id);
     },
     delete(path) {
       path = outputPath(path, true);

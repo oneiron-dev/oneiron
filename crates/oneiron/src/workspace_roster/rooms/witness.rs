@@ -24,8 +24,8 @@ pub(crate) struct RoomWitness {
     /// keeps its quotes in its room row alone, and its TURN is minted
     /// opaque: `None`, as for a stored TURN.
     pub(crate) quoted: Option<QuotedReply>,
-    /// The thread binding a minted TURN is born with (FIX 2951): its root
-    /// and, on the root, the audience it names. A stored TURN already holds
+    /// The thread binding a minted TURN is born with (FIX 2951): its root,
+    /// room and trunk anchor and, on the root, the audience it names. A stored TURN already holds
     /// the same one. `None` for a trunk turn, or outside a project room.
     pub(crate) thread: Option<ThreadBinding>,
 }
@@ -364,6 +364,8 @@ pub(crate) fn admit_witness(
                 }
                 ThreadBinding {
                     root: turn_id,
+                    room,
+                    anchor: thread_of,
                     audience: input.thread_audience.clone(),
                 }
             }
@@ -371,6 +373,8 @@ pub(crate) fn admit_witness(
         Some(root) => {
             let binding = ThreadBinding {
                 root,
+                room,
+                anchor: thread_of,
                 audience: None,
             };
             if input.thread_audience.is_some()

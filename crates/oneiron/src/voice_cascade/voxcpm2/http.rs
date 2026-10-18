@@ -206,17 +206,13 @@ fn render(
         .send()
         .and_then(reqwest::blocking::Response::error_for_status)
         .map_err(|_| invalid("worker render failed"))?;
-    let max_response = target.limits.max_pcm_bytes + target.limits.max_header_bytes + 4;
-    if response.content_length().is_some_and(|n| n > max_response) {
-        return Err(invalid("oversized worker response"));
-    }
+    // Rule 5: a render's audio is read whole, however long it speaks; only
+    // its framing and metadata header are checked.
     let mut received = Vec::new();
     response
-        .by_ref()
-        .take(max_response + 1)
         .read_to_end(&mut received)
         .map_err(|_| invalid("worker response failed"))?;
-    if received.len() as u64 > max_response || received.len() < 5 {
+    if received.len() < 5 {
         return Err(invalid("invalid worker response size"));
     }
     let n = u32::from_be_bytes(received[..4].try_into().map_err(|_| invalid("header"))?) as usize;

@@ -11,7 +11,7 @@ use super::plan::{ShapePlanItem, ShapePlanSummary};
 use crate::Vault;
 use crate::authority::HostSlipIssuer;
 use crate::consent::AuthenticatedOwner;
-use crate::error::{Error, Result};
+use crate::error::{Error, GateError, Result};
 use crate::inbox::InboxBulkVerb;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -92,7 +92,8 @@ impl Vault {
 
     /// The owner's answer to the apply whose group is `group_key`.
     /// Accept-all lands every waiting item, as an owner's apply approving
-    /// each `seq` would. Reject-all closes each as declined and cancels its
+    /// each `seq` would. Reject-all closes each as declined, declines a
+    /// filed grant's widen proposal with it, and cancels its
     /// row. Review-each changes nothing and returns the journal to answer
     /// item by item through `vault.shape.apply`.
     ///
@@ -127,11 +128,26 @@ impl Vault {
             }
             InboxBulkVerb::RejectAll => {
                 for entry in &mut journal.items {
-                    if open(&entry.state) {
-                        entry.state = ShapeItemState::Refused {
-                            reason: SHAPE_OWNER_DECLINED.to_owned(),
-                        };
+                    if !open(&entry.state) {
+                        continue;
                     }
+                    // A filed grant's widen proposal declines with it, so no
+                    // later accept in the widen inbox mints it. A proposal
+                    // the inbox already settled, or that another holder
+                    // owns, refuses the decline; the item still closes.
+                    if let ShapeItemState::Filed { proposal_ref, .. } = &entry.state {
+                        match self.reject_widen(owner, proposal_ref) {
+                            Ok(_)
+                            | Err(Error::Gate(
+                                GateError::InvalidConsentBound(_)
+                                | GateError::ConsentOwnerNotAuthenticated(_),
+                            )) => {}
+                            Err(error) => return Err(error),
+                        }
+                    }
+                    entry.state = ShapeItemState::Refused {
+                        reason: SHAPE_OWNER_DECLINED.to_owned(),
+                    };
                 }
                 journal.done = true;
                 self.put_shape_apply(&journal, now)?;

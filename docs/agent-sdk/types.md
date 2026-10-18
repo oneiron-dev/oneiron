@@ -1299,6 +1299,8 @@ class Oneiron:
             """Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members and cannot be changed later."""
         def join(self, spec: Facade.JoinRequest) -> Facade.JoinOutcome:
             """Files and decides a request to take part in a room or one of its threads."""
+        def invite(self, spec: Facade.JoinRequest) -> Facade.JoinOutcome:
+            """The vault's owner invites a person into an ordinary room: files her join with the owner's admission yes, which holds until she answers yes through vault.rooms.consent."""
         def consent(self, spec: Facade.ConsentAnswer) -> Facade.JoinOutcome:
             """One party's answer to a join that waits on it, after which the join is decided again."""
         @property
@@ -1426,6 +1428,19 @@ class Oneiron:
     class _VaultEsignVerbs:
         def create(self, spec: Facade.EsignCreateRequest) -> Facade.EsignDraftView:
             """Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act."""
+        def get(self, spec: Facade.EsignGetRequest) -> Facade.EsignDocumentView:
+            """Reads one signing document as its trail folds: its status, recipients, filled fields and its hash-chained audit trail."""
+        @property
+        def links(self) -> "Oneiron._VaultEsignLinksVerbs": ...
+        def send_for_signature(self, spec: Facade.EsignDispatchRequest) -> Facade.EsignDispatchView:
+            """Sends a drafted signing document to its recipients through the outbound gate, as the caller; an agent sends only within its principal envelope."""
+        def remind(self, spec: Facade.EsignDispatchRequest) -> Facade.EsignDispatchView:
+            """Reminds the recipients whose turn it is to sign a pending document, through the outbound gate, as the caller."""
+        def void(self, spec: Facade.EsignVoidRequest) -> Facade.EsignDispatchView:
+            """Withdraws a drafted or pending signing document unsealed and tells its recipients why, through the outbound gate, as the caller."""
+    class _VaultEsignLinksVerbs:
+        def issue(self, spec: Facade.EsignLinksIssueRequest) -> Facade.EsignLinksView:
+            """The vault owner mints the signing links of a drafted document and receives each new one once, to deliver to its recipient."""
     class _VaultConsolidationVerbs:
         def enqueue(self, spec: Facade.ConsolidationEnqueueRequest) -> Facade.DreamerAttemptRef:
             """Enqueues one consolidation attempt and returns its durable job reference."""

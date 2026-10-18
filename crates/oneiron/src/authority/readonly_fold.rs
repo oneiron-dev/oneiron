@@ -378,6 +378,23 @@ pub(super) fn is_history_incomplete(error: &Error) -> bool {
     )
 }
 
+/// The request a fold's or door's refusal for missing history names
+/// ([`history_required`]); None for any other error.
+pub(super) fn history_required_request(error: &Error) -> Option<AuthorityHistoryRequest> {
+    match error {
+        Error::Record(RecordError::AuthorityHistoryRequired {
+            vault_id,
+            checkpoint,
+            missing,
+        }) => Some(AuthorityHistoryRequest {
+            vault_id: *vault_id,
+            checkpoint: *checkpoint,
+            missing: missing.iter().copied().collect(),
+        }),
+        _ => None,
+    }
+}
+
 /// The stored log's fold behind `key` past `baseline` (OF-469). The rows the
 /// baseline folded are not read again: only the stored rows past it are
 /// decoded and verified, and the fold resumes from the baseline where its
