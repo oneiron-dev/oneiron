@@ -9,6 +9,7 @@ use crate::claim::{
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::Result;
 
+use super::candidate::is_resident_craft_candidate;
 use super::invalid;
 use super::rows::{
     ACTOR_CLAIM_LINEAGE_KEY, ACTOR_EDIT_COST_SCOPE_KEY, ACTOR_SKILL_FIT_SCOPE_KEY,
@@ -47,6 +48,8 @@ pub fn is_actor_claim_predicate(predicate: &str) -> bool {
 /// `src → Imported`. Imported rows can exist only as inert Proposed/Rejected
 /// data with an Imported evidence floor. Routing and projector head reads still
 /// require Observed/Auto; a peer's opinion never becomes local learned truth.
+/// The one native Proposed shape is a resident's dreaming candidate
+/// ([`super::candidate`]), which no head read takes as truth either.
 pub(crate) fn validate_actor_claim_structure(body: &ClaimBody) -> Result<()> {
     if !matches!(body.subject, ClaimSubject::Entity(_)) {
         return Err(invalid("actor.* claim subject must be an entity"));
@@ -60,6 +63,7 @@ pub(crate) fn validate_actor_claim_structure(body: &ClaimBody) -> Result<()> {
             ClaimApprovalStatus::Proposed | ClaimApprovalStatus::Rejected
         );
     if !archived
+        && !is_resident_craft_candidate(body)
         && (body.approval != ClaimApprovalStatus::Auto
             || body.source != Some(ClaimSource::Observed))
     {
