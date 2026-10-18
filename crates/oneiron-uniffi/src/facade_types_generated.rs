@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 315 facade rows, 1139 generated types.
+// UniFFI census: 315 facade rows, 1140 generated types.
 // Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 283.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -16709,6 +16709,17 @@ pub struct XlsxTable {
     pub worksheet: bool,
 }
 
+/// `oneiron_docedit::xlsx_body::XlsxSheetVisibility`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum XlsxSheetVisibility {
+    #[serde(rename = "visible")]
+    Visible,
+    #[serde(rename = "hidden")]
+    Hidden,
+    #[serde(rename = "veryHidden")]
+    VeryHidden,
+}
+
 /// `oneiron::office_body::verbs::XlsxSheetView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct XlsxSheetView {
@@ -16720,6 +16731,8 @@ pub struct XlsxSheetView {
     pub locked: Vec<XlsxArea>,
     #[serde(rename = "tables")]
     pub tables: Vec<XlsxTable>,
+    #[serde(rename = "visibility")]
+    pub visibility: XlsxSheetVisibility,
 }
 
 /// `oneiron::office_body::xlsx::BodyName`.
@@ -17478,6 +17491,13 @@ pub enum XlsxBodyOp {
         #[serde(rename = "sheet")]
         sheet: String,
     },
+    #[serde(rename = "set_sheet_visibility")]
+    SetSheetVisibility {
+        #[serde(rename = "sheet")]
+        sheet: String,
+        #[serde(rename = "visibility")]
+        visibility: XlsxSheetVisibility,
+    },
     #[serde(rename = "insert_rows")]
     InsertRows {
         #[serde(rename = "sheet")]
@@ -17647,6 +17667,8 @@ pub struct OfficeBodyEdit {
     pub minted: Vec<String>,
     #[serde(rename = "receipt")]
     pub receipt: TextCommitReceipt,
+    #[serde(rename = "effects")]
+    pub effects: Vec<String>,
 }
 
 /// `oneiron::office_body::verbs::OfficeBodyForkOpenRequest`.
@@ -18128,6 +18150,8 @@ pub struct XlsxSheet {
     pub locked: Vec<XlsxArea>,
     #[serde(rename = "tables")]
     pub tables: Vec<XlsxTable>,
+    #[serde(rename = "visibility")]
+    pub visibility: XlsxSheetVisibility,
 }
 
 /// `oneiron_docedit::xlsx_body::XlsxName`.

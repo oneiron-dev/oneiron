@@ -237,6 +237,7 @@ impl Vault {
                     .map(|id| id.0.to_string())
                     .collect(),
                 receipt: commit.receipt,
+                effects: Vec::new(),
             })
         })
     }

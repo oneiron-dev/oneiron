@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 315 facade rows, 1229 declarations.
+Census: 315 facade rows, 1230 declarations.
 Inputs: 272 of 315 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 272 of 315 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 72; unread shapes: 0.
@@ -5726,11 +5726,13 @@ class XlsxTable(TypedDict):
     totals_rows: int
     columns: list[str]
     worksheet: bool
+XlsxSheetVisibility = Literal["visible", "hidden", "veryHidden"]
 class XlsxSheetView(TypedDict):
     name: str
     cells: list[BodyCell]
     locked: list[XlsxArea]
     tables: list[XlsxTable]
+    visibility: XlsxSheetVisibility
 class BodyName(TypedDict):
     name: str
     sheet: NotRequired[str | None]
@@ -6027,6 +6029,10 @@ class XlsxBodyOpMoveSheet(TypedDict):
 class XlsxBodyOpDeleteSheet(TypedDict):
     op: Literal["delete_sheet"]
     sheet: str
+class XlsxBodyOpSetSheetVisibility(TypedDict):
+    op: Literal["set_sheet_visibility"]
+    sheet: str
+    visibility: XlsxSheetVisibility
 class XlsxBodyOpInsertRows(TypedDict):
     op: Literal["insert_rows"]
     sheet: str
@@ -6047,7 +6053,7 @@ class XlsxBodyOpDeleteColumns(TypedDict):
     sheet: str
     at: int
     count: int
-XlsxBodyOp = XlsxBodyOpSetValue | XlsxBodyOpSetFormula | XlsxBodyOpSetStyle | XlsxBodyOpDefineFormat | XlsxBodyOpSetFormat | XlsxBodyOpClear | XlsxBodyOpSetName | XlsxBodyOpDeleteName | XlsxBodyOpAddSheet | XlsxBodyOpRenameSheet | XlsxBodyOpMoveSheet | XlsxBodyOpDeleteSheet | XlsxBodyOpInsertRows | XlsxBodyOpDeleteRows | XlsxBodyOpInsertColumns | XlsxBodyOpDeleteColumns
+XlsxBodyOp = XlsxBodyOpSetValue | XlsxBodyOpSetFormula | XlsxBodyOpSetStyle | XlsxBodyOpDefineFormat | XlsxBodyOpSetFormat | XlsxBodyOpClear | XlsxBodyOpSetName | XlsxBodyOpDeleteName | XlsxBodyOpAddSheet | XlsxBodyOpRenameSheet | XlsxBodyOpMoveSheet | XlsxBodyOpDeleteSheet | XlsxBodyOpSetSheetVisibility | XlsxBodyOpInsertRows | XlsxBodyOpDeleteRows | XlsxBodyOpInsertColumns | XlsxBodyOpDeleteColumns
 class DeckOpAddSlideBody(TypedDict):
     id: NotRequired[NodeId | None]
 class DeckOpAddSlide(TypedDict):
@@ -6124,6 +6130,7 @@ class OfficeBodyEdit(TypedDict):
     frontier: list[int]
     minted: list[str]
     receipt: TextCommitReceipt
+    effects: list[str]
 class OfficeBodyForkOpenRequest(TypedDict):
     artifact_ref: str
     run_root_ref: NotRequired[str | None]
@@ -6282,6 +6289,7 @@ class XlsxSheet(TypedDict):
     cells: list[XlsxCell]
     locked: list[XlsxArea]
     tables: list[XlsxTable]
+    visibility: XlsxSheetVisibility
 class XlsxName(TypedDict):
     name: str
     sheet: NotRequired[str | None]

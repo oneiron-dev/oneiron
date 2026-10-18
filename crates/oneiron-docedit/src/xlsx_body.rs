@@ -87,6 +87,40 @@ pub struct XlsxSheet {
     /// data table ranges, and table header and totals rows.
     pub locked: Vec<XlsxArea>,
     pub tables: Vec<XlsxTable>,
+    pub visibility: XlsxSheetVisibility,
+}
+
+/// Whether a sheet's tab shows, as Excel's `<sheet state>` holds it. A
+/// `veryHidden` sheet is left out of Excel's Unhide list too.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum XlsxSheetVisibility {
+    #[default]
+    Visible,
+    Hidden,
+    VeryHidden,
+}
+
+impl XlsxSheetVisibility {
+    /// From a `<sheet state>` value; none, or any other, is visible.
+    #[must_use]
+    pub fn from_state(state: Option<&str>) -> Self {
+        match state.map(str::trim) {
+            Some("hidden") => Self::Hidden,
+            Some("veryHidden") => Self::VeryHidden,
+            _ => Self::Visible,
+        }
+    }
+
+    /// The `<sheet state>` value; a visible sheet carries none.
+    #[must_use]
+    pub const fn state(self) -> Option<&'static str> {
+        match self {
+            Self::Visible => None,
+            Self::Hidden => Some("hidden"),
+            Self::VeryHidden => Some("veryHidden"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -394,6 +428,9 @@ pub struct XlsxSheetPlan {
     /// The imported worksheet it is, by its imported name; `None` for a new,
     /// empty one.
     pub source: Option<String>,
+    /// A layout that leaves no sheet visible shows its first worksheet.
+    #[serde(default)]
+    pub visibility: XlsxSheetVisibility,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -420,6 +457,7 @@ pub fn read_xlsx_cells(bytes: &[u8], limits: Limits) -> Result<XlsxBook> {
                 cells,
                 locked,
                 tables: book.tables(part)?,
+                visibility: book.visibility.get(name).copied().unwrap_or_default(),
             });
         }
     }
@@ -783,6 +821,8 @@ struct Book {
     order: Vec<String>,
     /// Worksheet name → part.
     worksheets: BTreeMap<String, String>,
+    /// Sheet name → whether its tab shows; a visible sheet may be absent.
+    visibility: BTreeMap<String, XlsxSheetVisibility>,
     shared: Vec<String>,
     date1904: bool,
     names: Vec<XlsxName>,
@@ -810,6 +850,7 @@ impl Book {
         let links = package.relationships(&part)?;
         let mut order = Vec::new();
         let mut worksheets = BTreeMap::new();
+        let mut visibility = BTreeMap::new();
         if let Some((list, _)) = tree.child(0, SML, "sheets")? {
             for (_, sheet) in tree
                 .children(list)
@@ -817,6 +858,10 @@ impl Book {
             {
                 let name = sheet.attr("name").ok_or(refused("a sheet has no name"))?;
                 order.push(name.to_owned());
+                visibility.insert(
+                    name.to_owned(),
+                    XlsxSheetVisibility::from_state(sheet.attr("state")),
+                );
                 if let Some(rel) = sheet.attr_ns(REL, "id").and_then(|id| {
                     links.iter().find(|rel| {
                         rel.id == id && !rel.external && rel.kind.ends_with("/worksheet")
@@ -855,6 +900,7 @@ impl Book {
             part,
             order,
             worksheets,
+            visibility,
             shared,
             date1904,
             names,
@@ -1214,9 +1260,10 @@ impl Book {
             .filter(|(_, node)| node.is(SML, "sheet"))
             .map(|(_, node)| node)
             .collect();
-        // The final order: (index in the old order, name), `None` for a new
-        // worksheet.
-        let mut layout: Vec<(Option<usize>, String)> = Vec::new();
+        // The final order: (index in the old order, name, visibility),
+        // `None` for a new worksheet.
+        let mut layout: Vec<(Option<usize>, String, XlsxSheetVisibility)> = Vec::new();
+        let kept_state = |at: usize| XlsxSheetVisibility::from_state(entries[at].attr("state"));
         {
             let mut followers: HashMap<Option<&str>, Vec<usize>> = HashMap::new();
             let mut anchor = None;
@@ -1228,11 +1275,11 @@ impl Book {
                 }
             }
             for at in followers.remove(&None).unwrap_or_default() {
-                layout.push((Some(at), self.order[at].clone()));
+                layout.push((Some(at), self.order[at].clone(), kept_state(at)));
             }
             for slot in plan {
                 let Some(source) = &slot.source else {
-                    layout.push((None, slot.name.clone()));
+                    layout.push((None, slot.name.clone(), slot.visibility));
                     continue;
                 };
                 let at = self
@@ -1240,22 +1287,32 @@ impl Book {
                     .iter()
                     .position(|name| name == source)
                     .ok_or(refused("no such worksheet"))?;
-                layout.push((Some(at), slot.name.clone()));
+                layout.push((Some(at), slot.name.clone(), slot.visibility));
                 for at in followers.remove(&Some(source.as_str())).unwrap_or_default() {
-                    layout.push((Some(at), self.order[at].clone()));
+                    layout.push((Some(at), self.order[at].clone(), kept_state(at)));
                 }
             }
         }
-        let first_visible = layout
+        // Excel keeps one sheet visible: a layout that hides every one
+        // shows its first worksheet.
+        let first_visible = match layout
             .iter()
-            .position(|(old, _)| {
-                old.is_none_or(|at| {
-                    !matches!(entries[at].attr("state"), Some("hidden" | "veryHidden"))
-                })
-            })
-            .ok_or(refused("a workbook keeps one visible sheet"))?;
+            .position(|(_, _, state)| *state == XlsxSheetVisibility::Visible)
+        {
+            Some(at) => at,
+            None => {
+                let at = layout
+                    .iter()
+                    .position(|(old, ..)| {
+                        old.is_none_or(|at| self.worksheets.contains_key(&self.order[at]))
+                    })
+                    .ok_or(refused("a workbook keeps at least one worksheet"))?;
+                layout[at].2 = XlsxSheetVisibility::Visible;
+                at
+            }
+        };
         let mut moved: Vec<Option<usize>> = vec![None; self.order.len()];
-        for (new, (old, _)) in layout.iter().enumerate() {
+        for (new, (old, ..)) in layout.iter().enumerate() {
             if let Some(old) = old {
                 moved[*old] = Some(new);
             }
@@ -1316,7 +1373,7 @@ impl Book {
             .map_or_else(|| WORKSHEET_KIND.to_owned(), |rel| rel.kind);
         let mut content = Vec::new();
         let mut worksheets = BTreeMap::new();
-        for (old, name) in &layout {
+        for (old, name, state) in &layout {
             let Some(at) = old else {
                 let part = next_part(&self.package, &format!("{dir}/sheet"), ".xml")
                     .map_err(|_| refused("no free worksheet part name"))?;
@@ -1331,9 +1388,12 @@ impl Book {
                     || format!("xmlns:r=\"{REL}\" r:id=\"{id}\""),
                     |attr| format!("{attr}=\"{id}\""),
                 );
+                let hidden = state
+                    .state()
+                    .map_or_else(String::new, |state| format!(" state=\"{state}\""));
                 content.extend_from_slice(
                     format!(
-                        "<{sheet_element} name=\"{}\" sheetId=\"{sheet_id}\" {link}/>",
+                        "<{sheet_element} name=\"{}\" sheetId=\"{sheet_id}\"{hidden} {link}/>",
                         escape_text(name)
                     )
                     .as_bytes(),
@@ -1342,17 +1402,39 @@ impl Book {
                 continue;
             };
             let node = entries[*at];
-            if *name == self.order[*at] {
-                content.extend_from_slice(&bytes[node.span.clone()]);
-            } else {
-                let attr = node
-                    .attr_spans
-                    .get("name")
-                    .ok_or(refused("a sheet has no name"))?;
-                content.extend_from_slice(&bytes[node.span.start..attr.start]);
-                content.extend_from_slice(format!("name=\"{}\"", escape_text(name)).as_bytes());
-                content.extend_from_slice(&bytes[attr.end..node.span.end]);
+            // The retained `<sheet>`, its name and state as laid out.
+            let mut sheet_edits = Vec::new();
+            if *name != self.order[*at] {
+                if !node.attr_spans.contains_key("name") {
+                    return Err(refused("a sheet has no name"));
+                }
+                sheet_edits.push(set_attribute(&bytes, node, "name", name));
             }
+            if kept_state(*at) != *state {
+                match (state.state(), node.attr_spans.get("state")) {
+                    (Some(value), _) => {
+                        sheet_edits.push(set_attribute(&bytes, node, "state", value))
+                    }
+                    (None, Some(span)) => {
+                        let start = if bytes[span.start - 1].is_ascii_whitespace() {
+                            span.start - 1
+                        } else {
+                            span.start
+                        };
+                        sheet_edits.push((start..span.end, Vec::new()));
+                    }
+                    (None, None) => {}
+                }
+            }
+            let start = node.span.start;
+            let rebased = sheet_edits
+                .into_iter()
+                .map(|(range, value)| (range.start - start..range.end - start, value))
+                .collect();
+            content.extend(
+                splice(&bytes[node.span.clone()], rebased)
+                    .map_err(|_| refused("a sheet could not be rewritten"))?,
+            );
             if let Some(part) = self.worksheets.get(&self.order[*at]) {
                 worksheets.insert(name.clone(), part.clone());
             }
@@ -1408,7 +1490,11 @@ impl Book {
                     else {
                         continue;
                     };
-                    let new = moved.get(old).copied().flatten().unwrap_or(first_visible);
+                    let mut new = moved.get(old).copied().flatten().unwrap_or(first_visible);
+                    // The active tab is a visible one.
+                    if attr == "activeTab" && layout[new].2 != XlsxSheetVisibility::Visible {
+                        new = first_visible;
+                    }
                     if new != old {
                         edits.push(set_attribute(&bytes, view, attr, &new.to_string()));
                     }
@@ -1449,10 +1535,14 @@ impl Book {
                 self.rewrite_formulas(&part, &|text: &str| retarget_sheets(text, &order, &fate))?;
             }
         }
-        if layout.iter().map(|(_, name)| name).ne(self.order.iter()) {
+        if layout.iter().map(|(_, name, _)| name).ne(self.order.iter()) {
             self.drop_part_titles()?;
         }
-        self.order = layout.into_iter().map(|(_, name)| name).collect();
+        self.visibility = layout
+            .iter()
+            .map(|(_, name, state)| (name.clone(), *state))
+            .collect();
+        self.order = layout.into_iter().map(|(_, name, _)| name).collect();
         self.worksheets = worksheets;
         Ok(())
     }

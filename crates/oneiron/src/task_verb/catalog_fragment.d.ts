@@ -9,7 +9,7 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 378 code-mode rows (358 host rows, 20 run rows), 1343 declarations.
+// Census: 378 code-mode rows (358 host rows, 20 run rows), 1344 declarations.
 // Replies: 325 fully typed, 49 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 79; unread shapes: BoardVerbOutput.
@@ -1179,7 +1179,8 @@ declare namespace Sdk {
   type BodyCell = { address: string; value: XlsxValue; formula?: string | null; style?: number | null; format?: string | null; locked?: XlsxLock | null };
   type XlsxArea = { first: [number, number]; last: [number, number]; lock: XlsxLock };
   type XlsxTable = { name: string; first: [number, number]; last: [number, number]; header_rows: number; totals_rows: number; columns: string[]; worksheet: boolean };
-  type XlsxSheetView = { name: string; cells: BodyCell[]; locked: XlsxArea[]; tables: XlsxTable[] };
+  type XlsxSheetVisibility = "visible" | "hidden" | "veryHidden";
+  type XlsxSheetView = { name: string; cells: BodyCell[]; locked: XlsxArea[]; tables: XlsxTable[]; visibility: XlsxSheetVisibility };
   type BodyName = { name: string; sheet?: string | null; formula: string; hidden: boolean; locked?: XlsxLock | null };
   type XlsxStyle = { num_fmt: number; format?: string | null };
   type XlsxColor = { kind: "rgb"; argb: string } | { kind: "theme"; theme: number; tint?: number | null } | { kind: "indexed"; index: number } | { kind: "auto" };
@@ -1219,11 +1220,11 @@ declare namespace Sdk {
   type OfficeBodyCommitGap = "receipt_missing";
   type OfficeBodyCommitView = { actor?: string | null; receipt?: TextCommitReceipt | null; reason?: OfficeBodyCommitGap | null };
   type DocxBodyOp = { op: "set_text"; block: string; text: string } | { op: "splice"; block: string; at: number; delete: number; insert: string } | { op: "set_cell"; block: string; row: number; col: number; text: string } | { op: "insert_paragraph"; after?: string | null; role?: string | null; text: string } | { op: "delete"; block: string } | { op: "move"; block: string; after?: string | null } | { op: "mark"; block: string; at: number; len: number; mark: DocxMark; on: boolean };
-  type XlsxBodyOp = { op: "set_value"; sheet: string; cell: string; value: XlsxValue } | { op: "set_formula"; sheet: string; cell: string; formula: string } | { op: "set_style"; sheet: string; cell: string; style?: number | null } | { op: "define_format"; id: string; format: XlsxFormat } | { op: "set_format"; sheet: string; cell: string; format: string } | { op: "clear"; sheet: string; cell: string } | { op: "set_name"; name: string; sheet?: string | null; formula: string; hidden: boolean } | { op: "delete_name"; name: string; sheet?: string | null } | { op: "add_sheet"; sheet: string; at?: number | null } | { op: "rename_sheet"; sheet: string; name: string } | { op: "move_sheet"; sheet: string; at: number } | { op: "delete_sheet"; sheet: string } | { op: "insert_rows"; sheet: string; at: number; count: number } | { op: "delete_rows"; sheet: string; at: number; count: number } | { op: "insert_columns"; sheet: string; at: number; count: number } | { op: "delete_columns"; sheet: string; at: number; count: number };
+  type XlsxBodyOp = { op: "set_value"; sheet: string; cell: string; value: XlsxValue } | { op: "set_formula"; sheet: string; cell: string; formula: string } | { op: "set_style"; sheet: string; cell: string; style?: number | null } | { op: "define_format"; id: string; format: XlsxFormat } | { op: "set_format"; sheet: string; cell: string; format: string } | { op: "clear"; sheet: string; cell: string } | { op: "set_name"; name: string; sheet?: string | null; formula: string; hidden: boolean } | { op: "delete_name"; name: string; sheet?: string | null } | { op: "add_sheet"; sheet: string; at?: number | null } | { op: "rename_sheet"; sheet: string; name: string } | { op: "move_sheet"; sheet: string; at: number } | { op: "delete_sheet"; sheet: string } | { op: "set_sheet_visibility"; sheet: string; visibility: XlsxSheetVisibility } | { op: "insert_rows"; sheet: string; at: number; count: number } | { op: "delete_rows"; sheet: string; at: number; count: number } | { op: "insert_columns"; sheet: string; at: number; count: number } | { op: "delete_columns"; sheet: string; at: number; count: number };
   type DeckOp = { add_slide: { id?: NodeId | null } } | { add_node: { id?: NodeId | null; parent: NodeId; kind: NodeKind; name?: string | null; index?: number | null; preset?: Preset | null; payload?: NodePayload | null } } | { remove_node: { node: NodeId } } | { move_node: { node: NodeId; new_parent: NodeId; index: number } } | { set_text: { node: NodeId; body: TextBody } } | { set_run_marks: { node: NodeId; paragraph: NodeId; runs: Run[] } } | { set_geometry: { node: NodeId; geometry: GeometryProps } } | { set_preset: { node: NodeId; preset: Preset } } | { set_payload: { node: NodeId; payload: NodePayload } } | { replace_opaque: { part: string; expected: number[]; replacement: number[] } };
   type OfficeBodyOps = { format: "docx"; ops: DocxBodyOp[] } | { format: "xlsx"; ops: XlsxBodyOp[] } | { format: "pptx"; ops: DeckOp[] };
   type OfficeBodyEditRequest = { artifact_ref: string; base?: number[] | null; ops: OfficeBodyOps; made_by?: unknown | null };
-  type OfficeBodyEdit = { frontier: number[]; minted: string[]; receipt: TextCommitReceipt };
+  type OfficeBodyEdit = { frontier: number[]; minted: string[]; receipt: TextCommitReceipt; effects: string[] };
   type OfficeBodyForkOpenRequest = { artifact_ref: string; run_root_ref?: string | null; proposal_ref?: string | null };
   type ForkState = { state: "open" } | { state: "merged"; by: EntityId; at: number; head: number[] } | { state: "discarded"; by: EntityId; at: number };
   type OfficeBodyFork = { id: EntityId; artifact: EntityId; opener: EntityId; base: number[]; commits: number; opened_at: number; state: ForkState; run_root?: EntityId | null };
@@ -1255,7 +1256,7 @@ declare namespace Sdk {
   type OfficeBodyExportView = { frontier: number[]; record?: OfficeBodyExportRecord | null };
   type OfficeBodyPreviewRequest = { artifact_ref: string; utc_offset_minutes?: number | null; iana_timezone?: string | null };
   type XlsxCell = { col: number; row: number; value: XlsxValue; formula?: string | null; style?: number | null; locked?: XlsxLock | null };
-  type XlsxSheet = { name: string; cells: XlsxCell[]; locked: XlsxArea[]; tables: XlsxTable[] };
+  type XlsxSheet = { name: string; cells: XlsxCell[]; locked: XlsxArea[]; tables: XlsxTable[]; visibility: XlsxSheetVisibility };
   type XlsxName = { name: string; sheet?: string | null; formula: string; hidden: boolean; locked?: XlsxLock | null };
   type XlsxBook = { date1904: boolean; sheets: XlsxSheet[]; names: XlsxName[]; styles: XlsxStyle[] };
   type XlsxPreview = { frontier: number[]; book: XlsxBook; recalc?: string | null };
