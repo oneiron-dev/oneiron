@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "format": "repeat-utf8-prefix",
+  "pattern": "custody-large-fixture:0123456789abcdef\n",
+  "byte_length": 17825829,
+  "sha256": "9f7386e171318d816698406e576eba6cc6e5629f4a94c1d43a29d5e39f6f5200",
+  "repository_path": "assets/build-input.txt",
+  "lfs_pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:9f7386e171318d816698406e576eba6cc6e5629f4a94c1d43a29d5e39f6f5200\nsize 17825829\n",
+  "attributes": "assets/build-input.txt filter=lfs diff=lfs merge=lfs -text\n",
+  "mirror_files": [
+    "mirror-check.cjs",
+    "large-blob.json"
+  ],
+  "mirror_command": [
+    "node",
+    "mirror-check.cjs"
+  ],
+  "mirror_stdout": "build:4\nasset:9f7386e171318d816698406e576eba6cc6e5629f4a94c1d43a29d5e39f6f5200\n",
+  "materialization": "On Linux, repeat UTF-8 pattern bytes and truncate to byte_length; hash the independently materialized file before upload. Copy this recipe and mirror-check.cjs into the repo through public code proposals. Do not store a private vault blob path in the repo."
+}

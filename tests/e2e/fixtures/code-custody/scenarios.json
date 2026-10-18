@@ -1,0 +1,688 @@
+{
+  "version": 1,
+  "area": "Code execution and custody",
+  "all_flows_blocked": true,
+  "binding": {
+    "head": "cf8d4ce473ddffb6bf278f11263ae0cf84461117",
+    "origin_main": "cf8d4ce473ddffb6bf278f11263ae0cf84461117",
+    "public_sources": [
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/scripts/sdk/agent-verbs.json",
+        "repositoryPath": "scripts/sdk/agent-verbs.json",
+        "sha256": "d4fa36be976e4195323bf342a0e21a49f8965a2533536d7f6c0c2b9f2570911a"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/packages/oneiron-client/src/facade.ts",
+        "repositoryPath": "packages/oneiron-client/src/facade.ts",
+        "sha256": "e0cb73a45e493baa7182b10bc076eeb198984d15bcbc19add0fbc62c22912c76"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/packages/oneiron-client/src/facade-types.ts",
+        "repositoryPath": "packages/oneiron-client/src/facade-types.ts",
+        "sha256": "d64b62450805589152ac08d4dc99a6504c33862d0600449904ff264a45ad7e6a"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/packages/oneiron/src/facade-types.ts",
+        "repositoryPath": "packages/oneiron/src/facade-types.ts",
+        "sha256": "d64b62450805589152ac08d4dc99a6504c33862d0600449904ff264a45ad7e6a"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/packages/oneiron/README.md",
+        "repositoryPath": "packages/oneiron/README.md",
+        "sha256": "6459fe7b752d2b9ae516ef58475252aa047f04c5f1e432a393e6a4d960348097"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/crates/oneiron-server/src/cli.rs",
+        "repositoryPath": "crates/oneiron-server/src/cli.rs",
+        "sha256": "81eb90def61131fc4c8988941876972ec619af98c1f97d170bcabea50a34bf33"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/crates/oneiron-server/src/api/openapi_registry.rs",
+        "repositoryPath": "crates/oneiron-server/src/api/openapi_registry.rs",
+        "sha256": "38a4872df012265d0df3d2d749585957ecd57826b1478e29ff06962eccb1e145"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/crates/oneiron-server/src/api/openapi/endpoints_merge.rs",
+        "repositoryPath": "crates/oneiron-server/src/api/openapi/endpoints_merge.rs",
+        "sha256": "edbcb928be6877398c1a0417f399852d7cf7dd617ec98fc6af063bb36956ba0f"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/crates/oneiron-server/src/api/openapi/owner_paths.rs",
+        "repositoryPath": "crates/oneiron-server/src/api/openapi/owner_paths.rs",
+        "sha256": "7bb5654c2e2e5bedb9b8392bfea116bca68a14a4771968e0c2eb51703f927761"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/crates/oneiron-server/src/api/git_http/routes.rs",
+        "repositoryPath": "crates/oneiron-server/src/api/git_http/routes.rs",
+        "sha256": "8d8d22ec536a86c1de229b0ef19570c40570554d75897c156fa6824d4816de60"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/crates/oneiron-server/src/api/git_http/gate.rs",
+        "repositoryPath": "crates/oneiron-server/src/api/git_http/gate.rs",
+        "sha256": "099e3119af5545ecb6c46a6b82226ea810e2b2d33fa1dc2e1fe423592642ed94"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/crates/oneiron-server/src/api/git_lfs/mod.rs",
+        "repositoryPath": "crates/oneiron-server/src/api/git_lfs/mod.rs",
+        "sha256": "10351b3c98c0b10d788d8750018e480091d82f7cc12597a9c142995617242b7d"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/crates/oneiron-server/src/api/git_lfs/gate.rs",
+        "repositoryPath": "crates/oneiron-server/src/api/git_lfs/gate.rs",
+        "sha256": "7c7183fa680dff3595b571a7317b3e08af14193db18b1b2c17f020122239c29e"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/crates/oneiron-server/src/api/git_lfs/wire.rs",
+        "repositoryPath": "crates/oneiron-server/src/api/git_lfs/wire.rs",
+        "sha256": "f8567d12d6c849118f361dc3064c14ba7b0074604f651e124b363458ecadcc54"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/crates/oneiron-server/src/api/mod.rs",
+        "repositoryPath": "crates/oneiron-server/src/api/mod.rs",
+        "sha256": "c8ac1a8955d8ff7a6a5669ada79b88b6c896670835bef4314191f83f1ca4b587"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/oneiron.skills.md",
+        "repositoryPath": "oneiron.skills.md",
+        "sha256": "9335428a1e29b40abddaf55350c9d95bbce6d50385ada010f5fff2b422851ace"
+      }
+    ],
+    "canon_sources": [
+      {
+        "uri": "/oneiron/code-in-oneiron/oneiron-arch-0050-repo-as-world/",
+        "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/code-in-oneiron/oneiron-arch-0050-repo-as-world.md",
+        "sha256": "fd5c36e3c88430eaef2592ae8ce7fef734561295d95af57967866263fbfad888"
+      },
+      {
+        "uri": "/oneiron/code-in-oneiron/oneiron-arch-0068-repo-custody-v1/",
+        "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/code-in-oneiron/oneiron-arch-0068-repo-custody-v1.md",
+        "sha256": "cc8f12a513b6b3c0f3ab177a5300e048aa9dec4c442e296b7714d569e117745f"
+      },
+      {
+        "uri": "/oneiron/agents/oneiron-arch-0067-context-board-v1/",
+        "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0067-context-board-v1.md",
+        "sha256": "4342ddebdeee0bc1ae71a6fe07a7d1da296170fd9141d5788c3f8faee17d0d12"
+      },
+      {
+        "uri": "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/",
+        "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1.md",
+        "sha256": "6b960493c722c1182a81a5c168d63a9be3d8a669559addf3a749f556c4628050"
+      },
+      {
+        "uri": "/oneiron/gate/oneiron-arch-0069-secret-custody-v1/",
+        "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/gate/oneiron-arch-0069-secret-custody-v1.md",
+        "sha256": "a4c8df15efb88100eaaaef8ba4b90560074dd605bb5fa96a866d406f869d3b83"
+      },
+      {
+        "uri": "/oneiron/surfaces/oneiron-arch-0078-artifact-family-v1/",
+        "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/surfaces/oneiron-arch-0078-artifact-family-v1.md",
+        "sha256": "b3bb0a5ee003e3baf6cd3b43bccc30bd26571b6af3c5ab40a403378db29d4538"
+      }
+    ],
+    "registry": {
+      "path": "/Users/olety/Desktop/code/oneiron-docs/registry/oneiron.json",
+      "sha256": "8f56eb0c82be8475001e0127735558a0c6aa5721017138f9d68b951f87b19be7",
+      "rows": [
+        "OF-316",
+        "OF-322",
+        "OF-354",
+        "OF-424",
+        "OF-425",
+        "OF-428",
+        "OF-429",
+        "OF-430",
+        "OF-468",
+        "OF-480",
+        "OF-481",
+        "OF-482",
+        "OF-483",
+        "OF-484",
+        "OF-486"
+      ]
+    },
+    "ruling": "G01 typed HTTP and SDK call or wait; no generic escape hatch"
+  },
+  "fixture_policy": {
+    "authored_independently": true,
+    "licence": "CC0-1.0",
+    "fixture_labels_are_not_engine_ids": true,
+    "no_private_seeding": true,
+    "no_engine_constants_changed": true,
+    "harness_slots": 2,
+    "lease_ttl_seconds": 1,
+    "ttl_is_explicit_public_scenario_policy_not_an_engine_default": true,
+    "normal_flow_budget_ms": 30000,
+    "real_wall_time_no_private_clock": true,
+    "no_binary_hashes_invented": true
+  },
+  "activation_prerequisites": [
+    "typed public operations named by each blocking reason",
+    "prepared Linux git and git-lfs clients with inventory pins",
+    "real checker/sandbox public execution for the tiny Node command",
+    "per-request holder-proof git transport using the real paired credential outside the checkout",
+    "actual canonical REAPI Action bytes/digest from an independent client for cache activation; do not reuse the current internal blake3 cache key"
+  ],
+  "existing_surfaces": {
+    "facade": [
+      "vault.code.diff",
+      "vault.code.blame",
+      "vault.code.proposal_view",
+      "vault.code.repo_diff",
+      "vault.artifacts.put",
+      "vault.artifacts.append",
+      "vault.artifacts.read",
+      "vault.records.erase_preview",
+      "vault.records.erase_confirm",
+      "tasks.create",
+      "tasks.accept",
+      "tasks.update"
+    ],
+    "git_http": [
+      "GET /git/{repo}/info/refs?service=git-upload-pack",
+      "GET /git/{repo}/info/refs?service=git-receive-pack",
+      "POST /git/{repo}/git-upload-pack",
+      "POST /git/{repo}/git-receive-pack",
+      "corresponding /git/lease/{lease}/{repo}/ routes"
+    ],
+    "lfs": [
+      "POST /git/{repo}/info/lfs/objects/batch",
+      "PUT /git/{repo}/info/lfs/objects/{oid}",
+      "GET /git/{repo}/info/lfs/objects/{oid}",
+      "POST /git/{repo}/info/lfs/objects/{oid}/verify"
+    ],
+    "not_a_checkout_lease_door": "POST /api/lease/revoke revokes a device binding"
+  },
+  "patches": {
+    "good-math": {
+      "path": "math.cjs",
+      "before": "  return a + b;",
+      "after": "  return Number(a) + Number(b);"
+    },
+    "overlap-guard": {
+      "path": "math.cjs",
+      "before": "!Number.isFinite(a) || !Number.isFinite(b)",
+      "after": "![a, b].every(Number.isFinite)"
+    },
+    "good-label": {
+      "path": "label.cjs",
+      "before": "  return \"build:\" + value;",
+      "after": "  return `build:${value}`;"
+    },
+    "bad-api": {
+      "path": "math.cjs",
+      "before": "module.exports = { add, increment };",
+      "after": "module.exports = { add };"
+    },
+    "repair-api": {
+      "path": "math.cjs",
+      "before": "module.exports = { add };",
+      "after": "module.exports = { add, increment };"
+    },
+    "dirty-disk": {
+      "path": "math.cjs",
+      "before": "  return a + b;",
+      "after": "  return a - b;"
+    },
+    "conflict-left": {
+      "path": "math.cjs",
+      "before": "  return a + b;",
+      "after": "  return Number(a) + Number(b);"
+    },
+    "conflict-right": {
+      "path": "math.cjs",
+      "before": "  return a + b;",
+      "after": "  const sum = a + b;\n  return sum;"
+    },
+    "resolution": {
+      "path": "math.cjs",
+      "before": "  return a + b;",
+      "after": "  const sum = Number(a) + Number(b);\n  return sum;"
+    }
+  },
+  "tests": [
+    {
+      "id": "CODE-CUSTODY-01",
+      "name": "Repository scope and pointer ingest should work",
+      "surface": "HTTP + CLI",
+      "setup": "Repo pointer plus tiny source tree and symbol references.",
+      "steps": [
+        "register repo",
+        "capture snapshot",
+        "search symbol neighbors",
+        "read pinned version",
+        "modify checkout"
+      ],
+      "expect": "Repo corpus is explicit scope, pointers do not imply mutable disk is truth, and snapshot search cites versioned content.",
+      "source": [
+        "/oneiron/code-in-oneiron/oneiron-arch-0050-repo-as-world/#tested-pointer",
+        "/registry/oneiron/#OF-322",
+        "/registry/oneiron/#OF-354",
+        "/registry/oneiron/#OF-316"
+      ],
+      "rows": [
+        "OF-322",
+        "OF-354",
+        "OF-316"
+      ],
+      "blocked_reason": "waits on typed repo pointer registration, snapshot capture, symbol-neighbor search and pinned source read",
+      "inputs": {
+        "source_root": "repo",
+        "pointer_commit": "actual commit produced by the owned git client",
+        "editable_whitelist": [
+          "math.cjs",
+          "label.cjs",
+          "main.cjs"
+        ],
+        "symbol": "increment",
+        "disk_change": "dirty-disk"
+      },
+      "facts": {
+        "scope_kind": "repository membership on CODE artifact, not epistemic WORLD",
+        "call_neighbor": "add",
+        "reference_file": "main.cjs",
+        "pinned_file": "math.cjs",
+        "pinned_text_sha256": "d2d804dab92b13193c911bfe87409648be3f10eca81308f916fb095e18ac57b2",
+        "after_disk_change": "pinned bytes and symbol citations unchanged",
+        "excluded_actor": "no content, results or count hint"
+      }
+    },
+    {
+      "id": "CODE-CUSTODY-02",
+      "name": "Lease expiry prevents stale publication should work",
+      "surface": "HTTP + CLI",
+      "setup": "Two checkout holders and short declared lease.",
+      "steps": [
+        "lease checkout",
+        "expire A",
+        "claim B",
+        "A publishes",
+        "B settles twice"
+      ],
+      "expect": "Expired epoch cannot publish, safe-repeat controls reclamation and one settlement receipt survives retries.",
+      "source": [
+        "/oneiron/code-in-oneiron/oneiron-arch-0068-repo-custody-v1/#rc2-lease-lifecycle",
+        "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#mcp-actor-ceilings",
+        "/registry/oneiron/#OF-424",
+        "/registry/oneiron/#OF-425"
+      ],
+      "rows": [
+        "OF-424",
+        "OF-425"
+      ],
+      "blocked_reason": "waits on typed checkout lease claim/expiry/reclaim, epoch-fenced publication and consume-once settlement",
+      "inputs": {
+        "holders": [
+          "holder-A",
+          "holder-B"
+        ],
+        "lease_ttl_seconds": 1,
+        "safe_repeat_task_class": "declared-idempotent build/verify",
+        "unsafe_repeat_task_class": "external effect",
+        "settlement_action": "apply",
+        "explicit_settlement_calls": 2
+      },
+      "facts": {
+        "expired_holder_cannot_publish": true,
+        "reclaim_epoch_strictly_increases": true,
+        "one_candidate_settlement_receipt": true,
+        "unsafe_repeat_requires_manual_takeover": true,
+        "dirty_checkout_retained": true,
+        "teardown_requires_pushed_head_receipt": true
+      }
+    },
+    {
+      "id": "CODE-CUSTODY-03",
+      "name": "Symbol overlap schedules rather than drops should work",
+      "surface": "HTTP",
+      "setup": "Two proposals touching same leased symbol and one independent symbol.",
+      "steps": [
+        "submit all",
+        "inspect queue",
+        "release lease",
+        "await completion"
+      ],
+      "expect": "Symbol leases bind queue order, not authority to erase proposals; overlapping work waits and independent work proceeds.",
+      "source": [
+        "/oneiron/code-in-oneiron/oneiron-arch-0050-repo-as-world/#tested-pointer",
+        "/registry/oneiron/#OF-480"
+      ],
+      "rows": [
+        "OF-480"
+      ],
+      "blocked_reason": "waits on typed symbol leases, code proposal submission, queue observation and lease release",
+      "inputs": {
+        "leased_symbol": "add",
+        "proposal_order": [
+          "proposal-A",
+          "proposal-B",
+          "proposal-C"
+        ],
+        "proposal_patches": {
+          "proposal-A": "overlap-guard",
+          "proposal-B": "good-math",
+          "proposal-C": "good-label"
+        },
+        "proposal_symbols": {
+          "proposal-A": [
+            "add"
+          ],
+          "proposal-B": [
+            "add"
+          ],
+          "proposal-C": [
+            "label"
+          ]
+        }
+      },
+      "facts": {
+        "retained_proposal_labels": [
+          "proposal-A",
+          "proposal-B",
+          "proposal-C"
+        ],
+        "ordering": [
+          [
+            "proposal-A",
+            "proposal-B"
+          ]
+        ],
+        "independent_must_complete_while_B_waits": "proposal-C",
+        "lease_controls": "scheduling, never write approval or erasure authority",
+        "all_three_have_completion_receipts": true
+      }
+    },
+    {
+      "id": "CODE-CUSTODY-04",
+      "name": "Merge queue isolates failed batch should work",
+      "surface": "HTTP + CLI",
+      "setup": "Three tiny code proposals with external contract fixture identifying one failure.",
+      "steps": [
+        "enqueue",
+        "run actual lightweight check command",
+        "inspect bisection and head/green pointers",
+        "fix failing proposal"
+      ],
+      "expect": "Queue keeps last-green, lands valid subset according to policy and retains failed proposal with evidence; no fake success overrides checker.",
+      "source": [
+        "/oneiron/code-in-oneiron/oneiron-arch-0050-repo-as-world/#tested-pointer",
+        "/registry/oneiron/#OF-481",
+        "/registry/oneiron/#OF-482"
+      ],
+      "rows": [
+        "OF-481",
+        "OF-482"
+      ],
+      "blocked_reason": "waits on typed speculative merge-queue submission/policy, real checker execution and head/green/bisection observation",
+      "inputs": {
+        "source_root": "repo",
+        "check_command": [
+          "node",
+          "contract-check.cjs"
+        ],
+        "batch": [
+          "good-math",
+          "bad-api",
+          "good-label"
+        ],
+        "repair": "repair-api",
+        "queue_policy": "owner-declared batching window and valid-subset landing via public policy; no private tick"
+      },
+      "facts": {
+        "baseline_exit": 0,
+        "bad_batch_exit": "nonzero",
+        "missing_public_symbol": "increment",
+        "valid_subset": [
+          "good-math",
+          "good-label"
+        ],
+        "failed_proposal_retained": "bad-api",
+        "contract": {
+          "public_symbols": [
+            "add",
+            "increment"
+          ],
+          "numeric_examples": [
+            {
+              "symbol": "add",
+              "args": [
+                2,
+                3
+              ],
+              "result": 5
+            },
+            {
+              "symbol": "add",
+              "args": [
+                -2,
+                3
+              ],
+              "result": 1
+            },
+            {
+              "symbol": "increment",
+              "args": [
+                3
+              ],
+              "result": 4
+            }
+          ],
+          "invalid_input_error": "TypeError",
+          "cli_stdout": "build:4\n"
+        },
+        "failure_evidence_survives_repair": true,
+        "green_must_not_point_to_failed_tree": true,
+        "head_and_green_require_their_actual_checker_receipts": true,
+        "repair_exit": 0
+      }
+    },
+    {
+      "id": "CODE-CUSTODY-05",
+      "name": "Git export and crash-safe origin publication should work",
+      "surface": "CLI + HTTP git",
+      "setup": "Small document-backed code repository and local git executable.",
+      "steps": [
+        "commit tested frontier",
+        "clone HTTP export",
+        "push through credential door",
+        "kill after publication acknowledgement",
+        "restart and clone"
+      ],
+      "expect": "Git is commit-grain export of ledger truth; acknowledged publication survives same-build restart and credentials stay out of workspace.",
+      "source": [
+        "/oneiron/code-in-oneiron/oneiron-arch-0050-repo-as-world/#tested-pointer",
+        "/oneiron/code-in-oneiron/oneiron-arch-0068-repo-custody-v1/#rc2-lease-lifecycle",
+        "/registry/oneiron/#OF-429",
+        "/registry/oneiron/#OF-484"
+      ],
+      "rows": [
+        "OF-429",
+        "OF-484"
+      ],
+      "blocked_reason": "waits on typed document-backed tested-tree commit/git export, origin registration and checkout credential-door binding",
+      "inputs": {
+        "source_root": "repo",
+        "next_change": "good-label",
+        "clients": [
+          "stock git smart-HTTP",
+          "real authenticated CLI/HTTP"
+        ],
+        "crash_boundary": "complete successful per-ref receive-pack status and public publication receipt, then SIGKILL",
+        "restart": "same vault, same build"
+      },
+      "facts": {
+        "clone_checks": [
+          "all acknowledged refs",
+          "exact fixture bytes",
+          "node contract-check.cjs exit 0"
+        ],
+        "ledger_lineage": [
+          "parent",
+          "file-document frontiers",
+          "provenance receipt"
+        ],
+        "workspace_upstream_credentials": 0,
+        "lease_ticket_is_not_upstream_secret": true,
+        "http_200_or_unpack_ok_alone_is_not_ack": true
+      }
+    },
+    {
+      "id": "CODE-CUSTODY-06",
+      "name": "LFS large blob fidelity and deletion should work",
+      "surface": "CLI + HTTP",
+      "setup": "Two artifacts share bytes above 16 MiB with independent file digest.",
+      "steps": [
+        "upload and download via LFS",
+        "clone mirror",
+        "erase one owner",
+        "fetch surviving version"
+      ],
+      "expect": "Large files round-trip by independent digest with vault-scoped dedup; builds from mirror need no hidden private bytes and surviving owner keeps shared chunks.",
+      "source": [
+        "/oneiron/code-in-oneiron/oneiron-arch-0068-repo-custody-v1/#rc2-lease-lifecycle",
+        "/oneiron/surfaces/oneiron-arch-0078-artifact-family-v1/#contract",
+        "/registry/oneiron/#OF-430",
+        "/registry/oneiron/#OF-468"
+      ],
+      "rows": [
+        "OF-430",
+        "OF-468"
+      ],
+      "blocked_reason": "waits on typed origin/repo registration and build-required LFS mirror publication setup",
+      "inputs": {
+        "large_bytes": "large-blob.json",
+        "artifact_owners": [
+          "owner-A",
+          "owner-B"
+        ],
+        "erase": "owner-A",
+        "also_same_bytes": false,
+        "other_vault": "independent vault without a grant",
+        "mirror_check": [
+          "node",
+          "mirror-check.cjs"
+        ]
+      },
+      "facts": {
+        "byte_length": 17825829,
+        "sha256": "9f7386e171318d816698406e576eba6cc6e5629f4a94c1d43a29d5e39f6f5200",
+        "above_16_mib": true,
+        "lfs_transfer": "basic",
+        "surviving_version_owner": "owner-B",
+        "shared_ownership_visible_in_erase_preview": true,
+        "survivor_download_sha256": "9f7386e171318d816698406e576eba6cc6e5629f4a94c1d43a29d5e39f6f5200",
+        "cross_vault_bytes_disclosed": false,
+        "mirror_build_stdout": "build:4\nasset:9f7386e171318d816698406e576eba6cc6e5629f4a94c1d43a29d5e39f6f5200\n",
+        "original_origin_unavailable_during_mirror_build": true,
+        "no_internal_chunk_layout_or_physical_disk_size_assertion": true
+      }
+    },
+    {
+      "id": "CODE-CUSTODY-07",
+      "name": "Working views and cache isolate authority should work",
+      "surface": "HTTP + CLI",
+      "setup": "Two same-account working views, one different-tenant view and fixed build key.",
+      "steps": [
+        "build tiny fixture",
+        "reuse authorized cache",
+        "modify one linked view",
+        "request from other tenant"
+      ],
+      "expect": "Views avoid accidental shared edits; immutable cache reuse obeys account/secret fence and never transfers another tenant’s derived data.",
+      "source": [
+        "/oneiron/code-in-oneiron/oneiron-arch-0068-repo-custody-v1/#rc2-lease-lifecycle",
+        "/oneiron/gate/oneiron-arch-0069-secret-custody-v1/#handles",
+        "/registry/oneiron/#OF-428",
+        "/registry/oneiron/#OF-483"
+      ],
+      "rows": [
+        "OF-428",
+        "OF-483"
+      ],
+      "blocked_reason": "waits on typed linked working-view materialization and account/action/secret-fenced build-cache execution and reuse",
+      "inputs": {
+        "views": [
+          "view-A1",
+          "view-A2"
+        ],
+        "authorized_account": "account-A",
+        "denied_account": "account-B",
+        "build_command": [
+          "node",
+          "main.cjs"
+        ],
+        "view_edit": "dirty-disk",
+        "action_key": "independent REAPI v2 SHA-256 Action digest, computed from fixture input digests and argv; identical bytes for authorized reuse and denied request",
+        "secret_value": "generated at runtime, registered with redactor before use; never a literal credential",
+        "secret_generations": [
+          1,
+          2
+        ]
+      },
+      "facts": {
+        "stdout": "build:4\n",
+        "stdout_sha256": "4814d22e6929118a4c6ba95f2b6880d0609452504f0e91bfe3acd26b59822c41",
+        "view_A2_after_A1_edit": "original math.cjs bytes",
+        "authorized_same_key_reuse": "hit with receipt and immutable bytes",
+        "denied_account": "denial/miss, no first-account data or cache metadata",
+        "account_B_own_build": "independent cold build with own receipt, not cache transfer",
+        "rotation": "generation-1 exhaust not clean/reusable/exportable under generation 2",
+        "host_wide_cache_proof_claimed": false
+      }
+    },
+    {
+      "id": "CODE-CUSTODY-08",
+      "name": "Merge conflict becomes reviewable work should work",
+      "surface": "HTTP",
+      "setup": "Two incompatible proposals over same symbol.",
+      "steps": [
+        "submit",
+        "inspect conflict record/task",
+        "resolve via authorized agent",
+        "inspect final lineage"
+      ],
+      "expect": "Conflict persists as data and a reconciliation task, never silent winner or lost branch; resolution is a normal receipted change.",
+      "source": [
+        "/oneiron/code-in-oneiron/oneiron-arch-0050-repo-as-world/#tested-pointer",
+        "/oneiron/agents/oneiron-arch-0067-context-board-v1/#tasks",
+        "/registry/oneiron/#OF-486"
+      ],
+      "rows": [
+        "OF-486"
+      ],
+      "blocked_reason": "waits on typed code proposal/conflict creation, reconciliation-task linkage and authorized receipted resolution",
+      "inputs": {
+        "source_root": "repo",
+        "symbol": "add",
+        "proposals": [
+          "conflict-left",
+          "conflict-right"
+        ],
+        "shared_base": "one public tested revision",
+        "resolution": "resolution",
+        "resolver": "authorized independent actor outside either proposer lineage"
+      },
+      "facts": {
+        "conflict_fields": [
+          "base",
+          "left",
+          "right",
+          "paths/spans",
+          "reconciliation task"
+        ],
+        "both_proposals_retained": true,
+        "task_is_real_work": true,
+        "self_approval_permitted": false,
+        "final_lineage_parents": [
+          "conflict-left",
+          "conflict-right"
+        ],
+        "resolution_check_command": [
+          "node",
+          "contract-check.cjs"
+        ],
+        "resolution_exit": 0,
+        "conflict_task_and_receipt_survive_restart": true
+      }
+    }
+  ]
+}
