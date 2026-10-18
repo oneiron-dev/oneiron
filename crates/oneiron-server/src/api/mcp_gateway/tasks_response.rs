@@ -897,6 +897,10 @@ fn mcp_agent_verb_input(
         "vault.witness" => a.spec.clone().ok_or_else(invalid),
         "vault.claims.upsert" => a.spec.clone().ok_or_else(invalid),
         "vault.recall" => a.spec.clone().ok_or_else(invalid),
+        "vault.retrieval.weights.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.retrieval.weights.configure" => a.spec.clone().ok_or_else(invalid),
+        "vault.affect.annotations.put" => a.spec.clone().ok_or_else(invalid),
+        "vault.affect.claims.consolidate" => a.spec.clone().ok_or_else(invalid),
         "vault.retrieval.recall" => a.spec.clone().ok_or_else(invalid),
         "vault.retrieval.runs" => a.spec.clone().ok_or_else(invalid),
         "vault.retrieval.run" => a.spec.clone().ok_or_else(invalid),
@@ -1096,6 +1100,10 @@ fn mcp_agent_verb_input(
         "vault.policy.owner.row.change" => a.spec.clone().ok_or_else(invalid),
         "vault.policy.outbound.decide" => a.spec.clone().ok_or_else(invalid),
         "vault.policy.relay.decide" => a.spec.clone().ok_or_else(invalid),
+        "vault.consent.approve_once" => a.spec.clone().ok_or_else(invalid),
+        "vault.consent.create_standing_grant" => a.spec.clone().ok_or_else(invalid),
+        "vault.consent.registry" => a.spec.clone().ok_or_else(invalid),
+        "vault.consent.revoke" => a.spec.clone().ok_or_else(invalid),
         "vault.gate.policy.get" => a.spec.clone().ok_or_else(invalid),
         "vault.gate.policy.put" => a.spec.clone().ok_or_else(invalid),
         "vault.gate.policy.propose" => a.spec.clone().ok_or_else(invalid),
@@ -1372,6 +1380,7 @@ fn mcp_agent_verb_input(
         "ai.voice.tool" => a.spec.clone().ok_or_else(invalid),
         "ai.voice.end" => a.spec.clone().ok_or_else(invalid),
         "ai.voice.close" => a.spec.clone().ok_or_else(invalid),
+        "ai.anonymous_chat" => a.spec.clone().ok_or_else(invalid),
         "ai.options" => a.spec.clone().ok_or_else(invalid),
         "ai.image" => a.spec.clone().ok_or_else(invalid),
         "ai.speech" => a.spec.clone().ok_or_else(invalid),
@@ -1538,6 +1547,7 @@ fn mcp_agent_verb_input(
         "self.compact" => a.spec.clone().ok_or_else(invalid),
         "self.unfold" => a.spec.clone().ok_or_else(invalid),
         "self.folds" => a.spec.clone().ok_or_else(invalid),
+        "tasks.refuse" => a.spec.clone().ok_or_else(invalid),
         "self.agents.spawn" => a.spec.clone().ok_or_else(invalid),
         "self.leader.split" => a.spec.clone().ok_or_else(invalid),
         "self.skills.call" => a.spec.clone().ok_or_else(invalid),
@@ -1758,6 +1768,18 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.recall" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.retrieval.weights.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.retrieval.weights.configure" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.affect.annotations.put" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.affect.claims.consolidate" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.retrieval.recall" => {
@@ -2337,6 +2359,18 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.policy.relay.decide" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.consent.approve_once" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.consent.create_standing_grant" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.consent.registry" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.consent.revoke" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.gate.policy.get" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -2879,6 +2913,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "ai.voice.close" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "ai.anonymous_chat" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "ai.options" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -3377,6 +3414,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "self.folds" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "tasks.refuse" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "self.agents.spawn" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -3476,6 +3516,15 @@ async fn execute_agent_verb_listing(
         .is_some_and(oneiron::task_verb::sdk::AgentVerb::is_mcp)
     {
         return Err(invalid());
+    }
+    // G10: MCP and code mode retain envelopes and results. Do not run a
+    // memory-free turn on either, or fire a hook that could retain its text.
+    if tool == "ai.anonymous_chat" {
+        return Err(McpGatewayError::new(
+            -32020,
+            "model_unavailable",
+            "anonymous chat requires its standalone HTTP SDK route",
+        ));
     }
     // A narrowed connector's TASKs are born in its own world and in the
     // facet its writes land in (its session's, or its own write facet).
@@ -4194,6 +4243,74 @@ async fn execute_agent_verb_row(
                 .await;
             // Derived from these rows too, though it names none of them.
             served.extend(listed);
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.retrieval.weights.get" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.retrieval.weights.get", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_retrieval_weights_get(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.retrieval.weights.configure" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.retrieval.weights.configure", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::policy_manifest_doors::RetrievalWeightsConfigureRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_retrieval_weights_configure(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.affect.annotations.put" => {
+            let input: oneiron::memory::affect::AffectAnnotationPut =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_affect_annotations_put(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.affect.claims.consolidate" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.affect.claims.consolidate", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::affect::AffectClaimConsolidateRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_affect_claims_consolidate(
+                server, auth, input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7676,6 +7793,82 @@ async fn execute_agent_verb_row(
                 input,
             )
             .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.consent.approve_once" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.consent.approve_once", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::consent::lifecycle::ApproveOnceRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_consent_approve_once(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.consent.create_standing_grant" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.consent.create_standing_grant", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::consent::lifecycle::CreateStandingGrantRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_consent_create_standing_grant(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.consent.registry" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.consent.registry", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::consent::ConsentRegistryQuery =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_consent_registry(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.consent.revoke" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.consent.revoke", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::consent::lifecycle::RevokeGrantRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_consent_revoke(server, auth, input).await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)
@@ -12240,6 +12433,28 @@ async fn execute_agent_verb_row(
                 auth,
                 (actor.actor_ref, actor.actor_class),
                 memory.invocation(),
+                input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "tasks.refuse" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("tasks.refuse", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::TaskRefuseInput> =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::tasks_refuse(
+                server,
+                auth,
+                actor
+                    .off_record_session
+                    .as_deref()
+                    .map(oneiron::EntityId::from_hex)
+                    .transpose()
+                    .map_err(|_| invalid())?,
                 input,
             )
             .await

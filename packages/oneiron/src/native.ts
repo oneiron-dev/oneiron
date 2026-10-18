@@ -75,6 +75,10 @@ tasksAccept(input: unknown): unknown
 vaultWitness(turn: WitnessTurn): WitnessReceipt
 vaultClaimsUpsert(input: unknown): unknown
 vaultRecall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined, as_of: number | undefined, deadline_ms: number | undefined, media: RecallMedia | undefined, query_affect: QueryAffect | undefined): MemoryPack
+vaultRetrievalWeightsGet(input: unknown): unknown
+vaultRetrievalWeightsConfigure(input: unknown): unknown
+vaultAffectAnnotationsPut(input: unknown): unknown
+vaultAffectClaimsConsolidate(input: unknown): unknown
 vaultRetrievalRecall(input: unknown): unknown
 vaultRetrievalRuns(input: unknown): unknown
 vaultRetrievalRun(input: unknown): unknown
@@ -274,6 +278,10 @@ vaultPolicyOwnerConfigure(input: unknown): unknown
 vaultPolicyOwnerRowChange(input: unknown): unknown
 vaultPolicyOutboundDecide(input: unknown): unknown
 vaultPolicyRelayDecide(input: unknown): unknown
+vaultConsentApproveOnce(input: unknown): unknown
+vaultConsentCreateStandingGrant(input: unknown): unknown
+vaultConsentRegistry(input: unknown): unknown
+vaultConsentRevoke(input: unknown): unknown
 vaultGatePolicyGet(input: unknown): unknown
 vaultGatePolicyPut(input: unknown): unknown
 vaultGatePolicyPropose(input: unknown): unknown
@@ -441,6 +449,7 @@ aiVoiceUsage(input: unknown): unknown
 aiVoiceTool(input: unknown): unknown
 aiVoiceEnd(input: unknown): unknown
 aiVoiceClose(input: unknown): unknown
+aiAnonymousChat(input: unknown): unknown
 aiOptions(input: unknown): unknown
 aiImage(input: unknown): unknown
 aiSpeech(input: unknown): unknown
@@ -607,6 +616,7 @@ selfFold(input: unknown): unknown
 selfCompact(input: unknown): unknown
 selfUnfold(input: unknown): unknown
 selfFolds(input: unknown): unknown
+tasksRefuse(input: unknown): unknown
 selfAgentsSpawn(input: unknown): unknown
 selfLeaderSplit(input: unknown): unknown
 selfSkillsCall(input: unknown): unknown

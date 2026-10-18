@@ -5,7 +5,7 @@
 //! the new seed, and only the owner's explicit re-assertion restores a
 //! world's earlier settings, keeping its key.
 use super::machine_identity::{host, request_for};
-use super::support::{authority_key_from_ed, ed_key, sign_ed, unsigned_entry};
+use super::support::{authority_key_from_ed, ed_key, owner_act, sign_ed, unsigned_entry};
 use super::world_key_doors::{Fresh, fresh_install, kit_seed, opened_by, own_request};
 use super::world_privacy::{settings, stored_entries, world_row};
 use super::*;
@@ -34,7 +34,13 @@ pub(super) fn sync(from: &Vault, to: &Vault) {
 pub(super) fn set_on(install: &Fresh, world: EntityId, read: ReadLocation) {
     install
         .vault
-        .set_world_privacy_as(&install.owner, HERE, world, settings(read))
+        .set_world_privacy_as(
+            &install.owner,
+            ActSurface::ThisInstall,
+            world,
+            settings(read),
+            None,
+        )
         .unwrap();
 }
 
@@ -130,7 +136,7 @@ pub(super) fn edit_on(
             parents.into_iter().collect(),
             AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
                 world,
-                owner,
+                act: owner_act(owner, world),
                 machine,
                 settings: settings(read),
             }),

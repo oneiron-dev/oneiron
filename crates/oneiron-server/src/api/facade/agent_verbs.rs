@@ -47,6 +47,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.witness", post(facade_route))
         .route("/vault.claims.upsert", post(facade_route))
         .route("/vault.recall", post(facade_route))
+        .route("/vault.retrieval.weights.get", post(facade_route))
+        .route("/vault.retrieval.weights.configure", post(facade_route))
+        .route("/vault.affect.annotations.put", post(facade_route))
+        .route("/vault.affect.claims.consolidate", post(facade_route))
         .route("/vault.retrieval.recall", post(facade_route))
         .route("/vault.retrieval.runs", post(facade_route))
         .route("/vault.retrieval.run", post(facade_route))
@@ -264,6 +268,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.policy.owner.row.change", post(facade_route))
         .route("/vault.policy.outbound.decide", post(facade_route))
         .route("/vault.policy.relay.decide", post(facade_route))
+        .route("/vault.consent.approve_once", post(facade_route))
+        .route("/vault.consent.create_standing_grant", post(facade_route))
+        .route("/vault.consent.registry", post(facade_route))
+        .route("/vault.consent.revoke", post(facade_route))
         .route("/vault.gate.policy.get", post(facade_route))
         .route("/vault.gate.policy.put", post(facade_route))
         .route("/vault.gate.policy.propose", post(facade_route))
@@ -618,7 +626,14 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.compact", post(facade_route))
         .route("/self.unfold", post(facade_route))
         .route("/self.folds", post(facade_route))
+        .route("/tasks.refuse", post(facade_route))
         .route("/self.agents.spawn", post(facade_route))
         .route("/self.leader.split", post(facade_route))
         .route("/self.skills.call", post(facade_route))
+}
+pub(super) fn anonymous_chat_routes() -> Router<Arc<SyncServer>> {
+    Router::new().route(
+        "/v1/core/facade/ai.anonymous_chat",
+        post(crate::api::anonymous_chat::chat),
+    )
 }

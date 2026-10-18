@@ -113,43 +113,66 @@ fn required_runs(
     input: RetrievalDiagnosticRequest,
 ) -> MemoryResult<Vec<RetrievalRunRecord>> {
     let mut seen = std::collections::HashSet::new();
-    input.run_ids.into_iter().map(|id| {
-        if !seen.insert(id) {
-            return Err(MemoryError::bad_request("duplicate retrieval run id"));
-        }
-        memory.vault().retrieval_run(id)?
-            .ok_or_else(|| crate::Error::EntityNotFound.into())
-    }).collect()
+    input
+        .run_ids
+        .into_iter()
+        .map(|id| {
+            if !seen.insert(id) {
+                return Err(MemoryError::bad_request("duplicate retrieval run id"));
+            }
+            memory
+                .vault()
+                .retrieval_run(id)?
+                .ok_or_else(|| crate::Error::EntityNotFound.into())
+        })
+        .collect()
 }
 
 pub fn retrieval_runs_as_owner(
-    memory: &Memory<'_>, owner: &AuthenticatedOwner, input: RetrievalRunsRequest,
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    input: RetrievalRunsRequest,
 ) -> MemoryResult<Vec<RetrievalRunEvidence>> {
     admitted(memory, owner)?;
-    memory.vault().retrieval_runs(input.limit.unwrap_or(RETRIEVAL_RUNS_DEFAULT))?
-        .into_iter().map(|run| evidence(memory, run)).collect()
+    memory
+        .vault()
+        .retrieval_runs(input.limit.unwrap_or(RETRIEVAL_RUNS_DEFAULT))?
+        .into_iter()
+        .map(|run| evidence(memory, run))
+        .collect()
 }
 
 pub fn retrieval_run_as_owner(
-    memory: &Memory<'_>, owner: &AuthenticatedOwner, input: RetrievalRunRequest,
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    input: RetrievalRunRequest,
 ) -> MemoryResult<Option<RetrievalRunEvidence>> {
     admitted(memory, owner)?;
-    memory.vault().retrieval_run(input.run_id)?
-        .map(|run| evidence(memory, run)).transpose()
+    memory
+        .vault()
+        .retrieval_run(input.run_id)?
+        .map(|run| evidence(memory, run))
+        .transpose()
 }
 
 pub fn retrieval_turn_as_owner(
-    memory: &Memory<'_>, owner: &AuthenticatedOwner, input: RetrievalTurnRequest,
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    input: RetrievalTurnRequest,
 ) -> MemoryResult<Vec<RetrievalRunEvidence>> {
     admitted(memory, owner)?;
     let run_ids = memory.vault().retrieval_runs_by_turn(&input.turn_id)?;
     required_runs(memory, RetrievalDiagnosticRequest { run_ids })?
-        .into_iter().map(|run| evidence(memory, run)).collect()
+        .into_iter()
+        .map(|run| evidence(memory, run))
+        .collect()
 }
 
 /// Raw caller observations remain telemetry, not gate-attributed training labels.
 pub fn retrieval_outcomes_put_as_owner(
-    memory: &Memory<'_>, owner: &AuthenticatedOwner, input: RetrievalOutcome,
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    input: RetrievalOutcome,
 ) -> MemoryResult<Vec<RetrievalOutcomeRecord>> {
     admitted(memory, owner)?;
     let run_id = input.run_id;
@@ -160,7 +183,9 @@ pub fn retrieval_outcomes_put_as_owner(
 /// The existing end-outcome writer validates the exact run/turn links and writes
 /// or retracts every contributor atomically; the door computes no reward itself.
 pub fn retrieval_outcomes_end_as_owner(
-    memory: &Memory<'_>, owner: &AuthenticatedOwner, input: RetrievalEndOutcome,
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    input: RetrievalEndOutcome,
 ) -> MemoryResult<Vec<RetrievalRunEvidence>> {
     admitted(memory, owner)?;
     let turn_id = input.turn_id;
@@ -169,27 +194,36 @@ pub fn retrieval_outcomes_end_as_owner(
 }
 
 pub fn retrieval_trace_as_owner(
-    memory: &Memory<'_>, owner: &AuthenticatedOwner, input: RetrievalTraceRequest,
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    input: RetrievalTraceRequest,
 ) -> MemoryResult<Option<RetrievalTrace>> {
     admitted(memory, owner)?;
-    Ok(memory.vault().retrieval_trace_by_fork_hash(input.fork_hash)?)
+    Ok(memory
+        .vault()
+        .retrieval_trace_by_fork_hash(input.fork_hash)?)
 }
 
 pub fn retrieval_export_as_owner(
-    memory: &Memory<'_>, owner: &AuthenticatedOwner, input: RetrievalDiagnosticRequest,
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    input: RetrievalDiagnosticRequest,
 ) -> MemoryResult<RetrievalDiagnosticExport> {
     admitted(memory, owner)?;
-    let runs = required_runs(memory, input)?.into_iter().map(|run| {
-        let mut row = evidence(memory, run)?;
-        if let Some(inputs) = row.run.replay_inputs.as_mut() {
-            inputs.query_ref = None;
-            inputs.corpus_snapshot_ref = None;
-        }
-        for outcome in &mut row.outcomes {
-            outcome.metadata.clear();
-        }
-        Ok(row)
-    }).collect::<MemoryResult<Vec<_>>>()?;
+    let runs = required_runs(memory, input)?
+        .into_iter()
+        .map(|run| {
+            let mut row = evidence(memory, run)?;
+            if let Some(inputs) = row.run.replay_inputs.as_mut() {
+                inputs.query_ref = None;
+                inputs.corpus_snapshot_ref = None;
+            }
+            for outcome in &mut row.outcomes {
+                outcome.metadata.clear();
+            }
+            Ok(row)
+        })
+        .collect::<MemoryResult<Vec<_>>>()?;
     Ok(RetrievalDiagnosticExport {
         contract_version: "oneiron.retrieval_diagnostic_export.v1".into(),
         runs,
@@ -197,23 +231,35 @@ pub fn retrieval_export_as_owner(
 }
 
 pub fn retrieval_replay_as_owner(
-    memory: &Memory<'_>, owner: &AuthenticatedOwner, input: RetrievalDiagnosticRequest,
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    input: RetrievalDiagnosticRequest,
 ) -> MemoryResult<RetrievalDiagnosticReplay> {
     admitted(memory, owner)?;
-    let runs = required_runs(memory, input)?.into_iter().map(|run| {
-        let pack = run.result_ids.iter().map(|id| {
-            run.score_breakdown.iter().find(|score| &score.result_id == id).cloned()
-                .ok_or(crate::Error::CorruptedIndex("retrieval replay pack"))
-        }).collect::<crate::Result<Vec<_>>>()?;
-        Ok(RetrievalReplayRun {
-            source_run_id: run.run_id,
-            turn: run.turn,
-            state: run.replay_state().clone(),
-            result_ids: run.result_ids,
-            pack,
-            trace: run.trace,
+    let runs = required_runs(memory, input)?
+        .into_iter()
+        .map(|run| {
+            let pack = run
+                .result_ids
+                .iter()
+                .map(|id| {
+                    run.score_breakdown
+                        .iter()
+                        .find(|score| &score.result_id == id)
+                        .cloned()
+                        .ok_or(crate::Error::CorruptedIndex("retrieval replay pack"))
+                })
+                .collect::<crate::Result<Vec<_>>>()?;
+            Ok(RetrievalReplayRun {
+                source_run_id: run.run_id,
+                turn: run.turn,
+                state: run.replay_state().clone(),
+                result_ids: run.result_ids,
+                pack,
+                trace: run.trace,
+            })
         })
-    }).collect::<MemoryResult<Vec<_>>>()?;
+        .collect::<MemoryResult<Vec<_>>>()?;
     Ok(RetrievalDiagnosticReplay {
         contract_version: "oneiron.retrieval_diagnostic_replay.v1".into(),
         runs,

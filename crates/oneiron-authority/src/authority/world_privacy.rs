@@ -1,11 +1,14 @@
 //! A world's privacy settings and their wire codec: where the world may be
 //! read, where its sealed copies may rest, and the model routes it prefers.
 //!
-//! The settings never live in the WORLD body. One machine the owner marked
-//! "yours" signs each edit with its install key, and the authority fold merges
-//! concurrent edits stricter. Edits ride the authority log as a side branch:
-//! no other entry takes one as a parent, so a later PR can send a world's edits
-//! only where the world may live without stalling any replica's log.
+//! The settings never live in the WORLD body. The owner decides them from
+//! any surface where he is authenticated, and the install that served him, a
+//! live machine of the vault in any role, signs the edit with its install key
+//! as the carrier of his act ([`OwnerAct`], mesh contract §2). The authority
+//! fold merges concurrent edits stricter. Edits are main-log metadata, so
+//! they reach every linked machine; a world's keys and content stay
+//! recipient-filtered (the Engine call "OwnerAct world metadata to every
+//! linked machine").
 
 use rmpv::Value;
 
@@ -22,7 +25,7 @@ pub const WORLD_MODEL_ROUTE_MAX_BYTES: usize = 128;
 const WORLD_PRIVACY_KEYS: [&str; 8] = [
     OP_KEY_KIND,
     "world",
-    "owner",
+    OP_KEY_ACT,
     "machine",
     "read",
     "read_machine",
@@ -35,7 +38,8 @@ const WORLD_PRIVACY_KEYS: [&str; 8] = [
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
 )]
 pub enum ReadLocation {
-    /// Only on this machine, which must be one the owner marked "yours".
+    /// Only on one machine, which must be one the owner marked "yours": his
+    /// recipient choice, never a limit on who edits the world.
     OneMachine(EntityId),
     /// On every machine the owner marked "yours".
     MyMachines,
@@ -118,14 +122,30 @@ impl WorldPrivacy {
 }
 
 /// One owner edit of one world's settings, signed by the install key of
-/// `machine`, a machine the owner marked "yours" that holds the world.
+/// `machine`, the carrier: any live machine of the vault, in any role, that
+/// served the owner's authenticated say-so. It need not hold the world.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct WorldPrivacyEdit {
     pub world: EntityId,
-    /// The owner the door authenticated.
-    pub owner: EntityId,
+    /// The owner's act: who decided, from which surface, on which settings
+    /// revision. Its kind is `world_privacy` and its target is `world`.
+    pub act: OwnerAct,
     pub machine: EntityId,
     pub settings: WorldPrivacy,
+}
+
+impl WorldPrivacyEdit {
+    pub fn validate(&self) -> Result<()> {
+        self.settings.validate()?;
+        self.act
+            .validate_carried(OwnerActKind::WorldPrivacy, self.world)?;
+        // Only the owner's own say-so edits a world's settings until FIX
+        // 4480's agent door (mesh PR1c) relaxes this one line.
+        if self.act.by != ActBy::Owner {
+            return Err(invalid_authority());
+        }
+        Ok(())
+    }
 }
 
 pub(super) fn world_privacy_value(edit: &WorldPrivacyEdit) -> Value {
@@ -151,7 +171,10 @@ pub(super) fn world_privacy_value(edit: &WorldPrivacyEdit) -> Value {
     Value::Map(vec![
         (Value::from(OP_KEY_KIND), Value::from(OP_KIND_WORLD_PRIVACY)),
         (Value::from("world"), Value::from(edit.world.to_hex())),
-        (Value::from("owner"), Value::from(edit.owner.to_hex())),
+        (
+            Value::from(OP_KEY_ACT),
+            super::owner_act::owner_act_value(&edit.act),
+        ),
         (Value::from("machine"), Value::from(edit.machine.to_hex())),
         (Value::from("read"), Value::from(read)),
         (Value::from("read_machine"), read_machine),
@@ -188,7 +211,7 @@ pub(super) fn decode_world_privacy(entries: &[(Value, Value)]) -> Result<Authori
     };
     Ok(AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
         world: decode_canonical_id(required(entries, "world")?)?,
-        owner: decode_canonical_id(required(entries, "owner")?)?,
+        act: super::owner_act::decode_owner_act(required(entries, OP_KEY_ACT)?)?,
         machine: decode_canonical_id(required(entries, "machine")?)?,
         settings: WorldPrivacy {
             read,

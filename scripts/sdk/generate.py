@@ -870,6 +870,12 @@ async fn execute_agent_verb_listing(
     if !oneiron::task_verb::sdk::AgentVerb::from_name(tool).is_some_and(oneiron::task_verb::sdk::AgentVerb::is_mcp) {
         return Err(invalid());
     }
+    // G10: MCP and code mode retain envelopes and results. Do not run a
+    // memory-free turn on either, or fire a hook that could retain its text.
+    if tool == "ai.anonymous_chat" {
+        return Err(McpGatewayError::new(-32020, "model_unavailable",
+            "anonymous chat requires its standalone HTTP SDK route"));
+    }
     // A narrowed connector's TASKs are born in its own world and in the
     // facet its writes land in (its session's, or its own write facet).
     let mut position = actor.scope.birth_position();
@@ -913,7 +919,7 @@ async fn execute_agent_verb_row(
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
 '''
     result += invalid + 'match tool {\n'
-    result += ''.join(mcp_input_dispatch(row) for row in mcp_rows())
+    result += ''.join(mcp_input_dispatch(row) for row in mcp_rows() if row['name'] != 'ai.anonymous_chat')
     result += '_ => Err(invalid()), } }\n'
     result += '''/// One typed verb result, drained in a single frame.
 fn mcp_agent_verb_output(
@@ -1183,12 +1189,26 @@ def facade_dispatch(facade_rows):
         # narrowing as MCP refuses a narrowed connector there.
         return 'auth.require_unnarrowed_facets()?;'
     routes = HEADER + 'use super::*;\npub(super) fn routes() -> Router<Arc<SyncServer>> { Router::new()\n'
-    routes += ''.join(f'.route("/{r["name"]}", post(facade_route))\n' for r in facade_rows) + '}\n'
+    # G10: anonymous chat uses the existing standalone handler, never the
+    # facade's invocation claim, hook chains or retained call-receipt layer.
+    routes += ''.join(f'.route("/{r["name"]}", post(facade_route))\n' for r in facade_rows if r['name'] != 'ai.anonymous_chat') + '}\n'
+    routes += 'pub(super) fn anonymous_chat_routes() -> Router<Arc<SyncServer>> { Router::new().route("/v1/core/facade/ai.anonymous_chat", post(crate::api::anonymous_chat::chat)) }\n'
     dispatch = HEADER + DISPATCH_DOC + 'use super::*;\n'
     for r in facade_rows:
         method, name = r['name'].replace('.', '_'), r['name']
         head = f"async fn {method}({DISPATCH_SIGNATURE}) -> Result<FacadeCallOutput, FacadeApiError> {{\nlet auth = call.auth();\n"
         if name == 'vault.recall': dispatch += SERVER_RECALL_DOC
+        if name == 'ai.anonymous_chat':
+            # Socket/RPC calls retain their envelope. Only the standalone
+            # HTTP registration above can execute a traceless turn.
+            dispatch += head + '''let _ = (server, auth, input);
+                Err(oneiron::memory::MemoryError::new(
+                    oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE,
+                    "anonymous chat requires its standalone HTTP SDK route",
+                    &["Call POST /v1/ai/anonymous-chat or the HTTP SDK ai.anonymous_chat method."],
+                ).into())
+            }\n'''
+            continue
         if r.get('admission', {}).get('owner_grade'):
             # A full-vault result must carry verifier-produced owner proof into
             # same-snapshot engine admission, never generic actor-only invoke.
@@ -1438,6 +1458,9 @@ def outputs():
     # here, once; no caller of `invoke` wraps it again.
     core += "pub fn invoke(memory: &Memory<'_>, verb: &str, value: serde_json::Value) -> MemoryResult<serde_json::Value> {\n"
     core += 'if !AgentVerb::from_name(verb).is_some_and(AgentVerb::is_facade) { return Err(wrong_root(verb).unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb"))); }\n'
+    # G10: an embedded handle has no anonymous model host. Refuse it before
+    # hooks can retain even a hash or an ask containing the anonymous input.
+    core += 'if verb == "ai.anonymous_chat" { return encode(ai_anonymous_chat(memory, decode(value)?)?); }\n'
     core += "// The row's one verb-hook boundary (ARCH-0080 §3).\n"
     core += "crate::task_verb::verb_hook_boundary::row(memory, verb, value, |value| match verb {\n"
     for r in facade_rows:

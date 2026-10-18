@@ -103,7 +103,11 @@ impl CanonicalEntityDocument {
                     + pins.sum::<usize>()
                     + forks.sum::<usize>()
                     + 96 * (history.receipts.len() + history.purges.len())
-                    + history.receipts.iter().map(|receipt| 16 * receipt.read_refs.len()).sum::<usize>()
+                    + history
+                        .receipts
+                        .iter()
+                        .map(|receipt| 16 * receipt.read_refs.len())
+                        .sum::<usize>()
             })
     }
 }
@@ -593,6 +597,7 @@ pub(crate) fn capture_canonical_window_within(
             "document_pins",
             "message_docs",
             "withdrawn_cutoffs",
+            "peer_origins",
         ]
         .contains(&name.as_str())
     }) {
