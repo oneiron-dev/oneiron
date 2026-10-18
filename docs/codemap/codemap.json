@@ -25440,7 +25440,7 @@
      "purpose": "Actor-scoped, receipt-backed proposal observation; crossing only asks a question",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 6,
       "fn": 3,
       "struct": 3
      }
@@ -36698,7 +36698,7 @@
      "purpose": "Node-local OF-520 own-rate windows",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -49859,7 +49859,7 @@
      "path": "src/task_verb/ask_facade.rs",
      "purpose": "Async scope-authority asks over existing consult TASKs",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "fn": 7
      }
     },
@@ -50462,7 +50462,7 @@
      "path": "src/task_verb/fanout_launch.rs",
      "purpose": "Durable fan-out launches: a wave cut held for the owner's launch approval under the vault's approval mode…",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "enum": 1,
       "fn": 5,
       "struct": 1
@@ -50598,7 +50598,7 @@
      "path": "src/task_verb/lifecycle_receipt.rs",
      "purpose": "The durable `TaskLifecycle` receipt (OF-220, ARCH-0079): what one mutating highway call did, what it asked…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -50632,10 +50632,10 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 38,
+      "crate-vis": 39,
       "fn": 1,
       "mod": 3,
-      "re-export": 25
+      "re-export": 26
      }
     },
     {
@@ -50798,7 +50798,7 @@
      "path": "src/task_verb/report_journal.rs",
      "purpose": "The per-attempt report journal (OF-220)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -52153,6 +52153,20 @@
      "path": "src/task_verb/symbol_lease_tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TaskActor"
+     ],
+     "path": "src/task_verb/task_actor.rs",
+     "purpose": "Who a task row names, and the erase that forgets it (FIX 3520): a fan-out launch's launcher, an ask wait's…",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 2
+     }
     },
     {
      "bucket": "s",
@@ -58567,7 +58581,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 172,
+     "files": 173,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -58737,7 +58751,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3584,
+   "source_files": 3585,
    "test_files": 902
   },
   "oneiron-android": {
