@@ -1123,8 +1123,8 @@ class Oneiron:
     class _VaultResearchVerbs:
         def create_child(self, spec: Facade.ResearchChildWire) -> Facade.ResearchChildReceipt:
             """The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave."""
-        def archive(self, spec: Facade.ResearchArchiveWire) -> Facade.ResearchArchive:
-            """Reads the complete retained campaign record, including every pruned, buggy and woven candidate, original search and held-out evidence, selection rounds and promotion receipts, under the controller gate."""
+        @property
+        def archive(self) -> "Oneiron._VaultResearchArchiveVerbs": ...
         def bind(self, spec: Facade.ResearchBindWire) -> Facade.ResearchBinding:
             """Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it."""
         def fork(self, spec: Facade.ResearchForkWire) -> Facade.ExperimentNode:
@@ -1157,6 +1157,21 @@ class Oneiron:
             """Refunds a work reservation nothing was spent on."""
         def record_benchmark(self, spec: Facade.ResearchBenchmarkWire) -> Facade.SelectionBenchmark:
             """Records an estimator version's held-out selection benchmark against the DGM parent formula, once per version; a win of at least 30 cases lets its information gain rank parents."""
+    class _VaultResearchArchiveVerbs:
+        def __call__(self, spec: Facade.ResearchArchiveWire) -> Facade.ResearchArchive:
+            """Reads the complete retained campaign record, including every pruned, buggy and woven candidate, original search and held-out evidence, selection rounds and promotion receipts, under the controller gate."""
+        def install(self, spec: Facade.CampaignArchiveInstall) -> Facade.CampaignArchiveView:
+            """Installs one immutable campaign output descriptor from a receipted Coach proposal under the current human goal; categorical axes and embedding clusters share the engine validator."""
+        def record(self, spec: Facade.CampaignArchiveOutput) -> Facade.CampaignArchiveView:
+            """Records original placement and quality receipts for one output revision; categorical judgment or pinned embedding placement competes only within its own cell."""
+        def get(self, spec: Facade.CampaignArchiveRequest) -> Facade.CampaignArchiveRecord:
+            """Reads the installed campaign output descriptor and every original placement and scoring receipt, including losing outputs, under the research controller gate."""
+        def best(self, spec: Facade.CampaignArchiveRequest) -> Facade.CampaignArchiveView:
+            """Rebuilds one best output per cell under the immutable descriptor revision and reports whether bunching warrants a new campaign proposal."""
+        def repropose(self, spec: Facade.CampaignArchiveReproposal) -> Facade.CampaignArchiveView:
+            """Installs a receipted descriptor proposal in a new bound campaign when the old archive is bunched; the old descriptor, goal and cell winners remain unchanged."""
+        def coverage(self, spec: Facade.CampaignArchiveCoverage) -> Facade.CampaignArchiveAdmission:
+            """Pins the incumbent and candidate replay output refs and projects the human goal coverage floor; promotion rechecks these receipts and rejects any lost incumbent cell."""
     class _VaultEvalsVerbs:
         def inventory(self, spec: Facade.EvalInventoryWire) -> Facade.EvalAuthoringInventory:
             """The owner reads the metadata-only eval-authoring inventory: real receipt families, grounded case candidates, date-cut cohorts and exposure counts. Pin its built_at and digest for cohort setup."""
@@ -1456,6 +1471,8 @@ class Oneiron:
             """Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal."""
         def model_heal_count(self, spec: Facade.CodeRunModelHealCountRequest) -> Facade.CodeRunModelHealCountView:
             """Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."""
+        @property
+        def waits(self) -> "Oneiron._VaultCodeWaitsVerbs": ...
         def repo_diff(self, request: Facade.CodeRepoDiffRequest) -> Facade.CodeRepoDiffView | None: ...
         def export(self, spec: Facade.CodeExportRequest) -> Facade.CodeExportResult:
             """Export one already-finalized and reviewed document revision through the existing origin publication protocol."""
@@ -1476,6 +1493,11 @@ class Oneiron:
             """Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing."""
         def definitions(self, spec: Facade.CodeSnapshotDefinitionsRequest) -> Facade.CodeSnapshotDefinitionsView:
             """Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language."""
+    class _VaultCodeWaitsVerbs:
+        def resolve(self, spec: Facade.CodeWaitResolveRequest) -> Facade.CodeWaitReceiptView:
+            """Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken."""
+        def receipt(self, spec: Facade.CodeWaitReceiptRequest) -> Facade.CodeWaitReceiptView | None:
+            """Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait."""
     class _VaultCodeOriginVerbs:
         @property
         def authority(self) -> "Oneiron._VaultCodeOriginAuthorityVerbs": ...

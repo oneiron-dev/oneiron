@@ -1073,6 +1073,12 @@ fn mcp_agent_verb_input(
         "vault.records.erase_confirm" => a.spec.clone().ok_or_else(invalid),
         "vault.research.create_child" => a.spec.clone().ok_or_else(invalid),
         "vault.research.archive" => a.spec.clone().ok_or_else(invalid),
+        "vault.research.archive.install" => a.spec.clone().ok_or_else(invalid),
+        "vault.research.archive.record" => a.spec.clone().ok_or_else(invalid),
+        "vault.research.archive.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.research.archive.best" => a.spec.clone().ok_or_else(invalid),
+        "vault.research.archive.repropose" => a.spec.clone().ok_or_else(invalid),
+        "vault.research.archive.coverage" => a.spec.clone().ok_or_else(invalid),
         "vault.evals.inventory" => a.spec.clone().ok_or_else(invalid),
         "vault.evals.cohorts.setup" => a.spec.clone().ok_or_else(invalid),
         "vault.research.bind" => a.spec.clone().ok_or_else(invalid),
@@ -1197,6 +1203,8 @@ fn mcp_agent_verb_input(
         "vault.code.proposal_submit" => a.spec.clone().ok_or_else(invalid),
         "vault.code.oplog" => a.spec.clone().ok_or_else(invalid),
         "vault.code.model_heal_count" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.waits.resolve" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.waits.receipt" => a.spec.clone().ok_or_else(invalid),
         "vault.results.status" => a.spec.clone().ok_or_else(invalid),
         "vault.results.recover" => a.spec.clone().ok_or_else(invalid),
         "vault.results.read" => a.spec.clone().ok_or_else(invalid),
@@ -2355,6 +2363,24 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.research.archive" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.research.archive.install" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.research.archive.record" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.research.archive.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.research.archive.best" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.research.archive.repropose" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.research.archive.coverage" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.evals.inventory" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -2709,6 +2735,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.model_heal_count" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.code.waits.resolve" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.code.waits.receipt" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.results.status" => {
@@ -7581,6 +7613,54 @@ async fn execute_agent_verb_row(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "vault.research.archive.install" => {
+            let input: oneiron::autoreason_campaign::archive::CampaignArchiveInstall =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_research_archive_install(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.research.archive.record" => {
+            let input: oneiron::autoreason_campaign::archive::CampaignArchiveOutput =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_research_archive_record(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.research.archive.get" => {
+            let input: oneiron::autoreason_campaign::archive::CampaignArchiveRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_research_archive_get(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.research.archive.best" => {
+            let input: oneiron::autoreason_campaign::archive::CampaignArchiveRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_research_archive_best(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.research.archive.repropose" => {
+            let input: oneiron::autoreason_campaign::archive::CampaignArchiveReproposal =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_research_archive_repropose(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.research.archive.coverage" => {
+            let input: oneiron::autoreason_campaign::archive::CampaignArchiveCoverage =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_research_archive_coverage(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "vault.evals.inventory" => {
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             oneiron::task_verb::sdk::validate_input("vault.evals.inventory", &input)
@@ -9632,6 +9712,42 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_model_heal_count(server, auth, input)
                     .await
                     .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.code.waits.resolve" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.code.waits.resolve", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::code_wait_doors::CodeWaitResolveRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_code_waits_resolve(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.code.waits.receipt" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.code.waits.receipt", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::code_wait_doors::CodeWaitReceiptRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_code_waits_receipt(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

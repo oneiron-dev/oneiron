@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 657 facade rows, 2413 declarations.
-Inputs: 605 of 657 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 586 of 657 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 665 facade rows, 2438 declarations.
+Inputs: 613 of 665 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 594 of 665 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 94; unread shapes: 0.
 """
 
@@ -4747,6 +4747,84 @@ class ResearchArchive(TypedDict):
     rounds: list[SelectionReceipt]
     promotions: list[PromotionBasis]
     incumbent: EntityId
+class ArchiveAxesProposal(TypedDict):
+    receipt: EntityId
+    descriptor: ArchiveDescriptor
+class CampaignArchiveInstall(TypedDict):
+    root: EntityId
+    task: EntityId
+    project: EntityId
+    goal_ref: EntityId
+    quality_metric: ArchiveQualityMetric
+    sample_outputs: list[ArchiveOutputRef]
+    proposal: ArchiveAxesProposal
+class ArchiveCellAxes(TypedDict):
+    kind: Literal["axes"]
+    bins: list[str]
+class ArchiveCellCluster(TypedDict):
+    kind: Literal["cluster"]
+    index: int
+ArchiveCell = ArchiveCellAxes | ArchiveCellCluster
+class CampaignArchiveBest(TypedDict):
+    cell: ArchiveCell
+    output: ArchiveOutputRef
+    score: float
+    placement_receipt: EntityId
+    scoring_receipt: EntityId
+class CampaignArchiveView(TypedDict):
+    descriptor_revision: str
+    pin: CampaignArchivePin
+    best: list[CampaignArchiveBest]
+    needs_axes_reproposal: bool
+class ArchiveCellJudgment(TypedDict):
+    receipt: EntityId
+    pin_version: str
+    output: ArchiveOutputRef
+    cell: ArchiveCell
+class CampaignArchivePlacementJudgment(TypedDict):
+    kind: Literal["judgment"]
+    judgment: ArchiveCellJudgment
+class CampaignArchivePlacementEmbedding(TypedDict):
+    kind: Literal["embedding"]
+    output: ArchiveOutputRef
+    receipt: EntityId
+    model_revision: str
+    embedding: list[float]
+CampaignArchivePlacement = CampaignArchivePlacementJudgment | CampaignArchivePlacementEmbedding
+class ArchiveOutputScore(TypedDict):
+    receipt: EntityId
+    pin_version: str
+    output: ArchiveOutputRef
+    quality: float
+class CampaignArchiveOutput(TypedDict):
+    root: EntityId
+    descriptor_revision: str
+    placement: CampaignArchivePlacement
+    score: ArchiveOutputScore
+class CampaignArchiveRequest(TypedDict):
+    root: EntityId
+class CampaignArchiveRecord(TypedDict):
+    project: EntityId
+    pin: CampaignArchivePin
+    placements: list[ArchiveCellJudgment]
+    scores: list[ArchiveOutputScore]
+class CampaignArchiveReproposal(TypedDict):
+    root: EntityId
+    new_root: EntityId
+    proposal: ArchiveAxesProposal
+class CampaignArchiveCoverage(TypedDict):
+    root: EntityId
+    candidate: EntityId
+    incumbent: EntityId
+    descriptor_revision: str
+    incumbent_outputs: list[ArchiveOutputRef]
+    candidate_outputs: list[ArchiveOutputRef]
+class CampaignArchiveAdmission(TypedDict):
+    descriptor_revision: str
+    candidate: EntityId
+    required_cells: list[ArchiveCell]
+    covered_cells: list[ArchiveCell]
+    admitted: bool
 class EvalInventoryWire(TypedDict):
     at: NotRequired[int | None]
 FamilyPurpose = Literal["development", "judge_audit", "sealed_confirmation"]
@@ -6734,6 +6812,57 @@ class CodeRunModelHealCountRequest(TypedDict):
 class CodeRunModelHealCountView(TypedDict):
     model_id: str
     healed_turns: int
+class CodeWaitTarget(TypedDict):
+    run_id: EntityId
+    wait_id: EntityId
+    generation: int
+    step_hash: str
+    effect_digest: str
+CodeWaitChoice = Literal["approve_once", "approve_and_stop_asking", "deny"]
+class CodeWaitResolveRequest(TypedDict):
+    target: CodeWaitTarget
+    answer: CodeWaitChoice
+    word_ref: EntityId
+CodeWaitState = Literal["waiting", "settling", "settled", "consumed"]
+class CodeWaitAnswerView(TypedDict):
+    answer: CodeWaitChoice
+    word_ref: EntityId
+    decision_ref: str
+    answered_at_ms: int
+CodeWaitSettleOutcome = Literal["delivered", "refused", "delivery_unknown"]
+class CodeWaitLedgerLinks(TypedDict):
+    prior_ref: NotRequired[str | None]
+    word_ref: NotRequired[EntityId | None]
+    facts_digest: str
+class CodeWaitSettlementView(TypedDict):
+    receipt_ref: str
+    outcome: CodeWaitSettleOutcome
+    reason_codes: list[str]
+    settled_at_ms: int
+    ledger: NotRequired[CodeWaitLedgerLinks | None]
+class CodeWaitConsumptionView(TypedDict):
+    receipt_ref: str
+    step: int
+    resumed_path: str
+    result_handle: str
+    consumed_at_ms: int
+    ledger: NotRequired[CodeWaitLedgerLinks | None]
+class CodeWaitReceiptView(TypedDict):
+    target: CodeWaitTarget
+    state: CodeWaitState
+    verb: str
+    connector: str
+    tool: str
+    hold_reasons: list[str]
+    ask_ref: NotRequired[EntityId | None]
+    allowed_answers: list[CodeWaitChoice]
+    answer: NotRequired[CodeWaitAnswerView | None]
+    settlement: NotRequired[CodeWaitSettlementView | None]
+    consumption: NotRequired[CodeWaitConsumptionView | None]
+    already_answered: bool
+class CodeWaitReceiptRequest(TypedDict):
+    run_id: EntityId
+    wait_id: EntityId
 class ResultRunRequest(TypedDict):
     run_id: EntityId
 class ResultEffectRecord(TypedDict):

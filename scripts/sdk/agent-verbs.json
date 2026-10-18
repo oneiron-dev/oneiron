@@ -3525,6 +3525,84 @@
       "section": false
     },
     {
+      "name": "vault.research.archive.install",
+      "description": "Installs one immutable campaign output descriptor from a receipted Coach proposal under the current human goal; categorical axes and embedding clusters share the engine validator.",
+      "input": "crate::autoreason_campaign::archive::CampaignArchiveInstall",
+      "output": "crate::autoreason_campaign::archive::CampaignArchiveView",
+      "call": "crate::task_verb::sdk::research_archive_install(memory, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.research.archive.record",
+      "description": "Records original placement and quality receipts for one output revision; categorical judgment or pinned embedding placement competes only within its own cell.",
+      "input": "crate::autoreason_campaign::archive::CampaignArchiveOutput",
+      "output": "crate::autoreason_campaign::archive::CampaignArchiveView",
+      "call": "crate::task_verb::sdk::research_archive_record(memory, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.research.archive.get",
+      "description": "Reads the installed campaign output descriptor and every original placement and scoring receipt, including losing outputs, under the research controller gate.",
+      "input": "crate::autoreason_campaign::archive::CampaignArchiveRequest",
+      "output": "crate::autoreason_campaign::archive::CampaignArchiveRecord",
+      "call": "crate::task_verb::sdk::research_archive_get(memory, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.research.archive.best",
+      "description": "Rebuilds one best output per cell under the immutable descriptor revision and reports whether bunching warrants a new campaign proposal.",
+      "input": "crate::autoreason_campaign::archive::CampaignArchiveRequest",
+      "output": "crate::autoreason_campaign::archive::CampaignArchiveView",
+      "call": "crate::task_verb::sdk::research_archive_best(memory, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.research.archive.repropose",
+      "description": "Installs a receipted descriptor proposal in a new bound campaign when the old archive is bunched; the old descriptor, goal and cell winners remain unchanged.",
+      "input": "crate::autoreason_campaign::archive::CampaignArchiveReproposal",
+      "output": "crate::autoreason_campaign::archive::CampaignArchiveView",
+      "call": "crate::task_verb::sdk::research_archive_repropose(memory, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.research.archive.coverage",
+      "description": "Pins the incumbent and candidate replay output refs and projects the human goal coverage floor; promotion rechecks these receipts and rejects any lost incumbent cell.",
+      "input": "crate::autoreason_campaign::archive::CampaignArchiveCoverage",
+      "output": "crate::autoreason_campaign::archive::CampaignArchiveAdmission",
+      "call": "crate::task_verb::sdk::research_archive_coverage(memory, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.evals.inventory",
       "description": "The owner reads the metadata-only eval-authoring inventory: real receipt families, grounded case candidates, date-cut cohorts and exposure counts. Pin its built_at and digest for cohort setup.",
       "input": "crate::task_verb::sdk::EvalInventoryWire",
@@ -5368,6 +5446,36 @@
       },
       "section": false,
       "host_door": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.waits.resolve",
+      "description": "Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken.",
+      "input": "crate::memory::code_wait_doors::CodeWaitResolveRequest",
+      "output": "crate::memory::code_wait_doors::CodeWaitReceiptView",
+      "call": "memory.code_wait_resolve_as(&memory.embedded_owner(\"vault.code.waits.resolve\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.waits.receipt",
+      "description": "Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait.",
+      "input": "crate::memory::code_wait_doors::CodeWaitReceiptRequest",
+      "output": "Option<crate::memory::code_wait_doors::CodeWaitReceiptView>",
+      "call": "memory.code_wait_receipt_as(&memory.embedded_owner(\"vault.code.waits.receipt\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
       "openapi": true
     },
     {

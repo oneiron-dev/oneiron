@@ -223,6 +223,12 @@ pub enum AgentVerb {
     VaultRecordsEraseConfirm,
     VaultResearchCreateChild,
     VaultResearchArchive,
+    VaultResearchArchiveInstall,
+    VaultResearchArchiveRecord,
+    VaultResearchArchiveGet,
+    VaultResearchArchiveBest,
+    VaultResearchArchiveRepropose,
+    VaultResearchArchiveCoverage,
     VaultEvalsInventory,
     VaultEvalsCohortsSetup,
     VaultResearchBind,
@@ -347,6 +353,8 @@ pub enum AgentVerb {
     VaultCodeProposalSubmit,
     VaultCodeOplog,
     VaultCodeModelHealCount,
+    VaultCodeWaitsResolve,
+    VaultCodeWaitsReceipt,
     VaultResultsStatus,
     VaultResultsRecover,
     VaultResultsRead,
@@ -911,6 +919,12 @@ impl AgentVerb {
         Self::VaultRecordsEraseConfirm,
         Self::VaultResearchCreateChild,
         Self::VaultResearchArchive,
+        Self::VaultResearchArchiveInstall,
+        Self::VaultResearchArchiveRecord,
+        Self::VaultResearchArchiveGet,
+        Self::VaultResearchArchiveBest,
+        Self::VaultResearchArchiveRepropose,
+        Self::VaultResearchArchiveCoverage,
         Self::VaultEvalsInventory,
         Self::VaultEvalsCohortsSetup,
         Self::VaultResearchBind,
@@ -1035,6 +1049,8 @@ impl AgentVerb {
         Self::VaultCodeProposalSubmit,
         Self::VaultCodeOplog,
         Self::VaultCodeModelHealCount,
+        Self::VaultCodeWaitsResolve,
+        Self::VaultCodeWaitsReceipt,
         Self::VaultResultsStatus,
         Self::VaultResultsRecover,
         Self::VaultResultsRead,
@@ -1606,6 +1622,12 @@ impl AgentVerb {
             Self::VaultRecordsEraseConfirm => "vault.records.erase_confirm",
             Self::VaultResearchCreateChild => "vault.research.create_child",
             Self::VaultResearchArchive => "vault.research.archive",
+            Self::VaultResearchArchiveInstall => "vault.research.archive.install",
+            Self::VaultResearchArchiveRecord => "vault.research.archive.record",
+            Self::VaultResearchArchiveGet => "vault.research.archive.get",
+            Self::VaultResearchArchiveBest => "vault.research.archive.best",
+            Self::VaultResearchArchiveRepropose => "vault.research.archive.repropose",
+            Self::VaultResearchArchiveCoverage => "vault.research.archive.coverage",
             Self::VaultEvalsInventory => "vault.evals.inventory",
             Self::VaultEvalsCohortsSetup => "vault.evals.cohorts.setup",
             Self::VaultResearchBind => "vault.research.bind",
@@ -1738,6 +1760,8 @@ impl AgentVerb {
             Self::VaultCodeProposalSubmit => "vault.code.proposal_submit",
             Self::VaultCodeOplog => "vault.code.oplog",
             Self::VaultCodeModelHealCount => "vault.code.model_heal_count",
+            Self::VaultCodeWaitsResolve => "vault.code.waits.resolve",
+            Self::VaultCodeWaitsReceipt => "vault.code.waits.receipt",
             Self::VaultResultsStatus => "vault.results.status",
             Self::VaultResultsRecover => "vault.results.recover",
             Self::VaultResultsRead => "vault.results.read",
@@ -2305,6 +2329,12 @@ impl AgentVerb {
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultResearchCreateChild
                 | Self::VaultResearchArchive
+                | Self::VaultResearchArchiveInstall
+                | Self::VaultResearchArchiveRecord
+                | Self::VaultResearchArchiveGet
+                | Self::VaultResearchArchiveBest
+                | Self::VaultResearchArchiveRepropose
+                | Self::VaultResearchArchiveCoverage
                 | Self::VaultEvalsInventory
                 | Self::VaultEvalsCohortsSetup
                 | Self::VaultResearchBind
@@ -2429,6 +2459,8 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSubmit
                 | Self::VaultCodeOplog
                 | Self::VaultCodeModelHealCount
+                | Self::VaultCodeWaitsResolve
+                | Self::VaultCodeWaitsReceipt
                 | Self::VaultResultsStatus
                 | Self::VaultResultsRecover
                 | Self::VaultResultsRead
@@ -3015,6 +3047,12 @@ impl AgentVerb {
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultResearchCreateChild
                 | Self::VaultResearchArchive
+                | Self::VaultResearchArchiveInstall
+                | Self::VaultResearchArchiveRecord
+                | Self::VaultResearchArchiveGet
+                | Self::VaultResearchArchiveBest
+                | Self::VaultResearchArchiveRepropose
+                | Self::VaultResearchArchiveCoverage
                 | Self::VaultEvalsInventory
                 | Self::VaultEvalsCohortsSetup
                 | Self::VaultResearchBind
@@ -3139,6 +3177,8 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSubmit
                 | Self::VaultCodeOplog
                 | Self::VaultCodeModelHealCount
+                | Self::VaultCodeWaitsResolve
+                | Self::VaultCodeWaitsReceipt
                 | Self::VaultResultsStatus
                 | Self::VaultResultsRecover
                 | Self::VaultResultsRead
@@ -3783,6 +3823,12 @@ impl AgentVerb {
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultResearchCreateChild
                 | Self::VaultResearchArchive
+                | Self::VaultResearchArchiveInstall
+                | Self::VaultResearchArchiveRecord
+                | Self::VaultResearchArchiveGet
+                | Self::VaultResearchArchiveBest
+                | Self::VaultResearchArchiveRepropose
+                | Self::VaultResearchArchiveCoverage
                 | Self::VaultEvalsInventory
                 | Self::VaultEvalsCohortsSetup
                 | Self::VaultResearchBind
@@ -3907,6 +3953,8 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSubmit
                 | Self::VaultCodeOplog
                 | Self::VaultCodeModelHealCount
+                | Self::VaultCodeWaitsResolve
+                | Self::VaultCodeWaitsReceipt
                 | Self::VaultResultsStatus
                 | Self::VaultResultsRecover
                 | Self::VaultResultsRead
@@ -4360,6 +4408,10 @@ impl AgentVerb {
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultResearchCreateChild
+                | Self::VaultResearchArchiveInstall
+                | Self::VaultResearchArchiveRecord
+                | Self::VaultResearchArchiveRepropose
+                | Self::VaultResearchArchiveCoverage
                 | Self::VaultEvalsCohortsSetup
                 | Self::VaultResearchBind
                 | Self::VaultResearchFork
@@ -4445,6 +4497,7 @@ impl AgentVerb {
                 | Self::VaultCodeSymbolsRenew
                 | Self::VaultCodeSymbolsRelease
                 | Self::VaultCodeProposalSubmit
+                | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeCheckoutBind
@@ -4899,6 +4952,12 @@ impl AgentVerb {
             Self::VaultRecordsEraseConfirm => &["spec"],
             Self::VaultResearchCreateChild => &["spec"],
             Self::VaultResearchArchive => &["spec"],
+            Self::VaultResearchArchiveInstall => &["spec"],
+            Self::VaultResearchArchiveRecord => &["spec"],
+            Self::VaultResearchArchiveGet => &["spec"],
+            Self::VaultResearchArchiveBest => &["spec"],
+            Self::VaultResearchArchiveRepropose => &["spec"],
+            Self::VaultResearchArchiveCoverage => &["spec"],
             Self::VaultEvalsInventory => &["spec"],
             Self::VaultEvalsCohortsSetup => &["spec"],
             Self::VaultResearchBind => &["spec"],
@@ -5023,6 +5082,8 @@ impl AgentVerb {
             Self::VaultCodeProposalSubmit => &["spec"],
             Self::VaultCodeOplog => &["spec"],
             Self::VaultCodeModelHealCount => &["spec"],
+            Self::VaultCodeWaitsResolve => &["spec"],
+            Self::VaultCodeWaitsReceipt => &["spec"],
             Self::VaultResultsStatus => &["spec"],
             Self::VaultResultsRecover => &["spec"],
             Self::VaultResultsRead => &["spec"],
@@ -5588,6 +5649,12 @@ impl AgentVerb {
             Self::VaultRecordsEraseConfirm => &["spec"],
             Self::VaultResearchCreateChild => &["spec"],
             Self::VaultResearchArchive => &["spec"],
+            Self::VaultResearchArchiveInstall => &["spec"],
+            Self::VaultResearchArchiveRecord => &["spec"],
+            Self::VaultResearchArchiveGet => &["spec"],
+            Self::VaultResearchArchiveBest => &["spec"],
+            Self::VaultResearchArchiveRepropose => &["spec"],
+            Self::VaultResearchArchiveCoverage => &["spec"],
             Self::VaultEvalsInventory => &["spec"],
             Self::VaultEvalsCohortsSetup => &["spec"],
             Self::VaultResearchBind => &["spec"],
@@ -5712,6 +5779,8 @@ impl AgentVerb {
             Self::VaultCodeProposalSubmit => &["spec"],
             Self::VaultCodeOplog => &["spec"],
             Self::VaultCodeModelHealCount => &["spec"],
+            Self::VaultCodeWaitsResolve => &["spec"],
+            Self::VaultCodeWaitsReceipt => &["spec"],
             Self::VaultResultsStatus => &["spec"],
             Self::VaultResultsRecover => &["spec"],
             Self::VaultResultsRead => &["spec"],
@@ -6698,6 +6767,24 @@ impl AgentVerb {
             Self::VaultResearchArchive => {
                 "Reads the complete retained campaign record, including every pruned, buggy and woven candidate, original search and held-out evidence, selection rounds and promotion receipts, under the controller gate."
             }
+            Self::VaultResearchArchiveInstall => {
+                "Installs one immutable campaign output descriptor from a receipted Coach proposal under the current human goal; categorical axes and embedding clusters share the engine validator."
+            }
+            Self::VaultResearchArchiveRecord => {
+                "Records original placement and quality receipts for one output revision; categorical judgment or pinned embedding placement competes only within its own cell."
+            }
+            Self::VaultResearchArchiveGet => {
+                "Reads the installed campaign output descriptor and every original placement and scoring receipt, including losing outputs, under the research controller gate."
+            }
+            Self::VaultResearchArchiveBest => {
+                "Rebuilds one best output per cell under the immutable descriptor revision and reports whether bunching warrants a new campaign proposal."
+            }
+            Self::VaultResearchArchiveRepropose => {
+                "Installs a receipted descriptor proposal in a new bound campaign when the old archive is bunched; the old descriptor, goal and cell winners remain unchanged."
+            }
+            Self::VaultResearchArchiveCoverage => {
+                "Pins the incumbent and candidate replay output refs and projects the human goal coverage floor; promotion rechecks these receipts and rejects any lost incumbent cell."
+            }
             Self::VaultEvalsInventory => {
                 "The owner reads the metadata-only eval-authoring inventory: real receipt families, grounded case candidates, date-cut cohorts and exposure counts. Pin its built_at and digest for cohort setup."
             }
@@ -7055,6 +7142,12 @@ impl AgentVerb {
             }
             Self::VaultCodeModelHealCount => {
                 "Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."
+            }
+            Self::VaultCodeWaitsResolve => {
+                "Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken."
+            }
+            Self::VaultCodeWaitsReceipt => {
+                "Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait."
             }
             Self::VaultResultsStatus => {
                 "The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run."

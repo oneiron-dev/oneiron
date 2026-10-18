@@ -249,6 +249,12 @@ vaultRecordsErasePreview(input: unknown): unknown
 vaultRecordsEraseConfirm(input: unknown): unknown
 vaultResearchCreateChild(input: unknown): unknown
 vaultResearchArchive(input: unknown): unknown
+vaultResearchArchiveInstall(input: unknown): unknown
+vaultResearchArchiveRecord(input: unknown): unknown
+vaultResearchArchiveGet(input: unknown): unknown
+vaultResearchArchiveBest(input: unknown): unknown
+vaultResearchArchiveRepropose(input: unknown): unknown
+vaultResearchArchiveCoverage(input: unknown): unknown
 vaultEvalsInventory(input: unknown): unknown
 vaultEvalsCohortsSetup(input: unknown): unknown
 vaultResearchBind(input: unknown): unknown
@@ -373,6 +379,8 @@ vaultCodeSymbolsRelease(input: unknown): unknown
 vaultCodeProposalSubmit(input: unknown): unknown
 vaultCodeOplog(input: unknown): unknown
 vaultCodeModelHealCount(input: unknown): unknown
+vaultCodeWaitsResolve(input: unknown): unknown
+vaultCodeWaitsReceipt(input: unknown): unknown
 vaultResultsStatus(input: unknown): unknown
 vaultResultsRecover(input: unknown): unknown
 vaultResultsRead(input: unknown): unknown

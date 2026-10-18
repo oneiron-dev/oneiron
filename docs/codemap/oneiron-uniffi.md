@@ -18,6 +18,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/embedded_engine.rs` | src | m | 6 struct · 1 trait · 11 fn | AppHostCallbacks, EmbeddedEngine, EngineConnection, EngineHeader, EngineLimits, EngineReply, EngineRequest | The embedded engine (OF-237): the full server `oneiron serve` runs, inside the app's own process, over the… |
 | `src/error.rs` | src | s | 1 enum | OneironError | The single exported error type for the UniFFI head-contract surface |
 | `src/facade_generated.rs` | src | XL | — | — | — |
-| `src/facade_types_generated.rs` | src | XL | 1750 struct · 602 enum | AcceptConnect, AcceptRescopeConnect, AccessStatus, ActExecution, ActionBoundRequest, ActionEnvelopeRequest, ActorCeiling, AdmissionBasis +2344 | — |
+| `src/facade_types_generated.rs` | src | XL | 1770 struct · 607 enum | AcceptConnect, AcceptRescopeConnect, AccessStatus, ActExecution, ActionBoundRequest, ActionEnvelopeRequest, ActorCeiling, AdmissionBasis +2369 | — |
 | `src/lib.rs` | src | s | 1 struct · 10 fn · 1 const · 5 re-export | Oneiron | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound |
 | `src/pairing.rs` | src | s | 6 struct · 3 enum | CheckpointPin, CheckpointPinBinding, CheckpointPinKey, CheckpointPinPolicy, CheckpointPinPosture, CheckpointPinRoot, CheckpointPinSignature, CheckpointPinSuite +1 | The checkpoint pin `pair` returns (OF-469, FIX 3376), lifted whole from… |
