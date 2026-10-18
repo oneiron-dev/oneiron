@@ -1386,6 +1386,144 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_federation_connect_identity(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.federation.connect.identity")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.federation.connect.identity", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_federation_connect_grants_mint(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.federation.connect.grants.mint")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.federation.connect.grants.mint", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_federation_connect_offer(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.federation.connect.offer")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.federation.connect.offer", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_federation_connect_accept(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.federation.connect.accept")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.federation.connect.accept", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_federation_connect_narrow(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.federation.connect.narrow")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.federation.connect.narrow", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_federation_connect_rescope_offer(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(input_json, "vault.federation.connect.rescope.offer")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.federation.connect.rescope.offer", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_federation_connect_rescope_accept(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(input_json, "vault.federation.connect.rescope.accept")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.federation.connect.rescope.accept", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_federation_connect_disconnect(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.federation.connect.disconnect")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.federation.connect.disconnect", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_federation_connect_export(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.federation.connect.export")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.federation.connect.export", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_federation_connect_rejoin(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.federation.connect.rejoin")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.federation.connect.rejoin", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_trusted_contacts_name(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.trusted_contacts.name")?;
         let output = py
@@ -2509,6 +2647,86 @@ impl NativeClient {
             .detach(|| {
                 self.inner
                     .agent_verb("vault.code.symbols.definitions", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_merge_queue_enqueue(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.merge_queue.enqueue")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.merge_queue.enqueue", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_merge_queue_stage(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.merge_queue.stage")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.merge_queue.stage", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_merge_queue_observe(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.merge_queue.observe")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.merge_queue.observe", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_merge_queue_requeue_survivors(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(input_json, "vault.code.merge_queue.requeue_survivors")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.merge_queue.requeue_survivors", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_merge_queue_land_reviewed(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.merge_queue.land_reviewed")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.merge_queue.land_reviewed", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_merge_queue_settle_slow(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.merge_queue.settle_slow")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.merge_queue.settle_slow", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_merge_queue_recover(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.merge_queue.recover")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.merge_queue.recover", input)
             })
             .map_err(raise)?;
         encode(&output)

@@ -114,6 +114,10 @@ pub(super) async fn decision_read(
     if !auth.is_owner_grade() {
         return refusal(StatusCode::FORBIDDEN, "owner_required");
     }
+    // FIX 2222: an owner act; a hosted operator's root is refused, typed.
+    if let Err(error) = crate::api::host_action::require_host_owner_act(&server, &auth) {
+        return error.into_response();
+    }
     let Some((door, meter)) = server.decision_read.clone() else {
         return refusal(StatusCode::SERVICE_UNAVAILABLE, "decision_read_unavailable");
     };

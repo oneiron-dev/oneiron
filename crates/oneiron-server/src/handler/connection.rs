@@ -71,6 +71,10 @@ async fn ws_upgrade_handler(
     }
     let auth = require_owner_auth(&headers, &server.config, server.vault().as_ref())
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    // Full replication reads the whole vault, an owner act: a hosted
+    // operator's root is refused before the upgrade (FIX 2222).
+    crate::api::host_action::require_host_owner_act(&server, &auth)
+        .map_err(|_| StatusCode::FORBIDDEN)?;
     let session_jti = auth.jti().map(str::to_owned);
     // The socket's sync frames count under the actor its upgrade admitted,
     // as an HTTP request counts under its own (OF-520, FIX 1086).

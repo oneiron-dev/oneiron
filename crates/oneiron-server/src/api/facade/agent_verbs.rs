@@ -135,6 +135,22 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.shared.policy.propose", post(facade_route))
         .route("/vault.shared.policy.answer", post(facade_route))
         .route("/vault.shared.policy.change", post(facade_route))
+        .route("/vault.federation.connect.identity", post(facade_route))
+        .route("/vault.federation.connect.grants.mint", post(facade_route))
+        .route("/vault.federation.connect.offer", post(facade_route))
+        .route("/vault.federation.connect.accept", post(facade_route))
+        .route("/vault.federation.connect.narrow", post(facade_route))
+        .route(
+            "/vault.federation.connect.rescope.offer",
+            post(facade_route),
+        )
+        .route(
+            "/vault.federation.connect.rescope.accept",
+            post(facade_route),
+        )
+        .route("/vault.federation.connect.disconnect", post(facade_route))
+        .route("/vault.federation.connect.export", post(facade_route))
+        .route("/vault.federation.connect.rejoin", post(facade_route))
         .route("/vault.trusted_contacts.name", post(facade_route))
         .route("/vault.trusted_contacts.list", post(facade_route))
         .route("/vault.trusted_contacts.consent", post(facade_route))
@@ -274,6 +290,16 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.code.snapshots.get", post(facade_route))
         .route("/vault.code.snapshots.read", post(facade_route))
         .route("/vault.code.symbols.definitions", post(facade_route))
+        .route("/vault.code.merge_queue.enqueue", post(facade_route))
+        .route("/vault.code.merge_queue.stage", post(facade_route))
+        .route("/vault.code.merge_queue.observe", post(facade_route))
+        .route(
+            "/vault.code.merge_queue.requeue_survivors",
+            post(facade_route),
+        )
+        .route("/vault.code.merge_queue.land_reviewed", post(facade_route))
+        .route("/vault.code.merge_queue.settle_slow", post(facade_route))
+        .route("/vault.code.merge_queue.recover", post(facade_route))
         .route("/vault.artifacts.export", post(facade_route))
         .route("/vault.agents.create", post(facade_route))
         .route("/vault.agents.get", post(facade_route))

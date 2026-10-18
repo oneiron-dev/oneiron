@@ -42,6 +42,14 @@ pub(super) const EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS: u64 = 1;
 /// Erase's rewrite of every kept pad object runs within one such tick of the
 /// erase's commit; the bundle's take and upload once per UTC slot.
 pub(super) const SEALED_RELAY_INTERVAL_SECS: u64 = 300;
+/// How often a live lane asks the home again for the machine-claim history
+/// this machine is owed (FIX 3820). It also asks at connect, and once an
+/// import or a round lands rows an owed history waits on. CALLS: "FIX 3820
+/// machine history retry".
+pub(super) const MACHINE_HISTORY_RETRY_INTERVAL_SECS: u64 = 300;
+/// How many owed-history rounds a lane runs at once; each takes every owed
+/// target. CALLS: "FIX 3820 machine history tasks".
+pub(super) const MACHINE_HISTORY_FETCH_TASKS: usize = 1;
 
 pub(super) type WsSink = SplitSink<WsStream, Message>;
 

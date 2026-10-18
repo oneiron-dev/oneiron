@@ -137,6 +137,16 @@ pub enum AgentVerb {
     VaultSharedPolicyPropose,
     VaultSharedPolicyAnswer,
     VaultSharedPolicyChange,
+    VaultFederationConnectIdentity,
+    VaultFederationConnectGrantsMint,
+    VaultFederationConnectOffer,
+    VaultFederationConnectAccept,
+    VaultFederationConnectNarrow,
+    VaultFederationConnectRescopeOffer,
+    VaultFederationConnectRescopeAccept,
+    VaultFederationConnectDisconnect,
+    VaultFederationConnectExport,
+    VaultFederationConnectRejoin,
     VaultTrustedContactsName,
     VaultTrustedContactsList,
     VaultTrustedContactsConsent,
@@ -267,6 +277,13 @@ pub enum AgentVerb {
     VaultCodeSnapshotsGet,
     VaultCodeSnapshotsRead,
     VaultCodeSymbolsDefinitions,
+    VaultCodeMergeQueueEnqueue,
+    VaultCodeMergeQueueStage,
+    VaultCodeMergeQueueObserve,
+    VaultCodeMergeQueueRequeueSurvivors,
+    VaultCodeMergeQueueLandReviewed,
+    VaultCodeMergeQueueSettleSlow,
+    VaultCodeMergeQueueRecover,
     VaultArtifactsExport,
     VaultAgentsCreate,
     VaultAgentsGet,
@@ -652,6 +669,16 @@ impl AgentVerb {
         Self::VaultSharedPolicyPropose,
         Self::VaultSharedPolicyAnswer,
         Self::VaultSharedPolicyChange,
+        Self::VaultFederationConnectIdentity,
+        Self::VaultFederationConnectGrantsMint,
+        Self::VaultFederationConnectOffer,
+        Self::VaultFederationConnectAccept,
+        Self::VaultFederationConnectNarrow,
+        Self::VaultFederationConnectRescopeOffer,
+        Self::VaultFederationConnectRescopeAccept,
+        Self::VaultFederationConnectDisconnect,
+        Self::VaultFederationConnectExport,
+        Self::VaultFederationConnectRejoin,
         Self::VaultTrustedContactsName,
         Self::VaultTrustedContactsList,
         Self::VaultTrustedContactsConsent,
@@ -782,6 +809,13 @@ impl AgentVerb {
         Self::VaultCodeSnapshotsGet,
         Self::VaultCodeSnapshotsRead,
         Self::VaultCodeSymbolsDefinitions,
+        Self::VaultCodeMergeQueueEnqueue,
+        Self::VaultCodeMergeQueueStage,
+        Self::VaultCodeMergeQueueObserve,
+        Self::VaultCodeMergeQueueRequeueSurvivors,
+        Self::VaultCodeMergeQueueLandReviewed,
+        Self::VaultCodeMergeQueueSettleSlow,
+        Self::VaultCodeMergeQueueRecover,
         Self::VaultArtifactsExport,
         Self::VaultAgentsCreate,
         Self::VaultAgentsGet,
@@ -1170,6 +1204,16 @@ impl AgentVerb {
             Self::VaultSharedPolicyPropose => "vault.shared.policy.propose",
             Self::VaultSharedPolicyAnswer => "vault.shared.policy.answer",
             Self::VaultSharedPolicyChange => "vault.shared.policy.change",
+            Self::VaultFederationConnectIdentity => "vault.federation.connect.identity",
+            Self::VaultFederationConnectGrantsMint => "vault.federation.connect.grants.mint",
+            Self::VaultFederationConnectOffer => "vault.federation.connect.offer",
+            Self::VaultFederationConnectAccept => "vault.federation.connect.accept",
+            Self::VaultFederationConnectNarrow => "vault.federation.connect.narrow",
+            Self::VaultFederationConnectRescopeOffer => "vault.federation.connect.rescope.offer",
+            Self::VaultFederationConnectRescopeAccept => "vault.federation.connect.rescope.accept",
+            Self::VaultFederationConnectDisconnect => "vault.federation.connect.disconnect",
+            Self::VaultFederationConnectExport => "vault.federation.connect.export",
+            Self::VaultFederationConnectRejoin => "vault.federation.connect.rejoin",
             Self::VaultTrustedContactsName => "vault.trusted_contacts.name",
             Self::VaultTrustedContactsList => "vault.trusted_contacts.list",
             Self::VaultTrustedContactsConsent => "vault.trusted_contacts.consent",
@@ -1306,6 +1350,13 @@ impl AgentVerb {
             Self::VaultCodeSnapshotsGet => "vault.code.snapshots.get",
             Self::VaultCodeSnapshotsRead => "vault.code.snapshots.read",
             Self::VaultCodeSymbolsDefinitions => "vault.code.symbols.definitions",
+            Self::VaultCodeMergeQueueEnqueue => "vault.code.merge_queue.enqueue",
+            Self::VaultCodeMergeQueueStage => "vault.code.merge_queue.stage",
+            Self::VaultCodeMergeQueueObserve => "vault.code.merge_queue.observe",
+            Self::VaultCodeMergeQueueRequeueSurvivors => "vault.code.merge_queue.requeue_survivors",
+            Self::VaultCodeMergeQueueLandReviewed => "vault.code.merge_queue.land_reviewed",
+            Self::VaultCodeMergeQueueSettleSlow => "vault.code.merge_queue.settle_slow",
+            Self::VaultCodeMergeQueueRecover => "vault.code.merge_queue.recover",
             Self::VaultArtifactsExport => "vault.artifacts.export",
             Self::VaultAgentsCreate => "vault.agents.create",
             Self::VaultAgentsGet => "vault.agents.get",
@@ -1694,6 +1745,16 @@ impl AgentVerb {
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
                 | Self::VaultSharedPolicyChange
+                | Self::VaultFederationConnectIdentity
+                | Self::VaultFederationConnectGrantsMint
+                | Self::VaultFederationConnectOffer
+                | Self::VaultFederationConnectAccept
+                | Self::VaultFederationConnectNarrow
+                | Self::VaultFederationConnectRescopeOffer
+                | Self::VaultFederationConnectRescopeAccept
+                | Self::VaultFederationConnectDisconnect
+                | Self::VaultFederationConnectExport
+                | Self::VaultFederationConnectRejoin
                 | Self::VaultTrustedContactsName
                 | Self::VaultTrustedContactsList
                 | Self::VaultTrustedContactsConsent
@@ -1824,6 +1885,13 @@ impl AgentVerb {
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
                 | Self::VaultCodeSymbolsDefinitions
+                | Self::VaultCodeMergeQueueEnqueue
+                | Self::VaultCodeMergeQueueStage
+                | Self::VaultCodeMergeQueueObserve
+                | Self::VaultCodeMergeQueueRequeueSurvivors
+                | Self::VaultCodeMergeQueueLandReviewed
+                | Self::VaultCodeMergeQueueSettleSlow
+                | Self::VaultCodeMergeQueueRecover
                 | Self::VaultArtifactsExport
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
@@ -2216,6 +2284,16 @@ impl AgentVerb {
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
                 | Self::VaultSharedPolicyChange
+                | Self::VaultFederationConnectIdentity
+                | Self::VaultFederationConnectGrantsMint
+                | Self::VaultFederationConnectOffer
+                | Self::VaultFederationConnectAccept
+                | Self::VaultFederationConnectNarrow
+                | Self::VaultFederationConnectRescopeOffer
+                | Self::VaultFederationConnectRescopeAccept
+                | Self::VaultFederationConnectDisconnect
+                | Self::VaultFederationConnectExport
+                | Self::VaultFederationConnectRejoin
                 | Self::VaultTrustedContactsName
                 | Self::VaultTrustedContactsList
                 | Self::VaultTrustedContactsConsent
@@ -2346,6 +2424,13 @@ impl AgentVerb {
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
                 | Self::VaultCodeSymbolsDefinitions
+                | Self::VaultCodeMergeQueueEnqueue
+                | Self::VaultCodeMergeQueueStage
+                | Self::VaultCodeMergeQueueObserve
+                | Self::VaultCodeMergeQueueRequeueSurvivors
+                | Self::VaultCodeMergeQueueLandReviewed
+                | Self::VaultCodeMergeQueueSettleSlow
+                | Self::VaultCodeMergeQueueRecover
                 | Self::VaultArtifactsExport
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
@@ -2782,6 +2867,16 @@ impl AgentVerb {
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
                 | Self::VaultSharedPolicyChange
+                | Self::VaultFederationConnectIdentity
+                | Self::VaultFederationConnectGrantsMint
+                | Self::VaultFederationConnectOffer
+                | Self::VaultFederationConnectAccept
+                | Self::VaultFederationConnectNarrow
+                | Self::VaultFederationConnectRescopeOffer
+                | Self::VaultFederationConnectRescopeAccept
+                | Self::VaultFederationConnectDisconnect
+                | Self::VaultFederationConnectExport
+                | Self::VaultFederationConnectRejoin
                 | Self::VaultTrustedContactsName
                 | Self::VaultTrustedContactsList
                 | Self::VaultTrustedContactsConsent
@@ -2912,6 +3007,13 @@ impl AgentVerb {
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
                 | Self::VaultCodeSymbolsDefinitions
+                | Self::VaultCodeMergeQueueEnqueue
+                | Self::VaultCodeMergeQueueStage
+                | Self::VaultCodeMergeQueueObserve
+                | Self::VaultCodeMergeQueueRequeueSurvivors
+                | Self::VaultCodeMergeQueueLandReviewed
+                | Self::VaultCodeMergeQueueSettleSlow
+                | Self::VaultCodeMergeQueueRecover
                 | Self::VaultArtifactsExport
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
@@ -3225,6 +3327,14 @@ impl AgentVerb {
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
+                | Self::VaultFederationConnectGrantsMint
+                | Self::VaultFederationConnectOffer
+                | Self::VaultFederationConnectAccept
+                | Self::VaultFederationConnectNarrow
+                | Self::VaultFederationConnectRescopeOffer
+                | Self::VaultFederationConnectRescopeAccept
+                | Self::VaultFederationConnectDisconnect
+                | Self::VaultFederationConnectRejoin
                 | Self::VaultTrustedContactsName
                 | Self::VaultTrustedContactsConsent
                 | Self::VaultTrustedContactsRevoke
@@ -3310,6 +3420,12 @@ impl AgentVerb {
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeCheckoutBind
                 | Self::VaultCodeSnapshotsIngest
+                | Self::VaultCodeMergeQueueEnqueue
+                | Self::VaultCodeMergeQueueStage
+                | Self::VaultCodeMergeQueueRequeueSurvivors
+                | Self::VaultCodeMergeQueueLandReviewed
+                | Self::VaultCodeMergeQueueSettleSlow
+                | Self::VaultCodeMergeQueueRecover
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsUpdate
                 | Self::VaultWorkspaceEstablish
@@ -3618,6 +3734,16 @@ impl AgentVerb {
             Self::VaultSharedPolicyPropose => &["spec"],
             Self::VaultSharedPolicyAnswer => &["spec"],
             Self::VaultSharedPolicyChange => &["spec"],
+            Self::VaultFederationConnectIdentity => &[],
+            Self::VaultFederationConnectGrantsMint => &["spec"],
+            Self::VaultFederationConnectOffer => &["spec"],
+            Self::VaultFederationConnectAccept => &["spec"],
+            Self::VaultFederationConnectNarrow => &["spec"],
+            Self::VaultFederationConnectRescopeOffer => &["spec"],
+            Self::VaultFederationConnectRescopeAccept => &["spec"],
+            Self::VaultFederationConnectDisconnect => &["spec"],
+            Self::VaultFederationConnectExport => &["spec"],
+            Self::VaultFederationConnectRejoin => &["spec"],
             Self::VaultTrustedContactsName => &["spec"],
             Self::VaultTrustedContactsList => &["spec"],
             Self::VaultTrustedContactsConsent => &["spec"],
@@ -3748,6 +3874,13 @@ impl AgentVerb {
             Self::VaultCodeSnapshotsGet => &["spec"],
             Self::VaultCodeSnapshotsRead => &["spec"],
             Self::VaultCodeSymbolsDefinitions => &["spec"],
+            Self::VaultCodeMergeQueueEnqueue => &["spec"],
+            Self::VaultCodeMergeQueueStage => &["spec"],
+            Self::VaultCodeMergeQueueObserve => &["spec"],
+            Self::VaultCodeMergeQueueRequeueSurvivors => &["spec"],
+            Self::VaultCodeMergeQueueLandReviewed => &["spec"],
+            Self::VaultCodeMergeQueueSettleSlow => &["spec"],
+            Self::VaultCodeMergeQueueRecover => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultAgentsCreate => &["spec"],
             Self::VaultAgentsGet => &["spec"],
@@ -4134,6 +4267,16 @@ impl AgentVerb {
             Self::VaultSharedPolicyPropose => &["spec"],
             Self::VaultSharedPolicyAnswer => &["spec"],
             Self::VaultSharedPolicyChange => &["spec"],
+            Self::VaultFederationConnectIdentity => &[],
+            Self::VaultFederationConnectGrantsMint => &["spec"],
+            Self::VaultFederationConnectOffer => &["spec"],
+            Self::VaultFederationConnectAccept => &["spec"],
+            Self::VaultFederationConnectNarrow => &["spec"],
+            Self::VaultFederationConnectRescopeOffer => &["spec"],
+            Self::VaultFederationConnectRescopeAccept => &["spec"],
+            Self::VaultFederationConnectDisconnect => &["spec"],
+            Self::VaultFederationConnectExport => &["spec"],
+            Self::VaultFederationConnectRejoin => &["spec"],
             Self::VaultTrustedContactsName => &["spec"],
             Self::VaultTrustedContactsList => &["spec"],
             Self::VaultTrustedContactsConsent => &["spec"],
@@ -4264,6 +4407,13 @@ impl AgentVerb {
             Self::VaultCodeSnapshotsGet => &["spec"],
             Self::VaultCodeSnapshotsRead => &["spec"],
             Self::VaultCodeSymbolsDefinitions => &["spec"],
+            Self::VaultCodeMergeQueueEnqueue => &["spec"],
+            Self::VaultCodeMergeQueueStage => &["spec"],
+            Self::VaultCodeMergeQueueObserve => &["spec"],
+            Self::VaultCodeMergeQueueRequeueSurvivors => &["spec"],
+            Self::VaultCodeMergeQueueLandReviewed => &["spec"],
+            Self::VaultCodeMergeQueueSettleSlow => &["spec"],
+            Self::VaultCodeMergeQueueRecover => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultAgentsCreate => &["spec"],
             Self::VaultAgentsGet => &["spec"],
@@ -4901,6 +5051,36 @@ impl AgentVerb {
             Self::VaultSharedPolicyChange => {
                 "A live Owner reads one shared-act policy change: its row, approvals, veto, state and the live editors it still waits on."
             }
+            Self::VaultFederationConnectIdentity => {
+                "The owner reads this vault identity and the host key used for reciprocal Connect consent."
+            }
+            Self::VaultFederationConnectGrantsMint => {
+                "The owner mints an inert Connect guest grant inside the named local-world ceiling."
+            }
+            Self::VaultFederationConnectOffer => {
+                "The owner asks the host to sign one disclosed Connect half without activating it."
+            }
+            Self::VaultFederationConnectAccept => {
+                "The owner accepts the peer host signed Connect half and receives the matching host counter-half."
+            }
+            Self::VaultFederationConnectNarrow => {
+                "The owner narrows the current outbound scope without breaking the reciprocal relationship."
+            }
+            Self::VaultFederationConnectRescopeOffer => {
+                "The owner discloses both directions at a new epoch and asks the host to sign a reciprocal re-scope proposal."
+            }
+            Self::VaultFederationConnectRescopeAccept => {
+                "The owner accepts the peer host signed re-scope and receives the matching signed counter-half."
+            }
+            Self::VaultFederationConnectDisconnect => {
+                "The owner unilaterally ends both directions of a pact without claiming to erase the peer retained copy."
+            }
+            Self::VaultFederationConnectExport => {
+                "The owner exports one grant-filtered named-world update signed by the host for its live pact and epoch."
+            }
+            Self::VaultFederationConnectRejoin => {
+                "The owner admits a peer host signed update through guest admission into the retained foreign-world vault."
+            }
             Self::VaultTrustedContactsName => {
                 "The vault owner names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again."
             }
@@ -4930,16 +5110,16 @@ impl AgentVerb {
                 "The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."
             }
             Self::VaultResidenceMode => {
-                "Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it."
+                "Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive."
             }
             Self::VaultResidenceOpen => {
-                "Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors."
+                "Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors. A machine this host does not reach answers state queued, naming the directive."
             }
             Self::VaultResidenceIndex => {
-                "The thin index one of the owner's machines holds, window by window: what exists, never a body."
+                "The thin index one of the owner's machines holds, window by window: what exists, never a body. A machine this host does not reach answers state queued, naming the directive."
             }
             Self::VaultResidencePrune => {
-                "Drops the opened-item caches one of the owner's machines last touched before a time."
+                "Drops the opened-item caches one of the owner's machines last touched before a time. A machine this host does not reach answers state queued, naming the directive."
             }
             Self::VaultOffRecordStart => {
                 "The owner enters an off-record session, off record or anonymous, as the owner route does; nothing of it reaches the vault unless the owner promotes or saves it."
@@ -5274,6 +5454,27 @@ impl AgentVerb {
             }
             Self::VaultCodeSymbolsDefinitions => {
                 "Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language."
+            }
+            Self::VaultCodeMergeQueueEnqueue => {
+                "Queue stored repository proposals as one batch on the queue green commit, one to six per call, with no batching window. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed."
+            }
+            Self::VaultCodeMergeQueueStage => {
+                "Materialize every nonempty subset of one queued batch as a journaled detached speculative worktree. Owner only. Head and green do not move."
+            }
+            Self::VaultCodeMergeQueueObserve => {
+                "Read the queue head and green Git commits, the named batches in request order and the stored contract verdicts they name. Owner only. It never recovers or settles, and a verdict is no check execution receipt."
+            }
+            Self::VaultCodeMergeQueueRequeueSurvivors => {
+                "Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. No durable parent or child link is written."
+            }
+            Self::VaultCodeMergeQueueLandReviewed => {
+                "Advance the fast-tested head by one ready batch through reviewed-stack admission alone. Owner only. Each proposal still needs unanimous critic approval and exact bytes and base; the owner proof approves nothing."
+            }
+            Self::VaultCodeMergeQueueSettleSlow => {
+                "Settle stored slow results in landing order: green advances past passing ones, and a red one rolls the ungreen suffix back. Owner only. The caller names no commit or result."
+            }
+            Self::VaultCodeMergeQueueRecover => {
+                "Reconcile an interrupted landing or rollback with its persisted mutation receipts. Owner only. Unreceipted divergence refuses; nothing is approved or rebased."
             }
             Self::VaultArtifactsExport => {
                 "One artifact version's export file, with the born-with text the caller chose and a share receipt listing it."

@@ -63,14 +63,15 @@ pub(crate) use super::shared_policy_doors::*;
 // The trusted-contact doors (DOOR-140, OF-527) too.
 pub(crate) use super::trusted_contact_doors::*;
 // The owner's legal-hold doors (OF-470) too.
+pub(crate) use super::extraction_doors::*;
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
-pub(crate) use super::extraction_doors::*;
 pub(crate) use super::model_step_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
 // The owner's guest revoke door (OF-232) too.
+pub(crate) use super::federation_connect_doors::*;
 pub(crate) use super::guest_doors::*;
 pub(crate) use super::hub_doors::*;
 // The owner's residence doors (OF-534), likewise.
@@ -134,6 +135,8 @@ pub(crate) use super::project_card_doors::*;
 pub(crate) use super::claim_settle_doors::*;
 // The owner's symbol lease, proposal submit and oplog doors (DOOR-137), likewise.
 pub(crate) use super::code_doors::*;
+// The owner's speculative merge queue doors (DOOR-132), likewise.
+pub(crate) use super::merge_queue_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
 pub(crate) use super::ui_action_routes::vault_lenses_default;
 // The explain receipts' doors (OF-278), beside their HTTP routes, likewise.
@@ -317,7 +320,7 @@ pub(crate) async fn vault_artifacts_review_slides(
     input: oneiron::blob_artifact::SlideReviewSubmit,
 ) -> Listed<oneiron::blob_artifact::SlideReviewOutcome> {
     const VERB: &str = "vault.artifacts.review_slides";
-    let caller = match slide_reviewer(auth) {
+    let caller = match slide_reviewer(server, auth) {
         Ok(caller) => caller,
         Err(refusal) => return refused(refusal),
     };
@@ -348,8 +351,11 @@ pub(crate) async fn vault_artifacts_review_slides(
 }
 
 /// The principal a slide review binds its proposal to.
-fn slide_reviewer(auth: &CoreAuth) -> MemoryResult<(EntityId, EdgeActorClass)> {
-    super::facade_actor(auth).map_err(|_| {
+fn slide_reviewer(
+    server: &SyncServer,
+    auth: &CoreAuth,
+) -> MemoryResult<(EntityId, EdgeActorClass)> {
+    super::facade_actor(server, auth).map_err(|_| {
         MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             "a slide review binds its proposal to an authenticated principal",
@@ -370,7 +376,7 @@ pub(crate) async fn vault_artifacts_ask(
     input: oneiron::blob_artifact::ArtifactAskSubmit,
 ) -> Listed<oneiron::blob_artifact::ArtifactAskOutcome> {
     const VERB: &str = "vault.artifacts.ask";
-    let caller = match artifact_asker(auth) {
+    let caller = match artifact_asker(server, auth) {
         Ok(caller) => caller,
         Err(refusal) => return refused(refusal),
     };
@@ -391,8 +397,11 @@ pub(crate) async fn vault_artifacts_ask(
 }
 
 /// The principal an artifact ask binds its proposal to.
-fn artifact_asker(auth: &CoreAuth) -> MemoryResult<(EntityId, EdgeActorClass)> {
-    super::facade_actor(auth).map_err(|_| {
+fn artifact_asker(
+    server: &SyncServer,
+    auth: &CoreAuth,
+) -> MemoryResult<(EntityId, EdgeActorClass)> {
+    super::facade_actor(server, auth).map_err(|_| {
         MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             "an artifact ask binds its proposal to an authenticated principal",
@@ -412,7 +421,7 @@ pub(crate) async fn vault_artifacts_body_deck_preview(
 ) -> Listed<oneiron::office_body::DeckPreview> {
     const VERB: &str = "vault.artifacts.body.deck.preview";
     let admitted = || -> MemoryResult<(EntityId, EdgeActorClass)> {
-        let caller = super::facade_actor(auth).map_err(|_| {
+        let caller = super::facade_actor(server, auth).map_err(|_| {
             MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,
                 "a deck preview reads as the credential's own principal",
@@ -837,7 +846,7 @@ pub(crate) async fn self_memory_diary_query(
     input: oneiron::task_verb::sdk::DiaryQueryRequest,
 ) -> Listed<oneiron::task_verb::sdk::DiaryQueryOutcome> {
     const VERB: &str = "self.memory.diary.query";
-    let caller = match diary_reader(auth) {
+    let caller = match diary_reader(server, auth) {
         Ok(caller) => caller,
         Err(refusal) => return refused(refusal),
     };
@@ -849,8 +858,8 @@ pub(crate) async fn self_memory_diary_query(
 }
 
 /// The principal a diary query reads as.
-fn diary_reader(auth: &CoreAuth) -> MemoryResult<(EntityId, EdgeActorClass)> {
-    super::facade_actor(auth).map_err(|_| {
+fn diary_reader(server: &SyncServer, auth: &CoreAuth) -> MemoryResult<(EntityId, EdgeActorClass)> {
+    super::facade_actor(server, auth).map_err(|_| {
         MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             "self.memory.diary.query reads as the credential's own principal",
@@ -979,8 +988,8 @@ fn replay_verdict(_server: &Arc<SyncServer>) -> Option<Arc<dyn HookVerdict>> {
 }
 
 /// Whom a host-door question is asked for: the slip's principal, or the
-/// vault's own owner for an owner-grade credential that names none, as a
-/// chat turn's writer is.
+/// owner a self-hosted root or the dev mode acts as, as a chat turn's writer
+/// is; a hosted operator's root asks for no one (FIX 2222).
 fn asking(auth: &CoreAuth, server: &SyncServer) -> MemoryResult<(EntityId, EdgeActorClass)> {
     let refused = || {
         MemoryError::new(
@@ -989,12 +998,12 @@ fn asking(auth: &CoreAuth, server: &SyncServer) -> MemoryResult<(EntityId, EdgeA
             &["Present a slip that names its principal, or the owner's own credential."],
         )
     };
+    if let Some(action) = crate::api::host_action::host_action_of(server.vault(), auth) {
+        let actor = action.map_err(MemoryError::from)?.actor();
+        return Ok((actor.entity_ref(), actor.actor_class()));
+    }
     let actor = match auth.principal_ref() {
         Some(reference) => EntityId::from_hex(reference).map_err(|_| refused())?,
-        None if auth.is_owner_grade() => server
-            .vault
-            .ensure_embedded_owner_actor()
-            .map_err(|_| refused())?,
         None => return Err(refused()),
     };
     let class = match auth.actor_class() {
@@ -1137,6 +1146,16 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.embedding_spaces.probes.delete"
         | "vault.fanout.resume"
         | "vault.fanout.ack"
+        | "vault.federation.connect.identity"
+        | "vault.federation.connect.grants.mint"
+        | "vault.federation.connect.offer"
+        | "vault.federation.connect.accept"
+        | "vault.federation.connect.narrow"
+        | "vault.federation.connect.rescope.offer"
+        | "vault.federation.connect.rescope.accept"
+        | "vault.federation.connect.disconnect"
+        | "vault.federation.connect.export"
+        | "vault.federation.connect.rejoin"
         | "vault.guests.revoke"
         | "vault.guests.mint_slip"
         | "vault.projects.confirm"
@@ -1167,6 +1186,13 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.snapshots.get"
         | "vault.code.snapshots.read"
         | "vault.code.symbols.definitions"
+        | "vault.code.merge_queue.enqueue"
+        | "vault.code.merge_queue.stage"
+        | "vault.code.merge_queue.observe"
+        | "vault.code.merge_queue.requeue_survivors"
+        | "vault.code.merge_queue.land_reviewed"
+        | "vault.code.merge_queue.settle_slow"
+        | "vault.code.merge_queue.recover"
         | "vault.off_record.start"
         | "vault.off_record.status"
         | "vault.off_record.witness"
@@ -1215,9 +1241,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.shared.policy.answer" => {
             super::shared_act_doors::person(server, auth, verb).map(drop)
         }
-        "vault.artifacts.review_slides" => slide_reviewer(auth).map(drop),
-        "vault.artifacts.ask" => artifact_asker(auth).map(drop),
-        "self.memory.diary.query" => diary_reader(auth).map(drop),
+        "vault.artifacts.review_slides" => slide_reviewer(server, auth).map(drop),
+        "vault.artifacts.ask" => artifact_asker(server, auth).map(drop),
+        "self.memory.diary.query" => diary_reader(server, auth).map(drop),
         "vault.decisions.asks.answer"
         | "vault.decisions.asks.climb"
         | "self.decisions.asks"

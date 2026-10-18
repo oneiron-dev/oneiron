@@ -92,7 +92,10 @@ fn connect_action(
 }
 
 /// This vault's id, once `issuer` is its live host root.
-fn local_vault_id(fold: &AuthorityFold, issuer: &HostSlipIssuer) -> Result<AuthorityVaultId> {
+pub(super) fn local_vault_id(
+    fold: &AuthorityFold,
+    issuer: &HostSlipIssuer,
+) -> Result<AuthorityVaultId> {
     require_host(fold, issuer)?;
     fold.vault_id.ok_or_else(invalid_authority)
 }
@@ -111,7 +114,7 @@ fn require_peer_slice(inbound: &FederationDirectionScope) -> Result<()> {
 }
 
 /// Signs this host's half of `action` as an offer to its peer.
-fn offer_for(
+pub(super) fn offer_for(
     issuer: &HostSlipIssuer,
     action: &FederationLifecycleAction,
     local: AuthorityVaultId,

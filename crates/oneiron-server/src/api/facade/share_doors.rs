@@ -30,7 +30,7 @@ pub(crate) async fn vault_shares_revoke(
     input: ShareRevokeRequest,
 ) -> Listed<ShareRevokeReceipt> {
     const VERB: &str = "vault.shares.revoke";
-    let caller = match principal(auth, VERB) {
+    let caller = match principal(server, auth, VERB) {
         Ok(caller) => caller,
         Err(refusal) => return refused(refusal),
     };
@@ -49,7 +49,7 @@ pub(crate) async fn vault_shares_view(
     input: ShareViewRequest,
 ) -> Listed<ScopedReadResult<Option<SharedBriefView>>> {
     const VERB: &str = "vault.shares.view";
-    let caller = match principal(auth, VERB) {
+    let caller = match principal(server, auth, VERB) {
         Ok(caller) => caller,
         Err(refusal) => return refused(refusal),
     };
@@ -61,8 +61,12 @@ pub(crate) async fn vault_shares_view(
 
 /// The credential's own principal, as the facade binds a write to one. An
 /// owner-grade credential that names none is refused, as on create.
-fn principal(auth: &CoreAuth, verb: &str) -> MemoryResult<(EntityId, EdgeActorClass)> {
-    super::facade_actor(auth).map_err(|_| {
+fn principal(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+) -> MemoryResult<(EntityId, EdgeActorClass)> {
+    super::facade_actor(server, auth).map_err(|_| {
         MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             format!("{verb} acts as the credential's own principal"),

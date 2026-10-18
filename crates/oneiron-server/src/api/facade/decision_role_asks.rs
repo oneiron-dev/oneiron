@@ -42,7 +42,7 @@ async fn asks(
     State(server): State<Arc<SyncServer>>,
 ) -> Result<Json<Vec<DecisionAsk>>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-    let (actor, _) = facade_actor(&auth)?;
+    let (actor, _) = facade_actor(&server, &auth)?;
     let vault = Arc::clone(&server.vault);
     let asks = tokio::task::spawn_blocking(move || vault.decision_asks_held_by(actor))
         .await
@@ -61,7 +61,7 @@ async fn answer(
 ) -> Result<Json<DecisionAsk>, FacadeApiError> {
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
-    let (actor, class) = facade_actor(&auth)?;
+    let (actor, class) = facade_actor(&server, &auth)?;
     let request: AnswerAsk = facade_input(facade_json(payload)?)?;
     let ask = tokio::task::spawn_blocking(move || {
         let asks = server.decision_host().asks();

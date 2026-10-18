@@ -1189,6 +1189,96 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_federation_connect_identity(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.connect.identity", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_connect_grants_mint(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.connect.grants.mint", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_connect_offer(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.connect.offer", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_connect_accept(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.connect.accept", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_connect_narrow(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.connect.narrow", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_connect_rescope_offer(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.connect.rescope.offer", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_connect_rescope_accept(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.connect.rescope.accept", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_connect_disconnect(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.connect.disconnect", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_connect_export(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.connect.export", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_connect_rejoin(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.connect.rejoin", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_trusted_contacts_name(
         &self,
         input: serde_json::Value,
@@ -2368,6 +2458,69 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.code.symbols.definitions", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_merge_queue_enqueue(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.merge_queue.enqueue", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_merge_queue_stage(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.merge_queue.stage", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_merge_queue_observe(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.merge_queue.observe", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_merge_queue_requeue_survivors(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.merge_queue.requeue_survivors", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_merge_queue_land_reviewed(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.merge_queue.land_reviewed", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_merge_queue_settle_slow(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.merge_queue.settle_slow", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_merge_queue_recover(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.merge_queue.recover", input)
             .map_err(facade_error)
     }
     #[napi]

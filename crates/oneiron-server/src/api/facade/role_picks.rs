@@ -54,7 +54,7 @@ async fn asks(
     State(server): State<Arc<SyncServer>>,
 ) -> Result<Json<Vec<SkillTradeoffAsk>>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-    let (actor, _) = facade_actor(&auth)?;
+    let (actor, _) = facade_actor(&server, &auth)?;
     let vault = Arc::clone(&server.vault);
     let asks = tokio::task::spawn_blocking(move || skill_tradeoff_asks_for(&vault, &actor))
         .await
@@ -73,7 +73,7 @@ async fn pick(
 ) -> Result<Json<Settled>, FacadeApiError> {
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
-    let (actor, class) = facade_actor(&auth)?;
+    let (actor, class) = facade_actor(&server, &auth)?;
     if !matches!(class, EdgeActorClass::Human | EdgeActorClass::Agent) {
         return Err(FacadeApiError::forbidden(
             "this door takes a person's or an agent's pick",

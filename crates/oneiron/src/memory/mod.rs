@@ -59,6 +59,7 @@ mod key_value;
 mod lifted_view;
 mod locality;
 mod machine_write;
+pub mod merge_queue_doors;
 mod message_result;
 mod note_tombstone;
 mod notes;
@@ -76,8 +77,8 @@ mod room_turn;
 mod scoped_export;
 mod search_hybrid;
 mod session_writes;
-mod signal_extraction;
 mod shape_doors;
+mod signal_extraction;
 mod structural;
 mod subscriptions;
 mod support;
@@ -129,10 +130,6 @@ pub use diary_read::{
 };
 pub use diary_read::{DiaryReader, DiaryReaderList, SealedPadReader};
 pub use dreamer::{ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptView};
-pub use signal_extraction::{
-    ProspectiveQueryHint, SignalExtractionClaim, SignalExtractionMessage, SignalExtractionRequest,
-    SignalExtractionResult, SignalExtractionResultRequest, SignalExtractionSource, SignalExtractionTicket,
-};
 pub use entity_erase::{
     EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome,
 };
@@ -160,6 +157,11 @@ pub use people_verbs::{
     GrantAskReceipt, GrantAskRequest, GrantAskScope, MessagePersonReceipt, MessagePersonRequest,
     PEOPLE_PAGE_SIZE, PeopleListRequest, PeoplePage, PersonRequest,
 };
+pub use signal_extraction::{
+    ProspectiveQueryHint, SignalExtractionClaim, SignalExtractionMessage, SignalExtractionRequest,
+    SignalExtractionResult, SignalExtractionResultRequest, SignalExtractionSource,
+    SignalExtractionTicket,
+};
 // OF-063: a write that names a record its writer cannot resolve is refused
 // with this code; hover and open resolve a typed record ref through the lens.
 pub use crate::lens::{
@@ -181,21 +183,21 @@ pub use reads::{ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpt
 pub(crate) use recall::check_recall_request;
 pub use recall::{
     CONTAINER_KINDS, CitedMessage, DEFAULT_CALL_MODE_DEADLINE, Effort, MEMORY_PACK_VERSION,
-    MemoryItem, MemoryPack, MemoryProvenance, RecallEffort, RecallRerank, RecallRerankHost,
-    RecallScope, RerankDocument, RerankEgress, RerankReport, RerankScores, RerankSkip,
-    RetrievalMeta, ScopeHonesty, resolve_recall_dial,
+    MemoryItem, MemoryPack, MemoryProvenance, MemoryStaleStamp, RecallEffort, RecallRerank,
+    RecallRerankHost, RecallScope, RerankDocument, RerankEgress, RerankReport, RerankScores,
+    RerankSkip, RetrievalMeta, ScopeHonesty, resolve_recall_dial,
 };
 pub use result_attachment::{
     MESSAGE_RESULT_METADATA_KEY, MessageResultAttachment, MessageResultSource,
 };
 pub use room_turn::RoomTurnHandle;
-pub use search_hybrid::{
-    HybridPprQuery, HybridRankReplay, HybridSearchHit, HybridSearchRequest, HybridTemporalQuery,
-};
 pub use scoped_export::{
     ChannelCeiling, CredentialCeiling, ExportChannel, RecordPosition, RecordSelector,
     ScopeAxisInput, ScopeSensitivityBand, ScopeSensitivityInput, ScopedExport, ScopedExportRecord,
     ScopedExportRequest,
+};
+pub use search_hybrid::{
+    HybridPprQuery, HybridRankReplay, HybridSearchHit, HybridSearchRequest, HybridTemporalQuery,
 };
 pub use skill_authoring::SkillAuthoringReceipt;
 pub(crate) use skill_authoring::{skill_author_in_txn, skill_author_proof_is_live_in_txn};
