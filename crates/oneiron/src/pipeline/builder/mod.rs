@@ -108,6 +108,7 @@ pub struct PipelineBuilder<'a> {
     pub(super) rerank: Option<(&'a dyn Reranker, RerankOptions)>,
     pub(super) hyde: Option<(&'a dyn HydeExpander, GroundingContext, HydeOptions)>,
     pub(super) access_factor_overrides: Option<&'a HashMap<EntityId, f32>>,
+    pub(super) claim_aging_profiles: crate::claim::ClaimAgingProfiles,
     /// The run's affect retrieval policy (OF-423): the vault's by default,
     /// replaced per run with [`Self::affect_policy`].
     pub(super) affect_policy: super::AffectRetrievalPolicy,
@@ -190,6 +191,7 @@ impl<'a> PipelineBuilder<'a> {
             rerank: None,
             hyde: None,
             access_factor_overrides: None,
+            claim_aging_profiles: crate::claim::ClaimAgingProfiles::default(),
             affect_policy: vault.config.affect_retrieval,
             affect_policy_overridden: false,
             ppr_vad_alpha: vault.config.ppr_vad_alpha,

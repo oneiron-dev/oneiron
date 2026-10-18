@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 671 facade rows, 2452 declarations.
-Inputs: 619 of 671 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 601 of 671 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 93; unread shapes: 0.
+Census: 703 facade rows, 2543 declarations.
+Inputs: 651 of 703 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 628 of 703 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 95; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -43,6 +43,76 @@ class ReportReceipt(TypedDict):
     duplicate_of: NotRequired[str | None]
     route: ReportRoute
     disclosure: ReportDisclosure
+FeedbackCategory = Literal["bug", "papercut", "confusion", "feature-wish"]
+class FeedbackPreviewRequest(TypedDict):
+    issue_ref: str
+    category: FeedbackCategory
+    include_text: NotRequired[bool]
+class FeedbackSubjectPreview(TypedDict):
+    issue_ref: str
+    subject_ref: str
+    publisher_ref: str
+    disclosure: ReportDisclosure
+    includes_text: bool
+    digest: str
+    encoding: str
+    bundle: Any
+    destination: str
+    approval: str
+    previewed_at: int
+class FeedbackSendSubjectRequest(TypedDict):
+    issue_ref: str
+    category: FeedbackCategory
+    include_text: NotRequired[bool]
+    digest: str
+    approval: str
+    previewed_at: int
+class FeedbackSubjectSent(TypedDict):
+    issue_ref: str
+    subject_ref: str
+    publisher_ref: str
+    digest: str
+    outcome: str
+    gate_reasons: list[str]
+    approval_receipt_ref: str
+    logical_send_ref: str
+ReportDisclosureChoice = Literal["approve_once", "stop_asking_for_publisher", "deny"]
+class ReportDisclosureRequest(TypedDict):
+    issue_ref: str
+    choice: ReportDisclosureChoice
+class ReportReview(TypedDict):
+    status: ReportStatus
+    quality_score: NotRequired[float | None]
+    duplicate_of: NotRequired[str | None]
+class ReportIssue(TypedDict):
+    issue_ref: str
+    actor_ref: str
+    request: ReportRequest
+    received_at: int
+    route: ReportRoute
+    review: ReportReview
+    disclosure: ReportDisclosure
+class ReportRouteRequest(TypedDict):
+    subject_ref: str
+    route: ReportRoute
+class ReportRouteReceipt(TypedDict):
+    subject_ref: str
+    route: ReportRoute
+    updated: bool
+class ReportOutboundRequest(TypedDict):
+    issue_ref: str
+class ReportSignatureView(TypedDict):
+    issue_ref: str
+    subject_hash: str
+    category: IssueCategory
+    kind: ReportKind
+class ReportPayloadView(TypedDict):
+    route: ReportRoute
+    signature: ReportSignatureView
+    disclosed: NotRequired[ReportRequest | None]
+class ReportOutboundView(TypedDict):
+    issue_ref: str
+    payload: NotRequired[ReportPayloadView | None]
 class ScratchpadRecallRequest(TypedDict):
     session_id: str
     query: str
@@ -1657,6 +1727,23 @@ class MemoryPack(TypedDict):
     rendered: NotRequired[str | None]
     narrowing: ScopedReadReceipt
     retrieval_run_id: NotRequired[RetrievalRunId | None]
+class AccessFactorPolicy(TypedDict):
+    half_life_secs: float
+    floor: float
+class ClaimAgingProfiles(TypedDict):
+    durable: AccessFactorPolicy
+    standard: AccessFactorPolicy
+    ephemeral: AccessFactorPolicy
+class ClaimAgingProfilesView(TypedDict):
+    manifest_ref: str
+    body_hash: str
+    profiles: ClaimAgingProfiles
+class ClaimAgingProfilesConfigureRequest(TypedDict):
+    expected_body_hash: str
+    profiles: ClaimAgingProfiles
+class ClaimAgingProfilesReceipt(TypedDict):
+    configuration: ClaimAgingProfilesView
+    receipt_ref: str
 class RetrievalWeights(TypedDict):
     affect: float
     arousal: float
@@ -2028,23 +2115,42 @@ class Scope(TypedDict):
     audience: NotRequired[ScopeAxis[ScopeId]]
     verbs: NotRequired[ScopeAxis[str]]
     sensitivity: NotRequired[SensitivityCeiling]
-class SlipCaveat(TypedDict):
-    scope: NotRequired[Scope | None]
+class CredentialCeiling(TypedDict):
+    kind: Literal["ceiling"]
+    scope: Scope
+TypeByteFamily = Literal["Conversation", "People", "World", "Content", "AgentsAndSurfacing", "CoreOverflow", "AuthorityPolicyCustody", "AuditObservability", "OutboundCommunicationConsent", "RegistriesDerived", "Productivity", "Code", "Documents", "Companion", "PackOverflow"]
+class SelectorRangeFamily(TypedDict):
+    Family: TypeByteFamily
+SelectorRange = Literal["Semantic", "Core", "Maintenance"] | SelectorRangeFamily
+class FederationDirectionScope(TypedDict):
+    worlds: ScopeAxis[ScopeId]
+    facets: ScopeAxis[ScopeId]
+    bands: ScopeAxis[SelectorRange]
+class CredentialPactCeiling(TypedDict):
+    grant_ref: ScopeId
+    ceiling: FederationDirectionScope
+class CredentialCaveat(TypedDict):
+    scope: NotRequired[CredentialCeiling | None]
     expires_at: NotRequired[int | None]
     ttl_secs: NotRequired[int | None]
-    single_use: bool
+    single_use: NotRequired[bool]
     records: NotRequired[list[str] | None]
     channels: NotRequired[list[str] | None]
-    pact: NotRequired[tuple[ScopeId, list[int]] | None]
+    pact: NotRequired[CredentialPactCeiling | None]
 class CredentialAttenuationRequest(TypedDict):
     holder_seed: list[int]
-    caveat: SlipCaveat
+    caveat: CredentialCaveat
     next_binding_key: NotRequired[list[int] | None]
 class CredentialAttenuated(TypedDict):
     token: str
     binding_key: list[int]
-class CredentialCeiling(TypedDict):
-    kind: Literal["ceiling"]
+class RecordPositionRequest(TypedDict):
+    record_ref: str
+class ScopedReadResult(TypedDict, Generic[T]):
+    value: T
+    narrowing: ScopedReadReceipt
+class RecordPosition(TypedDict):
+    kind: Literal["position"]
     scope: Scope
 class RecordSelector(TypedDict):
     worlds: NotRequired[RecallWorlds | None]
@@ -2079,9 +2185,6 @@ class ExportChannel(TypedDict):
 class ScopedExportRequest(TypedDict):
     selector: RecordSelector
     channel: ExportChannel
-class RecordPosition(TypedDict):
-    kind: Literal["position"]
-    scope: Scope
 MadeByInputRole = Literal["input", "prompt"]
 class MadeByInput(TypedDict):
     row: str
@@ -2242,6 +2345,96 @@ class KeyValueNamespaces(TypedDict):
     max_depth: NotRequired[int | None]
     limit: NotRequired[int]
     offset: NotRequired[int]
+class CampaignMemberChannelSpec(TypedDict):
+    channel: str
+    basis_evidence: str
+    sender_ref: str
+class CampaignEnrollRequest(TypedDict):
+    campaign_ref: str
+    person_ref: str
+    channels: list[CampaignMemberChannelSpec]
+    evidence_refs: list[str]
+CampaignEnrollmentState = Literal["enrolled"]
+class CampaignActionProvenance(TypedDict):
+    actor_ref: str
+    evidence_refs: list[str]
+    recorded_at: int
+class CampaignEnrollmentReceipt(TypedDict):
+    membership_claim_ref: str
+    person_ref: str
+    campaign_ref: str
+    state: CampaignEnrollmentState
+    channels: list[CampaignMemberChannelSpec]
+    approval: str
+    provenance: CampaignActionProvenance
+    receipt_ref: str
+StageKey = str
+class StageDefinition(TypedDict):
+    key: StageKey
+    label: str
+StageEvidenceClass = Literal["meaningful_reply", "calendar_event", "calendar_event_outcome", "document_artifact_and_send_receipt", "counterparty_ledger", "task_list_progress", "recurring_commitment"]
+StageTransitionRule = TypedDict("StageTransitionRule", {"from": NotRequired[StageKey | None], "to": StageKey, "evidence_class": StageEvidenceClass, "owner_attested_allowed": bool})
+ReplyCode = Literal["positive_now", "positive_later", "referral", "objection", "not_interested", "complaint"]
+class ReplyDispositionPromote(TypedDict):
+    kind: Literal["promote"]
+    stage: StageKey
+class ReplyDispositionSnooze(TypedDict):
+    kind: Literal["snooze"]
+class ReplyDispositionRouteReferral(TypedDict):
+    kind: Literal["route_referral"]
+class ReplyDispositionRecordOnly(TypedDict):
+    kind: Literal["record_only"]
+class ReplyDispositionExit(TypedDict):
+    kind: Literal["exit"]
+class ReplyDispositionSuppress(TypedDict):
+    kind: Literal["suppress"]
+ReplyDisposition = ReplyDispositionPromote | ReplyDispositionSnooze | ReplyDispositionRouteReferral | ReplyDispositionRecordOnly | ReplyDispositionExit | ReplyDispositionSuppress
+class ReplyRouteRule(TypedDict):
+    code: ReplyCode
+    disposition: ReplyDisposition
+class NoShowRecoveryRule(TypedDict):
+    same_day_reschedule: bool
+    bump_after_secs: int
+    snooze_after_failed_bump: bool
+class StageLadderDefinition(TypedDict):
+    key: str
+    stages: list[StageDefinition]
+    transitions: list[StageTransitionRule]
+    reply_routes: list[ReplyRouteRule]
+    no_show_recovery: NoShowRecoveryRule
+EvidenceBasis = Literal["machine", "owner_attested"]
+CampaignStageEvidence = TypedDict("CampaignStageEvidence", {"class": StageEvidenceClass, "basis": EvidenceBasis, "evidence_refs": list[str], "recorded_at": int})
+PromotionMode = Literal["auto", "propose"]
+class CampaignStageEvidenceRequest(TypedDict):
+    campaign_ref: str
+    person_ref: str
+    ladder: StageLadderDefinition
+    target_stage: StageKey
+    evidence: CampaignStageEvidence
+    mode: NotRequired[PromotionMode]
+CampaignStageEvidenceOutcome = Literal["advanced", "proposed", "no_change"]
+class CampaignStageEvidenceReceipt(TypedDict):
+    person_ref: str
+    campaign_ref: str
+    outcome: CampaignStageEvidenceOutcome
+    stage_claim_ref: NotRequired[str | None]
+    stage: NotRequired[StageKey | None]
+    evidence: NotRequired[CampaignStageEvidence | None]
+    provenance: NotRequired[CampaignActionProvenance | None]
+    receipt_ref: NotRequired[str | None]
+class CampaignUnsubscribeRequest(TypedDict):
+    campaign_ref: str
+    person_ref: str
+    channel: str
+    evidence_ref: str
+class CampaignUnsubscribeReceipt(TypedDict):
+    campaign_ref: str
+    person_ref: str
+    channel: str
+    evidence_ref: str
+    suppression_claim_ref: str
+    member_claim_refs: list[str]
+    receipt_ref: str
 class CampaignProgramOutboundSpec(TypedDict):
     call_seq: int
     verb: str
@@ -3023,6 +3216,69 @@ class SkillCodeAutoInstallRequest(TypedDict):
 class HubSkillPermissionRequest(TypedDict):
     entity: EntityId
     hub_ref: HubRef
+class SkillOptimizeStartRequest(TypedDict):
+    skill: NotRequired[EntityId | None]
+    resident: NotRequired[EntityId | None]
+    run_id: NotRequired[str | None]
+    dedupe_key: NotRequired[str | None]
+    now: NotRequired[int | None]
+class SkillGovernanceView(TypedDict):
+    entity: EntityId
+    skill_id: str
+    version: str
+    lifecycle: SkillLibraryLifecycle
+    verdict: str
+    tier: NotRequired[str | None]
+    protected: bool
+    optimizable: bool
+class SkillOptimizeStartReceipt(TypedDict):
+    outcome: str
+    job_ref: NotRequired[str | None]
+    state: NotRequired[str | None]
+    skill: NotRequired[EntityId | None]
+    governance: NotRequired[SkillGovernanceView | None]
+class SkillOptimizeResultRequest(TypedDict):
+    job_ref: NotRequired[str | None]
+    proposal: NotRequired[EntityId | None]
+class SkillOptimizeAxisView(TypedDict):
+    axis: str
+    before: float
+    after: float
+class SkillOptimizeVerdictView(TypedDict):
+    id: EntityId
+    proposal: EntityId
+    skill: EntityId
+    disposition: str
+    accepted: bool
+    before: float
+    after: float
+    goal_axes: list[SkillOptimizeAxisView]
+    goal_revision: str
+    judge_revision: NotRequired[str | None]
+    cycle: str
+    held_out_receipts: list[str]
+    held_out_count: int
+    held_out_digest: str
+    held_out_truncated: bool
+    proposal_digest: str
+    target_digest: str
+    proposal_tier: NotRequired[str | None]
+    at: int
+class SkillOptimizeResultView(TypedDict):
+    job_ref: NotRequired[str | None]
+    state: NotRequired[str | None]
+    kind: NotRequired[str | None]
+    last_error: NotRequired[str | None]
+    skill: NotRequired[EntityId | None]
+    proposal: NotRequired[EntityId | None]
+    proposal_lifecycle: NotRequired[SkillLibraryLifecycle | None]
+    incumbent_lifecycle: NotRequired[SkillLibraryLifecycle | None]
+    governance: NotRequired[SkillGovernanceView | None]
+    verdict: NotRequired[SkillOptimizeVerdictView | None]
+    verdicts: list[SkillOptimizeVerdictView]
+class SkillGovernanceSetRequest(TypedDict):
+    entity: EntityId
+    tier: NotRequired[str | None]
 class HubHookBindRequest(TypedDict):
     pack: str
 HookActorClass = Literal["human", "agent", "system"]
@@ -3916,14 +4172,6 @@ class ConnectGrant(TypedDict):
     guest_actor: str
     resolved_scope: Scope
     expires_at: NotRequired[int | None]
-TypeByteFamily = Literal["Conversation", "People", "World", "Content", "AgentsAndSurfacing", "CoreOverflow", "AuthorityPolicyCustody", "AuditObservability", "OutboundCommunicationConsent", "RegistriesDerived", "Productivity", "Code", "Documents", "Companion", "PackOverflow"]
-class SelectorRangeFamily(TypedDict):
-    Family: TypeByteFamily
-SelectorRange = Literal["Semantic", "Core", "Maintenance"] | SelectorRangeFamily
-class FederationDirectionScope(TypedDict):
-    worlds: ScopeAxis[ScopeId]
-    facets: ScopeAxis[ScopeId]
-    bands: ScopeAxis[SelectorRange]
 class OfferConnect(TypedDict):
     peer_vault: str
     grant: str
@@ -6405,9 +6653,6 @@ class LensDefaultRequest(TypedDict):
     dossiers: NotRequired[list[LensDossierSource]]
     threads: NotRequired[list[str]]
     as_of: NotRequired[int | None]
-class ScopedReadResult(TypedDict, Generic[T]):
-    value: T
-    narrowing: ScopedReadReceipt
 class DisclosureOfferRequest(TypedDict):
     contact: str
     scope: Scope
@@ -7156,6 +7401,83 @@ class CheckoutDoorBinding(TypedDict):
     epoch: int
     checkout_path: str
     remote_url: str
+CheckoutClass = Literal["edit", "build", "verify", "effect"]
+class CheckoutClaimInput(TypedDict):
+    checkout: str
+    repo: EntityId
+    task: EntityId
+    task_class: CheckoutClass
+    ttl_seconds: int
+    declared_idempotent: bool
+CheckoutState = Literal["active", "settling", "settled", "retained"]
+class CheckoutLeaseView(TypedDict):
+    checkout: str
+    task: EntityId
+    repo_ref: str
+    holder: EntityId
+    epoch: int
+    task_class: CheckoutClass
+    state: CheckoutState
+    claimed_at: int
+    expires_at: NotRequired[int | None]
+    expired: bool
+    ticket: str
+    receipt: NotRequired[str | None]
+class CheckoutGetInput(TypedDict):
+    checkout: str
+class CheckoutRenewInput(TypedDict):
+    checkout: str
+    epoch: int
+    ttl_seconds: int
+class CheckoutReclaimInput(TypedDict):
+    checkout: str
+    expired_epoch: int
+class CheckoutTakeoverInput(TypedDict):
+    checkout: str
+    expected_epoch: int
+class CheckoutPublishInput(TypedDict):
+    checkout: str
+    epoch: int
+    observed_ref: str
+    candidate: EntityId
+class CheckoutPublished(TypedDict):
+    checkout: str
+    epoch: int
+    observed_ref: str
+    candidate: EntityId
+    result_identity: str
+    receipt: str
+CheckoutAction = Literal["select", "apply", "release", "discard"]
+class CheckoutSettleInput(TypedDict):
+    checkout: str
+    epoch: int
+    observed_ref: str
+    candidate: EntityId
+    action: CheckoutAction
+class CheckoutSettled(TypedDict):
+    checkout: str
+    epoch: int
+    observed_ref: str
+    candidate: EntityId
+    action: CheckoutAction
+    result_identity: str
+    receipt: str
+    settled_at: int
+class CheckoutTeardownInput(TypedDict):
+    checkout: str
+    epoch: int
+    pushed_head_receipt: NotRequired[EntityId | None]
+CheckoutRetention = Literal["missing_pushed_head_receipt", "receipt_mismatch", "live_occupant", "dirty_or_uncertain"]
+class CheckoutTornDownCollected(TypedDict):
+    status: Literal["collected"]
+    checkout: str
+    epoch: int
+class CheckoutTornDownRetained(TypedDict):
+    status: Literal["retained"]
+    checkout: str
+    epoch: int
+    reason: CheckoutRetention
+CheckoutTornDown = CheckoutTornDownCollected | CheckoutTornDownRetained
 class CodeRepoPointer(TypedDict):
     local_folder: str
     commit: str
@@ -7615,6 +7937,35 @@ class PlannedSpawnObservation(TypedDict):
     critics: list[CriticObservation]
     learning: list[LearningObservation]
     issues: list[ObservationIssue]
+class SpawnAskKnobSeed(TypedDict, Generic[T]):
+    mode: Literal["seed"]
+    value: T
+    weight_runs: float
+class SpawnAskKnobPin(TypedDict, Generic[T]):
+    mode: Literal["pin"]
+    value: T
+SpawnAskKnob = SpawnAskKnobSeed[T] | SpawnAskKnobPin[T]
+class SpawnIntentRequest(TypedDict):
+    intent_key: str
+    prompt: str
+    requested_type: NotRequired[TypeStamp | None]
+    need: str
+    care: NotRequired[str | None]
+    notes: NotRequired[str | None]
+    model: NotRequired[SpawnAskKnob[str] | None]
+    width: NotRequired[SpawnAskKnob[int] | None]
+    pattern: NotRequired[SpawnAskKnob[str] | None]
+    budget_cap_units: NotRequired[SpawnAskKnob[int] | None]
+class SpawnIntentReply(TypedDict):
+    intent_key: str
+    phase: SpawnPhase
+    placed: NotRequired[TypeStamp | None]
+    refusal: NotRequired[str | None]
+    root_attempt: NotRequired[EntityId | None]
+    member_attempts: list[EntityId]
+    team_ref: NotRequired[str | None]
+    agent_def_ref: NotRequired[EntityId | None]
+    plan: NotRequired[PlanObservation | None]
 class CancelForceRequest(TypedDict):
     task_ref: EntityId
     reason: NotRequired[str | None]
@@ -9933,6 +10284,24 @@ class QuestionAnswerArtifact(ArtifactAskRecord):
 QuestionAnswer = QuestionAnswerGraph | QuestionAnswerArtifact
 class QuestionRefreshRequest(TypedDict):
     id: EntityId
+class QuestionOutcomesRequest(TypedDict):
+    id: EntityId
+class QuestionOutcomes(TypedDict):
+    labels: list[OutcomeLabel]
+    calibration: list[CalibrationPair]
+class QuestionOutcomesProjectRequest(TypedDict):
+    id: EntityId
+class QuestionOutcomesProjected(TypedDict):
+    id: EntityId
+    projected: int
+class QuestionScheduleRequest(TypedDict):
+    id: EntityId
+class QuestionScheduleHead(TypedDict):
+    id: str
+    version: int
+    paused: bool
+    last_refresh: NotRequired[int | None]
+    retry_at: NotRequired[int | None]
 class DecisionBandReadRequest(TypedDict):
     question: DecisionQuestion
     reversibility: Reversibility
@@ -10244,6 +10613,39 @@ class ClaimListFilter(TypedDict):
     predicate: NotRequired[str | None]
     lifecycle: NotRequired[str | None]
     limit: int
+class ClaimDemoteActionInputDecay(TypedDict):
+    kind: Literal["decay"]
+    new_claim_of_weight: float
+class ClaimDemoteActionInputWeaken(TypedDict):
+    kind: Literal["weaken"]
+    new_confidence: float
+class ClaimDemoteActionInputStale(TypedDict):
+    kind: Literal["stale"]
+ClaimDemoteActionInput = ClaimDemoteActionInputDecay | ClaimDemoteActionInputWeaken | ClaimDemoteActionInputStale
+class ClaimDemoteRequest(TypedDict):
+    claim_ref: str
+    action: ClaimDemoteActionInput
+class ClaimDemoteView(TypedDict):
+    claim_ref: str
+    short_ref: NotRequired[str | None]
+    rung: str
+    stale: bool
+    receipt_ref: str
+class ReadFilterInput(TypedDict):
+    entity_types: NotRequired[list[int] | None]
+    max_sensitivity_band: NotRequired[int | None]
+    include_stale: NotRequired[bool | None]
+    min_confidence: NotRequired[float | None]
+    min_salience: NotRequired[float | None]
+class ClaimFilteredListRequest(TypedDict):
+    subject_ref: NotRequired[str | None]
+    predicate: NotRequired[str | None]
+    lifecycle: NotRequired[str | None]
+    limit: int
+    filter: NotRequired[ReadFilterInput | None]
+class ClaimFilteredReadRequest(TypedDict):
+    claim_ref: str
+    filter: NotRequired[ReadFilterInput | None]
 SafeDeleteReason = Literal["user_delete", "user_hard_delete", "gdpr_delete", "policy_delete"]
 class SafeDeleteRequest(TypedDict):
     entity_ref: str
@@ -11525,6 +11927,11 @@ class DreamerAttemptRef(TypedDict):
     existing: bool
 class ConsolidationStatusRequest(TypedDict):
     job_ref: str
+DreamerParkCauseView = Literal["provider_unavailable", "executor_error", "checkpoint", "cancelled", "signal", "other"]
+class DreamerParkedAttemptView(TypedDict):
+    job_ref: str
+    cause: DreamerParkCauseView
+    parked_at: int
 class DreamerAttemptView(TypedDict):
     job_ref: str
     state: str
@@ -11535,6 +11942,40 @@ class DreamerAttemptView(TypedDict):
     last_error: NotRequired[str | None]
     created_at: int
     updated_at: int
+    parked: NotRequired[DreamerParkedAttemptView | None]
+class SettledStepRequest(TypedDict):
+    job_ref: str
+    step_hash: str
+class SettledStepView(TypedDict):
+    job_ref: str
+    run_id: NotRequired[str | None]
+    claim_ref: str
+    step_hash: str
+    model: ModelId
+    purpose: str
+    params_hash: str
+    response: LlmResponse
+class CheckpointReadRequest(TypedDict):
+    run_ref: str
+    from_step: NotRequired[int]
+    limit: NotRequired[int | None]
+class CheckpointStepView(TypedDict):
+    step: int
+    label: str
+    state_hash: str
+    created_at_ms: int
+class CheckpointResumeView(TypedDict):
+    step: int
+    wait_ref: str
+    effect: str
+    output_handle: str
+    reply: NotRequired[Any | None]
+class CheckpointView(TypedDict):
+    run_ref: str
+    completed_steps: int
+    steps: list[CheckpointStepView]
+    resumed: list[CheckpointResumeView]
+    next_step: NotRequired[int | None]
 EvidenceKind = Literal["turn", "message", "note", "asset_text", "import_record"]
 class CursorSpan(TypedDict):
     start: list[int]
