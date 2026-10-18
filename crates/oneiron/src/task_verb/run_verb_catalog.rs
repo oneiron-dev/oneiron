@@ -5,6 +5,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunVerb {
     ConnectorAnswer,
+    VaultWorldsPrivacySet,
     VaultSearch,
     VaultClaimsPut,
     VaultClaimsSupersede,
@@ -14,6 +15,7 @@ pub enum RunVerb {
     SelfUnfold,
     SelfFolds,
     TasksRefuse,
+    SelfReportBlocked,
     SelfAgentsSpawn,
     SelfLeaderAdvice,
     SelfLeaderPattern,
@@ -29,6 +31,7 @@ pub enum RunVerb {
 impl RunVerb {
     pub const ALL: &[Self] = &[
         Self::ConnectorAnswer,
+        Self::VaultWorldsPrivacySet,
         Self::VaultSearch,
         Self::VaultClaimsPut,
         Self::VaultClaimsSupersede,
@@ -38,6 +41,7 @@ impl RunVerb {
         Self::SelfUnfold,
         Self::SelfFolds,
         Self::TasksRefuse,
+        Self::SelfReportBlocked,
         Self::SelfAgentsSpawn,
         Self::SelfLeaderAdvice,
         Self::SelfLeaderPattern,
@@ -56,6 +60,7 @@ impl RunVerb {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ConnectorAnswer => "connector.answer",
+            Self::VaultWorldsPrivacySet => "vault.worlds.privacy.set",
             Self::VaultSearch => "vault.search",
             Self::VaultClaimsPut => "vault.claims.put",
             Self::VaultClaimsSupersede => "vault.claims.supersede",
@@ -65,6 +70,7 @@ impl RunVerb {
             Self::SelfUnfold => "self.unfold",
             Self::SelfFolds => "self.folds",
             Self::TasksRefuse => "tasks.refuse",
+            Self::SelfReportBlocked => "self.report_blocked",
             Self::SelfAgentsSpawn => "self.agents.spawn",
             Self::SelfLeaderAdvice => "self.leader.advice",
             Self::SelfLeaderPattern => "self.leader.pattern",
@@ -82,6 +88,7 @@ impl RunVerb {
         matches!(
             self,
             Self::ConnectorAnswer
+                | Self::VaultWorldsPrivacySet
                 | Self::VaultClaimsPut
                 | Self::VaultClaimsSupersede
                 | Self::VaultEdgesPut
@@ -89,6 +96,7 @@ impl RunVerb {
                 | Self::SelfCompact
                 | Self::SelfUnfold
                 | Self::TasksRefuse
+                | Self::SelfReportBlocked
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
                 | Self::SelfSkillsCall
@@ -102,6 +110,7 @@ impl RunVerb {
     pub const fn effect(self) -> crate::code_run::SelfEffect {
         match self {
             Self::ConnectorAnswer => crate::code_run::SelfEffect::ConnectorAnswer,
+            Self::VaultWorldsPrivacySet => crate::code_run::SelfEffect::WorldPrivacySet,
             Self::VaultSearch => crate::code_run::SelfEffect::MemorySearch,
             Self::VaultClaimsPut => crate::code_run::SelfEffect::MemoryPutClaim,
             Self::VaultClaimsSupersede => crate::code_run::SelfEffect::MemorySupersedeClaim,
@@ -111,6 +120,7 @@ impl RunVerb {
             Self::SelfUnfold => crate::code_run::SelfEffect::Fold,
             Self::SelfFolds => crate::code_run::SelfEffect::Fold,
             Self::TasksRefuse => crate::code_run::SelfEffect::TasksRefuse,
+            Self::SelfReportBlocked => crate::code_run::SelfEffect::ReportBlocked,
             Self::SelfAgentsSpawn => crate::code_run::SelfEffect::AgentsSpawn,
             Self::SelfLeaderAdvice => crate::code_run::SelfEffect::Leader,
             Self::SelfLeaderPattern => crate::code_run::SelfEffect::Leader,

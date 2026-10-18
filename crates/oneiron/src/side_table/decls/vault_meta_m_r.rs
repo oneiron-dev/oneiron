@@ -277,6 +277,12 @@ side_tables! {
     /// Receipt of one owner change to a world's privacy settings on this machine, in revision
     /// order. Key: u64be revision.
     OWNER_POLICY_WORLD_PRIVACY_RECEIPT: VaultMeta b"owner_policy:world_privacy:receipt:v1:" Named;
+    /// An agent's world-privacy proposal or a widen ask, frozen, with its settlement (FIX 4480).
+    /// Key: request id.
+    OWNER_POLICY_WORLD_PRIVACY_REQUEST: VaultMeta b"owner_policy:world_privacy:request:v1:" Named;
+    /// The "widen needs every owner" row: the vault's setting and per-world overrides (FIX 4480).
+    /// Key: ().
+    OWNER_POLICY_WORLD_PRIVACY_UNANIMITY: VaultMeta b"owner_policy:world_privacy:unanimity:v1" Named;
     /// Marker (engine version string) that the built-in connector packs have been seeded. Key: ().
     SKILL_HUB_PACK_BUILTIN_SEED: VaultMeta b"pack.builtin.seeded.v1" Raw;
     /// Candidate knowledge-pack receipt. Key: lowercase hex content hash.
@@ -303,6 +309,8 @@ side_tables! {
     /// One person's PEOPLE `about` lines, one per sensitivity band, and the fact digests they stand
     /// on. Key: id16 (PERSON).
     PEOPLE_ABOUT: VaultMeta b"people:about:v1:" Named;
+    /// Accepted persona copy and curation for an immutable mode-A export. Key: id16(export).
+    PERSONA_SNAPSHOT_COPY: VaultMeta b"persona_snapshot:copy:v1:" Named Authored;
     /// A device-local held policy-classification item pending human moderation. Key: hex64 (blake3
     /// hash of caller/row/content-hash/frontier-hash).
     POLICY_HOLD_QUEUE: VaultMeta b"policy-hold:v1:" LegacyJson;

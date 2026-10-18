@@ -30,8 +30,9 @@ pub(crate) const MEMORY_RUN_VERBS: [RunVerb; 4] = [
 /// `self.skills.call`, `self.spawn`, `summarize` and `tasks.wait` need the
 /// running sandbox (its bridge, its results, its park). None of those is
 /// here.
-pub(crate) const LIVE_RUN_VERBS: [RunVerb; 11] = [
+pub(crate) const LIVE_RUN_VERBS: [RunVerb; 12] = [
     RunVerb::TasksRefuse,
+    RunVerb::SelfReportBlocked,
     RunVerb::SelfAgentsSpawn,
     RunVerb::SelfTeamStart,
     RunVerb::SelfTeamRecord,
@@ -126,6 +127,10 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
             let args: crate::code_run::TaskRefuseInput = decode(input)?;
             SelfCall::TasksRefuse(args.into_call(now)?)
         }
+        RunVerb::SelfReportBlocked => {
+            let args: crate::code_run::ReportBlockedInput = decode(input)?;
+            SelfCall::ReportBlocked(args.into_call())
+        }
         RunVerb::SelfSkillsCall => {
             let args: crate::code_run::SkillCallInput = decode(input)?;
             SelfCall::SkillsCall(crate::code_run::SelfSkillCall {
@@ -200,6 +205,8 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
         }
         // ONE-2510: the run's answer to a connector's mid-call questions.
         RunVerb::ConnectorAnswer => SelfCall::ConnectorAnswer(decode(input)?),
+        // FIX 4480: the run's agent asks to change a world's settings.
+        RunVerb::VaultWorldsPrivacySet => SelfCall::WorldPrivacySet(decode(input)?),
     })
 }
 
