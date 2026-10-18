@@ -97,6 +97,14 @@ both bindings and their export-census tests in one change.
 - `vault.skills.import`
 - `vault.skills.sync`
 - `vault.skills.receipts`
+- `vault.skills.convert`
+- `vault.skills.get`
+- `vault.skills.list`
+- `vault.skills.archive`
+- `vault.skills.restore`
+- `vault.skills.fork`
+- `vault.skills.rules.set`
+- `vault.skills.code_auto_install.set`
 - `vault.skills.permissions.approve`
 - `vault.packs.hooks.bind`
 - `vault.packs.hooks.list`
