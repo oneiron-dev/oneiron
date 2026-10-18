@@ -35,7 +35,7 @@ pub(crate) async fn self_credential_attenuate(
     let answer = tokio::task::spawn_blocking(move || {
         let slip = server.vault().attenuate_invocation_slip(
             &binding,
-            input.caveat,
+            input.caveat.into_engine(),
             &input.holder_seed,
             input.next_binding_key,
         )?;

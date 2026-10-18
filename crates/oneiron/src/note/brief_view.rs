@@ -45,7 +45,7 @@ impl Vault {
         frame: &LensRenderFrame,
         read: &ScopedRead<'_>,
     ) -> Result<ScopedReadResult<Option<BriefView>>> {
-        self.render_brief_with_claims(id, frame, read, None)
+        self.render_brief_with_claims(id, frame, read, None, None)
     }
 
     /// The existing share evaluator remains the single authorization evaluator;
@@ -57,6 +57,35 @@ impl Vault {
         narrowing: Option<&crate::share::ShareViewerScope>,
         frame: &LensRenderFrame,
         read: &ScopedRead<'_>,
+    ) -> Result<ScopedReadResult<Option<BriefView>>> {
+        self.render_shared_brief_selected(share_id, viewer, narrowing, frame, read, None)
+    }
+
+    /// A saved citation handle is only an address inside its share. Resolve
+    /// that share again, and select by its stored claim id before redaction
+    /// replaces hidden ids. If a claim has several pins, follow its first pin.
+    pub fn follow_shared_brief_citation(
+        &self,
+        share_id: EntityId,
+        viewer: EntityId,
+        claim: EntityId,
+        narrowing: Option<&crate::share::ShareViewerScope>,
+        frame: &LensRenderFrame,
+        read: &ScopedRead<'_>,
+    ) -> Result<ScopedReadResult<Option<BriefCitationView>>> {
+        Ok(self
+            .render_shared_brief_selected(share_id, viewer, narrowing, frame, read, Some(claim))?
+            .map(|view| view.and_then(|view| view.citations.into_iter().next())))
+    }
+
+    fn render_shared_brief_selected(
+        &self,
+        share_id: EntityId,
+        viewer: EntityId,
+        narrowing: Option<&crate::share::ShareViewerScope>,
+        frame: &LensRenderFrame,
+        read: &ScopedRead<'_>,
+        citation: Option<EntityId>,
     ) -> Result<ScopedReadResult<Option<BriefView>>> {
         if read.actor_key().actor_ref() != viewer.to_hex() {
             return Err(invalid("brief viewer key mismatch"));
@@ -78,8 +107,13 @@ impl Vault {
         else {
             return unresolved();
         };
-        let mut rendered =
-            self.render_brief_with_claims(id, frame, read, Some(&resolved.visible_claim_refs))?;
+        let mut rendered = self.render_brief_with_claims(
+            id,
+            frame,
+            read,
+            Some(&resolved.visible_claim_refs),
+            citation,
+        )?;
         if let Some(view) = rendered.value.as_mut() {
             view.born_with = self
                 .share_travel(&share_id)?
@@ -94,6 +128,7 @@ impl Vault {
         frame: &LensRenderFrame,
         read: &ScopedRead<'_>,
         visible: Option<&[EntityId]>,
+        citation: Option<EntityId>,
     ) -> Result<ScopedReadResult<Option<BriefView>>> {
         if self.vault_id() != read.vault().vault_id() {
             return Err(invalid("brief read frame belongs to another vault"));
@@ -114,7 +149,11 @@ impl Vault {
         }
         let document = self.note_document(id)?;
         let mut citations = Vec::new();
-        for pin in &document.pins {
+        for pin in document
+            .pins
+            .iter()
+            .filter(|pin| citation.is_none_or(|claim| pin.claim == claim))
+        {
             let admitted = if visible.is_none_or(|ids| ids.contains(&pin.claim)) {
                 let claim = frame.scoped_body(read, &pin.claim)?;
                 receipt.restrict_with(&claim.receipt);

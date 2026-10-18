@@ -229,7 +229,7 @@ pub fn parse_temporal_expression(
 }
 
 /// What retrieval did with one temporal phrase of a query.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum TemporalHintStatus {
@@ -257,7 +257,7 @@ impl TemporalHintStatus {
 }
 
 /// One temporal phrase read from a query.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TemporalHintReport {
     /// The phrase, lowercased with punctuation dropped (`last 2 weeks`).
     pub phrase: String,

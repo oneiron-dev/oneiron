@@ -68,8 +68,8 @@ pub use verbs::{
     DerivationEnvelopeView, MentionLinkView, MentionReferenceView, MergeEvidenceView,
     TaggedMentionView, TaggingFailureView, TaggingHistoryView, TaggingMarkerState,
     TaggingMarkerView, TaggingMentionHitView, TaggingMentionsRequest, TaggingMentionsView,
-    TaggingOutcomeView, TaggingSpeakerTarget, TaggingStatusView, TaggingTagsView,
-    TaggingTraceView, TaggingTurnRequest, TaggingVadView, TurnTagsView,
+    TaggingOutcomeView, TaggingSpeakerTarget, TaggingStatusView, TaggingTagsView, TaggingTraceView,
+    TaggingTurnRequest, TaggingVadView, TurnTagsView,
 };
 
 pub(crate) use held::settle_held_tags_in_txn;

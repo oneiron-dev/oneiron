@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use super::{CampaignDatasetRef, CampaignError, CampaignResult, CampaignSplits};
 
 /// A bounded, tunable search dimension.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct SearchAxis {
     pub name: String,
@@ -15,7 +15,7 @@ pub struct SearchAxis {
 }
 
 /// Which way a measured axis improves.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MetricDirection {
     Higher,
@@ -23,7 +23,7 @@ pub enum MetricDirection {
 }
 
 /// Primary axes seek improvement; floors cannot regress; costs count as tradeoffs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MetricRole {
     Primary,
@@ -32,7 +32,7 @@ pub enum MetricRole {
 }
 
 /// One named axis in a pinned metric set.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct MetricAxis {
     pub name: String,
@@ -41,7 +41,7 @@ pub struct MetricAxis {
 }
 
 /// Evaluator-owned metric set identity and the axes used by the decision rule.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct MetricSet {
     pub set_id: String,
@@ -51,7 +51,7 @@ pub struct MetricSet {
 
 /// A bounded share of an externally enforced, reserve-then-spend lease.
 /// This row cannot mint authority or spend the vault's lease by itself.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct BudgetLease {
     pub budget_id: String,
@@ -62,7 +62,7 @@ pub struct BudgetLease {
 /// How a held-out measurement is decided. OF-366 uses its own validated
 /// comparison report: its net taste gain, external cost penalty and smoke
 /// precedence cannot be reduced to OF-360 metric deltas.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DecideRules {
     /// Require a minimum primary gain unless an independent cost/floor axis wins.
@@ -72,7 +72,7 @@ pub enum DecideRules {
 }
 
 /// Requested merge crossover. It is never effective merely because this is true.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct MergeCrossover {
     #[serde(default)]
@@ -91,7 +91,7 @@ impl Default for MergeCrossover {
 }
 
 /// Optional search policy; crossover stays disabled by default.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct CampaignKnobs {
     #[serde(default)]
@@ -100,7 +100,7 @@ pub struct CampaignKnobs {
 
 /// One general, skill-driven campaign run. The OF-366 config is one adapter
 /// to this schema; it retains its own admission and report-specific gates.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct CampaignConfig {
     pub campaign_id: String,
@@ -115,7 +115,7 @@ pub struct CampaignConfig {
 
 /// Scores must come from a pinned dataset revision; a search split is never
 /// eligible to supply decision evidence.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct Measurement {
     pub dataset: CampaignDatasetRef,
