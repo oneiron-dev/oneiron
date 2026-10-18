@@ -61,6 +61,7 @@ pub(crate) use super::courtesy_delete_doors::*;
 pub(crate) use super::guest_doors::*;
 // The owner's residence doors (OF-534), likewise.
 pub(crate) use super::residence_doors::*;
+pub(crate) use super::note_doors::*;
 // The weave lens's human doors, likewise.
 pub(crate) use super::weave_doors::*;
 // The graph ask and standing-question doors (OF-506), likewise.
