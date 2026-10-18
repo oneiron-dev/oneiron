@@ -242,7 +242,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/machine_answers.rs` | src | m | 2 fn · 7 crate-vis | — | The owner's machine answers as one install writes them (mesh PR1b): he enrols, re-marks and removes a… |
 | `src/authority/machine_claims.rs` | src | s | 8 crate-vis | — | The fold's machine key claims, indexed once per view: P1's poison per admitter (a key two machines claim, a… |
 | `src/authority/machine_enroll.rs` | src | s | 1 fn · 1 crate-vis | — | Host-landed MACHINE enrollment: one EnrollDevice and its BindActor |
-| `src/authority/machine_identity.rs` | src | m | 3 struct · 1 enum · 9 fn · 1 const · 3 crate-vis | LocalMachine, MachineEnrolmentRequest, PeerMachine, RequestCode | A physical machine's identity: this install's own machine, the owner's enrolment door, and the proof a… |
+| `src/authority/machine_identity.rs` | src | m | 3 struct · 1 enum · 11 fn · 1 const · 4 crate-vis | LocalMachine, MachineEnrolmentRequest, PeerMachine, RequestCode | A physical machine's identity: this install's own machine, the owner's enrolment door, and the proof a… |
 | `src/authority/machine_profile/apply.rs` | src | s | 7 crate-vis | — | The fold transitions of a machine revision: a roster revision, an owner anchor's mark, and the checks every… |
 | `src/authority/machine_profile/merge.rs` | src | s | 4 crate-vis | — | How a machine's chains merge across branches: a higher revision supersedes, divergent profiles at one… |
 | `src/authority/machine_profile/mod.rs` | src | m | 4 struct · 2 enum · 15 fn · 11 crate-vis | FoldedMachine, MachineAdmitter, MachineRevision, PinnedRoot, SignerClass, TrustedMachine | Folds `MachineProfile` entries into each physical machine's standing |
