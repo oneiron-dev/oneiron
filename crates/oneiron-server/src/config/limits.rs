@@ -265,6 +265,8 @@ impl LimitsConfig {
             maintenance_row_items,
             maintenance_text_bytes,
             maintenance_scan_rows,
+            judge_instructions_bytes,
+            judge_replay_text_bytes,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -331,6 +333,11 @@ impl LimitsConfig {
             (EngineLimit::MaintenanceRowItems, maintenance_row_items),
             (EngineLimit::MaintenanceTextBytes, maintenance_text_bytes),
             (EngineLimit::MaintenanceScanRows, maintenance_scan_rows),
+            (
+                EngineLimit::JudgeInstructionsBytes,
+                judge_instructions_bytes,
+            ),
+            (EngineLimit::JudgeReplayTextBytes, judge_replay_text_bytes),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
@@ -467,4 +474,6 @@ pub(super) struct LimitsConfigOverride {
     pub(super) maintenance_row_items: Option<u64>,
     pub(super) maintenance_text_bytes: Option<u64>,
     pub(super) maintenance_scan_rows: Option<u64>,
+    pub(super) judge_instructions_bytes: Option<u64>,
+    pub(super) judge_replay_text_bytes: Option<u64>,
 }
