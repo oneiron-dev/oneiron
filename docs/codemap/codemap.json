@@ -17726,7 +17726,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DeliveryWindowApnsInterruptionLevel",
@@ -30418,7 +30418,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ChannelIdentityBindRequest",
@@ -30467,7 +30467,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DeliveryWindowEvaluateRequest",
@@ -48710,7 +48710,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AgentCeilingInput",
@@ -54630,7 +54630,7 @@
     "delivery_window": {
      "files": 8,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Delivery-window policy claims and evaluator for OF-327 O3"
     },
@@ -67971,7 +67971,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade.rs",
@@ -68201,7 +68201,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/hub_doors.rs",
