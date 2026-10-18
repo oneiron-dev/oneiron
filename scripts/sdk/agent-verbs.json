@@ -1,6 +1,39 @@
 {
   "verbs": [
     {
+      "name": "fetch",
+      "description": "Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links.",
+      "input": "crate::web_fetch::WebFetchRequest",
+      "output": "crate::web_fetch::FetchResult",
+      "call": "crate::task_verb::sdk::host_only(memory, \"fetch\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "crawl",
+      "description": "Crawls from one seed under an explicit attempted-page budget, same-origin by default; retains Imported evidence and Proposed claims, and returns failures and completion.",
+      "input": "crate::web_fetch::WebCrawlRequest",
+      "output": "crate::web_fetch::CrawlResult",
+      "call": "crate::task_verb::sdk::host_only(memory, \"crawl\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "validate": "crate::web_fetch::CrawlPageBudget::new(input.page_budget).map_err(|error| MemoryError::bad_request(error.to_string()))?;"
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "report",
       "description": "Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor.",
       "input": "crate::feedback::ReportRequest",
@@ -1667,6 +1700,32 @@
         "unrestricted_record_scope": true
       },
       "section": false
+    },
+    {
+      "name": "self.admission.status",
+      "description": "Reads the durable queued, held or terminal receipt of one typed call under its invocation id, as its own actor; never submits or replays work.",
+      "input": "crate::receipt::admission::AdmissionStatusRequest",
+      "output": "Option<crate::receipt::admission::AdmissionReceipt>",
+      "call": "memory.admission_status(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "self.admission.receipts",
+      "description": "Reconciles an exact authored set of invocation ids against the caller actor durable admission receipts in one snapshot, without duplicate outcomes or replay.",
+      "input": "crate::receipt::admission::AdmissionReceiptsRequest",
+      "output": "Vec<crate::receipt::admission::AdmissionReceipt>",
+      "call": "memory.admission_receipts(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.explain.memory",

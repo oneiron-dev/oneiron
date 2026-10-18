@@ -98,6 +98,7 @@ mod structural;
 mod subscriptions;
 mod support;
 mod transcript;
+mod web_fetch;
 mod witness;
 
 #[cfg(test)]

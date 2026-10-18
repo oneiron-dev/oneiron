@@ -242,6 +242,10 @@ export class Oneiron {
   }
 
   // BEGIN GENERATED FACADE VERBS
+  /** Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links. */
+  fetch(input: Facade.WebFetchRequest): Facade.FetchResult { return this.#call(() => this.#client.fetch(input) as Facade.FetchResult) }
+  /** Crawls from one seed under an explicit attempted-page budget, same-origin by default; retains Imported evidence and Proposed claims, and returns failures and completion. */
+  crawl(input: Facade.WebCrawlRequest): Facade.CrawlResult { return this.#call(() => this.#client.crawl(input) as Facade.CrawlResult) }
   /** Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor. */
   report(input: Facade.ReportRequest): Facade.ReportReceipt { return this.#call(() => this.#client.report(input) as Facade.ReportReceipt) }
   readonly feedback = {
@@ -2062,6 +2066,12 @@ export class Oneiron {
     credential: {
       /** Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted. */
       attenuate: (input: Facade.CredentialAttenuationRequest): Facade.CredentialAttenuated => this.#call(() => this.#client.selfCredentialAttenuate(input) as Facade.CredentialAttenuated),
+    },
+    admission: {
+      /** Reads the durable queued, held or terminal receipt of one typed call under its invocation id, as its own actor; never submits or replays work. */
+      status: (input: Facade.AdmissionStatusRequest): Facade.AdmissionReceipt | null => this.#call(() => this.#client.selfAdmissionStatus(input) as Facade.AdmissionReceipt | null),
+      /** Reconciles an exact authored set of invocation ids against the caller actor durable admission receipts in one snapshot, without duplicate outcomes or replay. */
+      receipts: (input: Facade.AdmissionReceiptsRequest): Facade.AdmissionReceipt[] => this.#call(() => this.#client.selfAdmissionReceipts(input) as Facade.AdmissionReceipt[]),
     },
     off_record: {
       /** The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */

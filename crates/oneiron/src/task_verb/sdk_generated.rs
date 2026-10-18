@@ -10,6 +10,14 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
     > = std::sync::LazyLock::new(|| {
         std::collections::HashMap::from([
             (
+                "fetch",
+                crate::code_run::vault_read::request_schema::<crate::web_fetch::WebFetchRequest>(),
+            ),
+            (
+                "crawl",
+                crate::code_run::vault_read::request_schema::<crate::web_fetch::WebCrawlRequest>(),
+            ),
+            (
                 "report",
                 crate::code_run::vault_read::request_schema::<crate::feedback::ReportRequest>(),
             ),
@@ -519,6 +527,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.receipts.get",
                 crate::code_run::vault_read::request_schema::<crate::receipt::CallReceiptRequest>(),
+            ),
+            (
+                "self.admission.status",
+                crate::code_run::vault_read::request_schema::<
+                    crate::receipt::admission::AdmissionStatusRequest,
+                >(),
+            ),
+            (
+                "self.admission.receipts",
+                crate::code_run::vault_read::request_schema::<
+                    crate::receipt::admission::AdmissionReceiptsRequest,
+                >(),
             ),
             (
                 "vault.explain.memory",
@@ -4495,6 +4515,8 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
 /// The facade rows the server's OpenAPI document publishes, each beside its
 /// [`input_schema`] and [`output_schema`].
 pub const OPENAPI_ROWS: &[&str] = &[
+    "fetch",
+    "crawl",
     "feedback.preview",
     "feedback.send",
     "vault.reports.disclosure",
@@ -4550,6 +4572,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.scope.position",
     "vault.scope.ceiling",
     "vault.export.scoped",
+    "self.admission.status",
+    "self.admission.receipts",
     "vault.campaign.compliance.install",
     "vault.campaign.compliance.amend",
     "vault.campaign.compliance.approve",
@@ -4946,6 +4970,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
 /// The JSON schema of an [`OPENAPI_ROWS`] row's answer; `None` for any other row.
 pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
     Some(match verb {
+        "fetch" => crate::code_run::vault_read::request_schema::<crate::web_fetch::FetchResult>(),
+        "crawl" => crate::code_run::vault_read::request_schema::<crate::web_fetch::CrawlResult>(),
         "feedback.preview" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::FeedbackSubjectPreview,
         >(),
@@ -5111,6 +5137,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.export.scoped" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ScopedExport>()
         }
+        "self.admission.status" => crate::code_run::vault_read::request_schema::<
+            Option<crate::receipt::admission::AdmissionReceipt>,
+        >(),
+        "self.admission.receipts" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::receipt::admission::AdmissionReceipt>,
+        >(),
         "vault.campaign.compliance.install" => crate::code_run::vault_read::request_schema::<
             crate::campaign::compliance::ComplianceReceipt,
         >(),
@@ -6330,6 +6362,20 @@ pub fn mcp_arguments_schema_from_input(
 ) -> Option<serde_json::Value> {
     let mut properties = serde_json::Map::new();
     let required: &[&str] = match verb {
+        "fetch" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "crawl" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "report" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -7071,6 +7117,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.receipts.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.admission.status" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.admission.receipts" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -11944,6 +12004,14 @@ pub fn mcp_arguments_schema_from_input(
 }
 pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()> {
     match verb {
+        "fetch" => {
+            let _input: crate::web_fetch::WebFetchRequest = decode(value.clone())?;
+        }
+        "crawl" => {
+            let input: crate::web_fetch::WebCrawlRequest = decode(value.clone())?;
+            crate::web_fetch::CrawlPageBudget::new(input.page_budget)
+                .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+        }
         "report" => {
             let input: crate::feedback::ReportRequest = decode(value.clone())?;
             input.validate().map_err(MemoryError::from)?;
@@ -12288,6 +12356,13 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.receipts.get" => {
             let _input: crate::receipt::CallReceiptRequest = decode(value.clone())?;
+        }
+        "self.admission.status" => {
+            let _input: crate::receipt::admission::AdmissionStatusRequest = decode(value.clone())?;
+        }
+        "self.admission.receipts" => {
+            let _input: crate::receipt::admission::AdmissionReceiptsRequest =
+                decode(value.clone())?;
         }
         "vault.explain.memory" => {
             let _input: crate::task_verb::sdk::ExplainMemoryRequest = decode(value.clone())?;
@@ -14827,6 +14902,8 @@ pub fn invoke(
     }
     // The row's one verb-hook boundary (ARCH-0080 §3).
     crate::task_verb::verb_hook_boundary::row(memory, verb, value, |value| match verb {
+        "fetch" => encode(fetch(memory, decode(value)?)?),
+        "crawl" => encode(crawl(memory, decode(value)?)?),
         "report" => encode(report(memory, decode(value)?)?),
         "feedback.preview" => encode(feedback_preview(memory, decode(value)?)?),
         "feedback.send" => encode(feedback_send(memory, decode(value)?)?),
@@ -14952,6 +15029,8 @@ pub fn invoke(
         "vault.receipts" => encode(vault_receipts(memory, decode(value)?)?),
         "vault.images.view" => encode(vault_images_view(memory, decode(value)?)?),
         "vault.receipts.get" => encode(vault_receipts_get(memory, decode(value)?)?),
+        "self.admission.status" => encode(self_admission_status(memory, decode(value)?)?),
+        "self.admission.receipts" => encode(self_admission_receipts(memory, decode(value)?)?),
         "vault.explain.memory" => encode(vault_explain_memory(memory, decode(value)?)?),
         "vault.explain.gate" => encode(vault_explain_gate(memory, decode(value)?)?),
         "vault.kv.get" => encode(vault_kv_get(memory, decode(value)?)?),
@@ -16452,6 +16531,20 @@ pub fn invoke_browser(
     };
     output.map_err(|error| oneiron_browser::BrowserError::Protocol(error.to_string()))
 }
+pub fn fetch(
+    memory: &Memory<'_>,
+    input: crate::web_fetch::WebFetchRequest,
+) -> MemoryResult<crate::web_fetch::FetchResult> {
+    crate::task_verb::sdk::host_only(memory, "fetch", &input)
+}
+pub fn crawl(
+    memory: &Memory<'_>,
+    input: crate::web_fetch::WebCrawlRequest,
+) -> MemoryResult<crate::web_fetch::CrawlResult> {
+    crate::web_fetch::CrawlPageBudget::new(input.page_budget)
+        .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+    crate::task_verb::sdk::host_only(memory, "crawl", &input)
+}
 pub fn report(
     memory: &Memory<'_>,
     input: crate::feedback::ReportRequest,
@@ -17291,6 +17384,18 @@ pub fn vault_receipts_get(
     input: crate::receipt::CallReceiptRequest,
 ) -> MemoryResult<Option<crate::receipt::CallReceipt>> {
     memory.call_receipt(&input.receipt_ref)
+}
+pub fn self_admission_status(
+    memory: &Memory<'_>,
+    input: crate::receipt::admission::AdmissionStatusRequest,
+) -> MemoryResult<Option<crate::receipt::admission::AdmissionReceipt>> {
+    memory.admission_status(&input)
+}
+pub fn self_admission_receipts(
+    memory: &Memory<'_>,
+    input: crate::receipt::admission::AdmissionReceiptsRequest,
+) -> MemoryResult<Vec<crate::receipt::admission::AdmissionReceipt>> {
+    memory.admission_receipts(&input)
 }
 pub fn vault_explain_memory(
     memory: &Memory<'_>,
