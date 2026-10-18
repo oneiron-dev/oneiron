@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 315 facade rows, 1230 declarations.
-Inputs: 272 of 315 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 272 of 315 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 316 facade rows, 1265 declarations.
+Inputs: 273 of 316 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 273 of 316 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 72; unread shapes: 0.
 """
 
@@ -199,12 +199,25 @@ class AgentHealthCoachAnswer(TypedDict):
     at: int
     pads: AgentHealthPadRead
     draft: NotRequired[AgentHealthCoachDraft | None]
+AgentHealthApplicationState = Literal["pending", "admitted", "rejected"]
+class AgentHealthCoachApplication(TypedDict):
+    by: EntityId
+    at: int
+    skill: EntityId
+    version: str
+    instructions: str
+    candidate: EntityId
+    state: AgentHealthApplicationState
+    verdict: NotRequired[EntityId | None]
+    disposition: NotRequired[str | None]
+    updated_at: int
 class AgentHealthCoachAsk(TypedDict):
     asked_by: EntityId
     asked_at: int
     diagnostic: NotRequired[EntityId | None]
     attempt: str
     answer: NotRequired[AgentHealthCoachAnswer | None]
+    application: NotRequired[AgentHealthCoachApplication | None]
 class AgentHealthCard(TypedDict):
     subject: EntityId
     signal: AgentHealthSignal
@@ -2768,6 +2781,183 @@ class ResearchHeldOutWire(TypedDict):
     attempt: EntityId
     measurement: Measurement
     receipt_refs: list[str]
+CampaignExecutableArm = Literal["single_pass", "tournament"]
+CampaignEvaluationSplit = Literal["search", "held_out"]
+Of360DatasetCompleteness = Literal["seed_subset", "full_owner_corpus"]
+class Of360GoldQa(TypedDict):
+    question_id: str
+    question: str
+    accepted_answers: list[str]
+    evidence_memory_ids: list[str]
+Of360Speaker = Literal["user", "assistant", "system"]
+class Of360ConversationTurn(TypedDict):
+    turn_id: str
+    speaker: Of360Speaker
+    timestamp: str
+    text: str
+Of360MemoryKind = Literal["persona", "preference", "event", "relationship", "plan", "constraint", "correction"]
+class Of360GoldMemoryPoint(TypedDict):
+    memory_id: str
+    claim: str
+    kind: Of360MemoryKind
+    importance: int
+    weight: float
+    is_update: bool
+    temporal_required: bool
+    valid_from: NotRequired[str | None]
+    valid_to: NotRequired[str | None]
+    evidence_turn_ids: list[str]
+class Of360GoldCase(TypedDict):
+    qa: NotRequired[list[Of360GoldQa]]
+    case_id: str
+    title: str
+    turns: list[Of360ConversationTurn]
+    gold_memory_points: list[Of360GoldMemoryPoint]
+    distractor_memories: NotRequired[list[str]]
+class Of360GoldDataset(TypedDict):
+    schema_version: int
+    dataset_id: str
+    revision: str
+    description: str
+    completeness: Of360DatasetCompleteness
+    seed: int
+    target_full_memory_points: int
+    owner_corpus_missing: bool
+    source_refs: list[str]
+    cases: list[Of360GoldCase]
+class Of360QaAnswer(TypedDict):
+    question_id: str
+    answer: str
+Of360ExtractionScore = Literal["omitted", "partial", "full"]
+class Of360GoldMatch(TypedDict):
+    memory_id: str
+    score: Of360ExtractionScore
+class Of360ExtractedClaim(TypedDict):
+    extraction_id: str
+    text: str
+    matched_gold: NotRequired[list[Of360GoldMatch]]
+    temporal_correct: NotRequired[bool | None]
+    overreach: bool
+    dedup_key: NotRequired[str | None]
+class Of360CaseExtractionOutput(TypedDict):
+    qa_answers: NotRequired[list[Of360QaAnswer]]
+    case_id: str
+    extracted_claims: list[Of360ExtractedClaim]
+class Of360ExtractionRun(TypedDict):
+    schema_version: int
+    run_id: str
+    system_id: str
+    dataset_id: str
+    dataset_revision: str
+    cases: list[Of360CaseExtractionOutput]
+class CampaignCost(TypedDict):
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+    cost_usd: float
+    elapsed_ms: int
+class CampaignGoldAnchor(TypedDict):
+    dataset_id: str
+    revision: str
+    gold_digest: str
+class BlindCampaignJudgeInput(TypedDict):
+    claim: str
+    evidence_refs: list[str]
+    held_out_gold: CampaignGoldAnchor
+class CampaignSmokeOutcomeKilledBody(TypedDict):
+    reason: str
+class CampaignSmokeOutcomeKilled(TypedDict):
+    killed: CampaignSmokeOutcomeKilledBody
+CampaignSmokeOutcome = Literal["passed"] | CampaignSmokeOutcomeKilled
+class CampaignSplitWire(TypedDict):
+    root: EntityId
+    arm: CampaignExecutableArm
+    split: CampaignEvaluationSplit
+    dataset: Of360GoldDataset
+    run: Of360ExtractionRun
+    cost: CampaignCost
+    blind: BlindCampaignJudgeInput
+    smoke: CampaignSmokeOutcome
+class AuthoringStrategyPin(TypedDict):
+    strategy_id: str
+    revision: str
+    config_sha256: str
+class Of360DerivationEnvelope(TypedDict):
+    content_hash: str
+    model_id: str
+    version: str
+    params_hash: str
+Of360MetricDirection = Literal["higher_is_better", "lower_is_better"]
+class Of360MetricDefinition(TypedDict):
+    metric_id: str
+    label: str
+    definition: str
+    formula: str
+    direction: Of360MetricDirection
+    primary: bool
+class Of360MetricDefinitionSet(TypedDict):
+    schema_version: int
+    set_id: str
+    revision: str
+    source_refs: list[str]
+    derivation_envelope: Of360DerivationEnvelope
+    metrics: list[Of360MetricDefinition]
+class Of360RateMetric(TypedDict):
+    value: NotRequired[float | None]
+    numerator: float
+    denominator: float
+class Of360ParsedMetrics(TypedDict):
+    updating_accuracy: Of360RateMetric
+    qa_accuracy: Of360RateMetric
+    omission_rate: Of360RateMetric
+    halumem_recall: Of360RateMetric
+    halumem_weighted_recall: Of360RateMetric
+    target_precision: Of360RateMetric
+    halumem_f1: Of360RateMetric
+    faithfulness_rate: Of360RateMetric
+    hallucination_rate: Of360RateMetric
+    overreach_rate: Of360RateMetric
+    temporal_correctness: Of360RateMetric
+    redundancy_rate: Of360RateMetric
+class Of360CaseEvalReport(TypedDict):
+    case_id: str
+    metrics: Of360ParsedMetrics
+    omitted_gold_memory_ids: list[str]
+    partial_gold_memory_ids: list[str]
+    hallucinated_extraction_ids: list[str]
+    overreach_extraction_ids: list[str]
+    redundant_extraction_ids: list[str]
+class Of360EvalReport(TypedDict):
+    schema_version: int
+    metric_set_id: str
+    metric_definition_envelope: Of360DerivationEnvelope
+    dataset_id: str
+    dataset_revision: str
+    run_id: str
+    system_id: str
+    metrics: Of360ParsedMetrics
+    cases: list[Of360CaseEvalReport]
+    warnings: list[str]
+class Of360Ar3MetricTier(TypedDict):
+    interface_version: int
+    metric_definitions: Of360MetricDefinitionSet
+    report: Of360EvalReport
+class CampaignTaste(TypedDict):
+    score: float
+    useful: NotRequired[bool | None]
+    external_anchor_digest: str
+class CampaignSplitReport(TypedDict):
+    authoring_strategy: AuthoringStrategyPin
+    arm: CampaignExecutableArm
+    split: CampaignEvaluationSplit
+    dataset: CampaignDatasetRef
+    metric_definition_digest: str
+    of360: Of360Ar3MetricTier
+    cost: CampaignCost
+    taste: CampaignTaste
+    smoke: CampaignSmokeOutcome
+    effective_taste_score: float
 class ResearchInvalidWire(TypedDict):
     root: EntityId
     attempt: EntityId

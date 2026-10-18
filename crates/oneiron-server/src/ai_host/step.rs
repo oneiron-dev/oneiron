@@ -95,6 +95,10 @@ pub(super) struct StepFault {
     /// was answered: its run holds at the cap, paused with its checkpoint,
     /// and is neither failed nor retried (OF-541).
     pub(super) exhausted: bool,
+    /// The step's payer waits on the owners' payer-needed ask (FIX 805):
+    /// the step parks as it is, neither failed nor retried, until they
+    /// answer.
+    pub(super) payer: Option<PayerFault>,
     pub(super) error: Error,
 }
 
@@ -103,6 +107,7 @@ impl From<Error> for StepFault {
         Self {
             retryable: false,
             exhausted: false,
+            payer: None,
             error,
         }
     }
@@ -279,18 +284,19 @@ impl StepRunner {
         // this try's meter, so the step's budget and every policy row it
         // matches (the agent's cap, the purpose's) see them: retries share
         // one budget, never renew it. The try this one follows left what the
-        // chain spent. After a restart nothing is left, and each earlier try
+        // chain spent, or this same try did when it parked on its payer
+        // (FIX 805). After a restart nothing is left, and each earlier try
         // is replayed at one reservation per rung of the ladder it has now:
         // an estimate, exact only when every earlier rung went out metered on
         // the same ladder and routes.
         let reserve = oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS;
         let earlier = AttemptQueue::new(vault).retry_chain_depth(attempt.id)?;
-        let carried = attempt.retry_of.and_then(|parent| {
-            self.spent
-                .lock()
-                .expect("step spend mutex poisoned")
-                .remove(&parent)
-        });
+        let carried = {
+            let mut spent = self.spent.lock().expect("step spend mutex poisoned");
+            spent
+                .remove(&attempt.id)
+                .or_else(|| attempt.retry_of.and_then(|parent| spent.remove(&parent)))
+        };
         let run_id = format!(
             "workflow-step:{}",
             oneiron::EntityId::from_bytes(*attempt.id.as_bytes())?.to_hex()
@@ -308,23 +314,25 @@ impl StepRunner {
         // OF-531: a room-paid step bills its root payer's own account, bound
         // before anything is reserved, never the vault owner's by default.
         // A payer this host cannot bill holds the step on the owners'
-        // payer-needed ask: it is retried, and a try after their yes bills
-        // the vault. Nothing went out, so the retry replays only what the
-        // earlier tries spent.
+        // payer-needed ask: it parks as this try (FIX 805), and once they say
+        // yes it bills the vault. Nothing went out, so taken up it replays
+        // only what the earlier tries spent.
         let payer = match scope_funding(vault, lease.as_ref(), room) {
             Ok(payer) => payer,
             Err(fault) => {
-                let retryable = matches!(fault, PayerFault::Needed { .. });
-                if retryable {
+                let held = matches!(fault, PayerFault::Needed { .. });
+                if held {
                     self.spent
                         .lock()
                         .expect("step spend mutex poisoned")
                         .insert(attempt.id, charged.saturating_mul(reserve));
                 }
+                let error = Error::InvalidConfig(format!("workflow step {fault}"));
                 return Err(StepFault {
-                    retryable,
+                    retryable: false,
                     exhausted: false,
-                    error: Error::InvalidConfig(format!("workflow step {fault}")),
+                    payer: held.then_some(fault),
+                    error,
                 });
             }
         };
@@ -346,6 +354,7 @@ impl StepRunner {
         let budget = |denied: oneiron::llm::BudgetDenied| StepFault {
             retryable: false,
             exhausted: matches!(denied, oneiron::llm::BudgetDenied::Exhausted),
+            payer: None,
             error: Error::InvalidConfig(format!("workflow step budget: {denied:?}")),
         };
         for _ in 0..charged {
@@ -404,6 +413,7 @@ impl StepRunner {
                 return Err(StepFault {
                     retryable,
                     exhausted: false,
+                    payer: None,
                     error: Error::InvalidConfig(format!(
                         "workflow step model call failed: {error}"
                     )),

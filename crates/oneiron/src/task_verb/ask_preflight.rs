@@ -7,6 +7,9 @@ impl Memory<'_> {
     /// disclosure and native route that `tasks_ask` resolves at admission. It
     /// neither mints a TASK nor schedules an outbound notice or effect.
     pub fn tasks_can_ask(&self, input: &TaskAskSpec) -> MemoryResult<TaskAskPreflight> {
+        if !self.has_task_work_turn() {
+            return self.task_work_memory().tasks_can_ask(input);
+        }
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let txn = self
             .vault()
