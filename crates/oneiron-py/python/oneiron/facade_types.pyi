@@ -6270,6 +6270,7 @@ class OfficeBodyExportRecord(TypedDict):
     at: int
     changes: int
     recalc: NotRequired[str | None]
+    effects: list[str]
 class OfficeBodyExportView(TypedDict):
     frontier: list[int]
     record: NotRequired[OfficeBodyExportRecord | None]
