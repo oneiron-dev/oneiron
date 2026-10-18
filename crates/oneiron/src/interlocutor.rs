@@ -25,6 +25,7 @@ use crate::voice_identity::{VoiceAttributionEvidence, VoiceResolvedSegment};
 /// entry exists so an unresolvable roster narrows disclosure instead of
 /// silently leaving the caller in owner-alone mode.
 const VOICE_ROSTER_UNRESOLVED_LABEL: &str = "unresolved voice roster";
+const LIVE_ROOM_SPEAKER_LABEL: &str = "live room speaker";
 
 /// Who a conversation participant is, as the disclosure clamp sees them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -135,6 +136,30 @@ impl Interlocutor {
             owner_print_matched: false,
             audience_ref: None,
         }
+    }
+
+    /// A speaker of a call live in a room, read through its entry fact
+    /// there (FIX 1388 C1): an unknown with a generic label, so nothing of
+    /// a roster the caller cannot read shows.
+    #[must_use]
+    pub(crate) fn live_room_speaker(entry_ref: EntityId) -> Self {
+        let mut entry = Self::unknown(LIVE_ROOM_SPEAKER_LABEL, false);
+        entry.audience_ref = Some(entry_ref);
+        entry
+    }
+
+    /// The one unknown a voice roster that cannot be read stands for.
+    #[must_use]
+    pub(crate) fn unresolved_voice_roster() -> Self {
+        Self::unknown(VOICE_ROSTER_UNRESOLVED_LABEL, false)
+    }
+
+    /// Whether this is [`Self::unresolved_voice_roster`]'s unknown.
+    #[must_use]
+    pub(crate) fn is_unresolved_voice_roster(&self) -> bool {
+        self.class == InterlocutorClass::Unknown
+            && self.audience_ref.is_none()
+            && self.label == VOICE_ROSTER_UNRESOLVED_LABEL
     }
 
     /// Builds an unknown-party entry. A spoofed "it's me" arrives here as
@@ -579,6 +604,29 @@ impl Vault {
         )
     }
 
+    /// [`Self::resolve_interlocutors_under`] for a read of `room`, a room
+    /// the caller has proved it reads (FIX 1388 C1): a voice roster's
+    /// speakers are read through their entries there, as a voice session
+    /// bound to the room reads them.
+    pub fn resolve_interlocutors_in_room_under(
+        &self,
+        input: &InterlocutorResolutionInput,
+        read: &crate::claim::ScopedRead<'_>,
+        read_rosters: bool,
+        room: EntityId,
+    ) -> Result<InterlocutorSet> {
+        read.persist_grant_clock()?;
+        let rtxn = self.store.env.read_txn()?;
+        let policy = read.live_policy_manifest_in(&rtxn)?;
+        self.resolve_interlocutors_in(
+            &rtxn,
+            input,
+            &|id| read.is_ref_readable_with_policy_in(&rtxn, &policy, id),
+            read_rosters,
+            Some(room),
+        )
+    }
+
     fn resolve_interlocutors_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -654,7 +702,10 @@ impl Vault {
             match parties {
                 Ok(parties) => {
                     for entry in parties {
-                        if let Some(contact_ref) = entry.contact_ref.as_ref()
+                        // A party read through an entry keeps its own cut,
+                        // beside any other for the same contact.
+                        if entry.audience_ref.is_none()
+                            && let Some(contact_ref) = entry.contact_ref.as_ref()
                             && !seen_contact_refs.insert(contact_ref.clone())
                         {
                             continue;
@@ -694,8 +745,9 @@ impl Vault {
     /// roster that resolves but names nobody legitimately yields no entries.
     /// One party per distinct speaker: repeated segments of the same speaker
     /// key or placed identity collapse before the caller's contact-ref
-    /// dedupe sees them. In a session bound to `container`, an unplaced
-    /// speaker is read through its first entry there.
+    /// dedupe sees them. In a session bound to `container`, a speaker is
+    /// read through its first entry there, placed or not (FIX 1388/1389),
+    /// and each entry keeps its own party.
     fn voice_roster_parties(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -706,49 +758,68 @@ impl Vault {
             .voice_session_roster_in_txn(rtxn, voice_session_ref)?
             .ok_or(Error::EntityNotFound)?;
 
-        // A placed speaker is one party per identity it was placed as. An
-        // unplaced speaker is one party per capture speaker key, whose
-        // residual segments add nothing once any segment of that key is
-        // placed. The owner names an unplaced speaker against this roster:
-        // the ask's session is the roster ref, its speaker the speaker key,
-        // and its revision the roster's (OF-365 P5).
+        // A placed speaker is one party per identity it was placed as. Bound,
+        // it is one per identity and speaker key until its entry is read:
+        // one with an entry keeps its own party, so two keys placed as one
+        // person keep both cuts, and one with none collapses by identity as
+        // unbound. An unplaced speaker is one party per capture speaker key,
+        // whose residual segments add nothing once any segment of that key
+        // is placed. The owner names an unplaced speaker against this
+        // roster: the ask's session is the roster ref, its speaker the
+        // speaker key, and its revision the roster's (OF-365 P5).
         let unplaced = roster.unplaced_speakers();
         let mut parties = Vec::new();
         let mut seen_parties: HashSet<String> = HashSet::new();
         for segment in &roster.segments {
-            let party = match &segment.evidence {
+            let (party, placed) = match &segment.evidence {
                 VoiceAttributionEvidence::EnrolledPrint { subject_ref, .. } => {
-                    format!("enrolled:{}", subject_ref.to_hex())
+                    (format!("enrolled:{}", subject_ref.to_hex()), true)
                 }
                 VoiceAttributionEvidence::InviteElimination { attendee_ref } => {
-                    format!("invite:{}", attendee_ref.to_hex())
+                    (format!("invite:{}", attendee_ref.to_hex()), true)
                 }
                 VoiceAttributionEvidence::ResidualCluster { .. } => {
                     if !unplaced.contains(&segment.speaker_key.as_str()) {
                         continue;
                     }
-                    format!("speaker:{}", segment.speaker_key)
+                    (format!("speaker:{}", segment.speaker_key), false)
                 }
             };
-            if !seen_parties.insert(party) {
-                continue;
-            }
-            // A bound speaker's identity is the one given on its entry
-            // revision, which a later placement elsewhere does not move.
-            let (answer, audience_ref) = match (&segment.evidence, container) {
-                (VoiceAttributionEvidence::ResidualCluster { .. }, Some(container)) => self
-                    .container_attendee_entry_in_txn(
-                        rtxn,
-                        container,
-                        &ContainerAttendee::Speaker {
-                            session_key: voice_session_ref.to_owned(),
-                            speaker_key: segment.speaker_key.clone(),
-                        },
-                    )?
-                    .map_or((None, None), |entry| {
-                        (entry.identity, Some(entry.entry_ref))
-                    }),
-                (VoiceAttributionEvidence::ResidualCluster { .. }, None) => (
+            let entry_in = |container: EntityId| {
+                self.container_attendee_entry_in_txn(
+                    rtxn,
+                    container,
+                    &ContainerAttendee::Speaker {
+                        session_key: voice_session_ref.to_owned(),
+                        speaker_key: segment.speaker_key.clone(),
+                    },
+                )
+            };
+            let entry = if placed && let Some(container) = container {
+                if !seen_parties.insert(format!("{party} {}", segment.speaker_key)) {
+                    continue;
+                }
+                let entry = entry_in(container)?;
+                if entry.is_none() && !seen_parties.insert(party) {
+                    continue;
+                }
+                entry
+            } else {
+                if !seen_parties.insert(party) {
+                    continue;
+                }
+                match container {
+                    Some(container) => entry_in(container)?,
+                    None => None,
+                }
+            };
+            // A bound unplaced speaker's identity is the one given on its
+            // entry revision, which a later placement elsewhere does not
+            // move. A placed one stays the identity it was placed as, read
+            // through its entry when it has one.
+            let (answer, audience_ref) = match (placed, entry) {
+                (false, Some(entry)) => (entry.identity, Some(entry.entry_ref)),
+                (false, None) if container.is_none() => (
                     self.attendee_identity_in_txn(
                         rtxn,
                         voice_session_ref,
@@ -757,7 +828,7 @@ impl Vault {
                     )?,
                     None,
                 ),
-                _ => (None, None),
+                (_, entry) => (None, entry.map(|entry| entry.entry_ref)),
             };
             let mut party = self.voice_roster_party(rtxn, segment, answer)?;
             party.audience_ref = audience_ref;

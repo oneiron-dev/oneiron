@@ -11,8 +11,10 @@
 //! before any audio is admitted; an admitted call is answered `accepted`.
 //! The hello may name the `room` the call is heard in and the voice
 //! `roster` its speakers are matched under. A room the caller cannot read
-//! closes the socket. A bound call enters each speaker it cannot place into
-//! the room, and an attendee's entry stops the call's output (OF-365 P5).
+//! closes the socket. A bound call is live in its room until it ends: each
+//! speaker it hears that no member covers enters the room, the room's reads
+//! meet them (FIX 1388/1389), and an attendee's entry stops the call's
+//! output (OF-365 P5).
 //!
 //! The call then runs on the wire's media ops (`wire`): the chat role
 //! answers each heard final (`brain`) on the owner's budget line, its
@@ -227,6 +229,11 @@ async fn call(
         .map_err(|fault| refused(&fault.to_string()))?,
         None => None,
     };
+    // The call is live in its room from here, whichever way it then ends:
+    // the registration drops with this frame, after the call is served.
+    let _live_call = container
+        .as_ref()
+        .map(|bound| vault.register_live_speaker_call(bound.container, roster.clone()));
 
     let call_ref = format!("voice-call:{}", EntityId::now().to_hex());
     let mut session = VoiceSessionConfig::new(
@@ -239,6 +246,7 @@ async fn call(
     );
     session.policy_caller_ref = auth.principal_ref().map(str::to_owned);
     session.policy_person = Some(owner);
+    let brain_room = container.as_ref().map(|bound| bound.container);
     session.container = container;
 
     // The host's own model calls run on the call's line, and the host
@@ -284,6 +292,7 @@ async fn call(
         ai: server.ai.clone(),
         vault: Arc::clone(vault),
         auth: auth.clone(),
+        room: brain_room,
         instructions,
         payer,
         funding: funding.clone(),
@@ -333,8 +342,8 @@ async fn call(
 
 /// The room `room` names, bound as the call's container: one the caller
 /// reads, with its members as the caller reads them. Each speaker the call
-/// cannot place enters it as the caller, and is offered as any of the
-/// room's contacts.
+/// must place there enters it as the caller, and one it cannot place is
+/// offered as any of the room's contacts.
 fn bind_room(
     vault: &Vault,
     auth: &CoreAuth,
