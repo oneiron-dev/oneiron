@@ -38,7 +38,7 @@ use crate::workspace_roster::join_door::require_admission_party_in_txn;
 use crate::workspace_roster::join_receipt::JOINS;
 use crate::workspace_roster::{
     ConsentAnswer, ConsentPart, JoinDecision, JoinOutcome, JoinReceiptRef, JoinSubject,
-    require_join_for_branch_in_txn, rooms_consent_in_txn,
+    RosterActor, require_join_for_branch_in_txn, rooms_consent_in_txn,
 };
 use crate::{EntityId, Vault, WriteActor};
 
@@ -88,8 +88,8 @@ pub struct OfferSettlement {
 #[serde(deny_unknown_fields)]
 pub(super) struct RecordedOfferAnswer {
     pub(super) action: OfferAnswer,
-    /// The host's actor.
-    pub(super) by: EntityId,
+    /// The host's actor; no one once that actor was erased.
+    pub(super) by: RosterActor,
     pub(super) intent_key: String,
     /// Unix seconds.
     pub(super) at: u64,
@@ -428,7 +428,7 @@ fn answer_in_txn(
     )?;
     let answer = RecordedOfferAnswer {
         action: request.action,
-        by: caller.entity_ref(),
+        by: RosterActor::Actor(caller.entity_ref()),
         intent_key: request.intent_key.clone(),
         at: now,
     };

@@ -6,7 +6,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::ENTITY_TYPE_ACCESS_GRANT;
-use crate::share::{Share, ShareAdmission, read_share_in_txn};
+use crate::share::{Share, ShareAdmission, read_share_history_in_txn};
 
 use super::grant::scan_entities_by_type;
 use super::kernel::{FIELD_BRIEF_REF, ReceiptKind, ReceiptQuery, ReceiptRecord};
@@ -23,7 +23,10 @@ pub(super) fn brief_share_receipts(
         ENTITY_TYPE_ACCESS_GRANT,
         "brief share type index",
         |id, _, _| {
-            let Some((share, admission)) = read_share_in_txn(&vault.store, txn, &id)? else {
+            // A share whose issuer was erased grants nothing and still reads
+            // as history (FIX 3520).
+            let Some((share, admission)) = read_share_history_in_txn(&vault.store, txn, &id)?
+            else {
                 return Ok(());
             };
             let Some(gate) = vault.store.gate_decision_in_txn(txn, admission.gate_id)? else {
@@ -96,15 +99,18 @@ fn brief_share_receipt(
         },
         receipt_kind: ReceiptKind::Share,
         occurred_at,
-        actor: Some(if revoked {
-            admission
-                .revoker
-                .unwrap_or(admission.issuer)
-                .entity_ref()
-                .to_hex()
-        } else {
-            admission.issuer.entity_ref().to_hex()
-        }),
+        // An erased issuer or revoker is named as no one, never as the other.
+        actor: Some(
+            if revoked {
+                admission.revoker
+            } else {
+                admission.issuer
+            }
+            .map_or_else(
+                || super::ERASED_CALL_IDENTITY.to_owned(),
+                |actor| actor.entity_ref().to_hex(),
+            ),
+        ),
         on_behalf_of: None,
         outcome: if revoked { "revoked" } else { "granted" }.to_owned(),
         job_ref: None,

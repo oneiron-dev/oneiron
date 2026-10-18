@@ -35,6 +35,7 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use super::doors::read_secret_custody_in_txn;
+use super::reveal::names_no_actor;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -94,7 +95,8 @@ impl FoundKeyAction {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FoundKeySettled {
     pub action: FoundKeyAction,
-    /// The owner who acted; `None` for a rotation, whose receipt names it.
+    /// The owner who acted; `None` for a rotation, whose receipt names it,
+    /// or once that owner was erased (FIX 3520).
     pub by: Option<EntityId>,
     pub at: u64,
     /// The act's receipt: `rotation:<hex>`, `redaction:<hex>` or
@@ -172,6 +174,43 @@ pub(crate) struct FoundNote {
     pub(crate) handle: String,
     pub(crate) reason: &'static str,
     pub(crate) place: String,
+}
+
+/// Erasing `actor` from the found keys it settled (FIX 3520): each
+/// settlement keeps its action, its time, its receipt and its grant, and
+/// names no owner. One-way, in the erase's own transaction. An id whose
+/// entity is no actor scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a found-key row that cannot be read.
+pub(crate) fn erase_found_key_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let mut erased = Vec::new();
+    for (record, mut found) in FOUND.scan(&vault.store, wtxn)? {
+        let mut named = false;
+        for key in &mut found.keys {
+            if let Some(settled) = &mut key.settled
+                && settled.by == Some(*actor)
+            {
+                settled.by = None;
+                named = true;
+            }
+        }
+        if named {
+            erased.push((record, found));
+        }
+    }
+    for (record, found) in &erased {
+        FOUND.put(&vault.store, wtxn, record, found)?;
+    }
+    Ok(())
 }
 
 /// Records the keys a mask lifted, in the write's own transaction, and

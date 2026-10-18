@@ -123,9 +123,14 @@ mod project;
 pub(crate) use project::create_project_signed_for_test;
 #[cfg(test)]
 pub(crate) use project::set_project_depth_signed_for_test;
+pub use project::{
+    ACTOR_ERASE_PENDING_PROJECT, ProjectCardConfirmRequest, ProjectCardRecord, ProjectCardState,
+    ProjectGoalInterviewContext, ProjectProposalRequest,
+};
 pub(crate) use project::{
     ClaimedProjectDetection, ProjectDetectionAnswer, ProjectDetectionSource,
-    ProjectDetectionVerdict, claim_project_detection, fail_project_detection, project_house_agent,
+    ProjectDetectionVerdict, claim_project_detection, erase_card_actor_in_txn,
+    erase_pending_actor_in_txn, fail_project_detection, project_house_agent,
     settle_project_detection, stage_project_detection_in_txn,
 };
 pub use project::{
@@ -163,10 +168,6 @@ pub(crate) use project::{
     check_revision_put, is_project_revision_type, project_revision_type, projects_touched_by_put,
     rebuild_project_revision_indexes, refresh_project_frontiers, refuse_revision_delete,
 };
-pub use project::{
-    ProjectCardConfirmRequest, ProjectCardRecord, ProjectCardState, ProjectGoalInterviewContext,
-    ProjectProposalRequest,
-};
 #[cfg(feature = "sync")]
 pub(crate) use project::{
     decode_revision, exportable_revisions_in_txn, forged_revision_in_txn,
@@ -189,7 +190,7 @@ pub use rooms::{
 };
 
 pub(crate) use rooms::RoomThreadTask;
-pub use rooms::{HostPin, HostPinKind, RoomHostHand, RoomHostPin};
+pub use rooms::{ACTOR_ERASE_HOST_PIN, HostPin, HostPinKind, RoomHostHand, RoomHostPin};
 pub use rooms::{
     OfferAnswer, OfferAnswerRequest, OfferCard, OfferDraft, OfferReopenRequest, OfferSettlement,
     OfferState, OfferVoteRequest, OfferVoteTally, OffersPage, OffersRequest,
@@ -209,6 +210,7 @@ pub(crate) use rooms::{
     replicated_shared_rows_in, replicated_side_carriers_in, replicated_side_rows_in,
     replicated_turn_in,
 };
+pub(crate) use rooms::{erase_host_pin_actor_in_txn, erase_offer_actor_in_txn};
 pub(crate) use rooms::{project_room_audience_in, room_join_audience_in};
 
 pub(crate) use rooms::{Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn};
@@ -234,4 +236,8 @@ pub use join_door::{
 pub(crate) use join_door::{
     files_roster_joins_in_txn, invites_into_room_in_txn, roster_invitee_in_txn,
 };
-pub use join_receipt::{JoinParticipation, JoinReceipt, JoinReceiptRef, RecordedAnswer};
+pub(crate) use join_receipt::erase_join_actor_in_txn;
+pub use join_receipt::{
+    ACTOR_ERASE_PENDING_JOIN, JoinParticipation, JoinReceipt, JoinReceiptRef, RecordedAnswer,
+    RosterActor, RosterErase,
+};

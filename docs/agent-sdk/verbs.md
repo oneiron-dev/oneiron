@@ -297,6 +297,10 @@ both bindings and their export-census tests in one change.
 - `vault.remember`
 - `vault.claims.retract`
 - `vault.forget`
+- `vault.booking.page_token`
+- `vault.calendar.read`
+- `vault.calendar.search`
+- `vault.calendar.freebusy`
 - `vault.claims.list`
 - `vault.claims.history`
 - `vault.delete`

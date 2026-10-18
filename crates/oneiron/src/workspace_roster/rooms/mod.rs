@@ -5,6 +5,7 @@ mod history;
 mod hosting;
 mod liveness;
 mod offer_activity;
+mod offer_erase;
 mod offer_liveness;
 mod offer_reopen;
 mod offer_settle;
@@ -37,10 +38,12 @@ pub(crate) use history::erase_room_side_rows;
 pub(in crate::workspace_roster) use history::index_task_bindings;
 pub(crate) use history::task_binding_turns_in;
 pub(in crate::workspace_roster) use history::thread_turns_in;
+pub(crate) use hosting::erase_host_pin_actor_in_txn;
 pub(in crate::workspace_roster) use hosting::room_host_in;
 pub(crate) use hosting::room_project_in;
 pub use hosting::{
-    HostPin, HostPinKind, RoomHostHand, RoomHostPin, RoomHosting, RoomSpeakingRole, RoomStanding,
+    ACTOR_ERASE_HOST_PIN, HostPin, HostPinKind, RoomHostHand, RoomHostPin, RoomHosting,
+    RoomSpeakingRole, RoomStanding,
 };
 pub(crate) use liveness::RoomThreadTask;
 pub use liveness::{
@@ -51,6 +54,8 @@ pub(in crate::workspace_roster) use liveness::{
 };
 pub use offer_activity::OfferVoteRequest;
 pub(crate) use offer_activity::{ROOM_OFFER_IDLE_SECS, record_offer_append_in_txn};
+pub(in crate::workspace_roster) use offer_erase::drop_open_offer_in_txn;
+pub(crate) use offer_erase::erase_offer_actor_in_txn;
 pub use offer_reopen::OfferReopenRequest;
 pub use offer_settle::{OfferAnswer, OfferAnswerRequest, OfferSettlement};
 pub use offers::{OfferCard, OfferDraft, OfferState, OfferVoteTally, OffersPage, OffersRequest};

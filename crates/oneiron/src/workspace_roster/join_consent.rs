@@ -29,7 +29,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::join_receipt::{JOINS, JoinReceiptRef, READY, RecordedAnswer, join_ref, ready_key};
+use super::join_receipt::{
+    JOINS, JoinReceiptRef, READY, RecordedAnswer, RosterActor, join_ref, ready_key,
+};
 use crate::agent_dispatch::{AgentDispatcher, SpendScopeId, SpendState, payer_binds_in_txn};
 use crate::conversation::{RoomHost, room_host_in_txn};
 use crate::error::{ClaimError, Error, Result};
@@ -71,11 +73,12 @@ pub struct JoinRequest {
     pub intent_key: String,
 }
 
-/// A party's recorded no.
+/// A party's recorded no. It stays a no once that party is erased, naming
+/// no one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConsentDenial {
-    pub party: EntityId,
+    pub party: RosterActor,
     pub answer_ref: String,
 }
 
@@ -93,8 +96,8 @@ pub enum SpendConsent {
     /// The payer said yes to this join, for a scope of a tree it funds.
     Paid {
         payer: EntityId,
-        /// The actor that answered for the payer.
-        granted_by: EntityId,
+        /// The actor that answered for the payer; no one once it was erased.
+        granted_by: RosterActor,
         scope: SpendScopeId,
         unit: LeaseUnit,
         /// The cap of the tree's root, which the payer accepted.
@@ -159,8 +162,9 @@ pub struct AdmissionConsent {
     pub branch: Option<EntityId>,
     pub subject: JoinSubject,
     /// The host that admitted, the subject itself as host, the project
-    /// whose roster seats it, or the principal a companion attends through.
-    pub granted_by: EntityId,
+    /// whose roster seats it, or the principal a companion attends through;
+    /// no one once that host was erased.
+    pub granted_by: RosterActor,
     pub basis: AdmissionBasis,
 }
 
@@ -169,13 +173,39 @@ pub struct AdmissionConsent {
 pub struct ConsentSet {
     /// The subject's own yes: the actor that gave it, the subject or its
     /// principal.
-    pub subject: ConsentState<EntityId>,
+    pub subject: ConsentState<RosterActor>,
     pub spend: ConsentState<SpendConsent>,
     pub membership: ConsentState<MembershipConsent>,
     pub admission: ConsentState<AdmissionConsent>,
 }
 
 impl ConsentSet {
+    /// Takes `actor` out of who gave or refused each consent (FIX 3520):
+    /// each granting or refusing party it was names no one. Whether any was.
+    pub(super) fn forget(&mut self, actor: EntityId) -> bool {
+        let mut named = match &mut self.subject {
+            ConsentState::Granted(by) => by.forget(actor),
+            ConsentState::Denied(denial) => denial.party.forget(actor),
+            ConsentState::Missing(_) => false,
+        };
+        named |= match &mut self.spend {
+            ConsentState::Granted(SpendConsent::Paid { granted_by, .. }) => {
+                granted_by.forget(actor)
+            }
+            ConsentState::Denied(denial) => denial.party.forget(actor),
+            ConsentState::Granted(SpendConsent::NoPaidWork) | ConsentState::Missing(_) => false,
+        };
+        if let ConsentState::Denied(denial) = &mut self.membership {
+            named |= denial.party.forget(actor);
+        }
+        named |= match &mut self.admission {
+            ConsentState::Granted(admission) => admission.granted_by.forget(actor),
+            ConsentState::Denied(denial) => denial.party.forget(actor),
+            ConsentState::Missing(_) => false,
+        };
+        named
+    }
+
     /// Every party still missing, in part order.
     #[must_use]
     pub fn needs(&self) -> Vec<ConsentNeed> {
@@ -202,10 +232,10 @@ fn missing<T>(state: &ConsentState<T>) -> Option<ConsentNeed> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JoinRefusal {
-    /// A party answered no.
+    /// A party answered no; no one is named once that party was erased.
     Denied {
         part: ConsentPart,
-        party: EntityId,
+        party: RosterActor,
         answer_ref: String,
     },
     /// The subject is not a live PERSON or AGENT_DEF.
@@ -242,7 +272,7 @@ pub fn decide_join_in_txn(
         .get(&vault.store, txn, &join_ref(request)?)?
         .filter(|receipt| receipt.request == *request);
     let (principal, answers) = filed.map_or((None, Vec::new()), |receipt| {
-        (receipt.principal, receipt.answers)
+        (receipt.principal_id(), receipt.answers)
     });
     decide_with_in_txn(vault, txn, request, principal, &answers, now)
 }
@@ -329,7 +359,7 @@ pub fn require_join_for_branch_in_txn(
         vault,
         txn,
         &receipt.request,
-        receipt.principal,
+        receipt.principal_id(),
         &receipt.answers,
         now,
     )?;
@@ -520,7 +550,7 @@ fn filed_spend_in_txn(
         vault,
         txn,
         &receipt.request,
-        receipt.principal,
+        receipt.principal_id(),
         &receipt.answers,
         now,
     )?;
@@ -636,14 +666,17 @@ impl<T> Loaded<T> {
 /// The subject's own consent: the latest answer the subject, or its
 /// principal for it, recorded. A direct join carries it from its filing; an
 /// invitation waits on it, and a no refuses the invitation for its intent.
-fn subject_consent(request: &JoinRequest, answers: &[RecordedAnswer]) -> Loaded<EntityId> {
-    match latest(answers, ConsentPart::Subject).filter(|answer| answer.by == request.subject.id()) {
+/// A yes the erased actor gave proves nothing: the join waits on it again.
+fn subject_consent(request: &JoinRequest, answers: &[RecordedAnswer]) -> Loaded<RosterActor> {
+    let need = ConsentNeed {
+        part: ConsentPart::Subject,
+        party: RequiredParty::Subject(request.subject),
+    };
+    match latest(answers, ConsentPart::Subject).filter(|answer| answer.by.is(request.subject.id()))
+    {
         Some(answer) if !answer.grant => Loaded::denied(answer),
-        Some(answer) => Loaded::granted(answer.actor),
-        None => Loaded::missing(ConsentNeed {
-            part: ConsentPart::Subject,
-            party: RequiredParty::Subject(request.subject),
-        }),
+        Some(answer) if answer.actor.id().is_some() => Loaded::granted(answer.actor),
+        _ => Loaded::missing(need),
     }
 }
 
@@ -695,10 +728,13 @@ fn spend_in_txn(
     if row.state != SpendState::Open || root.state != SpendState::Open {
         return Ok(Loaded::missing(named));
     }
-    // The payer's own yes to this join, for this scope. A cap is no consent.
-    let Some(yes) = answer
-        .filter(|answer| answer.by == payer.party && answer.spend_scope.as_ref() == Some(&scope))
-    else {
+    // The payer's own yes to this join, for this scope, from an actor not
+    // erased. A cap is no consent.
+    let Some(yes) = answer.filter(|answer| {
+        answer.by.is(payer.party)
+            && answer.actor.id().is_some()
+            && answer.spend_scope.as_ref() == Some(&scope)
+    }) else {
         return Ok(Loaded::missing(named));
     };
     Ok(Loaded::granted(SpendConsent::Paid {
@@ -1026,7 +1062,7 @@ fn admission_in_txn(
             room: request.room,
             branch: request.branch,
             subject: request.subject,
-            granted_by,
+            granted_by: RosterActor::Actor(granted_by),
             basis,
         })
     };
@@ -1034,11 +1070,19 @@ fn admission_in_txn(
         if !answer.grant {
             return Ok(Loaded::denied(answer));
         }
-        // A host's yes stands while that host still holds the room.
-        let host = WriteActor::new(answer.actor, EdgeActorClass::Human);
-        if room_host_in_txn(vault, txn, request.room, host)?.is_some() {
+        // A host's yes stands while that host still holds the room; an
+        // erased host's holds nothing.
+        if let (Some(actor), Some(by)) = (answer.actor.id(), answer.by.id())
+            && room_host_in_txn(
+                vault,
+                txn,
+                request.room,
+                WriteActor::new(actor, EdgeActorClass::Human),
+            )?
+            .is_some()
+        {
             return Ok(admitted(
-                answer.by,
+                by,
                 AdmissionBasis::HostAnswer {
                     answer_ref: answer.answer_ref.clone(),
                 },

@@ -53,7 +53,8 @@ side_tables! {
     /// The keys a mask on write lifted out of one record or file, each with its handle, its kind,
     /// where it sat and what the owner did about it (OF-560's found-key notice). Holds no value.
     /// Key: id16 (the record, or the file's ASSET).
-    SECRET_FOUND_KEY: VaultMeta b"secret_found_key:v1:" Named;
+    SECRET_FOUND_KEY: VaultMeta b"secret_found_key:v1:" Named
+        => crate::secret_custody::erase_found_key_actor_in_txn;
     /// A record whose found keys still owe the owner their needs-you notice: raised at the next
     /// write's commit boundary, then removed. Key: id16 (the record).
     SECRET_FOUND_KEY_DUE: VaultMeta b"secret_found_key_due:v1:" Named;
@@ -103,7 +104,8 @@ side_tables! {
     /// One reveal of a secret's value by its handle: the agent's ask, the owner's answer and the
     /// lease that delivered it, or the owner's own read with its reason (OF-560). Holds no value.
     /// Key: id16 (reveal id).
-    SECRET_REVEAL: VaultMeta b"secret_reveal:v1:" Named;
+    SECRET_REVEAL: VaultMeta b"secret_reveal:v1:" Named
+        => crate::secret_custody::erase_reveal_actor_in_txn;
     /// Durable attestation of one secret rotate-or-revoke op; carries no value bytes. Key:
     /// hex32(receipt id).
     SECRET_ROTATION_RECEIPT: VaultMeta b"secret_rotation_receipt:v1:" Raw;
@@ -212,7 +214,8 @@ side_tables! {
     /// Local, engine-written provenance and monotonic revocation latch for one admitted brief share
     /// (issuer, gate decision id, effect-target digest, revocation state), proving the row was
     /// created through the share door and not a generic grant write. Key: id16.
-    SHARE_BRIEF_ADMISSION: VaultMeta b"share:brief:admission:v1:" Raw;
+    SHARE_BRIEF_ADMISSION: VaultMeta b"share:brief:admission:v1:" Raw
+        => crate::share::erase_admission_actor_in_txn;
     /// One-way deletion fence for a brief identity. Key: id16; value: the one-byte marker `1`.
     SHARE_BRIEF_DELETE_RESERVATION: VaultMeta b"share:brief:deleting:v1:" Raw;
     /// The born-with text one brief share lets travel (OF-491), fixed in the transaction that
