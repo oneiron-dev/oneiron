@@ -68924,7 +68924,7 @@
      "path": "src/commands/credential_file.rs",
      "purpose": "A file holding a credential, readable by its owner alone",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -70046,6 +70046,16 @@
      "purpose": "A device's enrolment with its home (ARCH-0023b: \"a device connects the moment it is enrolled\")",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/device_sync/renewal.rs",
+     "purpose": "FIX 3377: the device renews its paired owner credential at its home (`POST /v1/core/slips/renew`…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -73836,7 +73846,7 @@
      "purpose": "Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a…"
     },
     "device_sync": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -74104,7 +74114,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 627,
+   "source_files": 628,
    "test_files": 182
   },
   "oneiron-spawn": {
