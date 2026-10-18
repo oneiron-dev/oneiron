@@ -49934,7 +49934,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 573
+      "fn": 575
      }
     },
     {
@@ -50828,6 +50828,27 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TaskTypeNodeSpec",
+      "TaskTypeNodeView",
+      "TaskTypeTreePin",
+      "TaskTypeTreePinReceipt",
+      "TaskTypeTreeRead",
+      "TaskTypeTreeReadReply",
+      "TaskTypeTreeView",
+      "TypeStamp"
+     ],
+     "path": "src/team/doors.rs",
+     "purpose": "The owner's task-type tree doors (DOOR-111, OF-541): store an authored tree on an open team-shape fork, and…",
+     "surface": {
+      "const": 1,
+      "fn": 2,
+      "struct": 8
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -50858,8 +50879,8 @@
      "purpose": "Coordination patterns as skills, and the team receipt contract (OF-540, ARCH-0079)",
      "surface": {
       "crate-vis": 1,
-      "mod": 9,
-      "re-export": 9
+      "mod": 10,
+      "re-export": 10
      }
     },
     {
@@ -56740,7 +56761,7 @@
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section"
     },
     "team": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -56903,7 +56924,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3468,
+   "source_files": 3469,
    "test_files": 902
   },
   "oneiron-android": {
@@ -65331,7 +65352,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 523
+      "fn": 525
      }
     },
     {
@@ -66380,7 +66401,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 524
+      "fn": 526
      }
     },
     {
@@ -69410,6 +69431,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/coordination_doors.rs",
+     "purpose": "The owner's task-type tree doors (DOOR-111), with the owner's own proof: store an authored tree on an open…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/core_write_doors.rs",
      "purpose": "The host doors of `vault.conversations.turns.create`, `vault.conversations.records.append` and `vault.batch`…",
      "surface": {
@@ -69583,7 +69614,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 101
+      "crate-vis": 102
      }
     },
     {
@@ -77062,7 +77093,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 360,
+     "files": 361,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -77477,7 +77508,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 687,
+   "source_files": 688,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -79375,6 +79406,13 @@
       "TaskStatusView",
       "TaskTerminalDisposition",
       "TaskTtl",
+      "TaskTypeNodeSpec",
+      "TaskTypeNodeView",
+      "TaskTypeTreePin",
+      "TaskTypeTreePinReceipt",
+      "TaskTypeTreeRead",
+      "TaskTypeTreeReadReply",
+      "TaskTypeTreeView",
       "TaskUpdateReceipt",
       "TaskUpdateRequest",
       "TaskWaitRequest",
@@ -79432,6 +79470,7 @@
       "TwoClocksAtom",
       "TypeByteFamily",
       "TypeRef",
+      "TypeStamp",
       "TypedDecision",
       "UncutFamily",
       "UndoneKeep",
@@ -79552,7 +79591,7 @@
      "purpose": "—",
      "surface": {
       "enum": 497,
-      "struct": 1379
+      "struct": 1387
      }
     },
     {
