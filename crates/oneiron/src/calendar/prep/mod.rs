@@ -54,6 +54,7 @@ mod wake;
 
 pub use self::home_node::{PrepHomeNodeJob, run_due_home_node_prep};
 pub use self::lens::{PrepLensCopy, render_prep_lens};
+pub(crate) use self::pack::build_prep_pack_scoped;
 pub use self::pack::{
     DEFAULT_PREP_MAX_WORDS, PrepBuildRequest, PrepItem, PrepPack, PrepSection, PrepSectionKind,
     build_prep_pack,

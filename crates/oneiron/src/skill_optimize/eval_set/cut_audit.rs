@@ -48,7 +48,7 @@ type Shingles = BTreeSet<[u8; 32]>;
 type AuditSides = (Vec<AuditCase>, Vec<AuditCase>);
 
 /// The method a cut was audited by, pinned on its row.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AuditMethodPin {
     pub name: String,
@@ -59,7 +59,7 @@ pub struct AuditMethodPin {
 }
 
 /// One case the audit read: its refs and purposes, never its text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AuditCase {
     pub case: EntityId,
@@ -74,7 +74,7 @@ pub struct AuditCase {
 
 /// A cut member and a case of another purpose whose texts overlap at or
 /// above the threshold: flagged for review, never moved.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NearCopyFlag {
     pub member_case: EntityId,
@@ -85,7 +85,7 @@ pub struct NearCopyFlag {
 }
 
 /// One comparison source the audit could not read.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CoverageGap {
     pub case: EntityId,
@@ -95,7 +95,7 @@ pub struct CoverageGap {
 }
 
 /// Whether every audited case's text was read, and what was not.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AuditCoverage {
     pub complete: bool,
@@ -105,7 +105,7 @@ pub struct AuditCoverage {
 /// The near-copy audit one cohort was cut with: who authored the cut, every
 /// case compared, the pinned method, the flags and the coverage. It holds no
 /// text.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EvalCutAudit {
     pub cohort: EntityId,
@@ -128,7 +128,7 @@ pub struct EvalCutAudit {
 }
 
 /// The authenticated author of a sealed-cohort cut.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EvalCutAuthor {
     Skill {
@@ -455,10 +455,7 @@ fn case_texts_listing(
                         .collect::<Result<Vec<_>>>()
                 })
                 .transpose()?;
-            match messages
-                .as_deref()
-                .and_then(crate::embed::joined_turn_text)
-            {
+            match messages.as_deref().and_then(crate::embed::joined_turn_text) {
                 Some(text) => {
                     rows.push(turn);
                     rows.extend(messages.iter().flatten().map(|(message, _)| *message));

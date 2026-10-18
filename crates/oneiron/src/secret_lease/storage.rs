@@ -319,6 +319,13 @@ pub(crate) fn stamp_reveal_lease_in_txn(
     }
     let floor = SecretCustodyFloor::resolve(&vault.store, wtxn)?;
     reveal_tier_admission(&rec, &floor)?;
+    crate::secret_custody::refuse_revoked_use_in_txn(
+        vault,
+        wtxn,
+        authority.secret(),
+        rec.class,
+        &rec.name,
+    )?;
     let now = VaultInstant(vault.store.clock.now_recorded_at()).secs();
     let expires_at = now.saturating_add(ttl_secs);
     crate::credential_door::admit_materialization_in_txn(

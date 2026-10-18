@@ -18,10 +18,10 @@ use super::super::record::{
 };
 use super::super::slate::{
     ConnectorGrantSlate, SlateDataClass, SlateDisposition, SlateDraftRow, SlateToolManifest,
-    read_connector_slate_in_txn,
+    SlateOwnerOverride, read_connector_slate_in_txn,
 };
 use super::super::txn::{
-    CATALOG_NAME_INDEX, append_connector_key_op_record, rewrite_connector_key_in_txn,
+    CATALOG_NAME_INDEX, append_connector_key_op_record, governing_connector_key, rewrite_connector_key_in_txn,
 };
 use super::catalog_views::ActorConnectorRegistration;
 use super::registration::catalog_key_record;
@@ -144,21 +144,10 @@ impl Vault {
         actor: EntityId,
         at: u64,
     ) -> Result<ActorConnectorRegistration> {
-        if let Some(live) = self.live_connector_registration(PROXY_CONNECTOR, &actor)? {
+        if let Some(live) = self.with_write_txn_grouped(|txn| {
+            self.proxy_admission_in_txn(txn, owner, actor)
+        })? {
             return Ok(live);
-        }
-        if self
-            .connector_key_for(PROXY_CONNECTOR, Some(&actor))?
-            .is_some_and(|(_, key)| {
-                key.actor_entity_ref == Some(actor) && key.status != ConnectorKeyStatus::Revoked
-            })
-        {
-            return Err(invalid_body(
-                "the actor's proxy connector key is not live: switch it on or stamp its slate",
-            ));
-        }
-        if self.get(&actor)?.is_none() {
-            return Err(invalid_body("no actor by that id"));
         }
         let (manifest, rows) = proxy_slate_draft();
         let drafted =
@@ -166,8 +155,10 @@ impl Vault {
         let slate_ref = self.store_connector_slate(&manifest, &drafted)?;
         let slate = self.override_connector_slate(owner, slate_ref, 0, &BTreeMap::new())?;
         let key_ref = self.store.clock.entity_id()?;
-        let key = self.with_write_txn_grouped(|wtxn| {
-            owner.revalidate_in_txn(self, wtxn)?;
+        self.with_write_txn_grouped(|wtxn| {
+            if let Some(live) = self.proxy_admission_in_txn(wtxn, owner, actor)? {
+                return Ok(live);
+            }
             // The key binds the stamp this admission made, or none.
             if read_connector_slate_in_txn(self, wtxn, slate_ref)?.as_ref() != Some(&slate) {
                 return Err(Error::ConcurrentWrite("connector slate revision"));
@@ -217,13 +208,70 @@ impl Vault {
                 policy.read_frontier_hash()?,
                 at,
             )?;
-            Ok(active)
-        })?;
-        Ok(ActorConnectorRegistration {
-            key_ref,
-            key,
-            slate_ref,
-            slate,
+            Ok(ActorConnectorRegistration {
+                key_ref,
+                key: active,
+                slate_ref,
+                slate: slate.clone(),
+            })
+        })
+    }
+
+    /// Revalidates every admission guard in the writer that creates the key.
+    fn proxy_admission_in_txn(
+        &self,
+        txn: &heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        actor: EntityId,
+    ) -> Result<Option<ActorConnectorRegistration>> {
+        owner.revalidate_in_txn(self, txn)?;
+        if let Some(live) = self.live_connector_registration_in_txn(txn, PROXY_CONNECTOR, &actor)? {
+            return Ok(Some(live));
+        }
+        if governing_connector_key(&self.store, txn, PROXY_CONNECTOR, Some(&actor))?
+            .is_some_and(|(_, key)| key.actor_entity_ref == Some(actor)
+                && key.status != ConnectorKeyStatus::Revoked)
+        {
+            return Err(invalid_body(
+                "the actor's proxy connector key is not live: switch it on or stamp its slate",
+            ));
+        }
+        if !crate::ports::EntityStoreRead::port_entity_present(&self.store, txn, &actor)? {
+            return Err(invalid_body("no actor by that id"));
+        }
+        Ok(None)
+    }
+
+    /// Withdraws only the proxy's remember capability. The read row, key
+    /// status, credential and memory stay unchanged. The reviewed key and
+    /// slate, owner proof, restamp and key adoption share this one writer.
+    pub fn revoke_proxy_connector_write(
+        &self,
+        owner: &AuthenticatedOwner,
+        actor: EntityId,
+        key: EntityId,
+        expected_revision: u64,
+        at: u64,
+    ) -> Result<ActorConnectorRegistration> {
+        self.with_write_txn_grouped(|txn| {
+            owner.revalidate_in_txn(self, txn)?;
+            let registration = self.live_connector_registration_in_txn(txn, PROXY_CONNECTOR, &actor)?
+                .ok_or(Error::EntityNotFound)?;
+            if registration.key_ref != key || registration.slate.revision() != expected_revision {
+                return Err(Error::ConcurrentWrite("proxy connector registration"));
+            }
+            if registration.slate.tool_setting("vault.remember") == SlateDisposition::NeverAllow {
+                return Ok(registration);
+            }
+            let slate = self.stamp_slate_in_txn(
+                txn, owner, registration.slate_ref, expected_revision,
+                &BTreeMap::from([("vault.remember".to_owned(), SlateOwnerOverride {
+                    disposition: SlateDisposition::NeverAllow,
+                })]),
+                None,
+            )?;
+            let key = self.adopt_connector_slate_stamp_in_txn(txn, &key, at)?;
+            Ok(ActorConnectorRegistration { key, slate, ..registration })
         })
     }
 

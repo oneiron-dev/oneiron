@@ -13,7 +13,8 @@ use super::args::ManagedError;
 /// the engine's MACHINE writers, which sign with host-held keys (ONE-1634).
 /// Then this install's key slots, only where the supervisor put them, and
 /// with them the host's own node in the roster: never the owner's, never a
-/// world key's recipient.
+/// world key's recipient. A restart keeps a node the owner answered for since
+/// as he answered (FIX 4648).
 pub(super) fn provision_host_authority(
     vault: &oneiron::Vault,
     issuer: &oneiron::authority::HostSlipIssuer,
@@ -25,7 +26,11 @@ pub(super) fn provision_host_authority(
     if keystore.install_on(vault, data_dir)
         && let Err(error) = vault.provision_host_node(issuer)
     {
-        tracing::warn!(kind = ?error.kind(), "this host's node is not in the roster; serving on");
+        tracing::warn!(
+            kind = ?error.kind(),
+            reason = %error,
+            "this host's node is not in the roster; serving on"
+        );
     }
     Ok(())
 }

@@ -245,6 +245,9 @@ pub fn recover_vault_window(
     budget: RecoveryBudget,
 ) -> Result<PreparedRecovery> {
     let path = manifest_path.as_ref();
+    // An actor this vault erased reads as no one in the artifact too (FIX
+    // 3878): the recovery checks, installs and compares only that form.
+    let snapshot = &snapshot.with_actors_erased_here(vault)?;
     // Full domain validation precedes quarantine and every durable write.
     limit(snapshot.encode()?.len(), budget.max_bytes)?;
     let candidate = rebuild_vault_window_from_canonical(snapshot)?;

@@ -21,8 +21,8 @@ use super::bridge::ActorScopedVault;
 use super::convert::{
     calendar_event_from_engine, calendar_range_to_engine, calendar_selectors_to_engine,
     commit_outcome_from_engine, commit_receipt_from_engine, entity_ref_receipt_from_engine,
-    memory_pack_from_engine, read_receipt_from_engine, recall_scope_to_engine,
-    structural_put_to_engine,
+    memory_pack_from_engine, parked_job_from_engine, read_receipt_from_engine,
+    recall_scope_to_engine, structural_put_to_engine,
 };
 use super::dtos::{
     NapiAdmitImportedClaimInput, NapiBlobArtifactInput, NapiBlobVersionView, NapiCalendarEventRead,
@@ -336,6 +336,11 @@ impl ActorScopedVault {
                 created_at: ts_from_engine(view.created_at, "created_at")
                     .map_err(boundary_error)?,
                 updated_at: ts_from_engine(view.updated_at, "updated_at")
+                    .map_err(boundary_error)?,
+                parked: view
+                    .parked
+                    .map(parked_job_from_engine)
+                    .transpose()
                     .map_err(boundary_error)?,
             })
         })

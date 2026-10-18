@@ -506,7 +506,7 @@ impl Vault {
             })
     }
 }
-fn land(
+pub(super) fn land(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     fork: &mut NoteFork,

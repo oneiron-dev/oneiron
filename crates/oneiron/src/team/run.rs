@@ -8,7 +8,9 @@
 //! existed and keeps the stamp it has. A team's reference is the leader's
 //! attempt and the start's key, so the same start opens the same team. An
 //! autoreason tournament's authors start the tournament's own market instead,
-//! under the reference its finalizer records.
+//! under the reference its finalizer records. A planned team's leader
+//! (DOOR-111) asking for the team its plan launched gets that team back, and
+//! no member spawns twice.
 //!
 //! `self.team.record` writes the team's one receipt once its work is done.
 //! The host fills every identity: the type and project the leader was placed
@@ -17,8 +19,10 @@
 //! leader as the deciding actor, a market's signed referee. It counts the
 //! members' confessions, calls and spend itself ([`super::observations`]),
 //! and leaves unknown what it cannot count. The guest names only what the
-//! host cannot observe: the axis, a vote's tally or an unsigned referee's
-//! rule, the roles and coverage. A tournament's receipt is its finalizer's,
+//! host cannot observe: the axis (a planned team's is the one its pattern
+//! froze), a vote's tally or an unsigned referee's rule, the roles and
+//! coverage. A team below its pattern's floor records what ran, and its
+//! receipt says so. A tournament's receipt is its finalizer's,
 //! never the leader's. Settlement stays with the anchored outcome
 //! ([`settle_team_outcome`](super::settle_team_outcome)), such as the
 //! owner's verdict on the team's deliverable ([`super::owner_outcome`]): a
@@ -30,8 +34,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::agent_dispatch::{
-    CoordinationPattern, TeamRunStamp, attempt_team_stamp, decode_agent_dispatch_input,
-    team_pattern,
+    AgentDispatcher, CoordinationPattern, TeamRunStamp, attempt_team_stamp,
+    decode_agent_dispatch_input, team_pattern,
 };
 use crate::attempt_queue::{AttemptId, AttemptRecord, ManifestKind};
 use crate::autoreason_campaign::authoring::tournament_team_stamp;
@@ -47,6 +51,7 @@ use super::receipt::{
     Coverage, DecidedBy, PatternSkillRef, TeamReceipt, TeamShape, record_team_receipt, team_receipt,
 };
 use super::run_binding::team_run_binding;
+use super::spawn_intent::FrozenPatternPack;
 
 /// Longest start key; a member's key is bounded the same way.
 const MAX_KEY_BYTES: usize = 64;
@@ -92,7 +97,8 @@ pub struct TeamRecordInput {
     /// such as an approved widening's: their attempt refs, hex. Each must
     /// carry the team's stamp. A start the host did not record needs them all.
     pub members: Vec<String>,
-    /// Whether the team converged on one answer or diverged into many.
+    /// Whether the team converged on one answer or diverged into many. A
+    /// planned team's receipt takes the axis its pattern froze instead.
     pub axis: TeamAxis,
     /// Who decided the team's result. The pattern fixes its kind. A market's
     /// signed referee replaces the rule named here.
@@ -148,11 +154,22 @@ pub enum TeamRunAnswer {
         pattern: TeamPattern,
         members: Vec<TeamMemberAnswer>,
     },
+    /// A start whose every member asked a widening: none launched, so no
+    /// team runs yet. Each member answers its proposal.
+    #[serde(rename_all = "camelCase")]
+    ProposedWiden {
+        team_ref: String,
+        pattern: TeamPattern,
+        members: Vec<TeamMemberAnswer>,
+    },
     #[serde(rename_all = "camelCase")]
     Recorded {
         team_ref: String,
         pattern: TeamPattern,
         width: u32,
+        /// The team ran with fewer agents than its pattern needs to mean
+        /// anything; the receipt records what ran.
+        below_floor: bool,
         models: Vec<String>,
         /// The loaded pattern skill the receipt names, hex.
         pattern_skill: Option<String>,
@@ -197,13 +214,66 @@ pub(crate) fn start_stamp(
     }
 }
 
+/// A start by a planned team's leader (DOOR-111) that asks for the team its
+/// plan launched, its pattern and its member count, answers that team's
+/// launched members and spawns none; a retry of the leader the launch
+/// queued gets that leader's team. `None` when `leader` leads no planned
+/// team, or asks for another, which then starts as any start does.
+///
+/// # Errors
+///
+/// A damaged planned launch, storage errors and a malformed dispatch
+/// payload.
+pub(crate) fn planned_start(
+    vault: &Vault,
+    leader: AttemptId,
+    input: &TeamStartInput,
+    pattern: TeamPattern,
+) -> Result<Option<TeamRunAnswer>> {
+    if input.tournament.is_some() {
+        return Ok(None);
+    }
+    let Some(launch) = AgentDispatcher::new(vault).planned_launch_for_leader(leader)? else {
+        return Ok(None);
+    };
+    let Some(bound) = team_run_binding(vault, launch.root, &launch.team_ref)? else {
+        return Ok(None);
+    };
+    if bound.stamp.pattern != pattern || input.members.len() != bound.members.len() {
+        return Ok(None);
+    }
+    let store = DreamerRunnerStore::new(vault);
+    let mut members = Vec::with_capacity(bound.members.len());
+    for (id, asked) in bound.members.iter().zip(&input.members) {
+        // The agent each member runs as, where its row still reads.
+        let agent = match store.status(*id)? {
+            Some(row) => decode_agent_dispatch_input(&row.payload.input)?
+                .target
+                .agent_definition_ref()?
+                .to_hex(),
+            None => asked.agent.clone(),
+        };
+        members.push(TeamMemberAnswer {
+            agent,
+            attempt_ref: Some(bytes_to_hex_lower(id.as_bytes())),
+            proposal_ref: None,
+        });
+    }
+    Ok(Some(TeamRunAnswer::Started {
+        team_ref: launch.team_ref,
+        pattern,
+        members,
+    }))
+}
+
 /// The spawn key of a member within its team's start.
 pub(crate) fn member_spawn_key(input: &TeamStartInput, member: &TeamMemberInput) -> String {
     format!("team:{}:{}", input.intent_key, member.intent_key)
 }
 
-/// Records the receipt of a team `leader` started. Storage errors are errors;
-/// a refusal is the guest's typed failure code.
+/// Records the receipt of a team `leader` started, or of the planned team
+/// it leads as a retry of the leader the launch queued. Storage errors are
+/// errors; a refusal is the guest's typed failure code.
 ///
 /// # Errors
 ///
@@ -219,11 +289,18 @@ pub(crate) fn record_led_team(
         return Ok(Err("team_unbound"));
     };
     let lead_input = decode_agent_dispatch_input(&lead.payload.input)?;
-    let prefix = led_team_ref(leader, "");
+    // A planned team's launch froze its axis and the pack revision its
+    // leader was shown, and bound the team under the leader it queued
+    // (DOOR-111).
+    let planned = AgentDispatcher::new(vault)
+        .planned_launch_for_leader(leader)?
+        .filter(|launch| launch.team_ref == input.team_ref);
+    let root = planned.as_ref().map_or(leader, |launch| launch.root);
+    let prefix = led_team_ref(root, "");
     if !input.team_ref.starts_with(&prefix) || input.team_ref.len() == prefix.len() {
         return Ok(Err("team_record_not_led"));
     }
-    let bound = team_run_binding(vault, leader, &input.team_ref)?;
+    let bound = team_run_binding(vault, root, &input.team_ref)?;
     if input.members.is_empty() && bound.is_none() {
         return Ok(Err("team_record_invalid_input"));
     }
@@ -313,8 +390,13 @@ pub(crate) fn record_led_team(
         project: lead_input.project_ref,
         type_ref: TypeRef::from(&lead_input.type_ref),
         pattern,
-        pattern_skill: loaded_pattern_skill(vault, &lead.attempt, pattern)?,
-        axis: input.axis,
+        pattern_skill: match &planned {
+            Some(launch) => frozen_pattern_skill(&lead.attempt, &launch.pack),
+            None => loaded_pattern_skill(vault, &lead.attempt, pattern)?,
+        },
+        axis: planned
+            .as_ref()
+            .map_or(input.axis, |launch| launch.start.axis),
         models: models.into_iter().collect(),
         shape: TeamShape { width, roles },
         decided_by,
@@ -342,6 +424,7 @@ fn recorded(receipt: &TeamReceipt, replay: bool) -> TeamRunAnswer {
         team_ref: receipt.team_ref.clone(),
         pattern: receipt.pattern,
         width: receipt.shape.width,
+        below_floor: receipt.below_floor(),
         models: receipt.models.clone(),
         pattern_skill: receipt
             .pattern_skill
@@ -377,6 +460,23 @@ fn loaded_pattern_skill(
         }
     }
     Ok(None)
+}
+
+/// The revision a planned team froze, when `lead` loaded it: its manifest
+/// names that skill at that version. Never another revision or another
+/// bound skill.
+fn frozen_pattern_skill(lead: &AttemptRecord, pack: &FrozenPatternPack) -> Option<PatternSkillRef> {
+    lead.manifest()
+        .iter()
+        .any(|entry| {
+            entry.kind == ManifestKind::Skill
+                && entry.reference == pack.skill_id()
+                && entry.version == pack.version()
+        })
+        .then(|| PatternSkillRef {
+            skill: pack.entity(),
+            version: pack.version().to_owned(),
+        })
 }
 
 pub(super) fn led_team_ref(leader: AttemptId, key: &str) -> String {
