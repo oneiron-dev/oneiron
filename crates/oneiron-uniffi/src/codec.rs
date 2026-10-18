@@ -295,6 +295,7 @@ impl Lower<engine::WitnessMessage> for WitnessMessage {
             metadata: self.metadata.lower()?,
             is_visible: self.is_visible.unwrap_or(true),
             order: self.order,
+            quote: self.quote.lower()?,
         })
     }
 }
@@ -319,7 +320,6 @@ impl Lower<engine::WitnessTurn> for WitnessTurn {
         Ok(engine::WitnessTurn {
             conversation_ref: self.conversation_ref,
             turn_ref: self.turn_ref,
-            quote: self.quote.lower()?,
             thread_audience,
             messages: self.messages.lower()?,
             occurred_at: stamped_seconds("occurred_at", self.occurred_at)?,
