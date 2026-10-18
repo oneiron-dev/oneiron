@@ -29,12 +29,18 @@
 //!   under, where its publisher knew it (FIX 3359), so a publisher that cannot
 //!   read a world still knows which section is that world's and stops carrying
 //!   it once the world is deleted here or no longer eligible.
+//! - Each carried private world's signed settings and key wraps also ride a
+//!   capsule of their own inside the bundle, sealed to the world's readers and
+//!   the root ([`SealedWorldAuthority`], FIX 4211), which a publisher that may
+//!   not read the world carries unchanged, as it carries the world's section.
 //! - Erase rewrites every kept pad object without the world's pads: that world's
 //!   section in every kept bundle stops opening, and every other world's still
 //!   does. Delete rewrites nothing; a deleted world restores from the bundles it is
 //!   in until they age out (DEC-0006: delete is backup-only undo).
 //! - A holder keeps [`SEALED_BUNDLE_KEEP`] generations, each bundle with its pad
 //!   object, and never retires the newest by age ([`retired_bundle_generations`]).
+
+mod authority;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -58,6 +64,8 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
 use crate::ports::TombstoneStoreRead;
 use crate::store::Store;
+
+pub(crate) use self::authority::{BundleCarry, SealedWorldAuthority};
 
 /// The bundle's size step: every bundle is a positive multiple of it.
 pub const SEALED_BUNDLE_PAD_STEP_BYTES: usize = 64 * 1024 * 1024;
@@ -471,6 +479,8 @@ pub struct OpenedVaultBundle {
     signed: [u8; 32],
     base: Zeroizing<Vec<u8>>,
     sections: Vec<SealedBundleSection>,
+    /// One capsule per private world whose authority the bundle files.
+    authorities: Vec<SealedWorldAuthority>,
 }
 
 impl std::fmt::Debug for OpenedVaultBundle {
@@ -480,6 +490,7 @@ impl std::fmt::Debug for OpenedVaultBundle {
             .field("publisher", &self.publisher)
             .field("base_len", &self.base.len())
             .field("sections", &self.sections.len())
+            .field("authorities", &self.authorities.len())
             .finish_non_exhaustive()
     }
 }
@@ -678,6 +689,9 @@ struct SealPlan {
     signing: SigningKey,
     publisher: EntityId,
     readers: Vec<HybridPublicKey>,
+    /// Each fresh world capsule's readers: the machines mine here that may read
+    /// the world, and the root.
+    authority_readers: Vec<(EntityId, Vec<HybridPublicKey>)>,
     kit_root: Option<RecoveryRootId>,
     pads: Vec<(WorldKeyId, Zeroizing<[u8; 32]>)>,
 }
@@ -694,7 +708,8 @@ impl Vault {
     /// `carried` are sections of an earlier generation, kept unchanged unless one
     /// of `worlds` replaces it. The pad object holds the pad of every key here of
     /// every world the bundle carries for `holder`, but a world deleted here
-    /// ([`SEALED_BUNDLE_NEW_PAD_DELETED_WORLD`]).
+    /// ([`SEALED_BUNDLE_NEW_PAD_DELETED_WORLD`]). It files no world authority
+    /// capsule: the sync assembly seals those with its sections.
     pub fn seal_vault_bundle(
         &self,
         slot: u64,
@@ -704,17 +719,27 @@ impl Vault {
         carried: &[SealedBundleSection],
     ) -> Result<SealedVaultUpload> {
         let carried: Vec<_> = carried.iter().map(|section| (None, section)).collect();
-        self.seal_vault_bundle_carrying(slot, holder, base, worlds, &carried, None)
+        self.seal_vault_bundle_carrying(
+            slot,
+            holder,
+            base,
+            worlds,
+            &carried,
+            &BundleCarry::default(),
+        )
     }
 
     /// [`Self::seal_vault_bundle`] for a publisher that carries `carried` on
-    /// from the generation whose pad object is `latest`: the new pad object
-    /// also holds each pad of `latest` this machine has no row for, of a world
-    /// the bundle still carries for `holder`, not deleted here and whose keys
-    /// were not destroyed here, so a carried section's key still restores with
-    /// the kit. Its index files each fresh section's tag under its key, and
-    /// each carried one's under the key it names, where known
-    /// ([`OpenedVaultBundle::sections_known`]).
+    /// from the generation whose pad object is `carry.latest`: the new pad
+    /// object also holds each pad of `carry.latest` this machine has no row
+    /// for, of a world the bundle still carries for `holder` (or whose settings
+    /// are not here: FIX 4211), not deleted here and whose keys were not
+    /// destroyed here, so a carried section's key still restores with the kit.
+    /// Its index files each fresh section's tag under its key, and each carried
+    /// one's under the key it names, where known
+    /// ([`OpenedVaultBundle::sections_known`]). The body files a fresh capsule
+    /// of each world in `carry.fresh_authority`, which the bundle must carry for
+    /// `holder`, and each of `carry.carried_authority` unchanged.
     pub(crate) fn seal_vault_bundle_carrying(
         &self,
         slot: u64,
@@ -722,7 +747,7 @@ impl Vault {
         base: &[u8],
         worlds: &[(EntityId, &[u8])],
         carried: &[(Option<WorldKeyId>, &SealedBundleSection)],
-        latest: Option<&OpenedKeyPads>,
+        carry: &BundleCarry<'_>,
     ) -> Result<SealedVaultUpload> {
         let secret = self.machine_secret_outside_txn()?;
         let mut keys: Vec<(Arc<WorldKey>, &[u8])> = Vec::with_capacity(worlds.len());
@@ -732,7 +757,7 @@ impl Vault {
             }
             keys.push((self.world_key(world)?, payload));
         }
-        let plan = self.seal_plan(&secret, holder, &keys, latest)?;
+        let plan = self.seal_plan(&secret, holder, &keys, carry)?;
         let generation = SealedBundleGeneration::fresh(slot)?;
         let mut sections = Vec::with_capacity(keys.len() + carried.len());
         let mut index = Vec::with_capacity(keys.len() + carried.len());
@@ -752,7 +777,8 @@ impl Vault {
                 sections.push((*section).clone());
             }
         }
-        let body = encode_bundle_body(&plan, generation, base, &sections)?;
+        let authorities = authority::seal_authorities(&plan, generation, carry)?;
+        let body = encode_bundle_body(&plan, generation, base, &sections, &authorities)?;
         drop(sections);
         let bundle = seal_object(BUNDLE, &plan, generation, body)?;
         let pads_body = encode_pads_body(&plan.vault_id, generation, &plan.pads, &index, None)?;
@@ -769,7 +795,7 @@ impl Vault {
         secret: &MachineSecret,
         holder: Destination,
         keys: &[(Arc<WorldKey>, &[u8])],
-        latest: Option<&OpenedKeyPads>,
+        carry: &BundleCarry<'_>,
     ) -> Result<SealPlan> {
         let txn = self.store.env.read_txn()?;
         let signing = self.door_signing_key_in_txn(&txn, secret.machine)?;
@@ -801,6 +827,19 @@ impl Vault {
         }
         let root = self.pinned_root_recipient_in_txn(&txn, &fold)?;
         let kit_root = root.as_ref().map(|root| root.id);
+        let mut authority_readers = Vec::with_capacity(carry.fresh_authority.len());
+        for &(world, _) in &carry.fresh_authority {
+            if !bundle_carries(&fold, world, holder) {
+                return Err(refused(
+                    "the world's sealed copies may not rest on the holder",
+                ));
+            }
+            let readers: Vec<HybridPublicKey> = recipients(&fold, world, root.clone())
+                .into_iter()
+                .map(|(_, public)| public)
+                .collect();
+            authority_readers.push((world, readers));
+        }
         // Base reality reads on every machine mine here: its recipients are the
         // vault's own readers, and the root.
         let readers: Vec<HybridPublicKey> = recipients(&fold, base_world(), root)
@@ -821,9 +860,11 @@ impl Vault {
         }
         // A carried section's key keeps the pad the latest generation held for
         // it, unless the bundle no longer carries its world for this holder, or
-        // the world was deleted or its keys destroyed here.
-        for (key, pad) in latest.map_or(&[][..], |latest| &latest.entries[..]) {
-            if bundle_carries(&fold, key.world, holder)
+        // the world was deleted or its keys destroyed here. A world whose
+        // settings are not here (they ride its own windows) rides blind with its
+        // section and capsule: unknown is not ineligible (FIX 4211).
+        for (key, pad) in carry.latest.map_or(&[][..], |latest| &latest.entries[..]) {
+            if (!fold.worlds.contains_key(&key.world) || bundle_carries(&fold, key.world, holder))
                 && !pads.iter().any(|(held, _)| held == key)
                 && !world_keys_destroyed_in_txn(&self.store, &txn, key.world)?
                 && new_pads_hold(&self.store, &txn, key.world)?
@@ -836,6 +877,7 @@ impl Vault {
             signing,
             publisher: secret.machine,
             readers,
+            authority_readers,
             kit_root,
             pads,
         })
@@ -1533,6 +1575,7 @@ fn encode_bundle_body(
     generation: SealedBundleGeneration,
     base: &[u8],
     sections: &[SealedBundleSection],
+    authorities: &[SealedWorldAuthority],
 ) -> Result<Zeroizing<Vec<u8>>> {
     let mut body = Zeroizing::new(Vec::new());
     body.extend_from_slice(BUNDLE_LABEL);
@@ -1548,6 +1591,11 @@ fn encode_bundle_body(
     body.extend_from_slice(&count.to_be_bytes());
     for section in sections {
         section.encode(&mut body)?;
+    }
+    let count = u32::try_from(authorities.len()).map_err(|_| refused("too many capsules"))?;
+    body.extend_from_slice(&count.to_be_bytes());
+    for capsule in authorities {
+        capsule.encode(&mut body)?;
     }
     let digest = signed_digest(
         &plan.vault_id,
@@ -1592,6 +1640,7 @@ fn decode_bundle_body(
         }
         sections.push(section);
     }
+    let authorities = SealedWorldAuthority::parse_all(&mut cursor)?;
     let signed = signed_digest(
         vault_id,
         generation,
@@ -1609,6 +1658,7 @@ fn decode_bundle_body(
         signed,
         base,
         sections,
+        authorities,
     })
 }
 

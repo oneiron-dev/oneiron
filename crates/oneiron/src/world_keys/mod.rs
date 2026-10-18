@@ -39,6 +39,8 @@ mod wrap;
 #[cfg(test)]
 mod tests;
 
+#[cfg(feature = "sync")]
+pub(crate) use self::bundle::BundleCarry;
 pub use self::bundle::{
     OpenedBundleSection, OpenedKeyPads, OpenedVaultBundle, SEALED_BUNDLE_KEEP,
     SEALED_BUNDLE_PAD_STEP_BYTES, SEALED_BUNDLE_UPLOAD_INTERVAL_SECS, SealedBundleGeneration,
