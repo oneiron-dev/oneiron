@@ -1,0 +1,164 @@
+{
+  "version": 1,
+  "area": "board",
+  "assets": [
+    {
+      "id": "board-canonical-cases",
+      "path": "cases.json",
+      "source": {
+        "uri": "independent-oracle:synthetic-board-fixtures",
+        "revision": "1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "3fa6de7d47b1087be5cc4ff13f703f3aa29a1bd4da7374ec70c157121a8d0b55",
+      "expectedFacts": {
+        "caseIds": [
+          "BOARD-01",
+          "BOARD-02",
+          "BOARD-03",
+          "BOARD-04",
+          "BOARD-05",
+          "BOARD-06",
+          "BOARD-07",
+          "BOARD-08",
+          "BOARD-09"
+        ],
+        "registryRows": [
+          "OF-042",
+          "OF-059",
+          "OF-082",
+          "OF-183",
+          "OF-190",
+          "OF-217",
+          "OF-219",
+          "OF-228",
+          "OF-236",
+          "OF-238",
+          "OF-241",
+          "OF-250",
+          "OF-309",
+          "OF-369",
+          "OF-386",
+          "OF-387",
+          "OF-421",
+          "OF-490",
+          "OF-538",
+          "OF-597"
+        ],
+        "meaning": "Authored public-behavior scenarios, not ready-to-send request DTOs. No expected engine score, ref, frontier, token estimate or receipt is fabricated.",
+        "canonPins": [
+          {
+            "uri": "/oneiron/agents/oneiron-arch-0026-dreamer-v2/#run-tree",
+            "sha256": "59eff8c7ebf592b19e4a9b904b80ca1568366c9d1ef5e54a8cfb30571ed03252"
+          },
+          {
+            "uri": "/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1/#r4-lifecycle",
+            "sha256": "dcfa341d856a48d1c5f4f02de932d3af6ff573890c53b8f7b5ea5c7506e02f76"
+          },
+          {
+            "uri": "/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1/#r4b-hubs",
+            "sha256": "dcfa341d856a48d1c5f4f02de932d3af6ff573890c53b8f7b5ea5c7506e02f76"
+          },
+          {
+            "uri": "/oneiron/agents/oneiron-arch-0067-context-board-v1/#what",
+            "sha256": "4342ddebdeee0bc1ae71a6fe07a7d1da296170fd9141d5788c3f8faee17d0d12"
+          },
+          {
+            "uri": "/oneiron/core/oneiron-arch-0019-oneiron-db-v1/#result-body-store",
+            "sha256": "99a775e2b95d0e7fcf1c5f7bd138882a4c0b7920239ce020e26382e718544483"
+          },
+          {
+            "uri": "/oneiron/core/oneiron-arch-0032-agentic-notes-v1/#writers",
+            "sha256": "50407d6e7537ef40f38f4642d19ecb06eb89f1fe80b53fba24e8d73e95f2e92b"
+          },
+          {
+            "uri": "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#memory-board-source-trust",
+            "sha256": "6b960493c722c1182a81a5c168d63a9be3d8a669559addf3a749f556c4628050"
+          },
+          {
+            "uri": "/oneiron/retrieval/oneiron-arch-0004-retrieval-graph/#access",
+            "sha256": "b214b7c1dd31851c0feae51a9c79a3e913ff7aab3f7ddd5021f46b36be7ae740"
+          },
+          {
+            "uri": "/oneiron/retrieval/oneiron-arch-0004-retrieval-graph/#rrf-pipeline",
+            "sha256": "b214b7c1dd31851c0feae51a9c79a3e913ff7aab3f7ddd5021f46b36be7ae740"
+          }
+        ],
+        "registryPin": {
+          "uri": "/registry/oneiron/",
+          "sha256": "8f56eb0c82be8475001e0127735558a0c6aa5721017138f9d68b951f87b19be7"
+        },
+        "bindingSnapshot": {
+          "head": "f6f16d4d906995dbc52826bb6c7a45f07301efee",
+          "files": {
+            "scripts/sdk/agent-verbs.json": "d4fa36be976e4195323bf342a0e21a49f8965a2533536d7f6c0c2b9f2570911a",
+            "packages/oneiron-client/src/facade.ts": "e0cb73a45e493baa7182b10bc076eeb198984d15bcbc19add0fbc62c22912c76",
+            "packages/oneiron-client/src/facade-types.ts": "d64b62450805589152ac08d4dc99a6504c33862d0600449904ff264a45ad7e6a",
+            "packages/oneiron/src/agent-verbs.ts": "b5f8633317cc8e39d5ef970e65964d040d76216fff7400a91a3b90ccc1663b7b",
+            "packages/oneiron/src/facade-types.ts": "d64b62450805589152ac08d4dc99a6504c33862d0600449904ff264a45ad7e6a",
+            "crates/oneiron-server/src/cli.rs": "81eb90def61131fc4c8988941876972ec619af98c1f97d170bcabea50a34bf33",
+            "crates/oneiron-server/src/api/openapi_registry.rs": "38a4872df012265d0df3d2d749585957ecd57826b1478e29ff06962eccb1e145",
+            "crates/oneiron-server/src/api/openapi/owner_paths.rs": "7bb5654c2e2e5bedb9b8392bfea116bca68a14a4771968e0c2eb51703f927761",
+            "crates/oneiron-server/src/api/context_board/mod.rs": "1f9fa69bab13bc627cd4fd0e567ac742a67c5954d3b5f42c94ba1f2c1bd8d74c",
+            "crates/oneiron-server/src/api/context_board/memories.rs": "0e0327fd04ea165b48d0881cbca97aee7e2d91a465421b7a9ca5e2af1bf606bd",
+            "crates/oneiron-server/src/api/context_board/history.rs": "a64aa78f70259a6b5d30f4663143734e3c2e30db75fa39d04c10c530b46e1732",
+            "crates/oneiron-server/src/api/context_board/standing.rs": "304d60bd8048e1d6a4a84548d7f5d7c0abc182c13a791991f40d7f04b91c65fc",
+            "crates/oneiron-server/src/api/context_pack/controls.rs": "627b545c63a623e92cf2774d31f5e94d76a6621cedba16c4b3b901443cc10461",
+            "crates/oneiron-server/src/api/context_pack/response.rs": "51010998ad5480022bf99665c3f6836f02f37b2d2994dd2e119723268712cacd",
+            "crates/oneiron-server/src/api/message_result.rs": "61fdc6ed2b357f1f392f74df9577f1a75dc89b146fb4506d77cad7700d84683e",
+            "crates/oneiron-server/src/api/facade/dispatch.rs": "5a8dfeffb1ca8ed2c9f958f42182230f7a2d39353d40f2d5d224e4121764bea9"
+          }
+        },
+        "fixtureConstants": {
+          "workingSetCallerBudgetTokens": 512,
+          "smallReaderBudgetTokens": 256,
+          "itemLimit": 4,
+          "allowedCorpusDocuments": 96,
+          "withheldCorpusDocuments": 8,
+          "dreamingWindowTokens": 4096,
+          "transcriptTurns": 32,
+          "transcriptPaddingRepetitions": 256
+        },
+        "engineConstantsChanged": false,
+        "executedOnCoordinatorMac": false
+      },
+      "scenarios": [
+        "BOARD-01",
+        "BOARD-02",
+        "BOARD-03",
+        "BOARD-04",
+        "BOARD-05",
+        "BOARD-06",
+        "BOARD-07",
+        "BOARD-08",
+        "BOARD-09"
+      ],
+      "requires": []
+    },
+    {
+      "id": "board-large-output-recipe",
+      "path": "large-output-recipe.json",
+      "source": {
+        "uri": "independent-oracle:synthetic-board-result-utf8",
+        "revision": "1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "a70fc1c6efd188515db6440c4a7bb52e3f1a8aff785c75f1c819f791bd22c7af",
+      "expectedFacts": {
+        "encoding": "utf-8",
+        "kind": "text",
+        "expandedBytes": 1224051,
+        "expandedSha256": "1eb8a1c6ff6555a5138846bfcb1a315e931b11f59a5dca72330a9833cf0062ce",
+        "tailStartByte": 1224021,
+        "recipeIsStoredResult": false,
+        "canonInlineDefaultBytes": 1048576,
+        "note": "Expand fixture strings only after typed public doors land. Never pass this recipe as an engine result or fabricate its handle."
+      },
+      "scenarios": [
+        "BOARD-06",
+        "BOARD-09"
+      ],
+      "requires": []
+    }
+  ]
+}
