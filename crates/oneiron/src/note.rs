@@ -73,8 +73,8 @@ impl NoteKind {
 
 mod reads;
 pub use reads::{
-    NoteAccessRequest, NoteAnchoredSpan, NoteEditorBinding, NoteEditorCloseRequest, NoteEditorClosed,
-    NoteHistoryView, NoteReadRequest, NoteReadSource, NoteReadSpan, NoteReadView,
+    NoteAccessRequest, NoteAnchoredSpan, NoteEditorBinding, NoteEditorCloseRequest,
+    NoteEditorClosed, NoteHistoryView, NoteReadRequest, NoteReadSource, NoteReadSpan, NoteReadView,
 };
 #[cfg(feature = "sync")]
 mod residence_read;

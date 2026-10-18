@@ -14,7 +14,9 @@
 //! Each pact the grant governed and that now stands ended is a courtesy
 //! target (FIX 1634): the typed handoff the courtesy-delete courier takes
 //! (`POST /v1/owner/courtesy-delete/send`, with the peer host's origin, which
-//! no grant or pact records).
+//! no grant or pact records). A revoke that names that origin has the
+//! server queue each target's ask after the revoke is durable, and each
+//! target says whether its ask was queued.
 
 use serde::{Deserialize, Serialize};
 
@@ -56,7 +58,7 @@ pub struct GuestRevokeCourtesyTarget {
 }
 
 /// A courtesy target as the response names it, in the courtesy-delete send
-/// request's own field names.
+/// request's own field names, with what became of its ask.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GuestRevokeCourtesyTargetView {
@@ -65,6 +67,16 @@ pub struct GuestRevokeCourtesyTargetView {
     /// The peer vault the pact ran with (hex).
     pub peer_vault_id: String,
     pub epoch_cutoff: u64,
+    /// `queued` once this target's ask waits in the outbox; `not_requested`
+    /// when the revoke named no peer origin or the ask did not queue.
+    pub deletion_request_status: GuestDeletionRequestStatus,
+    /// The queued ask's request id (32 hex), as
+    /// `vault.courtesy_delete.sent` lists it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<String>,
+    /// Why this target's ask did not queue. The revoke stands regardless.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// Whether a deletion request went to the guest. None of these states says
@@ -207,6 +219,9 @@ pub fn project_guest_revoke(outcome: GuestRevokeOutcome) -> GuestRevokeResponse 
                 pact: hex_lower(&target.pact_id),
                 peer_vault_id: hex_lower(&target.peer_vault_id),
                 epoch_cutoff: target.epoch_cutoff,
+                deletion_request_status: GuestDeletionRequestStatus::NotRequested,
+                request: None,
+                error: None,
             })
             .collect(),
     }
