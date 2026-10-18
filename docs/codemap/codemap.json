@@ -50074,7 +50074,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 48,
+      "re-export": 49,
       "struct": 36
      }
     },
@@ -50100,6 +50100,23 @@
       "enum": 3,
       "fn": 3,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AnonymousChatBlockReasonView",
+      "AnonymousChatRequest",
+      "AnonymousChatRequestTarget",
+      "AnonymousChatResponse",
+      "AnonymousChatSkippedCheckView"
+     ],
+     "path": "src/task_verb/sdk_anonymous_chat.rs",
+     "purpose": "The anonymous-chat wire contract (OF-500, PRIVACY-08), shared by the standalone HTTP handler, OpenAPI and…",
+     "surface": {
+      "enum": 3,
+      "struct": 2
      }
     },
     {
@@ -50398,7 +50415,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 634
+      "fn": 635
      }
     },
     {
@@ -57391,7 +57408,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 162,
+     "files": 163,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -57561,7 +57578,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3507,
+   "source_files": 3508,
    "test_files": 902
   },
   "oneiron-android": {
@@ -66049,7 +66066,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 584
+      "fn": 585
      }
     },
     {
@@ -67098,7 +67115,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 585
+      "fn": 586
      }
     },
     {
@@ -69043,7 +69060,7 @@
      "path": "src/api/anonymous_chat.rs",
      "purpose": "A single memory-free turn on the house configuration or a plain model",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
      }
     },
     {
@@ -69941,7 +69958,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 33
      }
     },
     {
@@ -69981,7 +69998,7 @@
      "path": "src/api/facade/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -70321,7 +70338,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 111
+      "crate-vis": 112
      }
     },
     {
@@ -71252,6 +71269,16 @@
      "purpose": "The OpenAI chat-completions wire the proxy speaks (OF-445): a closed request body, and the reply built from…",
      "surface": {
       "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openapi/anonymous_chat_paths.rs",
+     "purpose": "The standalone anonymous-chat routes: their schemas are the verb table's real request and reply/block types…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -77931,7 +77958,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 371,
+     "files": 372,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -78353,7 +78380,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 702,
+   "source_files": 703,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -78631,6 +78658,11 @@
       "AnnotationThreadRequest",
       "AnnotationThreadState",
       "AnnotationThreadView",
+      "AnonymousChatBlockReasonView",
+      "AnonymousChatRequest",
+      "AnonymousChatRequestTarget",
+      "AnonymousChatResponse",
+      "AnonymousChatSkippedCheckView",
       "AnswerContract",
       "AnswerRecord",
       "AnswerSheetAtom",
@@ -80700,8 +80732,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 561,
-      "struct": 1588
+      "enum": 564,
+      "struct": 1590
      }
     },
     {
