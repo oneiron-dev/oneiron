@@ -10,7 +10,7 @@
 use oneiron::claim::CallerLocality;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::persona_snapshot::{
-    PersonaSnapshotCompile, PersonaSnapshotCompileOptions, PersonaSnapshotStrikeList,
+    PersonaSnapshotCompile, PersonaSnapshotCompileOptions, PersonaSnapshotCopyRequest,
 };
 use oneiron::{ErrorKind, Vault};
 use serde::{Deserialize, Serialize};
@@ -109,13 +109,14 @@ pub(crate) fn export(
     request: &ExportRequest,
     locality: CallerLocality,
 ) -> OwnerResult<Exported> {
-    let compile = compile(vault, &request.subject, locality)?;
-    let strikes = PersonaSnapshotStrikeList {
+    let copy = PersonaSnapshotCopyRequest {
+        subject: entity_id("subject", &request.subject)?,
+        stamp: request.stamp.clone(),
         strike: request.strike.iter().cloned().collect(),
         unstrike: request.unstrike.iter().cloned().collect(),
     };
     let artifact = vault
-        .export_persona_snapshot_as(owner, &compile, &strikes, &request.stamp)
+        .export_persona_snapshot_copy_as(owner, &copy, locality)
         .map_err(|error| match error.kind() {
             ErrorKind::PersonaSnapshotConsentStale => OwnerError::Changed(
                 "the card changed since its preview; preview it again".to_owned(),

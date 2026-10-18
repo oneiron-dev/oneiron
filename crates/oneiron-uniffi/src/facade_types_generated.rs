@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 679 facade rows, 2444 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 14; generated in and out: 637.
+// UniFFI census: 683 facade rows, 2458 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 14; generated in and out: 641.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -2151,6 +2151,258 @@ pub struct GrantAskReceipt {
     pub asked: String,
     #[serde(rename = "status")]
     pub status: String,
+}
+
+/// `oneiron::task_verb::sdk_persona::CompanionAccessRequestAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CompanionAccessRequestAnswer {
+    #[serde(rename = "approve")]
+    Approve,
+    #[serde(rename = "deny")]
+    Deny,
+}
+
+/// `oneiron::task_verb::sdk_persona::CompanionAccessRequestAnswerRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CompanionAccessRequestAnswerRequest {
+    #[serde(rename = "request")]
+    pub request: String,
+    #[serde(rename = "answer")]
+    pub answer: CompanionAccessRequestAnswer,
+}
+
+/// `oneiron::task_verb::sdk_persona::CompanionProfileRequestedScope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum CompanionProfileRequestedScope {
+    #[serde(rename = "companion_profile")]
+    CompanionProfile {
+        #[serde(rename = "person_ref")]
+        person_ref: String,
+        #[serde(rename = "facet_ref", default, skip_serializing_if = "Option::is_none")]
+        facet_ref: Option<String>,
+    },
+}
+
+/// `oneiron::access_grant::request::AccessRequestStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AccessRequestStatus {
+    #[serde(rename = "PENDING")]
+    Pending,
+    #[serde(rename = "APPROVED")]
+    Approved,
+    #[serde(rename = "DENIED")]
+    Denied,
+}
+
+/// `oneiron::task_verb::sdk_persona::CompanionAccessRequestAnswered`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CompanionAccessRequestAnswered {
+    #[serde(rename = "request")]
+    pub request: String,
+    #[serde(rename = "principal_ref")]
+    pub principal_ref: String,
+    #[serde(rename = "capability")]
+    pub capability: String,
+    #[serde(rename = "scope")]
+    pub scope: CompanionProfileRequestedScope,
+    #[serde(rename = "status")]
+    pub status: AccessRequestStatus,
+    #[serde(rename = "grant_ref", default, skip_serializing_if = "Option::is_none")]
+    pub grant_ref: Option<String>,
+    #[serde(
+        rename = "decided_by",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub decided_by: Option<String>,
+    #[serde(
+        rename = "decided_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub decided_at: Option<u64>,
+}
+
+/// `oneiron::task_verb::sdk_persona::PersonaSnapshotPreviewRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PersonaSnapshotPreviewRequest {
+    #[serde(rename = "subject")]
+    pub subject: String,
+}
+
+/// `oneiron::task_verb::sdk_persona::PersonaSnapshotPreviewRow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PersonaSnapshotPreviewRow {
+    #[serde(rename = "row_id")]
+    pub row_id: String,
+    #[serde(rename = "kind")]
+    pub kind: String,
+    #[serde(rename = "text")]
+    pub text: String,
+    #[serde(rename = "provenance_refs")]
+    pub provenance_refs: Vec<String>,
+    #[serde(
+        rename = "attribution",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub attribution: Option<String>,
+    #[serde(rename = "struck")]
+    pub struck: bool,
+}
+
+/// `oneiron::task_verb::sdk_persona::PersonaSnapshotPreview`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PersonaSnapshotPreview {
+    #[serde(rename = "subject")]
+    pub subject: String,
+    #[serde(rename = "stamp")]
+    pub stamp: String,
+    #[serde(rename = "identity_line")]
+    pub identity_line: String,
+    #[serde(rename = "rows")]
+    pub rows: Vec<PersonaSnapshotPreviewRow>,
+    #[serde(rename = "compiled_at")]
+    pub compiled_at: String,
+    #[serde(rename = "stale_after_secs")]
+    pub stale_after_secs: u64,
+}
+
+/// `oneiron::persona_snapshot::copy::PersonaSnapshotCopyRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PersonaSnapshotCopyRequest {
+    #[serde(rename = "subject")]
+    pub subject: String,
+    #[serde(rename = "stamp")]
+    pub stamp: String,
+    #[serde(rename = "strike", default, skip_serializing_if = "Option::is_none")]
+    pub strike: Option<Vec<String>>,
+    #[serde(rename = "unstrike", default, skip_serializing_if = "Option::is_none")]
+    pub unstrike: Option<Vec<String>>,
+}
+
+/// `oneiron::task_verb::sdk_persona::PersonaSnapshotMemoryPackRow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PersonaSnapshotMemoryPackRow {
+    #[serde(rename = "row_id")]
+    pub row_id: String,
+    #[serde(rename = "kind")]
+    pub kind: String,
+    #[serde(rename = "text")]
+    pub text: String,
+    #[serde(
+        rename = "subject_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub subject_ref: Option<String>,
+    #[serde(
+        rename = "provenance_refs",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub provenance_refs: Option<Vec<String>>,
+    #[serde(rename = "salience", default, skip_serializing_if = "Option::is_none")]
+    pub salience: Option<f64>,
+    #[serde(
+        rename = "attribution",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub attribution: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_persona::PersonaSnapshotMemoryPack`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PersonaSnapshotMemoryPack {
+    #[serde(rename = "schema")]
+    pub schema: String,
+    #[serde(rename = "kind")]
+    pub kind: String,
+    #[serde(rename = "subject_ref")]
+    pub subject_ref: String,
+    #[serde(
+        rename = "identity_line",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub identity_line: Option<String>,
+    #[serde(
+        rename = "audience_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub audience_ref: Option<String>,
+    #[serde(rename = "takes_included")]
+    pub takes_included: bool,
+    #[serde(rename = "compiled_at_secs")]
+    pub compiled_at_secs: u64,
+    #[serde(rename = "stale_after_secs")]
+    pub stale_after_secs: u64,
+    #[serde(rename = "persona_compile_stamp")]
+    pub persona_compile_stamp: String,
+    #[serde(rename = "rows")]
+    pub rows: Vec<PersonaSnapshotMemoryPackRow>,
+}
+
+/// `oneiron::task_verb::sdk_persona::PersonaSnapshotExportedCopy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PersonaSnapshotExportedCopy {
+    #[serde(rename = "export_id")]
+    pub export_id: String,
+    #[serde(rename = "subject")]
+    pub subject: String,
+    #[serde(rename = "stamp")]
+    pub stamp: String,
+    #[serde(
+        rename = "previous_export_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub previous_export_id: Option<String>,
+    #[serde(rename = "memory_pack")]
+    pub memory_pack: PersonaSnapshotMemoryPack,
+    #[serde(rename = "markdown")]
+    pub markdown: String,
+    #[serde(rename = "included_row_ids")]
+    pub included_row_ids: Vec<String>,
+    #[serde(rename = "struck_row_ids")]
+    pub struck_row_ids: Vec<String>,
+    #[serde(rename = "compiled_at")]
+    pub compiled_at: String,
+    #[serde(rename = "stale_after_secs")]
+    pub stale_after_secs: u64,
+}
+
+/// `oneiron::persona_snapshot::copy::PersonaSnapshotTextEdit`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PersonaSnapshotTextEdit {
+    #[serde(rename = "row_id")]
+    pub row_id: String,
+    #[serde(rename = "text")]
+    pub text: String,
+}
+
+/// `oneiron::persona_snapshot::copy::PersonaSnapshotCopyEditRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PersonaSnapshotCopyEditRequest {
+    #[serde(rename = "export_id")]
+    pub export_id: String,
+    #[serde(rename = "stamp")]
+    pub stamp: String,
+    #[serde(rename = "edits")]
+    pub edits: Vec<PersonaSnapshotTextEdit>,
+    #[serde(rename = "strike", default, skip_serializing_if = "Option::is_none")]
+    pub strike: Option<Vec<String>>,
+    #[serde(rename = "unstrike", default, skip_serializing_if = "Option::is_none")]
+    pub unstrike: Option<Vec<String>>,
 }
 
 /// `oneiron::task_verb::sdk_diary::DiaryQueryRequest`.

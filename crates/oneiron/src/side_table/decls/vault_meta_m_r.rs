@@ -301,6 +301,8 @@ side_tables! {
     /// One person's PEOPLE `about` lines, one per sensitivity band, and the fact digests they stand
     /// on. Key: id16 (PERSON).
     PEOPLE_ABOUT: VaultMeta b"people:about:v1:" Named;
+    /// Accepted persona copy and curation for an immutable mode-A export. Key: id16(export).
+    PERSONA_SNAPSHOT_COPY: VaultMeta b"persona_snapshot:copy:v1:" Named Authored;
     /// A device-local held policy-classification item pending human moderation. Key: hex64 (blake3
     /// hash of caller/row/content-hash/frontier-hash).
     POLICY_HOLD_QUEUE: VaultMeta b"policy-hold:v1:" LegacyJson;

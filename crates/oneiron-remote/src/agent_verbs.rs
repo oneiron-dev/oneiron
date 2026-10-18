@@ -126,6 +126,18 @@ impl OneironClient {
                 "self.grants.ask" => remote_agent_verb_output::<oneiron::memory::GrantAskReceipt>(
                     client, verb, &input,
                 ),
+                "vault.companions.access_requests.answer" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::CompanionAccessRequestAnswered,
+                >(client, verb, &input),
+                "vault.personas.preview" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::PersonaSnapshotPreview,
+                >(client, verb, &input),
+                "vault.personas.export" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::PersonaSnapshotExportedCopy,
+                >(client, verb, &input),
+                "vault.personas.edit" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::PersonaSnapshotExportedCopy,
+                >(client, verb, &input),
                 "self.memory.diary.query" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::DiaryQueryOutcome,
                 >(client, verb, &input),
@@ -2503,6 +2515,54 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.grants.ask", value)
+    }
+    pub fn vault_companions_access_requests_answer(
+        &self,
+        input: &oneiron::task_verb::sdk::CompanionAccessRequestAnswerRequest,
+    ) -> Result<oneiron::task_verb::sdk::CompanionAccessRequestAnswered, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.companions.access_requests.answer", value)
+    }
+    pub fn vault_personas_preview(
+        &self,
+        input: &oneiron::task_verb::sdk::PersonaSnapshotPreviewRequest,
+    ) -> Result<oneiron::task_verb::sdk::PersonaSnapshotPreview, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.personas.preview", value)
+    }
+    pub fn vault_personas_export(
+        &self,
+        input: &oneiron::persona_snapshot::PersonaSnapshotCopyRequest,
+    ) -> Result<oneiron::task_verb::sdk::PersonaSnapshotExportedCopy, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.personas.export", value)
+    }
+    pub fn vault_personas_edit(
+        &self,
+        input: &oneiron::persona_snapshot::PersonaSnapshotCopyEditRequest,
+    ) -> Result<oneiron::task_verb::sdk::PersonaSnapshotExportedCopy, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.personas.edit", value)
     }
     pub fn self_memory_diary_query(
         &self,

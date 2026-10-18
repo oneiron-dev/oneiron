@@ -171,6 +171,30 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::GrantAskRequest>(),
             ),
             (
+                "vault.companions.access_requests.answer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::CompanionAccessRequestAnswerRequest,
+                >(),
+            ),
+            (
+                "vault.personas.preview",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::PersonaSnapshotPreviewRequest,
+                >(),
+            ),
+            (
+                "vault.personas.export",
+                crate::code_run::vault_read::request_schema::<
+                    crate::persona_snapshot::PersonaSnapshotCopyRequest,
+                >(),
+            ),
+            (
+                "vault.personas.edit",
+                crate::code_run::vault_read::request_schema::<
+                    crate::persona_snapshot::PersonaSnapshotCopyEditRequest,
+                >(),
+            ),
+            (
                 "self.memory.diary.query",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::DiaryQueryRequest,
@@ -3851,6 +3875,10 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.standing.get",
     "self.standing.list",
     "self.standing.edit",
+    "vault.companions.access_requests.answer",
+    "vault.personas.preview",
+    "vault.personas.export",
+    "vault.personas.edit",
     "vault.fanout.spawn",
     "vault.fanout.slots",
     "vault.budgets.lease.open",
@@ -4193,6 +4221,18 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "self.standing.edit" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::StandingBlockEditReceipt,
+        >(),
+        "vault.companions.access_requests.answer" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::CompanionAccessRequestAnswered,
+        >(),
+        "vault.personas.preview" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::PersonaSnapshotPreview,
+        >(),
+        "vault.personas.export" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::PersonaSnapshotExportedCopy,
+        >(),
+        "vault.personas.edit" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::PersonaSnapshotExportedCopy,
         >(),
         "vault.fanout.spawn" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::FanoutBatchView>()
@@ -5394,6 +5434,34 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.grants.ask" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.companions.access_requests.answer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.personas.preview" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.personas.export" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.personas.edit" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -10080,6 +10148,22 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.grants.ask" => {
             let _input: crate::memory::GrantAskRequest = decode(value.clone())?;
         }
+        "vault.companions.access_requests.answer" => {
+            let _input: crate::task_verb::sdk::CompanionAccessRequestAnswerRequest =
+                decode(value.clone())?;
+        }
+        "vault.personas.preview" => {
+            let _input: crate::task_verb::sdk::PersonaSnapshotPreviewRequest =
+                decode(value.clone())?;
+        }
+        "vault.personas.export" => {
+            let _input: crate::persona_snapshot::PersonaSnapshotCopyRequest =
+                decode(value.clone())?;
+        }
+        "vault.personas.edit" => {
+            let _input: crate::persona_snapshot::PersonaSnapshotCopyEditRequest =
+                decode(value.clone())?;
+        }
         "self.memory.diary.query" => {
             let input: crate::task_verb::sdk::DiaryQueryRequest = decode(value.clone())?;
             input.validate()?;
@@ -12492,6 +12576,12 @@ pub fn invoke(
         "vault.shape.apply" => encode(vault_shape_apply(memory, decode(value)?)?),
         "self.message" => encode(self_message(memory, decode(value)?)?),
         "self.grants.ask" => encode(self_grants_ask(memory, decode(value)?)?),
+        "vault.companions.access_requests.answer" => encode(
+            vault_companions_access_requests_answer(memory, decode(value)?)?,
+        ),
+        "vault.personas.preview" => encode(vault_personas_preview(memory, decode(value)?)?),
+        "vault.personas.export" => encode(vault_personas_export(memory, decode(value)?)?),
+        "vault.personas.edit" => encode(vault_personas_edit(memory, decode(value)?)?),
         "self.memory.diary.query" => encode(self_memory_diary_query(memory, decode(value)?)?),
         "cancel" => encode(cancel(memory, decode(value)?)?),
         "steer" => encode(steer(memory, decode(value)?)?),
@@ -14077,6 +14167,30 @@ pub fn self_grants_ask(
     input: crate::memory::GrantAskRequest,
 ) -> MemoryResult<crate::memory::GrantAskReceipt> {
     memory.grants_ask(&input)
+}
+pub fn vault_companions_access_requests_answer(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::CompanionAccessRequestAnswerRequest,
+) -> MemoryResult<crate::task_verb::sdk::CompanionAccessRequestAnswered> {
+    crate::task_verb::sdk::host_only(memory, "vault.companions.access_requests.answer", &input)
+}
+pub fn vault_personas_preview(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::PersonaSnapshotPreviewRequest,
+) -> MemoryResult<crate::task_verb::sdk::PersonaSnapshotPreview> {
+    crate::task_verb::sdk::host_only(memory, "vault.personas.preview", &input)
+}
+pub fn vault_personas_export(
+    memory: &Memory<'_>,
+    input: crate::persona_snapshot::PersonaSnapshotCopyRequest,
+) -> MemoryResult<crate::task_verb::sdk::PersonaSnapshotExportedCopy> {
+    crate::task_verb::sdk::host_only(memory, "vault.personas.export", &input)
+}
+pub fn vault_personas_edit(
+    memory: &Memory<'_>,
+    input: crate::persona_snapshot::PersonaSnapshotCopyEditRequest,
+) -> MemoryResult<crate::task_verb::sdk::PersonaSnapshotExportedCopy> {
+    crate::task_verb::sdk::host_only(memory, "vault.personas.edit", &input)
 }
 pub fn self_memory_diary_query(
     memory: &Memory<'_>,
