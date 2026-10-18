@@ -74,6 +74,7 @@ mod report;
 mod result_attachment;
 mod room_turn;
 mod scoped_export;
+mod search_hybrid;
 mod session_writes;
 mod signal_extraction;
 mod shape_doors;
@@ -188,6 +189,9 @@ pub use result_attachment::{
     MESSAGE_RESULT_METADATA_KEY, MessageResultAttachment, MessageResultSource,
 };
 pub use room_turn::RoomTurnHandle;
+pub use search_hybrid::{
+    HybridPprQuery, HybridRankReplay, HybridSearchHit, HybridSearchRequest, HybridTemporalQuery,
+};
 pub use scoped_export::{
     ChannelCeiling, CredentialCeiling, ExportChannel, RecordPosition, RecordSelector,
     ScopeAxisInput, ScopeSensitivityBand, ScopeSensitivityInput, ScopedExport, ScopedExportRecord,

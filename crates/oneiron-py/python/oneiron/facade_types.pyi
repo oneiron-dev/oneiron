@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 466 facade rows, 1775 declarations.
-Inputs: 417 of 466 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 413 of 466 fully typed, 53 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 467 facade rows, 1781 declarations.
+Inputs: 418 of 467 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 414 of 467 fully typed, 53 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 86; unread shapes: 0.
 """
 
@@ -7292,6 +7292,34 @@ class RecordLinks(TypedDict):
     texts: list[LinkedText]
     narrowing: NotRequired[ScopedReadReceipt | None]
     next_after: NotRequired[str | None]
+class HybridPprQuery(TypedDict):
+    seeds: list[str]
+    depth: int
+class HybridTemporalQuery(TypedDict):
+    start: int
+    end: int
+class RetrievalBlendWeights(TypedDict):
+    recency: float
+    salience: float
+    confidence: float
+    gravity: float
+class HybridRankReplay(TypedDict):
+    now: int
+    blend_weights: RetrievalBlendWeights
+class HybridSearchRequest(TypedDict):
+    query: NotRequired[str | None]
+    query_vector: NotRequired[list[float] | None]
+    phonetic_codes: NotRequired[list[str]]
+    ppr: NotRequired[HybridPprQuery | None]
+    temporal: NotRequired[HybridTemporalQuery | None]
+    replay: NotRequired[HybridRankReplay | None]
+    limit: int
+class HybridSearchHit(TypedDict):
+    entity_ref: str
+    source_revision_ref: NotRequired[str | None]
+    score: float
+    access_factor: NotRequired[float | None]
+    components: list[RetrievalScoreComponent]
 class QueryBm25Request(TypedDict):
     query: str
     limit: int

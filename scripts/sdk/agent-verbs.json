@@ -6713,6 +6713,25 @@
       "mcp_scope": "filtered"
     },
     {
+      "name": "vault.search.hybrid",
+      "description": "Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence.",
+      "input": "crate::memory::HybridSearchRequest",
+      "output": "crate::claim::ScopedReadResult<Vec<crate::memory::HybridSearchHit>>",
+      "call": "memory.query_hybrid(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true,
+        "validate": "input.validate()?;"
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
       "name": "vault.search.bm25",
       "description": "BM25 text search over the engine index; surfaceable claims only.",
       "uniffi": {

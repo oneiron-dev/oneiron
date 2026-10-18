@@ -425,6 +425,7 @@ pub enum AgentVerb {
     VaultGet,
     VaultRefsResolve,
     VaultRefsLinks,
+    VaultSearchHybrid,
     VaultSearchBm25,
     VaultNeighbors,
     VaultStructuralPut,
@@ -937,6 +938,7 @@ impl AgentVerb {
         Self::VaultGet,
         Self::VaultRefsResolve,
         Self::VaultRefsLinks,
+        Self::VaultSearchHybrid,
         Self::VaultSearchBm25,
         Self::VaultNeighbors,
         Self::VaultStructuralPut,
@@ -1458,6 +1460,7 @@ impl AgentVerb {
             Self::VaultGet => "vault.get",
             Self::VaultRefsResolve => "vault.refs.resolve",
             Self::VaultRefsLinks => "vault.refs.links",
+            Self::VaultSearchHybrid => "vault.search.hybrid",
             Self::VaultSearchBm25 => "vault.search.bm25",
             Self::VaultNeighbors => "vault.neighbors",
             Self::VaultStructuralPut => "vault.structural.put",
@@ -1933,6 +1936,7 @@ impl AgentVerb {
                 | Self::VaultGet
                 | Self::VaultRefsResolve
                 | Self::VaultRefsLinks
+                | Self::VaultSearchHybrid
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
                 | Self::VaultStructuralPut
@@ -2452,6 +2456,7 @@ impl AgentVerb {
                 | Self::VaultGet
                 | Self::VaultRefsResolve
                 | Self::VaultRefsLinks
+                | Self::VaultSearchHybrid
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
                 | Self::VaultStructuralPut
@@ -2633,6 +2638,7 @@ impl AgentVerb {
                 | Self::VaultGet
                 | Self::VaultRefsResolve
                 | Self::VaultRefsLinks
+                | Self::VaultSearchHybrid
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
                 | Self::VaultClaimsSeed
@@ -3888,6 +3894,7 @@ impl AgentVerb {
             Self::VaultGet => &["spec"],
             Self::VaultRefsResolve => &["spec"],
             Self::VaultRefsLinks => &["spec"],
+            Self::VaultSearchHybrid => &["spec"],
             Self::VaultSearchBm25 => &["spec"],
             Self::VaultNeighbors => &["spec"],
             Self::VaultStructuralPut => &["spec"],
@@ -4401,6 +4408,7 @@ impl AgentVerb {
             Self::VaultGet => &["spec"],
             Self::VaultRefsResolve => &["spec"],
             Self::VaultRefsLinks => &["spec"],
+            Self::VaultSearchHybrid => &["spec"],
             Self::VaultSearchBm25 => &["spec"],
             Self::VaultNeighbors => &["spec"],
             Self::VaultStructuralPut => &["spec"],
@@ -5664,6 +5672,9 @@ impl AgentVerb {
             }
             Self::VaultRefsLinks => {
                 "A text, the texts a read surface returned, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read."
+            }
+            Self::VaultSearchHybrid => {
+                "Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence."
             }
             Self::VaultSearchBm25 => {
                 "BM25 text search over the engine index; surfaceable claims only."
