@@ -49657,7 +49657,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 44,
+      "re-export": 45,
       "struct": 36
      }
     },
@@ -49981,7 +49981,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 579
+      "fn": 587
      }
     },
     {
@@ -50108,6 +50108,34 @@
      "purpose": "Typed host projections of the run's coordination verbs",
      "surface": {
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LiveVoiceAckKind",
+      "LiveVoiceAckRequest",
+      "LiveVoiceAudioRequest",
+      "LiveVoiceEvent",
+      "LiveVoiceEventKind",
+      "LiveVoiceEvents",
+      "LiveVoiceEventsRequest",
+      "LiveVoiceProcessed",
+      "LiveVoiceSession",
+      "LiveVoiceSessionRequest",
+      "LiveVoiceStartRequest",
+      "LiveVoiceStopReason",
+      "LiveVoiceToolReply",
+      "LiveVoiceToolRequest",
+      "LiveVoiceUsage",
+      "LiveVoiceUsageRequest"
+     ],
+     "path": "src/task_verb/sdk_live_voice.rs",
+     "purpose": "The owner-bound live media session (ARCH-0061, OF-139 and OF-078)",
+     "surface": {
+      "enum": 3,
+      "struct": 13
      }
     },
     {
@@ -56801,7 +56829,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 156,
+     "files": 157,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -56971,7 +56999,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3471,
+   "source_files": 3472,
    "test_files": 902
   },
   "oneiron-android": {
@@ -65399,7 +65427,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 529
+      "fn": 537
      }
     },
     {
@@ -66448,7 +66476,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 530
+      "fn": 538
      }
     },
     {
@@ -68102,7 +68130,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "fn": 22,
       "re-export": 1,
       "struct": 2
@@ -69661,7 +69689,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 103
+      "crate-vis": 104
      }
     },
     {
@@ -69702,6 +69730,16 @@
      "purpose": "Public coordination doors over the caller's own live-run attachment",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/live_voice_doors.rs",
+     "purpose": "Typed public live media doors",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -76582,7 +76620,7 @@
      "path": "src/voice_host/boot.rs",
      "purpose": "The server's own voice loop at serve start (OF-410)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 7
      }
     },
     {
@@ -76595,6 +76633,7 @@
      "path": "src/voice_host/brain.rs",
      "purpose": "The voice call's brain (OF-410): the chat role, as `/ai/chat` runs it",
      "surface": {
+      "crate-vis": 3,
       "fn": 1,
       "struct": 2
      }
@@ -76639,7 +76678,7 @@
      "path": "src/voice_host/media_bridge.rs",
      "purpose": "The host's own speech and hearing on the media seats (OF-410)",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "enum": 1,
       "struct": 1
      }
@@ -76658,11 +76697,41 @@
      "path": "src/voice_host/mod.rs",
      "purpose": "Private voice request adapter, not an audio/provider scheduler",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 7,
       "re-export": 5,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/voice_host/public.rs",
+     "purpose": "Credential-bound public sessions",
+     "surface": {
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/voice_host/public_events.rs",
+     "purpose": "Public event correlation and dequeue fencing, independent of transport",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/voice_host/public_loop.rs",
+     "purpose": "The public transport drives the existing voice host and media worker",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -76691,7 +76760,7 @@
      "path": "src/voice_host/speech.rs",
      "purpose": "The brain's reply in the host's own voice (OF-410)",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 16,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -77150,7 +77219,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 362,
+     "files": 363,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -77528,7 +77597,7 @@
      "purpose": "Provider-list metering and host-pushed vault budget limits"
     },
     "voice_host": {
-     "files": 15,
+     "files": 18,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77565,7 +77634,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 689,
+   "source_files": 693,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -78622,6 +78691,22 @@
       "LiveRunRequestAgentSpawnInput",
       "LiveRunRequestLeaderSplitInput",
       "LiveRunRequestMemorySupersedeInput",
+      "LiveVoiceAckKind",
+      "LiveVoiceAckRequest",
+      "LiveVoiceAudioRequest",
+      "LiveVoiceEvent",
+      "LiveVoiceEventKind",
+      "LiveVoiceEvents",
+      "LiveVoiceEventsRequest",
+      "LiveVoiceProcessed",
+      "LiveVoiceSession",
+      "LiveVoiceSessionRequest",
+      "LiveVoiceStartRequest",
+      "LiveVoiceStopReason",
+      "LiveVoiceToolReply",
+      "LiveVoiceToolRequest",
+      "LiveVoiceUsage",
+      "LiveVoiceUsageRequest",
       "LlmCapability",
       "LlmError",
       "LlmInputUsage",
@@ -79672,8 +79757,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 504,
-      "struct": 1405
+      "enum": 507,
+      "struct": 1418
      }
     },
     {
