@@ -26,7 +26,8 @@
 //! The host bounds concurrent workers and supplies independent enrichers. No
 //! global voice-loop lock is used. Shutdown interrupts socket waits, not a host
 //! enricher or synchronous vault call already running; those need host deadlines.
-//! A connection has bounded frames, requests, errors, idle time and frame time.
+//! A connection has bounded errors, idle time and frame time; it refuses no
+//! frame or request by its size or count.
 //!
 //! Filesystem binding uses Linux descriptor-relative paths; macOS binds by
 //! pathname, checked against the pinned directory before and after; other
@@ -44,10 +45,9 @@ pub use socket::SocketGuard;
 
 use crate::speculative::SpeculativeSessionConfig;
 
-/// Hard wire limits, independent of untrusted request fields.
+/// The frame size a sender splits long output into. A reader takes a frame
+/// of any size, and no text or result count is refused by size (Rule 5).
 pub const MAX_FRAME_BYTES: usize = 16 * 1024;
-pub const MAX_TEXT_BYTES: usize = 8 * 1024;
-pub const MAX_RESULT_REFS: usize = 64;
 
 /// Trusted host policy. No request can override these values.
 #[derive(Debug, Clone, Copy)]
@@ -73,10 +73,7 @@ impl Default for BridgeLimits {
 
 impl BridgeLimits {
     fn validate(self) -> std::io::Result<Self> {
-        if self.max_fires > 4
-            || !(1..=MAX_RESULT_REFS).contains(&self.fire_limit)
-            || !(1..=MAX_RESULT_REFS).contains(&self.final_limit)
-        {
+        if self.max_fires > 4 || self.fire_limit == 0 || self.final_limit == 0 {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 "invalid bridge limits",

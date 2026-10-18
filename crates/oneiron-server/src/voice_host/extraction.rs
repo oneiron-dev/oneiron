@@ -14,8 +14,8 @@ use serde_json::json;
 use super::HostError;
 use crate::runtime::{RuntimeConfig, RuntimeProviderKind, RuntimeRole, RuntimeRouteState};
 
-const MAX_PROMPT_BYTES: usize = 8 * 1024;
-const MAX_RESPONSE_BYTES: usize = 8 * 1024;
+/// The list shape the schema asks the model for. A prompt, an answer or a
+/// list past it is taken as it is, never refused by size (Rule 5).
 const MAX_ITEMS: usize = 16;
 const MAX_ITEM_BYTES: usize = 128;
 const MAX_OUTPUT_TOKENS: u64 = 512;
@@ -40,10 +40,7 @@ impl TinyExtractor {
         prompt: String,
     ) -> Result<Self, HostError> {
         let route = runtime.route_for_role(RuntimeRole::Summarizer);
-        if route.state != RuntimeRouteState::Available
-            || prompt.trim().is_empty()
-            || prompt.len() > MAX_PROMPT_BYTES
-        {
+        if route.state != RuntimeRouteState::Available || prompt.trim().is_empty() {
             return Err(HostError::InvalidRequest);
         }
         let model = ModelId::new(route.model).map_err(|_| HostError::InvalidRequest)?;
@@ -175,18 +172,12 @@ fn validate_response(response: LlmResponse) -> Result<PartialEnrichment, HostErr
     let [ContentPart::Text { text }] = response.message.content.as_slice() else {
         return Err(HostError::InvalidResponse);
     };
-    if text.len() > MAX_RESPONSE_BYTES {
-        return Err(HostError::InvalidResponse);
-    }
     let extraction: Extraction =
         serde_json::from_str(text).map_err(|_| HostError::InvalidResponse)?;
     for items in [&extraction.entity_labels, &extraction.salient_terms] {
-        if items.len() > MAX_ITEMS
-            || items.iter().any(|item| {
-                item.trim().is_empty()
-                    || item.len() > MAX_ITEM_BYTES
-                    || item.chars().any(char::is_control)
-            })
+        if items
+            .iter()
+            .any(|item| item.trim().is_empty() || item.chars().any(char::is_control))
         {
             return Err(HostError::InvalidResponse);
         }

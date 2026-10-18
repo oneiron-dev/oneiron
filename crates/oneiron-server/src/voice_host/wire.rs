@@ -31,7 +31,7 @@ use crate::server::MediaDoor;
 const PLAYOUT_QUEUE: usize = 64;
 
 /// Raw PCM bytes per outgoing frame: whole samples, and with the frame's
-/// fields its base64 stays under the wire's 16 KiB frame limit.
+/// fields its base64 stays under the wire's 16 KiB frame size.
 const PCM_CHUNK_BYTES: usize = 11 * 1024;
 
 fn invalid(message: &str) -> oneiron::Error {
@@ -155,7 +155,7 @@ impl CascadeControl for WireControl {
     }
 }
 
-/// Spoken audio as base64 frame payloads, each under the frame limit.
+/// Spoken audio as base64 frame payloads, each under the frame size.
 pub(super) fn pcm_chunks(frame: &PcmFrame) -> Vec<String> {
     let bytes: Vec<u8> = frame
         .samples

@@ -3,7 +3,6 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use super::MAX_FRAME_BYTES;
 use super::Shutdown;
 use crate::voice_cascade::RetrievalContext;
 
@@ -99,9 +98,6 @@ pub(super) fn read_frame(reader: &mut impl BufRead, shutdown: &Shutdown) -> io::
         frame_start.get_or_insert_with(Instant::now);
         let newline = bytes.iter().position(|byte| *byte == b'\n');
         let count = newline.unwrap_or(bytes.len());
-        if count > MAX_FRAME_BYTES - frame.len() {
-            return Ok(Frame::Fatal("frame_too_large"));
-        }
         frame.extend_from_slice(&bytes[..count]);
         reader.consume(count + usize::from(newline.is_some()));
         if newline.is_some() {
@@ -111,13 +107,9 @@ pub(super) fn read_frame(reader: &mut impl BufRead, shutdown: &Shutdown) -> io::
 }
 
 pub(super) fn write_response(writer: &mut impl Write, response: &Response) -> io::Result<()> {
-    // Ref count and string sizes are bounded before serialization. No entity
-    // bodies or host error strings enter this type.
+    // No entity bodies or host error strings enter this type.
     let mut bytes =
         serde_json::to_vec(response).map_err(|_| io::Error::other("response encoding failed"))?;
-    if bytes.len() > MAX_FRAME_BYTES {
-        return Err(io::Error::other("response exceeds limit"));
-    }
     bytes.push(b'\n');
     writer.write_all(&bytes)
 }

@@ -131,8 +131,8 @@ enum Response {
     SessionEnded,
 }
 
-/// The receipts' share of one `memories` frame, the rest of the frame's
-/// limit left for its other fields.
+/// The receipts' share of one `memories` frame, the rest of the frame size
+/// left for its other fields.
 const MEMORIES_PART_BYTES: usize = MAX_FRAME_BYTES / 2;
 
 type Pending<'a> =
@@ -244,7 +244,6 @@ impl VoiceHost {
         let mut pending_final = false;
         // Frames still to write; a sentence's audio goes out in several.
         let mut outbox = VecDeque::new();
-        let mut requests = 0;
         let mut errors = 0;
         // Subscribed before the session's first read: an attendee entering
         // the bound container stops what was assembled before it.
@@ -346,12 +345,6 @@ impl VoiceHost {
                     bytes = frame.read(&mut reader) => {
                         let Some(bytes) = bytes? else { break };
                         let request = serde_json::from_slice::<Request>(&bytes);
-                        // Media ops stream for the whole call; only transcript ops
-                        // spend the request budget.
-                        if !matches!(request, Ok(Request::Pcm { .. } | Request::Cut | Request::Speaking { .. } | Request::RosterChanged | Request::Drained { .. })) {
-                            requests += 1;
-                            if requests > 4096 { break; }
-                        }
                         match request {
                             Ok(Request::Open { utterance_id }) => match self.open(utterance_id) {
                                 Ok(handle) => Response::Opened { handle },
@@ -456,9 +449,6 @@ impl VoiceHost {
                 errors += 1;
             }
             let mut bytes = serde_json::to_vec(&response).map_err(io::Error::other)?;
-            if bytes.len() > MAX_FRAME_BYTES {
-                return Err(io::Error::other("voice response exceeds limit"));
-            }
             bytes.push(b'\n');
             tokio::select! {
                 biased;
@@ -510,9 +500,6 @@ async fn farewell(wire: &mut WireMedia, write: &mut OwnedWriteHalf) {
         while let Some(out) = wire.queued_control() {
             for response in control_frames(out) {
                 let mut bytes = serde_json::to_vec(&response).map_err(io::Error::other)?;
-                if bytes.len() > MAX_FRAME_BYTES {
-                    continue;
-                }
                 bytes.push(b'\n');
                 write.write_all(&bytes).await?;
             }
@@ -574,13 +561,6 @@ fn memories_frames(generation: GenerationEpoch, memories: TurnMemories) -> Vec<R
             part: at + 1,
             parts,
             receipts,
-        })
-        .filter(|frame| {
-            let fits = serde_json::to_vec(frame).is_ok_and(|bytes| bytes.len() < MAX_FRAME_BYTES);
-            if !fits {
-                tracing::warn!("voice wire: a memories receipt frame exceeds the wire's limit");
-            }
-            fits
         })
         .collect()
 }
@@ -672,12 +652,6 @@ impl FrameReader {
             }
             let newline = available.iter().position(|byte| *byte == b'\n');
             let count = newline.unwrap_or(available.len());
-            if count > MAX_FRAME_BYTES - self.bytes.len() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "voice frame exceeds limit",
-                ));
-            }
             self.bytes.extend_from_slice(&available[..count]);
             reader.consume(count + usize::from(newline.is_some()));
             if newline.is_some() {
