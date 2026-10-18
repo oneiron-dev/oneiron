@@ -8,11 +8,16 @@
 //! first, in the same transaction, so a crash after release still counts.
 //! Cohort and exposure rows restore LIVE: a historical restore cannot make a
 //! spent cohort fresh again.
+//!
+//! Every cut is audited: it commits with its near-copy audit in one
+//! transaction, and only a served cohort retires, with the decision that
+//! retired it kept on its row.
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use super::cut_audit::{EvalCutAuditDraft, put_audit_in_txn};
 use super::{
     CASE_PREFIX, EvalCase, EvalSeat, FamilyPurpose, decode, family_in_txn, invalid, rows_in_txn,
 };
@@ -24,6 +29,8 @@ pub(in crate::skill_optimize) const COHORT_PREFIX: &[u8] = b"skill_optimize:eval
 pub(in crate::skill_optimize) const EXPOSURE_PREFIX: &[u8] = b"skill_optimize:eval_exposure:v1:";
 const MEMBERSHIP_DOMAIN: &[u8] = b"skill_optimize:eval_cohort_membership:v1\0";
 const MAX_REF_BYTES: usize = 256;
+/// Longest reason a cohort retirement keeps.
+pub(super) const MAX_REASON_BYTES: usize = 512;
 
 /// One date-cut cohort of sealed families for a seat.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,6 +52,23 @@ pub struct EvalCohort {
     pub reference: bool,
     pub cut_at: u64,
     pub retired_at: Option<u64>,
+    /// Why the cohort retired, and on what exposure; `None` while it serves
+    /// and on rows retired before decisions were kept.
+    #[serde(default)]
+    pub retirement: Option<CohortRetirement>,
+}
+
+/// The eval-authoring skill's decision to retire one cohort: its bounded
+/// reason, the skill revision and attempt that made it, and the exposure it
+/// read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CohortRetirement {
+    pub reason: String,
+    pub skill: EntityId,
+    pub revision: String,
+    pub attempt: EntityId,
+    pub exposure: EvalExposureCounts,
 }
 
 /// What a serving of a sealed cohort was for. There is no search, authoring
@@ -81,11 +105,19 @@ pub struct EvalRelease {
     pub cases: Vec<EvalCase>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EvalExposureCounts {
     pub candidates: u64,
     pub queries: u64,
     pub promotions: u64,
+}
+
+impl EvalExposureCounts {
+    /// Whether the cohort has served anything.
+    #[must_use]
+    pub const fn served(&self) -> bool {
+        self.candidates > 0 || self.queries > 0 || self.promotions > 0
+    }
 }
 
 fn cohort_key(id: &EntityId) -> Vec<u8> {
@@ -96,7 +128,7 @@ fn encode<T: Serialize>(row: &T) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(row).map_err(|_| invalid("eval cohort row encoding failed"))
 }
 
-fn membership_digest(cases: &[EntityId]) -> String {
+pub(super) fn membership_digest(cases: &[EntityId]) -> String {
     let mut hash = Sha256::new();
     hash.update(MEMBERSHIP_DOMAIN);
     hash.update(u64::try_from(cases.len()).unwrap_or(u64::MAX).to_be_bytes());
@@ -106,7 +138,7 @@ fn membership_digest(cases: &[EntityId]) -> String {
     bytes_to_hex_lower(&hash.finalize())
 }
 
-fn cohorts_in_txn(
+pub(super) fn cohorts_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     seat: &EvalSeat,
@@ -139,14 +171,121 @@ fn cohort_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<
     decode(&raw)
 }
 
+/// What a cohort has served, by kind, on the caller's snapshot.
+pub(super) fn exposure_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    cohort: &EntityId,
+) -> Result<EvalExposureCounts> {
+    let mut counts = EvalExposureCounts::default();
+    let prefix = [EXPOSURE_PREFIX, cohort.as_bytes()].concat();
+    for exposure in rows_in_txn::<EvalExposure>(vault, txn, &prefix)? {
+        let slot = match exposure.kind {
+            EvalExposureKind::Candidate => &mut counts.candidates,
+            EvalExposureKind::Query => &mut counts.queries,
+            EvalExposureKind::Promotion => &mut counts.promotions,
+        };
+        *slot = slot.saturating_add(1);
+    }
+    Ok(counts)
+}
+
+/// The whole sealed families a cut of `from..until` takes for `seat`, with
+/// their cases in id order: each sealed family whose every case's source
+/// date falls in the window, and that no earlier cohort holds.
+pub(super) fn cut_members_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    seat: &EvalSeat,
+    from: u64,
+    until: u64,
+) -> Result<(BTreeSet<EntityId>, Vec<EvalCase>)> {
+    let held: BTreeSet<EntityId> = cohorts_in_txn(vault, txn, seat)?
+        .iter()
+        .flat_map(|cohort| cohort.families.iter().copied())
+        .collect();
+    let mut by_family: std::collections::BTreeMap<EntityId, Vec<EvalCase>> =
+        std::collections::BTreeMap::new();
+    for case in rows_in_txn::<EvalCase>(vault, txn, CASE_PREFIX)? {
+        if &case.seat == seat && !held.contains(&case.family) {
+            by_family.entry(case.family).or_default().push(case);
+        }
+    }
+    let mut families = BTreeSet::new();
+    let mut cases = Vec::new();
+    for (family, rows) in by_family {
+        let sealed = family_in_txn(vault, txn, &family)?
+            .ok_or(Error::CorruptedIndex("eval case without its family"))?
+            .purpose
+            == FamilyPurpose::SealedConfirmation;
+        if sealed
+            && rows
+                .iter()
+                .all(|case| (from..until).contains(&case.source_at))
+        {
+            families.insert(family);
+            cases.extend(rows);
+        }
+    }
+    cases.sort_unstable_by_key(|case| case.id);
+    Ok((families, cases))
+}
+
+/// The cut of `window` itself, in the caller's write transaction.
+fn cut_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    seat: &EvalSeat,
+    (from, until): (u64, u64),
+    rubric_revision: &str,
+    reference: bool,
+    at: u64,
+) -> Result<EvalCohort> {
+    if reference
+        && cohorts_in_txn(vault, txn, seat)?
+            .iter()
+            .any(|cohort| cohort.reference)
+    {
+        return Err(invalid("a seat keeps one fixed reference cohort"));
+    }
+    let (families, cases) = cut_members_in_txn(vault, txn, seat, from, until)?;
+    if families.is_empty() {
+        return Err(invalid("no whole sealed family falls in this window"));
+    }
+    let cases: Vec<EntityId> = cases.into_iter().map(|case| case.id).collect();
+    let cohort = EvalCohort {
+        id: vault.store.clock.entity_id()?,
+        seat: seat.clone(),
+        from,
+        until,
+        families,
+        membership_digest: membership_digest(&cases),
+        cases,
+        rubric_revision: rubric_revision.to_owned(),
+        reference,
+        cut_at: at,
+        retired_at: None,
+        retirement: None,
+    };
+    vault
+        .store
+        .vault_meta
+        .put(txn, &cohort_key(&cohort.id), &encode(&cohort)?)?;
+    Ok(cohort)
+}
+
 impl Vault {
     /// Cut a cohort for `seat` from sealed families whose every case's source
     /// date falls in `from..until`, and that no earlier cohort holds. The cut
     /// reads history only: `until` may not be later than `at`. At most one
-    /// reference cohort stands per seat.
+    /// reference cohort stands per seat. The cut and its near-copy `audit`
+    /// commit in one transaction, and the audit must be of exactly the
+    /// members the cut takes.
     /// # Errors
     /// An empty or future window, a second reference cohort, no family to
-    /// cut, an unbounded rubric revision, or storage errors.
+    /// cut, an unbounded rubric revision, an audit of another seat, window or
+    /// membership, or storage errors.
+    #[expect(clippy::too_many_arguments)]
     pub fn cut_eval_cohort(
         &self,
         seat: &EvalSeat,
@@ -154,6 +293,7 @@ impl Vault {
         until: u64,
         rubric_revision: &str,
         reference: bool,
+        audit: &EvalCutAuditDraft,
         at: u64,
     ) -> Result<EvalCohort> {
         if from >= until || until > at {
@@ -164,58 +304,23 @@ impl Vault {
         if rubric_revision.trim().is_empty() || rubric_revision.len() > MAX_REF_BYTES {
             return Err(invalid("an eval cohort names a bounded rubric revision"));
         }
+        if !audit.covers(seat, from, until) {
+            return Err(invalid("a cut's audit is of another seat or window"));
+        }
         self.with_write_txn_grouped(|txn| {
-            let existing = cohorts_in_txn(self, txn, seat)?;
-            if reference && existing.iter().any(|cohort| cohort.reference) {
-                return Err(invalid("a seat keeps one fixed reference cohort"));
-            }
-            let held: BTreeSet<EntityId> = existing
-                .iter()
-                .flat_map(|cohort| cohort.families.iter().copied())
-                .collect();
-            let mut by_family: std::collections::BTreeMap<EntityId, Vec<EvalCase>> =
-                std::collections::BTreeMap::new();
-            for case in rows_in_txn::<EvalCase>(self, txn, CASE_PREFIX)? {
-                if &case.seat == seat && !held.contains(&case.family) {
-                    by_family.entry(case.family).or_default().push(case);
-                }
-            }
-            let mut families = BTreeSet::new();
-            let mut cases = Vec::new();
-            for (family, rows) in by_family {
-                let sealed = family_in_txn(self, txn, &family)?
-                    .ok_or(Error::CorruptedIndex("eval case without its family"))?
-                    .purpose
-                    == FamilyPurpose::SealedConfirmation;
-                if sealed
-                    && rows
-                        .iter()
-                        .all(|case| (from..until).contains(&case.source_at))
-                {
-                    families.insert(family);
-                    cases.extend(rows.into_iter().map(|case| case.id));
-                }
-            }
-            if families.is_empty() {
-                return Err(invalid("no whole sealed family falls in this window"));
-            }
-            cases.sort_unstable();
-            let cohort = EvalCohort {
-                id: self.store.clock.entity_id()?,
-                seat: seat.clone(),
-                from,
-                until,
-                families,
-                membership_digest: membership_digest(&cases),
-                cases,
-                rubric_revision: rubric_revision.to_owned(),
+            let cohort = cut_in_txn(
+                self,
+                txn,
+                seat,
+                (from, until),
+                rubric_revision,
                 reference,
-                cut_at: at,
-                retired_at: None,
-            };
-            self.store
-                .vault_meta
-                .put(txn, &cohort_key(&cohort.id), &encode(&cohort)?)?;
+                at,
+            )?;
+            if cohort.membership_digest != audit.membership_digest() {
+                return Err(invalid("a cut's audit is of other members than the cut"));
+            }
+            put_audit_in_txn(self, txn, &audit.row(&cohort))?;
             Ok(cohort)
         })
     }
@@ -277,17 +382,7 @@ impl Vault {
     /// Unreadable rows, or storage errors.
     pub fn eval_cohort_exposure(&self, cohort: &EntityId) -> Result<EvalExposureCounts> {
         let txn = self.store.env.read_txn()?;
-        let mut counts = EvalExposureCounts::default();
-        let prefix = [EXPOSURE_PREFIX, cohort.as_bytes()].concat();
-        for exposure in rows_in_txn::<EvalExposure>(self, &txn, &prefix)? {
-            let slot = match exposure.kind {
-                EvalExposureKind::Candidate => &mut counts.candidates,
-                EvalExposureKind::Query => &mut counts.queries,
-                EvalExposureKind::Promotion => &mut counts.promotions,
-            };
-            *slot = slot.saturating_add(1);
-        }
-        Ok(counts)
+        exposure_in_txn(self, &txn, cohort)
     }
 
     /// A seat's cohorts, in cut order.
@@ -301,23 +396,45 @@ impl Vault {
     }
 
     /// Retire an exposed cohort: its families read as development from now
-    /// on, and still never feed training. The reference cohort stays fixed.
-    /// Which exposure retires a cohort is the eval-authoring skill's policy;
-    /// this door only records the act. Retiring twice keeps the first date.
+    /// on, and still never feed training. The reference cohort stays fixed,
+    /// and a cohort that has served nothing is not retired. Which exposure
+    /// retires a cohort is the eval-authoring skill's policy; this door
+    /// records the act with its `decision`. Retiring twice keeps the first
+    /// date and decision.
     /// # Errors
-    /// A missing cohort, the reference cohort, or storage errors.
-    pub fn retire_eval_cohort(&self, cohort: &EntityId, at: u64) -> Result<EvalCohort> {
+    /// A missing cohort, the reference cohort, a cohort with no recorded
+    /// exposure, an empty or unbounded reason or revision, or storage errors.
+    pub fn retire_eval_cohort(
+        &self,
+        cohort: &EntityId,
+        decision: CohortRetirement,
+        at: u64,
+    ) -> Result<EvalCohort> {
+        if decision.reason.trim().is_empty()
+            || decision.reason.len() > MAX_REASON_BYTES
+            || decision.revision.trim().is_empty()
+            || decision.revision.len() > MAX_REF_BYTES
+        {
+            return Err(invalid(
+                "a cohort retirement names a bounded reason and revision",
+            ));
+        }
         self.with_write_txn_grouped(|txn| {
             let mut row = cohort_in_txn(self, txn, cohort)?;
             if row.reference {
                 return Err(invalid("the reference eval cohort is never retired"));
             }
-            if row.retired_at.is_none() {
-                row.retired_at = Some(at);
-                self.store
-                    .vault_meta
-                    .put(txn, &cohort_key(cohort), &encode(&row)?)?;
+            if row.retired_at.is_some() {
+                return Ok(row);
             }
+            if !exposure_in_txn(self, txn, cohort)?.served() {
+                return Err(invalid("an eval cohort that served nothing is not retired"));
+            }
+            row.retired_at = Some(at);
+            row.retirement = Some(decision);
+            self.store
+                .vault_meta
+                .put(txn, &cohort_key(cohort), &encode(&row)?)?;
             Ok(row)
         })
     }
