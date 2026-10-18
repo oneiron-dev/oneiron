@@ -1033,9 +1033,9 @@ pub(super) fn refused<T>(refusal: MemoryError) -> Listed<T> {
 }
 
 /// The rows hex ids name; a value that is no id names none.
-fn hex_rows(ids: impl IntoIterator<Item = &String>) -> Vec<EntityId> {
+fn hex_rows<S: AsRef<str>>(ids: impl IntoIterator<Item = S>) -> Vec<EntityId> {
     ids.into_iter()
-        .filter_map(|hex| EntityId::from_hex(hex).ok())
+        .filter_map(|hex| EntityId::from_hex(hex.as_ref()).ok())
         .collect()
 }
 
