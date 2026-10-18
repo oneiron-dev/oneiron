@@ -164,8 +164,9 @@ pub(super) fn fold_entry_state(
     if entry.vault_id != Some(state.vault_id) {
         return EntryFold::Invalid(AuthorityFoldIssue::WrongVault(hash));
     }
-    // Signed by a machine's install key, never a roster key: the owner's
-    // signed "yours" mark is what makes the machine speak for the owner.
+    // Signed by the carrier's install key, never a roster key: any live
+    // linked machine carries the owner's authenticated say-so (mesh contract
+    // §3), and FIX 2222 keeps the host root acting as nobody.
     if let AuthorityOp::WorldPrivacy(edit) = &entry.op {
         if let Err(issue) = apply_world_privacy(
             &mut state,

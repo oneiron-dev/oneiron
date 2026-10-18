@@ -807,6 +807,18 @@ impl OneironClient {
                 "vault.policy.relay.decide" => remote_agent_verb_output::<
                     oneiron::policy_model::doors::HostedRelayDecision,
                 >(client, verb, &input),
+                "vault.consent.approve_once" => remote_agent_verb_output::<
+                    oneiron::consent::lifecycle::ConsentActReceipt,
+                >(client, verb, &input),
+                "vault.consent.create_standing_grant" => remote_agent_verb_output::<
+                    oneiron::consent::lifecycle::ConsentActReceipt,
+                >(client, verb, &input),
+                "vault.consent.registry" => remote_agent_verb_output::<
+                    oneiron::consent::ConsentRegistry,
+                >(client, verb, &input),
+                "vault.consent.revoke" => remote_agent_verb_output::<
+                    oneiron::consent::lifecycle::ConsentActReceipt,
+                >(client, verb, &input),
                 "vault.gate.policy.get" => remote_agent_verb_output::<
                     oneiron::policy_manifest_doors::PolicyManifestsView,
                 >(client, verb, &input),
@@ -904,6 +916,18 @@ impl OneironClient {
                 "self.use" => remote_agent_verb_output::<oneiron::task_verb::sdk::SecretUseAnswer>(
                     client, verb, &input,
                 ),
+                "self.secrets.materialize" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SecretGrantView,
+                >(client, verb, &input),
+                "self.secrets.renew" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SecretGrantView,
+                >(client, verb, &input),
+                "self.secrets.teardown" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SecretGrantView,
+                >(client, verb, &input),
+                "self.secrets.use" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SecretUseAnswer,
+                >(client, verb, &input),
                 "vault.shares.create" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ShareCreated,
                 >(client, verb, &input),
@@ -1315,6 +1339,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "ai.voice.close" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::LiveVoiceProcessed,
+                >(client, verb, &input),
+                "ai.anonymous_chat" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::AnonymousChatResponse,
                 >(client, verb, &input),
                 "ai.options" => remote_agent_verb_output::<oneiron::task_verb::sdk::AiOptions>(
                     client, verb, &input,
@@ -1828,6 +1855,9 @@ impl OneironClient {
                 "self.folds" => remote_agent_verb_output::<
                     oneiron::compaction::FoldReply<oneiron::compaction::FoldList>,
                 >(client, verb, &input),
+                "tasks.refuse" => remote_agent_verb_output::<oneiron::code_run::TaskRefuseOutput>(
+                    client, verb, &input,
+                ),
                 "self.agents.spawn" => remote_agent_verb_output::<
                     oneiron::code_run::AgentSpawnOutput,
                 >(client, verb, &input),
@@ -4952,6 +4982,54 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.policy.relay.decide", value)
     }
+    pub fn vault_consent_approve_once(
+        &self,
+        input: &oneiron::consent::lifecycle::ApproveOnceRequest,
+    ) -> Result<oneiron::consent::lifecycle::ConsentActReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consent.approve_once", value)
+    }
+    pub fn vault_consent_create_standing_grant(
+        &self,
+        input: &oneiron::consent::lifecycle::CreateStandingGrantRequest,
+    ) -> Result<oneiron::consent::lifecycle::ConsentActReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consent.create_standing_grant", value)
+    }
+    pub fn vault_consent_registry(
+        &self,
+        input: &oneiron::consent::ConsentRegistryQuery,
+    ) -> Result<oneiron::consent::ConsentRegistry, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consent.registry", value)
+    }
+    pub fn vault_consent_revoke(
+        &self,
+        input: &oneiron::consent::lifecycle::RevokeGrantRequest,
+    ) -> Result<oneiron::consent::lifecycle::ConsentActReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consent.revoke", value)
+    }
     pub fn vault_gate_policy_get(
         &self,
         input: &oneiron::policy_manifest_doors::PolicyManifestRead,
@@ -5323,6 +5401,62 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.use", value)
+    }
+    pub fn self_secrets_materialize(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::task_verb::sdk::SecretGrantMintRequest,
+        >,
+    ) -> Result<oneiron::task_verb::sdk::SecretGrantView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.secrets.materialize", value)
+    }
+    pub fn self_secrets_renew(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::task_verb::sdk::SecretGrantRenewRequest,
+        >,
+    ) -> Result<oneiron::task_verb::sdk::SecretGrantView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.secrets.renew", value)
+    }
+    pub fn self_secrets_teardown(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::task_verb::sdk::SecretGrantTeardownRequest,
+        >,
+    ) -> Result<oneiron::task_verb::sdk::SecretGrantView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.secrets.teardown", value)
+    }
+    pub fn self_secrets_use(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::task_verb::sdk::SecretGrantUseRequest,
+        >,
+    ) -> Result<oneiron::task_verb::sdk::SecretUseAnswer, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.secrets.use", value)
     }
     pub fn vault_shares_create(
         &self,
@@ -6978,6 +7112,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("ai.voice.close", value)
+    }
+    pub fn ai_anonymous_chat(
+        &self,
+        input: &oneiron::task_verb::sdk::AnonymousChatRequest,
+    ) -> Result<oneiron::task_verb::sdk::AnonymousChatResponse, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.anonymous_chat", value)
     }
     pub fn ai_options(
         &self,
@@ -9057,6 +9203,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.folds", value)
+    }
+    pub fn tasks_refuse(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::TaskRefuseInput>,
+    ) -> Result<oneiron::code_run::TaskRefuseOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("tasks.refuse", value)
     }
     pub fn self_agents_spawn(
         &self,

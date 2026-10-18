@@ -360,6 +360,9 @@ class Oneiron:
             """Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value."""
             return json.loads(_translate(lambda: self._client.self_use(json.dumps(spec))))
         @property
+        def secrets(self) -> "Oneiron._SelfSecretsVerbs":
+            return Oneiron._SelfSecretsVerbs(self._client)
+        @property
         def skills(self) -> "Oneiron._SelfSkillsVerbs":
             return Oneiron._SelfSkillsVerbs(self._client)
         @property
@@ -485,6 +488,21 @@ class Oneiron:
         def execute(self, spec):
             """The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""
             return json.loads(_translate(lambda: self._client.self_off_record_execute(json.dumps(spec))))
+    class _SelfSecretsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def materialize(self, spec):
+            """Mints a value-free grant on a secret for this credential's attached run, to one purpose: an operation or connector (door), a host destination (leased) or a declared file (local); the answer never holds the value."""
+            return json.loads(_translate(lambda: self._client.self_secrets_materialize(json.dumps(spec))))
+        def renew(self, spec):
+            """Renews a grant the attached run holds: a fresh grant at the secret's current generation in its place, never a longer life for bytes already handed out."""
+            return json.loads(_translate(lambda: self._client.self_secrets_renew(json.dumps(spec))))
+        def teardown(self, spec):
+            """Tears down a grant the attached run holds, whatever its state: revokes it and its lease, removes its file or clears its destination, and says what the cleanup found."""
+            return json.loads(_translate(lambda: self._client.self_secrets_teardown(json.dumps(spec))))
+        def use(self, spec):
+            """Hands the secret a door grant redeems to one trusted operation or connector call, for the attached run; a grant minted before a rotation refuses until renewed, and the answer never holds the value."""
+            return json.loads(_translate(lambda: self._client.self_secrets_use(json.dumps(spec))))
     class _SelfSkillsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -681,6 +699,9 @@ class Oneiron:
         @property
         def policy(self) -> "Oneiron._VaultPolicyVerbs":
             return Oneiron._VaultPolicyVerbs(self._client)
+        @property
+        def consent(self) -> "Oneiron._VaultConsentVerbs":
+            return Oneiron._VaultConsentVerbs(self._client)
         @property
         def gate(self) -> "Oneiron._VaultGateVerbs":
             return Oneiron._VaultGateVerbs(self._client)
@@ -1898,6 +1919,21 @@ class Oneiron:
         def decide(self, spec):
             """Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer."""
             return json.loads(_translate(lambda: self._client.vault_policy_relay_decide(json.dumps(spec))))
+    class _VaultConsentVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def approve_once(self, spec):
+            """The owner approves exactly one engine-emitted effect digest; no standing grant is created."""
+            return json.loads(_translate(lambda: self._client.vault_consent_approve_once(json.dumps(spec))))
+        def create_standing_grant(self, spec):
+            """The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision."""
+            return json.loads(_translate(lambda: self._client.vault_consent_create_standing_grant(json.dumps(spec))))
+        def registry(self, spec):
+            """The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants."""
+            return json.loads(_translate(lambda: self._client.vault_consent_registry(json.dumps(spec))))
+        def revoke(self, spec):
+            """The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted."""
+            return json.loads(_translate(lambda: self._client.vault_consent_revoke(json.dumps(spec))))
     class _VaultGateVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2356,13 +2392,13 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def create(self, spec):
-            """The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched."""
+            """The owner creates an inert custom agent composition with an optional per-domain refusal dial, caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched."""
             return json.loads(_translate(lambda: self._client.vault_agents_create(json.dumps(spec))))
         def get(self, spec):
-            """The owner reads one saved agent composition and its version and approval state."""
+            """The owner reads one saved agent composition, including its declared refusal dial, version and approval state."""
             return json.loads(_translate(lambda: self._client.vault_agents_get(json.dumps(spec))))
         def update(self, spec):
-            """The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision."""
+            """The owner edits the expected definition version and optional refusal dial through the existing immutable-field and ceiling gates; refusal decisions read the live dial."""
             return json.loads(_translate(lambda: self._client.vault_agents_update(json.dumps(spec))))
         @property
         def spawn(self) -> "Oneiron._VaultAgentsSpawnVerbs":
@@ -3114,6 +3150,9 @@ class Oneiron:
         def outcomes(self, handle):
             """Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."""
             return json.loads(_translate(lambda: self._client.tasks_outcomes(json.dumps(handle))))
+        def refuse(self, spec):
+            """Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay."""
+            return json.loads(_translate(lambda: self._client.tasks_refuse(json.dumps(spec))))
     class _RevealVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3138,6 +3177,9 @@ class Oneiron:
         @property
         def voice(self) -> "Oneiron._AiVoiceVerbs":
             return Oneiron._AiVoiceVerbs(self._client)
+        def anonymous_chat(self, spec):
+            """One standalone memory-free turn on the house configuration or a plain model, with ephemeral policy notices; use the HTTP SDK, not a recorded MCP or code-mode call."""
+            return json.loads(_translate(lambda: self._client.ai_anonymous_chat(json.dumps(spec))))
         def options(self, spec):
             """The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."""
             return json.loads(_translate(lambda: self._client.ai_options(json.dumps(spec))))

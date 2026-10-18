@@ -2555,7 +2555,7 @@
      "path": "src/authority/grant_travel.rs",
      "purpose": "Folds the owner's signed grant travel choices (OF-491, FIX 2998): the born-with text one federation grant's…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 10
      }
     },
     {
@@ -2846,7 +2846,7 @@
      "path": "src/authority/machine_profile.rs",
      "purpose": "Folds `MachineProfile` entries into each physical machine's standing",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 17,
       "enum": 2,
       "fn": 15,
       "struct": 4
@@ -2857,9 +2857,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/authority/machine_standing.rs",
-     "purpose": "A machine's standing as the world-privacy fold reads it: each chain's revisions, P2's race rule per chain…",
+     "purpose": "A machine's standing as the owner-act fold reads it: each chain's revisions, the carrier rule and its…",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 20
      }
     },
     {
@@ -2905,8 +2905,8 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 24,
-      "re-export": 41
+      "crate-vis": 25,
+      "re-export": 42
      }
     },
     {
@@ -2932,6 +2932,19 @@
      "purpose": "Applies one [`super::AuthorityOp`] to a [`super::fold_state::FoldState`]",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "KeyWork"
+     ],
+     "path": "src/authority/owner_act.rs",
+     "purpose": "The L02 side of the owner-act record (mesh contract §3): the one rule every owner act's carrier is judged…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1
      }
     },
     {
@@ -3544,7 +3557,7 @@
      "path": "src/authority/tests/support.rs",
      "purpose": "Shared fixtures and fold helpers for the authority tests",
      "surface": {
-      "crate-vis": 56
+      "crate-vis": 57
      }
     },
     {
@@ -3819,9 +3832,9 @@
      "path": "src/authority/world_privacy.rs",
      "purpose": "Folds `WorldPrivacy` edits into each world's effective settings",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "enum": 4,
-      "fn": 6,
+      "fn": 7,
       "struct": 2
      }
     },
@@ -3837,7 +3850,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "struct": 1
      }
     },
@@ -3846,7 +3859,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/authority/world_refold.rs",
-     "purpose": "A world edit or a grant travel choice above a main-log row the fold did not keep, folded again with that row…",
+     "purpose": "A world edit, a world key record or a grant travel choice above a main-log row the fold did not keep, folded…",
      "surface": {
       "crate-vis": 1
      }
@@ -3856,7 +3869,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/authority/world_strength.rs",
-     "purpose": "Each world's settings-edit frontier and the strength of its edits, judged under one trust set at a time…",
+     "purpose": "Each world's settings-edit frontier and the strength of its edits (world privacy P2, re-cut for the mesh…",
      "surface": {
       "crate-vis": 9
      }
@@ -11843,7 +11856,7 @@
      "path": "src/code_run/dispatcher/host_doors.rs",
      "purpose": "Typed coordination calls whose credential admission and verb hooks are owned by the host's verb-table door",
      "surface": {
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -12253,7 +12266,7 @@
      "purpose": "The inputs and outputs of the verb-table rows a code run answers itself (`context: \"run\"` in…",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 7,
       "fn": 1,
       "struct": 22
@@ -15086,12 +15099,34 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ActionBoundRequest",
+      "ActionEnvelopeRequest",
+      "ApproveOnceRequest",
+      "ConsentActReceipt",
+      "CreateStandingGrantRequest",
+      "DisclosureBoundRequest",
+      "DisclosureEnvelopeRequest",
+      "RevokeGrantRequest",
+      "StandingGrantBound"
+     ],
+     "path": "src/consent/lifecycle.rs",
+     "purpose": "Typed public consent lifecycle calls",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/consent/mod.rs",
      "purpose": "DEC-0006 unified consent-mode — bounded standing grants",
      "surface": {
       "crate-vis": 4,
-      "mod": 1,
+      "mod": 2,
       "re-export": 10
      }
     },
@@ -23102,7 +23137,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/entity_doc/summary.rs",
@@ -30521,8 +30556,8 @@
      "purpose": "Seat-birth model routing above the raw LLM call seam",
      "surface": {
       "enum": 3,
-      "fn": 18,
-      "re-export": 2,
+      "fn": 16,
+      "re-export": 3,
       "struct": 7
      }
     },
@@ -30554,6 +30589,19 @@
       "crate-vis": 6,
       "enum": 1,
       "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TaskSeatReceipt"
+     ],
+     "path": "src/llm/seat/run.rs",
+     "purpose": "A run's immutable seat pin: born once per run, loaded again on resume",
+     "surface": {
+      "fn": 4,
       "struct": 1
      }
     },
@@ -41169,7 +41217,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/scope_summary/public.rs",
@@ -50074,7 +50122,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 48,
+      "re-export": 50,
       "struct": 36
      }
     },
@@ -50100,6 +50148,23 @@
       "enum": 3,
       "fn": 3,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AnonymousChatBlockReasonView",
+      "AnonymousChatRequest",
+      "AnonymousChatRequestTarget",
+      "AnonymousChatResponse",
+      "AnonymousChatSkippedCheckView"
+     ],
+     "path": "src/task_verb/sdk_anonymous_chat.rs",
+     "purpose": "The anonymous-chat wire contract (OF-500, PRIVACY-08), shared by the standalone HTTP handler, OpenAPI and…",
+     "surface": {
+      "enum": 3,
+      "struct": 2
      }
     },
     {
@@ -50398,7 +50463,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 634
+      "fn": 644
      }
     },
     {
@@ -50813,6 +50878,28 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "SecretGrantCleanup",
+      "SecretGrantMintRequest",
+      "SecretGrantPurpose",
+      "SecretGrantRegistration",
+      "SecretGrantRenewRequest",
+      "SecretGrantTeardownRequest",
+      "SecretGrantUseRequest",
+      "SecretGrantView",
+      "SecretGrantViewStatus"
+     ],
+     "path": "src/task_verb/sdk_secret_grant.rs",
+     "purpose": "`self.secrets.*` (DOOR-124, e2e SECRETS-03): the typed lifecycle of a secret grant, over the engine's grant…",
+     "surface": {
+      "enum": 3,
+      "fn": 4,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "SecretUseAnswer",
       "SecretUseRecord",
       "SecretUseRequest",
@@ -50821,6 +50908,7 @@
      "path": "src/task_verb/sdk_secret_use.rs",
      "purpose": "`self.use`: an agent hands a secret to one trusted operation by its handle, and reads the operation's…",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 4,
       "struct": 3
@@ -51422,7 +51510,6 @@
       "ProviderPinView",
       "ResolvedTeam",
       "RouteObservation",
-      "RouteStampState",
       "SkillRevisionView",
       "SpawnPhase",
       "TaskTypeNodeSpec",
@@ -51440,7 +51527,7 @@
      "purpose": "The owner's task-type tree doors (DOOR-111, OF-541): store an authored tree on an open team-shape fork, and…",
      "surface": {
       "const": 1,
-      "enum": 5,
+      "enum": 4,
       "fn": 3,
       "struct": 23
      }
@@ -56103,7 +56190,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 148,
+     "files": 149,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56383,7 +56470,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 21,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56859,7 +56946,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 99,
+     "files": 100,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -57391,7 +57478,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 162,
+     "files": 164,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -57561,7 +57648,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3507,
+   "source_files": 3512,
    "test_files": 902
   },
   "oneiron-android": {
@@ -57745,7 +57832,26 @@
      "path": "src/authority/mod.rs",
      "purpose": "The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary…",
      "surface": {
-      "re-export": 19
+      "re-export": 20
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ActBy",
+      "ActSurface",
+      "OwnerAct",
+      "OwnerActKind"
+     ],
+     "path": "src/authority/owner_act.rs",
+     "purpose": "The owner's act as a signed op carries it (mesh contract §2): one provenance record, [`OwnerAct`], inside…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "enum": 3,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -57908,7 +58014,7 @@
       "const": 3,
       "crate-vis": 2,
       "enum": 3,
-      "fn": 1,
+      "fn": 2,
       "struct": 2
      }
     },
@@ -58043,7 +58149,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 20,
+     "files": 21,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -58073,7 +58179,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 29,
+   "source_files": 30,
    "test_files": 1
   },
   "oneiron-bench": {
@@ -66049,7 +66155,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 584
+      "fn": 594
      }
     },
     {
@@ -67098,7 +67204,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 585
+      "fn": 595
      }
     },
     {
@@ -69043,7 +69149,7 @@
      "path": "src/api/anonymous_chat.rs",
      "purpose": "A single memory-free turn on the house configuration or a plain model",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
      }
     },
     {
@@ -69941,7 +70047,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 33
      }
     },
     {
@@ -69981,7 +70087,7 @@
      "path": "src/api/facade/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -70112,6 +70218,16 @@
      "purpose": "Source-bound connector packs over the existing owner, probe and slate doors",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/consent_doors.rs",
+     "purpose": "Consent lifecycle host doors, on the same owner proof as Gate policy",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -70321,7 +70437,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 111
+      "crate-vis": 114
      }
     },
     {
@@ -70371,7 +70487,7 @@
      "path": "src/api/facade/live_run_doors.rs",
      "purpose": "Public coordination doors over the caller's own live-run attachment",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -70528,6 +70644,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/secret_grant_doors.rs",
+     "purpose": "The host doors of `self.secrets.*` (DOOR-124, e2e SECRETS-03): an agent run's secret grants, minted…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/secret_lift_doors.rs",
      "purpose": "The host door of the owner's historical secret lift sweep, `vault.secrets.lift_history` (OF-067)",
      "surface": {
@@ -70595,7 +70721,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/skill_doors.rs",
@@ -71252,6 +71378,16 @@
      "purpose": "The OpenAI chat-completions wire the proxy speaks (OF-445): a closed request body, and the reply built from…",
      "surface": {
       "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openapi/anonymous_chat_paths.rs",
+     "purpose": "The standalone anonymous-chat routes: their schemas are the verb table's real request and reply/block types…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -75470,7 +75606,7 @@
      "path": "src/mcp/exec_host.rs",
      "purpose": "MCP code-execution host seam and the engine-native host binding",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "enum": 1,
       "fn": 7,
       "struct": 3,
@@ -76714,7 +76850,7 @@
      "purpose": "—",
      "surface": {
       "mod": 1,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -76776,6 +76912,23 @@
      "surface": {
       "fn": 10,
       "struct": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RunSecretDestinations",
+      "SecretDestination",
+      "SecretDestinations",
+      "ServedSecretDelivery"
+     ],
+     "path": "src/runtime/secret_destinations.rs",
+     "purpose": "T1 host delivery (DOOR-124, FIX 4490): the secret destinations a run host registers for one run, and the…",
+     "surface": {
+      "const": 1,
+      "fn": 5,
+      "struct": 4
      }
     },
     {
@@ -76942,7 +77095,7 @@
      "path": "src/server/live_runs.rs",
      "purpose": "The live agent runs a harness may act for over HTTP (OF-181)",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 33
      }
     },
     {
@@ -77931,7 +78084,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 371,
+     "files": 374,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -78267,7 +78420,7 @@
      "purpose": "The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a…"
     },
     "runtime": {
-     "files": 9,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78353,7 +78506,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 702,
+   "source_files": 706,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -78551,6 +78704,8 @@
       "AcceptRescopeConnect",
       "AccessStatus",
       "ActExecution",
+      "ActionBoundRequest",
+      "ActionEnvelopeRequest",
       "ActorCeiling",
       "AdmissionBasis",
       "AdmissionConsent",
@@ -78631,10 +78786,16 @@
       "AnnotationThreadRequest",
       "AnnotationThreadState",
       "AnnotationThreadView",
+      "AnonymousChatBlockReasonView",
+      "AnonymousChatRequest",
+      "AnonymousChatRequestTarget",
+      "AnonymousChatResponse",
+      "AnonymousChatSkippedCheckView",
       "AnswerContract",
       "AnswerRecord",
       "AnswerSheetAtom",
       "AnsweringAuthority",
+      "ApproveOnceRequest",
       "ApproveScope",
       "ArchiveAxis",
       "ArchiveCampaignProgramRequest",
@@ -78719,6 +78880,8 @@
       "BundleVerdict",
       "BundledSkillPermissions",
       "ButtonControl",
+      "BypassExtent",
+      "BypassScope",
       "CalendarEventCreateRequest",
       "CalendarEventCreated",
       "CalendarEventView",
@@ -78937,10 +79100,18 @@
       "ConnectorSendTaskOutcome",
       "ConnectorToolResult",
       "ConnectorView",
+      "ConsentActReceipt",
       "ConsentAnswer",
       "ConsentDenial",
+      "ConsentDomain",
+      "ConsentGrantStatus",
       "ConsentNeed",
       "ConsentPart",
+      "ConsentRegistry",
+      "ConsentRegistryDelegation",
+      "ConsentRegistryQuery",
+      "ConsentRegistryRow",
+      "ConsentRevokeAction",
       "ConsentSet",
       "ConsentStateAdmissionConsent",
       "ConsentStateMembershipConsent",
@@ -78995,6 +79166,7 @@
       "CreateCampaignProgramRequest",
       "CreateNoteFromEntityRequest",
       "CreateNoteRequest",
+      "CreateStandingGrantRequest",
       "CredentialAttenuated",
       "CredentialAttenuationRequest",
       "CredentialCeiling",
@@ -79104,6 +79276,8 @@
       "DiaryReviewAnswer",
       "DiaryReviewState",
       "DiscardedProposal",
+      "DisclosureBoundRequest",
+      "DisclosureEnvelopeRequest",
       "DisclosureOfferRequest",
       "DisclosureOffered",
       "DocumentKind",
@@ -79478,7 +79652,12 @@
       "LiveRunRequestAgentSpawnInput",
       "LiveRunRequestLeaderSplitInput",
       "LiveRunRequestMemorySupersedeInput",
+      "LiveRunRequestSecretGrantMintRequest",
+      "LiveRunRequestSecretGrantRenewRequest",
+      "LiveRunRequestSecretGrantTeardownRequest",
+      "LiveRunRequestSecretGrantUseRequest",
       "LiveRunRequestSkillCallInput",
+      "LiveRunRequestTaskRefuseInput",
       "LiveVoiceAckKind",
       "LiveVoiceAckRequest",
       "LiveVoiceAudioRequest",
@@ -79927,6 +80106,9 @@
       "RecordRefPreview",
       "RecordSelector",
       "RefreshPolicy",
+      "RefusalDial",
+      "RefusalLevel",
+      "RefusalOutcome",
       "RelationshipChange",
       "RelationshipContext",
       "RelayBoundaryDegrade",
@@ -80072,6 +80254,7 @@
       "RevealWaitAnswer",
       "RevealWaitRequest",
       "Reversibility",
+      "RevokeGrantRequest",
       "RoleHolder",
       "RoleRank",
       "RoomClaimOutcome",
@@ -80100,7 +80283,6 @@
       "RoomTurnRequest",
       "RoomWaitKind",
       "RouteObservation",
-      "RouteStampState",
       "RoutineOutcome",
       "RowBirth",
       "RsiSettlement",
@@ -80180,6 +80362,15 @@
       "SearchAxis",
       "SearchEvidence",
       "SeatInventory",
+      "SecretGrantCleanup",
+      "SecretGrantMintRequest",
+      "SecretGrantPurpose",
+      "SecretGrantRegistration",
+      "SecretGrantRenewRequest",
+      "SecretGrantTeardownRequest",
+      "SecretGrantUseRequest",
+      "SecretGrantView",
+      "SecretGrantViewStatus",
       "SecretLiftClose",
       "SecretLiftHistoryProposal",
       "SecretLiftProgress",
@@ -80398,6 +80589,7 @@
       "SpendSignal",
       "SpendState",
       "SpentKind",
+      "StandingGrantBound",
       "StateFamilyRef",
       "StatusDotAtom",
       "SteerReceipt",
@@ -80499,6 +80691,9 @@
       "TaskLifecycleRecord",
       "TaskOutcome",
       "TaskPhase",
+      "TaskRefuseDomain",
+      "TaskRefuseInput",
+      "TaskRefuseOutput",
       "TaskReportBody",
       "TaskRouteOutcome",
       "TaskRow",
@@ -80700,8 +80895,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 561,
-      "struct": 1588
+      "enum": 573,
+      "struct": 1618
      }
     },
     {

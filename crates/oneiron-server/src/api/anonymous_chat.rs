@@ -20,11 +20,14 @@ use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::{CallOutcome, RunCall, RunReceipt, RunReceiptSink};
 use oneiron::off_record::OffRecordBackendClass;
 use oneiron::off_record::anonymous_chat::{
-    AnonymousChatBlockReason, AnonymousChatResponder as Responder, AnonymousChatSession,
-    AnonymousChatSkippedCheck, AnonymousChatTarget, AnonymousChatTurn,
+    AnonymousChatResponder as Responder, AnonymousChatSession, AnonymousChatTarget,
 };
-use oneiron::policy_model::{PolicyModelConfig, PolicySkipReason};
+use oneiron::policy_model::PolicyModelConfig;
 use oneiron::store::GateSystemNoticeRecord;
+use oneiron::task_verb::sdk::{
+    AnonymousChatRequest as ChatRequest, AnonymousChatRequestTarget as Target,
+    AnonymousChatResponse as ChatResponse,
+};
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, CallClass, CallEnvelope, CallPurpose,
     ContentPart, FatalLlmError, LlmBackend, LlmGenerateFuture, LlmMessage, LlmMessageRole,
@@ -32,7 +35,6 @@ use oneiron::{
     ResponseFormat, TierPrecedence, Vault,
 };
 use rand_core::RngCore;
-use serde::{Deserialize, Serialize};
 
 use crate::ai_host::CHAT_ROLE;
 use crate::auth::{CoreAuth, CoreScope};
@@ -42,6 +44,7 @@ use crate::server::SyncServer;
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/v1/ai/anonymous-chat", post(chat))
+        .merge(super::facade::anonymous_chat_routes())
         .layer(middleware::from_fn(no_store))
 }
 
@@ -63,118 +66,11 @@ async fn no_store(request: Request, next: Next) -> Response {
     response
 }
 
-#[derive(Clone, Copy, Default, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum Target {
-    #[default]
-    HouseMind,
-    PlainModel,
-}
-
-impl From<Target> for AnonymousChatTarget {
-    fn from(target: Target) -> Self {
-        match target {
-            Target::HouseMind => Self::HouseMind,
-            Target::PlainModel => Self::PlainModel,
-        }
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ChatRequest {
-    text: String,
-    #[serde(default)]
-    target: Target,
-    /// A configured provider model id, required only for plain_model.
-    model: Option<ModelId>,
-}
-
-#[derive(Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum ChatResponse {
-    Reply {
-        content: String,
-        notices: Vec<GateSystemNoticeRecord>,
-        skipped_checks: Vec<SkippedCheck>,
-        /// The same notices, in the same order, for the model's notice
-        /// channel. Neither channel is a chat message or a retained turn.
-        model_notices: Vec<GateSystemNoticeRecord>,
-    },
-    Blocked {
-        input: bool,
-        notice: Box<GateSystemNoticeRecord>,
-        preceding_notices: Vec<GateSystemNoticeRecord>,
-        reason: BlockReason,
-        model_notices: Vec<GateSystemNoticeRecord>,
-    },
-}
-
-#[derive(Serialize)]
-struct SkippedCheck {
-    input: bool,
-    reason: PolicySkipReason,
-}
-
-impl From<AnonymousChatSkippedCheck> for SkippedCheck {
-    fn from(check: AnonymousChatSkippedCheck) -> Self {
-        Self {
-            input: check.input,
-            reason: check.reason,
-        }
-    }
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case")]
-enum BlockReason {
-    Policy,
-    HumanReviewUnavailable,
-}
-
-impl From<AnonymousChatTurn> for ChatResponse {
-    fn from(turn: AnonymousChatTurn) -> Self {
-        match turn {
-            AnonymousChatTurn::Reply {
-                content,
-                notices,
-                skipped_checks,
-            } => Self::Reply {
-                content,
-                model_notices: notices.clone(),
-                notices,
-                skipped_checks: skipped_checks.into_iter().map(SkippedCheck::from).collect(),
-            },
-            AnonymousChatTurn::Blocked {
-                input,
-                notice,
-                preceding_notices,
-                reason,
-            } => {
-                let mut model_notices = preceding_notices.clone();
-                model_notices.push((*notice).clone());
-                Self::Blocked {
-                    input,
-                    notice,
-                    preceding_notices,
-                    reason: match reason {
-                        AnonymousChatBlockReason::Policy => BlockReason::Policy,
-                        AnonymousChatBlockReason::HumanReviewUnavailable => {
-                            BlockReason::HumanReviewUnavailable
-                        }
-                    },
-                    model_notices,
-                }
-            }
-        }
-    }
-}
-
 fn refusal(status: StatusCode, code: &'static str) -> Response {
     (status, Json(serde_json::json!({"error": {"code": code}}))).into_response()
 }
 
-async fn chat(
+pub(super) async fn chat(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<ChatRequest>, JsonRejection>,
@@ -185,21 +81,40 @@ async fn chat(
     let Ok(Json(request)) = payload else {
         return refusal(StatusCode::BAD_REQUEST, "invalid_anonymous_chat_request");
     };
+    match super::facade::host_doors::ai_anonymous_chat(&server, &auth, request).await {
+        Ok(answer) => Json(answer).into_response(),
+        Err(error) => refusal(error.0, error.1),
+    }
+}
+
+pub(crate) struct ChatRefusal(pub(crate) StatusCode, pub(crate) &'static str);
+
+/// The existing anonymous-chat execution, on the caller's own credential.
+/// Only the standalone HTTP routes call it: recorded transports cannot run
+/// hooks, claim invocations or retain a result for this memory-free turn.
+pub(crate) async fn ai_anonymous_chat(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    request: ChatRequest,
+) -> Result<ChatResponse, ChatRefusal> {
     if request.text.trim().is_empty()
         || matches!(request.target, Target::HouseMind) && request.model.is_some()
         || matches!(request.target, Target::PlainModel) && request.model.is_none()
     {
-        return refusal(StatusCode::BAD_REQUEST, "invalid_anonymous_chat_request");
+        return Err(ChatRefusal(
+            StatusCode::BAD_REQUEST,
+            "invalid_anonymous_chat_request",
+        ));
     }
 
     let target = AnonymousChatTarget::from(request.target);
     let (model_request, offer) = match bind_target(&server, target, request.model.as_ref()) {
         Ok(binding) => binding,
         Err(_) => {
-            return refusal(
+            return Err(ChatRefusal(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "anonymous_model_unavailable",
-            );
+            ));
         }
     };
     let backend = if offer.binding.locality == ModelLocality::OnDevice {
@@ -219,7 +134,12 @@ async fn chat(
     };
     let session = match opened {
         Ok(session) => session,
-        Err(_) => return refusal(StatusCode::CONFLICT, "anonymous_session_unavailable"),
+        Err(_) => {
+            return Err(ChatRefusal(
+                StatusCode::CONFLICT,
+                "anonymous_session_unavailable",
+            ));
+        }
     };
     let mut session = ClosingSession(Some(session));
     let responder = AnonymousChatResponder {
@@ -250,17 +170,17 @@ async fn chat(
         .await;
     let closed = session.close();
     if !auth.credential_is_live(&server.vault) {
-        return refusal(StatusCode::FORBIDDEN, "credential_revoked");
+        return Err(ChatRefusal(StatusCode::FORBIDDEN, "credential_revoked"));
     }
     if closed.is_err() {
-        return refusal(
+        return Err(ChatRefusal(
             StatusCode::INTERNAL_SERVER_ERROR,
             "anonymous_session_close_failed",
-        );
+        ));
     }
     match result {
-        Ok(turn) => Json(ChatResponse::from(turn)).into_response(),
-        Err(_) => refusal(StatusCode::CONFLICT, "anonymous_chat_failed"),
+        Ok(turn) => Ok(ChatResponse::from(turn)),
+        Err(_) => Err(ChatRefusal(StatusCode::CONFLICT, "anonymous_chat_failed")),
     }
 }
 

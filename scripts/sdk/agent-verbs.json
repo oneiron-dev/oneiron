@@ -3921,6 +3921,66 @@
       "host_door_session": true
     },
     {
+      "name": "vault.consent.approve_once",
+      "description": "The owner approves exactly one engine-emitted effect digest; no standing grant is created.",
+      "input": "crate::consent::lifecycle::ApproveOnceRequest",
+      "output": "crate::consent::lifecycle::ConsentActReceipt",
+      "call": "crate::consent::lifecycle::approve_once(memory.vault(), &memory.embedded_owner(\"vault.consent.approve_once\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.create_standing_grant",
+      "description": "The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision.",
+      "input": "crate::consent::lifecycle::CreateStandingGrantRequest",
+      "output": "crate::consent::lifecycle::ConsentActReceipt",
+      "call": "crate::consent::lifecycle::create_standing_grant(memory.vault(), &memory.embedded_owner(\"vault.consent.create_standing_grant\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.registry",
+      "description": "The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants.",
+      "input": "crate::consent::ConsentRegistryQuery",
+      "output": "crate::consent::ConsentRegistry",
+      "call": "crate::consent::lifecycle::registry(memory.vault(), &memory.embedded_owner(\"vault.consent.registry\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.revoke",
+      "description": "The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted.",
+      "input": "crate::consent::lifecycle::RevokeGrantRequest",
+      "output": "crate::consent::lifecycle::ConsentActReceipt",
+      "call": "crate::consent::lifecycle::revoke(memory.vault(), &memory.embedded_owner(\"vault.consent.revoke\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.gate.policy.get",
       "description": "The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions.",
       "input": "crate::policy_manifest_doors::PolicyManifestRead",
@@ -4353,6 +4413,70 @@
         "unrestricted_record_scope": true
       },
       "section": false
+    },
+    {
+      "name": "self.secrets.materialize",
+      "description": "Mints a value-free grant on a secret for this credential's attached run, to one purpose: an operation or connector (door), a host destination (leased) or a declared file (local); the answer never holds the value.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::SecretGrantMintRequest>",
+      "output": "crate::task_verb::sdk::SecretGrantView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"self.secrets.materialize\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "self.secrets.renew",
+      "description": "Renews a grant the attached run holds: a fresh grant at the secret's current generation in its place, never a longer life for bytes already handed out.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::SecretGrantRenewRequest>",
+      "output": "crate::task_verb::sdk::SecretGrantView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"self.secrets.renew\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "self.secrets.teardown",
+      "description": "Tears down a grant the attached run holds, whatever its state: revokes it and its lease, removes its file or clears its destination, and says what the cleanup found.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::SecretGrantTeardownRequest>",
+      "output": "crate::task_verb::sdk::SecretGrantView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"self.secrets.teardown\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "self.secrets.use",
+      "description": "Hands the secret a door grant redeems to one trusted operation or connector call, for the attached run; a grant minted before a rotation refuses until renewed, and the answer never holds the value.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::SecretGrantUseRequest>",
+      "output": "crate::task_verb::sdk::SecretUseAnswer",
+      "call": "crate::task_verb::sdk::host_only(memory, \"self.secrets.use\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.shares.create",
@@ -5102,7 +5226,7 @@
     },
     {
       "name": "vault.agents.create",
-      "description": "The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched.",
+      "description": "The owner creates an inert custom agent composition with an optional per-domain refusal dial, caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched.",
       "input": "crate::task_verb::sdk::AgentDefinitionCreateRequest",
       "output": "crate::task_verb::sdk::AgentDefinitionView",
       "call": "crate::task_verb::sdk::create_agent_definition_as(memory.vault(), &memory.embedded_owner(\"vault.agents.create\")?, input)?",
@@ -5117,7 +5241,7 @@
     },
     {
       "name": "vault.agents.get",
-      "description": "The owner reads one saved agent composition and its version and approval state.",
+      "description": "The owner reads one saved agent composition, including its declared refusal dial, version and approval state.",
       "input": "crate::task_verb::sdk::AgentDefinitionRequest",
       "output": "crate::task_verb::sdk::AgentDefinitionView",
       "call": "crate::task_verb::sdk::read_agent_definition_as(memory.vault(), &memory.embedded_owner(\"vault.agents.get\")?, input)?",
@@ -5132,7 +5256,7 @@
     },
     {
       "name": "vault.agents.update",
-      "description": "The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision.",
+      "description": "The owner edits the expected definition version and optional refusal dial through the existing immutable-field and ceiling gates; refusal decisions read the live dial.",
       "input": "crate::task_verb::sdk::AgentDefinitionUpdateRequest",
       "output": "crate::task_verb::sdk::AgentDefinitionView",
       "call": "crate::task_verb::sdk::update_agent_definition_as(memory.vault(), &memory.embedded_owner(\"vault.agents.update\")?, input)?",
@@ -6761,6 +6885,18 @@
       "admission": {
         "unrestricted_record_scope": true
       },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "ai.anonymous_chat",
+      "description": "One standalone memory-free turn on the house configuration or a plain model, with ephemeral policy notices; use the HTTP SDK, not a recorded MCP or code-mode call.",
+      "input": "crate::task_verb::sdk::AnonymousChatRequest",
+      "output": "crate::task_verb::sdk::AnonymousChatResponse",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.anonymous_chat\", &input)?",
+      "host_door": true,
+      "no_record": true,
+      "scope": "Read",
       "section": false,
       "openapi": true
     },
@@ -10475,7 +10611,11 @@
       "output": "crate::code_run::TaskRefuseOutput",
       "scope": "Write",
       "context": "run",
-      "effect": "TasksRefuse"
+      "effect": "TasksRefuse",
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::TaskRefuseInput>",
+        "description": "Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay."
+      }
     },
     {
       "name": "self.agents.spawn",
