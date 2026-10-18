@@ -15,6 +15,7 @@ mod decode;
 mod doors;
 mod id_pin;
 mod manifest;
+mod models;
 mod optional_memory;
 mod refusal;
 mod types;
@@ -24,6 +25,9 @@ pub mod workflow;
 pub use self::codec::{decode_agent_definition, encode_agent_definition};
 pub(crate) use self::doors::AgentAuthorLease;
 pub use self::doors::AgentDefinitionPutDisposition;
+pub use self::models::{
+    AgentModel, ensure_listed, note_stale_listed_models, resolve_compaction_model,
+};
 pub use self::optional_memory::{
     OPTIONAL_MEMORY_BUDGET_KEYS, OPTIONAL_MEMORY_PROFILE_KEYS, OptionalMemory,
     OptionalMemoryProfile,
@@ -34,7 +38,7 @@ pub use self::refusal::{
 };
 pub use self::types::{
     AGENT_DEF_BODY_KEYS, AGENT_DESC_MAX_BYTES, AGENT_ID_MAX_BYTES, AGENT_INSTRUCTIONS_MAX_BYTES,
-    AGENT_MAX_LIST_ENTRIES, AGENT_MODEL_TIER_MAX_BYTES, AGENT_REF_KEY_MAX_BYTES,
+    AGENT_MAX_LIST_ENTRIES, AGENT_MODEL_KEYS, AGENT_MODEL_TIER_MAX_BYTES, AGENT_REF_KEY_MAX_BYTES,
     AGENT_VERSION_MAX_BYTES, AgentCeiling, AgentDefinition, AgentScope, AgentWakeCadence,
     CONTEXT_BUDGET_SPLIT_KEYS, CompactionOwnership, ContextBudgetSplit, DreamingMode, MCP_REF_KEYS,
     MEMORY_PROFILE_KEYS, McpRef, MemoryProfile,
@@ -53,6 +57,7 @@ pub(crate) use self::id_pin::{
 pub(crate) use self::manifest::{
     seed_system_agent_definitions, system_export_identity, validate_reserved_logical_id,
 };
+pub(crate) use self::models::{list_admits, listed_entry, no_listed_model};
 pub(crate) use self::types::forked_from_row_ref;
 pub(crate) use self::widening::agent_definition_put_widens_in_txn;
 

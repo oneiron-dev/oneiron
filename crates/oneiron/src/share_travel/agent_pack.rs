@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use super::BornWith;
 use crate::agent_def::{
-    AgentCeiling, AgentDefinition, AgentScope, AgentWakeCadence, CompactionOwnership,
+    AgentCeiling, AgentDefinition, AgentModel, AgentScope, AgentWakeCadence, CompactionOwnership,
     ContextBudgetSplit, DreamingMode, McpRef, MemoryProfile, OptionalMemory, OptionalMemoryProfile,
     RefusalDial, RefusalLevel, encode_agent_definition,
 };
@@ -35,7 +35,7 @@ use crate::compaction::output::OutputDecayPolicy;
 use crate::context_pack::FieldProfile;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::llm::ModelTierRef;
+use crate::llm::{ModelId, ModelTierRef};
 use crate::skill::{SkillDependency, canonical_skill_tree_hash};
 use crate::skill_hub::{HubFile, HubPackage};
 
@@ -392,6 +392,10 @@ pub struct AgentPackPolicy {
     pub dreaming_model: Option<String>,
     pub wake_cadence: Option<AgentPackWakeCadence>,
     pub refusal: Option<AgentPackRefusal>,
+    /// The models the agent runs on, each with when (FIX 4472); the
+    /// destination seats only those its own catalog serves.
+    pub models: Vec<AgentModel>,
+    pub compaction_model: Option<ModelId>,
 }
 
 /// One `skills.json` row: a skill dependency pinned by its content hash.
@@ -571,6 +575,8 @@ impl AgentPackTravelProjection {
                 dreaming_model: def.dreaming_model.as_ref().map(|tier| tier.0.clone()),
                 wake_cadence: def.wake_cadence.map(Into::into),
                 refusal: def.refusal.map(Into::into),
+                models: def.models.clone(),
+                compaction_model: def.compaction_model.clone(),
             },
             skills,
             knowledge,
@@ -669,7 +675,9 @@ impl AgentPackTravelProjection {
             policy.dreaming.map(Into::into),
             policy.dreaming_model.clone().map(ModelTierRef),
         )
-        .with_refusal(policy.refusal.map(Into::into));
+        .with_refusal(policy.refusal.map(Into::into))
+        .with_models(policy.models.clone())
+        .with_compaction_model(policy.compaction_model.clone());
         def.wake_cadence = policy.wake_cadence.map(Into::into);
         def
     }

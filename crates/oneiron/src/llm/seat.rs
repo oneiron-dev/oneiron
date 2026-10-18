@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use super::registry::ModelWireFormat;
 use super::{CallPurpose, LlmCapability, ModelId, ModelLocality, ReasoningEffort};
+use crate::agent_def::{AgentModel, list_admits, listed_entry, no_listed_model};
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
     Vault,
@@ -255,6 +256,11 @@ pub struct SeatTask {
     pub locality: ModelLocality,
     pub override_model: Option<ModelId>,
     pub override_effort: Option<ReasoningEffort>,
+    /// The waking agent's model list (FIX 4472). When it holds any, the seat
+    /// is born on a listed model alone, with the owner's `when` read first.
+    /// Empty: the agent lists none, and any eligible model may seat it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub listed: Vec<AgentModel>,
 }
 
 /// The pick sees only models admitted by the engine's route, capability,
@@ -354,6 +360,14 @@ impl SeatPool {
         {
             return Err(invalid("seat task, facet and warm scope are required"));
         }
+        // A pin outside the agent's list refuses before any judgment.
+        if task
+            .override_model
+            .as_ref()
+            .is_some_and(|model| !list_admits(&task.listed, model))
+        {
+            return Err(invalid("pinned model is not in the agent's model list"));
+        }
         let allowed = vault
             .model_route(super::manifest::ModelSlot::Llm)?
             .ok_or_else(|| invalid("model manifest not configured"))?;
@@ -374,6 +388,11 @@ impl SeatPool {
         let rows = vault.model_registry_rows()?;
         let mut candidates = Vec::new();
         for row in rows {
+            // A model its provider retired seats no one; its row stays for
+            // the lists and receipts that name it.
+            if row.is_stale() {
+                continue;
+            }
             let catalog = row.catalog;
             if catalog.locality != route
                 || catalog.context_window_tokens < task.min_context_tokens
@@ -385,6 +404,7 @@ impl SeatPool {
                     .override_model
                     .as_ref()
                     .is_some_and(|id| id != &catalog.model)
+                || !list_admits(&task.listed, &catalog.model)
             {
                 continue;
             }
@@ -421,6 +441,18 @@ impl SeatPool {
             {
                 continue;
             }
+            // The owner's own words on when the agent takes this model come
+            // first, so the pick chooses among the agent's list by them.
+            let mut lines = description.lines(&policy.evidence_order);
+            if let Some(entry) = listed_entry(&task.listed, &catalog.model) {
+                lines.insert(
+                    0,
+                    DescriptionLine {
+                        source: DescriptionSource::Owner,
+                        text: entry.when.clone(),
+                    },
+                );
+            }
             candidates.push(SeatCandidate {
                 reasoning,
                 wire: row.wire,
@@ -428,11 +460,16 @@ impl SeatPool {
                 allowed_efforts: ladder,
                 model: catalog.model,
                 locality: route,
-                description: description.lines(&policy.evidence_order),
+                description: lines,
             });
         }
+        // With a list, no fallback: the wake holds rather than run unlisted.
         if candidates.is_empty() {
-            return Err(invalid("no described model eligible for seat"));
+            return Err(if task.listed.is_empty() {
+                invalid("no described model eligible for seat")
+            } else {
+                no_listed_model(&task.listed)
+            });
         }
         let eligible: BTreeSet<_> = candidates.iter().map(|c| &c.model).collect();
         if let Some(seat) = self.seats.iter().find(|seat| {
@@ -442,6 +479,7 @@ impl SeatPool {
                 && seat.facet == task.facet
                 && seat.locality == route
                 && eligible.contains(&seat.model)
+                && list_admits(&task.listed, &seat.model)
                 && candidates
                     .iter()
                     .find(|candidate| candidate.model == seat.model)

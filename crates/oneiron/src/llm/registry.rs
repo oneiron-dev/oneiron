@@ -12,7 +12,7 @@ use crate::{
     error::{Error, Result},
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// One priced model registry row. Key: string (model id).
 const REGISTRY_ROW: SideTable<String, ModelRegistryRow, LegacyJson> =
@@ -50,6 +50,12 @@ pub struct ModelRegistryRow {
     /// until measured. A refresh that changes the catalog entry clears it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tokens_per_o200k: Option<f64>,
+    /// When the model's provider retired it (FIX 4472): a pack refresh that
+    /// no longer ships it, or the host's own mark. The row is kept, never
+    /// deleted, so the agent lists and receipts that name it still read it;
+    /// no seat is born on it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stale_since: Option<u64>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -92,6 +98,11 @@ fn price(value: &str) -> bool {
         && value.bytes().any(|c| c.is_ascii_digit())
 }
 impl ModelRegistryRow {
+    /// Whether the model's provider retired it ([`Self::stale_since`]).
+    #[must_use]
+    pub fn is_stale(&self) -> bool {
+        self.stale_since.is_some()
+    }
     /// Descriptions stay alongside the model entry; older host-created rows have no evidence.
     pub fn description(&self) -> Result<ModelDescription> {
         self.catalog.metadata.get("description").map_or_else(
@@ -161,6 +172,7 @@ impl CatalogSeed {
                 || !ids.insert(&row.catalog.model)
                 || !row.scores.is_empty()
                 || !row.fetched_at.is_empty()
+                || row.stale_since.is_some()
             {
                 return Err(invalid("invalid seed fields or seeded benchmark metadata"));
             }
@@ -340,6 +352,8 @@ impl Vault {
     /// A pack refresh: a new model is inserted; a row still equal to what the
     /// prior pack shipped takes the new catalog and keeps its scores; a row
     /// the host edited stays as it is. With no prior pack this is the seed.
+    /// A model the prior pack shipped and this one does not goes stale, its
+    /// row kept; a model this pack ships is not stale.
     pub(crate) fn refresh_model_catalog_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -356,6 +370,11 @@ impl Vault {
                     .collect()
             })
             .unwrap_or_default();
+        let ships: BTreeSet<String> = checked
+            .rows
+            .iter()
+            .map(|row| row.catalog.model.as_str().to_owned())
+            .collect();
         for row in checked.rows {
             let key = row.catalog.model.as_str().to_owned();
             match REGISTRY_ROW.get(&self.store, txn, &key)? {
@@ -377,14 +396,58 @@ impl Vault {
                         wire: row.wire,
                         catalog: row.catalog,
                         tokens_per_o200k,
+                        stale_since: None,
                         ..existing
                     };
                     REGISTRY_ROW.put(&self.store, txn, &key, &refreshed)?;
                 }
+                Some(mut existing) if existing.is_stale() => {
+                    existing.stale_since = None;
+                    REGISTRY_ROW.put(&self.store, txn, &key, &existing)?;
+                }
                 Some(_) => {}
             }
         }
+        let retired: Vec<String> = shipped
+            .keys()
+            .filter(|model| !ships.contains(**model))
+            .map(|model| (*model).to_owned())
+            .collect();
+        if retired.is_empty() {
+            return Ok(());
+        }
+        let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+        for key in retired {
+            if let Some(mut existing) = REGISTRY_ROW.get(&self.store, txn, &key)?
+                && !existing.is_stale()
+            {
+                existing.stale_since = Some(now);
+                REGISTRY_ROW.put(&self.store, txn, &key, &existing)?;
+            }
+        }
         Ok(())
+    }
+    /// Marks `model`'s stored row retired by its provider since `at`, for a
+    /// host that learns of a retirement outside a pack refresh; `None`
+    /// clears the mark. The row stays. `Ok(false)` when no row is stored or
+    /// it already reads so.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn mark_model_row_stale(&self, model: &ModelId, at: Option<u64>) -> Result<bool> {
+        let key = model.as_str().to_owned();
+        let mut txn = self.store.env.write_txn()?;
+        let Some(mut row) = REGISTRY_ROW.get(&self.store, &txn, &key)? else {
+            return Ok(false);
+        };
+        if row.stale_since == at {
+            return Ok(false);
+        }
+        row.stale_since = at;
+        REGISTRY_ROW.put(self, &mut txn, &key, &row)?;
+        txn.commit()?;
+        Ok(true)
     }
     pub fn apply_model_scores(&self, snapshot: &ScoreSnapshot) -> Result<Vec<ModelScoreDiff>> {
         self.apply_model_score_snapshots(std::slice::from_ref(snapshot))

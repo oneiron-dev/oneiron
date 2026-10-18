@@ -5,21 +5,23 @@ use super::decode::{
     encode_mcp_ref, text_value, validate_agent_definition,
 };
 use super::manifest::system_agent_manifest;
+use super::models::{decode_agent_models, decode_compaction_model, encode_agent_models};
 use super::refusal::{decode_refusal_dial, encode_refusal_dial};
 use super::types::{
     AGENT_DEF_BODY_KEYS, AGENT_DESC_MAX_BYTES, AGENT_DISPLAY_NAME_MAX_BYTES, AGENT_ID_MAX_BYTES,
     AGENT_INSTRUCTIONS_MAX_BYTES, AGENT_LOGICAL_ID_MAX_BYTES, AGENT_MODEL_TIER_MAX_BYTES,
     AGENT_VERSION_MAX_BYTES, AgentCeiling, AgentDefinition, AgentScope, AgentWakeCadence,
     ContextBudgetSplit, DreamingMode, KEY_AGENT_ID, KEY_APPROVAL_STATUS, KEY_CEILING,
-    KEY_CODE_MODE_MCPS, KEY_CONFIDENCE, KEY_CONNECTORS, KEY_DEP_MIN_VERSION, KEY_DEP_SKILL_ID,
-    KEY_DESC, KEY_DISPLAY_NAME, KEY_DREAMING, KEY_DREAMING_MODEL, KEY_ENABLED, KEY_FORKED_FROM,
-    KEY_GENERATED, KEY_HUMAN_AUTHORED, KEY_INSTRUCTIONS, KEY_LIFECYCLE_STATUS, KEY_LOGICAL_ID,
-    KEY_MEMORY_PROFILE, KEY_MODEL_TIER, KEY_PROFILE_BUDGET_SPLIT, KEY_PROFILE_COMPACTION,
-    KEY_PROFILE_COMPACTION_BACKEND, KEY_PROFILE_HOT_STEPS, KEY_PROFILE_OPTIONAL_MEMORY,
-    KEY_PROFILE_OUTPUT_DECAY, KEY_PROFILE_VERBATIM_PINS, KEY_PROFILE_WINDOW_TOKEN_BUDGET,
-    KEY_PROVENANCE, KEY_REFUSAL, KEY_SCOPE, KEY_SKILLS, KEY_SOURCE, KEY_SPLIT_CLAIMS,
-    KEY_SPLIT_OTHER, KEY_SPLIT_SUMMARIES, KEY_SPLIT_TURNS, KEY_VERSION, KEY_WAKE_CADENCE,
-    KEY_WORLD, MemoryProfile, OUTPUT_DECAY_KEYS, SCOPE_ALL, SCOPE_BASE, SCOPE_WORLD,
+    KEY_CODE_MODE_MCPS, KEY_COMPACTION_MODEL, KEY_CONFIDENCE, KEY_CONNECTORS, KEY_DEP_MIN_VERSION,
+    KEY_DEP_SKILL_ID, KEY_DESC, KEY_DISPLAY_NAME, KEY_DREAMING, KEY_DREAMING_MODEL, KEY_ENABLED,
+    KEY_FORKED_FROM, KEY_GENERATED, KEY_HUMAN_AUTHORED, KEY_INSTRUCTIONS, KEY_LIFECYCLE_STATUS,
+    KEY_LOGICAL_ID, KEY_MEMORY_PROFILE, KEY_MODEL_TIER, KEY_MODELS, KEY_PROFILE_BUDGET_SPLIT,
+    KEY_PROFILE_COMPACTION, KEY_PROFILE_COMPACTION_BACKEND, KEY_PROFILE_HOT_STEPS,
+    KEY_PROFILE_OPTIONAL_MEMORY, KEY_PROFILE_OUTPUT_DECAY, KEY_PROFILE_VERBATIM_PINS,
+    KEY_PROFILE_WINDOW_TOKEN_BUDGET, KEY_PROVENANCE, KEY_REFUSAL, KEY_SCOPE, KEY_SKILLS,
+    KEY_SOURCE, KEY_SPLIT_CLAIMS, KEY_SPLIT_OTHER, KEY_SPLIT_SUMMARIES, KEY_SPLIT_TURNS,
+    KEY_VERSION, KEY_WAKE_CADENCE, KEY_WORLD, MemoryProfile, OUTPUT_DECAY_KEYS, SCOPE_ALL,
+    SCOPE_BASE, SCOPE_WORLD,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::entity_id::EntityId;
@@ -132,6 +134,15 @@ pub fn encode_agent_definition(def: &AgentDefinition) -> Result<Vec<u8>> {
     if let Some(dial) = def.refusal {
         entries.push((Value::from(KEY_REFUSAL), encode_refusal_dial(dial)));
     }
+    if !def.models.is_empty() {
+        entries.push((Value::from(KEY_MODELS), encode_agent_models(&def.models)));
+    }
+    if let Some(model) = &def.compaction_model {
+        entries.push((
+            Value::from(KEY_COMPACTION_MODEL),
+            Value::from(model.as_str()),
+        ));
+    }
     let value = Value::Map(entries);
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &value)
@@ -243,6 +254,8 @@ fn decode_agent_definition_value(value: &Value) -> Result<AgentDefinition> {
     let mut dreaming_model = None;
     let mut wake_cadence = None;
     let mut refusal = None;
+    let mut models = None;
+    let mut compaction_model = None;
     let mut seen = [false; AGENT_DEF_BODY_KEYS.len()];
 
     for (key, value) in entries {
@@ -425,6 +438,8 @@ fn decode_agent_definition_value(value: &Value) -> Result<AgentDefinition> {
             }
             KEY_WAKE_CADENCE => wake_cadence = Some(decode_wake_cadence(value)?),
             KEY_REFUSAL => refusal = Some(decode_refusal_dial(value)?),
+            KEY_MODELS => models = Some(decode_agent_models(value)?),
+            KEY_COMPACTION_MODEL => compaction_model = Some(decode_compaction_model(value)?),
             _ => unreachable!("index resolved from AGENT_DEF_BODY_KEYS"),
         }
     }
@@ -486,6 +501,8 @@ fn decode_agent_definition_value(value: &Value) -> Result<AgentDefinition> {
         dreaming_model,
         wake_cadence,
         refusal,
+        models: models.unwrap_or_default(),
+        compaction_model,
     };
     validate_agent_definition(&definition)?;
     Ok(definition)

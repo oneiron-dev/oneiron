@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 576 facade rows, 2132 generated types.
+// UniFFI census: 576 facade rows, 2133 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 11; generated in and out: 538.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -20079,6 +20079,16 @@ pub enum AgentCeilingInput {
     Proposed,
 }
 
+/// `oneiron::agent_def::models::AgentModel`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgentModel {
+    #[serde(rename = "model_ref")]
+    pub model_ref: String,
+    #[serde(rename = "when")]
+    pub when: String,
+}
+
 /// `oneiron::task_verb::sdk_agents::AgentDefinitionSpec`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -20133,6 +20143,14 @@ pub struct AgentDefinitionSpec {
         skip_serializing_if = "Option::is_none"
     )]
     pub display_name: Option<String>,
+    #[serde(rename = "models", default, skip_serializing_if = "Option::is_none")]
+    pub models: Option<Vec<AgentModel>>,
+    #[serde(
+        rename = "compaction_model",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub compaction_model: Option<String>,
 }
 
 /// `oneiron::task_verb::sdk_agents::AgentDefinitionCreateRequest`.

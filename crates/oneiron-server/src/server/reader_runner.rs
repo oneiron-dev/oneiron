@@ -579,6 +579,7 @@ impl Child {
                 locality,
                 override_model: None,
                 override_effort: None,
+                listed: Vec::new(),
             }
         })
     }

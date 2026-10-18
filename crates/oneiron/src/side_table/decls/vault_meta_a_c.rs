@@ -58,6 +58,9 @@ side_tables! {
     /// Frozen source-tree identity (source id + skill content hash, 48 raw bytes) recorded at an
     /// agent's genuine local birth. Key: id16.
     AGENT_DEF_PORTABLE_BIRTH: VaultMeta b"agent_def/portable-birth/v1\0" Raw;
+    /// FIX 4472: the model an agent's last wake ran on, so a wake on another model notes it in
+    /// the agent's own diary. Key: id16(agent).
+    AGENT_DEF_WAKE_MODEL: VaultMeta b"agent_def/wake-model/v1\0" Named;
     /// Pre-1890 reserved-actor census row, deleted with the census it served; not written by current
     /// code, only deleted once on seed. Key: ().
     AGENT_DEF_DEFAULT_RESERVED_ACTOR_CENSUS_V1: VaultMeta b"agent_def:default_reserved_actor_census:v1" Raw;
