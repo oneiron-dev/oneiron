@@ -842,6 +842,47 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_retrieval_hyde_configure(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.retrieval.hyde.configure")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.retrieval.hyde.configure", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_retrieval_hyde_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.retrieval.hyde.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.retrieval.hyde.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_retrieval_hyde_pending(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.retrieval.hyde.pending")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.retrieval.hyde.pending", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_retrieval_hyde_complete(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.retrieval.hyde.complete")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.retrieval.hyde.complete", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_retrieval_hyde_receipt(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.retrieval.hyde.receipt")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.retrieval.hyde.receipt", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_affect_annotations_put(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.affect.annotations.put")?;
         let output = py

@@ -342,6 +342,31 @@ export_facade! {
     let output = client.vault_retrieval_weights_configure(&input)?;
     crate::codec::lift_record("vault.retrieval.weights.configure", &output)
 };
+"vault.retrieval.hyde.configure" => fn vault_retrieval_hyde_configure(&self, input: HydeHostConfigureRequest) -> HydeHostConfiguration = |client| {
+    let input: oneiron::query_expansion::host::HydeHostConfigureRequest = crate::codec::lower_record("vault.retrieval.hyde.configure", input)?;
+    let output = client.vault_retrieval_hyde_configure(&input)?;
+    crate::codec::lift_record("vault.retrieval.hyde.configure", &output)
+};
+"vault.retrieval.hyde.get" => fn vault_retrieval_hyde_get(&self) -> HydeHostConfiguration = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.retrieval.hyde.get")?;
+    let output = client.vault_retrieval_hyde_get(&input)?;
+    crate::codec::lift_record("vault.retrieval.hyde.get", &output)
+};
+"vault.retrieval.hyde.pending" => fn vault_retrieval_hyde_pending(&self, input: HydeHostPendingRequest) -> Vec<HydeHostWork> = |client| {
+    let input: oneiron::query_expansion::host::HydeHostPendingRequest = crate::codec::lower_record("vault.retrieval.hyde.pending", input)?;
+    let output = client.vault_retrieval_hyde_pending(&input)?;
+    crate::codec::lift_record("vault.retrieval.hyde.pending", &output)
+};
+"vault.retrieval.hyde.complete" => fn vault_retrieval_hyde_complete(&self, input: HydeHostCompleteRequest) -> HydeHostReceipt = |client| {
+    let input: oneiron::query_expansion::host::HydeHostCompleteRequest = crate::codec::lower_record("vault.retrieval.hyde.complete", input)?;
+    let output = client.vault_retrieval_hyde_complete(&input)?;
+    crate::codec::lift_record("vault.retrieval.hyde.complete", &output)
+};
+"vault.retrieval.hyde.receipt" => fn vault_retrieval_hyde_receipt(&self, input: HydeHostReceiptRequest) -> Option<HydeHostReceipt> = |client| {
+    let input: oneiron::query_expansion::host::HydeHostReceiptRequest = crate::codec::lower_record("vault.retrieval.hyde.receipt", input)?;
+    let output = client.vault_retrieval_hyde_receipt(&input)?;
+    crate::codec::lift_record("vault.retrieval.hyde.receipt", &output)
+};
 "vault.affect.annotations.put" => fn vault_affect_annotations_put(&self, input: AffectAnnotationPut) -> CommitReceipt = |client| {
     let input: oneiron::memory::affect::AffectAnnotationPut = crate::codec::lower_record("vault.affect.annotations.put", input)?;
     let output = client.vault_affect_annotations_put(&input)?;

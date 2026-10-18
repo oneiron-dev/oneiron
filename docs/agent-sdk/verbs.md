@@ -74,6 +74,11 @@ both bindings and their export-census tests in one change.
 - `vault.retrieval.aging.configure`
 - `vault.retrieval.weights.get`
 - `vault.retrieval.weights.configure`
+- `vault.retrieval.hyde.configure`
+- `vault.retrieval.hyde.get`
+- `vault.retrieval.hyde.pending`
+- `vault.retrieval.hyde.complete`
+- `vault.retrieval.hyde.receipt`
 - `vault.affect.annotations.put`
 - `vault.tagging.status`
 - `vault.tagging.tags`

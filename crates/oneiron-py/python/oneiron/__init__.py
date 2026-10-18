@@ -944,6 +944,9 @@ class Oneiron:
         @property
         def weights(self) -> "Oneiron._VaultRetrievalWeightsVerbs":
             return Oneiron._VaultRetrievalWeightsVerbs(self._client)
+        @property
+        def hyde(self) -> "Oneiron._VaultRetrievalHydeVerbs":
+            return Oneiron._VaultRetrievalHydeVerbs(self._client)
         def recall(self, spec):
             """Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle."""
             return json.loads(_translate(lambda: self._client.vault_retrieval_recall(json.dumps(spec))))
@@ -986,6 +989,24 @@ class Oneiron:
         def configure(self, spec):
             """The owner sets independent retrieval priors against the current manifest hash; zero disables each prior without changing confidence or authority."""
             return json.loads(_translate(lambda: self._client.vault_retrieval_weights_configure(json.dumps(spec))))
+    class _VaultRetrievalHydeVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def configure(self, spec):
+            """The owner binds or disables a host HyDE expander for paid recall; replacing the binding cancels unanswered work."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_hyde_configure(json.dumps(spec))))
+        def get(self, spec=None):
+            """The owner reads the serving host HyDE binding, grounding and bounded retry options."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_hyde_get(json.dumps({} if spec is None else spec))))
+        def pending(self, spec):
+            """Lists pending expansion and evidence-assessment work for the same credential that called recall; free efforts enqueue nothing."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_hyde_pending(json.dumps(spec))))
+        def complete(self, spec):
+            """Completes one credential-bound host expansion or evidence assessment, or reports failure; late bytes are receipted and discarded."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_hyde_complete(json.dumps(spec))))
+        def receipt(self, spec):
+            """Reads one credential-bound host completion receipt, including expired work and late answers discarded at the recall deadline."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_hyde_receipt(json.dumps(spec))))
     class _VaultRetrievalOutcomesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

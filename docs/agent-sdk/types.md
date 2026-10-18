@@ -1210,6 +1210,8 @@ class Oneiron:
         def aging(self) -> "Oneiron._VaultRetrievalAgingVerbs": ...
         @property
         def weights(self) -> "Oneiron._VaultRetrievalWeightsVerbs": ...
+        @property
+        def hyde(self) -> "Oneiron._VaultRetrievalHydeVerbs": ...
         def recall(self, spec: Facade.RecallRequest) -> Facade.MemoryPack:
             """Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle."""
         def runs(self, spec: Facade.RetrievalRunsRequest) -> list[Facade.RetrievalRunEvidence]:
@@ -1236,6 +1238,17 @@ class Oneiron:
             """The owner reads effective affect, arousal, community and semantic-edge VAD priors with the trusted manifest hash."""
         def configure(self, spec: Facade.RetrievalWeightsConfigureRequest) -> Facade.RetrievalWeightsReceipt:
             """The owner sets independent retrieval priors against the current manifest hash; zero disables each prior without changing confidence or authority."""
+    class _VaultRetrievalHydeVerbs:
+        def configure(self, spec: Facade.HydeHostConfigureRequest) -> Facade.HydeHostConfiguration:
+            """The owner binds or disables a host HyDE expander for paid recall; replacing the binding cancels unanswered work."""
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.HydeHostConfiguration:
+            """The owner reads the serving host HyDE binding, grounding and bounded retry options."""
+        def pending(self, spec: Facade.HydeHostPendingRequest) -> list[Facade.HydeHostWork]:
+            """Lists pending expansion and evidence-assessment work for the same credential that called recall; free efforts enqueue nothing."""
+        def complete(self, spec: Facade.HydeHostCompleteRequest) -> Facade.HydeHostReceipt:
+            """Completes one credential-bound host expansion or evidence assessment, or reports failure; late bytes are receipted and discarded."""
+        def receipt(self, spec: Facade.HydeHostReceiptRequest) -> Facade.HydeHostReceipt | None:
+            """Reads one credential-bound host completion receipt, including expired work and late answers discarded at the recall deadline."""
     class _VaultRetrievalOutcomesVerbs:
         def put(self, spec: Facade.RetrievalOutcome) -> list[Facade.RetrievalOutcomeRecord]:
             """The owner attaches an explicit observation to one local serving run; raw reward stays telemetry, never a gated training label."""

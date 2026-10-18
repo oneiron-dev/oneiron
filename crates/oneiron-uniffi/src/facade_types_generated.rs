@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 841 facade rows, 2871 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 797.
+// UniFFI census: 846 facade rows, 2888 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 802.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -5540,6 +5540,222 @@ pub struct RetrievalWeightsReceipt {
     pub configuration: RetrievalWeightsView,
     #[serde(rename = "receipt_ref")]
     pub receipt_ref: String,
+}
+
+/// `oneiron::query_expansion::GroundingContext`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct GroundingContext {
+    #[serde(rename = "bindings")]
+    pub bindings: std::collections::HashMap<String, String>,
+}
+
+/// `oneiron::query_expansion::HydeOptions`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HydeOptions {
+    #[serde(rename = "channel_limit")]
+    pub channel_limit: u64,
+    #[serde(rename = "retry_once")]
+    pub retry_once: bool,
+}
+
+/// `oneiron::query_expansion::host::HydeHostConfig`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HydeHostConfig {
+    #[serde(rename = "expander")]
+    pub expander: String,
+    #[serde(rename = "grounding")]
+    pub grounding: GroundingContext,
+    #[serde(rename = "options")]
+    pub options: HydeOptions,
+}
+
+/// `oneiron::query_expansion::host::HydeHostConfigureRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HydeHostConfigureRequest {
+    #[serde(rename = "binding", default, skip_serializing_if = "Option::is_none")]
+    pub binding: Option<HydeHostConfig>,
+}
+
+/// `oneiron::query_expansion::host::HydeHostConfiguration`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HydeHostConfiguration {
+    #[serde(rename = "binding", default, skip_serializing_if = "Option::is_none")]
+    pub binding: Option<HydeHostConfig>,
+}
+
+/// `oneiron::query_expansion::host::HydeHostPendingRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HydeHostPendingRequest {
+    #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u64>,
+}
+
+/// `oneiron::query_expansion::HydeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HydeRequest {
+    #[serde(rename = "query")]
+    pub query: String,
+    #[serde(rename = "max_subqueries")]
+    pub max_subqueries: u64,
+}
+
+/// `oneiron::query_expansion::host::HydeHostCandidate`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HydeHostCandidate {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "score")]
+    pub score: f64,
+    #[serde(rename = "claim", default, skip_serializing_if = "Option::is_none")]
+    pub claim: Option<WireClaimView>,
+}
+
+/// `oneiron::query_expansion::host::HydeHostInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "stage")]
+pub enum HydeHostInput {
+    #[serde(rename = "expansion")]
+    Expansion {
+        #[serde(rename = "request")]
+        request: HydeRequest,
+    },
+    #[serde(rename = "evidence")]
+    Evidence {
+        #[serde(rename = "query")]
+        query: String,
+        #[serde(rename = "candidates")]
+        candidates: Vec<HydeHostCandidate>,
+    },
+}
+
+/// `oneiron::query_expansion::host::HydeHostWork`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HydeHostWork {
+    #[serde(rename = "request_id")]
+    pub request_id: String,
+    #[serde(rename = "expander")]
+    pub expander: String,
+    #[serde(rename = "requested_at_ms")]
+    pub requested_at_ms: u64,
+    #[serde(
+        rename = "deadline_at_ms",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub deadline_at_ms: Option<u64>,
+    #[serde(rename = "input")]
+    pub input: HydeHostInput,
+}
+
+/// `oneiron::query_expansion::HydeExpansion`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HydeExpansion {
+    #[serde(rename = "grounded_query")]
+    pub grounded_query: String,
+    #[serde(rename = "hypothetical_answer")]
+    pub hypothetical_answer: String,
+    #[serde(rename = "embedding")]
+    pub embedding: Vec<f64>,
+    #[serde(rename = "subqueries")]
+    pub subqueries: Vec<String>,
+}
+
+/// `oneiron::query_expansion::EvidenceVerdict`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum EvidenceVerdict {
+    #[serde(rename = "Sufficient")]
+    Sufficient,
+    #[serde(rename = "Insufficient")]
+    Insufficient {
+        #[serde(rename = "gaps")]
+        gaps: Vec<String>,
+    },
+}
+
+/// `oneiron::query_expansion::host::HydeHostAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "stage")]
+pub enum HydeHostAnswer {
+    #[serde(rename = "expansion")]
+    Expansion {
+        #[serde(rename = "expansion")]
+        expansion: HydeExpansion,
+    },
+    #[serde(rename = "evidence")]
+    Evidence {
+        #[serde(rename = "verdict")]
+        verdict: EvidenceVerdict,
+    },
+    #[serde(rename = "failed")]
+    Failed {
+        #[serde(rename = "reason")]
+        reason: String,
+    },
+}
+
+/// `oneiron::query_expansion::host::HydeHostCompleteRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HydeHostCompleteRequest {
+    #[serde(rename = "request_id")]
+    pub request_id: String,
+    #[serde(rename = "answer")]
+    pub answer: HydeHostAnswer,
+}
+
+/// `oneiron::query_expansion::host::HydeHostStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum HydeHostStatus {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "expired")]
+    Expired,
+    #[serde(rename = "completed")]
+    Completed,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "discarded_deadline")]
+    DiscardedDeadline,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+}
+
+/// `oneiron::query_expansion::host::HydeHostReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HydeHostReceipt {
+    #[serde(rename = "request_id")]
+    pub request_id: String,
+    #[serde(rename = "expander")]
+    pub expander: String,
+    #[serde(rename = "requested_at_ms")]
+    pub requested_at_ms: u64,
+    #[serde(
+        rename = "deadline_at_ms",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub deadline_at_ms: Option<u64>,
+    #[serde(
+        rename = "completed_at_ms",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub completed_at_ms: Option<u64>,
+    #[serde(rename = "status")]
+    pub status: HydeHostStatus,
+    #[serde(rename = "received_bytes")]
+    pub received_bytes: u64,
+}
+
+/// `oneiron::query_expansion::host::HydeHostReceiptRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HydeHostReceiptRequest {
+    #[serde(rename = "request_id")]
+    pub request_id: String,
 }
 
 /// `oneiron::task_verb::sdk::QueryAffect`.
