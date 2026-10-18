@@ -82,6 +82,10 @@ pub enum GateDenialReason {
     /// and only an explicit owner-authored actor-bound `auto` ceiling row
     /// matching the writing actor carries it.
     DenyWitnessMessageAuthorNotAuthorized,
+    /// FIX 1380: the comm dial does not admit this message's address: the
+    /// target is outside the sender's reach, or a live dispatch of the target
+    /// hears only its parent and its children.
+    DenyMessageAddress,
 }
 
 impl GateDenialReason {
@@ -111,6 +115,7 @@ impl GateDenialReason {
             Self::DenyWitnessMessageAuthorNotAuthorized => {
                 "gate.deny.witness_message.author_not_authorized"
             }
+            Self::DenyMessageAddress => "gate.deny.message_address",
         }
     }
 
@@ -142,6 +147,7 @@ impl GateDenialReason {
             "gate.deny.witness_message.author_not_authorized" => {
                 Some(Self::DenyWitnessMessageAuthorNotAuthorized)
             }
+            "gate.deny.message_address" => Some(Self::DenyMessageAddress),
             _ => None,
         }
     }
@@ -158,7 +164,8 @@ impl GateDenialReason {
             | Self::DenyDreamerPrecommitMalformed
             | Self::DenyDreamerPrecommitNoEvidence
             | Self::DenyWitnessMessageMalformedEnvelope
-            | Self::DenyWitnessMessageAuthorNotAuthorized => GateDenialOutcome::Deny,
+            | Self::DenyWitnessMessageAuthorNotAuthorized
+            | Self::DenyMessageAddress => GateDenialOutcome::Deny,
             Self::PendingActorCeiling
             | Self::PendingSourceTrust
             | Self::PendingCriticalityFloor

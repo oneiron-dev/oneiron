@@ -13,6 +13,9 @@ side_tables! {
     ACTOR_CLAIMS_DISTILL_RUNNER_CURSOR: VaultMeta b"actor_claims:distill_runner_cursor:v1" Raw;
     /// Per-agent, per-unit launch spend calibration folded from settled launches. Key: string.
     AGENT_DISPATCH_SPEND_CALIBRATION: VaultMeta b"agent.dispatch.calibration.v1\0" LegacyJson;
+    /// FIX 1380: one running child's comm widening, its per-reach asks to its parent and the
+    /// reach the parent approved. Key: id16.
+    AGENT_DISPATCH_COMM_WIDEN: VaultMeta b"agent.dispatch.comm.v1\0" Named Engine;
     /// Resumable partial-result hold for one gracefully stopped spawn (OF-541). Key: id16.
     AGENT_DISPATCH_PLAN_HOLD: VaultMeta b"agent.dispatch.hold.v1\0" LegacyJson;
     /// Approved board-widened context slice override recorded for one parent attempt. Key: id16.

@@ -221,7 +221,7 @@ export type ShapeApplyRequest = { plan: ShapePlan; approve?: number[] }
 /** `oneiron::dreamer_runner::maintenance::identity::MentionProvenance` */
 export type MentionProvenance = { turn: string; message: string; start: number; end: number }
 /** `oneiron::memory::people_verbs::MessagePersonRequest` */
-export type MessagePersonRequest = { pr: string; text: string; mention?: MentionProvenance | null }
+export type MessagePersonRequest = { pr: string; text: string; mention?: MentionProvenance | null; from_project?: string | null; to_project?: string | null }
 /** `oneiron::memory::witness::types::WitnessReceipt` */
 export type WitnessReceipt = { turn_short_id: string; message_short_ids: string[]; receipt_ref: string; turn?: RecordRef | null; messages?: RecordRef[] }
 /** `oneiron::memory::people_verbs::MessagePersonReceipt` */

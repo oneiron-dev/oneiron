@@ -30,7 +30,7 @@ pub const DEFAULT_BASE_LOGICAL_ID: &str = "sys.default";
 pub const AGENT_DISPATCH_INPUT_SCHEMA_VERSION: u64 = 1;
 
 /// The pinned dispatch-input body keys (dreamer-payload-side snake_case).
-pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 21] = [
+pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 22] = [
     "schema_version",
     "target",
     "agent_def",
@@ -52,6 +52,7 @@ pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 21] = [
     "team",
     "plan",
     "objectives",
+    "comm",
 ];
 
 pub(super) const KEY_SCHEMA_VERSION: &str = AGENT_DISPATCH_INPUT_KEYS[0];
@@ -86,6 +87,8 @@ pub(super) const KEY_TEAM: &str = AGENT_DISPATCH_INPUT_KEYS[18];
 pub(super) const KEY_PLAN: &str = AGENT_DISPATCH_INPUT_KEYS[19];
 /// OF-544: the objectives the caller gave the dispatch.
 pub(super) const KEY_OBJECTIVES: &str = AGENT_DISPATCH_INPUT_KEYS[20];
+/// FIX 1380: the comm reach the dispatch resolved at spawn. Required.
+pub(super) const KEY_COMM: &str = AGENT_DISPATCH_INPUT_KEYS[21];
 
 /// The configured compatibility cap for a parent whose persisted depth is
 /// absent or unreadable — a schema-v1 row, or an attempt that is not an
@@ -177,10 +180,15 @@ pub struct AgentDispatchInput {
     /// order; its confession seals against them. `None`: none were given,
     /// and the runner infers its own.
     pub objectives: Option<Vec<String>>,
+    /// FIX 1380: whom this dispatch may address, resolved once at spawn:
+    /// the spawn's request or its role's default, clamped to its parent's.
+    /// ARCH-0067: "`comm` is whom the child may address".
+    pub comm: super::CommReach,
 }
 
 impl AgentDispatchInput {
     /// The pre-ONE-1709 payload shape: no spawn context, no depth budget.
+    /// With no project to lead it is a worker, so it takes a worker's reach.
     #[must_use]
     pub fn frozen(target: AgentDispatchTarget, definition: AgentDefinition) -> Self {
         Self {
@@ -201,6 +209,7 @@ impl AgentDispatchInput {
             team: None,
             plan: None,
             objectives: None,
+            comm: super::comm::default_comm_reach(super::comm::SpawnRole::Worker),
         }
     }
 }
@@ -255,6 +264,9 @@ pub struct AgentSpawnContext {
     /// and in order; its confession seals against them. `None` lets the
     /// runner infer its own. Never inherited from the parent.
     pub objectives: Option<Vec<String>>,
+    /// FIX 1380: the comm reach the spawner asks for. `None` takes the
+    /// spawn role's default; either is clamped to the parent's reach.
+    pub comm: Option<super::CommReach>,
 }
 
 impl AgentSpawnContext {

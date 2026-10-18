@@ -99,6 +99,10 @@ pub(super) struct WidenIntent {
     /// approval like the rest of the spawn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub objectives: Option<Vec<String>>,
+    /// The comm reach the spawn asked for (FIX 1380), resolved at approval
+    /// like the rest of the spawn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comm: Option<super::CommReach>,
 }
 
 impl WidenIntent {
@@ -126,6 +130,7 @@ impl WidenIntent {
             team: spawn.team.clone(),
             plan: spawn.plan.clone(),
             objectives: spawn.objectives.clone(),
+            comm: spawn.comm,
         })
     }
 
@@ -176,6 +181,7 @@ impl WidenIntent {
                 team: self.team.clone(),
                 plan: self.plan.clone(),
                 objectives: self.objectives.clone(),
+                comm: self.comm,
             },
         ))
     }

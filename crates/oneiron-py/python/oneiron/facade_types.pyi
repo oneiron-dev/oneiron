@@ -542,6 +542,8 @@ class MessagePersonRequest(TypedDict):
     pr: str
     text: str
     mention: NotRequired[MentionProvenance | None]
+    from_project: NotRequired[str | None]
+    to_project: NotRequired[str | None]
 class WitnessReceipt(TypedDict):
     turn_short_id: str
     message_short_ids: list[str]

@@ -85,6 +85,10 @@ pub(super) struct WorkflowIntent {
     /// A retry naming another list is another intent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub objectives: Option<Vec<String>>,
+    /// The comm reach the caller asked for (FIX 1380). Each leaf resolves
+    /// it against the real parent; a retry naming another is another intent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comm: Option<super::CommReach>,
 }
 
 #[derive(Serialize, Deserialize)]

@@ -289,11 +289,11 @@ fn settle_with_cutoff_in(
             result.settlement.outcome_answer_ref = Some(bound.claim);
         }
     }
-    // OF-365: an attendee ask's owner-proved word resolves the speaker's
-    // identity in the settling commit; no other ask is touched.
+    // OF-365 and each routed ask settle their own domain in this commit only.
     super::attendee_answer::resolve_answer_in(vault, txn, &group, &result, owner)?;
     super::training_offer_ask::resolve_answer_in(vault, txn, &group, &result, owner)?;
     super::training_swap_ask::resolve_answer_in(vault, txn, &group, &result, owner)?;
+    super::comm_widen::resolve_answer_in(vault, txn, &group, &result)?;
     let proof = ask_record::sign_link_settlement(vault, txn, id, &group, &result)?;
     result.settlement.link_result_proof = proof;
     ask_record::put(vault, txn, reference, SETTLEMENT, &result, now)?;
