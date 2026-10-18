@@ -399,9 +399,7 @@ impl Vault {
         purpose: FamilyPurpose,
         at: u64,
     ) -> Result<SourceFamily> {
-        self.with_write_txn_grouped(|txn| {
-            assign_family_in_txn(self, txn, seat, roots, purpose, at)
-        })
+        self.with_write_txn_grouped(|txn| assign_family_in_txn(self, txn, seat, roots, purpose, at))
     }
 
     /// The family `root` belongs to for `seat`, if assigned.
@@ -424,9 +422,7 @@ impl Vault {
     /// Unbounded references, an unassigned receipt, lineage that spans
     /// families or seats, an invalid draw probability, or storage errors.
     pub fn record_eval_case(&self, draft: &EvalCaseDraft, at: u64) -> Result<EvalCase> {
-        self.with_write_txn_grouped(|txn| {
-            record_case_in_txn(self, txn, draft, at)
-        })
+        self.with_write_txn_grouped(|txn| record_case_in_txn(self, txn, draft, at))
     }
 
     /// Attach an outcome, audit or judge label to a case. An owner's pick
@@ -533,7 +529,8 @@ fn assign_family_in_txn(
         return Ok(family);
     }
     for root in &fresh {
-        vault.store
+        vault
+            .store
             .vault_meta
             .put(txn, &root_key(seat, root)?, family.id.as_bytes())?;
     }

@@ -6,6 +6,13 @@ not a claim that every engine-internal method is a public SDK verb.
 Names are stable: a new export or rename must update the engine catalog,
 both bindings and their export-census tests in one change.
 
+- `vault.commitments.create`
+- `vault.commitments.get`
+- `vault.commitments.instances`
+- `vault.commitments.proposals`
+- `vault.commitments.fulfill`
+- `vault.commitments.release`
+- `vault.commitments.supersede`
 - `fetch`
 - `crawl`
 - `report`
@@ -74,6 +81,11 @@ both bindings and their export-census tests in one change.
 - `vault.retrieval.aging.configure`
 - `vault.retrieval.weights.get`
 - `vault.retrieval.weights.configure`
+- `vault.retrieval.hyde.configure`
+- `vault.retrieval.hyde.get`
+- `vault.retrieval.hyde.pending`
+- `vault.retrieval.hyde.complete`
+- `vault.retrieval.hyde.receipt`
 - `vault.affect.annotations.put`
 - `vault.tagging.status`
 - `vault.tagging.tags`
@@ -183,6 +195,8 @@ both bindings and their export-census tests in one change.
 - `vault.skills.governance.set`
 - `vault.packs.hooks.bind`
 - `vault.packs.hooks.list`
+- `vault.packs.hooks.grant.set`
+- `vault.packs.hooks.grant.get`
 - `vault.packs.hooks.qualify`
 - `vault.packs.put`
 - `vault.packs.connector.prepare`
@@ -261,6 +275,9 @@ both bindings and their export-census tests in one change.
 - `vault.trusted_contacts.concern.authorize`
 - `vault.trusted_contacts.concern.propose`
 - `vault.trusted_contacts.concern.deliver`
+- `vault.guests.share`
+- `vault.guests.export_envelope`
+- `vault.guests.reshare`
 - `vault.guests.revoke`
 - `vault.guests.mint_slip`
 - `vault.support_grants.mint`
@@ -425,6 +442,9 @@ both bindings and their export-census tests in one change.
 - `vault.shares.create`
 - `vault.shares.revoke`
 - `vault.shares.view`
+- `host.compact`
+- `host.wake`
+- `host.budget.hit`
 - `vault.hooks.replay`
 - `vault.hooks.regen.due`
 - `vault.hooks.regen.get`
@@ -651,6 +671,11 @@ both bindings and their export-census tests in one change.
 - `vault.booking.constraint_turn`
 - `vault.booking.page_token`
 - `calendar.invite`
+- `calendar.ics.configure`
+- `calendar.ics.poll`
+- `calendar.ics.status`
+- `vault.calendar.passports.read`
+- `vault.calendar.passports.history`
 - `calendar.connector.configure`
 - `calendar.connector.get`
 - `calendar.connector.pull`
@@ -726,6 +751,11 @@ both bindings and their export-census tests in one change.
 - `vault.runs.checkpoint`
 - `vault.consolidation.promote`
 - `vault.consolidation.evidence`
+- `vault.sieve.evidence`
+- `vault.sieve.evidence.replay`
+- `vault.sieve.cadence`
+- `vault.sieve.settlements`
+- `vault.sieve.settlements.get`
 - `vault.sieve.queue`
 - `vault.sieve.retained`
 - `vault.sieve.receipts`
@@ -804,3 +834,13 @@ both bindings and their export-census tests in one change.
 - `vault.runs.settle`
 - `vault.runs.settlement`
 - `vault.revert_run`
+- `vault.identity.merge`
+- `vault.identity.split`
+- `vault.identity.facet`
+- `vault.identity.assert_distinct`
+- `vault.identity.propose`
+- `vault.identity.undo`
+- `vault.identity.resolve`
+- `vault.identity.events.get`
+- `vault.identity.proposals.resolve`
+- `vault.identity.proposals.for_pair`

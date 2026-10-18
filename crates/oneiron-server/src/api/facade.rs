@@ -43,6 +43,7 @@ mod campaign_split_doors;
 mod channel_doors;
 mod checkout_doors;
 mod claim_settle_doors;
+mod commitment_doors;
 mod cleanup_doors;
 mod coach_offer_doors;
 mod code_doors;
@@ -75,13 +76,16 @@ mod feedback_doors;
 mod fold_doors;
 mod foreign_code_doors;
 mod gate_policy_doors;
-mod graduation_doors;
 mod goal_optimize_doors;
+mod graduation_doors;
 mod graph_ask_doors;
+mod guest_document_doors;
 mod guest_doors;
 mod hook_regen_doors;
+mod host_trigger_doors;
 pub(super) mod host_doors;
 mod hub_doors;
+mod identity_topology_doors;
 mod learning_doors;
 mod legal_hold_doors;
 mod lens_selection_doors;
@@ -103,6 +107,7 @@ mod research_doors;
 mod residence_doors;
 mod result_doors;
 mod retrieval_doors;
+mod hyde_doors;
 pub(super) mod role_picks;
 mod run_read_doors;
 mod run_review_doors;
@@ -116,6 +121,7 @@ mod shared_act_doors;
 mod shared_member_doors;
 mod shared_policy_doors;
 mod sieve_doors;
+mod sieve_observation_doors;
 mod skill_doors;
 mod skill_execution_doors;
 mod slim_doors;
@@ -133,11 +139,11 @@ mod weave_doors;
 mod web_fetch_doors;
 mod widen_proposal_doors;
 
+pub(crate) use admission_doors::{admission_observer, call_verb};
 pub(crate) use asr_doors::AsrSessions;
 pub(crate) use call_context::{FacadeCall, FacadeCallOutput};
 use call_context::{VerbContext, context_required, facade_invocation_id};
 pub(crate) use connector_call_doors::{connector_answer_as, connector_call_as};
-pub(crate) use admission_doors::{admission_observer, call_verb};
 pub(crate) use host_doors::ai_speech_for_run;
 pub(crate) use secret_use_doors::self_use_as;
 
@@ -693,6 +699,7 @@ pub(crate) async fn row_hooks_pre_with(
             domain: verb_hook_boundary::row_domain(&verb),
             reader,
         };
+        oneiron::runtime_hooks::host_doors::admit_trigger(&server.vault, &verb, &args)?;
         let admit = |args: &serde_json::Value| {
             oneiron::task_verb::sdk::validate_input(&verb, args)
                 .map_err(|error| error.to_string())?;

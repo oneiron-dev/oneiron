@@ -12,7 +12,9 @@
 //!   (purpose `SealedVaultBundle`), sized so the whole frame lands on the size
 //!   step; the padding is inside the ciphertext.
 //! - Inside: the publishing machine and its signature, the base section, then the
-//!   catalog of world sections. Each section is sealed again under a key derived
+//!   catalog of world sections, the world capsules and, last, the owner work
+//!   request it published for, if any (`publication`). Each section is sealed
+//!   again under a key derived
 //!   from its world's key and filed under a tag only a holder of that key can
 //!   compute, so a reader of the outer layer opens only the worlds it holds keys
 //!   for. A publisher carries a section it cannot read unchanged.
@@ -47,6 +49,7 @@
 #[cfg(feature = "sync")]
 mod admission;
 mod authority;
+mod publication;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -65,7 +68,9 @@ use super::{
     WrapRecipient, base_world, open_counted, os_fill, recipients, refused,
 };
 use crate::Vault;
-use crate::authority::{AuthorityFold, Destination, EffectiveRead, SealedCopies};
+use crate::authority::{
+    AuthorityEntryHash, AuthorityFold, Destination, EffectiveRead, SealedCopies,
+};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
 use crate::ports::TombstoneStoreRead;
@@ -74,6 +79,7 @@ use crate::store::Store;
 #[cfg(feature = "sync")]
 pub use self::admission::{PadAdmissionTarget, SealedPadAdmissionGrant};
 pub(crate) use self::authority::{BundleCarry, SealedWorldAuthority};
+pub(crate) use self::publication::bundle_publish_executor;
 
 /// The bundle's size step: every bundle is a positive multiple of it.
 pub const SEALED_BUNDLE_PAD_STEP_BYTES: usize = 64 * 1024 * 1024;
@@ -89,6 +95,8 @@ const SEALED_KEY_PADS_STEP_BYTES: usize = 64 * 1024;
 const SLOT_STEP: usize = 16;
 
 const FRAME_VERSION: u8 = 1;
+/// The byte before an upload's owner work request in a bundle body.
+const REQUEST_TAG: u8 = 1;
 const SLOT_LABEL: &[u8] = b"oneiron/sealed-vault-slot/v1\0";
 const PART_LABEL: &[u8] = b"oneiron/sealed-vault-part/v1\0";
 const BUNDLE_LABEL: &[u8] = b"oneiron/sealed-vault-bundle/v1\0";
@@ -501,6 +509,9 @@ pub struct OpenedVaultBundle {
     generation: SealedBundleGeneration,
     publisher: EntityId,
     signature: [u8; 64],
+    /// The owner work request the publisher published it for, inside the
+    /// signed content; `None` for the cadence's own upload.
+    request: Option<AuthorityEntryHash>,
     /// The digest the publisher's signature covers.
     signed: [u8; 32],
     base: Zeroizing<Vec<u8>>,
@@ -716,6 +727,8 @@ struct SealPlan {
     vault_id: [u8; 32],
     signing: SigningKey,
     publisher: EntityId,
+    /// The owner work request this upload publishes for.
+    request: Option<AuthorityEntryHash>,
     readers: Vec<HybridPublicKey>,
     /// Each fresh world capsule's readers: the machines mine here that may read
     /// the world, and the root.
@@ -834,9 +847,15 @@ impl Vault {
         let mine = fold.trusted_machine(secret.machine).is_some_and(|trusted| {
             trusted.profile.machine_key == signing.verifying_key().to_bytes()
         });
+        // The install his counted request asked to publish to `holder`, in any
+        // role (WILL L04 row 03), seals too: it still opens only the keys it
+        // holds as an eligible reader.
+        let asked = carry.request.is_some_and(|request| {
+            publication::asks(&fold, &request, secret.machine, Some(holder))
+        });
         // The owner's recipient choice: only a machine he marked "yours"
         // opens a world's key to seal it, never a rule on who decides.
-        if !mine {
+        if !mine && !asked {
             return Err(refused(
                 "the owner-selected world read policy excludes this destination; use an allowed \
                  holder",
@@ -909,6 +928,7 @@ impl Vault {
             vault_id,
             signing,
             publisher: secret.machine,
+            request: carry.request,
             readers,
             authority_readers,
             kit_root,
@@ -916,39 +936,23 @@ impl Vault {
         })
     }
 
-    /// Opens `bundle` with this machine's capsule, and checks that a machine mine
-    /// here signed it with its own key.
-    pub fn open_vault_bundle(&self, bundle: &SealedVaultBundle) -> Result<OpenedVaultBundle> {
-        let secret = self.machine_secret_outside_txn()?;
-        let opened = bundle.open_with(&self.bundle_vault_id()?, &secret.secret)?;
-        let txn = self.store.env.read_txn()?;
-        let fold = self.authority_view_readonly_in_txn(&txn)?;
-        if !fold
-            .trusted_machine(opened.publisher)
-            .is_some_and(|trusted| opened.signed_by(&trusted.profile.machine_key))
-        {
-            return Err(refused("no machine mine here signed the bundle"));
-        }
-        Ok(opened)
-    }
-
-    /// [`Self::open_vault_bundle`] for a publisher that carries the bundle's
-    /// sections on: it opens with this machine's capsule, and a machine the
-    /// owner vouched for signed it, mine here now or removed since
-    /// ([`OpenedVaultBundle::signed_by_owner_machine`]). So a latest generation
-    /// that a machine removed since sealed does not stop the next upload.
+    /// Opens `bundle`, read from `holder`, with this machine's capsule, and
+    /// checks its publisher with the one verifier a take, a carry and a kit
+    /// restore share ([`OpenedVaultBundle::require_publisher`]): a machine the
+    /// owner vouched for, mine here now or removed since, so a latest
+    /// generation that a machine removed since sealed does not stop the next
+    /// upload; or the install his counted request asked to publish.
     #[cfg(feature = "sync")]
-    pub(crate) fn open_vault_bundle_to_carry(
+    pub fn open_vault_bundle(
         &self,
         bundle: &SealedVaultBundle,
+        holder: Destination,
     ) -> Result<OpenedVaultBundle> {
         let secret = self.machine_secret_outside_txn()?;
         let opened = bundle.open_with(&self.bundle_vault_id()?, &secret.secret)?;
         let txn = self.store.env.read_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
-        if !opened.signed_by_owner_machine(&fold) {
-            return Err(refused("no machine of the owner's signed the bundle"));
-        }
+        opened.require_publisher(&fold, Some(holder))?;
         Ok(opened)
     }
 
@@ -1593,8 +1597,12 @@ fn parse_envelope(
 }
 
 /// label ‖ vault (32) ‖ generation (24) ‖ publisher (16) ‖ signature (64) ‖ base
-/// length (8) ‖ base ‖ section count (4) ‖ sections. The signature covers vault,
-/// generation, publisher and everything after it; the zeros after are padding.
+/// length (8) ‖ base ‖ section count (4) ‖ sections ‖ capsule count (4) ‖
+/// capsules, then, for an upload published on the owner's request, 1 ‖ the
+/// request's entry hash (32). The signature covers vault, generation, publisher
+/// and everything after it; the zeros after are padding, so a body with no
+/// request ends at its capsules, as every generation sealed before the field
+/// existed does.
 fn encode_bundle_body(
     plan: &SealPlan,
     generation: SealedBundleGeneration,
@@ -1621,6 +1629,10 @@ fn encode_bundle_body(
     body.extend_from_slice(&count.to_be_bytes());
     for capsule in authorities {
         capsule.encode(&mut body)?;
+    }
+    if let Some(request) = plan.request {
+        body.push(REQUEST_TAG);
+        body.extend_from_slice(&request);
     }
     let digest = signed_digest(
         &plan.vault_id,
@@ -1666,11 +1678,23 @@ fn decode_bundle_body(
         sections.push(section);
     }
     let authorities = SealedWorldAuthority::parse_all(&mut cursor)?;
+    // The request, when the content names one; a padding zero, or the body's
+    // end, is none, and is not signed content.
+    let mut content_end = cursor.at;
+    let request = match cursor.take(1) {
+        None | Some([0]) => None,
+        Some([REQUEST_TAG]) => {
+            let request = cursor.array().ok_or_else(malformed)?;
+            content_end = cursor.at;
+            Some(request)
+        }
+        Some(_) => return Err(malformed()),
+    };
     let signed = signed_digest(
         vault_id,
         generation,
         publisher,
-        &body[content_at..cursor.at],
+        &body[content_at..content_end],
     );
     if !cursor.rest_is_zero() {
         return Err(malformed());
@@ -1680,6 +1704,7 @@ fn decode_bundle_body(
         generation,
         publisher,
         signature,
+        request,
         signed,
         base,
         sections,

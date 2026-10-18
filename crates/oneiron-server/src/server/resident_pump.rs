@@ -940,7 +940,9 @@ fn task_text(status: &AgentDispatchStatus, parts: impl Iterator<Item = String>) 
         .then(|| brief.to_owned())
         .into_iter()
         .chain(parts)
-        .chain(std::iter::once(status.input.comm.prompt_block()))
+        .chain(std::iter::once(oneiron::agent_dispatch::comm_prompt_block(
+            status.input.comm,
+        )))
         .collect::<Vec<_>>()
         .join("\n\n")
 }
