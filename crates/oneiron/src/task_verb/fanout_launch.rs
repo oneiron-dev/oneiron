@@ -1227,7 +1227,9 @@ impl Memory<'_> {
         launch_ref: EntityId,
     ) -> MemoryResult<Option<FanoutLaunchReceipt>> {
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-        Ok(self.readable_task_fanout_in(&txn, launch_ref)?.map(|launch| launch.receipt()))
+        Ok(self
+            .readable_task_fanout_in(&txn, launch_ref)?
+            .map(|launch| launch.receipt()))
     }
 
     /// The launch door's same admission inside a batch observation's snapshot.
