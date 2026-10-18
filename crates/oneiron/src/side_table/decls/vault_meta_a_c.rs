@@ -281,7 +281,8 @@ side_tables! {
     /// Channel-identity lifecycle receipt ledger. Key: id16.
     CHANNEL_IDENTITY_LIFECYCLE_RECEIPT: VaultMeta b"channel_identity_lifecycle:v0:" Named;
     /// Channel-identity selection rule set. Key: ().
-    CHANNEL_IDENTITY_SELECTION_RULES: VaultMeta b"channel_identity_selection:v1:rules" Raw;
+    CHANNEL_IDENTITY_SELECTION_RULES: VaultMeta b"channel_identity_selection:v1:rules" Raw
+        => crate::channel_identity_selection::erase_rule_actor_in_txn;
     /// Per-repository environment blueprint. Key: bytes32.
     CHECKOUT_ENV_BLUEPRINT: VaultMeta b"checkout:env_blueprint:v1:" VersionedNamed;
     /// Checkout lease act. Key: hex32.
