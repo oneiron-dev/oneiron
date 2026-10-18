@@ -1289,6 +1289,41 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_slim_policy(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.slim.policy")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.slim.policy", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_slim_state(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.slim.state")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.slim.state", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_slim_resume_step(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.slim.resume_step")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.slim.resume_step", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_slim_drop_heavy(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.slim.drop_heavy")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.slim.drop_heavy", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_slim_resume(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.slim.resume")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.slim.resume", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_mesh_path_receipts(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.mesh.path_receipts")?;
         let output = py

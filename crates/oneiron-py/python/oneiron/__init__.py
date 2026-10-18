@@ -615,6 +615,9 @@ class Oneiron:
         def authority(self) -> "Oneiron._VaultAuthorityVerbs":
             return Oneiron._VaultAuthorityVerbs(self._client)
         @property
+        def slim(self) -> "Oneiron._VaultSlimVerbs":
+            return Oneiron._VaultSlimVerbs(self._client)
+        @property
         def mesh(self) -> "Oneiron._VaultMeshVerbs":
             return Oneiron._VaultMeshVerbs(self._client)
         @property
@@ -1319,6 +1322,24 @@ class Oneiron:
         def acknowledge(self, spec):
             """The owner acknowledges one saved handoff fork alarm."""
             return json.loads(_translate(lambda: self._client.vault_authority_handoff_alarms_acknowledge(json.dumps(spec))))
+    class _VaultSlimVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def policy(self, spec):
+            """Reads the serving host idle policy: the long outbound wait, no exit on idle and lazy heap rebuild."""
+            return json.loads(_translate(lambda: self._client.vault_slim_policy(json.dumps(spec))))
+        def state(self, spec):
+            """Observes FULL or SLIM atomically with this process id and the retained journaled resume pointer, without waking the vault."""
+            return json.loads(_translate(lambda: self._client.vault_slim_state(json.dumps(spec))))
+        def resume_step(self, spec):
+            """Reads a saved model checkpoint or outbound intent by its retained identity, including after FULL or restart, without reissuing it."""
+            return json.loads(_translate(lambda: self._client.vault_slim_resume_step(json.dumps(spec))))
+        def drop_heavy(self, spec):
+            """Drops rebuildable heap in process and returns the completed engine transition, drop counts or typed refusal; one journaled outbound step is required."""
+            return json.loads(_translate(lambda: self._client.vault_slim_drop_heavy(json.dumps(spec))))
+        def resume(self, spec):
+            """Resumes logical FULL in the same process and returns its completion receipt; indexes rebuild lazily and no saved outbound step is reissued."""
+            return json.loads(_translate(lambda: self._client.vault_slim_resume(json.dumps(spec))))
     class _VaultMeshVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

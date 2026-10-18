@@ -611,6 +611,31 @@ export_facade! {
     let output = client.vault_authority_history_import(&input)?;
     crate::codec::lift_record("vault.authority.history.import", &output)
 };
+"vault.slim.policy" => fn vault_slim_policy(&self) -> SlimIdlePolicy = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.slim.policy")?;
+    let output = client.vault_slim_policy(&input)?;
+    crate::codec::lift_record("vault.slim.policy", &output)
+};
+"vault.slim.state" => fn vault_slim_state(&self) -> SlimStateSnapshot = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.slim.state")?;
+    let output = client.vault_slim_state(&input)?;
+    crate::codec::lift_record("vault.slim.state", &output)
+};
+"vault.slim.resume_step" => fn vault_slim_resume_step(&self, input: SlimResumeStepRequest) -> SavedResumeStep = |client| {
+    let input: oneiron::slim::public::SlimResumeStepRequest = crate::codec::lower_record("vault.slim.resume_step", input)?;
+    let output = client.vault_slim_resume_step(&input)?;
+    crate::codec::lift_record("vault.slim.resume_step", &output)
+};
+"vault.slim.drop_heavy" => fn vault_slim_drop_heavy(&self, input: SlimDropRequest) -> SlimDropReceipt = |client| {
+    let input: oneiron::slim::public::SlimDropRequest = crate::codec::lower_record("vault.slim.drop_heavy", input)?;
+    let output = client.vault_slim_drop_heavy(&input)?;
+    crate::codec::lift_record("vault.slim.drop_heavy", &output)
+};
+"vault.slim.resume" => fn vault_slim_resume(&self) -> SlimResumeReceipt = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.slim.resume")?;
+    let output = client.vault_slim_resume(&input)?;
+    crate::codec::lift_record("vault.slim.resume", &output)
+};
 "vault.mesh.path_receipts" => fn vault_mesh_path_receipts(&self, input: MeshPathReceiptsRequest) -> Vec<MeshPathReceipt> = |client| {
     let input: oneiron::task_verb::sdk::MeshPathReceiptsRequest = crate::codec::lower_record("vault.mesh.path_receipts", input)?;
     let output = client.vault_mesh_path_receipts(&input)?;

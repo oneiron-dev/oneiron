@@ -128,6 +128,11 @@ both bindings and their export-census tests in one change.
 - `vault.authority.audit`
 - `vault.authority.history.export`
 - `vault.authority.history.import`
+- `vault.slim.policy`
+- `vault.slim.state`
+- `vault.slim.resume_step`
+- `vault.slim.drop_heavy`
+- `vault.slim.resume`
 - `vault.mesh.path_receipts`
 - `vault.inspection.resolve`
 - `vault.shared.propose_delete`

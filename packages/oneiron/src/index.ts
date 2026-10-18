@@ -650,6 +650,18 @@ export class Oneiron {
         acknowledge: (input: Facade.HandoffAlarmRequest): Facade.AuthorityHandoffAlarm => this.#call(() => this.#client.vaultAuthorityHandoffAlarmsAcknowledge(input) as Facade.AuthorityHandoffAlarm),
       }),
     },
+    slim: {
+      /** Reads the serving host idle policy: the long outbound wait, no exit on idle and lazy heap rebuild. */
+      policy: (input: Facade.EmptyRequest): Facade.SlimIdlePolicy => this.#call(() => this.#client.vaultSlimPolicy(input) as Facade.SlimIdlePolicy),
+      /** Observes FULL or SLIM atomically with this process id and the retained journaled resume pointer, without waking the vault. */
+      state: (input: Facade.EmptyRequest): Facade.SlimStateSnapshot => this.#call(() => this.#client.vaultSlimState(input) as Facade.SlimStateSnapshot),
+      /** Reads a saved model checkpoint or outbound intent by its retained identity, including after FULL or restart, without reissuing it. */
+      resume_step: (input: Facade.SlimResumeStepRequest): Facade.SavedResumeStep => this.#call(() => this.#client.vaultSlimResumeStep(input) as Facade.SavedResumeStep),
+      /** Drops rebuildable heap in process and returns the completed engine transition, drop counts or typed refusal; one journaled outbound step is required. */
+      drop_heavy: (input: Facade.SlimDropRequest): Facade.SlimDropReceipt => this.#call(() => this.#client.vaultSlimDropHeavy(input) as Facade.SlimDropReceipt),
+      /** Resumes logical FULL in the same process and returns its completion receipt; indexes rebuild lazily and no saved outbound step is reissued. */
+      resume: (input: Facade.EmptyRequest): Facade.SlimResumeReceipt => this.#call(() => this.#client.vaultSlimResume(input) as Facade.SlimResumeReceipt),
+    },
     mesh: {
       /** The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner. */
       path_receipts: (input: Facade.MeshPathReceiptsRequest): Facade.MeshPathReceipt[] => this.#call(() => this.#client.vaultMeshPathReceipts(input) as Facade.MeshPathReceipt[]),
