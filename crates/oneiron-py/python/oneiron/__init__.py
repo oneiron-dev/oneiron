@@ -1805,6 +1805,12 @@ class Oneiron:
         @property
         def checkout(self) -> "Oneiron._VaultCodeCheckoutVerbs":
             return Oneiron._VaultCodeCheckoutVerbs(self._client)
+        @property
+        def snapshots(self) -> "Oneiron._VaultCodeSnapshotsVerbs":
+            return Oneiron._VaultCodeSnapshotsVerbs(self._client)
+        @property
+        def symbols(self) -> "Oneiron._VaultCodeSymbolsVerbs":
+            return Oneiron._VaultCodeSymbolsVerbs(self._client)
     class _VaultCodeOriginVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1829,6 +1835,24 @@ class Oneiron:
         def bind(self, spec):
             """Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential."""
             return json.loads(_translate(lambda: self._client.vault_code_checkout_bind(json.dumps(spec))))
+    class _VaultCodeSnapshotsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def ingest(self, spec):
+            """Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt."""
+            return json.loads(_translate(lambda: self._client.vault_code_snapshots_ingest(json.dumps(spec))))
+        def get(self, spec):
+            """Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant."""
+            return json.loads(_translate(lambda: self._client.vault_code_snapshots_get(json.dumps(spec))))
+        def read(self, spec):
+            """Read one UTF-8 file and its SHA-256 from the frozen blobs of a pinned code snapshot, never from the folder on disk. Owner only."""
+            return json.loads(_translate(lambda: self._client.vault_code_snapshots_read(json.dumps(spec))))
+    class _VaultCodeSymbolsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def definitions(self, spec):
+            """Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language."""
+            return json.loads(_translate(lambda: self._client.vault_code_symbols_definitions(json.dumps(spec))))
     class _VaultAgentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

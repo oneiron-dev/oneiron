@@ -1181,6 +1181,26 @@ export_facade! {
     let output = client.vault_code_checkout_bind(&input)?;
     crate::codec::lift_record("vault.code.checkout.bind", &output)
 };
+"vault.code.snapshots.ingest" => fn vault_code_snapshots_ingest(&self, input: CodeSnapshotIngestRequest) -> CodeSnapshotView = |client| {
+    let input: oneiron::memory::codebase_doors::CodeSnapshotIngestRequest = crate::codec::lower_record("vault.code.snapshots.ingest", input)?;
+    let output = client.vault_code_snapshots_ingest(&input)?;
+    crate::codec::lift_record("vault.code.snapshots.ingest", &output)
+};
+"vault.code.snapshots.get" => fn vault_code_snapshots_get(&self, input: CodeSnapshotRequest) -> Option<CodeSnapshotView> = |client| {
+    let input: oneiron::memory::codebase_doors::CodeSnapshotRequest = crate::codec::lower_record("vault.code.snapshots.get", input)?;
+    let output = client.vault_code_snapshots_get(&input)?;
+    crate::codec::lift_record("vault.code.snapshots.get", &output)
+};
+"vault.code.snapshots.read" => fn vault_code_snapshots_read(&self, input: CodeSnapshotReadRequest) -> Option<CodeSnapshotPinnedFile> = |client| {
+    let input: oneiron::memory::codebase_doors::CodeSnapshotReadRequest = crate::codec::lower_record("vault.code.snapshots.read", input)?;
+    let output = client.vault_code_snapshots_read(&input)?;
+    crate::codec::lift_record("vault.code.snapshots.read", &output)
+};
+"vault.code.symbols.definitions" => fn vault_code_symbols_definitions(&self, input: CodeSnapshotDefinitionsRequest) -> CodeSnapshotDefinitionsView = |client| {
+    let input: oneiron::memory::codebase_doors::CodeSnapshotDefinitionsRequest = crate::codec::lower_record("vault.code.symbols.definitions", input)?;
+    let output = client.vault_code_symbols_definitions(&input)?;
+    crate::codec::lift_record("vault.code.symbols.definitions", &output)
+};
 "vault.artifacts.export" => fn vault_artifacts_export(&self, input: ArtifactExportRequest) -> Option<ArtifactExportFile> = |client| {
     let input: oneiron::blob_artifact::ArtifactExportRequest = crate::codec::lower_record("vault.artifacts.export", input)?;
     let output = client.vault_artifacts_export(&input)?;

@@ -266,6 +266,10 @@ vaultCodeOriginAuthorityGet(input: unknown): unknown
 vaultCodeOriginAuthoritySet(input: unknown): unknown
 vaultCodeOriginPublications(input: unknown): unknown
 vaultCodeCheckoutBind(input: unknown): unknown
+vaultCodeSnapshotsIngest(input: unknown): unknown
+vaultCodeSnapshotsGet(input: unknown): unknown
+vaultCodeSnapshotsRead(input: unknown): unknown
+vaultCodeSymbolsDefinitions(input: unknown): unknown
 vaultArtifactsExport(requestJson: string): string
 vaultAgentsCreate(input: unknown): unknown
 vaultAgentsGet(input: unknown): unknown

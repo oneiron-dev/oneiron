@@ -35,6 +35,7 @@ mod calendar_doors;
 mod campaign_split_doors;
 mod channel_doors;
 mod claim_settle_doors;
+mod codebase_doors;
 mod connector_call_doors;
 mod connector_pack_doors;
 mod core_write_doors;
