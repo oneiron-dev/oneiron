@@ -21,9 +21,11 @@ use crate::agent_dispatch::{CoordinationPattern, LivePlanRequest, SpawnNeed, Spa
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::learning_setting::{
-    SettingMode, SettingScope, check_row_terms, parse_row_key, read_scopes_in_txn, scoped_row_key,
+    SettingMode, SettingScope, check_row_terms, names_no_actor, parse_row_key, read_scopes_in_txn,
+    scoped_row_key,
 };
 use crate::llm::ModelId;
+use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::write_envelope::WriteActor;
 
@@ -199,8 +201,39 @@ pub fn clear_choice_row(
     })
 }
 
+/// Erasing `actor` from the owner's choice rows (FIX 3520): each row it set
+/// keeps its choice, weight, mode, scope, time and reason, and its setter
+/// reads [`ERASED_CALL_IDENTITY`]. A row still steers its spawn field: no
+/// layering reads who set it. One-way, in the erase's own transaction. An
+/// id whose entity is no actor scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a row that cannot be read.
+pub(crate) fn erase_choice_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let hex = actor.to_hex();
+    let mut rows = Vec::new();
+    for (key, mut row) in CHOICE.scan(&vault.store, wtxn)? {
+        if row.by == hex {
+            row.by = ERASED_CALL_IDENTITY.to_owned();
+            rows.push((key, row));
+        }
+    }
+    for (key, row) in rows {
+        CHOICE.put(&vault.store, wtxn, &key, &row)?;
+    }
+    Ok(())
+}
+
 /// Every owner choice row as stored, in key order: its scope, the row, and
-/// the owner who set it (32 hex).
+/// the owner who set it (32 hex, or "erased" once that owner was erased).
 ///
 /// # Errors
 ///

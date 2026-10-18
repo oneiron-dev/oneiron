@@ -20,7 +20,9 @@ use super::ceremony::sign;
 use super::ledger::state_in;
 use super::model::*;
 use crate::llm::decision::catalogue;
-use crate::llm::decision::{AnswerContract, AskRole, DecisionAsk, DecisionQuestion, RoleRank};
+use crate::llm::decision::{
+    AnswerActor, AnswerContract, AskRole, DecisionAsk, DecisionQuestion, RoleRank,
+};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};
@@ -83,9 +85,10 @@ pub struct HeldAskWait {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HeldSigningAnswer {
     /// Lands the signature: `by` answered as the holder of a `role`, and the
-    /// signature's trail names both.
+    /// signature's trail names both. An erased `by` lands nothing: its
+    /// authority ended with its erase (FIX 3520).
     Allow {
-        by: EntityId,
+        by: AnswerActor,
         role: RoleRank,
     },
     Decline,
@@ -356,8 +359,9 @@ impl Vault {
     /// field checks the call met; a document that moved on supersedes it.
     ///
     /// # Errors
-    /// The hold is no longer open, an event of the document awaits its
-    /// owner's answer (the next pass tries again), or the write failed.
+    /// The hold is no longer open, the allowing answerer was erased (the
+    /// hold stays asked), an event of the document awaits its owner's answer
+    /// (the next pass tries again), or the write failed.
     pub fn settle_esign_hold(
         &self,
         document: &str,
@@ -371,6 +375,9 @@ impl Vault {
             held.state = match answer {
                 HeldSigningAnswer::Decline => HeldSigningState::Declined { at: now },
                 HeldSigningAnswer::Allow { by, role } => {
+                    let by = by
+                        .id()
+                        .ok_or_else(|| invalid("the hold's allowing answerer was erased"))?;
                     let id = EntityId::from_hex(document)?;
                     let state = state_in(self, txn, id)?;
                     let signed = EsignEvent::Signed {

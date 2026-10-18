@@ -27,7 +27,8 @@ use super::ladder::{
 use super::rules::rule_reason;
 use super::types::invalid;
 use super::{
-    DecisionAnswer, DecisionQuestion, HostRuleRef, HumanAskReason, PairedReading, ProviderPin,
+    AnswerActor, DecisionAnswer, DecisionQuestion, HostRuleRef, HumanAskReason, PairedReading,
+    ProviderPin,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, Named, SideTable};
@@ -35,7 +36,8 @@ use crate::write_envelope::WriteActor;
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault};
 
 /// Every ask, keyed by its arrival number.
-const ASKS: SideTable<u64, DecisionAsk, Named> = SideTable::new(&side_table::DECISION_ASK);
+pub(super) const ASKS: SideTable<u64, DecisionAsk, Named> =
+    SideTable::new(&side_table::DECISION_ASK);
 
 /// How far back a new ask looks for the same open ask.
 const SAME_ASK_SCAN: usize = 4_096;
@@ -97,9 +99,10 @@ pub struct AskAnswer {
     pub answer: DecisionAnswer,
     /// Vault clock seconds when the answer landed.
     pub answered_at: u64,
-    /// The actor that answered, authenticated by its door.
-    #[serde(with = "super::codec::entity")]
-    pub by: EntityId,
+    /// The actor that answered, authenticated by its door; erased once that
+    /// actor was erased (FIX 3520).
+    #[serde(with = "super::codec::answer_actor")]
+    pub by: AnswerActor,
     /// The role it answered as, and whether it is a person or a bound agent.
     pub role: AskRole,
     pub kind: HolderKind,
@@ -465,7 +468,7 @@ impl Vault {
             held.answer = Some(AskAnswer {
                 answer,
                 answered_at,
-                by,
+                by: AnswerActor::Actor(by),
                 role,
                 kind,
                 changed: changed.is_some(),

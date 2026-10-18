@@ -1021,6 +1021,10 @@ class Oneiron:
         @property
         def evals(self) -> "Oneiron._VaultEvalsVerbs": ...
         @property
+        def cleanup(self) -> "Oneiron._VaultCleanupVerbs": ...
+        @property
+        def entities(self) -> "Oneiron._VaultEntitiesVerbs": ...
+        @property
         def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs": ...
         @property
         def courtesy_delete(self) -> "Oneiron._VaultCourtesyDeleteVerbs": ...
@@ -1674,6 +1678,12 @@ class Oneiron:
     class _VaultEvalsCohortsVerbs:
         def setup(self, spec: Facade.EvalCohortSetup) -> Facade.EvalAuthoringReport:
             """The owner sets up sealed cohorts from a pinned real inventory through the existing family, case and audited cut doors. Reports refused decisions; never serves sealed content or fabricates labels or skill provenance."""
+    class _VaultCleanupVerbs:
+        def run(self, spec: Facade.CleanupRunRequest) -> Facade.CleanupRunView:
+            """The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."""
+    class _VaultEntitiesVerbs:
+        def mention(self, spec: Facade.EntityMentionRequest) -> Facade.EntityResolutionWaterfallDecision:
+            """The owner resolves an evidence-backed mention through the existing waterfall, restoring its selected archived record in place and never minting a duplicate."""
     class _VaultLegalHoldsVerbs:
         def place(self, spec: Facade.LegalHoldPlaceRequest) -> Facade.LegalHold:
             """The owner places a customer legal hold on the named records or gate partitions."""

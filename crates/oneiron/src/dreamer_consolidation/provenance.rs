@@ -122,7 +122,8 @@ pub struct KeptDecision {
 
 /// The ask a decision went up as: its arrival number, the route the Dreamer
 /// bound, and the holder's answer once one landed (who, as which role, person
-/// or agent). A request never reads as a grant.
+/// or agent). The answer is copied as the ask holds it, so one read after its
+/// answerer's erase names no one (FIX 3520). A request never reads as a grant.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct KeptAsk {

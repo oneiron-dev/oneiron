@@ -14,11 +14,15 @@
 //! - `mediation` — host mediation: principals, backing refs, [`LensRenderFrame`].
 //! - `validate` — cross-cutting validators and the surface compiler.
 //! - `proposal`, `activation` — pack lens proposals and the owner's slot
-//!   selection (`vault.lenses.*`); `regen` — enacting a regeneration outcome
-//!   through those doors; `sdk` — the default vault projection verb.
+//!   selection (`vault.lenses.*`); `actor_erase` — an erased actor out of
+//!   both; `regen` — enacting a regeneration outcome through those doors;
+//!   `sdk` — the default vault projection verb.
 //! - `record_ref` — OF-063 typed record refs and their scoped resolution.
 
 mod activation;
+mod actor_erase;
+pub use actor_erase::{ACTOR_ERASE_UNSELECTED_LENS_PROPOSAL, UnselectedLensProposalErase};
+pub(crate) use actor_erase::{erase_proposal_actor_in_txn, erase_slot_actor_in_txn};
 mod atom;
 mod default_vault;
 pub use default_vault::{DefaultVaultInput, DefaultVaultItem, compose_default_vault};

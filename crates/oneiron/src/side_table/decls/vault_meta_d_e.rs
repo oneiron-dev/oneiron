@@ -4,11 +4,13 @@ side_tables! {
     VAULT_META_D_E;
     /// One typed-decision ask the ladder queued for the vault owner role, and its answer once
     /// given. Key: u64be(sequence).
-    DECISION_ASK: VaultMeta b"decision:ask:v1:" Named;
+    DECISION_ASK: VaultMeta b"decision:ask:v1:" Named
+        => crate::llm::decision::erase_ask_actor_in_txn;
     /// One revision of a host rule row: the owner's reason on an answered decision ask, the
     /// answer it gives that question about that evidence, and whether it was revoked. Key:
     /// id16 (rule) + u64be(revision).
-    DECISION_HOST_RULE: VaultMeta b"decision:host_rule:v1:" Named;
+    DECISION_HOST_RULE: VaultMeta b"decision:host_rule:v1:" Named
+        => crate::llm::decision::erase_rule_actor_in_txn;
     /// The creation record of one deck made from a kept outline: born-from, template, slides,
     /// write set and fit. Key: id16 (artifact).
     DECK_CREATION: VaultMeta b"deck:creation:v1:" Named;

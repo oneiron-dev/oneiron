@@ -470,7 +470,8 @@ side_tables! {
     SKILL_OPTIMIZE_OFFER_CHECK: VaultMeta b"skill_optimize:offer_check:v1:" Named;
     /// The stock switch an offer's approval bound: the replaced and new role bindings, and any
     /// undo. Key: id16 (offer).
-    SKILL_OPTIMIZE_OFFER_SWITCH: VaultMeta b"skill_optimize:offer_switch:v1:" Named;
+    SKILL_OPTIMIZE_OFFER_SWITCH: VaultMeta b"skill_optimize:offer_switch:v1:" Named
+        => crate::skill_optimize::erase_switch_actor_in_txn;
     /// The prepared training run an approved Train offer handed off, with the exact spec the
     /// owner authorized. Key: id16 (offer).
     SKILL_OPTIMIZE_OFFER_TRAINING: VaultMeta b"skill_optimize:offer_training:v1:" Named;

@@ -277,7 +277,8 @@ side_tables! {
     /// Owner seed or pin over one spawn choice (model, width, pattern or budget) at a goal, a
     /// project, a task type or the vault (value, weight in runs, setter, why). Key: string (choice
     /// "\0" mode, then the scope).
-    LEARNING_CHOICE: VaultMeta b"learning:choice:v1:" Raw;
+    LEARNING_CHOICE: VaultMeta b"learning:choice:v1:" Raw
+        => crate::learning_setting_choice::erase_choice_actor_in_txn;
     /// A team's derived coordination cost (wait by reason, reuse delay, duplicate work): a
     /// diagnostic, never a score. Key: string (team reference).
     LEARNING_COORDINATION: VaultMeta b"learning:coordination:v1:" Named;
@@ -292,7 +293,8 @@ side_tables! {
     LEARNING_PRIOR: VaultMeta b"learning:prior:v1:" Named;
     /// Owner seed or pin over one learned-setting catalog row (value, weight in runs, setter, why).
     /// Key: string (setting key "\0" mode).
-    LEARNING_SETTING: VaultMeta b"learning:setting:v1:" Raw;
+    LEARNING_SETTING: VaultMeta b"learning:setting:v1:" Raw
+        => crate::learning_setting::erase_setting_actor_in_txn;
     /// The vault-scope `learning.setting` fit, cached beside its claim for hot readers. Key: string
     /// (setting key).
     LEARNING_SETTING_FIT: VaultMeta b"learning:setting_fit:v1:" Named;
@@ -330,10 +332,12 @@ side_tables! {
     /// One proposed pack lens: its frozen compiled tree, the pack/skill slot and pack content
     /// hash it is bound to, and who proposed it. It mounts only once the owner selects it. Key:
     /// id16 (lens).
-    LENS_PROPOSAL: VaultMeta b"lens/proposal/v1\0" Named;
+    LENS_PROPOSAL: VaultMeta b"lens/proposal/v1\0" Named
+        => crate::lens::erase_proposal_actor_in_txn;
     /// The owner's consented selection of one proposed lens revision for a pack/skill slot.
     /// Key: string (pack name "\0" skill id hex).
-    LENS_SLOT: VaultMeta b"lens/slot/v1\0" Named;
+    LENS_SLOT: VaultMeta b"lens/slot/v1\0" Named
+        => crate::lens::erase_slot_actor_in_txn;
     /// Tracker issue id to task id. Key: string.
     LINEAR_ISSUE_REVERSE: VaultMeta b"linear.issue.v1/" Raw;
     /// One TASK's mirror control (OF-427 C6): whether it is opted out, its mapping revision and

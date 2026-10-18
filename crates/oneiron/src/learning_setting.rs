@@ -26,6 +26,9 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::write_envelope::WriteActor;
 
+mod actor_erase;
+pub(crate) use actor_erase::{erase_setting_actor_in_txn, names_no_actor};
+
 /// One learned knob: its key, its bounds and the value it ships with.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SettingSpec {
@@ -694,9 +697,10 @@ fn cached_fit(
 }
 
 /// Every owner row as stored, in key order: its scope, the row, and the
-/// owner who set it (32 hex), for the owner's list doors. A type row's key
-/// names its node only, so its scope reads `tree_version` 0: a type row
-/// matches its node at any tree version.
+/// owner who set it (32 hex, or "erased" once that owner was erased), for
+/// the owner's list doors. A type row's key names its node only, so its
+/// scope reads `tree_version` 0: a type row matches its node at any tree
+/// version.
 ///
 /// # Errors
 ///

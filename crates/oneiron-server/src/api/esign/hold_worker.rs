@@ -180,6 +180,9 @@ fn settle(server: &SyncServer, owner: EntityId, held: &HeldSigning) -> Result<()
     let Some(answer) = ask.answer else {
         return Ok(());
     };
+    // An allow whose answerer was erased carries the erased form, and the
+    // settle refuses it: the hold stays asked and the answer stays kept
+    // (FIX 3520).
     let answer = match answer.answer {
         DecisionAnswer::Choice(label) if label == HOLD_ALLOW => HeldSigningAnswer::Allow {
             by: answer.by,
