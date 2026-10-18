@@ -69664,7 +69664,7 @@
      "path": "src/config/models/mod.rs",
      "purpose": "`[models]`: which model serves each role, at three levels of detail",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 2,
       "re-export": 8,
@@ -71743,7 +71743,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 11,
       "struct": 1
      }
@@ -71794,7 +71794,7 @@
      "path": "src/models/mod.rs",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 20,
       "re-export": 14,
       "struct": 2
@@ -71912,7 +71912,7 @@
      "path": "src/models/router.rs",
      "purpose": "Every configured model and seat by id: the raw `/v1/llm` routes call whichever model they name, through its…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "fn": 6,
       "struct": 1
      }
@@ -71964,6 +71964,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DiscoveredStatus",
       "HealthState",
       "LimitHold",
       "ModelsStatus",
@@ -71978,7 +71979,7 @@
      "surface": {
       "crate-vis": 8,
       "enum": 2,
-      "struct": 6
+      "struct": 7
      }
     },
     {
