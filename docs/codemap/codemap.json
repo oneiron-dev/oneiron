@@ -15471,6 +15471,16 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_board/room_verbs/live_audience.rs",
+     "purpose": "What a room's live speakers add to its ceiling (FIX 1388/1389): their entry refs as audience terms beside…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/context_board/room_verbs_tests.rs",
@@ -16202,6 +16212,21 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "LiveSpeakerCall",
+      "RoomLiveSpeakerEntries"
+     ],
+     "path": "src/conversation/live_speakers.rs",
+     "purpose": "The live speakers of a room (FIX 1388/1389 C1/C2): the one engine source of which voice calls are live in a…",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 10,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "HistoryChoice",
       "MembershipAction",
       "MembershipRow",
@@ -16223,8 +16248,8 @@
      "path": "src/conversation/mod.rs",
      "purpose": "Room bodies, membership windows, session presence and audience visibility",
      "surface": {
-      "crate-vis": 7,
-      "re-export": 7
+      "crate-vis": 8,
+      "re-export": 8
      }
     },
     {
@@ -16236,7 +16261,7 @@
      "path": "src/conversation/output_guard.rs",
      "purpose": "The container output guard (OF-365 P5, FIX 1389): the fence between an attendee's first entry into a…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 3,
       "struct": 1
      }
@@ -18672,7 +18697,7 @@
      "path": "src/dreamer_consolidation/turn_text.rs",
      "purpose": "The read-only text of one TURN as a consolidation branch sees it",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 24
      }
     },
     {
@@ -18695,7 +18720,7 @@
      "path": "src/dreamer_consolidation/wake_plan.rs",
      "purpose": "One frozen read revision and exact preparation of queued consolidation work",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "struct": 2
      }
     },
@@ -19986,7 +20011,7 @@
      "path": "src/dreamer_wake/mod.rs",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "re-export": 11
      }
     },
@@ -20044,7 +20069,7 @@
      "path": "src/dreamer_wake/projector.rs",
      "purpose": "The projector's surprise check (ARCH-0026 RD-26): a due wake writes only when its material is new to the…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 2,
       "struct": 1
      }
@@ -27115,8 +27140,9 @@
      "path": "src/interlocutor.rs",
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)",
      "surface": {
+      "crate-vis": 3,
       "enum": 3,
-      "fn": 29,
+      "fn": 30,
       "struct": 4
      }
     },
@@ -47005,7 +47031,7 @@
      "path": "src/tagging/tags.rs",
      "purpose": "The saved tag sets: what save mode keeps for a tagged turn, the index of the entities they name, and the…",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 21,
       "enum": 2,
       "fn": 7,
       "struct": 5
@@ -47244,7 +47270,7 @@
      "path": "src/task_verb/ask_record/attendee_entry.rs",
      "purpose": "The protected first-entry fact of one attendee in one container (OF-365, ILDF2 P5)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -53811,7 +53837,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 57,
+     "files": 58,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -53839,7 +53865,7 @@
      "purpose": "Persisted, deterministic Rust API, schema and command-output contracts"
     },
     "conversation": {
-     "files": 16,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -54968,7 +54994,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3346,
+   "source_files": 3348,
    "test_files": 902
   },
   "oneiron-android": {
@@ -58038,13 +58064,15 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "RecordError"
+      "RecordError",
+      "RoomLiveSpeakersHold"
      ],
      "path": "src/error/record.rs",
      "purpose": "Record-domain errors: body validation and identity-collision refusals for the stored record families —…",
      "surface": {
       "crate-vis": 1,
-      "enum": 1
+      "enum": 1,
+      "struct": 1
      }
     },
     {
