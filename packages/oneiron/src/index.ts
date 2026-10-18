@@ -1145,6 +1145,14 @@ export class Oneiron {
       refresh: (input: Facade.QuestionRefreshRequest): Facade.AnswerRecord[] => this.#call(() => this.#client.vaultQuestionsRefresh(input) as Facade.AnswerRecord[]),
     },
     decisions: {
+      bands: {
+        /** The owner reads a question version's effective band on the running host; an unlearned row stays shadow at the supplied seed and version zero. */
+        read: (input: Facade.DecisionBandReadRequest): Facade.LearnedBand => this.#call(() => this.#client.vaultDecisionsBandsRead(input) as Facade.LearnedBand),
+        /** The owner declares a question version's learned band in shadow mode on the running host, advancing its band version for that reversibility. */
+        learn: (input: Facade.DecisionBandLearnRequest): Facade.LearnedBand => this.#call(() => this.#client.vaultDecisionsBandsLearn(input) as Facade.LearnedBand),
+        /** The owner enforces an already learned question-version and reversibility band on the running host without widening any decision dial or authority. */
+        enforce: (input: Facade.DecisionBandEnforceRequest): Facade.LearnedBand => this.#call(() => this.#client.vaultDecisionsBandsEnforce(input) as Facade.LearnedBand),
+      },
       asks: {
         answer: (input: Facade.DecisionAskAnswerRequest): Facade.DecisionAsk => this.#call(() => this.#client.vaultDecisionsAsksAnswer(input) as Facade.DecisionAsk),
         climb: (input: Facade.DecisionAskClimbRequest): Facade.ResolvedRole | null => this.#call(() => this.#client.vaultDecisionsAsksClimb(input) as Facade.ResolvedRole | null),

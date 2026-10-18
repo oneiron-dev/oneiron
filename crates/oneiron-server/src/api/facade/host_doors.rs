@@ -80,13 +80,14 @@ pub(crate) use super::graph_ask_doors::*;
 pub(crate) use super::share_doors::*;
 // The role-holder decision-ask doors (OF-493), likewise.
 pub(crate) use super::decision_ask_doors::*;
+pub(crate) use super::decision_band_doors::*;
 // The vault shape's apply door (ARCH-0070), likewise.
 pub(crate) use super::vault_shape_doors::*;
 // The owner's embedding-space doors (OF-370), likewise.
 pub(crate) use super::embedding_space_doors::*;
 // The owner's fan-out ruling doors (OF-393), likewise.
-pub(crate) use super::fanout_doors::*;
 pub(crate) use super::budget_doors::*;
+pub(crate) use super::fanout_doors::*;
 // The owner's learned-setting doors, likewise.
 pub(crate) use super::setting_doors::*;
 // The owner's historical secret lift sweep door (OF-067), likewise.
@@ -1072,6 +1073,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.courtesy_delete.sent"
         | "vault.courtesy_delete.incoming"
         | "vault.courtesy_delete.answer"
+        | "vault.decisions.bands.read"
+        | "vault.decisions.bands.learn"
+        | "vault.decisions.bands.enforce"
         | "vault.settings.learning"
         | "vault.settings.learning.put"
         | "vault.settings.learning.clear"

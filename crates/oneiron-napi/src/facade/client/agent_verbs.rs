@@ -2993,6 +2993,33 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_decisions_bands_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.decisions.bands.read", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_decisions_bands_learn(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.decisions.bands.learn", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_decisions_bands_enforce(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.decisions.bands.enforce", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_decisions_asks_answer(
         &self,
         input: serde_json::Value,

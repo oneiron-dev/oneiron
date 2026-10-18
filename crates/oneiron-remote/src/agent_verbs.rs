@@ -1033,6 +1033,15 @@ impl OneironClient {
                 "vault.questions.refresh" => remote_agent_verb_output::<
                     Vec<oneiron::llm::decision::questions::AnswerRecord>,
                 >(client, verb, &input),
+                "vault.decisions.bands.read" => remote_agent_verb_output::<
+                    oneiron::llm::decision::LearnedBand,
+                >(client, verb, &input),
+                "vault.decisions.bands.learn" => remote_agent_verb_output::<
+                    oneiron::llm::decision::LearnedBand,
+                >(client, verb, &input),
+                "vault.decisions.bands.enforce" => remote_agent_verb_output::<
+                    oneiron::llm::decision::LearnedBand,
+                >(client, verb, &input),
                 "vault.decisions.asks.answer" => remote_agent_verb_output::<
                     oneiron::llm::decision::DecisionAsk,
                 >(client, verb, &input),
@@ -5403,6 +5412,42 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.questions.refresh", value)
+    }
+    pub fn vault_decisions_bands_read(
+        &self,
+        input: &oneiron::llm::decision::DecisionBandReadRequest,
+    ) -> Result<oneiron::llm::decision::LearnedBand, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.decisions.bands.read", value)
+    }
+    pub fn vault_decisions_bands_learn(
+        &self,
+        input: &oneiron::llm::decision::DecisionBandLearnRequest,
+    ) -> Result<oneiron::llm::decision::LearnedBand, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.decisions.bands.learn", value)
+    }
+    pub fn vault_decisions_bands_enforce(
+        &self,
+        input: &oneiron::llm::decision::DecisionBandEnforceRequest,
+    ) -> Result<oneiron::llm::decision::LearnedBand, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.decisions.bands.enforce", value)
     }
     pub fn vault_decisions_asks_answer(
         &self,

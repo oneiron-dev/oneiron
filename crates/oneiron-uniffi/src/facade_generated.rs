@@ -1621,6 +1621,21 @@ export_facade! {
     let output = client.vault_questions_refresh(&input)?;
     crate::codec::lift_record("vault.questions.refresh", &output)
 };
+"vault.decisions.bands.read" => fn vault_decisions_bands_read(&self, input: DecisionBandReadRequest) -> LearnedBand = |client| {
+    let input: oneiron::llm::decision::DecisionBandReadRequest = crate::codec::lower_record("vault.decisions.bands.read", input)?;
+    let output = client.vault_decisions_bands_read(&input)?;
+    crate::codec::lift_record("vault.decisions.bands.read", &output)
+};
+"vault.decisions.bands.learn" => fn vault_decisions_bands_learn(&self, input: DecisionBandLearnRequest) -> LearnedBand = |client| {
+    let input: oneiron::llm::decision::DecisionBandLearnRequest = crate::codec::lower_record("vault.decisions.bands.learn", input)?;
+    let output = client.vault_decisions_bands_learn(&input)?;
+    crate::codec::lift_record("vault.decisions.bands.learn", &output)
+};
+"vault.decisions.bands.enforce" => fn vault_decisions_bands_enforce(&self, input: DecisionBandEnforceRequest) -> LearnedBand = |client| {
+    let input: oneiron::llm::decision::DecisionBandEnforceRequest = crate::codec::lower_record("vault.decisions.bands.enforce", input)?;
+    let output = client.vault_decisions_bands_enforce(&input)?;
+    crate::codec::lift_record("vault.decisions.bands.enforce", &output)
+};
 "vault.decisions.asks.answer" => fn vault_decisions_asks_answer(&self, input: DecisionAskAnswerRequest) -> DecisionAsk = |client| {
     let input: oneiron::receipt::DecisionAskAnswerRequest = crate::codec::lower_record("vault.decisions.asks.answer", input)?;
     let output = client.vault_decisions_asks_answer(&input)?;

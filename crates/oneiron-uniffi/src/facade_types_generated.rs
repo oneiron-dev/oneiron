@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 435 facade rows, 1583 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 9; generated in and out: 399.
+// UniFFI census: 438 facade rows, 1588 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 9; generated in and out: 402.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -19746,6 +19746,63 @@ pub enum QuestionAnswer {
 pub struct QuestionRefreshRequest {
     #[serde(rename = "id")]
     pub id: String,
+}
+
+/// `oneiron::llm::decision::policy::DecisionBandReadRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DecisionBandReadRequest {
+    #[serde(rename = "question")]
+    pub question: DecisionQuestion,
+    #[serde(rename = "reversibility")]
+    pub reversibility: Reversibility,
+    #[serde(rename = "seed")]
+    pub seed: DecisionBand,
+}
+
+/// `oneiron::llm::decision::policy::BandMode`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum BandMode {
+    #[serde(rename = "shadow")]
+    Shadow,
+    #[serde(rename = "enforce")]
+    Enforce,
+}
+
+/// `oneiron::llm::decision::policy::LearnedBand`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LearnedBand {
+    #[serde(rename = "band")]
+    pub band: DecisionBand,
+    #[serde(rename = "version")]
+    pub version: u32,
+    #[serde(rename = "mode")]
+    pub mode: BandMode,
+}
+
+/// `oneiron::llm::decision::policy::DecisionBandLearnRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DecisionBandLearnRequest {
+    #[serde(rename = "question")]
+    pub question: DecisionQuestion,
+    #[serde(rename = "reversibility")]
+    pub reversibility: Reversibility,
+    #[serde(rename = "band")]
+    pub band: DecisionBand,
+    #[serde(rename = "version")]
+    pub version: u32,
+}
+
+/// `oneiron::llm::decision::policy::DecisionBandEnforceRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DecisionBandEnforceRequest {
+    #[serde(rename = "question")]
+    pub question: DecisionQuestion,
+    #[serde(rename = "reversibility")]
+    pub reversibility: Reversibility,
 }
 
 /// `oneiron::receipt::decision_asks::DecisionAskAnswerRequest`.
