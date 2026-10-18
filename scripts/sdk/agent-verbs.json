@@ -4192,7 +4192,9 @@
       "host_door_lists": true,
       "host_door_caller": true,
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false,
       "openapi": true
     },
@@ -4206,7 +4208,9 @@
       "host_door_lists": true,
       "host_door_caller": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false,
       "openapi": true
     },
@@ -4528,6 +4532,202 @@
       "admission": {
         "unrestricted_record_scope": true,
         "validate": "input.limit()?;"
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.publish_approval",
+      "description": "Computes the exact publication approval digest for the existing owner approve-once door; it grants nothing.",
+      "input": "crate::artifact_hosting::door_types::ArtifactPublishRequest",
+      "output": "crate::artifact_hosting::door_types::ArtifactPublishApproval",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.publish_approval\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.publish",
+      "description": "Publishes one immutable code fork or numbered blob export with an explicit audience through the existing Gate, returning its pointer and durable receipt ref.",
+      "input": "crate::artifact_hosting::door_types::ArtifactPublishRequest",
+      "output": "crate::artifact_hosting::door_types::ArtifactPublishView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.publish\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.repoint",
+      "description": "Repoints one artifact channel to an exact immutable export through the publication Gate; use a new publish id, and earlier receipts survive.",
+      "input": "crate::artifact_hosting::door_types::ArtifactPublishRequest",
+      "output": "crate::artifact_hosting::door_types::ArtifactPublishView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.repoint\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.pointer",
+      "description": "Reads the current artifact channel pin and audience under the owner credential; null when absent or withheld.",
+      "input": "crate::artifact_hosting::door_types::ArtifactPointerRequest",
+      "output": "Option<crate::artifact_hosting::ArtifactPointer>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.pointer\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.unpublish",
+      "description": "Removes one artifact channel pointer without deleting its immutable export or earlier publication receipts.",
+      "input": "crate::artifact_hosting::door_types::ArtifactPointerRequest",
+      "output": "crate::artifact_hosting::door_types::ArtifactUnpublished",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.unpublish\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.link_token",
+      "description": "Mints a serving-only link token and its digest tier; publication still requires a separate exact Gate authorization.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "crate::artifact_hosting::door_types::ArtifactLinkToken",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.link_token\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.live_preview.register",
+      "description": "Opens a draft-labelled, owner-private live preview only for the exact process, port and lease already declared by the trusted session runtime.",
+      "input": "crate::artifact_hosting::door_types::ArtifactPreviewRegisterRequest",
+      "output": "crate::artifact_hosting::door_types::ArtifactPreviewView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.live_preview.register\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.live_preview.read",
+      "description": "Reads a live draft endpoint and a caller-specific preview URL as the owner or a named invitee; uninvited callers are refused.",
+      "input": "crate::artifact_hosting::door_types::ArtifactPreviewRequest",
+      "output": "Option<crate::artifact_hosting::door_types::ArtifactPreviewView>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.live_preview.read\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door_caller": true
+    },
+    {
+      "name": "vault.artifacts.live_preview.close",
+      "description": "Closes one owner-private preview lease, invalidating its old URLs, streams and upgrades without changing any published artifact pin.",
+      "input": "crate::artifact_hosting::door_types::ArtifactPreviewRequest",
+      "output": "crate::artifact_hosting::door_types::ArtifactPreviewClosed",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.live_preview.close\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.live_preview.invite",
+      "description": "Invites one named principal to a private live preview under the lease owner proof; no public audience is created.",
+      "input": "crate::artifact_hosting::door_types::ArtifactPreviewInviteRequest",
+      "output": "crate::artifact_hosting::door_types::ArtifactPreviewInvitation",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.live_preview.invite\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.live_preview.revoke_invite",
+      "description": "Revokes one private preview invitation and its personal credentials, including active streams.",
+      "input": "crate::artifact_hosting::door_types::ArtifactPreviewInviteRequest",
+      "output": "crate::artifact_hosting::door_types::ArtifactPreviewInvitation",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.live_preview.revoke_invite\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.live_preview.share",
+      "description": "Mints a revocable sharing URL for one private live preview, replacing any earlier sharing URL; no artifact is published.",
+      "input": "crate::artifact_hosting::door_types::ArtifactPreviewRequest",
+      "output": "crate::artifact_hosting::door_types::ArtifactPreviewShare",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.live_preview.share\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.live_preview.revoke_share",
+      "description": "Revokes the private preview sharing URL and streams that used it while preserving separate owner and invitee credentials.",
+      "input": "crate::artifact_hosting::door_types::ArtifactPreviewRequest",
+      "output": "crate::artifact_hosting::door_types::ArtifactPreviewShare",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.live_preview.revoke_share\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
       },
       "section": false
     },
@@ -10500,7 +10700,9 @@
     {
       "name": "vault.tasks.linear.mapping",
       "description": "One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events.",
-      "refs": ["/task_ref"],
+      "refs": [
+        "/task_ref"
+      ],
       "input": "crate::linear_sync::LinearMappingRequest",
       "output": "crate::linear_sync::LinearMappingView",
       "call": "memory.linear_mapping(&input)?",
@@ -10524,14 +10726,18 @@
       "host_door_caller": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false,
       "openapi": true
     },
     {
       "name": "vault.tasks.linear.provenance",
       "description": "One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts.",
-      "refs": ["/task_ref"],
+      "refs": [
+        "/task_ref"
+      ],
       "input": "crate::linear_sync::LinearProvenanceRequest",
       "output": "crate::linear_sync::LinearProvenancePage",
       "call": "memory.linear_provenance(&input)?",
