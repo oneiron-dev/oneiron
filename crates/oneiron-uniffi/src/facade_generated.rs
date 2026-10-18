@@ -1581,6 +1581,11 @@ export_facade! {
     let output = client.vault_task_types_get(&input)?;
     crate::codec::lift_record("vault.task_types.get", &output)
 };
+"vault.agents.spawn.get" => fn vault_agents_spawn_get(&self, input: PlannedSpawnRead) -> PlannedSpawnObservation = |client| {
+    let input: oneiron::team::doors::PlannedSpawnRead = crate::codec::lower_record("vault.agents.spawn.get", input)?;
+    let output = client.vault_agents_spawn_get(&input)?;
+    crate::codec::lift_record("vault.agents.spawn.get", &output)
+};
 "vault.workspace.establish" => fn vault_workspace_establish(&self, input: WorkspacePresetRequest) -> WorkspacePresetReceipt = |client| {
     let input: oneiron::task_verb::sdk::WorkspacePresetRequest = crate::codec::lower_record("vault.workspace.establish", input)?;
     let output = client.vault_workspace_establish(&input)?;

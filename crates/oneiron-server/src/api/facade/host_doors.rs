@@ -1151,6 +1151,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.workflows.status"
         | "vault.task_types.pin"
         | "vault.task_types.get"
+        | "vault.agents.spawn.get"
         | "vault.workspace.roster"
         | "vault.booking.page_token"
         | "vault.channel_identities.provision"

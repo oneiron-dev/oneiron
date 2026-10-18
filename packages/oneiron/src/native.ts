@@ -346,6 +346,7 @@ vaultWorkflowsDispatch(input: unknown): unknown
 vaultWorkflowsStatus(input: unknown): unknown
 vaultTaskTypesPin(input: unknown): unknown
 vaultTaskTypesGet(input: unknown): unknown
+vaultAgentsSpawnGet(input: unknown): unknown
 vaultWorkspaceEstablish(input: unknown): unknown
 vaultWorkspaceMembersOnboard(input: unknown): unknown
 vaultWorkspaceRoster(input: unknown): unknown

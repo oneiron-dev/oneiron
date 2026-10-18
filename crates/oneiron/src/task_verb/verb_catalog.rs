@@ -320,6 +320,7 @@ pub enum AgentVerb {
     VaultWorkflowsStatus,
     VaultTaskTypesPin,
     VaultTaskTypesGet,
+    VaultAgentsSpawnGet,
     VaultWorkspaceEstablish,
     VaultWorkspaceMembersOnboard,
     VaultWorkspaceRoster,
@@ -914,6 +915,7 @@ impl AgentVerb {
         Self::VaultWorkflowsStatus,
         Self::VaultTaskTypesPin,
         Self::VaultTaskTypesGet,
+        Self::VaultAgentsSpawnGet,
         Self::VaultWorkspaceEstablish,
         Self::VaultWorkspaceMembersOnboard,
         Self::VaultWorkspaceRoster,
@@ -1517,6 +1519,7 @@ impl AgentVerb {
             Self::VaultWorkflowsStatus => "vault.workflows.status",
             Self::VaultTaskTypesPin => "vault.task_types.pin",
             Self::VaultTaskTypesGet => "vault.task_types.get",
+            Self::VaultAgentsSpawnGet => "vault.agents.spawn.get",
             Self::VaultWorkspaceEstablish => "vault.workspace.establish",
             Self::VaultWorkspaceMembersOnboard => "vault.workspace.members.onboard",
             Self::VaultWorkspaceRoster => "vault.workspace.roster",
@@ -2114,6 +2117,7 @@ impl AgentVerb {
                 | Self::VaultWorkflowsStatus
                 | Self::VaultTaskTypesPin
                 | Self::VaultTaskTypesGet
+                | Self::VaultAgentsSpawnGet
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultWorkspaceRoster
@@ -2715,6 +2719,7 @@ impl AgentVerb {
                 | Self::VaultWorkflowsStatus
                 | Self::VaultTaskTypesPin
                 | Self::VaultTaskTypesGet
+                | Self::VaultAgentsSpawnGet
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultWorkspaceRoster
@@ -3369,6 +3374,7 @@ impl AgentVerb {
                 | Self::VaultWorkflowsStatus
                 | Self::VaultTaskTypesPin
                 | Self::VaultTaskTypesGet
+                | Self::VaultAgentsSpawnGet
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultWorkspaceRoster
@@ -4336,6 +4342,7 @@ impl AgentVerb {
             Self::VaultWorkflowsStatus => &["spec"],
             Self::VaultTaskTypesPin => &["spec"],
             Self::VaultTaskTypesGet => &["spec"],
+            Self::VaultAgentsSpawnGet => &["spec"],
             Self::VaultWorkspaceEstablish => &["spec"],
             Self::VaultWorkspaceMembersOnboard => &["spec"],
             Self::VaultWorkspaceRoster => &["spec"],
@@ -4931,6 +4938,7 @@ impl AgentVerb {
             Self::VaultWorkflowsStatus => &["spec"],
             Self::VaultTaskTypesPin => &["spec"],
             Self::VaultTaskTypesGet => &["spec"],
+            Self::VaultAgentsSpawnGet => &["spec"],
             Self::VaultWorkspaceEstablish => &["spec"],
             Self::VaultWorkspaceMembersOnboard => &["spec"],
             Self::VaultWorkspaceRoster => &["spec"],
@@ -6126,6 +6134,9 @@ impl AgentVerb {
             }
             Self::VaultTaskTypesGet => {
                 "The owner reads the task-type tree in force, or one kept tree version, for the vault or a project."
+            }
+            Self::VaultAgentsSpawnGet => {
+                "The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning."
             }
             Self::VaultWorkspaceEstablish => {
                 "The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted."
