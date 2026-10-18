@@ -330,3 +330,10 @@ pub(super) fn parse_claim_source(value: &str) -> MemoryResult<ClaimSource> {
 
 mod commit;
 mod lifecycle;
+mod settle;
+
+pub use settle::{
+    ClaimChangeVerdict, ClaimProposalReview, ClaimProposalReviewRequest, ClaimSettleDecision,
+    ClaimSettleRequest, ClaimSettlement, ClaimSettlementAnswer, ClaimSettlementReason,
+    ClaimSettlementRevert, ClaimSettlementVerdict,
+};

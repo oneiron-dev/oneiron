@@ -771,7 +771,7 @@
      "path": "src/agent_dispatch/continuation.rs",
      "purpose": "The owner's prompt continuation of a failed agent run (FIX 3694, OF-568): the successor attempt an approved…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "struct": 2
      }
     },
@@ -17726,7 +17726,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DeliveryWindowApnsInterruptionLevel",
@@ -19282,6 +19282,7 @@
       "AgentHealthCounter",
       "AgentHealthMove",
       "AgentHealthOutcome",
+      "AgentHealthPromptInject",
       "AgentHealthRunTree",
       "AgentHealthTone",
       "ConcernCardRequest",
@@ -19297,7 +19298,7 @@
       "enum": 6,
       "fn": 12,
       "re-export": 2,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -22481,6 +22482,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DocActor"
+     ],
+     "path": "src/entity_doc/doc_actor.rs",
+     "purpose": "Whose act an entity-document row records, and the erase that forgets it (FIX 3520)",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -22504,6 +22519,7 @@
       "ForkRecord",
       "ForkRequest",
       "ForkStatus",
+      "PendingDocForkErase",
       "ProposalBundle",
       "SettleVerb",
       "TextReceipt"
@@ -22511,8 +22527,9 @@
      "path": "src/entity_doc/forks.rs",
      "purpose": "Durable divergences, entity-bound grant admission and atomic fork-set settlement",
      "surface": {
-      "crate-vis": 16,
-      "enum": 3,
+      "const": 1,
+      "crate-vis": 19,
+      "enum": 4,
       "fn": 7,
       "struct": 4
      }
@@ -22572,9 +22589,9 @@
      "path": "src/entity_doc/mod.rs",
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "mod": 2,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -22604,7 +22621,7 @@
      "path": "src/entity_doc/pins.rs",
      "purpose": "Causal citation floors, retained quotes and the owner's shallow-purge door",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 9,
       "struct": 2
@@ -23867,6 +23884,16 @@
      "surface": {
       "const": 5,
       "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/bundle/claim_settle.rs",
+     "purpose": "One proposed claim decided on its own (DOOR-115): the owner's approval or decline of a claim named by its…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -30418,7 +30445,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ChannelIdentityBindRequest",
@@ -30467,7 +30494,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DeliveryWindowEvaluateRequest",
@@ -30615,6 +30642,30 @@
       "crate-vis": 5,
       "enum": 3,
       "fn": 4,
+      "re-export": 1,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ClaimChangeVerdict",
+      "ClaimProposalReview",
+      "ClaimProposalReviewRequest",
+      "ClaimSettleDecision",
+      "ClaimSettleRequest",
+      "ClaimSettlement",
+      "ClaimSettlementAnswer",
+      "ClaimSettlementReason",
+      "ClaimSettlementRevert",
+      "ClaimSettlementVerdict"
+     ],
+     "path": "src/memory/claims/settle.rs",
+     "purpose": "One proposed claim's review and settlement (DOOR-115, e2e MEMORY-01): `vault.claims.review` reads one…",
+     "surface": {
+      "enum": 4,
+      "fn": 3,
       "struct": 6
      }
     },
@@ -48710,7 +48761,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AgentCeilingInput",
@@ -48930,8 +48981,8 @@
      "path": "src/task_verb/sdk_generated.rs",
      "purpose": "—",
      "surface": {
-      "const": 2,
-      "fn": 432
+      "const": 3,
+      "fn": 435
      }
     },
     {
@@ -54630,7 +54681,7 @@
     "delivery_window": {
      "files": 8,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Delivery-window policy claims and evaluator for OF-327 O3"
     },
@@ -54747,7 +54798,7 @@
      "purpose": "Engine-native JS code-mode executor"
     },
     "entity_doc": {
-     "files": 20,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54817,7 +54868,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 137,
+     "files": 138,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55020,7 +55071,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 143,
+     "files": 144,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55701,7 +55752,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3392,
+   "source_files": 3395,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64096,7 +64147,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 383
+      "fn": 385
      }
     },
     {
@@ -65144,7 +65195,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 384
+      "fn": 386
      }
     },
     {
@@ -67971,7 +68022,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade.rs",
@@ -68048,6 +68099,16 @@
      "purpose": "Credential-bound host projections of the typed channel setup verbs",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/claim_settle_doors.rs",
+     "purpose": "The host doors of one proposed claim's review and settlement (DOOR-115): `vault.claims.review` and…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -68197,11 +68258,11 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 76
+      "crate-vis": 77
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/hub_doors.rs",
@@ -68948,6 +69009,16 @@
      "purpose": "OpenAPI endpoint wiring and component merges",
      "surface": {
       "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openapi/facade_paths.rs",
+     "purpose": "The facade rows the OpenAPI document publishes (DOOR-115): each row the verb table marks `openapi` is `POST…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -75472,7 +75543,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 330,
+     "files": 332,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -75887,7 +75958,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 652,
+   "source_files": 654,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -76105,6 +76176,7 @@
       "AgentHealthMove",
       "AgentHealthOutcome",
       "AgentHealthPadRead",
+      "AgentHealthPromptInject",
       "AgentHealthRunTree",
       "AgentHealthSignal",
       "AgentHealthTone",
@@ -76273,9 +76345,19 @@
       "ChartSource",
       "ChatProjection",
       "ClaimApprovalStatus",
+      "ClaimChangeVerdict",
       "ClaimLineAtom",
+      "ClaimProposalReview",
+      "ClaimProposalReviewRequest",
       "ClaimRelationships",
       "ClaimScope",
+      "ClaimSettleDecision",
+      "ClaimSettleRequest",
+      "ClaimSettlement",
+      "ClaimSettlementAnswer",
+      "ClaimSettlementReason",
+      "ClaimSettlementRevert",
+      "ClaimSettlementVerdict",
       "CodeBlameView",
       "CodeChangeView",
       "CodeDiffRequest",
@@ -77500,8 +77582,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 403,
-      "struct": 1013
+      "enum": 407,
+      "struct": 1020
      }
     },
     {

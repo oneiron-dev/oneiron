@@ -18,7 +18,17 @@ use super::codec::invalid_identity;
 /// `facet_ref` is owned HERE rather than on the connector key record because
 /// the facet is the mask worn ON THIS CHANNEL: one actor speaks through many
 /// identities and may wear a different face on each.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 #[non_exhaustive]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ChannelIdentityBinding {
@@ -100,7 +110,17 @@ impl ChannelIdentityBinding {
 }
 
 /// Async fulfillment lane for PENDING_FULFILLMENT.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 #[non_exhaustive]
 #[serde(rename_all = "snake_case")]
 pub enum ChannelIdentityFulfillment {

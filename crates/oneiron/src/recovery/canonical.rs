@@ -152,7 +152,8 @@ pub struct CanonicalDocumentVersion {
 pub struct CanonicalDocumentPin {
     pub citation: [u8; 16],
     pub document: [u8; 16],
-    pub actor: [u8; 16],
+    /// None once the actor was erased (FIX 3520).
+    pub actor: Option<[u8; 16]>,
     pub version: u32,
     pub start: u32,
     pub end: u32,
@@ -182,7 +183,8 @@ pub struct CanonicalDocumentReceipt {
     pub receipt: [u8; 16],
     pub proposal: [u8; 16],
     pub fork: [u8; 16],
-    pub actor: [u8; 16],
+    /// None once the actor was erased (FIX 3520).
+    pub actor: Option<[u8; 16]>,
     pub verb: CanonicalSettleVerb,
     pub at: u64,
     pub before: u32,
@@ -197,7 +199,8 @@ pub struct CanonicalDocumentFork {
     pub fork: [u8; 16],
     pub proposal: [u8; 16],
     pub parent_document: [u8; 16],
-    pub actor: [u8; 16],
+    /// None once the actor was erased (FIX 3520).
+    pub actor: Option<[u8; 16]>,
     pub opened_at: u64,
     pub rewrite: bool,
     pub status: CanonicalForkStatus,
@@ -217,7 +220,8 @@ pub struct CanonicalDocumentFork {
 pub struct CanonicalDocumentPurge {
     pub receipt: [u8; 16],
     pub document: [u8; 16],
-    pub actor: [u8; 16],
+    /// None once the actor was erased (FIX 3520).
+    pub actor: Option<[u8; 16]>,
     pub requested: u32,
     pub applied: u32,
     pub at: u64,
