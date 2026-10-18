@@ -1,0 +1,886 @@
+{
+  "version": 1,
+  "oracle": {
+    "kind": "independently-authored-canon-scenarios",
+    "licence": "Apache-2.0",
+    "notEngineOutput": true,
+    "notProtocolQualification": true,
+    "note": "Inputs, expected facts and symbolic refs for complete flows waiting on public doors. These are not a fake engine, serialized vault, executable connector adapter, legal advice, or fabricated runtime/probe results. Bind exact model/connector wire scripts and usage at activation; no live network or account is needed."
+  },
+  "sourcePins": {
+    "canon": [
+      {
+        "uri": "/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1/",
+        "sha256": "dcfa341d856a48d1c5f4f02de932d3af6ff573890c53b8f7b5ea5c7506e02f76"
+      },
+      {
+        "uri": "/oneiron/agents/oneiron-arch-0059-campaign-loop-v1/",
+        "sha256": "3970a9f4c870770a4fabcf900ac8fd56004eff752c5d501d07cc1d984ad5f251"
+      },
+      {
+        "uri": "/oneiron/agents/oneiron-arch-0063-agent-inbox-email-identity-v1/",
+        "sha256": "e713deabcb3a46144bf3bbd082e177662e6e422703a028ef4f1e7a420f39d409"
+      },
+      {
+        "uri": "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/",
+        "sha256": "6b960493c722c1182a81a5c168d63a9be3d8a669559addf3a749f556c4628050"
+      },
+      {
+        "uri": "/oneiron/gate/oneiron-arch-0072-foreign-actor-admission-grants-v1/",
+        "sha256": "0c761bc465f74b84cd09c4e171465766a4e552829aa6f41efa87fa3bcf0017bf"
+      },
+      {
+        "uri": "/oneiron/surfaces/oneiron-arch-0044-public-surface-ws/",
+        "sha256": "e29ef93a3f343377411b6226964f0e9d3da0ca7b85df4a8845f859bf1af0b48b"
+      }
+    ],
+    "registry": {
+      "uri": "/registry/oneiron/",
+      "path": "/Users/olety/Desktop/code/oneiron-docs/registry/oneiron.json",
+      "sha256": "8f56eb0c82be8475001e0127735558a0c6aa5721017138f9d68b951f87b19be7",
+      "rows": [
+        "OF-188",
+        "OF-189",
+        "OF-213",
+        "OF-247",
+        "OF-272",
+        "OF-277",
+        "OF-327",
+        "OF-347",
+        "OF-372",
+        "OF-373",
+        "OF-374",
+        "OF-402",
+        "OF-404",
+        "OF-413",
+        "OF-416",
+        "OF-435",
+        "OF-517",
+        "OF-519"
+      ]
+    },
+    "plan": {
+      "path": "/Users/olety/Desktop/temp/vibe-build-20261017/e2e-plan.json",
+      "sha256": "133dc98326022c9e01452abdbc42a78e067fd59b9cf9f142496d3bc50c6c3ba2"
+    },
+    "rulings": {
+      "path": "/Users/olety/Desktop/temp/vibe-build-20261017/e2e-rulings.md",
+      "sha256": "e1e02bfb1592280b869b9963bf6c8d5c8a9880d018438dbbdae27bcda87d90df",
+      "G01": "A designed verb waits for typed HTTP and SDK calls. No generic escape hatch."
+    }
+  },
+  "bindingEvidence": {
+    "head": "65529b62e07209d8faeb0c0fcde7812e3df9cc46",
+    "files": [
+      {
+        "path": "packages/oneiron-client/src/facade.ts",
+        "sha256": "e0cb73a45e493baa7182b10bc076eeb198984d15bcbc19add0fbc62c22912c76"
+      },
+      {
+        "path": "packages/oneiron-client/src/facade-types.ts",
+        "sha256": "d64b62450805589152ac08d4dc99a6504c33862d0600449904ff264a45ad7e6a"
+      },
+      {
+        "path": "packages/oneiron/src/facade-types.ts",
+        "sha256": "d64b62450805589152ac08d4dc99a6504c33862d0600449904ff264a45ad7e6a"
+      },
+      {
+        "path": "crates/oneiron-server/src/api/surface_events.rs",
+        "sha256": "bcfbe4a78358e169d46b964746a5ee8dd8d966426d667de229ae2d29d89ea2b6"
+      },
+      {
+        "path": "crates/oneiron-server/src/api/campaign.rs",
+        "sha256": "fe8ae283685eefd14b0a8e92f14a4728177ea9ba52fa8d708931555abb9495e6"
+      },
+      {
+        "path": "crates/oneiron-server/src/api/owner_routes/connector_admission_routes.rs",
+        "sha256": "8494f614686125abbd7169c0f8a889c342573f6b88d28409c66c626f3fe2a612"
+      },
+      {
+        "path": "crates/oneiron-server/src/api/openapi/owner_paths.rs",
+        "sha256": "7bb5654c2e2e5bedb9b8392bfea116bca68a14a4771968e0c2eb51703f927761"
+      },
+      {
+        "path": "crates/oneiron-server/src/api/openapi_registry.rs",
+        "sha256": "38a4872df012265d0df3d2d749585957ecd57826b1478e29ff06962eccb1e145"
+      },
+      {
+        "path": "crates/oneiron-server/src/api/facade/host_doors.rs",
+        "sha256": "bd9a9a83b3929277817bc70cc83ccb2708d64dfa766b5b429e24672ae1d8cb0c"
+      },
+      {
+        "path": "crates/oneiron-server/src/cli.rs",
+        "sha256": "81eb90def61131fc4c8988941876972ec619af98c1f97d170bcabea50a34bf33"
+      }
+    ],
+    "scope": "Source-only readback in assigned worktree; assembled runtime schema and Linux execution have not been run."
+  },
+  "setup": {
+    "isolation": "fresh authenticated vault and server per case; loopback-only external providers",
+    "references": "All actor, identity, person, evidence, message, thread and intent labels are symbolic, not pre-seeded engine records. Obtain actual refs through typed public setup.",
+    "time": "t0 is wall time sampled by a future running case. Relative dates are authored inputs to public owner policy/verification calls, never an internal clock override.",
+    "models": "Script typed responses and declared usage through real production adapters; provider barriers may delay responses, not fabricate internal commits.",
+    "acknowledgments": "Provider delivery, reactions and read signals are distinct. No fixture interprets a glyph alone as acknowledgment evidence.",
+    "constants": "One suite slot, existing harness deadlines; 90-day quarantine metadata is canon, not an accelerated engine setting. No engine constant changes."
+  },
+  "cases": [
+    {
+      "id": "CHANNELS-01",
+      "name": "Connector qualification and grant slate should work",
+      "rows": [
+        "OF-188",
+        "OF-189",
+        "OF-435",
+        "OF-519"
+      ],
+      "canon": [
+        "/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1/#r4b-hubs",
+        "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#mcp-actor-ceilings",
+        "/oneiron/gate/oneiron-arch-0072-foreign-actor-admission-grants-v1/#slate",
+        "/registry/oneiron/#OF-188",
+        "/registry/oneiron/#OF-189",
+        "/registry/oneiron/#OF-435",
+        "/registry/oneiron/#OF-519"
+      ],
+      "status": "BLOCKED",
+      "waitsOn": "waits on typed connector-pack qualification/advisory and grant-slate admission HTTP and SDK calls",
+      "inputsAndExpectedFacts": {
+        "pack": {
+          "name": "fixture-channels",
+          "version": "1.0.0",
+          "kind": "connector",
+          "declaredTools": [
+            "fixture.read",
+            "fixture.send"
+          ],
+          "elicitation": true,
+          "requestedRecipientSet": [
+            "recipient-a"
+          ]
+        },
+        "draft": {
+          "dispositions": {
+            "fixture.read": "auto",
+            "fixture.send": "auto",
+            "@elicitation": "auto"
+          },
+          "rationaleRequiredForEveryRow": true
+        },
+        "undeclaredTool": "fixture.erase",
+        "revokeRow": "fixture.send",
+        "expected": {
+          "beforeQualificationEffects": 0,
+          "qualifiedButUnstampedEffects": 0,
+          "ownerAdmissionStamps": 1,
+          "rows": [
+            "fixture.read",
+            "fixture.send",
+            "@elicitation"
+          ],
+          "undeclaredEffects": 0,
+          "revokedRowEffects": 0,
+          "unrevokedReadRemainsCallable": true,
+          "qualificationAndAdvisoryBindExactSource": true
+        }
+      }
+    },
+    {
+      "id": "CHANNELS-02",
+      "name": "Connector drift requires re-consent should work",
+      "rows": [
+        "OF-189",
+        "OF-213",
+        "OF-277"
+      ],
+      "canon": [
+        "/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1/#r4b-hubs",
+        "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#mcp-actor-ceilings",
+        "/registry/oneiron/#OF-189",
+        "/registry/oneiron/#OF-213",
+        "/registry/oneiron/#OF-277"
+      ],
+      "status": "BLOCKED",
+      "waitsOn": "waits on typed connector-pack permission/protocol delta-consent HTTP and SDK calls",
+      "inputsAndExpectedFacts": {
+        "sourceAlias": "fixture-hub/fixture-channels@stable",
+        "v1": {
+          "version": "1.0.0",
+          "toolReach": {
+            "fixture.read": [
+              "public"
+            ],
+            "fixture.send": [
+              "recipient-a"
+            ]
+          },
+          "protocol": "fixture-revision-1"
+        },
+        "v2": {
+          "version": "2.0.0",
+          "toolReach": {
+            "fixture.read": [
+              "public"
+            ],
+            "fixture.send": [
+              "recipient-a",
+              "recipient-b"
+            ],
+            "fixture.erase": [
+              "external-record"
+            ]
+          },
+          "protocol": "fixture-revision-2"
+        },
+        "protocolNote": "Symbolic revisions must be bound to supported negotiated wire revisions at activation; this is not an MCP revision fixture.",
+        "expected": {
+          "reask": [
+            "fixture.send",
+            "fixture.erase"
+          ],
+          "carried": [
+            "fixture.read"
+          ],
+          "effectsOnNewReachBeforeStamp": 0,
+          "newReachAfterStamp": "recipient-b",
+          "oldStampExpandsAuthority": false,
+          "deltaOnly": true,
+          "retainedSourceIdentities": 2
+        }
+      }
+    },
+    {
+      "id": "CHANNELS-03",
+      "name": "Outbound delivery window and receipt should work",
+      "rows": [
+        "OF-327",
+        "OF-277",
+        "OF-272"
+      ],
+      "canon": [
+        "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#mcp-actor-ceilings",
+        "/oneiron/agents/oneiron-arch-0063-agent-inbox-email-identity-v1/#law",
+        "/registry/oneiron/#OF-327",
+        "/registry/oneiron/#OF-277",
+        "/registry/oneiron/#OF-272"
+      ],
+      "status": "BLOCKED",
+      "waitsOn": "waits on typed channel-identity and delivery-window policy HTTP and SDK calls for dispatch setup",
+      "inputsAndExpectedFacts": {
+        "recipients": [
+          {
+            "label": "recipient-a",
+            "address": "a@example.test"
+          },
+          {
+            "label": "recipient-b",
+            "address": "b@example.test"
+          }
+        ],
+        "content": "Fixture delivery: the observation slot is confirmed.",
+        "intents": {
+          "allowed": "channels-03-a",
+          "held": "channels-03-b",
+          "async": "channels-03-async",
+          "reaction": "channels-03-react",
+          "budgetDenied": "channels-03-budget"
+        },
+        "policy": {
+          "holdRecipient": "recipient-b",
+          "holdAppliesTo": "interrupt_class_only",
+          "grantRevokedWhileHeld": true,
+          "budget": "explicit owner row exhausted before budgetDenied dispatch",
+          "release": "owner policy change, not a private tick"
+        },
+        "expected": {
+          "allowedEffects": 1,
+          "heldEffectsBeforeRelease": 0,
+          "heldEffectsAfterGrantRevocationAndWindowRelease": 0,
+          "heldEffectsAfterExplicitGrantAndPolicyRelease": 1,
+          "sameIntentReplayAdditionalEffects": 0,
+          "budgetDeniedEffects": 0,
+          "asyncBlockedOnlyByQuietHours": false,
+          "deliveryMeans": "delivered_to_channel_not_seen",
+          "gateCheckedAtDispatch": true,
+          "holdAndDeliveryProvenanceRequired": true
+        }
+      }
+    },
+    {
+      "id": "CHANNELS-04",
+      "name": "Channel identity lifecycle and sticky thread should work",
+      "rows": [
+        "OF-347",
+        "OF-413",
+        "OF-416"
+      ],
+      "canon": [
+        "/oneiron/agents/oneiron-arch-0063-agent-inbox-email-identity-v1/#law",
+        "/registry/oneiron/#OF-347",
+        "/registry/oneiron/#OF-413",
+        "/registry/oneiron/#OF-416"
+      ],
+      "status": "BLOCKED",
+      "waitsOn": "waits on typed channel-identity lifecycle, selection-rule and thread-passport HTTP and SDK calls",
+      "inputsAndExpectedFacts": {
+        "identities": [
+          {
+            "label": "agent-address",
+            "shape": "dedicated_address",
+            "address": "assistant@agent.example.test",
+            "actor": "agent-a",
+            "facet": "work"
+          },
+          {
+            "label": "owner-mailbox",
+            "shape": "delegated_grant",
+            "address": "member@example.test",
+            "actor": "agent-a",
+            "facet": "work"
+          }
+        ],
+        "relationship": "scheduling_logistics",
+        "defaultBefore": "agent-address",
+        "defaultAfter": "owner-mailbox",
+        "firstMessage": {
+          "messageId": "<channels-04-first@provider.example.test>",
+          "body": "The observation slot is Thursday at 14:00 UTC."
+        },
+        "reply": {
+          "messageId": "<channels-04-reply@provider.example.test>",
+          "references": [
+            "<channels-04-first@provider.example.test>"
+          ],
+          "inReplyTo": "<channels-04-first@provider.example.test>",
+          "body": "Thanks, the same observation slot still works."
+        },
+        "expected": {
+          "firstIdentity": "agent-address",
+          "replyIdentity": "agent-address",
+          "replyFacet": "work",
+          "newThreadIdentity": "owner-mailbox",
+          "revokedIdentityEffects": 0,
+          "silentRetiredAddressReassignment": false,
+          "dedicatedQuarantineMetadataDays": 90,
+          "ownerAccountRotatedByEngine": false,
+          "ruleWriterIsAuthenticated": true
+        }
+      }
+    },
+    {
+      "id": "CHANNELS-05",
+      "name": "Normalized inbound events and reactions should work",
+      "rows": [
+        "OF-247",
+        "OF-372",
+        "OF-272"
+      ],
+      "canon": [
+        "/oneiron/surfaces/oneiron-arch-0044-public-surface-ws/#part-a",
+        "/oneiron/agents/oneiron-arch-0063-agent-inbox-email-identity-v1/#law",
+        "/registry/oneiron/#OF-247",
+        "/registry/oneiron/#OF-372",
+        "/registry/oneiron/#OF-272"
+      ],
+      "status": "BLOCKED",
+      "waitsOn": "waits on typed receiving ChannelIdentity provisioning/binding HTTP and SDK calls",
+      "inputsAndExpectedFacts": {
+        "adapters": [
+          {
+            "channel": "slack",
+            "receivingAddress": "T-FIXTURE/assistant",
+            "sender": "slack:U-FIXTURE"
+          },
+          {
+            "channel": "line",
+            "receivingAddress": "line:fixture-assistant",
+            "sender": "line:fixture-person"
+          },
+          {
+            "channel": "telegram",
+            "receivingAddress": "telegram:fixture-assistant",
+            "sender": "telegram:fixture-person"
+          }
+        ],
+        "message": "Please confirm the observation slot.",
+        "perAdapterEventIds": [
+          "channels-05-slack-message",
+          "channels-05-line-message",
+          "channels-05-telegram-message"
+        ],
+        "perAdapterReactionIds": [
+          "channels-05-slack-reaction",
+          "channels-05-line-reaction",
+          "channels-05-telegram-reaction"
+        ],
+        "reaction": {
+          "glyph": "👍",
+          "replaysPerAdd": 2,
+          "thenRemove": true
+        },
+        "invalidEvent": {
+          "sourceApp": "not-a-source-app",
+          "interaction": "not-an-interaction"
+        },
+        "expected": {
+          "messagesPerAdapter": 1,
+          "distinctMessagesAcrossAdapters": 3,
+          "correlationReplayKeepsAttemptRef": true,
+          "replayed": true,
+          "foreignInbound": true,
+          "claimsNotInstructions": true,
+          "reactionAddsCreateDialogueTurns": 0,
+          "reactionRemoveKeepsHistory": true,
+          "glyphAloneCreatesAckEvidence": false,
+          "supportedOutboundReact": [
+            "slack",
+            "telegram"
+          ],
+          "unsupportedOutboundReact": [
+            "line"
+          ],
+          "unsupportedProviderEffects": 0,
+          "unsupportedSuccessReceipts": 0,
+          "invalidEventConversationChanges": 0
+        }
+      }
+    },
+    {
+      "id": "CHANNELS-06",
+      "name": "Member email and LinkedIn consent should work",
+      "rows": [
+        "OF-373",
+        "OF-374"
+      ],
+      "canon": [
+        "/oneiron/agents/oneiron-arch-0063-agent-inbox-email-identity-v1/#law",
+        "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#mcp-actor-ceilings",
+        "/registry/oneiron/#OF-373",
+        "/registry/oneiron/#OF-374"
+      ],
+      "status": "BLOCKED",
+      "waitsOn": "waits on typed member-account send-as/draft and per-send consent HTTP and SDK calls",
+      "inputsAndExpectedFacts": {
+        "member": {
+          "label": "member-a",
+          "mailbox": "member@example.test",
+          "linkedinSeat": "fixture-seat-a"
+        },
+        "grants": {
+          "gmail": "press-per-send",
+          "linkedin": "press-per-send"
+        },
+        "threads": [
+          {
+            "channel": "gmail",
+            "thread": "gmail-thread-a",
+            "externalMessageId": "gmail-incoming-a"
+          },
+          {
+            "channel": "linkedin",
+            "thread": "linkedin-thread-a",
+            "externalMessageId": "linkedin-incoming-a"
+          }
+        ],
+        "draft": "Thanks for the note. Thursday at 14:00 UTC works.",
+        "intentKeys": [
+          "channels-06-gmail-1",
+          "channels-06-linkedin-1"
+        ],
+        "expected": {
+          "draftEffectsPerChannel": 0,
+          "beforePressEffectsPerChannel": 0,
+          "afterPressEffectsPerChannel": 1,
+          "replayAdditionalEffectsPerChannel": 0,
+          "otherIntentReleasedByPress": false,
+          "senderIsMemberOwnAccount": true,
+          "threadAndApprovalProvenanceRequired": true,
+          "linkedinDeliveredRequiresCreatedIdInOwnSeatTranscript": true,
+          "ambiguousResendAllowed": false,
+          "credentialsInVaultClaims": false
+        }
+      }
+    },
+    {
+      "id": "CHANNELS-07",
+      "name": "Campaign membership and earned stages should work",
+      "rows": [
+        "OF-402"
+      ],
+      "canon": [
+        "/oneiron/agents/oneiron-arch-0059-campaign-loop-v1/#sends",
+        "/registry/oneiron/#OF-402"
+      ],
+      "status": "BLOCKED",
+      "waitsOn": "waits on typed campaign enrollment, earned-stage evidence and unsubscribe HTTP and SDK calls",
+      "inputsAndExpectedFacts": {
+        "campaign": {
+          "label": "observation-outreach",
+          "state": "active",
+          "owner": "owner",
+          "brief": "Invite interested observers to an observation slot."
+        },
+        "people": [
+          {
+            "label": "lead-a",
+            "contact": "a@example.test",
+            "channel": "email",
+            "basisEvidence": "lead-a-requested-details",
+            "sender": "campaign-sender"
+          },
+          {
+            "label": "lead-b",
+            "contact": "b@example.test",
+            "channel": "email",
+            "basisEvidence": "lead-b-requested-details",
+            "sender": "campaign-sender"
+          }
+        ],
+        "transitions": [
+          {
+            "from": null,
+            "to": "replied",
+            "evidenceClass": "meaningful_reply"
+          },
+          {
+            "from": "replied",
+            "to": "call_booked",
+            "evidenceClass": "calendar_event"
+          }
+        ],
+        "evidence": [
+          {
+            "label": "lead-a-positive-reply",
+            "person": "lead-a",
+            "replyCode": "positive_now",
+            "text": "Yes, please book the observation slot."
+          },
+          {
+            "label": "lead-a-booking",
+            "person": "lead-a",
+            "kind": "EVENT",
+            "icsRef": "lead-a-ics"
+          }
+        ],
+        "unsubscribe": {
+          "person": "lead-a",
+          "channel": "email",
+          "suppressionOverride": false
+        },
+        "expected": {
+          "membershipIsPersonClaim": true,
+          "campaignOwnsMemberArray": false,
+          "membershipOrContactOrTimeEarnsStage": false,
+          "wrongEvidenceClassEarnsStage": false,
+          "leadAStages": [
+            "replied",
+            "call_booked"
+          ],
+          "leadBStages": [],
+          "stageEvidenceRequired": true,
+          "suppression": "suppressed",
+          "nextSendAdditionalEffects": 0,
+          "unsubscribeSuppressesBeforeReturn": true
+        }
+      }
+    },
+    {
+      "id": "CHANNELS-08",
+      "name": "Compliance strictness and stale rules should work",
+      "rows": [
+        "OF-404"
+      ],
+      "canon": [
+        "/oneiron/agents/oneiron-arch-0059-campaign-loop-v1/#sends",
+        "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#mcp-actor-ceilings",
+        "/oneiron/agents/oneiron-arch-0059-campaign-loop-v1/#compliance",
+        "/registry/oneiron/#OF-404"
+      ],
+      "status": "BLOCKED",
+      "waitsOn": "waits on typed compliance-pack amendment, owner approval and verification HTTP and SDK calls",
+      "inputsAndExpectedFacts": {
+        "recipient": {
+          "label": "lead-a",
+          "address": "a@example.test",
+          "jurisdictions": [
+            "UK",
+            "EU/DE"
+          ],
+          "legalForm": "corporate"
+        },
+        "rules": [
+          {
+            "jurisdiction": "UK",
+            "channel": "email",
+            "rule_kind": "consent_class",
+            "requirement": "Fixture corporate-B2B lane permits contact without opt-in.",
+            "b2b_exemption": "yes",
+            "source": {
+              "citation": "Fixture policy from ARCH-0059 UK pole; not legal advice",
+              "url": "https://legislation.gov.uk/uksi/2003/2426/regulation/22"
+            },
+            "verified_at": "t0",
+            "version": 1,
+            "penalty_note": "Fixture only; no production-law certification."
+          },
+          {
+            "jurisdiction": "EU/DE",
+            "channel": "email",
+            "rule_kind": "consent_class",
+            "requirement": "Fixture contact needs explicit opt-in.",
+            "b2b_exemption": "no",
+            "source": {
+              "citation": "Fixture policy from ARCH-0059 DE pole; not legal advice",
+              "url": "https://www.gesetze-im-internet.de/uwg_2004/__7.html"
+            },
+            "verified_at": "t0",
+            "version": 1,
+            "penalty_note": "Fixture only; no production-law certification."
+          }
+        ],
+        "tightening": {
+          "version": 2,
+          "addsRequirement": "physical_address"
+        },
+        "loosening": {
+          "version": 3,
+          "removesRequirement": "physical_address",
+          "ownerApprovalRequired": true
+        },
+        "staleVerification": {
+          "verified_at": "t0 - declared_max_age_secs - 1",
+          "note": "Use public verification policy/workflow or its short public TTL, never backdoor clock mutation."
+        },
+        "expected": {
+          "overlapWithoutConsentEffects": 0,
+          "withConsentEffects": 1,
+          "unmetTighteningAdditionalEffects": 0,
+          "looseningBeforeStampEffectiveVersion": 2,
+          "looseningAfterStampEffectiveVersion": 3,
+          "staleVerificationAdditionalEffects": 0,
+          "staleRefusalIdentifiesRule": true,
+          "strictestApplicableWins": true,
+          "unknownFallsBackToStrictPole": true,
+          "warningVisible": true
+        }
+      }
+    },
+    {
+      "id": "CHANNELS-09",
+      "name": "Outreach-fit skill proposes but does not send should work",
+      "rows": [
+        "OF-517"
+      ],
+      "canon": [
+        "/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1/#r4-lifecycle",
+        "/oneiron/agents/oneiron-arch-0059-campaign-loop-v1/#sends",
+        "/registry/oneiron/#OF-517"
+      ],
+      "status": "BLOCKED",
+      "waitsOn": "waits on typed outreach workflow execution/proposal and earned-stage outcome settlement calls",
+      "inputsAndExpectedFacts": {
+        "skill": {
+          "name": "fixture-outreach-fit",
+          "role": "workflow",
+          "proposesOnly": true
+        },
+        "campaign": "observation-outreach",
+        "leads": [
+          {
+            "label": "lead-a",
+            "recentSignal": "Asked for a hands-on observation slot.",
+            "basisEvidence": "lead-a-requested-details"
+          },
+          {
+            "label": "lead-b",
+            "recentSignal": "Asked to read a short summary first.",
+            "basisEvidence": "lead-b-requested-details"
+          }
+        ],
+        "variants": [
+          {
+            "label": "hands-on",
+            "text": "Would you like an observation slot this Thursday?"
+          },
+          {
+            "label": "summary",
+            "text": "May I send a short summary for your review?"
+          }
+        ],
+        "questions": [
+          {
+            "id": "hook",
+            "answerContract": {
+              "kind": "score",
+              "min": 0,
+              "max": 1
+            }
+          },
+          {
+            "id": "format",
+            "answerContract": {
+              "kind": "score",
+              "min": 0,
+              "max": 1
+            }
+          },
+          {
+            "id": "offer",
+            "answerContract": {
+              "kind": "score",
+              "min": 0,
+              "max": 1
+            }
+          },
+          {
+            "id": "cta",
+            "answerContract": {
+              "kind": "score",
+              "min": 0,
+              "max": 1
+            }
+          },
+          {
+            "id": "buying_signal",
+            "answerContract": {
+              "kind": "score",
+              "min": 0,
+              "max": 1
+            }
+          },
+          {
+            "id": "icp_fit",
+            "answerContract": {
+              "kind": "score",
+              "min": 0,
+              "max": 1
+            }
+          },
+          {
+            "id": "intent",
+            "answerContract": {
+              "kind": "score",
+              "min": 0,
+              "max": 1
+            }
+          },
+          {
+            "id": "personalisation",
+            "answerContract": {
+              "kind": "score",
+              "min": 0,
+              "max": 1
+            }
+          },
+          {
+            "id": "prospect_fit",
+            "answerContract": {
+              "kind": "score",
+              "min": 0,
+              "max": 1
+            }
+          },
+          {
+            "id": "reply_odds",
+            "answerContract": {
+              "kind": "score",
+              "min": 0,
+              "max": 1
+            }
+          }
+        ],
+        "scriptedAnswers": {
+          "lead-a": {
+            "hands-on": [
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1
+            ],
+            "summary": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              1,
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "lead-b": {
+            "hands-on": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              1,
+              0,
+              0,
+              0,
+              0
+            ],
+            "summary": [
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1,
+              1
+            ]
+          }
+        },
+        "outcomeBinding": {
+          "source": {
+            "kind": "stage",
+            "campaign": "observation-outreach"
+          },
+          "horizon": "declared public horizon; do not wait or invent a failure label",
+          "mapping": {
+            "replied": true
+          },
+          "noise_weight": 1
+        },
+        "laterEvidence": {
+          "person": "lead-a",
+          "stage": "replied",
+          "evidenceRef": "lead-a-positive-reply",
+          "text": "Yes, please book the observation slot."
+        },
+        "expected": {
+          "questionCount": 10,
+          "scoredLeadVariantUnits": 4,
+          "typedAnswers": 40,
+          "proposedPicks": {
+            "lead-a": "hands-on",
+            "lead-b": "summary"
+          },
+          "reviewProposalOnly": true,
+          "providerSendEffectsDuringSkill": 0,
+          "providerSendEffectsAfterKeep": 0,
+          "positiveOutcomeLabels": [
+            "lead-a"
+          ],
+          "unresolvedOutcomes": [
+            "lead-b"
+          ],
+          "predictionOrClickIsOutcome": false,
+          "perQuestionEvidenceAndVersionRequired": true,
+          "sendingRemainsCampaignConsentAndCompliance": true
+        }
+      }
+    }
+  ]
+}
