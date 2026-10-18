@@ -12274,7 +12274,7 @@
      "path": "src/code_sandbox/firecracker/snapshot.rs",
      "purpose": "Descriptor-relative, no-symlink source snapshot for a foreign VM",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -12385,7 +12385,7 @@
      "path": "src/code_sandbox/microvm/overlay.rs",
      "purpose": "The host-side scratch root and the bounded overlay walk that turns guest writes into proposals",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 11,
       "fn": 2
      }
     },
@@ -12455,7 +12455,23 @@
       "crate-vis": 1,
       "enum": 2,
       "fn": 10,
+      "re-export": 1,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SandboxProposalBody",
+      "SandboxProposalBodyReader",
+      "SandboxProposalBodyWriter"
+     ],
+     "path": "src/code_sandbox/proposal/body.rs",
+     "purpose": "A proposed file's bytes, spooled to an anonymous host temp file as they arrive",
+     "surface": {
+      "fn": 13,
+      "struct": 3
      }
     },
     {
@@ -53110,7 +53126,7 @@
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls"
     },
     "code_sandbox": {
-     "files": 40,
+     "files": 41,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54386,7 +54402,7 @@
    },
    "over_bar": 186,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3303,
+   "source_files": 3304,
    "test_files": 902
   },
   "oneiron-android": {
@@ -60307,7 +60323,7 @@
      "path": "src/filesystem.rs",
      "purpose": "Descriptor-relative workspace access",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 8
      }
     },
     {
@@ -60350,7 +60366,7 @@
      "path": "src/protocol.rs",
      "purpose": "Strict, bounded host/guest JSON framing and admission state machine",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 20
      }
     },
     {
@@ -60358,7 +60374,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/runtime.rs",
-     "purpose": "Canonical typed Component Model execution with six non-write imports",
+     "purpose": "Canonical typed Component Model execution with six non-write imports and the three that stream a proposed…",
      "surface": {
       "crate-vis": 1
      }
@@ -60428,7 +60444,7 @@
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file",
-     "purpose": "Canonical typed Component Model execution with six non-write imports"
+     "purpose": "Canonical typed Component Model execution with six non-write imports and the three that stream a proposed…"
     },
     "tests": {
      "files": 1,
@@ -64188,7 +64204,7 @@
      "path": "src/lib.rs",
      "purpose": "Portable, pure shape rules shared by the host and the isolated guest",
      "surface": {
-      "const": 8,
+      "const": 9,
       "fn": 1,
       "mod": 1,
       "re-export": 3,
@@ -66277,7 +66293,7 @@
      "path": "src/api/esign/hold_worker.rs",
      "purpose": "The held sign act's worker (OF-415, ARCH-0064 D6, ARCH-0076 #roles-everywhere): every tick it asks each new…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -67097,7 +67113,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 40
+      "crate-vis": 41
      }
     },
     {
