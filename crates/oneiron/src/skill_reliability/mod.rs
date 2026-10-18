@@ -44,6 +44,7 @@ pub use self::projector::{
     SKILL_OUTCOME_AXIS, project_skill_reliability, project_skill_reliability_for,
     project_skill_reliability_for_executor,
 };
+pub(crate) use self::provenance::skill_reliability_sources;
 pub use self::provenance::{skill_provenance_trust_class, skill_reliability_prior};
 pub use self::read::{
     ExecutorReliability, SkillReliabilityQuery, read_skill_reliability,

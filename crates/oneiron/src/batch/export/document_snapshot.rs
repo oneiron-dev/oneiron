@@ -44,6 +44,10 @@ pub(crate) struct ExportSnapshot {
     /// OF-013: a whole-vault archive carries every session's epoch floor; a
     /// records archive and OKF carry none.
     pub(crate) epoch_floors: Vec<super::ExportEpochFloor>,
+    /// The rows this export is derived from, as a host lists them beside it
+    /// (DEC-0005): each row the snapshot read past its locality, the ones it
+    /// carries, counts or folds into another section among them.
+    pub(crate) sources: Vec<EntityId>,
 }
 
 /// One run's result manifests, as its replay record names them, each with
@@ -188,6 +192,11 @@ impl Vault {
         let mut archived_receipts = BTreeMap::new();
         let mut diaries = ExportDiaryLedger::new(reader)?;
         let mut secrets = Vec::new();
+        // Every row read past the locality filter below: a row the archive
+        // carries, a custody record it carries as a value or a handle, a
+        // diary it carries or counts as held, and a receipt source, pack
+        // source or skill source carrier another section is folded from.
+        let mut sources = BTreeSet::new();
         for entry in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &rtxn)? {
             let (id, raw) = entry?;
             if only.is_some_and(|only| !only.contains(&id))
@@ -224,13 +233,16 @@ impl Vault {
                         &id,
                     )?
                     .map(|(name, hash)| format!("{name}:{hash:02x}"));
-                    secrets.extend(archive_custody_secret(
+                    if let Some(secret) = archive_custody_secret(
                         &id,
                         handle,
                         &raw[ENTITY_METADATA_HEADER_LEN..],
                         locality == CallerLocality::OnDevice,
                         include_secrets,
-                    )?);
+                    )? {
+                        sources.insert(id);
+                        secrets.push(secret);
+                    }
                 }
                 continue;
             }
@@ -243,6 +255,7 @@ impl Vault {
             {
                 continue;
             }
+            sources.insert(id);
             if header.entity_type == crate::registry::ENTITY_TYPE_ASSET
                 && crate::receipt::is_receipt_archive_source(&raw[ENTITY_METADATA_HEADER_LEN..])
             {
@@ -416,6 +429,7 @@ impl Vault {
                 })? {
                     continue;
                 }
+                sources.insert(session);
                 epoch_floors.push(super::ExportEpochFloor {
                     session: session.to_hex(),
                     epoch,
@@ -424,6 +438,8 @@ impl Vault {
             }
         }
         drop(rtxn);
+        // Each run whose results go with it, on this device only.
+        sources.extend(run_results.iter().map(|run| run.run_id));
         // The gate logs the reads after the snapshot. An entry whose read
         // could not be logged leaves the archive, with its edges.
         let (diary_reads, diary_holds, unlogged) = diaries.finish(self);
@@ -453,6 +469,7 @@ impl Vault {
                 embedding_setup,
                 attaches_files: scope == ExportScope::WholeVault,
                 epoch_floors,
+                sources: sources.into_iter().collect(),
             },
             cut,
         )
