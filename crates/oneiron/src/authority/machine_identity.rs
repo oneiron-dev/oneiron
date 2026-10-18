@@ -24,13 +24,16 @@ pub const MACHINE_PROOF_HEADER: &str = "x-oneiron-machine";
 const EMPTY_MACHINE_BODY: &[u8] = &[0x80];
 const REQUEST_CODE_CONTEXT: &str = "oneiron/machine-request-code/v1";
 
-/// What a machine sends to join a vault: its row, its keys, and its own
-/// signature over them for that vault.
+/// What a machine sends to join a vault: its row, its class, its keys, and
+/// its own signature over them for that vault.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MachineEnrolmentRequest {
     pub vault_id: [u8; 32],
     pub machine: EntityId,
     pub machine_key: [u8; 32],
+    /// The class this machine's host declares (`VaultConfig::machine_device_class`).
+    /// The owner approves it by approving the request.
+    pub device_class: MachineDeviceClass,
     pub encryption_key: MachineEncryptionKey,
     pub machine_proof: [u8; 64],
 }
@@ -44,8 +47,8 @@ pub struct RequestCode(pub [u8; 16]);
 
 impl MachineEnrolmentRequest {
     /// The first 16 bytes of `BLAKE3-derive_key("oneiron/machine-request-code/v1",
-    /// vault_id ‖ machine ‖ machine_key ‖ suite (u16 BE) ‖ key length (u32 BE) ‖ key
-    /// ‖ machine_proof)`.
+    /// vault_id ‖ machine ‖ machine_key ‖ class name ‖ 0 ‖ suite (u16 BE) ‖ key
+    /// length (u32 BE) ‖ key ‖ machine_proof)`.
     #[must_use]
     pub fn code(&self) -> RequestCode {
         let key = &self.encryption_key.key;
@@ -53,6 +56,8 @@ impl MachineEnrolmentRequest {
         hasher.update(&self.vault_id);
         hasher.update(self.machine.as_bytes());
         hasher.update(&self.machine_key);
+        hasher.update(self.device_class.wire().as_bytes());
+        hasher.update(&[0]);
         hasher.update(&self.encryption_key.suite.to_be_bytes());
         hasher.update(&u32::try_from(key.len()).unwrap_or(u32::MAX).to_be_bytes());
         hasher.update(key);
@@ -182,7 +187,8 @@ impl Vault {
 
     /// Called on the machine that joins: mints (once) and keeps this install's
     /// machine id, loads its machine key from the keystore, and signs its identity
-    /// for `vault_id` with that key.
+    /// for `vault_id` with that key. The identity carries the class this host
+    /// declares in its config (`VaultConfig::machine_device_class`).
     /// `encryption_key` must be this install's own for `vault_id`
     /// ([`Vault::machine_encryption_key`]), derived under the machine id the request
     /// signs: a key from another slot, or one taken before the id changed, is refused.
@@ -207,11 +213,13 @@ impl Vault {
                 ));
             }
             let machine_key = key.verifying_key().to_bytes();
+            let device_class = self.config.machine_device_class;
             let machine_proof = key
                 .sign(&machine_profile_proof_transcript(
                     &vault_id,
                     machine,
                     &machine_key,
+                    device_class,
                     &encryption_key,
                 ))
                 .to_bytes();
@@ -219,6 +227,7 @@ impl Vault {
                 vault_id,
                 machine,
                 machine_key,
+                device_class,
                 encryption_key: encryption_key.clone(),
                 machine_proof,
             });
@@ -365,6 +374,7 @@ impl Vault {
             machine: request.machine,
             owner,
             machine_key: request.machine_key,
+            device_class: request.device_class,
             encryption_key: request.encryption_key.clone(),
             role,
             revision: 1,

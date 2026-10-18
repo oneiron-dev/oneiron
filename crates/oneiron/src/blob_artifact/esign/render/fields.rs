@@ -60,10 +60,12 @@ fn raster(doc: &mut Document, image: &SignatureRaster) -> Result<ObjectId> {
         "Height" => image.height, "ColorSpace" => "DeviceRGB", "BitsPerComponent" => 8, "SMask" => alpha,
     }, image.rgba.chunks_exact(4).flat_map(|p| p[..3].iter().copied()).collect())))
 }
+/// The signature rasters already written, each once however many fields
+/// show it. No raster budget refuses a document (Rule 5): each raster is held
+/// to its decoder's bounds at upload.
 #[derive(Default)]
 pub(super) struct BurnImages {
     ids: BTreeMap<String, ObjectId>,
-    bytes: usize,
 }
 pub(super) fn burn_fields(
     out: &mut Document,
@@ -141,13 +143,6 @@ pub(super) fn burn_fields(
                     let id = if let Some(id) = images.ids.get(&image_ref) {
                         *id
                     } else {
-                        images.bytes = images
-                            .bytes
-                            .checked_add(image.rgba.len())
-                            .ok_or(PdfPreparationError::Limit)?;
-                        if images.bytes > MAX_OUTPUT {
-                            return Err(PdfPreparationError::Limit);
-                        }
                         let id = raster(out, image)?;
                         images.ids.insert(image_ref.clone(), id);
                         id

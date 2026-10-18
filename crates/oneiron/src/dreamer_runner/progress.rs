@@ -330,17 +330,18 @@ impl DreamerRunnerStore<'_> {
     }
 
     /// Marks a leased Dreamer attempt complete, with its TASK's judged Done
-    /// as [`Self::complete_judged`] takes it, and stops live progress
-    /// production.
+    /// and its realization's confession as [`Self::complete_sealed`] takes
+    /// them, and stops live progress production.
     #[cfg(feature = "sync")]
     pub fn complete_with_progress(
         &self,
         input: CompleteDreamerAttempt,
         judged: Option<crate::task_verb::RunnerDoneAnswer>,
+        confession: Option<&crate::self_heal::audit::AttemptConfession>,
         producer: &mut DreamerAttemptProgressProducer,
         ephemeral: &EphemeralStore,
     ) -> Result<DreamerProgressed<CompleteDreamerAttemptOutcome>> {
-        let outcome = self.complete_judged(input, judged)?;
+        let outcome = self.complete_sealed(input, judged, confession)?;
         let status = complete_outcome_status(&outcome);
         let frame = self.publish_progress(
             producer,

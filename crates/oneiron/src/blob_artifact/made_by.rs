@@ -18,9 +18,6 @@ use crate::write_envelope::WriteActor;
 
 use super::provenance::BlobVersionProvenance;
 
-/// The most input rows one version's envelope may name.
-pub const BLOB_VERSION_MADE_BY_MAX_INPUTS: usize = 1024;
-
 /// The writer's own envelope for a version that names none.
 pub(super) fn default_version_made_by(
     actor: &WriteActor,
@@ -53,16 +50,16 @@ pub(super) fn default_version_made_by(
 }
 
 /// Checks a named envelope before it lands on a version: a valid process,
-/// bounded inputs, no secret in its text, and a trigger that names a live
+/// any number of inputs (Rule 5), no secret in its text, and a trigger that names a live
 /// task, ask, run or skill in this vault (the row-birth rule).
 pub(super) fn validate_version_made_by_in_txn(
     vault: &Vault,
     rtxn: &RoTxn<'_>,
     made_by: &MadeBy,
 ) -> Result<()> {
-    if !made_by.process.is_valid() || made_by.inputs.len() > BLOB_VERSION_MADE_BY_MAX_INPUTS {
+    if !made_by.process.is_valid() {
         return Err(invalid(
-            "made_by needs a process identity, version and params hash of 1-256 bytes and at most 1024 inputs",
+            "made_by needs a process identity, version and params hash of 1-256 bytes",
         ));
     }
     for text in [

@@ -16,7 +16,8 @@
 //! in a room reads it again each turn, with every speaker a call live there
 //! must place; a room a missing entry holds starts no turn (FIX 3342). What
 //! a turn's memories read found, heard and withheld goes to the owner's
-//! client with the turn's first event, its narrowing receipts whole.
+//! client with the turn's first event, its narrowing receipts whole; a turn
+//! cancelled or ended before any event sends it then.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
@@ -109,6 +110,8 @@ struct Running {
     /// What it has handed the speech host so far; whichever ends it, the
     /// turn's terminal or a cancel, takes it.
     said: Arc<Mutex<Option<String>>>,
+    /// Its memories receipt until an event carries it, shared the same way.
+    memories: Arc<Mutex<Option<TurnMemories>>>,
 }
 
 /// The turn's retrieved memories, as the brain hears them.
@@ -339,6 +342,27 @@ impl ChatBrain {
             return;
         };
         running.handle.abort();
+        // A turn cancelled before its first event still owes the owner's
+        // client its memories receipt. An empty delta carries it: the host
+        // hands the receipt on first and says nothing for a cancelled turn.
+        if let Some(memories) = running
+            .memories
+            .lock()
+            .ok()
+            .and_then(|mut memories| memories.take())
+            && self
+                .bindings
+                .out
+                .try_send(VoiceBrainOut {
+                    generation: running.generation,
+                    event: BrainEvent::TextDelta(String::new()),
+                    externally_tainted: false,
+                    memories: Some(memories),
+                })
+                .is_err()
+        {
+            tracing::warn!("voice brain: a cancelled turn's memories receipt was not delivered");
+        }
         let said = running.said.lock().ok().and_then(|mut said| said.take());
         if let Some(said) = said.filter(|said| !said.is_empty())
             && let Ok(mut history) = self.history.lock()
@@ -385,10 +409,11 @@ impl Brain for ChatBrain {
                 request.transcript.clone(),
             ));
         let said = Arc::new(Mutex::new(Some(String::new())));
+        let memories = Arc::new(Mutex::new(memories));
         let turn = Turn {
             generation,
             tainted,
-            memories,
+            memories: Arc::clone(&memories),
             out: self.bindings.out.clone(),
             history: Arc::clone(&self.history),
             said: Arc::clone(&said),
@@ -402,6 +427,7 @@ impl Brain for ChatBrain {
             generation,
             handle,
             said,
+            memories,
         });
         Ok(())
     }
@@ -451,8 +477,9 @@ struct Turn {
     /// The turn heard context from outside it: every event says so, from
     /// the first delta, so its first sentence already passes the safeguard.
     tainted: bool,
-    /// What its memories read found and withheld, sent with its first event.
-    memories: Option<TurnMemories>,
+    /// What its memories read found and withheld, sent with its first event;
+    /// shared with its cancel, which sends it when no event did.
+    memories: Arc<Mutex<Option<TurnMemories>>>,
     out: mpsc::Sender<VoiceBrainOut>,
     history: Arc<Mutex<Vec<LlmMessage>>>,
     /// What the turn has handed the speech host, shared with its cancel.
@@ -473,11 +500,21 @@ impl Turn {
                         said.push_str(&text);
                     }
                 }
-                // A cancelled terminal is no answer: nothing more is said.
+                // A cancelled terminal is no answer: nothing more is said,
+                // but a memories receipt no event carried still goes.
                 Some(Ok(LlmStreamEvent::Done {
                     finish_reason: FinishReason::Cancelled,
                     ..
-                })) => return,
+                })) => {
+                    let owed = self
+                        .memories
+                        .lock()
+                        .is_ok_and(|memories| memories.is_some());
+                    if owed {
+                        self.send(BrainEvent::TextDelta(String::new())).await;
+                    }
+                    return;
+                }
                 Some(Ok(LlmStreamEvent::Done { .. })) => break BrainEvent::Done,
                 Some(Ok(_)) => {}
                 Some(Err(error)) => break BrainEvent::Error(error.to_string()),
@@ -496,12 +533,18 @@ impl Turn {
 
     /// `false` once the host stopped listening.
     async fn send(&mut self, event: BrainEvent) -> bool {
+        // Taken before the await, so no lock is held across it.
+        let memories = self
+            .memories
+            .lock()
+            .ok()
+            .and_then(|mut memories| memories.take());
         self.out
             .send(VoiceBrainOut {
                 generation: self.generation,
                 event,
                 externally_tainted: self.tainted,
-                memories: self.memories.take(),
+                memories,
             })
             .await
             .is_ok()

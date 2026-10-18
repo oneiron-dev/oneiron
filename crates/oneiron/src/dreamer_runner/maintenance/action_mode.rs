@@ -14,6 +14,7 @@ use super::applied::MaintenanceInverse;
 use super::{MAINTENANCE_QUEUE_KIND, invalid, proposals, validate_owner_in_txn};
 use crate::affect::state_inputs::StateWindow;
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore};
+use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{EntityId, Result, Vault};
 
@@ -22,8 +23,6 @@ pub const ACTION_MODE_FACET: &str = "dreamer.action_mode";
 pub const ACTION_MODE_PROPOSAL_PREDICATE: &str = "dreamer.action_mode.proposal";
 const POLICY: SideTable<(), ActionModePolicy, LegacyJson> =
     SideTable::new(&side_table::DREAMER_ACTION_MODE_POLICY);
-const MAX_RULES: usize = 16;
-const MAX_MODE_BYTES: usize = 128;
 
 /// One band: an index in `[min_index, max_index)` selects `mode`; a band
 /// whose upper bound is 1 includes 1.
@@ -50,13 +49,11 @@ impl ActionModePolicy {
         self.window.validate()?;
         let band = |rule: &ActionModeRule| {
             !rule.mode.trim().is_empty()
-                && rule.mode.len() <= MAX_MODE_BYTES
                 && (0.0..=1.0).contains(&rule.min_index)
                 && (0.0..=1.0).contains(&rule.max_index)
                 && rule.min_index < rule.max_index
         };
         if self.rules.is_empty()
-            || self.rules.len() > MAX_RULES
             || !self.rules.iter().all(band)
             || self
                 .rules
@@ -66,6 +63,16 @@ impl ActionModePolicy {
             return Err(invalid());
         }
         Ok(())
+    }
+
+    /// Measures the policy against its `[limits]` rows (OF-520): its bands
+    /// and its longest mode. Past one the vault's port asks, and the policy
+    /// is kept whole.
+    fn measure(&self, vault: &Vault) {
+        let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, self.rules.len() as u64);
+        if let Some(longest) = self.rules.iter().map(|rule| rule.mode.len()).max() {
+            let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
+        }
     }
 
     fn mode_for(&self, value: f32) -> Option<&ActionModeRule> {
@@ -92,6 +99,7 @@ impl Vault {
     ) -> Result<Option<ActionModePolicy>> {
         if let Some(policy) = &policy {
             policy.validate()?;
+            policy.measure(self);
         }
         self.with_write_txn_grouped(|txn| {
             validate_owner_in_txn(self, txn, owner)?;

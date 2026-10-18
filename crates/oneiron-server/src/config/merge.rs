@@ -257,6 +257,23 @@ pub(crate) fn layer_serve_config(
     Ok(resolved)
 }
 
+/// One `[embedder]` table settled onto `config` as [`layer_serve_config`]
+/// settles the layered section: applied over the defaults as the vault file's
+/// layer, its local space settled, then refused as serve refuses a section
+/// that cannot make a working slot. Managed mode's `--embedder-file` is the
+/// one layer it has (FIX 777).
+pub(crate) fn settle_embedder_section(
+    config: &mut ServeConfig,
+    section: EmbedderConfigOverride,
+) -> anyhow::Result<()> {
+    let space_naming = super::embedder_space::SpaceNaming::of([Some(&section), None, None]);
+    let mut embedder = EmbedderConfig::default();
+    embedder.apply_override(section, ConfigLayer::Vault)?;
+    super::embedder_space::settle_local_space(&mut embedder, space_naming)?;
+    config.embedder = Some(embedder);
+    validate_embedder_config(config)
+}
+
 /// The engine's own config-validation refusal, wrapped for this crate's
 /// `anyhow` boundary so it survives as a downcastable `oneiron::Error`.
 fn invalid_sync_config(field: SyncConfigField) -> anyhow::Error {
@@ -540,6 +557,7 @@ struct FileServeConfig {
     failure_signal_training: Option<bool>,
     hosted_kms_key_ref: Option<String>,
     maximum_tier: Option<bool>,
+    device_class: Option<oneiron::authority::MachineDeviceClass>,
 }
 
 impl From<FileServeConfig> for PartialServeConfig {
@@ -604,6 +622,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             failure_signal_training: value.failure_signal_training,
             hosted_kms_key_ref: value.hosted_kms_key_ref,
             maximum_tier: value.maximum_tier,
+            device_class: value.device_class,
         }
     }
 }
@@ -679,6 +698,8 @@ struct PartialServeConfig {
     hosted_kms_key_ref: Option<String>,
     /// `maximum_tier` is file-only: `oneiron init --maximum-tier` writes it.
     maximum_tier: Option<bool>,
+    /// `device_class` is file-only, as `maximum_tier` is.
+    device_class: Option<oneiron::authority::MachineDeviceClass>,
 }
 
 impl fmt::Debug for PartialServeConfig {
@@ -756,6 +777,7 @@ impl fmt::Debug for PartialServeConfig {
                 &redacted_secret(&self.hosted_kms_key_ref),
             )
             .field("maximum_tier", &self.maximum_tier)
+            .field("device_class", &self.device_class)
             .finish()
     }
 }
@@ -952,6 +974,9 @@ impl PartialServeConfig {
         if let Some(value) = self.maximum_tier {
             resolved.maximum_tier = value;
         }
+        if let Some(value) = self.device_class {
+            resolved.device_class = value;
+        }
         Ok(())
     }
 }
@@ -1030,6 +1055,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             failure_signal_training: value.failure_signal_training,
             hosted_kms_key_ref: value.hosted_kms_key_ref.clone(),
             maximum_tier: None,
+            device_class: None,
         }
     }
 }
