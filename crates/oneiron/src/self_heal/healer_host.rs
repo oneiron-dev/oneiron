@@ -417,6 +417,7 @@ impl HealerRegistration<'_> {
                 healer: &drafts,
             };
             let bundle = run_healer_proposals(
+                self.vault,
                 &policy,
                 &registration,
                 run,
