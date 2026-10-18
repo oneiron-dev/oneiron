@@ -114,8 +114,8 @@ pub(crate) use super::widen_proposal_doors::*;
 pub(crate) use super::craft_candidate_doors::*;
 // The app's policy-action doors (OF-181), likewise.
 pub(crate) use super::channel_doors::*;
-pub(crate) use super::gate_policy_doors::*;
 pub(crate) use super::content_policy_doors::*;
+pub(crate) use super::gate_policy_doors::*;
 pub(crate) use super::policy_doors::*;
 // The owner's origin and checkout doors (DOOR-139), likewise.
 pub(crate) use super::origin_doors::*;

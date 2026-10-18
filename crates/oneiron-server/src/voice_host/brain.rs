@@ -358,9 +358,9 @@ impl ChatBrain {
     }
 
     pub(super) fn producer_pending(&self, generation: GenerationEpoch) -> bool {
-        self.turn.as_ref().is_some_and(|turn| {
-            turn.generation == generation && !turn.handle.is_finished()
-        })
+        self.turn
+            .as_ref()
+            .is_some_and(|turn| turn.generation == generation && !turn.handle.is_finished())
     }
 
     /// An abort only requests cancellation. Joining observes the stream drop,
