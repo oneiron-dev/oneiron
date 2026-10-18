@@ -32,7 +32,7 @@ use crate::sync::quarantine::remote_rejection_reason;
 /// The most entries one authority tail page carries.
 pub const AUTHORITY_TAIL_PAGE_MAX: usize = 512;
 
-/// The most image bytes one checkpoint part carries, as a sealed packet's
+/// The most image bytes one checkpoint part carries, as a sealed bundle
 /// part does: inside the RPC reply once base64 is added.
 pub const AUTHORITY_CHECKPOINT_PART_MAX: usize = 16 * 1024 * 1024;
 

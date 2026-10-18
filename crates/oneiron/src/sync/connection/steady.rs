@@ -44,7 +44,7 @@ impl SyncConnection {
             tokio::time::interval(Duration::from_secs(EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS));
         ephemeral_housekeeping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         // One residence upkeep at a time (authority catch-up, then the sealed
-        // relay), on its own sockets, off this loop.
+        // bundle relay), on its own sockets, off this loop.
         let mut sealed_relay =
             tokio::time::interval(Duration::from_secs(SEALED_RELAY_INTERVAL_SECS));
         sealed_relay.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -298,14 +298,6 @@ impl SyncConnection {
                                 Err(error) => {
                                     let _ = events.send(SyncEvent::Error(format!(
                                         "Custody re-seal stopped: {error}"
-                                    )));
-                                }
-                            }
-                            match crate::sync::client::relay_sealed_windows(&manager, &config).await {
-                                Ok(_) | Err(crate::sync::TransportError::InvalidPayload(_)) => {}
-                                Err(error) => {
-                                    let _ = events.send(SyncEvent::Error(format!(
-                                        "Sealed window relay failed: {error}"
                                     )));
                                 }
                             }

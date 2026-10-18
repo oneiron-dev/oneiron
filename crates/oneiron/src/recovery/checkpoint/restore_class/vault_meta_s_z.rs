@@ -295,10 +295,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::WORLD_KEY_DELETED, CONTENT),
     // A destroyed world stays destroyed: no image restores its keys.
     (&t::WORLD_KEY_DESTROYED, LIVE),
-    // Sealed copies and their mirrors follow the live vault: an image never brings
-    // back a copy a delete or the 30-day expiry purged.
+    // Sealing mirrors follow the live vault: an image never brings back a mirror
+    // an erase purged.
     (&t::WORLD_KEY_SEALED_MIRROR, LIVE),
-    (&t::WORLD_KEY_SEALED_RETIRED, LIVE),
-    (&t::WORLD_KEY_SEALED, LIVE),
-    (&t::WORLD_KEY_SEALED_WINDOW, LIVE),
 ];
