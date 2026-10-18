@@ -42,6 +42,26 @@ pub(in crate::gate) fn native_mail_cold_composed_effect(
         .ok()
 }
 
+/// The one-shot digest a code consent wait's answer approves (DOOR-079
+/// 1a): the external effect's own facts and action requirement, with its
+/// operation named by the wait's immutable binding digest, so approving one
+/// wait never releases another, nor any other send of the same actor on the
+/// same channel. Standing grants still match on the unchanged requirement.
+pub(in crate::gate) fn code_wait_composed_effect(
+    effect: &ExternalEffectGateInput,
+    binding_digest: &[u8; 32],
+) -> Option<crate::consent::ComposedEffect> {
+    let mut facts = external_effect_facts(effect);
+    facts.operation_kind = format!(
+        "{}:code_wait:{}",
+        facts.operation_kind,
+        crate::entity_id::bytes_to_hex_lower(binding_digest)
+    );
+    crate::consent::ComposedEffect::new(facts)
+        .with_action_requirement(external_effect_action_requirement(effect)?)
+        .ok()
+}
+
 pub(in crate::gate) fn external_effect_consent_context(
     effect: &ExternalEffectGateInput,
     approve_once: Option<&crate::consent::ApproveOnceAuthorization>,

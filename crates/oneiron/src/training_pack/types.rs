@@ -8,6 +8,7 @@ use crate::entity_id::EntityId;
 use crate::llm::manifest::{ModelBinding, ModelRole};
 use crate::llm::run_admission::{BudgetLine, LeaseUnit, Payer};
 use crate::llm::{ModelId, ModelLocality};
+use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::skill_optimize::{EvalCohort, EvalExposure, EvalSeat};
 
 /// A source is a repository and an immutable revision, never a moving branch.
@@ -201,11 +202,63 @@ pub enum TrainingAuthorizationSource {
     },
 }
 
+/// The owner a run, an authorization or a swap receipt names: an actor, or
+/// no one once that actor was erased (FIX 3520). It reads and writes as the
+/// actor's hex id, or as [`ERASED_CALL_IDENTITY`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrainingOwner {
+    Actor(EntityId),
+    Erased,
+}
+
+impl TrainingOwner {
+    /// Whether this is `actor`.
+    #[must_use]
+    pub fn is(self, actor: EntityId) -> bool {
+        self == Self::Actor(actor)
+    }
+
+    /// Makes this no one when it is `actor`; whether it was.
+    pub(super) fn forget(&mut self, actor: EntityId) -> bool {
+        let named = self.is(actor);
+        if named {
+            *self = Self::Erased;
+        }
+        named
+    }
+}
+
+impl Serialize for TrainingOwner {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        match self {
+            Self::Actor(id) => serializer.serialize_str(&id.to_hex()),
+            Self::Erased => serializer.serialize_str(ERASED_CALL_IDENTITY),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for TrainingOwner {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        if value == ERASED_CALL_IDENTITY {
+            return Ok(Self::Erased);
+        }
+        EntityId::from_hex(&value)
+            .map(Self::Actor)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 /// The owner's yes on one prepared spec and declaration. It holds no
 /// credential, key, lease or permit; the host takes a fresh permit at dispatch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrainingAuthorization {
-    pub owner: EntityId,
+    pub owner: TrainingOwner,
     pub at: u64,
     pub spec_blake3: [u8; 32],
     pub declaration: TrainingDeclarationPin,
@@ -271,7 +324,7 @@ pub struct HeldOutResult {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TrainingRun {
     pub id: EntityId,
-    pub owner: EntityId,
+    pub owner: TrainingOwner,
     pub created_at: u64,
     pub plan: TrainingPlan,
     pub compute: ComputePin,
@@ -308,7 +361,7 @@ pub enum SwapChoice {
 pub struct RoleSwapReceipt {
     pub id: EntityId,
     pub run: EntityId,
-    pub owner: EntityId,
+    pub owner: TrainingOwner,
     pub at: u64,
     pub role: ModelRole,
     pub previous: Option<ModelBinding>,

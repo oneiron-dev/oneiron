@@ -95,6 +95,14 @@ pub enum AgentVerb {
     VaultSkillsImport,
     VaultSkillsSync,
     VaultSkillsReceipts,
+    VaultSkillsConvert,
+    VaultSkillsGet,
+    VaultSkillsList,
+    VaultSkillsArchive,
+    VaultSkillsRestore,
+    VaultSkillsFork,
+    VaultSkillsRulesSet,
+    VaultSkillsCodeAutoInstallSet,
     VaultSkillsPermissionsApprove,
     VaultPacksHooksBind,
     VaultPacksHooksList,
@@ -118,6 +126,11 @@ pub enum AgentVerb {
     VaultAuthorityAudit,
     VaultAuthorityHistoryExport,
     VaultAuthorityHistoryImport,
+    VaultSlimPolicy,
+    VaultSlimState,
+    VaultSlimResumeStep,
+    VaultSlimDropHeavy,
+    VaultSlimResume,
     VaultMeshPathReceipts,
     VaultInspectionResolve,
     VaultSharedProposeDelete,
@@ -321,6 +334,8 @@ pub enum AgentVerb {
     VaultTaskTypesPin,
     VaultTaskTypesGet,
     VaultAgentsSpawnGet,
+    VaultTasksCancelForce,
+    VaultRunsBranchesGet,
     VaultWorkspaceEstablish,
     VaultWorkspaceMembersOnboard,
     VaultWorkspaceRoster,
@@ -332,6 +347,7 @@ pub enum AgentVerb {
     VaultArtifactsReviewSlides,
     VaultArtifactsAsk,
     VaultCriticReview,
+    VaultArtifactsInspectDeck,
     VaultArtifactsProposeDeck,
     VaultArtifactsProposeOutput,
     VaultArtifactsKeep,
@@ -690,6 +706,14 @@ impl AgentVerb {
         Self::VaultSkillsImport,
         Self::VaultSkillsSync,
         Self::VaultSkillsReceipts,
+        Self::VaultSkillsConvert,
+        Self::VaultSkillsGet,
+        Self::VaultSkillsList,
+        Self::VaultSkillsArchive,
+        Self::VaultSkillsRestore,
+        Self::VaultSkillsFork,
+        Self::VaultSkillsRulesSet,
+        Self::VaultSkillsCodeAutoInstallSet,
         Self::VaultSkillsPermissionsApprove,
         Self::VaultPacksHooksBind,
         Self::VaultPacksHooksList,
@@ -713,6 +737,11 @@ impl AgentVerb {
         Self::VaultAuthorityAudit,
         Self::VaultAuthorityHistoryExport,
         Self::VaultAuthorityHistoryImport,
+        Self::VaultSlimPolicy,
+        Self::VaultSlimState,
+        Self::VaultSlimResumeStep,
+        Self::VaultSlimDropHeavy,
+        Self::VaultSlimResume,
         Self::VaultMeshPathReceipts,
         Self::VaultInspectionResolve,
         Self::VaultSharedProposeDelete,
@@ -916,6 +945,8 @@ impl AgentVerb {
         Self::VaultTaskTypesPin,
         Self::VaultTaskTypesGet,
         Self::VaultAgentsSpawnGet,
+        Self::VaultTasksCancelForce,
+        Self::VaultRunsBranchesGet,
         Self::VaultWorkspaceEstablish,
         Self::VaultWorkspaceMembersOnboard,
         Self::VaultWorkspaceRoster,
@@ -927,6 +958,7 @@ impl AgentVerb {
         Self::VaultArtifactsReviewSlides,
         Self::VaultArtifactsAsk,
         Self::VaultCriticReview,
+        Self::VaultArtifactsInspectDeck,
         Self::VaultArtifactsProposeDeck,
         Self::VaultArtifactsProposeOutput,
         Self::VaultArtifactsKeep,
@@ -1288,6 +1320,14 @@ impl AgentVerb {
             Self::VaultSkillsImport => "vault.skills.import",
             Self::VaultSkillsSync => "vault.skills.sync",
             Self::VaultSkillsReceipts => "vault.skills.receipts",
+            Self::VaultSkillsConvert => "vault.skills.convert",
+            Self::VaultSkillsGet => "vault.skills.get",
+            Self::VaultSkillsList => "vault.skills.list",
+            Self::VaultSkillsArchive => "vault.skills.archive",
+            Self::VaultSkillsRestore => "vault.skills.restore",
+            Self::VaultSkillsFork => "vault.skills.fork",
+            Self::VaultSkillsRulesSet => "vault.skills.rules.set",
+            Self::VaultSkillsCodeAutoInstallSet => "vault.skills.code_auto_install.set",
             Self::VaultSkillsPermissionsApprove => "vault.skills.permissions.approve",
             Self::VaultPacksHooksBind => "vault.packs.hooks.bind",
             Self::VaultPacksHooksList => "vault.packs.hooks.list",
@@ -1311,6 +1351,11 @@ impl AgentVerb {
             Self::VaultAuthorityAudit => "vault.authority.audit",
             Self::VaultAuthorityHistoryExport => "vault.authority.history.export",
             Self::VaultAuthorityHistoryImport => "vault.authority.history.import",
+            Self::VaultSlimPolicy => "vault.slim.policy",
+            Self::VaultSlimState => "vault.slim.state",
+            Self::VaultSlimResumeStep => "vault.slim.resume_step",
+            Self::VaultSlimDropHeavy => "vault.slim.drop_heavy",
+            Self::VaultSlimResume => "vault.slim.resume",
             Self::VaultMeshPathReceipts => "vault.mesh.path_receipts",
             Self::VaultInspectionResolve => "vault.inspection.resolve",
             Self::VaultSharedProposeDelete => "vault.shared.propose_delete",
@@ -1520,6 +1565,8 @@ impl AgentVerb {
             Self::VaultTaskTypesPin => "vault.task_types.pin",
             Self::VaultTaskTypesGet => "vault.task_types.get",
             Self::VaultAgentsSpawnGet => "vault.agents.spawn.get",
+            Self::VaultTasksCancelForce => "vault.tasks.cancel_force",
+            Self::VaultRunsBranchesGet => "vault.runs.branches.get",
             Self::VaultWorkspaceEstablish => "vault.workspace.establish",
             Self::VaultWorkspaceMembersOnboard => "vault.workspace.members.onboard",
             Self::VaultWorkspaceRoster => "vault.workspace.roster",
@@ -1531,6 +1578,7 @@ impl AgentVerb {
             Self::VaultArtifactsReviewSlides => "vault.artifacts.review_slides",
             Self::VaultArtifactsAsk => "vault.artifacts.ask",
             Self::VaultCriticReview => "vault.critic.review",
+            Self::VaultArtifactsInspectDeck => "vault.artifacts.inspect_deck",
             Self::VaultArtifactsProposeDeck => "vault.artifacts.propose_deck",
             Self::VaultArtifactsProposeOutput => "vault.artifacts.propose_output",
             Self::VaultArtifactsKeep => "vault.artifacts.keep",
@@ -1892,6 +1940,14 @@ impl AgentVerb {
                 | Self::VaultSkillsImport
                 | Self::VaultSkillsSync
                 | Self::VaultSkillsReceipts
+                | Self::VaultSkillsConvert
+                | Self::VaultSkillsGet
+                | Self::VaultSkillsList
+                | Self::VaultSkillsArchive
+                | Self::VaultSkillsRestore
+                | Self::VaultSkillsFork
+                | Self::VaultSkillsRulesSet
+                | Self::VaultSkillsCodeAutoInstallSet
                 | Self::VaultSkillsPermissionsApprove
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksList
@@ -1915,6 +1971,11 @@ impl AgentVerb {
                 | Self::VaultAuthorityAudit
                 | Self::VaultAuthorityHistoryExport
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultSlimPolicy
+                | Self::VaultSlimState
+                | Self::VaultSlimResumeStep
+                | Self::VaultSlimDropHeavy
+                | Self::VaultSlimResume
                 | Self::VaultMeshPathReceipts
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
@@ -2118,6 +2179,8 @@ impl AgentVerb {
                 | Self::VaultTaskTypesPin
                 | Self::VaultTaskTypesGet
                 | Self::VaultAgentsSpawnGet
+                | Self::VaultTasksCancelForce
+                | Self::VaultRunsBranchesGet
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultWorkspaceRoster
@@ -2129,6 +2192,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
                 | Self::VaultCriticReview
+                | Self::VaultArtifactsInspectDeck
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -2494,6 +2558,14 @@ impl AgentVerb {
                 | Self::VaultSkillsImport
                 | Self::VaultSkillsSync
                 | Self::VaultSkillsReceipts
+                | Self::VaultSkillsConvert
+                | Self::VaultSkillsGet
+                | Self::VaultSkillsList
+                | Self::VaultSkillsArchive
+                | Self::VaultSkillsRestore
+                | Self::VaultSkillsFork
+                | Self::VaultSkillsRulesSet
+                | Self::VaultSkillsCodeAutoInstallSet
                 | Self::VaultSkillsPermissionsApprove
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksList
@@ -2517,6 +2589,11 @@ impl AgentVerb {
                 | Self::VaultAuthorityAudit
                 | Self::VaultAuthorityHistoryExport
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultSlimPolicy
+                | Self::VaultSlimState
+                | Self::VaultSlimResumeStep
+                | Self::VaultSlimDropHeavy
+                | Self::VaultSlimResume
                 | Self::VaultMeshPathReceipts
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
@@ -2720,6 +2797,8 @@ impl AgentVerb {
                 | Self::VaultTaskTypesPin
                 | Self::VaultTaskTypesGet
                 | Self::VaultAgentsSpawnGet
+                | Self::VaultTasksCancelForce
+                | Self::VaultRunsBranchesGet
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultWorkspaceRoster
@@ -2731,6 +2810,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
                 | Self::VaultCriticReview
+                | Self::VaultArtifactsInspectDeck
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -3149,6 +3229,14 @@ impl AgentVerb {
                 | Self::VaultSkillsImport
                 | Self::VaultSkillsSync
                 | Self::VaultSkillsReceipts
+                | Self::VaultSkillsConvert
+                | Self::VaultSkillsGet
+                | Self::VaultSkillsList
+                | Self::VaultSkillsArchive
+                | Self::VaultSkillsRestore
+                | Self::VaultSkillsFork
+                | Self::VaultSkillsRulesSet
+                | Self::VaultSkillsCodeAutoInstallSet
                 | Self::VaultSkillsPermissionsApprove
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksList
@@ -3172,6 +3260,11 @@ impl AgentVerb {
                 | Self::VaultAuthorityAudit
                 | Self::VaultAuthorityHistoryExport
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultSlimPolicy
+                | Self::VaultSlimState
+                | Self::VaultSlimResumeStep
+                | Self::VaultSlimDropHeavy
+                | Self::VaultSlimResume
                 | Self::VaultMeshPathReceipts
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
@@ -3375,6 +3468,8 @@ impl AgentVerb {
                 | Self::VaultTaskTypesPin
                 | Self::VaultTaskTypesGet
                 | Self::VaultAgentsSpawnGet
+                | Self::VaultTasksCancelForce
+                | Self::VaultRunsBranchesGet
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultWorkspaceRoster
@@ -3386,6 +3481,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
                 | Self::VaultCriticReview
+                | Self::VaultArtifactsInspectDeck
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -3678,6 +3774,12 @@ impl AgentVerb {
                 | Self::VaultPacksSync
                 | Self::VaultSkillsImport
                 | Self::VaultSkillsSync
+                | Self::VaultSkillsConvert
+                | Self::VaultSkillsArchive
+                | Self::VaultSkillsRestore
+                | Self::VaultSkillsFork
+                | Self::VaultSkillsRulesSet
+                | Self::VaultSkillsCodeAutoInstallSet
                 | Self::VaultSkillsPermissionsApprove
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksQualify
@@ -3694,6 +3796,8 @@ impl AgentVerb {
                 | Self::VaultPacksSetupAnswer
                 | Self::VaultPacksSetupVerify
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultSlimDropHeavy
+                | Self::VaultSlimResume
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
                 | Self::VaultSharedProposeRemoveOwner
@@ -3825,6 +3929,7 @@ impl AgentVerb {
                 | Self::VaultWorkflowsUpdate
                 | Self::VaultWorkflowsDispatch
                 | Self::VaultTaskTypesPin
+                | Self::VaultTasksCancelForce
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultArtifactsReleaseWait
@@ -4117,6 +4222,14 @@ impl AgentVerb {
             Self::VaultSkillsImport => &["spec"],
             Self::VaultSkillsSync => &["spec"],
             Self::VaultSkillsReceipts => &["spec"],
+            Self::VaultSkillsConvert => &["spec"],
+            Self::VaultSkillsGet => &["spec"],
+            Self::VaultSkillsList => &["spec"],
+            Self::VaultSkillsArchive => &["spec"],
+            Self::VaultSkillsRestore => &["spec"],
+            Self::VaultSkillsFork => &["spec"],
+            Self::VaultSkillsRulesSet => &["spec"],
+            Self::VaultSkillsCodeAutoInstallSet => &["spec"],
             Self::VaultSkillsPermissionsApprove => &["spec"],
             Self::VaultPacksHooksBind => &["spec"],
             Self::VaultPacksHooksList => &["spec"],
@@ -4140,6 +4253,11 @@ impl AgentVerb {
             Self::VaultAuthorityAudit => &["spec"],
             Self::VaultAuthorityHistoryExport => &[],
             Self::VaultAuthorityHistoryImport => &["spec"],
+            Self::VaultSlimPolicy => &["spec"],
+            Self::VaultSlimState => &["spec"],
+            Self::VaultSlimResumeStep => &["spec"],
+            Self::VaultSlimDropHeavy => &["spec"],
+            Self::VaultSlimResume => &["spec"],
             Self::VaultMeshPathReceipts => &["spec"],
             Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
@@ -4343,6 +4461,8 @@ impl AgentVerb {
             Self::VaultTaskTypesPin => &["spec"],
             Self::VaultTaskTypesGet => &["spec"],
             Self::VaultAgentsSpawnGet => &["spec"],
+            Self::VaultTasksCancelForce => &["spec"],
+            Self::VaultRunsBranchesGet => &["spec"],
             Self::VaultWorkspaceEstablish => &["spec"],
             Self::VaultWorkspaceMembersOnboard => &["spec"],
             Self::VaultWorkspaceRoster => &["spec"],
@@ -4354,6 +4474,7 @@ impl AgentVerb {
             Self::VaultArtifactsReviewSlides => &["spec"],
             Self::VaultArtifactsAsk => &["spec"],
             Self::VaultCriticReview => &["spec"],
+            Self::VaultArtifactsInspectDeck => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
             Self::VaultArtifactsKeep => &["spec"],
@@ -4713,6 +4834,14 @@ impl AgentVerb {
             Self::VaultSkillsImport => &["spec"],
             Self::VaultSkillsSync => &["spec"],
             Self::VaultSkillsReceipts => &["spec"],
+            Self::VaultSkillsConvert => &["spec"],
+            Self::VaultSkillsGet => &["spec"],
+            Self::VaultSkillsList => &["spec"],
+            Self::VaultSkillsArchive => &["spec"],
+            Self::VaultSkillsRestore => &["spec"],
+            Self::VaultSkillsFork => &["spec"],
+            Self::VaultSkillsRulesSet => &["spec"],
+            Self::VaultSkillsCodeAutoInstallSet => &["spec"],
             Self::VaultSkillsPermissionsApprove => &["spec"],
             Self::VaultPacksHooksBind => &["spec"],
             Self::VaultPacksHooksList => &["spec"],
@@ -4736,6 +4865,11 @@ impl AgentVerb {
             Self::VaultAuthorityAudit => &["spec"],
             Self::VaultAuthorityHistoryExport => &[],
             Self::VaultAuthorityHistoryImport => &["spec"],
+            Self::VaultSlimPolicy => &["spec"],
+            Self::VaultSlimState => &["spec"],
+            Self::VaultSlimResumeStep => &["spec"],
+            Self::VaultSlimDropHeavy => &["spec"],
+            Self::VaultSlimResume => &["spec"],
             Self::VaultMeshPathReceipts => &["spec"],
             Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
@@ -4939,6 +5073,8 @@ impl AgentVerb {
             Self::VaultTaskTypesPin => &["spec"],
             Self::VaultTaskTypesGet => &["spec"],
             Self::VaultAgentsSpawnGet => &["spec"],
+            Self::VaultTasksCancelForce => &["spec"],
+            Self::VaultRunsBranchesGet => &["spec"],
             Self::VaultWorkspaceEstablish => &["spec"],
             Self::VaultWorkspaceMembersOnboard => &["spec"],
             Self::VaultWorkspaceRoster => &["spec"],
@@ -4950,6 +5086,7 @@ impl AgentVerb {
             Self::VaultArtifactsReviewSlides => &["spec"],
             Self::VaultArtifactsAsk => &["spec"],
             Self::VaultCriticReview => &["spec"],
+            Self::VaultArtifactsInspectDeck => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
             Self::VaultArtifactsKeep => &["spec"],
@@ -5484,6 +5621,30 @@ impl AgentVerb {
             Self::VaultSkillsReceipts => {
                 "Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner."
             }
+            Self::VaultSkillsConvert => {
+                "Converts selected messages through the configured refiner; user initiation approves conversion, never admission."
+            }
+            Self::VaultSkillsGet => {
+                "Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry."
+            }
+            Self::VaultSkillsList => {
+                "Lists a page of the owner skill library, including inactive skills and their retained evidence."
+            }
+            Self::VaultSkillsArchive => {
+                "The owner soft-retires an active skill without deleting its body, source or receipts; running callable invocations are cancelled."
+            }
+            Self::VaultSkillsRestore => {
+                "The owner restores an archived skill through the same admission gates; a hub restore prepares exact consent and reruns held-out scoring."
+            }
+            Self::VaultSkillsFork => {
+                "The owner forks a stored skill under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable."
+            }
+            Self::VaultSkillsRulesSet => {
+                "The owner sets or clears a known-bad canonical skill hash rule, independently of advisory scanner prose."
+            }
+            Self::VaultSkillsCodeAutoInstallSet => {
+                "The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification."
+            }
             Self::VaultSkillsPermissionsApprove => {
                 "The owner answers one imported skill permission ask at its exact hub source."
             }
@@ -5550,6 +5711,21 @@ impl AgentVerb {
             }
             Self::VaultAuthorityHistoryImport => {
                 "Imports original base64 signed authority envelopes atomically for the owner, preserving bytes and refolding locally. Invalid signatures, foreign genesis and missing parents write nothing."
+            }
+            Self::VaultSlimPolicy => {
+                "Reads the serving host idle policy: the long outbound wait, no exit on idle and lazy heap rebuild."
+            }
+            Self::VaultSlimState => {
+                "Observes FULL or SLIM atomically with this process id and the retained journaled resume pointer, without waking the vault."
+            }
+            Self::VaultSlimResumeStep => {
+                "Reads a saved model checkpoint or outbound intent by its retained identity, including after FULL or restart, without reissuing it."
+            }
+            Self::VaultSlimDropHeavy => {
+                "Drops rebuildable heap in process and returns the completed engine transition, drop counts or typed refusal; one journaled outbound step is required."
+            }
+            Self::VaultSlimResume => {
+                "Resumes logical FULL in the same process and returns its completion receipt; indexes rebuild lazily and no saved outbound step is reissued."
             }
             Self::VaultMeshPathReceipts => {
                 "The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner."
@@ -6138,6 +6314,12 @@ impl AgentVerb {
             Self::VaultAgentsSpawnGet => {
                 "The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning."
             }
+            Self::VaultTasksCancelForce => {
+                "The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts."
+            }
+            Self::VaultRunsBranchesGet => {
+                "The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts."
+            }
             Self::VaultWorkspaceEstablish => {
                 "The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted."
             }
@@ -6168,6 +6350,9 @@ impl AgentVerb {
             }
             Self::VaultCriticReview => {
                 "Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target."
+            }
+            Self::VaultArtifactsInspectDeck => {
+                "Inspects one PPTX version for native edit targets and comment identities without minting ids."
             }
             Self::VaultArtifactsProposeDeck => {
                 "Runs one native deck transaction over an artifact's head and holds the proposal for Keep."

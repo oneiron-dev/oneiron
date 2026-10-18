@@ -24,6 +24,12 @@ pub struct SkillsConfig {
     /// The goal-intake skill a minted project's leader interviews with, by
     /// its 32-hex id. Unset: the shipped goal-intake skill.
     pub goal_intake_skill: Option<String>,
+    /// Host-supplied conversion instructions (ARCH-0017): preserve the selected
+    /// words, invent no authority, and diff against the supplied neighbors.
+    /// Returns JSON {skill_id, desc, files:[{path,content}], verdict:{kind:
+    /// "mint", justification} | {kind:"merge_into", existing, rationale}}.
+    /// Unset means selected-message conversion is unavailable, never a fallback prompt.
+    pub conversion_prompt: Option<String>,
 }
 
 impl SkillsConfig {
@@ -36,6 +42,9 @@ impl SkillsConfig {
         }
         if let Some(value) = over.goal_intake_skill {
             self.goal_intake_skill = Some(value);
+        }
+        if let Some(value) = over.conversion_prompt {
+            self.conversion_prompt = Some(value);
         }
     }
 
@@ -51,6 +60,9 @@ impl SkillsConfig {
             &self.project_proposal_draft_skill,
         )?;
         skill_id("goal_intake_skill", &self.goal_intake_skill)?;
+        if self.conversion_prompt.as_ref().is_some_and(|prompt| prompt.trim().is_empty()) {
+            anyhow::bail!("skills.conversion_prompt must not be empty");
+        }
         Ok(())
     }
 
@@ -87,6 +99,7 @@ pub(super) struct SkillsConfigOverride {
     pub(super) live_pulls_per_axis: Option<u32>,
     pub(super) project_proposal_draft_skill: Option<String>,
     pub(super) goal_intake_skill: Option<String>,
+    pub(super) conversion_prompt: Option<String>,
 }
 
 pub(super) fn lookup_skills_override(
@@ -103,10 +116,12 @@ pub(super) fn lookup_skills_override(
         .transpose()?;
     let project_proposal_draft_skill = lookup("ONEIRON_SKILLS_PROJECT_PROPOSAL_DRAFT_SKILL");
     let goal_intake_skill = lookup("ONEIRON_SKILLS_GOAL_INTAKE_SKILL");
+    let conversion_prompt = lookup("ONEIRON_SKILLS_CONVERSION_PROMPT");
     let over = SkillsConfigOverride {
         live_pulls_per_axis,
         project_proposal_draft_skill,
         goal_intake_skill,
+        conversion_prompt,
     };
     Ok((over != SkillsConfigOverride::default()).then_some(over))
 }
