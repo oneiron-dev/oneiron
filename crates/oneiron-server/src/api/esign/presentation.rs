@@ -12,10 +12,8 @@ pub(super) struct LayoutRequest {
     pages: Vec<PageGeometry>,
 }
 /// Pure editor layout. Caller data only; this door reads/writes no vault rows.
+/// Every field of every page is laid out, however many (Rule 5).
 pub(super) async fn layout(Json(request): Json<LayoutRequest>) -> Response {
-    if request.fields.len() > 10000 || request.pages.len() > 1000 || request.values.len() > 10000 {
-        return refused();
-    }
     let layouts: Result<Vec<_>, _> = request
         .fields
         .iter()
@@ -51,7 +49,6 @@ pub(super) async fn preview(
     let ua = headers
         .get(header::USER_AGENT)
         .and_then(|v| v.to_str().ok())
-        .filter(|v| v.len() <= 1024)
         .map(str::to_owned);
     let Ok((page, bytes)) = server
         .vault

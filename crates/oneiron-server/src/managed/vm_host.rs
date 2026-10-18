@@ -20,7 +20,7 @@ use super::vault_gates::read_managed_credentials;
 use super::vm_schedule::VmWakeSchedule;
 use oneiron_vault_contract::vm::{
     MAX_VM_FRAME, VM_ARTIFACT_PORT, VM_BOOT_PORT, VM_CTL_PORT, VM_GUEST_CID, VM_HTTP_PORT,
-    VM_LEDGER_PORT, VmGuestFrame, VmHostFrame, decode_vm_frame, encode_vm_frame,
+    VM_LEDGER_PORT, VM_VOICE_PORT, VmGuestFrame, VmHostFrame, decode_vm_frame, encode_vm_frame,
     guest_initiated_socket, host_connect_line,
 };
 use oneiron_vault_contract::{
@@ -78,13 +78,13 @@ pub struct VaultVmConfig {
     #[serde(default)]
     pub artifact_domains: Vec<String>,
     /// This vault's managed settings files, as a read-only ext4 image the
-    /// supervisor builds (FIX 2168, FIX 3487). The guest mounts it at
-    /// `/config` and passes each file it holds to the engine: `models.toml`
-    /// as `--models-file`, and under `seal/` `key.pem`, `chain.pem`,
-    /// `trust.pem` and `organ` as the matching `--seal-*-file` and
-    /// `--seal-organ` flags, and the one-line `tsa-url` and `signing-url` as
-    /// `--seal-tsa-url` and `--seal-signing-url`. Without it the guest runs
-    /// with none of them.
+    /// supervisor builds (FIX 2168, FIX 3487, FIX 777). The guest mounts it
+    /// at `/config` and passes each file it holds to the engine: `models.toml`
+    /// as `--models-file`, `embedder.toml` as `--embedder-file`, and under
+    /// `seal/` `key.pem`, `chain.pem`, `trust.pem` and `organ` as the
+    /// matching `--seal-*-file` and `--seal-organ` flags, and the one-line
+    /// `tsa-url` and `signing-url` as `--seal-tsa-url` and
+    /// `--seal-signing-url`. Without it the guest runs with none of them.
     #[serde(default)]
     pub config_disk: Option<PathBuf>,
 }
@@ -416,6 +416,12 @@ impl VaultVm {
     /// The vault's artifact origin, when its profile serves one.
     pub async fn artifacts(&self) -> anyhow::Result<UnixStream> {
         self.connect(VM_ARTIFACT_PORT).await
+    }
+
+    /// The vault's voice loop, when its `[models.voice]` names a socket in
+    /// `VM_VOICE_DIR` (FIX 2391): a call's audio sibling dials this.
+    pub async fn voice(&self) -> anyhow::Result<UnixStream> {
+        self.connect(VM_VOICE_PORT).await
     }
 
     /// One ctl verb, exactly as a node's supervisor sends it.

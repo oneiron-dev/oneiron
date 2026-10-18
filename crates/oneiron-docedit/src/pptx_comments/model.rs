@@ -66,7 +66,6 @@ pub struct PptxCommentLimits {
     pub max_entries: usize,
     pub max_part_bytes: usize,
     pub max_expanded_bytes: usize,
-    pub max_author_name_bytes: usize,
     pub max_xml_bytes: usize,
     pub max_xml_attributes: usize,
     pub max_xml_namespaces: usize,
@@ -81,7 +80,6 @@ impl PptxCommentLimits {
             && self.max_entries > 0
             && self.max_part_bytes > 0
             && self.max_expanded_bytes > 0
-            && self.max_author_name_bytes > 0
             && self.max_xml_bytes > 0
             && self.max_xml_attributes > 0
             && self.max_xml_namespaces > 0

@@ -1,0 +1,68 @@
+{
+  "profile": "pptx-live-v1",
+  "version": 1,
+  "baselines": [
+    {
+      "id": "clean",
+      "path": "scripts/office/fixtures/clean.pptx",
+      "sha256": "a737f4c991836665b2dcc7a835a72d268cafd3cbab13cba0e59df1d402619480",
+      "typed": [["ONE-2531 clean oracle fixture"]]
+    }
+  ],
+  "edits": [
+    "set_text",
+    "set_run_marks",
+    "set_geometry",
+    "set_preset",
+    "add_shape",
+    "add_group",
+    "add_connector",
+    "add_table",
+    "add_chart",
+    "add_picture",
+    "add_slide",
+    "move_shape",
+    "move_cross_slide",
+    "remove_shape"
+  ],
+  "concurrency": [
+    "both_move",
+    "both_move_same",
+    "delete_group_edit_child",
+    "reparent_geometry",
+    "text_animation_range",
+    "theme_inherited_style",
+    "both_replace_opaque",
+    "both_add_shape"
+  ],
+  "non_pdf": ["modern_comment", "animated_text"],
+  "regression": {
+    "pptarena": {
+      "manifest": "scripts/office/pptarena.json",
+      "select": "all",
+      "cases": [],
+      "exclude": []
+    },
+    "adversarial": {
+      "manifest": "scripts/office/fixtures.json",
+      "cases": [
+        {"id": "failed-open", "engine": "refuses"},
+        {"id": "damaged-candidate", "engine": "refuses"},
+        {"id": "repair-prompt", "engine": "refuses"},
+        {"id": "timeout", "engine": "imports", "timeout_seconds": 1}
+      ]
+    }
+  },
+  "office": {
+    "timeout_seconds": 90,
+    "observer": "system-events",
+    "owner_accounts": ["olety"],
+    "scripts": [
+      "deck_gate.py",
+      "deck_oracle.py",
+      "powerpoint.applescript",
+      "raster.swift",
+      "environment.json"
+    ]
+  }
+}
