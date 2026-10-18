@@ -19,8 +19,8 @@ use serde::{Deserialize, Serialize};
 use super::TURNS;
 use super::offer_settle::OfferAnswer;
 use super::offers::{
-    OFFER_CURRENT, OFFERS, OfferCard, OfferState, StoredOffer, current_key, is_offer_id,
-    room_wide_prefix,
+    OFFER_CURRENT, OFFERS, OfferBallot, OfferCard, OfferState, StoredOffer, current_key,
+    is_offer_id, room_wide_prefix,
 };
 use crate::conversation_dag::AppendRecord;
 use crate::edge::EdgeKind;
@@ -432,12 +432,20 @@ impl Memory<'_> {
             {
                 return Ok(stored.into_card());
             }
+            let held = stored.votes.get(&caller.entity_ref()).copied();
             if room_offer_expired(&stored.card, now) {
                 stored.card.state = OfferState::AgedOut;
-            } else if stored.votes.get(&caller.entity_ref()) == Some(&request.action) {
+            } else if held.is_some_and(|ballot| ballot.action == request.action) {
                 return Ok(stored.into_card());
             } else {
-                stored.votes.insert(caller.entity_ref(), request.action);
+                // FIX 3323: the ballot is stamped past the one it replaces,
+                // so an older copy of it carried in later never wins.
+                let ballot = OfferBallot {
+                    action: request.action,
+                    revision: held.map_or(0, |ballot| ballot.revision).saturating_add(1),
+                    client_id: crate::identity::load_or_mint_client_id_in_txn(vault, txn)?,
+                };
+                stored.votes.insert(caller.entity_ref(), ballot);
                 stored.card.last_engaged_at = stored.card.last_engaged_at.max(now);
             }
             OFFERS.put(&vault.store, txn, &request.offer_id, &stored)?;

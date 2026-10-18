@@ -217,6 +217,31 @@ impl WindowManager {
     /// cleared only after it succeeds. Any recovery error aborts the open
     /// with nothing registered and the marker still set (fail-closed).
     pub fn open_window(self: &Arc<Self>, key: &WindowKey) -> Result<Arc<LoadedWindow>> {
+        self.open_window_with(key, false).map(|(window, _)| window)
+    }
+
+    /// [`Self::open_window`] for a flush of a room's marked side rows that no
+    /// loaded window took (FIX 3095). A cold open's recovery commits on the
+    /// bare doc before Observer A attaches, so what its reverse pass mirrors
+    /// would reach peers only at the next full exchange. This open persists
+    /// and routes that recovered delta as Observer A would, before the
+    /// forward pass clears the marks it mirrored. Returns the window, and
+    /// whether this call opened it.
+    pub(crate) fn open_window_for_room_fact_flush(
+        self: &Arc<Self>,
+        key: &WindowKey,
+    ) -> Result<(Arc<LoadedWindow>, bool)> {
+        self.open_window_with(key, true)
+    }
+
+    /// [`Self::open_window`], persisting and routing a cold open's recovered
+    /// delta when `route_recovery`. Returns the window, and whether this call
+    /// opened it.
+    fn open_window_with(
+        self: &Arc<Self>,
+        key: &WindowKey,
+        route_recovery: bool,
+    ) -> Result<(Arc<LoadedWindow>, bool)> {
         // ONE-1135 production wiring: every open (re-)attaches this manager
         // as the vault's delete router. Idempotent; takes only the vault's
         // attach mutex, never the registry lock.
@@ -240,7 +265,7 @@ impl WindowManager {
             self.maybe_pause_handle_issue();
             self.track_issued_handle(key, &existing);
             drop(registry);
-            return Ok(existing);
+            return Ok((existing, false));
         }
 
         // Startup steps 1-2 (per-window slice): persisted snapshot + pending
@@ -262,6 +287,7 @@ impl WindowManager {
             }
             Err(err) => return Err(err),
         };
+        let recovered_from = route_recovery.then(|| doc.oplog_vv());
 
         let rm_flagged = self.sync_state_marker_present(key)?;
         if rm_flagged {
@@ -280,6 +306,11 @@ impl WindowManager {
         let pending_tombstones = replay_pending_tombstones(&self.vault, &doc, key)?;
         let replayed = replay_pending_mirrors(&self.vault, &doc, key)?;
         let mirrored = reverse_rematerialize(&self.vault, &doc, key)?;
+        // FIX 3095: a flush open makes what recovery mirrored durable, and
+        // sends it, before the forward pass clears the marks it mirrored.
+        if let Some(before) = &recovered_from {
+            self.route_recovered_delta(&doc, key, before)?;
+        }
         let materialized = forward_rematerialize(&self.vault, &doc, &self.materializer, key)?;
         tracing::debug!(
             window = %key,
@@ -309,7 +340,24 @@ impl WindowManager {
         self.maybe_pause_handle_issue();
         self.track_issued_handle(key, &window);
         drop(registry);
-        Ok(window)
+        Ok((window, true))
+    }
+
+    /// Persists and routes what `doc`'s recovery committed since `before`,
+    /// as Observer A persists and routes a local update (FIX 3095).
+    fn route_recovered_delta(
+        &self,
+        doc: &loro::LoroDoc,
+        key: &WindowKey,
+        before: &loro::VersionVector,
+    ) -> Result<()> {
+        if doc.oplog_vv() == *before {
+            return Ok(());
+        }
+        let update = super::loro_support::export_updates_from(doc, before)?;
+        super::bridge::persist_window_update(&self.vault, key.as_str(), &update)?;
+        self.outbound.route(&self.vault, key.as_str(), &update);
+        Ok(())
     }
 
     /// Opens the default loaded-window set for `now_secs` per the

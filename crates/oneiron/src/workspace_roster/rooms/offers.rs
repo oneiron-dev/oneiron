@@ -165,11 +165,24 @@ pub(crate) struct StoredOffer {
     pub(super) answer: Option<super::offer_settle::RecordedOfferAnswer>,
     /// The room's advisory ballots on a room-wide card, one per voter: they
     /// keep it open and decide nothing; only the host's answer admits.
-    pub(super) votes: BTreeMap<EntityId, super::offer_settle::OfferAnswer>,
+    pub(super) votes: BTreeMap<EntityId, OfferBallot>,
     /// How many times the host reopened the card. Another machine's copy
     /// merges by it: the later reopening wins, and older ballots drop (FIX
     /// 1794).
     pub(super) reopen_epoch: u32,
+}
+
+/// One voter's advisory ballot, stamped by the write that cast it (FIX
+/// 3323): the voter's revision, one past the ballot that write replaced, and
+/// the client id of the machine it was cast on. Another machine's copy of
+/// the card merges each voter's ballots by this stamp, never by which copy
+/// arrived last.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct OfferBallot {
+    pub(super) action: super::offer_settle::OfferAnswer,
+    pub(super) revision: u64,
+    pub(super) client_id: u64,
 }
 
 impl StoredOffer {
@@ -178,8 +191,8 @@ impl StoredOffer {
     /// a second ballot: nothing reads it back to decide.
     pub(super) fn into_card(mut self) -> OfferCard {
         let mut tally = OfferVoteTally::default();
-        for vote in self.votes.values() {
-            match vote {
+        for ballot in self.votes.values() {
+            match ballot.action {
                 super::offer_settle::OfferAnswer::Join => tally.join += 1,
                 super::offer_settle::OfferAnswer::NotNow => tally.not_now += 1,
             }
