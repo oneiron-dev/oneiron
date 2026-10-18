@@ -4282,9 +4282,41 @@
      "kind": "src",
      "notable": [],
      "path": "src/batch/export/archive_read.rs",
-     "purpose": "Reads the whole-vault archive (OF-222) back into its typed document",
+     "purpose": "Reads the whole-vault archive (OF-222) member by member from a seekable source (FIX 2766, rule 5): only the…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "ArchiveLfsObject",
+      "ArchiveSideFamily",
+      "ArchiveSideKeyPart",
+      "ArchiveSideRow",
+      "ArchiveSideTree",
+      "ArchiveSideValue",
+      "ArchiveSideWithheld",
+      "ArchiveSideWithheldReason"
+     ],
+     "path": "src/batch/export/archive_side_tables.rs",
+     "purpose": "OF-222 (FIX 2768): the side tables a whole-vault archive carries beside the records they index",
+     "surface": {
+      "crate-vis": 10,
+      "enum": 5,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/archive_spool.rs",
+     "purpose": "FIX 2766 (rule 5): the whole-vault archive is built through spool files and read member by member, so no…",
+     "surface": {
+      "crate-vis": 19,
+      "fn": 1
      }
     },
     {
@@ -4346,7 +4378,7 @@
      "path": "src/batch/export/bundle_validation.rs",
      "purpose": "Validate source identities, facet/body agreement and explicit archive-only omissions",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 8
      }
     },
     {
@@ -4368,7 +4400,7 @@
      "purpose": "Validating archive import through ordinary admission doors, never sync replay",
      "surface": {
       "crate-vis": 3,
-      "fn": 3
+      "fn": 6
      }
     },
     {
@@ -4378,8 +4410,8 @@
      "path": "src/batch/export/document_snapshot.rs",
      "purpose": "Snapshot enumeration for whole-vault export",
      "surface": {
-      "crate-vis": 7,
-      "fn": 2
+      "crate-vis": 6,
+      "fn": 4
      }
     },
     {
@@ -4411,6 +4443,7 @@
       "WholeVaultDocument",
       "WholeVaultDocumentManifest",
       "WholeVaultExport",
+      "WholeVaultExportReceipt",
       "WholeVaultImportReceipt"
      ],
      "path": "src/batch/export/document_types.rs",
@@ -4419,8 +4452,8 @@
       "const": 1,
       "crate-vis": 1,
       "enum": 1,
-      "fn": 5,
-      "struct": 17
+      "fn": 7,
+      "struct": 18
      }
     },
     {
@@ -4592,8 +4625,8 @@
      "path": "src/batch/export/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 5,
-      "re-export": 12
+      "crate-vis": 8,
+      "re-export": 13
      }
     },
     {
@@ -5349,7 +5382,7 @@
      "path": "src/blob_artifact/born_from.rs",
      "purpose": "Born-from (ARCH-0078 section 4): every artifact answers \"born from what\" the same way",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 3,
       "struct": 1
@@ -5938,7 +5971,7 @@
      "path": "src/blob_artifact/mod.rs",
      "purpose": "ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 12,
       "mod": 1,
       "re-export": 9
      }
@@ -6050,7 +6083,7 @@
      "purpose": "Blob version chain: version record codec and the Vault version-chain API",
      "surface": {
       "const": 1,
-      "crate-vis": 26,
+      "crate-vis": 27,
       "fn": 16,
       "struct": 3
      }
@@ -10773,7 +10806,7 @@
      "path": "src/code_document/mod.rs",
      "purpose": "Base-mode live code files: actor-stamped Loro operations and verified tested frontiers",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 5
      }
     },
@@ -10818,7 +10851,7 @@
      "path": "src/code_document/storage.rs",
      "purpose": "Atomic merge-before-persist of live file edits and immutable tested snapshots",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 9
      }
     },
@@ -11061,7 +11094,7 @@
      "path": "src/code_revision/keys.rs",
      "purpose": "Typed side tables for the code-revision row families: finalized records, forks, per-revision integrity…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -11071,7 +11104,7 @@
      "path": "src/code_revision/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 5,
       "re-export": 5
      }
     },
@@ -11085,7 +11118,7 @@
      "path": "src/code_revision/promotion.rs",
      "purpose": "Session provenance claims and promotion guarded by verified revision history",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 5,
       "struct": 2
      }
@@ -11100,7 +11133,7 @@
      "path": "src/code_revision/proposals.rs",
      "purpose": "Durable stranded revisions against the new head; reconciliation is explicit",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 2,
       "struct": 1
@@ -12894,7 +12927,7 @@
      "path": "src/codebase/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 4
      }
     },
@@ -12978,7 +13011,7 @@
      "path": "src/codebase/store/mod.rs",
      "purpose": "Vault persistence for codebase snapshots: ingest methods, transactions, and index keys",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "fn": 9
      }
     },
@@ -16389,7 +16422,7 @@
      "path": "src/conversation_dag/quote.rs",
      "purpose": "Quote spans: a transient scalar selection over one MESSAGE becomes an engine-issued anchor in the reply's…",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "enum": 1,
       "struct": 1
      }
@@ -17920,6 +17953,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/confession.rs",
+     "purpose": "The confession ask and its parse (OF-544, ARCH-0079): after a DONE line, one fenced block naming each…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -18054,8 +18097,8 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 20,
-      "mod": 3,
+      "crate-vis": 21,
+      "mod": 4,
       "re-export": 18
      }
     },
@@ -18435,7 +18478,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "TaskRealizeModel"
@@ -18444,6 +18487,7 @@
      "purpose": "A Dreamer-lane TASK's realization: the one row `tasks.create` queues for a TASK routed to the Dreamer",
      "surface": {
       "const": 1,
+      "crate-vis": 2,
       "fn": 1,
       "struct": 1
      }
@@ -19152,9 +19196,9 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 26,
+      "const": 27,
       "crate-vis": 8,
-      "fn": 12,
+      "fn": 13,
       "trait": 1
      }
     },
@@ -30006,7 +30050,7 @@
      "path": "src/memory/caps.rs",
      "purpose": "The boundary cap contract (ONE-1441 §Binding cap contract, I11)",
      "surface": {
-      "const": 13,
+      "const": 12,
       "crate-vis": 1,
       "fn": 14
      }
@@ -30248,15 +30292,16 @@
      "notable": [
       "ExportOptions",
       "ExportReceipt",
-      "MemoryExport"
+      "MemoryExport",
+      "MemoryExportReceipt"
      ],
      "path": "src/memory/export.rs",
      "purpose": "Full-vault memory export: the whole-vault archive (OF-222)",
      "surface": {
       "const": 2,
       "crate-vis": 2,
-      "fn": 7,
-      "struct": 3
+      "fn": 8,
+      "struct": 4
      }
     },
     {
@@ -32574,7 +32619,7 @@
      "purpose": "Canonical BLAKE3 chunk manifests and vault-private FastCDC parameters",
      "surface": {
       "const": 3,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 7,
       "struct": 3
      }
@@ -32608,7 +32653,7 @@
      "path": "src/origin/lfs/mod.rs",
      "purpose": "Vault-scoped FastCDC/BLAKE3 object plane over ordinary ASSET storage",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 7
      }
     },
@@ -37320,7 +37365,7 @@
      "path": "src/receipt/reference_refusal.rs",
      "purpose": "Reference-refusal receipts (OF-063): a record ref a write named does not resolve for its writer",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -40366,7 +40411,7 @@
      "path": "src/serialize/credential_nulling.rs",
      "purpose": "Unconditional credential removal before any context/export format writer",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -40390,7 +40435,7 @@
      "path": "src/serialize/export_value.rs",
      "purpose": "Credential-safe, type-preserving MessagePack values for whole-vault JSON",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 2,
       "struct": 1
      }
@@ -40611,7 +40656,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/serialize/vault_archive.rs",
-     "purpose": "Writes the whole-vault archive (OF-222) from the credential-nulled document value: every JSONL row is cut…",
+     "purpose": "Writes the whole-vault archive (OF-222) from the document's spools (FIX 2766): the manifest first, then each…",
      "surface": {
       "crate-vis": 1
      }
@@ -40623,17 +40668,17 @@
      "path": "src/serialize/vault_bundles.rs",
      "purpose": "Build portable facets after every native body has passed credential nulling",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/serialize/vault_document.rs",
-     "purpose": "Whole-vault export: the snapshot becomes the typed document, the document passes the credential-nulling…",
+     "purpose": "Whole-vault export (OF-222), written row by row (FIX 2766, rule 5): each snapshot row becomes its typed…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 11
      }
     },
     {
@@ -42826,10 +42871,10 @@
      "path": "src/skill_optimize/eval_set.rs",
      "purpose": "OF-578 (ARCH-0053 \"Eval authoring\", RESEARCH-0937; EVAL-SKILL = A, EVAL-COLDSTART = C, NOT-WORSE = A): the…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 4,
       "fn": 7,
-      "re-export": 2,
+      "re-export": 4,
       "struct": 4
      }
     },
@@ -42837,6 +42882,58 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "CandidateLabel",
+      "CohortSummary",
+      "EvalAuthoringInventory",
+      "EvalCandidate",
+      "EvalSourceGroup",
+      "PurposeCounts",
+      "SeatInventory",
+      "UncutFamily"
+     ],
+     "path": "src/skill_optimize/eval_set/authoring.rs",
+     "purpose": "The eval-authoring pass (OF-578, ARCH-0053 \"Eval authoring\"): the Coach's nightly upkeep of each seat's test…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "re-export": 1,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CaseDecision",
+      "CutDecision",
+      "EvalAuthoringPlan",
+      "EvalAuthoringReport",
+      "EvalAuthoringSkip",
+      "EvalCohortDecision",
+      "FamilyDecision"
+     ],
+     "path": "src/skill_optimize/eval_set/authoring/apply.rs",
+     "purpose": "The plan the eval-authoring skill answers with, checked whole against its inventory and applied in order…",
+     "surface": {
+      "fn": 1,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/eval_set/authoring/lineage.rs",
+     "purpose": "The lineage fixed code resolves for a candidate, from the existing readers' explicit links only: the…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CohortRetirement",
       "EvalCohort",
       "EvalExposure",
       "EvalExposureCounts",
@@ -42846,10 +42943,30 @@
      "path": "src/skill_optimize/eval_set/cohort.rs",
      "purpose": "Date-cut sealed cohorts and the exposure ledger (ARCH-0053: \"The ledger counts what each sealed cohort has…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 8,
       "enum": 1,
-      "fn": 5,
-      "struct": 4
+      "fn": 6,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AuditCase",
+      "AuditCoverage",
+      "AuditMethodPin",
+      "CoverageGap",
+      "EvalCutAudit",
+      "EvalCutAuditDraft",
+      "NearCopyFlag"
+     ],
+     "path": "src/skill_optimize/eval_set/cut_audit.rs",
+     "purpose": "The near-copy audit every cohort cut commits with (ARCH-0053: \"At each cut, a near-copy audit runs across…",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 1,
+      "struct": 7
      }
     },
     {
@@ -43192,7 +43309,7 @@
       "const": 1,
       "crate-vis": 2,
       "enum": 4,
-      "fn": 9,
+      "fn": 10,
       "struct": 10
      }
     },
@@ -45989,7 +46106,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/room_turns.rs",
@@ -53197,7 +53314,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 125,
+     "files": 127,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53596,7 +53713,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 65,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54380,7 +54497,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 35,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -54639,9 +54756,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 189,
+   "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3323,
+   "source_files": 3330,
    "test_files": 902
   },
   "oneiron-android": {
@@ -59887,6 +60004,7 @@
       "XlsxChange",
       "XlsxLock",
       "XlsxName",
+      "XlsxProjection",
       "XlsxSheet",
       "XlsxSheetPlan",
       "XlsxSheetVisibility",
@@ -59902,7 +60020,7 @@
       "enum": 5,
       "fn": 16,
       "re-export": 2,
-      "struct": 9
+      "struct": 10
      }
     },
     {
@@ -65465,6 +65583,16 @@
      "purpose": "The server's Dreamer: one wake supervisor for its one vault (ARCH-0026: one Dreamer per vault, on the…",
      "surface": {
       "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/eval_authoring.rs",
+     "purpose": "The Coach's eval authoring (ARCH-0053 \"Eval authoring\", OF-578): each night it keeps each seat's test set…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -74003,7 +74131,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 40,
+     "files": 41,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -74418,7 +74546,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 630,
+   "source_files": 631,
    "test_files": 182
   },
   "oneiron-spawn": {
