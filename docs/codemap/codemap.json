@@ -491,7 +491,7 @@
      "surface": {
       "crate-vis": 6,
       "enum": 1,
-      "fn": 8
+      "fn": 10
      }
     },
     {
@@ -48537,8 +48537,32 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 27,
+      "re-export": 29,
       "struct": 36
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AgentCeilingInput",
+      "AgentDefinitionCreateRequest",
+      "AgentDefinitionLifecycle",
+      "AgentDefinitionRequest",
+      "AgentDefinitionSpec",
+      "AgentDefinitionUpdateRequest",
+      "AgentDefinitionView",
+      "AgentMcpInput",
+      "AgentScopeInput",
+      "AgentSkillInput"
+     ],
+     "path": "src/task_verb/sdk_agents.rs",
+     "purpose": "Typed custom AGENT_DEF authoring",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 3,
+      "fn": 3,
+      "struct": 7
      }
     },
     {
@@ -48725,7 +48749,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 396
+      "fn": 402
      }
     },
     {
@@ -49073,6 +49097,24 @@
       "crate-vis": 1,
       "fn": 15,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WorkspaceCompanionInput",
+      "WorkspaceMemberOnboardRequest",
+      "WorkspacePresetReceipt",
+      "WorkspacePresetRequest",
+      "WorkspaceRosterRequest"
+     ],
+     "path": "src/task_verb/sdk_workspace.rs",
+     "purpose": "Workspace roster and companion onboarding through the existing runner",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "struct": 4
      }
     },
     {
@@ -55247,7 +55289,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 137,
+     "files": 139,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -55417,7 +55459,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3375,
+   "source_files": 3377,
    "test_files": 902
   },
   "oneiron-android": {
@@ -63812,7 +63854,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 347
+      "fn": 353
      }
     },
     {
@@ -64860,7 +64902,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 348
+      "fn": 354
      }
     },
     {
@@ -67707,6 +67749,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/agent_definition_doors.rs",
+     "purpose": "Custom definitions and workspace onboarding, with the caller's own proof",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -67883,7 +67935,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 71
+      "crate-vis": 73
      }
     },
     {
@@ -75148,7 +75200,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 326,
+     "files": 327,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -75563,7 +75615,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 648,
+   "source_files": 649,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -75761,6 +75813,13 @@
       "ActorCeiling",
       "AdmissionBasis",
       "AdmissionConsent",
+      "AgentCeilingInput",
+      "AgentDefinitionCreateRequest",
+      "AgentDefinitionLifecycle",
+      "AgentDefinitionRequest",
+      "AgentDefinitionSpec",
+      "AgentDefinitionUpdateRequest",
+      "AgentDefinitionView",
       "AgentHealthApplicationState",
       "AgentHealthCard",
       "AgentHealthCardView",
@@ -75777,9 +75836,12 @@
       "AgentHealthRunTree",
       "AgentHealthSignal",
       "AgentHealthTone",
+      "AgentMcpInput",
       "AgentPackExport",
       "AgentPackExportFile",
       "AgentPackExportRequest",
+      "AgentScopeInput",
+      "AgentSkillInput",
       "AgentSpawnInput",
       "AgentSpawnKind",
       "AgentSpawnOutput",
@@ -76355,6 +76417,7 @@
       "MediaAtom",
       "MediaUsage",
       "MemberAnswer",
+      "MemberOnboardingOutcome",
       "MemberVerdict",
       "MembershipConsent",
       "MemoryExport",
@@ -77028,7 +77091,15 @@
       "WireWitnessReceipt",
       "WorkCompanionPolicy",
       "WorkCompanionSetRequest",
+      "WorkspaceCompanionInput",
+      "WorkspaceMemberOnboardRequest",
+      "WorkspacePresetReceipt",
+      "WorkspacePresetRequest",
       "WorkspaceRefRequest",
+      "WorkspaceRosterEntry",
+      "WorkspaceRosterPreset",
+      "WorkspaceRosterRequest",
+      "WorkspaceRosterRole",
       "XlsxAlignment",
       "XlsxArea",
       "XlsxBodyOp",
@@ -77056,8 +77127,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 366,
-      "struct": 930
+      "enum": 371,
+      "struct": 944
      }
     },
     {
