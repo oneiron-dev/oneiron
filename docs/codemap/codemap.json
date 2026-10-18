@@ -14159,14 +14159,15 @@
       "ConnectorKeyDispatchTally",
       "EffectorBudgetCharge",
       "EffectorBudgetRead",
-      "EffectorBudgetRowRead"
+      "EffectorBudgetRowRead",
+      "EffectorPoolCharge"
      ],
      "path": "src/connector_key/meter.rs",
      "purpose": "—",
      "surface": {
       "const": 5,
-      "crate-vis": 21,
-      "struct": 5
+      "crate-vis": 23,
+      "struct": 6
      }
     },
     {
@@ -57109,11 +57110,11 @@
      "path": "src/driver.rs",
      "purpose": "The CDP driver: one page in a Chromium guest, read as an outline and acted on by ref",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 30
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "BatchInput",
@@ -57142,6 +57143,7 @@
       "ObservationPage",
       "ObserveInput",
       "OpenInput",
+      "PartialTree",
       "PointInput",
       "PressMode",
       "RoutineAnswer",
@@ -57157,6 +57159,8 @@
       "SelectInput",
       "SendPolicy",
       "SubgoalStatus",
+      "TabSwitch",
+      "TabSwitchCause",
       "TypeInput",
       "ViewInput",
       "WaitForInput",
@@ -57170,10 +57174,10 @@
      "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
      "surface": {
       "const": 11,
-      "enum": 8,
+      "enum": 9,
       "fn": 12,
       "re-export": 5,
-      "struct": 39,
+      "struct": 41,
       "trait": 2
      }
     },
@@ -57244,7 +57248,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "BrowserGuest",
@@ -57254,7 +57258,7 @@
      "purpose": "A browser session: one Chromium guest in a container and the CDP driver attached to it, with the host's…",
      "surface": {
       "crate-vis": 3,
-      "fn": 21,
+      "fn": 22,
       "struct": 2
      }
     }
@@ -57312,12 +57316,12 @@
     "session": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "A browser session: one Chromium guest in a container and the CDP driver attached to it, with the host's…"
     }
    },
-   "over_bar": 3,
+   "over_bar": 4,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
    "source_files": 9,
    "test_files": 0
