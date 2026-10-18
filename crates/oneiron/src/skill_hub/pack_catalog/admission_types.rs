@@ -62,7 +62,9 @@ pub struct PackRuntimeRecipe {
     pub runtime_id: String,
     pub runtime_hash: String,
 }
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct PackPermissions {
     pub bundled_skills: Vec<BundledSkillPermissions>,
@@ -85,7 +87,9 @@ pub struct PackPermissions {
     pub widening_section_authorities: Vec<String>,
 }
 /// A skill's requested capability surface, keyed by the authored skill identity.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct BundledSkillPermissions {
     pub skill_id: String,
@@ -145,13 +149,17 @@ impl PackInstallAsk {
         self.scan_risk
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum PackInstallStatus {
     Active,
     Candidate,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum PackCandidateReason {
     RulesHit,
@@ -164,7 +172,9 @@ pub enum PackCandidateReason {
     /// waits for the owner to pick one, or to create it (OF-491).
     NeedsWorld,
 }
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct PackInstallReceipt {
     pub source_id: String,

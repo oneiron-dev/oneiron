@@ -167,6 +167,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/campaign_split_doors.rs` | src | s | 1 crate-vis | — | The host door of a campaign split's evaluation, `vault.research.evaluate_split` (FIX 655): the owner scores… |
 | `src/api/facade/channel_doors.rs` | src | s | 9 crate-vis | — | Credential-bound host projections of the typed channel setup verbs |
 | `src/api/facade/claim_settle_doors.rs` | src | s | 2 crate-vis | — | The host doors of one proposed claim's review and settlement (DOOR-115): `vault.claims.review` and… |
+| `src/api/facade/codebase_doors.rs` | src | s | 4 crate-vis | — | Credential-bound host projections of the typed code snapshot doors (DOOR-118) |
 | `src/api/facade/connector_call_doors.rs` | src | s | 3 crate-vis | — | The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's… |
 | `src/api/facade/connector_pack_doors.rs` | src | m | 7 crate-vis | — | Source-bound connector packs over the existing owner, probe and slate doors |
 | `src/api/facade/core_write_doors.rs` | src | s | 6 crate-vis | — | The host doors of `vault.conversations.turns.create`, `vault.conversations.records.append` and `vault.batch`… |
@@ -183,11 +184,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/gate_policy_doors.rs` | src | s | 4 crate-vis | — | Owner policy and checker host doors |
 | `src/api/facade/graph_ask_doors.rs` | src | m | 8 crate-vis | — | OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the… |
 | `src/api/facade/guest_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's guest revoke row (OF-232): `vault.guests.revoke` |
-| `src/api/facade/host_doors.rs` | src | XL | 87 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | XL | 90 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/hub_doors.rs` | src | m | 16 crate-vis | — | Owner-proof facade doors for configured hubs and pinned foreign imports |
 | `src/api/facade/legal_hold_doors.rs` | src | s | 8 crate-vis | — | The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`… |
 | `src/api/facade/linear_doors.rs` | src | s | 1 crate-vis | — | The host door of `vault.tasks.linear.mapping.edit` (OF-427 C6) |
 | `src/api/facade/live_run_doors.rs` | src | s | 2 crate-vis | — | Public coordination doors over the caller's own live-run attachment |
+| `src/api/facade/model_step_doors.rs` | src | s | 2 crate-vis | — | Owner-proof model steps; HTTP, SDK and MCP reach the same typed door |
 | `src/api/facade/note_doors.rs` | src | s | 2 crate-vis | — | Host-held NOTE editor bindings beside the ordinary scoped NOTE reads |
 | `src/api/facade/off_record_doors.rs` | src | m | 8 crate-vis | — | The host doors of the owner's off-record session rows (DOOR-127, e2e PRIVACY-06) |
 | `src/api/facade/origin_doors.rs` | src | s | 5 crate-vis | — | Credential-bound host projections of the typed origin and checkout doors (DOOR-139) |
@@ -195,6 +197,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/project_card_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's project-card tap (OF-501): `vault.projects.confirm` |
 | `src/api/facade/reaction_doors.rs` | src | s | 2 crate-vis | — | The host door of `vault.messages.react` (OF-181) |
 | `src/api/facade/reply_doors.rs` | src | s | 1 crate-vis | — | The generated context-bearing reply door, under the existing owner's inference authority |
+| `src/api/facade/research_doors.rs` | src | s | 3 crate-vis | — | Owner-authenticated child admission and sealed-cohort setup |
 | `src/api/facade/residence_doors.rs` | src | s | 4 crate-vis | — | The host doors of the owner's residence rows (OF-534, FIX 531): `vault.residence.mode`, `.open`, `.index`… |
 | `src/api/facade/role_picks.rs` | src | s | 1 crate-vis | — | OF-495: role holders' tradeoff picks (ROLES-EVERYWHERE) |
 | `src/api/facade/secret_lift_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's historical secret lift sweep, `vault.secrets.lift_history` (OF-067) |
@@ -323,7 +326,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/pairing.rs` | src | m | 14 crate-vis | — | Pairing-only enrollment and unauthenticated liveness discovery |
 | `src/api/params.rs` | src | s | 9 crate-vis | — | Shared query/body param extractors, hex-id parsing, and small scalar helpers |
 | `src/api/reactive.rs` | src | s | 11 crate-vis | — | Reactive local-first read contract (ONE-1437 — the on-device half of OF-241) |
-| `src/api/recovery_bundle.rs` | src | s | 1 crate-vis | — | The kit door to the vault's sealed cloud bundle (FIX 922): an install that holds the recovery kit and no… |
+| `src/api/recovery_bundle.rs` | src | s | 4 crate-vis | — | The kit door to the vault's sealed cloud bundle (FIX 922): an install that holds the recovery kit and no… |
 | `src/api/report.rs` | src | s | 3 crate-vis | — | OF-537 report execution and owner triage |
 | `src/api/run_tree.rs` | src | m | 28 crate-vis | — | — |
 | `src/api/saved_query.rs` | src | s | 6 crate-vis | — | CA-07 saved-query HTTP routes |
@@ -679,6 +682,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/http.rs` | src | m | 21 crate-vis | — | The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter… |
 | `src/models/kept_on_device_tests.rs` | test | m | — | — | World privacy on a fallback ladder (owner ruling 2026-10-14, "Models": no silent fallback to a cloud model… |
 | `src/models/ladder.rs` | src | XL | 1 struct · 12 fn · 18 crate-vis | OfferLadder | One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on… |
+| `src/models/ladder/step_attempt.rs` | src | s | 1 crate-vis | — | The durable step executor owns retries; this door sends one gated attempt |
 | `src/models/launch_price.rs` | src | s | 2 crate-vis | — | The launch statement's USD quote (OF-532) |
 | `src/models/media.rs` | src | L | 3 struct · 17 fn · 24 crate-vis | MediaRow, MediaRuntime, MediaTicket | The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible… |
 | `src/models/media/jobs.rs` | src | s | 7 crate-vis | — | The `ai.video` jobs a restart keeps (FIX-LIST 465) |
