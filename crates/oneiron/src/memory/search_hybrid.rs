@@ -128,7 +128,8 @@ impl Memory<'_> {
                 .seeds
                 .iter()
                 .map(|reference| {
-                    self.resolve_ref_in_lane(&lane, reference).map(PointRead::id)
+                    self.resolve_ref_in_lane(&lane, reference)
+                        .map(PointRead::id)
                 })
                 .collect::<MemoryResult<Vec<_>>>()?;
             let admitted = lane.read(&reads, None)?;
