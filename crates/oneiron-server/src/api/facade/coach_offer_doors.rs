@@ -1,5 +1,5 @@
 //! Typed owner doors for Coach offers and counted pilot evidence.
-use super::host_doors::{internal, owner_proof};
+use super::host_doors::{Listed, internal, owner_proof};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 use oneiron::consent::AuthenticatedOwner;
@@ -18,6 +18,21 @@ async fn owned<T: Send + 'static>(
     tokio::task::spawn_blocking(move || act(server.vault(), &owner).map_err(MemoryError::from))
         .await
         .map_err(|_| internal(verb))?
+}
+
+/// [`owned`] for a door whose answer is ids and control metadata only: the
+/// pass's attempt, an answer's record, an undo's model, the owner's
+/// candidate setups and a pilot's counts, measurement and card. It lists
+/// complete and empty (`host_door_lists`). The offer reads, which serve the
+/// Coach's drafted text, and the pilot prepare, which serves eval cases,
+/// stay unlisted.
+async fn owned_control<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    verb: &'static str,
+    act: impl FnOnce(&oneiron::Vault, &AuthenticatedOwner) -> oneiron::Result<T> + Send + 'static,
+) -> Listed<T> {
+    (owned(server, auth, verb, act).await, Vec::new())
 }
 
 pub(crate) async fn vault_coach_training_offers(
@@ -52,8 +67,8 @@ pub(crate) async fn vault_coach_training_offers_trigger(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: offer_doors::OfferPassRequest,
-) -> MemoryResult<oneiron::skill_optimize::offer_doors::OfferPassRef> {
-    owned(
+) -> Listed<oneiron::skill_optimize::offer_doors::OfferPassRef> {
+    owned_control(
         server,
         auth,
         "vault.coach.training_offers.trigger",
@@ -80,8 +95,8 @@ pub(crate) async fn vault_coach_training_offers_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: offer_doors::OfferAnswerRequest,
-) -> MemoryResult<oneiron::skill_optimize::OfferAnswerRecord> {
-    owned(
+) -> Listed<oneiron::skill_optimize::OfferAnswerRecord> {
+    owned_control(
         server,
         auth,
         "vault.coach.training_offers.answer",
@@ -94,8 +109,8 @@ pub(crate) async fn vault_coach_training_offers_undo(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: offer_doors::OfferRef,
-) -> MemoryResult<oneiron::skill_optimize::offer_doors::OfferUndoReceipt> {
-    owned(
+) -> Listed<oneiron::skill_optimize::offer_doors::OfferUndoReceipt> {
+    owned_control(
         server,
         auth,
         "vault.coach.training_offers.undo",
@@ -108,8 +123,8 @@ pub(crate) async fn vault_coach_training_offers_candidates(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: offer_pilot::OfferCandidateQuery,
-) -> MemoryResult<Vec<oneiron::skill_optimize::offer_pilot::OfferCandidateRecord>> {
-    owned(
+) -> Listed<Vec<oneiron::skill_optimize::offer_pilot::OfferCandidateRecord>> {
+    owned_control(
         server,
         auth,
         "vault.coach.training_offers.candidates",
@@ -122,8 +137,8 @@ pub(crate) async fn vault_coach_training_offers_candidates_prepare(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: offer_pilot::OfferCandidateSetup,
-) -> MemoryResult<oneiron::skill_optimize::offer_pilot::OfferCandidateRecord> {
-    owned(
+) -> Listed<oneiron::skill_optimize::offer_pilot::OfferCandidateRecord> {
+    owned_control(
         server,
         auth,
         "vault.coach.training_offers.candidates.prepare",
@@ -150,8 +165,8 @@ pub(crate) async fn vault_coach_training_offers_pilots_complete(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: offer_pilot::OfferPilotComplete,
-) -> MemoryResult<oneiron::skill_optimize::offer_pilot::OfferPilot> {
-    owned(
+) -> Listed<oneiron::skill_optimize::offer_pilot::OfferPilot> {
+    owned_control(
         server,
         auth,
         "vault.coach.training_offers.pilots.complete",
@@ -164,8 +179,8 @@ pub(crate) async fn vault_coach_training_offers_pilots_get(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: offer_pilot::OfferPilotRef,
-) -> MemoryResult<Option<oneiron::skill_optimize::offer_pilot::OfferPilot>> {
-    owned(
+) -> Listed<Option<oneiron::skill_optimize::offer_pilot::OfferPilot>> {
+    owned_control(
         server,
         auth,
         "vault.coach.training_offers.pilots.get",

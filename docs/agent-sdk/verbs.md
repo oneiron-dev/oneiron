@@ -396,6 +396,9 @@ both bindings and their export-census tests in one change.
 - `vault.lenses.activate`
 - `vault.lenses.deactivate`
 - `vault.lenses.list`
+- `vault.lenses.select`
+- `vault.lenses.resolve`
+- `vault.lenses.result_set.action`
 - `vault.lenses.default`
 - `vault.disclosure.offer`
 - `reveal`
