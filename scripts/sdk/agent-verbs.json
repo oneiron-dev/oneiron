@@ -4262,6 +4262,70 @@
       "section": false
     },
     {
+      "name": "self.secrets.materialize",
+      "description": "Mints a value-free grant on a secret for this credential's attached run, to one purpose: an operation or connector (door), a host destination (leased) or a declared file (local); the answer never holds the value.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::SecretGrantMintRequest>",
+      "output": "crate::task_verb::sdk::SecretGrantView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"self.secrets.materialize\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "self.secrets.renew",
+      "description": "Renews a grant the attached run holds: a fresh grant at the secret's current generation in its place, never a longer life for bytes already handed out.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::SecretGrantRenewRequest>",
+      "output": "crate::task_verb::sdk::SecretGrantView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"self.secrets.renew\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "self.secrets.teardown",
+      "description": "Tears down a grant the attached run holds, whatever its state: revokes it and its lease, removes its file or clears its destination, and says what the cleanup found.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::SecretGrantTeardownRequest>",
+      "output": "crate::task_verb::sdk::SecretGrantView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"self.secrets.teardown\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "self.secrets.use",
+      "description": "Hands the secret a door grant redeems to one trusted operation or connector call, for the attached run; a grant minted before a rotation refuses until renewed, and the answer never holds the value.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::SecretGrantUseRequest>",
+      "output": "crate::task_verb::sdk::SecretUseAnswer",
+      "call": "crate::task_verb::sdk::host_only(memory, \"self.secrets.use\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.shares.create",
       "description": "The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels.",
       "input": "crate::task_verb::sdk::ShareCreateRequest",

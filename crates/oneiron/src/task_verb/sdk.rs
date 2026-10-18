@@ -569,6 +569,7 @@ pub use super::sdk_retrieval::*;
 pub use super::sdk_residence::*;
 pub use super::sdk_scratchpad::*;
 pub use super::sdk_secret::*;
+pub use super::sdk_secret_grant::*;
 pub use super::sdk_secret_use::*;
 pub use super::sdk_self::*;
 pub use super::sdk_share::*;

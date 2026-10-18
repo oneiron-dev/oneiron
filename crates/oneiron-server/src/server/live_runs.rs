@@ -450,6 +450,12 @@ pub(crate) struct ResolvedLiveRun {
 }
 
 impl ResolvedLiveRun {
+    /// The leased try the run's runner holds: the run a secret grant minted
+    /// through this handle is bound to (DOOR-124).
+    pub(crate) fn attempt(&self) -> oneiron::AttemptId {
+        self.entry.leased.id
+    }
+
     /// The `[models.planner]` the run's runner plans under, and the model it
     /// executes on, for the planner its action's leader rows run on.
     pub(crate) fn planner(&self) -> (Option<&PlannerSettings>, &str) {

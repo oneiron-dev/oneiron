@@ -359,6 +359,9 @@ class Oneiron:
             """Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value."""
             return json.loads(_translate(lambda: self._client.self_use(json.dumps(spec))))
         @property
+        def secrets(self) -> "Oneiron._SelfSecretsVerbs":
+            return Oneiron._SelfSecretsVerbs(self._client)
+        @property
         def skills(self) -> "Oneiron._SelfSkillsVerbs":
             return Oneiron._SelfSkillsVerbs(self._client)
         @property
@@ -484,6 +487,21 @@ class Oneiron:
         def execute(self, spec):
             """The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""
             return json.loads(_translate(lambda: self._client.self_off_record_execute(json.dumps(spec))))
+    class _SelfSecretsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def materialize(self, spec):
+            """Mints a value-free grant on a secret for this credential's attached run, to one purpose: an operation or connector (door), a host destination (leased) or a declared file (local); the answer never holds the value."""
+            return json.loads(_translate(lambda: self._client.self_secrets_materialize(json.dumps(spec))))
+        def renew(self, spec):
+            """Renews a grant the attached run holds: a fresh grant at the secret's current generation in its place, never a longer life for bytes already handed out."""
+            return json.loads(_translate(lambda: self._client.self_secrets_renew(json.dumps(spec))))
+        def teardown(self, spec):
+            """Tears down a grant the attached run holds, whatever its state: revokes it and its lease, removes its file or clears its destination, and says what the cleanup found."""
+            return json.loads(_translate(lambda: self._client.self_secrets_teardown(json.dumps(spec))))
+        def use(self, spec):
+            """Hands the secret a door grant redeems to one trusted operation or connector call, for the attached run; a grant minted before a rotation refuses until renewed, and the answer never holds the value."""
+            return json.loads(_translate(lambda: self._client.self_secrets_use(json.dumps(spec))))
     class _SelfSkillsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

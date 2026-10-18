@@ -2658,6 +2658,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn self_secrets_materialize(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.secrets.materialize")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.secrets.materialize", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_secrets_renew(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.secrets.renew")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.secrets.renew", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_secrets_teardown(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.secrets.teardown")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.secrets.teardown", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_secrets_use(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.secrets.use")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.secrets.use", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_shares_create(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.shares.create")?;
         let output = py

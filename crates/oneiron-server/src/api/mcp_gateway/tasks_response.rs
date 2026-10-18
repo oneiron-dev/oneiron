@@ -1127,6 +1127,10 @@ fn mcp_agent_verb_input(
         "reveal.wait" => a.spec.clone().ok_or_else(invalid),
         "reveal.describe" => a.spec.clone().ok_or_else(invalid),
         "self.use" => a.spec.clone().ok_or_else(invalid),
+        "self.secrets.materialize" => a.spec.clone().ok_or_else(invalid),
+        "self.secrets.renew" => a.spec.clone().ok_or_else(invalid),
+        "self.secrets.teardown" => a.spec.clone().ok_or_else(invalid),
+        "self.secrets.use" => a.spec.clone().ok_or_else(invalid),
         "vault.shares.create" => a.spec.clone().ok_or_else(invalid),
         "vault.shares.revoke" => a.spec.clone().ok_or_else(invalid),
         "vault.shares.view" => a.spec.clone().ok_or_else(invalid),
@@ -2422,6 +2426,18 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.use" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.secrets.materialize" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.secrets.renew" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.secrets.teardown" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.secrets.use" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.shares.create" => {
@@ -8174,6 +8190,106 @@ async fn execute_agent_verb_row(
             let input: oneiron::task_verb::sdk::SecretUseRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = crate::api::facade::host_doors::self_use(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                memory.invocation(),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.secrets.materialize" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.secrets.materialize", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveRunRequest<
+                oneiron::task_verb::sdk::SecretGrantMintRequest,
+            > = serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::self_secrets_materialize(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                memory.invocation(),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.secrets.renew" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.secrets.renew", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveRunRequest<
+                oneiron::task_verb::sdk::SecretGrantRenewRequest,
+            > = serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::self_secrets_renew(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                memory.invocation(),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.secrets.teardown" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.secrets.teardown", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveRunRequest<
+                oneiron::task_verb::sdk::SecretGrantTeardownRequest,
+            > = serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::self_secrets_teardown(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                memory.invocation(),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.secrets.use" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.secrets.use", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveRunRequest<
+                oneiron::task_verb::sdk::SecretGrantUseRequest,
+            > = serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::self_secrets_use(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
