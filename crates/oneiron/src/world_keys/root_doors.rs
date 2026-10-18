@@ -2,13 +2,18 @@
 //! machine with the kit's seed, restoring a world's keys from the kit, and
 //! pinning a root from a fingerprint the owner carried.
 //!
-//! Each runs only on this machine (`EditOrigin::ThisMachine`): a remote
-//! request never pins, anchors or restores. Every check runs before the
-//! first write, and each door's writes, its pin and its re-wraps commit in
-//! one transaction or not at all. A door that may mint this install's
-//! machine identity first runs every refusal the stored state decides in a
-//! read snapshot, so a refused kit, fingerprint, owner or root leaves no
-//! identity behind; its transaction runs them again.
+//! The work runs on the install that holds the key or the kit's seed, and the
+//! caller's origin does not narrow it: the owner's say-so counts from any
+//! surface the owner is authenticated on (owner, 10-19), so a linked peer's
+//! request runs as this machine's does. The revalidated owner proof, the
+//! kit's seed gate and the key work this install does itself are what stand;
+//! no seed or key leaves this install for the requesting surface (CALLS:
+//! ROOT_REPLACEMENT_CONFIRMATION). Every check runs before the first write,
+//! and each door's writes, its pin and its re-wraps commit in one
+//! transaction or not at all. A door that may mint this install's machine
+//! identity first runs every refusal the stored state decides in a read
+//! snapshot, so a refused kit, fingerprint, owner or root leaves no identity
+//! behind; its transaction runs them again.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -66,13 +71,6 @@ pub struct RootRestore {
     pub needs_rehome: Vec<WorldKeyId>,
     pub withheld: Vec<(WorldKeyId, Withheld)>,
     pub narrowed: Vec<NarrowedWorld>,
-}
-
-pub(super) fn this_machine_only(origin: EditOrigin) -> Result<()> {
-    match origin {
-        EditOrigin::ThisMachine => Ok(()),
-        EditOrigin::Peer(_) => Err(refused("a remote request never pins, anchors or restores")),
-    }
 }
 
 /// The seed's root record, as the anchor publishes it.
@@ -304,12 +302,11 @@ impl Vault {
     pub(crate) fn activate_owner_root_with<T>(
         &self,
         owner: &AuthenticatedOwner,
-        origin: EditOrigin,
+        _origin: EditOrigin,
         prepared: PreparedRoot,
         carry: &BTreeSet<EntityId>,
         also: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<T>,
     ) -> Result<(ActivatedRoot, T)> {
-        this_machine_only(origin)?;
         self.precheck_root_door(owner, |txn, fold| {
             let me = crate::identity::read_machine_id_in_txn(self, txn)?;
             carried_marks(fold, &prepared, carry, me).map(drop)
@@ -373,13 +370,12 @@ impl Vault {
     pub fn anchor_machine(
         &self,
         owner: &AuthenticatedOwner,
-        origin: EditOrigin,
+        _origin: EditOrigin,
         seed: &RecoveryRootSeed,
         request: &MachineEnrolmentRequest,
         code: Option<RequestCode>,
         confirm: Option<KitConfirmation>,
     ) -> Result<AnchoredMachine> {
-        this_machine_only(origin)?;
         self.load_install_signing_if_minted()?;
         let own = {
             let txn = self.store.env.read_txn()?;
@@ -582,10 +578,9 @@ impl Vault {
     pub fn pin_owner_root(
         &self,
         owner: &AuthenticatedOwner,
-        origin: EditOrigin,
+        _origin: EditOrigin,
         root: RecoveryRootId,
     ) -> Result<RepinReport> {
-        this_machine_only(origin)?;
         let stored = self.precheck_root_door(owner, |txn, fold| {
             Ok(owner_root_records_in_txn(&self.store, txn, fold)?.contains_key(&root))
         })?;

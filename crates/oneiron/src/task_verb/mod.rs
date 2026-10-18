@@ -311,6 +311,7 @@ mod sdk_secret;
 mod sdk_secret_use;
 mod sdk_self;
 mod sdk_share;
+mod sdk_skill_execution;
 mod sdk_shared;
 mod sdk_shared_members;
 mod sdk_shared_policy;

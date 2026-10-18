@@ -407,6 +407,10 @@ fn reverse_rematerialize_scan(
                 } else {
                     map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice())?;
                 }
+                // FIX 2902: a local re-authoring makes a peer's row this vault's own.
+                if edited {
+                    crate::sync::ingest::forget_peer_origin(vault, doc, id, &raw)?;
+                }
                 if let Some(revision) = source_revision {
                     mirror_sources.insert(*id, revision);
                 }

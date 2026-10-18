@@ -402,6 +402,9 @@ both bindings and their export-census tests in one change.
 - `self.skills.save`
 - `self.skills.fork`
 - `self.skills.callables`
+- `vault.skills.pack_receipt`
+- `vault.skills.outcomes.project`
+- `vault.skills.outcomes.get`
 - `ai.steps.submit`
 - `ai.steps.receipt`
 - `ai.reply`
@@ -536,6 +539,17 @@ both bindings and their export-census tests in one change.
 - `vault.delivery_window.policy.retract`
 - `vault.delivery_window.evaluate`
 - `connector.outbound.schedule`
+- `vault.summaries.create`
+- `vault.summaries.read`
+- `vault.summaries.status`
+- `vault.summaries.keep`
+- `vault.summaries.edit`
+- `vault.summaries.patch`
+- `vault.summaries.regenerate`
+- `vault.summaries.proposals.read`
+- `vault.summaries.proposals.merge`
+- `vault.summaries.proposals.switch`
+- `vault.summaries.proposals.reject`
 - `vault.notes.create`
 - `vault.notes.from_entity`
 - `vault.notes.read`

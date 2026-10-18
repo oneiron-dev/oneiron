@@ -9,6 +9,7 @@ use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryErro
 use crate::Vault;
 use crate::authority::{HostActionAuthority, VerifiedSlip};
 use crate::claim::CallerLocality;
+use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::memory::verify_actor_binding_in_txn;
@@ -298,6 +299,49 @@ impl Vault {
         })
     }
 
+    /// Full-vault export for an owner the request itself authenticated: a
+    /// managed vault's attested owner (`ManagedOwnerAction`), which carries
+    /// neither a slip nor a host action. The proof is revalidated in the
+    /// export's own snapshot (its vault, a live person, a live Owner role,
+    /// any credential or host action it bound), and the actor it names there
+    /// must be the export's reader. The same archive and served listing as
+    /// the slip path, read at the caller's own `locality`: a caller off this
+    /// device takes no device-local world with it (DEC-0005). The proof is
+    /// this request's alone, never a durable owner authorization.
+    pub fn export_with_authenticated_owner_listing(
+        &self,
+        opts: &ExportOptions,
+        owner: &AuthenticatedOwner,
+        locality: CallerLocality,
+    ) -> MemoryResult<(MemoryExport, Vec<EntityId>)> {
+        let actor = self.admit_authenticated_owner(owner)?;
+        let reader = WriteActor::new(actor, EdgeActorClass::Human);
+        render_export(self, opts, &actor.to_hex(), locality, reader, |txn| {
+            if authenticated_owner_export_admitted(self, txn, owner)? == actor {
+                Ok(())
+            } else {
+                Err(export_forbidden())
+            }
+        })
+    }
+
+    /// Whether [`Self::export_with_authenticated_owner_listing`] admits
+    /// `owner` now, in a read snapshot of its own; the export asks again in
+    /// its own.
+    pub fn admit_authenticated_owner_export(
+        &self,
+        owner: &AuthenticatedOwner,
+    ) -> MemoryResult<()> {
+        self.admit_authenticated_owner(owner)?;
+        Ok(())
+    }
+
+    /// The owner `owner` exports as, in a read snapshot of its own.
+    fn admit_authenticated_owner(&self, owner: &AuthenticatedOwner) -> MemoryResult<EntityId> {
+        let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
+        authenticated_owner_export_admitted(self, &txn, owner)
+    }
+
     /// Whether [`Self::export_with_verified_host_owner`] admits `proof` now,
     /// in a read snapshot of its own; the export asks again in its own.
     pub fn admit_host_owner_export(&self, proof: &VerifiedSlip) -> MemoryResult<()> {
@@ -337,6 +381,35 @@ fn host_owner_export_admitted(
     vault
         .host_action_owner_in_txn(txn, Some(proof))
         .map_err(MemoryError::from)
+}
+
+/// The owner a request's own proof exports as, in `txn`: the proof belongs
+/// to this vault, and its person is live and owns it now (the proof's
+/// `revalidate_in_txn`, the rule every owner act takes). A proof that no
+/// longer holds gets the export's own refusal, naming why.
+fn authenticated_owner_export_admitted(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    owner: &AuthenticatedOwner,
+) -> MemoryResult<EntityId> {
+    owner
+        .revalidate_in_txn(vault, txn)
+        .map_err(|error| match error {
+            crate::Error::Gate(crate::error::GateError::ConsentOwnerNotAuthenticated(reason)) => {
+                owner_proof_export_refused(reason)
+            }
+            other => MemoryError::from(other),
+        })
+}
+
+/// The refusal of a request owner proof that no longer holds in the
+/// export's snapshot, with the proof's own reason.
+fn owner_proof_export_refused(reason: &str) -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_FORBIDDEN,
+        format!("full-vault export requires an authenticated owner: {reason}"),
+        &["Authenticate again as this vault's live owner, then export."],
+    )
 }
 
 fn validate_verified_owner(

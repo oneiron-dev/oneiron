@@ -263,7 +263,8 @@ class Oneiron:
         ..., "readReceipt": ...}`` for a deterministic tool. A card the server
         no longer holds raises ``NOT_FOUND``: render the lens again. An
         embedded handle raises ``BAD_REQUEST``: lens frames live on the
-        server that rendered the card.
+        served host that rendered the card, so render the lens through a
+        connected handle and send its events on that same handle.
         """
         return json.loads(
             _translate(lambda: self._client.lens_frame_event(card_id, json.dumps(request)))
@@ -496,6 +497,9 @@ class Oneiron:
         def callables(self, spec=None):
             """Every loadable callable helper skill and its call contract: what it takes and returns."""
             return json.loads(_translate(lambda: self._client.self_skills_callables(json.dumps({} if spec is None else spec))))
+        def call(self, spec):
+            """Runs a callable skill on this credential's attached leased run with its existing sandbox and gates; the result follows the stored return contract, while anchored outcomes settle separately."""
+            return json.loads(_translate(lambda: self._client.self_skills_call(json.dumps(spec))))
     class _SelfDecisionsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -818,6 +822,9 @@ class Oneiron:
         @property
         def delivery_window(self) -> "Oneiron._VaultDeliveryWindowVerbs":
             return Oneiron._VaultDeliveryWindowVerbs(self._client)
+        @property
+        def summaries(self) -> "Oneiron._VaultSummariesVerbs":
+            return Oneiron._VaultSummariesVerbs(self._client)
         @property
         def notes(self) -> "Oneiron._VaultNotesVerbs":
             return Oneiron._VaultNotesVerbs(self._client)
@@ -1256,6 +1263,12 @@ class Oneiron:
         @property
         def permissions(self) -> "Oneiron._VaultSkillsPermissionsVerbs":
             return Oneiron._VaultSkillsPermissionsVerbs(self._client)
+        def pack_receipt(self, spec):
+            """Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner."""
+            return json.loads(_translate(lambda: self._client.vault_skills_pack_receipt(json.dumps(spec))))
+        @property
+        def outcomes(self) -> "Oneiron._VaultSkillsOutcomesVerbs":
+            return Oneiron._VaultSkillsOutcomesVerbs(self._client)
     class _VaultSkillsRulesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1274,6 +1287,15 @@ class Oneiron:
         def approve(self, spec):
             """The owner answers one imported skill permission ask at its exact hub source."""
             return json.loads(_translate(lambda: self._client.vault_skills_permissions_approve(json.dumps(spec))))
+    class _VaultSkillsOutcomesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def project(self, spec):
+            """Projects the owner's anchored verdict through existing attributed pack outcomes; loading or calling alone never earns a reliability win."""
+            return json.loads(_translate(lambda: self._client.vault_skills_outcomes_project(json.dumps(spec))))
+        def get(self, spec):
+            """Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner."""
+            return json.loads(_translate(lambda: self._client.vault_skills_outcomes_get(json.dumps(spec))))
     class _VaultConnectorsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2888,6 +2910,48 @@ class Oneiron:
         def retract(self, spec):
             """The owner retracts a delivery-window policy through the existing claim lifecycle door."""
             return json.loads(_translate(lambda: self._client.vault_delivery_window_policy_retract(json.dumps(spec))))
+    class _VaultSummariesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def create(self, request):
+            """Declares a readable source scope; only the configured Dreamer writes and source-links the SUMMARY birth."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_create(json.dumps(request))))
+        def read(self, request):
+            """Reads SUMMARY text, keep, derivation, covers and stable edit anchors in one caller-scoped snapshot."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_read(json.dumps(request))))
+        def status(self, request):
+            """Reads the calling principal's own summary declaration and its retained completion or failure."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_status(json.dumps(request))))
+        def keep(self, request):
+            """Edits the SUMMARY keep memo at the exact frontier read, under the caller's owner proof or entity-bound text grant."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_keep(json.dumps(request))))
+        def edit(self, request):
+            """Applies attributed anchored SUMMARY edits through existing grants; ungranted edits remain a typed review proposal."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_edit(json.dumps(request))))
+        def patch(self, request):
+            """Applies generated anchored SUMMARY operations after a keep fence and source admission; durable receipts name the sources read."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_patch(json.dumps(request))))
+        def regenerate(self, request):
+            """Retains generated SUMMARY text as a source-linked rewrite fork after reading keep; no head moves without explicit switch."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_regenerate(json.dumps(request))))
+        @property
+        def proposals(self) -> "Oneiron._VaultSummariesProposalsVerbs":
+            return Oneiron._VaultSummariesProposalsVerbs(self._client)
+    class _VaultSummariesProposalsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def read(self, request):
+            """Reads a SUMMARY proposal's fork provenance, retained text and durable receipts only when every member is readable."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_proposals_read(json.dumps(request))))
+        def merge(self, request):
+            """Merges the complete SUMMARY proposal under existing entity grants, preserving concurrent head edits and durable receipts."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_proposals_merge(json.dumps(request))))
+        def switch(self, request):
+            """Explicitly switches the complete SUMMARY proposal under existing entity grants; a stale causal base refuses the entire set."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_proposals_switch(json.dumps(request))))
+        def reject(self, request):
+            """Rejects the complete SUMMARY proposal under existing entity grants, dropping pending fork text without moving live heads."""
+            return json.loads(_translate(lambda: self._client.vault_summaries_proposals_reject(json.dumps(request))))
     class _VaultNotesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

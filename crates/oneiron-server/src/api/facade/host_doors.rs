@@ -70,6 +70,7 @@ pub(crate) use super::extraction_doors::*;
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
+pub(crate) use super::skill_execution_doors::*;
 pub(crate) use super::live_voice_doors::*;
 pub(crate) use super::model_step_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
@@ -84,6 +85,7 @@ pub(crate) use super::support_grant_doors::*;
 // The owner's residence doors (OF-534), likewise.
 pub(crate) use super::fold_doors::*;
 pub(crate) use super::note_doors::*;
+pub(crate) use super::summary_doors::*;
 pub(crate) use super::off_record_doors::*;
 pub(crate) use super::residence_doors::*;
 // The weave lens's human doors, likewise.
@@ -1089,6 +1091,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.skills.rules.set"
         | "vault.skills.code_auto_install.set"
         | "vault.skills.permissions.approve"
+        | "vault.skills.pack_receipt"
+        | "vault.skills.outcomes.project"
+        | "vault.skills.outcomes.get"
         | "vault.packs.hooks.bind"
         | "vault.packs.hooks.list"
         | "vault.packs.hooks.qualify"

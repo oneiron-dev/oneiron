@@ -96,11 +96,14 @@ impl CanonicalEntityDocument {
                 let forks = history.forks.iter().map(|fork| {
                     96 + fork.output.as_ref().map_or(0, String::len)
                         + fork.output_metadata.as_ref().map_or(0, metadata_size)
+                        + 16 * fork.read_refs.len()
+                        + fork.keep.as_ref().map_or(0, String::len)
                 });
                 versions.sum::<usize>()
                     + pins.sum::<usize>()
                     + forks.sum::<usize>()
                     + 96 * (history.receipts.len() + history.purges.len())
+                    + history.receipts.iter().map(|receipt| 16 * receipt.read_refs.len()).sum::<usize>()
             })
     }
 }
@@ -189,6 +192,7 @@ pub struct CanonicalDocumentReceipt {
     pub at: u64,
     pub before: u32,
     pub after: u32,
+    pub read_refs: Vec<[u8; 16]>,
 }
 
 /// A fork and its place in its proposal bundle, which the snapshot carries
@@ -212,6 +216,8 @@ pub struct CanonicalDocumentFork {
     pub proposal_index: u16,
     pub proposal_len: u16,
     pub proposal_settled: bool,
+    pub read_refs: Vec<[u8; 16]>,
+    pub keep: Option<String>,
 }
 
 /// Durable proof of one owner purge, bound to the versions it named.
@@ -587,6 +593,7 @@ pub(crate) fn capture_canonical_window_within(
             "document_pins",
             "message_docs",
             "withdrawn_cutoffs",
+            "peer_origins",
         ]
         .contains(&name.as_str())
     }) {

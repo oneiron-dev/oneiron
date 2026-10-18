@@ -462,6 +462,11 @@ fn admit(
             return Ok(EntityStep::Skip);
         }
     }
+    // FIX 2902: the origin the window carries for these exact bytes lands in this txn first, so
+    // a peer's row another own machine or a staged import brings is judged as the peer's below.
+    if let Some(doc) = ctx.carrier_doc() {
+        crate::sync::ingest::carried_origin_in_txn(vault, wtxn, doc, ctx.window_key, &id, blob)?;
+    }
     // A federation peer may not turn an agent definition back on (Docs Q04). Window admission
     // judged the row in a read txn; a local revocation may have committed since, so the writer
     // txn judges it again when it holds the exact bytes a peer's import brought.
