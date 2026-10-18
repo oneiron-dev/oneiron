@@ -59457,9 +59457,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/edit/structure/slides/app_props.rs",
-     "purpose": "The app properties (`docProps/app.xml`) a slide's addition, copy or removal would leave stale (FIX 2377, FIX…",
+     "purpose": "The app properties (`docProps/app.xml`) a slide's addition, copy, removal or move, or an edit of its title…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -59784,6 +59784,20 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Conversion"
+     ],
+     "path": "src/live/convert.rs",
+     "purpose": "Deck edits PowerPoint performs, done its way where the live deck once refused them (OF-510; the Office…",
+     "surface": {
+      "crate-vis": 7,
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [
@@ -59812,7 +59826,7 @@
      "path": "src/live/held.rs",
      "purpose": "What a retained element is written as, in live-model terms: a shape's preset or custom geometry, a…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 19
      }
     },
     {
@@ -59826,7 +59840,7 @@
      "surface": {
       "enum": 1,
       "mod": 2,
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -59870,9 +59884,9 @@
      "path": "src/live/pptx.rs",
      "purpose": "The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 7,
       "enum": 9,
-      "fn": 31,
+      "fn": 32,
       "struct": 24
      }
     },
@@ -59883,7 +59897,7 @@
      "path": "src/live/reshape.rs",
      "purpose": "Shape changes to a written table or chart at export (OF-510)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 8
      }
     },
     {
@@ -60334,7 +60348,7 @@
      "purpose": "The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed…"
     },
     "live": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -60399,7 +60413,7 @@
    },
    "over_bar": 10,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 75,
+   "source_files": 76,
    "test_files": 14
   },
   "oneiron-driver": {
