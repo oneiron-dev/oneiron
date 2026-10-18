@@ -12,7 +12,9 @@ pub const MAX_CALENDAR_SEARCH_LIMIT: u32 = 200;
 /// serialized calendar request shape carries this inline pair and converts to
 /// `TimeRange` at the handler boundary — the same boundary that performs the
 /// inclusive-to-half-open checked conversion for freebusy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct CalendarRangeDto {
     /// Inclusive start, Unix seconds.
@@ -45,7 +47,9 @@ impl CalendarRangeDto {
 /// selector that has no index yet would silently empty every result. An empty
 /// selector slice likewise means "every calendar EVENT visible under the
 /// caller's existing read scope".
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct CalendarSel {
     /// Calendar system key (e.g. a passport `system`); ignored on this baseline.
@@ -75,7 +79,9 @@ pub struct CalendarEventView {
 }
 
 /// `calendar.read` request.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct CalendarReadRequest {
     /// Hex EVENT entity id.
@@ -83,7 +89,9 @@ pub struct CalendarReadRequest {
 }
 
 /// `calendar.search` request.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct CalendarSearchRequest {
     /// Calendar selectors; see [`CalendarSel`] for the deferred-selection rule.

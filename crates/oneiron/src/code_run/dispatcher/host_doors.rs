@@ -2,12 +2,12 @@
 //! owned by the host's verb-table door. The dispatcher retains the acquired
 //! parent lease, planner, attenuation and project-write gates.
 use super::HostSelfDispatcher;
+use crate::EntityId;
 use crate::code_run::{
     AgentSpawnInput, AgentSpawnKind, AgentSpawnOutput, LeaderSplitInput, LeaderSplitOutput,
     SelfAgentSpawnResult, SelfDispatchOutcome,
 };
 use crate::memory::{MEMORY_CODE_INTERNAL, MemoryError, MemoryResult};
-use crate::EntityId;
 
 impl<'a> HostSelfDispatcher<'a> {
     /// Re-enters a registered live run under the sealed lease its host held.
@@ -27,21 +27,25 @@ impl<'a> HostSelfDispatcher<'a> {
     pub fn spawn_agent_from_host(&self, input: AgentSpawnInput) -> MemoryResult<AgentSpawnOutput> {
         // An id-only binding is not a public host call's acquired lease.
         self.live_parent()?;
-        let _run_writes = self.agent_lease.as_ref().map(crate::skill_attribution::enter_run_writes);
+        let _run_writes = self
+            .agent_lease
+            .as_ref()
+            .map(crate::skill_attribution::enter_run_writes);
         match self.dispatch_agents_spawn(input.into_call()?)? {
-            SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::Queued { attempt_ref, launch }) => {
-                Ok(AgentSpawnOutput::Queued {
-                    kind: AgentSpawnKind::AgentSpawn,
-                    attempt: crate::entity_id::bytes_to_hex_lower(attempt_ref.as_bytes()),
-                    launch,
-                })
-            }
-            SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::ProposedWiden { proposal_ref }) => {
-                Ok(AgentSpawnOutput::ProposedWiden {
-                    kind: AgentSpawnKind::AgentSpawn,
-                    proposal: proposal_ref,
-                })
-            }
+            SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::Queued {
+                attempt_ref,
+                launch,
+            }) => Ok(AgentSpawnOutput::Queued {
+                kind: AgentSpawnKind::AgentSpawn,
+                attempt: crate::entity_id::bytes_to_hex_lower(attempt_ref.as_bytes()),
+                launch,
+            }),
+            SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::ProposedWiden {
+                proposal_ref,
+            }) => Ok(AgentSpawnOutput::ProposedWiden {
+                kind: AgentSpawnKind::AgentSpawn,
+                proposal: proposal_ref,
+            }),
             SelfDispatchOutcome::Failed(failed) => {
                 Err(MemoryError::new(&failed.error, &failed.error, &[]))
             }
@@ -52,10 +56,20 @@ impl<'a> HostSelfDispatcher<'a> {
     /// The host door's `self.leader.split`, under its admitted credential
     /// and hooks. TASK, project, actor and parent attempt come only from the
     /// run's acquired lease. The existing split signs and gates the write.
-    pub fn split_leader_from_host(&self, input: LeaderSplitInput) -> MemoryResult<LeaderSplitOutput> {
+    pub fn split_leader_from_host(
+        &self,
+        input: LeaderSplitInput,
+    ) -> MemoryResult<LeaderSplitOutput> {
         self.live_parent()?;
-        let _run_writes = self.agent_lease.as_ref().map(crate::skill_attribution::enter_run_writes);
-        let leader = input.leader.as_deref().map(EntityId::from_hex).transpose()?;
+        let _run_writes = self
+            .agent_lease
+            .as_ref()
+            .map(crate::skill_attribution::enter_run_writes);
+        let leader = input
+            .leader
+            .as_deref()
+            .map(EntityId::from_hex)
+            .transpose()?;
         match self.dispatch_leader_split(leader, input.slice)? {
             SelfDispatchOutcome::Leader(output) => {
                 serde_json::from_str(&output).map_err(|_| host_result_mismatch())
