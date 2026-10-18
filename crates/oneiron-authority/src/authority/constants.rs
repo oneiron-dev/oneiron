@@ -125,6 +125,21 @@ pub const SLIP_KEY_ACTOR_CLASS: &str = "actor_class";
 pub const SLIP_KEY_ORG_REF: &str = "org_ref";
 pub const SLIP_KEY_GRANT_REF: &str = "grant_ref";
 pub const SLIP_KEY_INVITATION_REF: &str = "invitation_ref";
+/// A support slip's signed delegation (OF-606). Present only on a support
+/// slip's mint, so every other slip's wire form is unchanged.
+pub const SLIP_KEY_DELEGATION: &str = "delegation";
+pub const DELEGATION_KEY_PURPOSE: &str = "purpose";
+pub const DELEGATION_KEY_TICKET_REF: &str = "ticket_ref";
+pub const DELEGATION_KEY_OWNER_REF: &str = "owner_ref";
+pub const DELEGATION_KEY_APPROVED_AT: &str = "approved_at";
+pub const DELEGATION_KEY_WALL_EXPIRES_AT: &str = "wall_expires_at";
+pub const SLIP_DELEGATION_KEYS: [&str; 5] = [
+    DELEGATION_KEY_PURPOSE,
+    DELEGATION_KEY_TICKET_REF,
+    DELEGATION_KEY_OWNER_REF,
+    DELEGATION_KEY_APPROVED_AT,
+    DELEGATION_KEY_WALL_EXPIRES_AT,
+];
 pub const SLIP_MINT_KEYS: [&str; 17] = [
     OP_KEY_KIND,
     SLIP_KEY_SLIP_ID,

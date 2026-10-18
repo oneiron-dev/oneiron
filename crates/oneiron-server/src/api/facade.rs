@@ -82,6 +82,7 @@ mod share_doors;
 mod shared_act_doors;
 mod shared_member_doors;
 mod shared_policy_doors;
+mod support_grant_doors;
 #[cfg(test)]
 pub(super) mod tests;
 mod trusted_contact_doors;

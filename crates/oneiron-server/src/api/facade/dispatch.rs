@@ -1066,30 +1066,49 @@ async fn vault_export(
     }
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.export", &value)?;
-    let proof = auth.verified_slip().ok_or_else(|| {
-        FacadeApiError::forbidden(
+    // A host credential resolves first (FIX 2222): a hosted
+    // operator root gets the typed refusal, and a self-hosted root
+    // or the explicit dev mode exports as the owner it acts as.
+    let action = crate::api::host_action::facade_host_action(server, auth)?;
+    let proof = auth.verified_slip();
+    if proof.is_none() && action.is_none() {
+        return Err(FacadeApiError::forbidden(
             "full-vault export requires verified owner authority",
             ["Present a verified owner credential."],
-        )
-    })?;
+        ));
+    }
     let hooks = facade_hooks_pre(server, call, "vault.export", value).await?;
     let input: oneiron::memory::ExportOptions = facade_input(hooks.args.clone())?;
     // Beside the archive, the rows its snapshot read past the
-    // caller's locality: both owner paths list them.
-    let (output, rows) = if proof.claims().holder_ref == "host" {
-        server
+    // caller's locality: every owner path lists them. A slip keeps
+    // its own path; a host action with no slip (the dev mode)
+    // takes the engine's host-action export.
+    let (output, rows) = match (proof, action) {
+        (Some(proof), _) if proof.claims().holder_ref == "host" => server
             .vault
-            .export_with_verified_host_owner_listing(&input, proof, auth.locality())?
-    } else {
-        let (actor, class) = facade_actor(server, auth)?;
-        let producers = oneiron::memory::ProducerRows::default();
-        let output = server
-            .vault
-            .memory(actor, class)
-            .at(auth.locality())
-            .listing_producers(&producers)
-            .export_with_verified_owner(&input, proof)?;
-        (output, producers.take())
+            .export_with_verified_host_owner_listing(&input, proof, auth.locality())?,
+        (Some(proof), _) => {
+            let (actor, class) = facade_actor(server, auth)?;
+            let producers = oneiron::memory::ProducerRows::default();
+            let output = server
+                .vault
+                .memory(actor, class)
+                .at(auth.locality())
+                .listing_producers(&producers)
+                .export_with_verified_owner(&input, proof)?;
+            (output, producers.take())
+        }
+        (None, Some(action)) => {
+            server
+                .vault
+                .export_with_host_action_listing(&input, &action, auth.locality())?
+        }
+        (None, None) => {
+            return Err(FacadeApiError::forbidden(
+                "full-vault export requires verified owner authority",
+                ["Present a verified owner credential."],
+            ));
+        }
     };
     let output = serde_json::to_value(output).map_err(|_| {
         FacadeApiError::new(
@@ -3566,6 +3585,78 @@ async fn vault_guests_mint_slip(
     let (output, listed) =
         super::host_doors::vault_guests_mint_slip(server, auth, facade_input(hooks.args.clone())?)
             .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_support_grants_mint(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.support_grants.mint")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.support_grants.mint", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.support_grants.mint", value).await?;
+    let (output, listed) = super::host_doors::vault_support_grants_mint(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_support_grants_list(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.support_grants.list")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.support_grants.list", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.support_grants.list", value).await?;
+    let (output, listed) = super::host_doors::vault_support_grants_list(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_support_grants_revoke(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.support_grants.revoke")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.support_grants.revoke", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.support_grants.revoke", value).await?;
+    let (output, listed) = super::host_doors::vault_support_grants_revoke(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
     let output = facade_output(output?)?;
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
@@ -12182,6 +12273,9 @@ pub(crate) async fn call_verb(
         }
         "vault.guests.revoke" => vault_guests_revoke(server, call, input).await,
         "vault.guests.mint_slip" => vault_guests_mint_slip(server, call, input).await,
+        "vault.support_grants.mint" => vault_support_grants_mint(server, call, input).await,
+        "vault.support_grants.list" => vault_support_grants_list(server, call, input).await,
+        "vault.support_grants.revoke" => vault_support_grants_revoke(server, call, input).await,
         "vault.residence.mode" => vault_residence_mode(server, call, input).await,
         "vault.residence.open" => vault_residence_open(server, call, input).await,
         "vault.residence.index" => vault_residence_index(server, call, input).await,

@@ -771,6 +771,21 @@ export_facade! {
     let output = client.vault_guests_mint_slip(&input)?;
     crate::codec::lift_record("vault.guests.mint_slip", &output)
 };
+"vault.support_grants.mint" => fn vault_support_grants_mint(&self, input: SupportGrantMintRequest) -> SupportGrantMintAnswer = |client| {
+    let input: oneiron::task_verb::sdk::SupportGrantMintRequest = crate::codec::lower_record("vault.support_grants.mint", input)?;
+    let output = client.vault_support_grants_mint(&input)?;
+    crate::codec::lift_record("vault.support_grants.mint", &output)
+};
+"vault.support_grants.list" => fn vault_support_grants_list(&self, input: SupportGrantListRequest) -> SupportGrantList = |client| {
+    let input: oneiron::task_verb::sdk::SupportGrantListRequest = crate::codec::lower_record("vault.support_grants.list", input)?;
+    let output = client.vault_support_grants_list(&input)?;
+    crate::codec::lift_record("vault.support_grants.list", &output)
+};
+"vault.support_grants.revoke" => fn vault_support_grants_revoke(&self, input: SupportGrantRevokeRequest) -> SupportGrantRevokeAnswer = |client| {
+    let input: oneiron::task_verb::sdk::SupportGrantRevokeRequest = crate::codec::lower_record("vault.support_grants.revoke", input)?;
+    let output = client.vault_support_grants_revoke(&input)?;
+    crate::codec::lift_record("vault.support_grants.revoke", &output)
+};
 "vault.residence.mode" => fn vault_residence_mode(&self, input: ResidenceModeRequest) -> ResidenceModeAnswer = |client| {
     let input: oneiron::task_verb::sdk::ResidenceModeRequest = crate::codec::lower_record("vault.residence.mode", input)?;
     let output = client.vault_residence_mode(&input)?;

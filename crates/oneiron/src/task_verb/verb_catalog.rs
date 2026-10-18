@@ -158,6 +158,9 @@ pub enum AgentVerb {
     VaultTrustedContactsConcernAuthorize,
     VaultGuestsRevoke,
     VaultGuestsMintSlip,
+    VaultSupportGrantsMint,
+    VaultSupportGrantsList,
+    VaultSupportGrantsRevoke,
     VaultResidenceMode,
     VaultResidenceOpen,
     VaultResidenceIndex,
@@ -717,6 +720,9 @@ impl AgentVerb {
         Self::VaultTrustedContactsConcernAuthorize,
         Self::VaultGuestsRevoke,
         Self::VaultGuestsMintSlip,
+        Self::VaultSupportGrantsMint,
+        Self::VaultSupportGrantsList,
+        Self::VaultSupportGrantsRevoke,
         Self::VaultResidenceMode,
         Self::VaultResidenceOpen,
         Self::VaultResidenceIndex,
@@ -1281,6 +1287,9 @@ impl AgentVerb {
             }
             Self::VaultGuestsRevoke => "vault.guests.revoke",
             Self::VaultGuestsMintSlip => "vault.guests.mint_slip",
+            Self::VaultSupportGrantsMint => "vault.support_grants.mint",
+            Self::VaultSupportGrantsList => "vault.support_grants.list",
+            Self::VaultSupportGrantsRevoke => "vault.support_grants.revoke",
             Self::VaultResidenceMode => "vault.residence.mode",
             Self::VaultResidenceOpen => "vault.residence.open",
             Self::VaultResidenceIndex => "vault.residence.index",
@@ -1847,6 +1856,9 @@ impl AgentVerb {
                 | Self::VaultTrustedContactsConcernAuthorize
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
+                | Self::VaultSupportGrantsMint
+                | Self::VaultSupportGrantsList
+                | Self::VaultSupportGrantsRevoke
                 | Self::VaultResidenceMode
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
@@ -2413,6 +2425,9 @@ impl AgentVerb {
                 | Self::VaultTrustedContactsConcernAuthorize
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
+                | Self::VaultSupportGrantsMint
+                | Self::VaultSupportGrantsList
+                | Self::VaultSupportGrantsRevoke
                 | Self::VaultResidenceMode
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
@@ -3028,6 +3043,9 @@ impl AgentVerb {
                 | Self::VaultTrustedContactsConcernAuthorize
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
+                | Self::VaultSupportGrantsMint
+                | Self::VaultSupportGrantsList
+                | Self::VaultSupportGrantsRevoke
                 | Self::VaultResidenceMode
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
@@ -3506,6 +3524,8 @@ impl AgentVerb {
                 | Self::VaultTrustedContactsConcernAuthorize
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
+                | Self::VaultSupportGrantsMint
+                | Self::VaultSupportGrantsRevoke
                 | Self::VaultResidenceMode
                 | Self::VaultResidenceOpen
                 | Self::VaultResidencePrune
@@ -3943,6 +3963,9 @@ impl AgentVerb {
             Self::VaultTrustedContactsConcernAuthorize => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
+            Self::VaultSupportGrantsMint => &["spec"],
+            Self::VaultSupportGrantsList => &["spec"],
+            Self::VaultSupportGrantsRevoke => &["spec"],
             Self::VaultResidenceMode => &["spec"],
             Self::VaultResidenceOpen => &["spec"],
             Self::VaultResidenceIndex => &["spec"],
@@ -4503,6 +4526,9 @@ impl AgentVerb {
             Self::VaultTrustedContactsConcernAuthorize => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
+            Self::VaultSupportGrantsMint => &["spec"],
+            Self::VaultSupportGrantsList => &["spec"],
+            Self::VaultSupportGrantsRevoke => &["spec"],
             Self::VaultResidenceMode => &["spec"],
             Self::VaultResidenceOpen => &["spec"],
             Self::VaultResidenceIndex => &["spec"],
@@ -5353,6 +5379,15 @@ impl AgentVerb {
             Self::VaultGuestsRevoke => "",
             Self::VaultGuestsMintSlip => {
                 "The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."
+            }
+            Self::VaultSupportGrantsMint => {
+                "The owner mints our support person or agent a time-limited, revocable grant, bound to that party's own key, inside explicit bounds."
+            }
+            Self::VaultSupportGrantsList => {
+                "The owner lists the vault's support grants, newest first, with each one's bounds, deadline, status and revoke command."
+            }
+            Self::VaultSupportGrantsRevoke => {
+                "The owner revokes one support grant; what support already read is not recalled."
             }
             Self::VaultResidenceMode => {
                 "Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive."

@@ -97,6 +97,9 @@ mod slip_replay;
 mod slip_state;
 mod slip_vault;
 mod stale_roster;
+mod support_admission;
+mod support_grant;
+mod support_receipt;
 mod task_actor;
 mod vault_api;
 mod world_key_fold;
@@ -132,7 +135,8 @@ pub use oneiron_authority::authority::{
     ModelOrder, OWNER_HANDOVER_REF_MAX, OwnerHandover, OwnerHandoverCause, OwnerRootRecord,
     RESIDENCE_REASON_MAX, RESIDENCE_WINDOW_KEY_MAX, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER,
     ROLE_RECOVERY, ReadLocation, RecoveryRootId, ResidenceAct, ResidenceDirective, ResidenceResult,
-    ResidenceResultStatus, SealedCopies, SlipClaims, SlipMintAction, WORLD_MODEL_ROUTE_MAX_BYTES,
+    ResidenceResultStatus, SUPPORT_GRANT_DEFAULT_TTL_SECS, SUPPORT_GRANT_MAX_TTL_SECS,
+    SealedCopies, SlipClaims, SlipMintAction, SupportDelegation, WORLD_MODEL_ROUTE_MAX_BYTES,
     WORLD_MODEL_ROUTES_MAX, WorldKeyWrapsRecord, WorldPrivacy, WorldPrivacyEdit,
     authority_entry_hash, authority_log_entity_id, authority_log_entity_id_from_hash,
     authority_transcript, decode_authority_log_entry_body, encode_authority_log_entry_body,
@@ -210,6 +214,10 @@ pub(crate) use slip_replay::refuse_moved_proof_freshness;
 pub use slip_replay::{ProofClockAhead, ProofClockRecovery, holder_proof, holder_proof_challenge};
 pub use slip_state::{FoldedSlip, SlipAuthorityState};
 pub use slip_vault::{ConnectOffer, ConnectRescopeOffer, HostSlipIssuer};
+pub use support_grant::{
+    SUPPORT_GRANT_REVOKE_COMMAND, SupportGrantMinted, SupportGrantQuery, SupportGrantRequest,
+    SupportGrantRevoked, SupportGrantRow, SupportGrantStatus, SupportHolderClass,
+};
 pub use task_actor::AdmittedTaskGrant;
 pub(crate) use task_actor::{RunnerLease, TaskActorProof, TaskActorVerb};
 pub use vault_api::AuthorityEntryStatus;

@@ -56,6 +56,23 @@ pub struct ConsentRegistryRow {
     /// Where a scoped catastrophe bypass grant applies; `None` for an
     /// ordinary standing grant.
     pub bypass: Option<super::bypass::BypassExtent>,
+    /// A support grant's delegation (OF-606), projected from its logged
+    /// mint; `None` for every other row. Projection only: no grant row
+    /// stores or edits it.
+    pub delegation: Option<ConsentRegistryDelegation>,
+}
+
+/// A support grant's delegation as the registry shows it (OF-606): why the
+/// customer let support in, who approved it, and the wall deadline it ends
+/// at, with where the grant stands now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConsentRegistryDelegation {
+    pub purpose: String,
+    pub ticket_ref: Option<String>,
+    /// The approving owner PERSON (hex).
+    pub approved_by: String,
+    pub wall_expires_at: u64,
+    pub status: crate::authority::SupportGrantStatus,
 }
 
 /// The one-tap revoke command carried by every registry row.
@@ -98,6 +115,7 @@ impl ConsentRegistryRow {
             },
             grant_ref,
             bypass: row.bypass,
+            delegation: None,
         }
     }
 
@@ -122,9 +140,54 @@ impl ConsentRegistryRow {
             },
             grant_ref,
             bypass: None,
+            delegation: None,
+        }
+    }
+
+    /// One support grant (OF-606), from its logged mint. Its one-tap revoke
+    /// is the support revoke door's, never the consent grant revoke; it is
+    /// Active only while the grant admits its holder.
+    pub(super) fn from_support_grant(grant: &crate::authority::SupportGrantRow) -> Self {
+        use crate::authority::{SUPPORT_GRANT_REVOKE_COMMAND, SupportGrantStatus};
+        let grant_ref = crate::entity_id::bytes_to_hex_lower(&grant.slip_id);
+        let mut selectors = render_scope(&grant.scope);
+        if !grant.records.is_empty() {
+            selectors.push(format!(
+                "records:{}",
+                grant.records.iter().cloned().collect::<Vec<_>>().join(",")
+            ));
+        }
+        Self {
+            domain: ConsentDomain::Action,
+            subject: format!("{}/{}", grant.holder.to_hex(), grant.holder_class),
+            class: SUPPORT_GRANT_CLASS.to_owned(),
+            selectors,
+            scope: Some(grant.scope.clone()),
+            status: if grant.status == SupportGrantStatus::Active {
+                ConsentGrantStatus::Active
+            } else {
+                ConsentGrantStatus::Revoked
+            },
+            created_at: grant.delegation.approved_at,
+            revoke_action: ConsentRevokeAction {
+                command: SUPPORT_GRANT_REVOKE_COMMAND.to_owned(),
+                grant_ref: grant_ref.clone(),
+            },
+            grant_ref,
+            bypass: None,
+            delegation: Some(ConsentRegistryDelegation {
+                purpose: grant.delegation.purpose.clone(),
+                ticket_ref: grant.delegation.ticket_ref.clone(),
+                approved_by: grant.delegation.owner_ref.clone(),
+                wall_expires_at: grant.delegation.wall_expires_at,
+                status: grant.status,
+            }),
         }
     }
 }
+
+/// The class a support grant's registry row shows (OF-606).
+pub const SUPPORT_GRANT_CLASS: &str = "support";
 
 fn render_subject(subject: &BoundSubject) -> String {
     match subject {
