@@ -118,6 +118,17 @@ pub enum EngineLimit {
     /// judgment's state carries. Past it the replays are read whole, cut only
     /// where the decision ladder's state bound would refuse the call.
     JudgeReplayTextBytes,
+    /// UTF-8 bytes of the task a contribution check's judge reads for one
+    /// fork: the replayed step's non-system message text. Past it the row
+    /// asks whether everything is okay and the judge reads the task whole.
+    ContributionJudgeTaskBytes,
+    /// UTF-8 bytes of one contribution fork's answer its judge reads. Past
+    /// it the row asks and the judge reads the answer whole.
+    ContributionJudgeAnswerBytes,
+    /// Callable skills one call nests, itself included: a callable that
+    /// calls another runs the inner one's step inside its own. Past it the
+    /// row asks whether everything is okay and the call runs.
+    CallableNestDepth,
     /// Bytes of one signing item's PDF the e-sign seal holds in memory: its
     /// original or its prepared copy, whichever is larger. Past it asks
     /// whether everything is okay, and the item is prepared and sealed whole.
@@ -126,7 +137,7 @@ pub enum EngineLimit {
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 28] = [
+    pub const ALL: [Self; 31] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -154,6 +165,9 @@ impl EngineLimit {
         Self::JudgeRubricBytes,
         Self::JudgeInstructionsBytes,
         Self::JudgeReplayTextBytes,
+        Self::ContributionJudgeTaskBytes,
+        Self::ContributionJudgeAnswerBytes,
+        Self::CallableNestDepth,
         Self::EsignPdfBytes,
     ];
 
@@ -187,6 +201,9 @@ impl EngineLimit {
             Self::JudgeRubricBytes => "limits.judge_rubric_bytes",
             Self::JudgeInstructionsBytes => "limits.judge_instructions_bytes",
             Self::JudgeReplayTextBytes => "limits.judge_replay_text_bytes",
+            Self::ContributionJudgeTaskBytes => "limits.contribution_judge_task_bytes",
+            Self::ContributionJudgeAnswerBytes => "limits.contribution_judge_answer_bytes",
+            Self::CallableNestDepth => "limits.callable_nest_depth",
             Self::EsignPdfBytes => "limits.esign_pdf_bytes",
         }
     }
@@ -226,6 +243,11 @@ impl EngineLimit {
             // instructions and 40,000 bytes of replay text.
             Self::JudgeInstructionsBytes => 8_192,
             Self::JudgeReplayTextBytes => 40_000,
+            // Together they leave room in the judgment's 64 KiB state, whose
+            // ladder refuses a larger one: the row asks before that.
+            Self::ContributionJudgeTaskBytes => 24 << 10,
+            Self::ContributionJudgeAnswerBytes => 16 << 10,
+            Self::CallableNestDepth => 8,
             Self::EsignPdfBytes => 256 << 20,
         }
     }

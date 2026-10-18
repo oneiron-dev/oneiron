@@ -976,6 +976,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_research_evaluate_split(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.research.evaluate_split", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_research_mark_invalid(
         &self,
         input: serde_json::Value,
