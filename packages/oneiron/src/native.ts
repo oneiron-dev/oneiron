@@ -80,6 +80,8 @@ tasksAccept(input: unknown): unknown
 vaultWitness(turn: WitnessTurn): WitnessReceipt
 vaultClaimsUpsert(input: unknown): unknown
 vaultRecall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined, as_of: number | undefined, deadline_ms: number | undefined, media: RecallMedia | undefined, query_affect: QueryAffect | undefined): MemoryPack
+vaultRetrievalAgingGet(input: unknown): unknown
+vaultRetrievalAgingConfigure(input: unknown): unknown
 vaultRetrievalWeightsGet(input: unknown): unknown
 vaultRetrievalWeightsConfigure(input: unknown): unknown
 vaultAffectAnnotationsPut(input: unknown): unknown

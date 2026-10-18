@@ -1171,6 +1171,54 @@ async fn vault_recall(
         rows,
     })
 }
+async fn vault_retrieval_aging_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.retrieval.aging.get")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.retrieval.aging.get", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.retrieval.aging.get", value).await?;
+    let (output, listed) = super::host_doors::vault_retrieval_aging_get(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_retrieval_aging_configure(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.retrieval.aging.configure")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.retrieval.aging.configure", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.retrieval.aging.configure", value).await?;
+    let (output, listed) = super::host_doors::vault_retrieval_aging_configure(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_retrieval_weights_get(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -15510,6 +15558,10 @@ pub(crate) async fn call_verb(
         "vault.witness" => vault_witness(server, call, input).await,
         "vault.claims.upsert" => vault_claims_upsert(server, call, input).await,
         "vault.recall" => vault_recall(server, call, input).await,
+        "vault.retrieval.aging.get" => vault_retrieval_aging_get(server, call, input).await,
+        "vault.retrieval.aging.configure" => {
+            vault_retrieval_aging_configure(server, call, input).await
+        }
         "vault.retrieval.weights.get" => vault_retrieval_weights_get(server, call, input).await,
         "vault.retrieval.weights.configure" => {
             vault_retrieval_weights_configure(server, call, input).await

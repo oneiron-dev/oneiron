@@ -487,6 +487,12 @@ export class Oneiron {
    */
     recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media, opts.queryAffect)),
     retrieval: {
+      aging: {
+        /** The owner reads class-level exponential aging profiles and the trusted manifest hash; confidence never ages. */
+        get: (input: Facade.EmptyRequest = {}): Facade.ClaimAgingProfilesView => this.#call(() => this.#client.vaultRetrievalAgingGet(input) as Facade.ClaimAgingProfilesView),
+        /** The owner edits all class-aging profiles against the current manifest hash without rewriting confidence, lifecycle or claim bodies. */
+        configure: (input: Facade.ClaimAgingProfilesConfigureRequest): Facade.ClaimAgingProfilesReceipt => this.#call(() => this.#client.vaultRetrievalAgingConfigure(input) as Facade.ClaimAgingProfilesReceipt),
+      },
       weights: {
         /** The owner reads effective affect, arousal, community and semantic-edge VAD priors with the trusted manifest hash. */
         get: (input: Facade.EmptyRequest = {}): Facade.RetrievalWeightsView => this.#call(() => this.#client.vaultRetrievalWeightsGet(input) as Facade.RetrievalWeightsView),

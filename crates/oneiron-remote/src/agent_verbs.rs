@@ -195,6 +195,12 @@ impl OneironClient {
                 "vault.recall" => {
                     remote_agent_verb_output::<oneiron::memory::MemoryPack>(client, verb, &input)
                 }
+                "vault.retrieval.aging.get" => remote_agent_verb_output::<
+                    oneiron::policy_manifest_doors::ClaimAgingProfilesView,
+                >(client, verb, &input),
+                "vault.retrieval.aging.configure" => remote_agent_verb_output::<
+                    oneiron::policy_manifest_doors::ClaimAgingProfilesReceipt,
+                >(client, verb, &input),
                 "vault.retrieval.weights.get" => remote_agent_verb_output::<
                     oneiron::policy_manifest_doors::RetrievalWeightsView,
                 >(client, verb, &input),
@@ -2751,6 +2757,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.recall", value)
+    }
+    pub fn vault_retrieval_aging_get(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::policy_manifest_doors::ClaimAgingProfilesView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.retrieval.aging.get", value)
+    }
+    pub fn vault_retrieval_aging_configure(
+        &self,
+        input: &oneiron::policy_manifest_doors::ClaimAgingProfilesConfigureRequest,
+    ) -> Result<oneiron::policy_manifest_doors::ClaimAgingProfilesReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.retrieval.aging.configure", value)
     }
     pub fn vault_retrieval_weights_get(
         &self,
