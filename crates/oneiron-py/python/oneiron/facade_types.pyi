@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 742 facade rows, 2626 declarations.
-Inputs: 690 of 742 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 665 of 742 fully typed, 77 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 95; unread shapes: 0.
+Census: 780 facade rows, 2722 declarations.
+Inputs: 728 of 780 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 700 of 780 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 99; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -407,6 +407,123 @@ class ConcernMoveRequest(TypedDict):
 class ConcernMoveOutcome(TypedDict):
     card: str
     ask: AgentHealthCoachAsk
+class DiagnosticsListRequest(TypedDict):
+    event_class: NotRequired[str | None]
+    actor_ref: NotRequired[str | None]
+    evidence_ref: NotRequired[str | None]
+    limit: int
+class ReadScope(TypedDict):
+    entity_types: NotRequired[list[int] | None]
+    max_sensitivity_band: int
+    include_stale: bool
+    min_confidence: float
+    min_salience: float
+    deny_all: bool
+class ScopedReadReceipt(TypedDict):
+    requested: ReadScope
+    actor_ceiling: ReadScope
+    applied: ReadScope
+    narrowed_axes: list[str]
+    suppressed_count: int
+    replan_hint: list[str]
+class ScopedReadResult(TypedDict, Generic[T]):
+    value: T
+    narrowing: ScopedReadReceipt
+class DiagnosticEventView(TypedDict):
+    diagnostic_ref: str
+    detector_id: str
+    event_class: str
+    signal: NotRequired[str | None]
+    actor_class: str
+    actor_ref: NotRequired[str | None]
+    source: str
+    criticality: str
+    expected: Any
+    actual: Any
+    delta: Any
+    replay_content_hash: str
+    replay_run_ref: NotRequired[str | None]
+    replay_checkpoint_ref: NotRequired[str | None]
+    evidence_refs: list[str]
+    untrusted_detail: NotRequired[str | None]
+    valid_from: int
+    valid_to: NotRequired[int | None]
+class DiagnosticsGetRequest(TypedDict):
+    diagnostic_ref: str
+class CoachInspectRequest(TypedDict):
+    receipt_ref: str
+class BlockedReportView(TypedDict):
+    receipt_ref: str
+    category: str
+    untrusted_detail: str
+    attempt: NotRequired[str | None]
+    semi_trusted: bool
+class CoachWorkingSetView(TypedDict):
+    evidence_refs: list[str]
+    diagnostic_refs: list[str]
+    reporter: NotRequired[str | None]
+    run_ref: NotRequired[str | None]
+    reported_at: NotRequired[int | None]
+    retries: NotRequired[int | None]
+AllRelationships = Literal["all"]
+ClaimRelationships = AllRelationships | list[str]
+class ClaimScope(TypedDict):
+    world_id: str
+    scope_facet_id: str
+    scope_relationship_id: ClaimRelationships
+    scope_project_id: str
+MadeByInputRole = Literal["input", "prompt"]
+class MadeByInput(TypedDict):
+    row: str
+    role: MadeByInputRole
+MadeByClass = Literal["stated", "concluded"]
+MadeByProcess = TypedDict("MadeByProcess", {"actor": str, "class": MadeByClass, "identity": str, "version": str, "params_hash": str})
+class MadeByTriggerTask(TypedDict):
+    task: str
+class MadeByTriggerAsk(TypedDict):
+    ask: str
+class MadeByTriggerRun(TypedDict):
+    run: str
+class MadeByTriggerSkill(TypedDict):
+    skill: str
+MadeByTrigger = MadeByTriggerTask | MadeByTriggerAsk | MadeByTriggerRun | MadeByTriggerSkill
+class MadeBy(TypedDict):
+    inputs: list[MadeByInput]
+    process: MadeByProcess
+    at: int
+    trigger: NotRequired[MadeByTrigger | None]
+class ClaimView(TypedDict):
+    claim_ref: str
+    short_ref: NotRequired[str | None]
+    predicate: str
+    subject_ref: str
+    value: Any
+    confidence: float
+    approval: str
+    lifecycle: str
+    source: NotRequired[str | None]
+    world_ref: NotRequired[str | None]
+    scope: NotRequired[Any | None]
+    claim_scope: ClaimScope
+    made_by: NotRequired[MadeBy | None]
+    valid_from: NotRequired[int | None]
+    valid_to: NotRequired[int | None]
+    salience: NotRequired[float | None]
+    stale: bool
+    claim: NotRequired[RecordRef | None]
+class CoachProposalView(TypedDict):
+    claim: ClaimView
+    route: NotRequired[str | None]
+    decided: NotRequired[str | None]
+    repair: NotRequired[Any | None]
+    settled_at: int
+class CoachInspectionView(TypedDict):
+    receipt_ref: str
+    state: str
+    report: NotRequired[BlockedReportView | None]
+    diagnostic: NotRequired[DiagnosticEventView | None]
+    working_set: CoachWorkingSetView
+    proposal: NotRequired[CoachProposalView | None]
 class PeopleListRequest(TypedDict):
     vault: NotRequired[str | None]
     page: NotRequired[int | None]
@@ -1639,13 +1756,6 @@ class WitnessTurn(TypedDict):
     messages: list[WitnessMessage]
     occurred_at: int
     assertions: NotRequired[WitnessAssertions]
-AllRelationships = Literal["all"]
-ClaimRelationships = AllRelationships | list[str]
-class ClaimScope(TypedDict):
-    world_id: str
-    scope_facet_id: str
-    scope_relationship_id: ClaimRelationships
-    scope_project_id: str
 class ScopedClaimInput(TypedDict):
     id: NotRequired[str | None]
     predicate: str
@@ -1782,20 +1892,6 @@ class RetrievalMeta(TypedDict):
     temporal_hints: NotRequired[list[TemporalHintReport]]
     rerank: NotRequired[RerankReport | None]
     limit_clamped: NotRequired[bool]
-class ReadScope(TypedDict):
-    entity_types: NotRequired[list[int] | None]
-    max_sensitivity_band: int
-    include_stale: bool
-    min_confidence: float
-    min_salience: float
-    deny_all: bool
-class ScopedReadReceipt(TypedDict):
-    requested: ReadScope
-    actor_ceiling: ReadScope
-    applied: ReadScope
-    narrowed_axes: list[str]
-    suppressed_count: int
-    replan_hint: list[str]
 class RetrievalRunId(TypedDict):
     bytes: list[int]
 class MemoryPack(TypedDict):
@@ -2225,9 +2321,6 @@ class CredentialAttenuated(TypedDict):
     binding_key: list[int]
 class RecordPositionRequest(TypedDict):
     record_ref: str
-class ScopedReadResult(TypedDict, Generic[T]):
-    value: T
-    narrowing: ScopedReadReceipt
 class RecordPosition(TypedDict):
     kind: Literal["position"]
     scope: Scope
@@ -2264,26 +2357,6 @@ class ExportChannel(TypedDict):
 class ScopedExportRequest(TypedDict):
     selector: RecordSelector
     channel: ExportChannel
-MadeByInputRole = Literal["input", "prompt"]
-class MadeByInput(TypedDict):
-    row: str
-    role: MadeByInputRole
-MadeByClass = Literal["stated", "concluded"]
-MadeByProcess = TypedDict("MadeByProcess", {"actor": str, "class": MadeByClass, "identity": str, "version": str, "params_hash": str})
-class MadeByTriggerTask(TypedDict):
-    task: str
-class MadeByTriggerAsk(TypedDict):
-    ask: str
-class MadeByTriggerRun(TypedDict):
-    run: str
-class MadeByTriggerSkill(TypedDict):
-    skill: str
-MadeByTrigger = MadeByTriggerTask | MadeByTriggerAsk | MadeByTriggerRun | MadeByTriggerSkill
-class MadeBy(TypedDict):
-    inputs: list[MadeByInput]
-    process: MadeByProcess
-    at: int
-    trigger: NotRequired[MadeByTrigger | None]
 WithheldRole = Literal["input", "prompt", "trigger"]
 class WithheldRef(TypedDict):
     handle: str
@@ -2424,6 +2497,72 @@ class KeyValueNamespaces(TypedDict):
     max_depth: NotRequired[int | None]
     limit: NotRequired[int]
     offset: NotRequired[int]
+UnknownJurisdictionDefault = Literal["strict_pole"]
+ComplianceExemptionEvidence = Literal["legal_form", "publication_context"]
+class ConditionalExemptionEvidence(TypedDict):
+    jurisdiction: str
+    evidence: ComplianceExemptionEvidence
+ComplianceRuleKind = Literal["consent_class", "sender_id", "physical_address", "optout_mechanism", "optout_deadline", "content_marking", "records", "source_hygiene"]
+B2bExemption = Literal["yes", "no", "conditional"]
+class ComplianceSource(TypedDict):
+    citation: str
+    url: str
+class ComplianceRuleRow(TypedDict):
+    jurisdiction: str
+    channel: str
+    rule_kind: ComplianceRuleKind
+    requirement: str
+    b2b_exemption: B2bExemption
+    source: ComplianceSource
+    verified_at: int
+    version: int
+    penalty_note: str
+class CompliancePack(TypedDict):
+    pack_id: str
+    pack_version: int
+    min_engine_version: str
+    verified_at_max_age_secs: int
+    unknown_jurisdiction_default: UnknownJurisdictionDefault
+    strict_pole_jurisdiction: str
+    jurisdiction_confidence_floor_millis: int
+    prohibited_list_provenance_classes: list[str]
+    conditional_exemption_evidence: list[ConditionalExemptionEvidence]
+    warning: str
+    rows: list[ComplianceRuleRow]
+class ComplianceAmendRequest(TypedDict):
+    prior_version: int
+    pack: CompliancePack
+ComplianceOperation = Literal["install", "amend", "approve", "reject", "verify"]
+ComplianceDisposition = Literal["applied", "pending_owner_stamp", "rejected"]
+ComplianceAmendmentClass = Literal["Tightening", "MetadataRefresh", "LooseningOrAmbiguous"]
+class ComplianceOwnerStamp(TypedDict):
+    owner_ref: str
+    proposal_hash: str
+    recorded_at: int
+ComplianceReceipt = TypedDict("ComplianceReceipt", {"receipt_ref": str, "operation": ComplianceOperation, "disposition": ComplianceDisposition, "prior_version": int, "effective_version": int, "proposed_version": int, "class": NotRequired[ComplianceAmendmentClass | None], "proposal_hash": str, "actor_ref": str, "owner_stamp": NotRequired[ComplianceOwnerStamp | None], "notice": NotRequired[str | None], "reason_codes": list[str], "recorded_at": int})
+class ComplianceApprovalRequest(TypedDict):
+    prior_version: int
+    proposal_hash: str
+class ComplianceRowVerification(TypedDict):
+    jurisdiction: str
+    channel: str
+    rule_kind: ComplianceRuleKind
+    expected_row_version: int
+    source: ComplianceSource
+    verified_at: int
+class ComplianceVerifyRequest(TypedDict):
+    prior_version: int
+    rows: list[ComplianceRowVerification]
+class ComplianceResultRequest(TypedDict):
+    receipt_ref: NotRequired[str | None]
+class CompliancePendingProposal(TypedDict):
+    pack: CompliancePack
+    proposal_hash: str
+class ComplianceResult(TypedDict):
+    active: CompliancePack
+    pending: NotRequired[CompliancePendingProposal | None]
+    notices: list[str]
+    receipts: list[ComplianceReceipt]
 class CampaignMemberChannelSpec(TypedDict):
     channel: str
     basis_evidence: str
@@ -2574,25 +2713,6 @@ class WeaveSectionInput(TypedDict):
     edge_kinds: NotRequired[list[str]]
 class WeaveReportRequest(TypedDict):
     sections: list[WeaveSectionInput]
-class ClaimView(TypedDict):
-    claim_ref: str
-    short_ref: NotRequired[str | None]
-    predicate: str
-    subject_ref: str
-    value: Any
-    confidence: float
-    approval: str
-    lifecycle: str
-    source: NotRequired[str | None]
-    world_ref: NotRequired[str | None]
-    scope: NotRequired[Any | None]
-    claim_scope: ClaimScope
-    made_by: NotRequired[MadeBy | None]
-    valid_from: NotRequired[int | None]
-    valid_to: NotRequired[int | None]
-    salience: NotRequired[float | None]
-    stale: bool
-    claim: NotRequired[RecordRef | None]
 class WeaveItemViewClaim(TypedDict):
     item: Literal["claim"]
     claim: ClaimView
@@ -5303,6 +5423,198 @@ class EvalAuthoringReport(TypedDict):
     cohorts_retired: list[EntityId]
     cohorts_kept: int
     skipped: list[EvalAuthoringSkip]
+class OfferListRequest(TypedDict):
+    seat: NotRequired[EvalSeat | None]
+    pending_only: NotRequired[bool]
+class OfferModelPin(TypedDict):
+    model: str
+    revision: str
+    content_hash: NotRequired[str | None]
+class OfferCandidateStockBody(TypedDict):
+    model: OfferModelPin
+    licence: str
+    source: str
+class OfferCandidateStock(TypedDict):
+    stock: OfferCandidateStockBody
+class OfferCandidateTrainRecipeBody(TypedDict):
+    base: OfferModelPin
+    recipe_ref: str
+    licence: str
+class OfferCandidateTrainRecipe(TypedDict):
+    train_recipe: OfferCandidateTrainRecipeBody
+OfferCandidate = OfferCandidateStock | OfferCandidateTrainRecipe
+class OfferCost(TypedDict):
+    currency: str
+    monthly_before: NotRequired[float | None]
+    monthly_after: NotRequired[float | None]
+    one_off: NotRequired[float | None]
+    payback_months: NotRequired[float | None]
+class OfferOption(TypedDict):
+    label: str
+    model: OfferModelPin
+    cost: OfferCost
+    score: NotRequired[float | None]
+    evidence_refs: list[str]
+SeatWorkload = TypedDict("SeatWorkload", {"from": int, "until": int, "calls": NotRequired[int | None], "input_tokens": NotRequired[int | None], "output_tokens": NotRequired[int | None], "complete": bool, "receipt_refs": list[str]})
+class OfferEvidence(TypedDict):
+    cohort: NotRequired[EntityId | None]
+    exposures: list[EntityId]
+    rubric_revision: NotRequired[str | None]
+    card: NotRequired[SufficiencyCard | None]
+    losses: list[str]
+    risk: NotRequired[str | None]
+class ComputeDestinationSelfHostedBody(TypedDict):
+    host: str
+class ComputeDestinationSelfHosted(TypedDict):
+    self_hosted: ComputeDestinationSelfHostedBody
+class ComputeDestinationHostedBody(TypedDict):
+    provider: str
+    rows_leaving: int
+class ComputeDestinationHosted(TypedDict):
+    hosted: ComputeDestinationHostedBody
+ComputeDestination = Literal["on_device"] | ComputeDestinationSelfHosted | ComputeDestinationHosted
+class TrainingOffer(TypedDict):
+    id: EntityId
+    seat: EvalSeat
+    offer_skill: NotRequired[tuple[EntityId, str] | None]
+    drafted_on: NotRequired[str | None]
+    attempt: AttemptId
+    incumbent: OfferModelPin
+    candidate: OfferCandidate
+    baseline: OfferOption
+    alternatives: list[OfferOption]
+    workload: SeatWorkload
+    cost: OfferCost
+    evidence: OfferEvidence
+    destination: ComputeDestination
+    previous: NotRequired[EntityId | None]
+    what_changed: NotRequired[str | None]
+    check_at: int
+    offered_at: int
+    digest: str
+OfferAnswer = Literal["keep_baseline", "approve_switch", "approve_train", "decline", "postpone"]
+OfferIntentSwitchBody = TypedDict("OfferIntentSwitchBody", {"seat": EvalSeat, "from": OfferModelPin, "to": OfferModelPin})
+class OfferIntentSwitch(TypedDict):
+    switch: OfferIntentSwitchBody
+class OfferIntentTrainBody(TypedDict):
+    seat: EvalSeat
+    base: OfferModelPin
+    recipe_ref: str
+    destination: ComputeDestination
+class OfferIntentTrain(TypedDict):
+    train: OfferIntentTrainBody
+OfferIntent = OfferIntentSwitch | OfferIntentTrain
+class OfferAnswerRecord(TypedDict):
+    offer: EntityId
+    answer: OfferAnswer
+    owner: EntityId
+    authentication: str
+    offer_digest: str
+    intent: NotRequired[OfferIntent | None]
+    at: int
+class OfferCheck(TypedDict):
+    id: EntityId
+    offer: EntityId
+    receipt_refs: list[str]
+    observed_monthly_cost: NotRequired[float | None]
+    observed_score: NotRequired[float | None]
+    held: NotRequired[bool | None]
+    note: NotRequired[str | None]
+    at: int
+class OfferView(TypedDict):
+    offer: TrainingOffer
+    answer: NotRequired[OfferAnswerRecord | None]
+    checks: list[OfferCheck]
+class OfferRef(TypedDict):
+    offer: EntityId
+class OfferPassRequest(TypedDict):
+    ...
+class OfferPassRef(TypedDict):
+    attempt: EntityId
+class OfferPassResult(TypedDict):
+    attempt: EntityId
+    state: AttemptState
+    terminal: bool
+    offers: list[TrainingOffer]
+class OfferAnswerRequest(TypedDict):
+    offer: EntityId
+    digest: str
+    answer: OfferAnswer
+class OfferUndoReceipt(TypedDict):
+    offer: EntityId
+    at: int
+    restored_model: str
+class OfferCandidateQuery(TypedDict):
+    seat: NotRequired[EvalSeat | None]
+class OfferCandidateSetup(TypedDict):
+    seat: EvalSeat
+    incumbent: OfferModelPin
+    candidate: OfferCandidate
+    destination: ComputeDestination
+class OfferCandidateRecord(TypedDict):
+    id: EntityId
+    setup: OfferCandidateSetup
+    at: int
+class OfferPilotPrepare(TypedDict):
+    candidate: EntityId
+    cohort: EntityId
+EvalExposureKind = Literal["candidate", "query", "promotion"]
+class EvalExposure(TypedDict):
+    id: EntityId
+    cohort: EntityId
+    kind: EvalExposureKind
+    consumer: str
+    candidate_pin: NotRequired[str | None]
+    at: int
+class OfferPilotMeasurement(TypedDict):
+    sufficiency: SufficiencyInput
+    receipt_refs: list[str]
+    currency: str
+    one_off_cost: NotRequired[float | None]
+    incumbent_score: NotRequired[float | None]
+    candidate_score: NotRequired[float | None]
+class OfferPilot(TypedDict):
+    id: EntityId
+    candidate: EntityId
+    exposure: EvalExposure
+    membership_digest: str
+    rubric_revision: str
+    families: int
+    floor_slices: dict[str, int]
+    prepared_at: int
+    measurement: NotRequired[OfferPilotMeasurement | None]
+    card: NotRequired[SufficiencyCard | None]
+    completed_at: NotRequired[int | None]
+DerivationKind = Literal["receipt", "repair", "paraphrase", "summary", "translation", "synthetic", "rubric"]
+class EvalLabel(TypedDict):
+    kind: EvalLabelKind
+    value: str
+    reference: str
+    weight: float
+    at: int
+class EvalCase(TypedDict):
+    id: EntityId
+    family: EntityId
+    seat: EvalSeat
+    kind: DerivationKind
+    receipts: list[str]
+    parents: list[EntityId]
+    stratum: NotRequired[str | None]
+    draw_probability: NotRequired[float | None]
+    source_at: int
+    recorded_at: int
+    labels: list[EvalLabel]
+class EvalRelease(TypedDict):
+    exposure: EvalExposure
+    cases: list[EvalCase]
+class OfferPilotPrepared(TypedDict):
+    pilot: OfferPilot
+    release: EvalRelease
+class OfferPilotComplete(TypedDict):
+    pilot: EntityId
+    measurement: OfferPilotMeasurement
+class OfferPilotRef(TypedDict):
+    pilot: EntityId
 class ResearchBindWire(TypedDict):
     root: EntityId
     config: CampaignConfig
@@ -5545,36 +5857,6 @@ class ResearchBasisWire(TypedDict):
 class ResearchCandidateWire(TypedDict):
     root: EntityId
     candidate: EntityId
-EvalExposureKind = Literal["candidate", "query", "promotion"]
-class EvalExposure(TypedDict):
-    id: EntityId
-    cohort: EntityId
-    kind: EvalExposureKind
-    consumer: str
-    candidate_pin: NotRequired[str | None]
-    at: int
-DerivationKind = Literal["receipt", "repair", "paraphrase", "summary", "translation", "synthetic", "rubric"]
-class EvalLabel(TypedDict):
-    kind: EvalLabelKind
-    value: str
-    reference: str
-    weight: float
-    at: int
-class EvalCase(TypedDict):
-    id: EntityId
-    family: EntityId
-    seat: EvalSeat
-    kind: DerivationKind
-    receipts: list[str]
-    parents: list[EntityId]
-    stratum: NotRequired[str | None]
-    draw_probability: NotRequired[float | None]
-    source_at: int
-    recorded_at: int
-    labels: list[EvalLabel]
-class EvalRelease(TypedDict):
-    exposure: EvalExposure
-    cases: list[EvalCase]
 class ResearchRefereeScores(TypedDict):
     candidate: float
     incumbent: float
@@ -6216,6 +6498,76 @@ class ConsentRegistry(TypedDict):
     rows: list[ConsentRegistryRow]
 class RevokeGrantRequest(TypedDict):
     grant: str
+class GraduationScope(TypedDict):
+    op_kind: str
+    target_class: str
+    actor: str
+class GraduationPolicyRequest(TypedDict):
+    scope: NotRequired[GraduationScope | None]
+class GraduationPolicy(TypedDict):
+    scope_pattern: str
+    required_streak: int
+    posterior_guard: float
+    snooze_backoff_seconds: list[int]
+class GraduationPolicies(TypedDict):
+    rows: list[GraduationPolicy]
+    effective: NotRequired[GraduationPolicy | None]
+class GraduationPolicySetRequest(TypedDict):
+    policy: GraduationPolicy
+class GraduationChanged(TypedDict):
+    changed: bool
+class GraduationPolicyClearRequest(TypedDict):
+    scope_pattern: str
+class GraduationScopeRequest(TypedDict):
+    scope: GraduationScope
+GraduationOutcome = Literal["approved_untouched", "approved_amended", "rejected"]
+GraduationMode = Literal["propose", "offered", "auto"]
+class GraduationStats(TypedDict):
+    scope: GraduationScope
+    untouched_streak: int
+    amended: int
+    rejected: int
+    last_outcome: NotRequired[GraduationOutcome | None]
+    updated_at: int
+    state: GraduationMode
+class GraduationOutcomeRequest(TypedDict):
+    scope: GraduationScope
+    outcome: GraduationOutcome
+class GraduationOffer(TypedDict):
+    scope: GraduationScope
+    stats: GraduationStats
+    threshold: GraduationPolicy
+    reach: ShapePlanReach
+GraduationAnswer = Literal["auto", "not-now", "manual_pinned"]
+class GraduationAnswerRequest(TypedDict):
+    scope: GraduationScope
+    answer: GraduationAnswer
+class GraduationSnoozeNone(TypedDict):
+    state: Literal["none"]
+class GraduationSnoozeSnoozed(TypedDict):
+    state: Literal["snoozed"]
+    count: int
+    next_eligible_at: int
+class GraduationSnoozeManualPinned(TypedDict):
+    state: Literal["manual_pinned"]
+GraduationSnooze = GraduationSnoozeNone | GraduationSnoozeSnoozed | GraduationSnoozeManualPinned
+class GraduationAnswerReceipt(TypedDict):
+    scope: GraduationScope
+    answer: GraduationAnswer
+    grant: NotRequired[ConsentActReceipt | None]
+    snooze: GraduationSnooze
+class GraduationTrustRow(TypedDict):
+    scope: GraduationScope
+    stats: GraduationStats
+    threshold: GraduationPolicy
+    snooze: GraduationSnooze
+    grant_ref: NotRequired[str | None]
+    offer_is_earned: bool
+    offer_reach: NotRequired[str | None]
+GraduationDemotionReason = Literal["rejected", "amended", "agent_judgment"]
+class GraduationDemoteRequest(TypedDict):
+    scope: GraduationScope
+    reason: GraduationDemotionReason
 class PolicyManifestRead(TypedDict):
     manifest_ref: NotRequired[str | None]
 PolicyCriticality = Literal["normal", "critical"]
@@ -6446,6 +6798,69 @@ class LateCreditReceipt(TypedDict):
     shares: list[LateCreditShare]
 class LearningProjectionView(TypedDict):
     receipt: NotRequired[LateCreditReceipt | None]
+class ObjectiveConfession(TypedDict):
+    objective: str
+    met: bool
+    flaw: NotRequired[str | None]
+    uncertainty: NotRequired[str | None]
+class AttemptConfession(TypedDict):
+    attempt: AttemptId
+    subject: EntityId
+    type_ref: CellTypeRef
+    objectives: list[ObjectiveConfession]
+class AuditDraw(TypedDict):
+    rate: float
+    sample: float
+    at: int
+SealCheckKind = Literal["confession_recheck", "random_audit"]
+class SealCheckRequest(TypedDict):
+    reference: str
+    attempt: AttemptId
+    kind: SealCheckKind
+    result_ref: str
+    objectives: list[ObjectiveConfession]
+    rate: float
+    created_at: int
+class ObjectiveFinding(TypedDict):
+    objective: str
+    flaw_present: bool
+    evidence_ref: str
+class SealCheckOutcome(TypedDict):
+    judge_revision: str
+    checked_at: int
+    findings: list[ObjectiveFinding]
+class SealCheckReceipt(TypedDict):
+    request: SealCheckRequest
+    outcome: NotRequired[SealCheckOutcome | None]
+class SealedAttemptReceipt(TypedDict):
+    confession: AttemptConfession
+    executor: str
+    result_ref: str
+    sealed_at: int
+    passing: bool
+    draw: NotRequired[AuditDraw | None]
+    checks: list[SealCheckReceipt]
+class SealAssessment(TypedDict):
+    weighted_flaws: float
+    weighted_hidden_flaws: float
+    confirmed_confessions: int
+    false_confessions: int
+class SealReceiptView(TypedDict):
+    receipt: SealedAttemptReceipt
+    assessment: SealAssessment
+    honesty_reward: float
+class SealAttemptRequest(TypedDict):
+    attempt: AttemptId
+class SealPendingRequest(TypedDict):
+    attempt: NotRequired[AttemptId | None]
+class SealRunRequest(TypedDict):
+    ...
+class SealRunReceipt(TypedDict):
+    job: AttemptId
+class SealCompleteRequest(TypedDict):
+    attempt: AttemptId
+    kind: SealCheckKind
+    outcome: SealCheckOutcome
 class LearningSettingsRequest(TypedDict):
     key: NotRequired[str | None]
 class LearningSettingSpecView(TypedDict):
@@ -9456,10 +9871,10 @@ class OfferCard(TypedDict):
     until: NotRequired[int | None]
     last_engaged_at: int
     vote_tally: OfferVoteTally
-OfferAnswer = Literal["join", "not_now"]
-class OfferAnswerRequest(TypedDict):
+OfferSettleOfferAnswer = Literal["join", "not_now"]
+class OfferSettleOfferAnswerRequest(TypedDict):
     offer_id: str
-    action: OfferAnswer
+    action: OfferSettleOfferAnswer
     intent_key: str
 class OfferSettlement(TypedDict):
     offer_id: str
@@ -9469,7 +9884,7 @@ class OfferSettlement(TypedDict):
     diary_ref: NotRequired[str | None]
 class OfferVoteRequest(TypedDict):
     offer_id: str
-    action: OfferAnswer
+    action: OfferSettleOfferAnswer
 class OfferReopenRequest(TypedDict):
     offer_id: str
     expected_last_engaged_at: int
@@ -13407,6 +13822,12 @@ class TaskRefuseOutput(TypedDict):
     level: RefusalLevel
     outcome: RefusalOutcome
     replay: bool
+BlockedCategory = Literal["tool", "permission", "context", "environment"]
+class ReportBlockedInput(TypedDict):
+    category: BlockedCategory
+    detail: str
+class ReportBlockedOutput(TypedDict):
+    receipt: str
 SpawnCare = Literal["light", "medium", "high", "xhigh", "max"]
 class SpawnKnobSeed(TypedDict, Generic[T]):
     mode: Literal["seed"]

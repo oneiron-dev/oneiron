@@ -55,6 +55,7 @@ pub(crate) use super::booking_doors::*;
 pub(crate) use super::browser_doors::*;
 pub(crate) use super::calendar_doors::*;
 pub(crate) use super::campaign_doors::*;
+pub(crate) use super::compliance_doors::*;
 pub(crate) use super::credential_doors::*;
 pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 
@@ -118,6 +119,7 @@ pub(crate) use super::budget_doors::*;
 pub(crate) use super::fanout_doors::*;
 // The owner's learned-setting doors, likewise.
 pub(crate) use super::learning_doors::*;
+pub(crate) use super::seal_doors::*;
 pub(crate) use super::setting_doors::*;
 pub(crate) use super::slim_doors::*;
 // The owner's historical secret lift sweep door (OF-067), likewise.
@@ -131,6 +133,7 @@ pub(crate) use super::craft_candidate_doors::*;
 // The app's policy-action doors (OF-181), likewise.
 pub(crate) use super::channel_doors::*;
 pub(crate) use super::consent_doors::*;
+pub(crate) use super::graduation_doors::*;
 pub(crate) use super::content_policy_doors::*;
 pub(crate) use super::gate_policy_doors::*;
 pub(crate) use super::policy_doors::*;
@@ -162,6 +165,7 @@ pub(crate) use super::affect_doors::*;
 pub(crate) use super::aging_doors::*;
 pub(crate) use super::campaign_split_doors::*;
 pub(crate) use super::research_doors::*;
+pub(crate) use super::coach_offer_doors::*;
 pub(crate) use super::retrieval_doors::*;
 // The owner's project-card tap door (OF-501), likewise.
 pub(crate) use super::project_card_doors::*;
@@ -1101,6 +1105,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "calendar.imip.get"
         | "vault.calendar.ics.import"
         | "vault.calendar.instances.move"
+        | "vault.campaign.compliance.install"
+        | "vault.campaign.compliance.approve"
+        | "vault.campaign.compliance.reject"
+        | "vault.campaign.compliance.verify"
         | "vault.companions.access_requests.answer"
         | "vault.personas.preview"
         | "vault.personas.export"
@@ -1204,6 +1212,12 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.retrieval.replay"
         | "vault.learning.read"
         | "vault.learning.projection"
+        | "vault.seal.confess"
+        | "vault.seal.audit"
+        | "vault.seal.receipt"
+        | "vault.seal.pending"
+        | "vault.seal.run"
+        | "vault.seal.complete"
         | "vault.settings.learning"
         | "vault.settings.learning.put"
         | "vault.settings.learning.clear"
@@ -1274,6 +1288,16 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.consent.create_standing_grant"
         | "vault.consent.registry"
         | "vault.consent.revoke"
+        | "vault.consent.graduation.policy"
+        | "vault.consent.graduation.policy.set"
+        | "vault.consent.graduation.policy.clear"
+        | "vault.consent.graduation.stats"
+        | "vault.consent.graduation.outcome"
+        | "vault.consent.graduation.offers"
+        | "vault.consent.graduation.answer"
+        | "vault.consent.graduation.trust_table"
+        | "vault.consent.graduation.settings.unpin"
+        | "vault.consent.graduation.demote"
         | "vault.gate.policy.get"
         | "vault.gate.policy.put"
         | "vault.gate.checker.get"
@@ -1334,6 +1358,17 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.research.create_child"
         | "vault.evals.inventory"
         | "vault.evals.cohorts.setup"
+        | "vault.coach.training_offers"
+        | "vault.coach.training_offers.get"
+        | "vault.coach.training_offers.trigger"
+        | "vault.coach.training_offers.result"
+        | "vault.coach.training_offers.answer"
+        | "vault.coach.training_offers.undo"
+        | "vault.coach.training_offers.candidates"
+        | "vault.coach.training_offers.candidates.prepare"
+        | "vault.coach.training_offers.pilots.prepare"
+        | "vault.coach.training_offers.pilots.complete"
+        | "vault.coach.training_offers.pilots.get"
         | "vault.code.symbols.declare"
         | "vault.code.symbols.renew"
         | "vault.code.symbols.release"

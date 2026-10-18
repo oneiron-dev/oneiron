@@ -24,6 +24,9 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.inbox.concern", post(facade_route))
         .route("/self.inbox.concern.outcome", post(facade_route))
         .route("/self.inbox.concern.move", post(facade_route))
+        .route("/vault.diagnostics.list", post(facade_route))
+        .route("/vault.diagnostics.get", post(facade_route))
+        .route("/vault.coach.inspect", post(facade_route))
         .route("/vault.people.list", post(facade_route))
         .route("/vault.people.get", post(facade_route))
         .route("/vault.shape.read", post(facade_route))
@@ -98,6 +101,12 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.kv.delete", post(facade_route))
         .route("/vault.kv.search", post(facade_route))
         .route("/vault.kv.namespaces", post(facade_route))
+        .route("/vault.campaign.compliance.install", post(facade_route))
+        .route("/vault.campaign.compliance.amend", post(facade_route))
+        .route("/vault.campaign.compliance.approve", post(facade_route))
+        .route("/vault.campaign.compliance.reject", post(facade_route))
+        .route("/vault.campaign.compliance.verify", post(facade_route))
+        .route("/vault.campaign.compliance.result", post(facade_route))
         .route("/vault.campaign.enroll", post(facade_route))
         .route("/vault.campaign.stage.evidence", post(facade_route))
         .route("/vault.campaign.unsubscribe", post(facade_route))
@@ -276,6 +285,32 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.research.archive.coverage", post(facade_route))
         .route("/vault.evals.inventory", post(facade_route))
         .route("/vault.evals.cohorts.setup", post(facade_route))
+        .route("/vault.coach.training_offers", post(facade_route))
+        .route("/vault.coach.training_offers.get", post(facade_route))
+        .route("/vault.coach.training_offers.trigger", post(facade_route))
+        .route("/vault.coach.training_offers.result", post(facade_route))
+        .route("/vault.coach.training_offers.answer", post(facade_route))
+        .route("/vault.coach.training_offers.undo", post(facade_route))
+        .route(
+            "/vault.coach.training_offers.candidates",
+            post(facade_route),
+        )
+        .route(
+            "/vault.coach.training_offers.candidates.prepare",
+            post(facade_route),
+        )
+        .route(
+            "/vault.coach.training_offers.pilots.prepare",
+            post(facade_route),
+        )
+        .route(
+            "/vault.coach.training_offers.pilots.complete",
+            post(facade_route),
+        )
+        .route(
+            "/vault.coach.training_offers.pilots.get",
+            post(facade_route),
+        )
         .route("/vault.research.bind", post(facade_route))
         .route("/vault.research.fork", post(facade_route))
         .route("/vault.research.weave", post(facade_route))
@@ -331,6 +366,20 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.consent.create_standing_grant", post(facade_route))
         .route("/vault.consent.registry", post(facade_route))
         .route("/vault.consent.revoke", post(facade_route))
+        .route("/vault.consent.graduation.policy", post(facade_route))
+        .route("/vault.consent.graduation.policy.set", post(facade_route))
+        .route("/vault.consent.graduation.policy.clear", post(facade_route))
+        .route("/vault.consent.graduation.stats", post(facade_route))
+        .route("/vault.consent.graduation.outcome", post(facade_route))
+        .route("/vault.consent.graduation.offers", post(facade_route))
+        .route("/vault.consent.graduation.answer", post(facade_route))
+        .route("/vault.consent.graduation.trust_table", post(facade_route))
+        .route(
+            "/vault.consent.graduation.settings.unpin",
+            post(facade_route),
+        )
+        .route("/vault.consent.graduation.demote", post(facade_route))
+        .route("/self.consent.graduation.demote", post(facade_route))
         .route("/vault.gate.policy.get", post(facade_route))
         .route("/vault.gate.policy.put", post(facade_route))
         .route("/vault.gate.policy.propose", post(facade_route))
@@ -338,6 +387,12 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.gate.checker.set", post(facade_route))
         .route("/vault.learning.read", post(facade_route))
         .route("/vault.learning.projection", post(facade_route))
+        .route("/vault.seal.confess", post(facade_route))
+        .route("/vault.seal.audit", post(facade_route))
+        .route("/vault.seal.receipt", post(facade_route))
+        .route("/vault.seal.pending", post(facade_route))
+        .route("/vault.seal.run", post(facade_route))
+        .route("/vault.seal.complete", post(facade_route))
         .route("/vault.settings.learning", post(facade_route))
         .route("/vault.settings.learning.put", post(facade_route))
         .route("/vault.settings.learning.clear", post(facade_route))
@@ -791,6 +846,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.unfold", post(facade_route))
         .route("/self.folds", post(facade_route))
         .route("/tasks.refuse", post(facade_route))
+        .route("/self.report_blocked", post(facade_route))
         .route("/self.agents.spawn", post(facade_route))
         .route("/self.leader.split", post(facade_route))
         .route("/self.skills.call", post(facade_route))
