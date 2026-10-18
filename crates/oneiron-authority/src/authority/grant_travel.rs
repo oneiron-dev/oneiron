@@ -1,11 +1,12 @@
 //! The owner's choice of the born-with text one federation grant's windows
 //! carry to another vault (OF-491, FIX 2998), and its wire codec.
 //!
-//! The choice never lives in the FederationGrant body. One machine the owner
-//! marked "yours" signs each choice with its install key, and the authority
-//! fold meets concurrent choices: the fields every live choice names travel.
-//! A choice is a main-log entry, not a world's side branch, so it reaches
-//! every machine the owner admits.
+//! The choice never lives in the FederationGrant body. The owner makes it
+//! from any surface where he is authenticated; the install that served him,
+//! a live machine of the vault in any role, signs it with its install key,
+//! and the authority fold meets concurrent choices: the fields every live
+//! choice names travel. A choice is a main-log entry, not a world's side
+//! branch, so it reaches every machine the owner admits.
 
 use std::collections::BTreeSet;
 
@@ -21,7 +22,7 @@ pub const OP_KIND_GRANT_TRAVEL: &str = "grant_travel";
 const GRANT_TRAVEL_KEYS: [&str; 5] = [OP_KEY_KIND, "grant", "owner", "machine", "choice"];
 
 /// One owner choice for one federation grant, signed by the install key of
-/// `machine`, a machine the owner marked "yours".
+/// `machine`, a live machine of the vault.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GrantTravelSet {
     /// The FEDERATION_GRANT row.

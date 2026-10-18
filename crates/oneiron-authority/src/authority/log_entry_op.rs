@@ -119,9 +119,9 @@ pub enum AuthorityOp {
     /// key of the machine it names, with the directive among its parents.
     ResidenceResult(ResidenceResult),
     /// One owner choice of the born-with text a federation grant's windows
-    /// carry to another vault, signed by the install key of a machine the
-    /// owner marked "yours" (OF-491, FIX 2998). A main-log entry, so every
-    /// machine the owner admits folds it.
+    /// carry to another vault, signed by the install key of a live machine
+    /// of the vault, in any role (OF-491, FIX 2998). A main-log entry, so
+    /// every machine the owner admits folds it.
     GrantTravelSet(GrantTravelSet),
 }
 
