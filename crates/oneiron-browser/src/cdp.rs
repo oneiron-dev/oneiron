@@ -1,11 +1,12 @@
 //! The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`:
 //! JSON messages, each ended by a NUL byte, on one reader and one writer.
-//! Replies are matched to calls by id. Network events cross the host proxy;
-//! the DOM driver still polls for its observations.
+//! Replies are matched to calls by id. Network events cross the host proxy,
+//! for every page the guest opens; the DOM driver still polls for its
+//! observations and its tabs.
 
 use crate::BrowserError;
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
@@ -25,6 +26,10 @@ pub(crate) struct Pipe {
     pending: Pending,
     next: Arc<AtomicU64>,
     egress: bool,
+    /// The targets one session already routes through the proxy: another
+    /// session on one of them (the driver's own, or the browser's auto-attach
+    /// finding a page again) only lets it run.
+    routed: Arc<Mutex<HashSet<String>>>,
 }
 
 impl Pipe {
@@ -46,6 +51,7 @@ impl Pipe {
             pending,
             next: Arc::new(AtomicU64::new(1)),
             egress: relay.is_some(),
+            routed: Arc::default(),
         };
         let handle = pipe.clone();
         std::thread::spawn(move || {
@@ -59,6 +65,15 @@ impl Pipe {
 
     pub(crate) fn mediated(&self) -> bool {
         self.egress
+    }
+
+    /// Claims `target`'s routing through the proxy for the caller's session;
+    /// false when another session already routes it.
+    pub(crate) fn claim_network(&self, target: &str) -> bool {
+        self.routed
+            .lock()
+            .map(|mut routed| routed.insert(target.to_owned()))
+            .unwrap_or(false)
     }
 
     /// Sends one command and waits for its reply until `deadline`.
@@ -161,9 +176,15 @@ fn network_event(pipe: Pipe, relay: Arc<dyn oneiron_container::EgressRelay>, eve
         else {
             return;
         };
+        // Claimed here, on the reader, so a later reply never finds a page
+        // unclaimed whose attach came first.
+        let routed = event
+            .pointer("/params/targetInfo/targetId")
+            .and_then(Value::as_str)
+            .is_some_and(|target| !pipe.claim_network(target));
         std::thread::spawn(move || {
             let deadline = Instant::now() + std::time::Duration::from_secs(30);
-            if enable_network(&pipe, &session, deadline).is_ok() {
+            if routed || enable_network(&pipe, &session, deadline).is_ok() {
                 let _ = pipe.call(
                     Some(&session),
                     "Runtime.runIfWaitingForDebugger",
@@ -287,6 +308,21 @@ fn network_event(pipe: Pipe, relay: Arc<dyn oneiron_container::EgressRelay>, eve
             }
         });
     }
+}
+
+/// Has the browser attach every page it opens from now on (a popup, a tab a
+/// link opens), paused at its start until [`network_event`] routed its
+/// network through the proxy, as the first page's is. Frames and workers
+/// stay each page's own auto-attach.
+pub(crate) fn follow_pages(pipe: &Pipe, deadline: Instant) -> Result<(), BrowserError> {
+    pipe.call(
+        None,
+        "Target.setAutoAttach",
+        json!({"autoAttach": true, "waitForDebuggerOnStart": true, "flatten": true,
+        "filter": [{"type": "page"}]}),
+        deadline,
+    )?;
+    Ok(())
 }
 
 pub(crate) fn enable_network(

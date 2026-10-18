@@ -5,18 +5,23 @@
 //! arc-cua measured for Chromium over CDP: up to 0.6 s for the page to start
 //! changing, then 0.15 s with no change, never more than 2 s in all.
 //! A faster driver than the page only reads a stale page.
+//!
+//! The driver follows the guest's tabs for a person who holds the browser:
+//! a popup or a tab a link opens is attached to as it is found, so the
+//! person sees and drives it, and the tab they leave in front is the one
+//! the agent's verbs read after.
 
 use crate::cdp::Pipe;
 use crate::outline::{self, Line};
 use crate::{
-    BrowserDriver, BrowserError, BrowserPersonInput, ClickInput, CropInput, ExpectInput,
-    ExpectOutput, FindInput, FindOutput, ImageOutput, Observation, ObservationPage, ObserveInput,
-    OpenInput, PointInput, Row, ScreenshotInput, ScreenshotOutput, SelectInput, TypeInput,
-    ViewInput, WaitForInput, WaitForOutput, ZoomInput,
+    BrowserDriver, BrowserError, BrowserPersonInput, BrowserTab, ClickInput, CropInput,
+    ExpectInput, ExpectOutput, FindInput, FindOutput, ImageOutput, Observation, ObservationPage,
+    ObserveInput, OpenInput, PointInput, Row, ScreenshotInput, ScreenshotOutput, SelectInput,
+    TypeInput, ViewInput, WaitForInput, WaitForOutput, ZoomInput,
 };
 use base64::Engine as _;
 use serde_json::{Value, json};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Cursor;
 use std::time::{Duration, Instant};
 
@@ -31,7 +36,8 @@ const WAIT_DEFAULT: Duration = Duration::from_secs(5);
 /// The viewport, so a screenshot is never wider than 1,366 px.
 const WIDTH: u32 = 1366;
 const HEIGHT: u32 = 900;
-/// Observations a `since` diff can name.
+/// Observations a `since` diff can name, and answers of each kind held for
+/// their later pages.
 const HISTORY: usize = 8;
 /// Screenshots the driver holds for a later image read.
 const MEDIA: usize = 16;
@@ -52,15 +58,39 @@ const SHIFT: u32 = 8;
 
 pub(crate) struct CdpDriver {
     pipe: Pipe,
+    /// The tab in front: the one the agent's verbs and the person's screen
+    /// and input drive.
     session: String,
     target: String,
+    /// Every tab the driver follows, the one in front among them.
+    tabs: Vec<Tab>,
+    /// The guest's pages from before the driver opened its own (the
+    /// browser's startup page): never followed.
+    ignored: HashSet<String>,
     seq: u64,
     history: VecDeque<(u64, HashMap<String, Row>)>,
     media: VecDeque<Held>,
-    /// The paged observations whose later pages a cursor may still read,
-    /// the last [`HISTORY`] of them.
-    pages: VecDeque<Paged>,
+    pages: Pages,
     wait_cap: Duration,
+}
+
+/// One page target the driver follows, with its session on it, and the
+/// tab that opened it.
+struct Tab {
+    target: String,
+    session: String,
+    opener: Option<String>,
+}
+
+/// The answers a driver holds for their later pages (Rule 5): its last
+/// [`HISTORY`] paged observations and its last [`HISTORY`] paged row
+/// answers (`find`, `wait_for`). An answer that fits one page is not held.
+#[derive(Default)]
+pub(crate) struct Pages {
+    observations: VecDeque<Paged>,
+    rows: VecDeque<(u64, Vec<Row>)>,
+    /// The number the last held row answer took.
+    rows_seq: u64,
 }
 
 /// An observation answered in pages: every row and removed ref it had, so
@@ -70,8 +100,179 @@ struct Paged {
     url: String,
     title: String,
     full: bool,
+    no_tree: bool,
     rows: Vec<Row>,
     removed: Vec<String>,
+}
+
+impl Paged {
+    /// The held observation with `rows` and `removed` of its own.
+    fn observation(&self, rows: Vec<Row>, removed: Vec<String>) -> Observation {
+        Observation {
+            seq: self.seq,
+            url: self.url.clone(),
+            title: self.title.clone(),
+            full: self.full,
+            rows,
+            removed,
+            receipt: None,
+            library: Vec::new(),
+            no_tree: self.no_tree,
+        }
+    }
+}
+
+impl Pages {
+    /// `observation` as its first page; the rest is held for its cursor.
+    pub(crate) fn first(&mut self, mut observation: Observation) -> ObservationPage {
+        let (rows, removed, Some(next)) = page_of(&observation.rows, &observation.removed, (0, 0))
+        else {
+            return ObservationPage::whole(observation);
+        };
+        let seq = observation.seq;
+        let held = Paged {
+            seq,
+            url: observation.url.clone(),
+            title: observation.title.clone(),
+            full: observation.full,
+            no_tree: observation.no_tree,
+            rows: std::mem::replace(&mut observation.rows, rows),
+            removed: std::mem::replace(&mut observation.removed, removed),
+        };
+        self.observations.retain(|paged| paged.seq != seq);
+        self.observations.push_back(held);
+        if self.observations.len() > HISTORY {
+            self.observations.pop_front();
+        }
+        ObservationPage {
+            observation,
+            next: Some(cursor_of(seq, next)),
+        }
+    }
+
+    /// The page of a held observation that `cursor` starts.
+    pub(crate) fn next(&self, cursor: &str) -> Result<ObservationPage, BrowserError> {
+        let (held, from) = self.continued(cursor)?;
+        let (rows, removed, next) = page_of(&held.rows, &held.removed, from);
+        Ok(ObservationPage {
+            observation: held.observation(rows, removed),
+            next: next.map(|at| cursor_of(held.seq, at)),
+        })
+    }
+
+    /// The whole rest of a held observation from `cursor`, unpaged.
+    pub(crate) fn rest(&self, cursor: &str) -> Result<Observation, BrowserError> {
+        let (held, (rows, removed)) = self.continued(cursor)?;
+        Ok(held.observation(
+            held.rows.get(rows..).unwrap_or_default().to_vec(),
+            held.removed.get(removed..).unwrap_or_default().to_vec(),
+        ))
+    }
+
+    /// A row answer's first page, and the cursor of the next when the rows
+    /// go on; the rest is held for it.
+    pub(crate) fn first_rows(&mut self, rows: Vec<Row>) -> (Vec<Row>, Option<String>) {
+        let (page, _, Some((at, _))) = page_of(&rows, &[], (0, 0)) else {
+            return (rows, None);
+        };
+        self.rows_seq += 1;
+        let answer = self.rows_seq;
+        self.rows.push_back((answer, rows));
+        if self.rows.len() > HISTORY {
+            self.rows.pop_front();
+        }
+        (page, Some(rows_cursor(answer, at)))
+    }
+
+    /// The page of a held row answer that `cursor` starts, and the cursor
+    /// of the next when the rows go on.
+    pub(crate) fn next_rows(
+        &self,
+        cursor: &str,
+    ) -> Result<(Vec<Row>, Option<String>), BrowserError> {
+        let parsed = cursor
+            .strip_prefix('r')
+            .and_then(|rest| rest.split_once('.'))
+            .and_then(|(answer, at)| {
+                Some((answer.parse::<u64>().ok()?, at.parse::<usize>().ok()?))
+            });
+        let Some((answer, at)) = parsed else {
+            return Err(BrowserError::Input(format!("{cursor} is no row cursor")));
+        };
+        let (_, rows) = self
+            .rows
+            .iter()
+            .find(|(held, _)| *held == answer)
+            .ok_or_else(|| {
+                BrowserError::Input(format!(
+                    "answer {answer} is no longer held for its later pages; ask again"
+                ))
+            })?;
+        let (page, _, next) = page_of(rows, &[], (at, 0));
+        Ok((page, next.map(|(at, _)| rows_cursor(answer, at))))
+    }
+
+    /// Forgets every held answer.
+    pub(crate) fn clear(&mut self) {
+        self.observations.clear();
+        self.rows.clear();
+    }
+
+    /// The paged observation `cursor` reads on, and where its next page
+    /// starts. A cursor whose observation has left the held ones refuses.
+    fn continued(&self, cursor: &str) -> Result<(&Paged, (usize, usize)), BrowserError> {
+        let parsed = cursor.split_once('.').and_then(|(seq, at)| {
+            let (rows, removed) = at.split_once('.')?;
+            Some((
+                seq.parse::<u64>().ok()?,
+                (rows.parse::<usize>().ok()?, removed.parse::<usize>().ok()?),
+            ))
+        });
+        let Some((seq, from)) = parsed else {
+            return Err(BrowserError::Input(format!(
+                "{cursor} is no observation cursor"
+            )));
+        };
+        let held = self
+            .observations
+            .iter()
+            .find(|held| held.seq == seq)
+            .ok_or_else(|| {
+                BrowserError::Input(format!(
+                    "observation {seq} is no longer held for its later pages; observe again"
+                ))
+            })?;
+        Ok((held, from))
+    }
+}
+
+/// The cursor a `find` reads on from, when it names one: a cursor beside a
+/// role or a name refuses.
+pub(crate) fn find_cursor(input: &FindInput) -> Result<Option<&str>, BrowserError> {
+    match input.cursor.as_deref() {
+        Some(_) if input.role.is_some() || input.name.is_some() => Err(BrowserError::Input(
+            "find reads a role and name or a cursor, not both".to_owned(),
+        )),
+        cursor => Ok(cursor),
+    }
+}
+
+/// The cursor a `wait_for` reads on from, when it names one: a cursor
+/// beside what to wait for refuses.
+pub(crate) fn wait_cursor(input: &WaitForInput) -> Result<Option<&str>, BrowserError> {
+    match input.cursor.as_deref() {
+        Some(_)
+            if !input.targets.is_empty()
+                || input.role.is_some()
+                || input.name.is_some()
+                || input.timeout_ms.is_some() =>
+        {
+            Err(BrowserError::Input(
+                "wait_for waits for rows or reads on from a cursor, not both".to_owned(),
+            ))
+        }
+        cursor => Ok(cursor),
+    }
 }
 
 /// One key as CDP's key events name it.
@@ -121,47 +322,156 @@ impl Frame {
 }
 
 impl CdpDriver {
-    /// Opens one blank page in the guest and attaches to it.
+    /// Opens one blank page in the guest and attaches to it. With the
+    /// host's proxy, every page the guest opens after it (a popup, a tab a
+    /// link opens) reaches the network only through the proxy, as it does.
     pub(crate) fn attach(pipe: Pipe, wait_cap: Duration) -> Result<Self, BrowserError> {
-        let deadline = Instant::now() + CALL;
+        let ignored = page_targets(&pipe)?
+            .iter()
+            .map(target_id)
+            .filter(|id| !id.is_empty())
+            .collect();
         let created = pipe.call(
             None,
             "Target.createTarget",
             json!({"url": "about:blank"}),
-            deadline,
+            Instant::now() + CALL,
         )?;
         let target = str_field(&created, "targetId")?;
-        let attached = pipe.call(
-            None,
-            "Target.attachToTarget",
-            json!({"targetId": target, "flatten": true}),
-            deadline,
-        )?;
-        let session = str_field(&attached, "sessionId")?;
+        let session = attach_tab(&pipe, &target)?;
         let driver = Self {
             pipe,
-            session,
-            target,
+            session: session.clone(),
+            target: target.clone(),
+            tabs: vec![Tab {
+                target: target.clone(),
+                session,
+                opener: None,
+            }],
+            ignored,
             seq: 0,
             history: VecDeque::new(),
             media: VecDeque::new(),
-            pages: VecDeque::new(),
+            pages: Pages::default(),
             wait_cap,
         };
-        for (method, params) in [
-            ("Accessibility.enable", json!({})),
-            ("DOM.enable", json!({})),
-            (
-                "Emulation.setDeviceMetricsOverride",
-                json!({"width": WIDTH, "height": HEIGHT, "deviceScaleFactor": 1, "mobile": false}),
-            ),
-        ] {
-            driver.page(method, params)?;
-        }
         if driver.pipe.mediated() {
-            crate::cdp::enable_network(&driver.pipe, &driver.session, Instant::now() + CALL)?;
+            let deadline = Instant::now() + CALL;
+            driver.pipe.claim_network(&target);
+            crate::cdp::enable_network(&driver.pipe, &driver.session, deadline)?;
+            crate::cdp::follow_pages(&driver.pipe, deadline)?;
         }
         Ok(driver)
+    }
+
+    /// The tabs as they are now, each tab or popup opened since followed
+    /// and each closed one dropped. With `front_new`, a tab found opened
+    /// comes to the front, as a browser shows a popup; a front tab that
+    /// closed gives way to the tab that opened it, else the newest left,
+    /// and with none left a blank one opens.
+    pub(crate) fn tabs(&mut self, front_new: bool) -> Result<Vec<BrowserTab>, BrowserError> {
+        let pages = page_targets(&self.pipe)?;
+        let open: HashSet<String> = pages.iter().map(target_id).collect();
+        let front_opener = self
+            .tabs
+            .iter()
+            .find(|tab| tab.target == self.target)
+            .and_then(|tab| tab.opener.clone());
+        self.tabs.retain(|tab| open.contains(&tab.target));
+        let mut opened = None;
+        for info in &pages {
+            let id = target_id(info);
+            if id.is_empty()
+                || self.ignored.contains(&id)
+                || self.tabs.iter().any(|tab| tab.target == id)
+            {
+                continue;
+            }
+            let session = attach_tab(&self.pipe, &id)?;
+            let opener = info
+                .get("openerId")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            self.tabs.push(Tab {
+                target: id.clone(),
+                session,
+                opener,
+            });
+            opened = Some(id);
+        }
+        let front_gone = !self.tabs.iter().any(|tab| tab.target == self.target);
+        let next = match opened {
+            Some(id) if front_new => Some(id),
+            _ if front_gone => front_opener
+                .filter(|opener| self.tabs.iter().any(|tab| &tab.target == opener))
+                .or_else(|| self.tabs.last().map(|tab| tab.target.clone())),
+            _ => None,
+        };
+        match next {
+            Some(id) => self.bring_to_front(&id)?,
+            None if self.tabs.is_empty() => self.open_tab()?,
+            None => {}
+        }
+        Ok(self
+            .tabs
+            .iter()
+            .map(|tab| {
+                let info = pages.iter().find(|info| target_id(info) == tab.target);
+                let field = |name: &str| {
+                    info.and_then(|info| info.get(name))
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_owned()
+                };
+                BrowserTab {
+                    tab: tab.target.clone(),
+                    url: field("url"),
+                    title: field("title"),
+                    front: tab.target == self.target,
+                }
+            })
+            .collect())
+    }
+
+    /// Brings followed tab `target` to the front.
+    pub(crate) fn bring_to_front(&mut self, target: &str) -> Result<(), BrowserError> {
+        let session = self
+            .tabs
+            .iter()
+            .find(|tab| tab.target == target)
+            .map(|tab| tab.session.clone())
+            .ok_or_else(|| BrowserError::Input(format!("{target} is no tab of this browser")))?;
+        self.pipe.call(
+            None,
+            "Target.activateTarget",
+            json!({"targetId": target}),
+            Instant::now() + CALL,
+        )?;
+        if self.target != target {
+            self.target = target.to_owned();
+            self.session = session;
+            // The observations held were of the other tab.
+            self.forget_observations();
+        }
+        Ok(())
+    }
+
+    /// Opens a blank tab in front, once every tab closed.
+    fn open_tab(&mut self) -> Result<(), BrowserError> {
+        let created = self.pipe.call(
+            None,
+            "Target.createTarget",
+            json!({"url": "about:blank"}),
+            Instant::now() + CALL,
+        )?;
+        let target = str_field(&created, "targetId")?;
+        let session = attach_tab(&self.pipe, &target)?;
+        self.tabs.push(Tab {
+            target: target.clone(),
+            session,
+            opener: None,
+        });
+        self.bring_to_front(&target)
     }
 
     fn page(&self, method: &str, params: Value) -> Result<Value, BrowserError> {
@@ -498,33 +808,6 @@ impl CdpDriver {
             .collect())
     }
 
-    /// The paged observation `cursor` reads on, and where its next page
-    /// starts. A cursor whose observation has left the held ones refuses.
-    fn continued(&self, cursor: &str) -> Result<(&Paged, (usize, usize)), BrowserError> {
-        let parsed = cursor.split_once('.').and_then(|(seq, at)| {
-            let (rows, removed) = at.split_once('.')?;
-            Some((
-                seq.parse::<u64>().ok()?,
-                (rows.parse::<usize>().ok()?, removed.parse::<usize>().ok()?),
-            ))
-        });
-        let Some((seq, from)) = parsed else {
-            return Err(BrowserError::Input(format!(
-                "{cursor} is no observation cursor"
-            )));
-        };
-        let held = self
-            .pages
-            .iter()
-            .find(|held| held.seq == seq)
-            .ok_or_else(|| {
-                BrowserError::Input(format!(
-                    "observation {seq} is no longer held for its later pages; observe again"
-                ))
-            })?;
-        Ok((held, from))
-    }
-
     /// Forgets every observation, so the next one is whole: a person drove
     /// the page meanwhile.
     pub(crate) fn forget_observations(&mut self) {
@@ -532,8 +815,9 @@ impl CdpDriver {
         self.pages.clear();
     }
 
-    /// The viewport as a PNG for the person who holds the browser: unmasked,
-    /// never held among the driver's images and never a receipt.
+    /// The front tab's viewport as a PNG for the person who holds the
+    /// browser: unmasked, never held among the driver's images and never a
+    /// receipt.
     pub(crate) fn person_screen(&self) -> Result<Vec<u8>, BrowserError> {
         let shot = self.page("Page.captureScreenshot", json!({"format": "png"}))?;
         let data = shot.get("data").and_then(Value::as_str).unwrap_or("");
@@ -831,6 +1115,55 @@ fn cursor_of(seq: u64, (rows, removed): (usize, usize)) -> String {
     format!("{seq}.{rows}.{removed}")
 }
 
+/// A row answer's cursor: the answer's number and the row its page starts at.
+fn rows_cursor(answer: u64, at: usize) -> String {
+    format!("r{answer}.{at}")
+}
+
+/// The guest's page targets as they are now, as CDP lists them.
+fn page_targets(pipe: &Pipe) -> Result<Vec<Value>, BrowserError> {
+    let listed = pipe.call(None, "Target.getTargets", json!({}), Instant::now() + CALL)?;
+    Ok(listed
+        .get("targetInfos")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|info| info.get("type").and_then(Value::as_str) == Some("page"))
+        .cloned()
+        .collect())
+}
+
+fn target_id(info: &Value) -> String {
+    info.get("targetId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned()
+}
+
+/// Attaches a session to page `target` and readies it as every tab the
+/// driver drives: its outline and DOM read, its viewport the driver's.
+fn attach_tab(pipe: &Pipe, target: &str) -> Result<String, BrowserError> {
+    let deadline = Instant::now() + CALL;
+    let attached = pipe.call(
+        None,
+        "Target.attachToTarget",
+        json!({"targetId": target, "flatten": true}),
+        deadline,
+    )?;
+    let session = str_field(&attached, "sessionId")?;
+    for (method, params) in [
+        ("Accessibility.enable", json!({})),
+        ("DOM.enable", json!({})),
+        (
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": WIDTH, "height": HEIGHT, "deviceScaleFactor": 1, "mobile": false}),
+        ),
+    ] {
+        pipe.call(Some(&session), method, params, Instant::now() + CALL)?;
+    }
+    Ok(session)
+}
+
 impl BrowserDriver for CdpDriver {
     fn open(&mut self, input: OpenInput) -> Result<Observation, BrowserError> {
         let navigated = self.page("Page.navigate", json!({"url": input.url}))?;
@@ -857,81 +1190,39 @@ impl BrowserDriver for CdpDriver {
     }
 
     fn observe(&mut self, input: ObserveInput) -> Result<Observation, BrowserError> {
-        let Some(cursor) = input.cursor.as_deref() else {
-            return self.observation(input.since);
-        };
-        // Unpaged, a cursor reads the whole rest of its observation.
-        let (held, (rows, removed)) = self.continued(cursor)?;
-        Ok(Observation {
-            seq: held.seq,
-            url: held.url.clone(),
-            title: held.title.clone(),
-            full: held.full,
-            rows: held.rows.get(rows..).unwrap_or_default().to_vec(),
-            removed: held.removed.get(removed..).unwrap_or_default().to_vec(),
-            receipt: None,
-            library: Vec::new(),
-            no_tree: false,
-        })
+        match input.cursor.as_deref() {
+            // Unpaged, a cursor reads the whole rest of its observation.
+            Some(cursor) => self.pages.rest(cursor),
+            None => self.observation(input.since),
+        }
     }
 
-    fn paged(&mut self, mut observation: Observation) -> ObservationPage {
-        let (rows, removed, Some(next)) = page_of(&observation.rows, &observation.removed, (0, 0))
-        else {
-            return ObservationPage::whole(observation);
-        };
-        let seq = observation.seq;
-        let held = Paged {
-            seq,
-            url: observation.url.clone(),
-            title: observation.title.clone(),
-            full: observation.full,
-            rows: std::mem::replace(&mut observation.rows, rows),
-            removed: std::mem::replace(&mut observation.removed, removed),
-        };
-        self.pages.retain(|paged| paged.seq != seq);
-        self.pages.push_back(held);
-        if self.pages.len() > HISTORY {
-            self.pages.pop_front();
-        }
-        ObservationPage {
-            observation,
-            next: Some(cursor_of(seq, next)),
-        }
+    fn paged(&mut self, observation: Observation) -> ObservationPage {
+        self.pages.first(observation)
     }
 
     fn observe_page(&mut self, input: ObserveInput) -> Result<ObservationPage, BrowserError> {
         let Some(cursor) = input.cursor.as_deref() else {
             let observation = self.observation(input.since)?;
-            return Ok(self.paged(observation));
+            return Ok(self.pages.first(observation));
         };
         if input.since.is_some() {
             return Err(BrowserError::Input(
                 "observe reads since or a cursor, not both".to_owned(),
             ));
         }
-        let (held, from) = self.continued(cursor)?;
-        let (rows, removed, next) = page_of(&held.rows, &held.removed, from);
-        Ok(ObservationPage {
-            observation: Observation {
-                seq: held.seq,
-                url: held.url.clone(),
-                title: held.title.clone(),
-                full: held.full,
-                rows,
-                removed,
-                receipt: None,
-                library: Vec::new(),
-                no_tree: false,
-            },
-            next: next.map(|at| cursor_of(held.seq, at)),
-        })
+        self.pages.next(cursor)
     }
 
     fn find(&mut self, input: FindInput) -> Result<FindOutput, BrowserError> {
-        Ok(FindOutput {
-            rows: self.matching(|row| input.matches(row))?,
-        })
+        let (rows, next) = match find_cursor(&input)? {
+            Some(cursor) => self.pages.next_rows(cursor)?,
+            None => {
+                let rows = self.matching(|row| input.matches(row))?;
+                self.pages.first_rows(rows)
+            }
+        };
+        Ok(FindOutput { rows, next })
     }
 
     fn click(&mut self, input: ClickInput) -> Result<Observation, BrowserError> {
@@ -1009,6 +1300,15 @@ impl BrowserDriver for CdpDriver {
     }
 
     fn wait_for(&mut self, input: WaitForInput) -> Result<WaitForOutput, BrowserError> {
+        if let Some(cursor) = wait_cursor(&input)? {
+            let (rows, next) = self.pages.next_rows(cursor)?;
+            return Ok(WaitForOutput {
+                rows,
+                timed_out: false,
+                waited_ms: 0,
+                next,
+            });
+        }
         let wanted = input
             .timeout_ms
             .map_or(WAIT_DEFAULT, |ms| Duration::from_millis(ms.into()));
@@ -1019,10 +1319,12 @@ impl BrowserDriver for CdpDriver {
             let waited = start.elapsed();
             if !rows.is_empty() || waited >= bound {
                 let timed_out = rows.is_empty();
+                let (rows, next) = self.pages.first_rows(rows);
                 return Ok(WaitForOutput {
                     rows,
                     timed_out,
                     waited_ms: u64::try_from(waited.as_millis()).unwrap_or(u64::MAX),
+                    next,
                 });
             }
             std::thread::sleep(POLL * 2);

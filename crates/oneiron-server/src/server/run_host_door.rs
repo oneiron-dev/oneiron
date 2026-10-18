@@ -82,7 +82,8 @@ pub(super) struct RunHostDoor {
     actor: WriteActor,
     /// The server's runtime: each row runs on one of its blocking threads.
     runtime: tokio::runtime::Handle,
-    /// The run's browser and desktop, removed when the door drops.
+    /// The run's browser and desktop seats: each guest outlives the door,
+    /// for the run's next door, and ends with the run or once idle.
     guests: RunGuests,
     /// The run's own board STREAM connection, dropped with the door.
     board: StreamConnectionId,

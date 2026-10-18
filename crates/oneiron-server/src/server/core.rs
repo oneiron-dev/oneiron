@@ -383,6 +383,8 @@ impl SyncServer {
         // OF-181: a live run that ends closes the lens cards it created.
         let live_runs: Arc<super::LiveRuns> = Arc::default();
         live_runs.close_cards_with(Arc::clone(&lens_frames));
+        // CUA-001: no run guest outlives a restart, so no takeover Ask can be answered.
+        super::desktop_seats::clear_stale_asks(&vault);
         Ok(Self {
             lens_frames,
             retained,

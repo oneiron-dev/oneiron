@@ -48,6 +48,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "get",
+        path: "/browsers/stream",
+        summary: "The run browser's front tab as server-sent events while the owner watches or holds it, as the desktop stream sends its display: state, frame, error, ended and refused events, and tabs when the browser's tabs change.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
         path: "/cleanup",
         summary: "Cleanup review.",
         row: None,

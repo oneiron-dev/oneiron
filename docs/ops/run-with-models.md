@@ -1461,8 +1461,9 @@ how many inputs) as the run's `desktop_takeover` sandbox receipt, and the
 agent's next desktop answer carries it as `takeover`.
 
 A handover is each owner's inbox Ask (producer `guest.takeover`): its source
-names the run, its result is the take route, and its event ends with the
-agent's reason. Taking the desktop or handing it back clears it. `GET
+names the run, its result is the take route, and its `detail` is the
+agent's reason. Taking the desktop or handing it back clears it, and so
+does a server start, since no run guest outlives the server. `GET
 /v1/owner/desktops/stream?run=<hex>` streams the display as server-sent
 events while the owner watches or holds it: `state` (the takeover), `frame`
 (`{seq, png_base64}`, at most every 500 ms and only when it changed),
@@ -1489,12 +1490,30 @@ PNG's pixels, and `navigate {url}` to an http or https page. While asked or
 held, every browser verb refuses `browser_taken_over` (a batch stops
 `NEEDS_YOU`). Handing it back writes the run's `browser_takeover` sandbox
 receipt, the agent's next browser answer carries the record as `takeover`,
-and its next observe is whole.
+and its next observe is whole. The browser belongs to the run as the
+desktop does: parked between `execute_code` entries and through a pumped
+run's durable wait, with its cart and login, and ended with the run or on
+the same idle limits.
 
-A browser observation comes in pages: an answer whose outline does not fit
-one page (256 KiB of rows) carries `next`, and `self.browser.observe({cursor:
-next})` reads the next page of the same observation. The pages of the last
-8 observations stay readable.
+The owner sees every tab of the browser. A popup or a tab a link opens (an
+OAuth sign-in window, a `target=_blank` link) is followed, reaches the
+network through the run's proxy as the first page does, and comes to the
+front at the owner's next look while the owner holds the browser. `GET`
+lists each browser's `tabs` (`{tab, url, title, front}`); `screen` and
+`input` take an optional `"tab"`, which the holder brings to the front. The
+tab the owner leaves in front is the one the agent's verbs read after the
+return; a front tab that closes gives way to the tab that opened it. `GET
+/v1/owner/browsers/stream?run=<hex>` streams the front tab as the desktop's
+stream does, with a `tabs` event when the tabs change.
+
+A browser or desktop observation comes in pages: an answer whose outline
+does not fit one page (256 KiB of rows) carries `next`, and
+`observe({cursor: next})` reads the next page of the same observation. The
+pages of the last 8 observations stay readable. `find` and `wait_for` page
+their rows the same way, read on with `find({cursor: next})`. A desktop
+window's tree is read whole: a walk cua-driver cuts at its node budget is
+read again with a larger one, and a walk cut at its time budget with a
+longer one, up to 12 s.
 
 ## 11. When a provider refuses for a limit
 

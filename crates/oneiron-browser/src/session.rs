@@ -26,7 +26,11 @@
 //! agent waits on its ask, and while a person holds the browser, every agent
 //! verb refuses `browser_taken_over` and takes no screenshot; the person sees
 //! the viewport and drives the page through the same driver. Handing it back
-//! ends the takeover with its record, which is its receipt.
+//! ends the takeover with its record, which is its receipt. The person
+//! sees every tab: a popup or a tab a link opens (an OAuth sign-in window)
+//! is followed, comes to the front at their next look, and can be named to
+//! the screen and input; the tab they leave in front is the one the agent
+//! reads after.
 //!
 //! A long outline is answered in pages (Rule 5): each answer carries as
 //! many rows as fit one page, and `next` names the cursor `observe` reads
@@ -36,15 +40,15 @@ use crate::cdp::Pipe;
 use crate::driver::CdpDriver;
 use crate::{
     AbandonedTakeover, BatchInput, BatchOutput, BrowserDriver, BrowserError, BrowserPersonInput,
-    ClickInput, CropInput, EFFECT_ACCOUNT, EFFECT_DESTRUCTIVE, EFFECT_PAY, EFFECT_PUBLISH,
-    EFFECT_SEND, EFFECT_UNKNOWN, EffectReceipt, ExpectInput, ExpectOutput, FindInput, FindOutput,
-    HandoverInput, HandoverOutput, ImageOutput, LibraryFindInput, LibraryFindOutput,
-    LibraryRetireInput, LibraryRetireOutput, LibraryRetiredInput, LibraryRetiredOutput,
-    LibraryRunInput, LibraryRunOutput, NoDecider, Observation, ObservationPage, ObserveInput,
-    OpenInput, PointInput, PressMode, ProposeInput, ProposeOutput, ReceiptEvidenceSink,
-    RoutineDecider, Row, ScreenshotInput, ScreenshotOutput, ScreenshotTrigger, SelectInput,
-    SendPolicy, Takeover, TakeoverRecord, TypeInput, ViewInput, WaitForInput, WaitForOutput,
-    WorkflowLibrary, ZoomInput, site_of,
+    BrowserTab, ClickInput, CropInput, EFFECT_ACCOUNT, EFFECT_DESTRUCTIVE, EFFECT_PAY,
+    EFFECT_PUBLISH, EFFECT_SEND, EFFECT_UNKNOWN, EffectReceipt, ExpectInput, ExpectOutput,
+    FindInput, FindOutput, HandoverInput, HandoverOutput, ImageOutput, LibraryFindInput,
+    LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput, LibraryRetiredInput,
+    LibraryRetiredOutput, LibraryRunInput, LibraryRunOutput, NoDecider, Observation,
+    ObservationPage, ObserveInput, OpenInput, PointInput, PressMode, ProposeInput, ProposeOutput,
+    ReceiptEvidenceSink, RoutineDecider, Row, ScreenshotInput, ScreenshotOutput, ScreenshotTrigger,
+    SelectInput, SendPolicy, Takeover, TakeoverRecord, TypeInput, ViewInput, WaitForInput,
+    WaitForOutput, WorkflowLibrary, ZoomInput, site_of,
 };
 use oneiron_container::{
     EgressRelay, GuestLimits, SessionLease, SessionManifest, SessionTransport,
@@ -220,6 +224,13 @@ impl BrowserSession {
         &self.policy
     }
 
+    /// Sets the press each effect class runs under, as the vault's grants
+    /// stand now: a browser that outlives one door of its run takes the
+    /// next door's policy.
+    pub fn set_policy(&mut self, policy: SendPolicy) {
+        self.policy = policy;
+    }
+
     /// Records a person's press over a reviewed batch of `count` sends of
     /// `class`. Its sends then run without a press each until spent.
     pub fn approve_batch(&mut self, class: &str, count: u32) {
@@ -262,19 +273,42 @@ impl BrowserSession {
         Ok(&self.takeover)
     }
 
-    /// The viewport as a PNG for the person: unmasked, never held in the
-    /// session's images and never a receipt.
-    pub fn person_screen(&mut self) -> Result<Vec<u8>, BrowserError> {
+    /// The browser's tabs for the person's view, the one in front marked:
+    /// a tab or popup opened since is followed, and while a person holds
+    /// the browser it comes to the front, as a browser shows a popup.
+    pub fn tabs(&mut self) -> Result<Vec<BrowserTab>, BrowserError> {
         self.guest_up()?;
+        let held = matches!(self.takeover, Takeover::Held { .. });
+        self.driver.tabs(held)
+    }
+
+    /// The front tab's viewport as a PNG for the person, or `tab`'s, which
+    /// comes to the front: unmasked, never held in the session's images and
+    /// never a receipt. Only the person who holds the browser brings
+    /// another tab to the front.
+    pub fn person_screen(&mut self, tab: Option<&str>) -> Result<Vec<u8>, BrowserError> {
+        self.tabs()?;
+        self.bring_up(tab)?;
         self.driver.person_screen()
     }
 
+    /// The person's view in one look: the tabs, then the front tab's
+    /// viewport, as [`Self::tabs`] and [`Self::person_screen`] give them.
+    pub fn person_view(&mut self) -> Result<(Vec<BrowserTab>, Vec<u8>), BrowserError> {
+        let tabs = self.tabs()?;
+        Ok((tabs, self.driver.person_screen()?))
+    }
+
     /// One input from `by`, who must hold the browser, at the viewport's
-    /// pixels, or a page to go to; it counts toward the takeover's record.
-    /// No press gates it: the person's own input is their press.
+    /// pixels of the front tab, or of `tab`, which comes to the front first,
+    /// or a page to go to; it counts toward the takeover's record. A tab
+    /// opened since the person's last look stays behind: the input goes to
+    /// the tab they saw. No press gates it: the person's own input is their
+    /// press.
     pub fn person_input(
         &mut self,
         by: &str,
+        tab: Option<&str>,
         input: BrowserPersonInput,
     ) -> Result<u64, BrowserError> {
         self.guest_up()?;
@@ -294,6 +328,8 @@ impl BrowserSession {
         {
             return Err(BrowserError::Url(url.clone()));
         }
+        self.driver.tabs(false)?;
+        self.bring_up(tab)?;
         self.driver.person_input(input)?;
         let Takeover::Held { inputs, .. } = &mut self.takeover else {
             return Err(BrowserError::GuestLost);
@@ -336,8 +372,30 @@ impl BrowserSession {
         };
         self.takeover = Takeover::Agent;
         self.driver.forget_observations();
+        // The agent reads the tab the person left in front; a front tab that
+        // closed gives way here. A guest that no longer answers refuses the
+        // agent's next call itself.
+        let _ = self.driver.tabs(false);
         self.returned = Some(record.clone());
         Ok(record)
+    }
+
+    /// Brings `tab` to the front for the person who holds the browser; the
+    /// tab already in front needs no hold.
+    fn bring_up(&mut self, tab: Option<&str>) -> Result<(), BrowserError> {
+        let Some(tab) = tab else {
+            return Ok(());
+        };
+        if !matches!(self.takeover, Takeover::Held { .. }) {
+            let front = self.driver.tabs(false)?.into_iter().find(|t| t.front);
+            if front.is_some_and(|front| front.tab == tab) {
+                return Ok(());
+            }
+            return Err(BrowserError::Input(
+                "take the browser over to bring another tab to the front".to_owned(),
+            ));
+        }
+        self.driver.bring_to_front(tab)
     }
 
     /// The takeover that ended since the agent's last answer, once.
