@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 606 code-mode rows (585 host rows, 21 run rows), 2169 declarations.
-// Replies: 533 fully typed, 69 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 622 code-mode rows (601 host rows, 21 run rows), 2254 declarations.
+// Replies: 544 fully typed, 74 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 95; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 94; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -542,6 +542,26 @@ declare namespace Sdk {
   type HubImportReceipt = { entity: string; content_hash: string; hub_id: string; ref_string: string; pin_type: string; pin_value?: string | null; publisher?: string | null; publisher_grant?: string | null; installed_as: InstallLifecycle; disposition: InstallDisposition; fit_analysis?: string | null; requested_permissions?: string[]; at: number };
   type HubAdmissionReceipt = { receipt_id: string; candidate: string; content_hash: string; binding: string; consent_digest: string; publisher: string; publisher_grant: string; hub_id: string; hub_ref: string; evidence_skill: string; held_out_digest: string; held_out_count: number; before: number; after: number; accepted: boolean; judge_revision: string; displaced_by_revision?: string | null; at: number };
   type HubSkillReceipts = { sources: HubRef[]; imports: HubImportReceipt[]; admission?: HubAdmissionReceipt | null };
+  type SkillConvertRequest = { message_refs: EntityId[]; hint?: string | null };
+  type SkillConvertReceipt = { outcome: "created"; entity: EntityId } | { outcome: "dup_pointer"; entity: EntityId } | { outcome: "merge_proposed"; existing: EntityId; proposal: EntityId };
+  type SkillLibraryLifecycle = "candidate" | "active" | "stale" | "archived" | "superseded";
+  type SkillLibraryCall = { reference: string; arguments: unknown; returns: unknown };
+  type SkillLibraryDependency = { skill_id: string; min_version?: string | null };
+  type SkillSourceEvidence = { message_ref: EntityId; available: boolean };
+  type SkillStaleView = { reason: string; deleted_refs: EntityId[] };
+  type SkillForkLineage = { parent: EntityId; parent_version?: string | null; parent_document?: EntityId | null; parent_frontier?: number[] | null; parent_available: boolean; hub_sources: HubRef[] };
+  type SkillLibraryFile = { path: string; content: number[] };
+  type SkillCapabilityView = { bins: string[]; env: string[]; mcp: string[]; allowed_tools: string[] };
+  type SkillLibraryScan = { contentHash: string; provider: string; scannedAt: number; verdict: string; riskLevel: string; completeness: string; governance: string; scannedAtDeclared?: number | null };
+  type SkillLibraryView = { entity: EntityId; skill_id: string; desc: string; version: string; content_hash?: string | null; lifecycle: SkillLibraryLifecycle; approval: ClaimApprovalStatus; loadable: boolean; source: string; role: string; call?: SkillLibraryCall | null; governance_tier?: string | null; generated: boolean; human_authored: boolean; dependencies: SkillLibraryDependency[]; provenance: unknown; source_messages: SkillSourceEvidence[]; stale?: SkillStaleView | null; lineage: SkillForkLineage[]; files?: SkillLibraryFile[] | null; capabilities?: SkillCapabilityView | null; scans: SkillLibraryScan[]; receipts: HubSkillReceipts };
+  type SkillLibraryListRequest = { after?: EntityId | null; limit: number };
+  type SkillLibraryPage = { skills: SkillLibraryView[]; next_after?: EntityId | null };
+  type SkillRestoreAdmission = { source: HubRef; publisher: string; evidence_skill: EntityId; effect_digest?: string | null };
+  type SkillLibraryRestoreRequest = { entity: EntityId; admission?: SkillRestoreAdmission | null };
+  type SkillLibraryRestoreReceipt = { outcome: "restored"; skill: SkillLibraryView; admission?: HubAdmissionReceipt | null } | { outcome: "pending_admission"; entity: EntityId; content_hash: string; effect_digest: string } | { outcome: "refused"; entity: EntityId; admission: HubAdmissionReceipt };
+  type SkillLibraryForkRequest = { parent: EntityId; entity?: EntityId | null; skill_id: string };
+  type SkillHashRuleRequest = { content_hash: string; blocked: boolean };
+  type SkillCodeAutoInstallRequest = { enabled: boolean };
   type HubSkillPermissionRequest = { entity: EntityId; hub_ref: HubRef };
   type HubHookBindRequest = { pack: string };
   type HookActorClass = "human" | "agent" | "system";
@@ -632,6 +652,24 @@ declare namespace Sdk {
   type AuthorityAuditPage = { rows: AuthorityAuditRow[]; next_after?: EntityId | null; order: AuthorityAuditOrder; scanned: number; cold_attested?: ColdAuthorityAuditRow[] };
   type SignedAuthorityHistory = { entries: string[] };
   type AuthorityHistoryImported = { entry_refs: string[] };
+  type SlimIdlePolicy = { long_outbound_wait_secs: number; exits_on_idle: boolean; lazy_rebuild: boolean };
+  type SlimResumeStep = { kind: "outbound_intent"; intent_id: string; attempt_id: string; call_seq: number; updated_ms: number } | { kind: "model"; attempt_id: string; step_hash: string; updated_ms: number };
+  type SlimResidueView = { step: SlimResumeStep; entered_at_ms: number };
+  type SlimStateView = { residency: "full" } | { residency: "slim"; residue: SlimResidueView };
+  type SlimStateSnapshot = { process_id: number; state: SlimStateView };
+  type SlimResumeStepRequest = { kind: "model"; attempt_id: string; step_hash: string } | { kind: "outbound_intent"; intent_id: string };
+  type StepProgression = "started" | "response_received" | "logged" | "finished";
+  type ModelStepCheckpoint = { progression: StepProgression; updated_ms?: number | null; claim_ref?: string | null };
+  type SavedIntentState = "pending" | "done" | "abandoned";
+  type SavedResumeStep = { kind: "model"; attempt_id: string; step_hash: string; checkpoint: ModelStepCheckpoint } | { kind: "outbound_intent"; step: SlimResumeStep; state: SavedIntentState };
+  type ShedCause = "long_outbound_wait" | "memory_pressure";
+  type SlimDropRequest = { cause: ShedCause; waited_secs: number };
+  type HeapDropReport = { sync_windows: number; ppr_cache_rows: number; ppr_dependency_rows: number; hnsw_nodes: number; estimated_reclaimed_bytes: number };
+  type ShedBlocker = { kind: "no_pending_outbound_step" } | { kind: "multiple_pending_outbound_steps"; count: number } | { kind: "sync_window_busy"; window_key: string; outstanding_handles: number } | { kind: "already_slim_for_different_step" };
+  type SlimDropOutcome = { status: "entered"; residue: SlimResidueView; dropped: HeapDropReport } | { status: "already_slim"; residue: SlimResidueView; dropped: HeapDropReport } | { status: "refused"; blocker: ShedBlocker };
+  type SlimDropReceipt = { process_id: number; outcome: SlimDropOutcome };
+  type SlimResumeOutcome = { status: "already_full" } | { status: "resumed"; residue: SlimResidueView };
+  type SlimResumeReceipt = { process_id: number; outcome: SlimResumeOutcome };
   type MeshPathReceiptsRequest = { limit?: number | null };
   type MeshPathDirection = "inbound" | "outbound";
   type MeshPathOutcome = "admitted" | "refused" | "failed";
@@ -1355,6 +1393,23 @@ declare namespace Sdk {
   type LearningObservation = { cell: DoorsLearningCellView; mean: number; own: boolean; own_runs: number; prior_origin: string; prior_weight_runs: number; borrowed_from?: BorrowedCellView | null; untested: boolean; window_half_life_secs: number; estimator_version: number; evidence: DoorsLearningEvidenceView[] };
   type ObservationIssue = { kind: "stamp_mismatch"; consumer: string; reference: string; expected: TypeStamp; actual: TypeStamp } | { kind: "missing_binding"; reference: string } | { kind: "several_teams"; team_refs: string[] } | { kind: "team_mismatch"; member_ref: EntityId; expected: string; actual?: string | null } | { kind: "unavailable"; consumer: string; reason: string };
   type PlannedSpawnObservation = { spawn_ref: EntityId; phase: SpawnPhase; type_ref: TypeStamp; plan?: PlanObservation | null; launched: LaunchedMember[]; resolved?: ResolvedTeam | null; binding?: TeamBindingView | null; receipt?: TeamReceiptView | null; routes: RouteObservation[]; critics: CriticObservation[]; learning: LearningObservation[]; issues: ObservationIssue[] };
+  type CancelForceRequest = { task_ref: EntityId; reason?: string | null };
+  type AttemptState = "Queued" | "Leased" | "Paused" | "Completed" | "Failed" | "Cancelled" | "Scheduled" | "Landing" | "Abandoned";
+  type AgentRunStatus = "spawned" | "working" | "needs_input" | "delivered" | "archived" | "failed" | "abandoned";
+  type RunAskQuestion = { who: string; prompt: string; options: string[]; deadline?: number | null };
+  type RunAskAnswerKind = "Word" | "Companion" | "Default" | "Unknown";
+  type RunAskAnswer = { who: string; answer: string; kind: RunAskAnswerKind; at: number };
+  type RunAsk = { handle: string; questions: RunAskQuestion[]; answers: RunAskAnswer[] };
+  type RunSignalKind = { Steer: { instruction: string } } | { Interject: { content: string } } | { Cancel: { standing: CancelStanding; reason?: string | null } } | { AskAnswer: { handle: string; who: string; answer: string; kind: RunAskAnswerKind } };
+  type RunBranchSignal = { key: string; actor: string; kind: RunSignalKind; state: RunSignalState };
+  type CancelMode = "landed" | "forced";
+  type AttemptCancellation = { mode: CancelMode; grounds?: ForceCancelGrounds | null; actor: string; at: number; reason?: string | null; trigger?: LandingTrigger | null; reserve_units: number; reserve_spent_units: number };
+  type AttemptCancelPressure = { requests?: number; rejections?: number; pending?: number };
+  type AttemptCancelState = { landing?: AttemptLanding | null; resume_point?: AttemptResumePoint | null; cancellation?: AttemptCancellation | null; pressure?: AttemptCancelPressure; receipts?: AttemptCancelReceipt[]; reserve?: AttemptLandingReserve };
+  type RunBranchView = { branch: string; run_id?: string | null; state: AttemptState; agent_status: AgentRunStatus; attempt_count: number; result_ref?: string | null; last_error?: string | null; asks: RunAsk[]; signals: RunBranchSignal[]; cancel_state: AttemptCancelState };
+  type CancelForceReceipt = { task_ref: EntityId; effected: boolean; forced: number; branches: RunBranchView[] };
+  type RunBranchesRequest = { task_ref: EntityId };
+  type RunBranchesView = { task_ref: EntityId; branches: RunBranchView[] };
   type WorkspaceRosterPreset = { workspace_ref: string; workspace_vault_id: string; org_ref: EntityId; venture_name: string; house_display_name?: string | null; house_actor_ref: EntityId; house_identity_ref?: EntityId | null };
   type WorkCompanionPolicy = "choose" | "suggest" | "require";
   type WorkspacePresetRequest = { preset: WorkspaceRosterPreset; work_companion?: WorkCompanionPolicy };
@@ -1400,8 +1455,42 @@ declare namespace Sdk {
   type CriticPrediction = { what: string; by_when: number; how_checked: OutcomeBinding };
   type CritiqueArtifact = { schema_version: number; artifact_id: string; run_id: string; branch_job: AttemptId; candidate_ref: string; lens_id: string; domain: string; provenance: CritiqueProvenance; calibration: LearningCell; prediction?: CriticPrediction | null; verdict: CritiqueVerdict; severity: CritiqueSeverity; hard_check_passed?: boolean | null; evidence_refs: string[]; suggested_edit?: string | null; out_of_scope?: boolean; created_at: number };
   type CriticReviewOutcome = { verdict_claim_ref: string; triage: CritiqueTriage; artifacts: CritiqueArtifact[]; receipts: DecisionReceipt[] };
-  type DeckProposeRequest = { artifact_ref: string; transaction: unknown; run_ref: string; context?: unknown; made_by?: unknown | null };
-  type DeckProposeOutcome = { proposed?: PendingProposalView | null; rejected?: unknown | null };
+  type DeckInspectRequest = { artifact_ref: string; version?: number | null };
+  type Digest = string;
+  type IdMarks = { slide?: number; shapes?: Record<string, number> };
+  type DeckShapeKind = "shape" | "picture" | "graphic_frame" | "connector" | "group";
+  type DeckShapeInspection = { kind: DeckShapeKind; id?: number | null; creation_id?: string | null; name?: string | null; group_path: number[]; content_fingerprint: Digest };
+  type DeckSlideInspection = { part: string; sld_id: number; creation_id?: number | null; content_fingerprint: Digest; render_fingerprint: Digest; shapes: DeckShapeInspection[] };
+  type DeckIdentityAmbiguity = { kind: "duplicate_slide_creation_id"; creation_id: number; slides: number[] } | { kind: "duplicate_shape_id"; slide: number; id: number; shapes: number[] } | { kind: "duplicate_shape_creation_id"; slide: number; id: string; shapes: number[] };
+  type PptxShapeIdentity = { shape_id: number; creation_id?: string | null; fingerprint: number[]; position?: [number, number] | null };
+  type PptxSlideIdentity = { slide: number; part: string; sld_id: number; creation_id?: number | null; fingerprint: number[]; shapes: PptxShapeIdentity[] };
+  type PptxInspection = { slides: PptxSlideIdentity[]; signature_parts: string[] };
+  type DeckCommentInspection = { state: "inspected"; inspection: PptxInspection } | { state: "refused"; reason: string };
+  type DeckInspectionView = { artifact_id: EntityId; version: number; base: Digest; marks: IdMarks; slides: DeckSlideInspection[]; ambiguities: DeckIdentityAmbiguity[]; comments: DeckCommentInspection };
+  type StepTarget = { slide: string; shape: number; expected: Digest };
+  type StepXfrm = { offset?: number[] | null; extent?: number[] | null; rotation?: number | null; flip_h?: boolean | null; flip_v?: boolean | null };
+  type StepAssetKind = "factual" | "illustration";
+  type AssetRef = { artifact: string; version: number; hash: Digest; kind: StepAssetKind; description: string };
+  type StepPreset = "rect" | "roundRect" | "ellipse" | "triangle" | "rightArrow";
+  type StepSequence = "name" | "categories" | "values";
+  type StepCell = "missing" | { number: number } | { text: string } | { date: string };
+  type DeckStep = { set_text: { target: StepTarget; text: string } } | { replace_run_text: { target: StepTarget; paragraph: number; run: number; expected: string; text: string } } | { set_xfrm: { target: StepTarget; xfrm: StepXfrm } } | { move_in_slide_space: { target: StepTarget; dx: number; dy: number } } | { set_picture: { target: StepTarget; asset: AssetRef } } | { set_notes: { slide: string; expected?: string | null; text: string } } | { add_shape: { slide: string; preset: StepPreset; name: string; offset: number[]; extent: number[] } } | { delete_shape: { target: StepTarget; cascade?: boolean } } | { reparent: { target: StepTarget; parent?: number | null } } | { duplicate_slide: { slide: string; expected: Digest } } | { reorder_slides: { order: number[] } } | { set_table_cell: { slide: string; table: number; row: number; col: number; expected: string; value: string } } | { set_series_values: { chart: string; series: number; sequence: StepSequence; values: StepCell[] } };
+  type DeckTransaction = { schema: number; base: Digest; marks?: IdMarks; seed: string; steps: DeckStep[] };
+  type DeckRenderSide = "base" | "candidate";
+  type DeckRender = { side: DeckRenderSide; slide: string; image_hash: number[]; renderer: string };
+  type DeckEditContext = { made_by?: EntityId | null; thread?: EntityId | null; renders?: DeckRender[] };
+  type DeckProposeRequest = { artifact_ref: string; transaction: DeckTransaction; run_ref: string; context?: DeckEditContext; made_by?: MadeBy | null };
+  type OfficeFormat = "xlsx" | "docx" | "pptx";
+  type DeckRejectionSheet = { name: string; index: number };
+  type DeckRejectionSheetDependency = { from_sheet: string; to_sheet: string };
+  type DeckRejectionSummary = { format: OfficeFormat; sheets: DeckRejectionSheet[]; defined_names: string[]; has_pivots: boolean; has_charts: boolean; has_macros: boolean; cross_sheet_dependencies: DeckRejectionSheetDependency[]; unknown_parts: string[] };
+  type DeckRejectionCheck = { name: string; passed: boolean; detail: string };
+  type DeckRejectionReport = { ok: boolean; checks: DeckRejectionCheck[] };
+  type DeckNativeRefusal = { kind: "external_chart_source"; detail: string } | { kind: "formula_backed_series"; detail: string } | { kind: "ambiguous_chart_data"; detail: string } | { kind: "shared_chart_data" } | { kind: "unsupported_chart_family"; detail: string } | { kind: "merged_continuation_cell" } | { kind: "unsupported_merge_topology"; detail: string } | { kind: "length_change"; have: number; want: number } | { kind: "stale"; detail: string } | { kind: "invalid"; detail: string } | { kind: "cache_mismatch" } | { kind: "outside_allowed_parts"; part: string } | { kind: "workbook"; detail: string } | { kind: "package"; detail: string } | { kind: "xml"; detail: string };
+  type DeckStepRefusal = { kind: "target_changed" } | { kind: "ambiguous_anchor"; detail: string } | { kind: "animated_text_structure_changed" } | { kind: "animation_dependency_unsupported"; detail: string } | { kind: "non_invertible_group_transform" } | { kind: "unrepresentable_transform"; detail: string } | { kind: "inherited_transform" } | { kind: "part_diff_outside_transaction"; part: string } | { kind: "write_outside_target"; part: string; why: string } | { kind: "text_mapping"; detail: string } | { kind: "missing"; detail: string } | { kind: "id_space_exhausted" } | { kind: "reparent_unsupported"; detail: string } | { kind: "clone_dependency_unsupported"; relationship: string } | { kind: "reorder_unsupported"; detail: string } | { kind: "glued_connector"; connector?: number | null } | { kind: "invalid"; detail: string } | { kind: "picture"; detail: string } | { kind: "read_back"; detail: string } | { kind: "package"; detail: string } | { kind: "xml"; detail: string } | { kind: "deck"; detail: string } | { kind: "native"; refusal: DeckNativeRefusal } | { kind: "asset"; detail: string };
+  type DeckTransactionRefusal = { kind: "invalid"; detail: string } | { kind: "base_changed" } | { kind: "not_editable" } | { kind: "step"; step: number; verb: string; refusal: DeckStepRefusal } | { kind: "part_diff_outside_transaction"; part: string } | { kind: "package"; detail: string } | { kind: "deck"; detail: string };
+  type DeckProposeRejection = { inspection: DeckRejectionSummary; report: DeckRejectionReport; refusal: DeckTransactionRefusal };
+  type DeckProposeOutcome = { proposed?: PendingProposalView | null; rejected?: DeckProposeRejection | null };
   type NativeOutputRequest = { artifact_ref: string; run_ref: string; name: string; media_type: string; content_base64: string; report?: unknown; made_by?: unknown | null };
   type ReceiptKind = "outbound" | "gate" | "identity_lifecycle" | "scoped_read" | "share" | "artifact_settle" | "proposal_outcome" | "commitment_lifecycle" | "extraction" | "served_form" | "hook" | "reference_refusal" | "task_lifecycle";
   type ReceiptRecord = { receipt_id: string; receipt_kind: ReceiptKind; occurred_at: number; actor?: string | null; on_behalf_of?: string | null; outcome: string; job_ref?: string | null; trigger_ref?: string | null; policy_trace?: string[]; fields?: Record<string, string> };
@@ -1562,7 +1651,6 @@ declare namespace Sdk {
   type LlmRequest = { model: ModelId; envelope: CallEnvelope; messages: LlmMessage[]; tools?: LlmToolSpec[]; params?: Record<string, unknown>; provider_options?: Record<string, unknown> };
   type ModelStepRetryPolicy = { max_attempts: number };
   type ModelStepSubmit = { step_key: string; request: LlmRequest; retry?: ModelStepRetryPolicy };
-  type StepProgression = "started" | "response_received" | "logged" | "finished";
   type LlmInputUsage = { total: number; cache_read: number; cache_write: number };
   type LlmOutputUsage = { total: number; text: number; reasoning: number };
   type LlmUsage = { input: LlmInputUsage; output: LlmOutputUsage; raw_provider: unknown };
@@ -1901,9 +1989,6 @@ declare namespace Sdk {
   type NodeKind = "root" | "slide" | "group" | "shape" | "picture" | "graphic_frame" | "connector";
   type GeometryProps = { offset?: [number, number] | null; extent?: [number, number] | null; rotation?: number | null; flip_h?: boolean | null; flip_v?: boolean | null };
   type Preset = "rect" | "round_rect" | "ellipse" | "triangle" | "right_arrow";
-  type Digest = string;
-  type StepAssetKind = "factual" | "illustration";
-  type AssetRef = { artifact: string; version: number; hash: Digest; kind: StepAssetKind; description: string };
   type HeldMedia = { part: string; hash: Digest };
   type ChartKind = "bar" | "line" | "pie" | "area" | "scatter" | "doughnut" | "radar";
   type ChartSeries = { name: string; values: (number | null)[]; family?: ChartKind | null; x?: (number | null)[] | null };
@@ -2561,6 +2646,8 @@ declare const vault: Sdk.VaultHost & {
     discard(input: Sdk.ProposalSettleRequest): Promise<Sdk.DiscardedProposal | StoredResult>;
     /** One artifact version's export file, with the born-with text the caller chose and a share receipt listing it. */
     export(input: Sdk.ArtifactExportRequest): Promise<Sdk.ArtifactExportFile | null | StoredResult>;
+    /** Inspects one PPTX version for native edit targets and comment identities without minting ids. */
+    inspect_deck(input: Sdk.DeckInspectRequest): Promise<Sdk.DeckInspectionView | StoredResult>;
     /** Settles one waiting artifact proposal into a version. */
     keep(input: Sdk.ProposalSettleRequest): Promise<Sdk.KeptProposal | StoredResult>;
     /** The proposals waiting beside one artifact. */
@@ -3462,6 +3549,12 @@ declare const vault: Sdk.VaultHost & {
     /** One trunk turn of a room, with the completed TASK result headers that hang under it. */
     trunk(input: Sdk.RoomTurnRequest): Promise<Sdk.RoomTrunk | StoredResult>;
   };
+  runs: {
+    branches: {
+      /** The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts. */
+      get(input: Sdk.RunBranchesRequest): Promise<Sdk.RunBranchesView | StoredResult>;
+    };
+  };
   scope: {
     /** Reads the caller credential ceiling as a typed ceiling, never as a record position. */
     ceiling(input: Sdk.EmptyRequest): Promise<Sdk.CredentialCeiling | StoredResult>;
@@ -3567,16 +3660,48 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   skills: {
+    /** The owner soft-retires an active skill without deleting its body, source or receipts; running callable invocations are cancelled. */
+    archive(input: Sdk.HubSkillRequest): Promise<Sdk.SkillLibraryView | StoredResult>;
+    code_auto_install: {
+      /** The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification. */
+      set(input: Sdk.SkillCodeAutoInstallRequest): Promise<Sdk.HubConsentReceipt | StoredResult>;
+    };
+    /** Converts selected messages through the configured refiner; user initiation approves conversion, never admission. */
+    convert(input: Sdk.SkillConvertRequest): Promise<Sdk.SkillConvertReceipt | StoredResult>;
+    /** The owner forks a stored skill under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable. */
+    fork(input: Sdk.SkillLibraryForkRequest): Promise<Sdk.SkillLibraryView | StoredResult>;
+    /** Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry. */
+    get(input: Sdk.HubSkillRequest): Promise<Sdk.SkillLibraryView | StoredResult>;
     /** The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask. */
     import(input: Sdk.HubImportRequest): Promise<Sdk.HubSkillImported | StoredResult>;
+    /** Lists a page of the owner skill library, including inactive skills and their retained evidence. */
+    list(input: Sdk.SkillLibraryListRequest): Promise<Sdk.SkillLibraryPage | StoredResult>;
     permissions: {
       /** The owner answers one imported skill permission ask at its exact hub source. */
       approve(input: Sdk.HubSkillPermissionRequest): Promise<Sdk.HubConsentReceipt | StoredResult>;
     };
     /** Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner. */
     receipts(input: Sdk.HubSkillRequest): Promise<Sdk.HubSkillReceipts | StoredResult>;
+    /** The owner restores an archived skill through the same admission gates; a hub restore prepares exact consent and reruns held-out scoring. */
+    restore(input: Sdk.SkillLibraryRestoreRequest): Promise<Sdk.SkillLibraryRestoreReceipt | StoredResult>;
+    rules: {
+      /** The owner sets or clears a known-bad canonical skill hash rule, independently of advisory scanner prose. */
+      set(input: Sdk.SkillHashRuleRequest): Promise<Sdk.HubConsentReceipt | StoredResult>;
+    };
     /** The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities. */
     sync(input: Sdk.HubSkillRequest): Promise<Sdk.HubSkillSyncReceipt | StoredResult>;
+  };
+  slim: {
+    /** Drops rebuildable heap in process and returns the completed engine transition, drop counts or typed refusal; one journaled outbound step is required. */
+    drop_heavy(input: Sdk.SlimDropRequest): Promise<Sdk.SlimDropReceipt | StoredResult>;
+    /** Reads the serving host idle policy: the long outbound wait, no exit on idle and lazy heap rebuild. */
+    policy(input: Sdk.EmptyRequest): Promise<Sdk.SlimIdlePolicy | StoredResult>;
+    /** Resumes logical FULL in the same process and returns its completion receipt; indexes rebuild lazily and no saved outbound step is reissued. */
+    resume(input: Sdk.EmptyRequest): Promise<Sdk.SlimResumeReceipt | StoredResult>;
+    /** Reads a saved model checkpoint or outbound intent by its retained identity, including after FULL or restart, without reissuing it. */
+    resume_step(input: Sdk.SlimResumeStepRequest): Promise<Sdk.SavedResumeStep | StoredResult>;
+    /** Observes FULL or SLIM atomically with this process id and the retained journaled resume pointer, without waking the vault. */
+    state(input: Sdk.EmptyRequest): Promise<Sdk.SlimStateSnapshot | StoredResult>;
   };
   structural: {
     /** Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit. */
@@ -3597,6 +3722,8 @@ declare const vault: Sdk.VaultHost & {
     pin(input: Sdk.TaskTypeTreePin): Promise<Sdk.TaskTypeTreePinReceipt | StoredResult>;
   };
   tasks: {
+    /** The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts. */
+    cancel_force(input: Sdk.CancelForceRequest): Promise<Sdk.CancelForceReceipt | StoredResult>;
     linear: {
       /** One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events. */
       mapping: ((input: Sdk.LinearMappingRequest) => Promise<Sdk.LinearMappingView | StoredResult>) & {

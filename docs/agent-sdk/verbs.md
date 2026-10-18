@@ -97,6 +97,14 @@ both bindings and their export-census tests in one change.
 - `vault.skills.import`
 - `vault.skills.sync`
 - `vault.skills.receipts`
+- `vault.skills.convert`
+- `vault.skills.get`
+- `vault.skills.list`
+- `vault.skills.archive`
+- `vault.skills.restore`
+- `vault.skills.fork`
+- `vault.skills.rules.set`
+- `vault.skills.code_auto_install.set`
 - `vault.skills.permissions.approve`
 - `vault.packs.hooks.bind`
 - `vault.packs.hooks.list`
@@ -120,6 +128,11 @@ both bindings and their export-census tests in one change.
 - `vault.authority.audit`
 - `vault.authority.history.export`
 - `vault.authority.history.import`
+- `vault.slim.policy`
+- `vault.slim.state`
+- `vault.slim.resume_step`
+- `vault.slim.drop_heavy`
+- `vault.slim.resume`
 - `vault.mesh.path_receipts`
 - `vault.inspection.resolve`
 - `vault.shared.propose_delete`
@@ -323,6 +336,8 @@ both bindings and their export-census tests in one change.
 - `vault.task_types.pin`
 - `vault.task_types.get`
 - `vault.agents.spawn.get`
+- `vault.tasks.cancel_force`
+- `vault.runs.branches.get`
 - `vault.workspace.establish`
 - `vault.workspace.members.onboard`
 - `vault.workspace.roster`
@@ -334,6 +349,7 @@ both bindings and their export-census tests in one change.
 - `vault.artifacts.review_slides`
 - `vault.artifacts.ask`
 - `vault.critic.review`
+- `vault.artifacts.inspect_deck`
 - `vault.artifacts.propose_deck`
 - `vault.artifacts.propose_output`
 - `vault.artifacts.keep`
