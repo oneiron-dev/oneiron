@@ -12525,7 +12525,7 @@
      "purpose": "Transport-injected and cloud adapters over the same validated dispatch",
      "surface": {
       "crate-vis": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 2,
       "trait": 1
      }
