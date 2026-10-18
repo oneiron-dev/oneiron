@@ -97,11 +97,14 @@ impl Vault {
                     decoded.retain(|(hash, _, _)| !dropped.contains(hash));
                     refused.extend(dropped);
                 }
-                Err(error) if super::readonly_fold::is_history_incomplete(&error) => {
-                    let request = self.stage_repair_rows(&decoded)?;
+                Err(error) => {
+                    let Some(needed) = super::readonly_fold::history_required_request(&error)
+                    else {
+                        return Err(error);
+                    };
+                    let request = self.stage_repair_rows(&decoded, needed)?;
                     return Ok(AuthorityRepairOutcome::Staged { request, refused });
                 }
-                Err(error) => return Err(error),
             }
         }
     }
@@ -156,7 +159,18 @@ impl Vault {
     /// new row's parents held, staged or earlier beside it. On a vault that
     /// adopted a checkpoint image, its pin's genesis is the genesis and its
     /// covered rows are held for that check ([`AdoptedPrefix`]).
-    fn stage_repair_rows(&self, decoded: &[DecodedRow]) -> Result<AuthorityHistoryRequest> {
+    ///
+    /// The request is this vault's own, plus what the import that refused
+    /// named (`needed`): its fold or door judged the log with this page and
+    /// the stage in it. Past those checks every waiting row's parents are
+    /// held, waiting or covered, so on an adopted vault a covered parent is
+    /// asked for only when that fold or door needs its row, never because a
+    /// waiting row names it.
+    fn stage_repair_rows(
+        &self,
+        decoded: &[DecodedRow],
+        needed: AuthorityHistoryRequest,
+    ) -> Result<AuthorityHistoryRequest> {
         let mut txn = self.store.env.write_txn()?;
         let mut merged = history_in_txn(self, &txn)?;
         let resident: BTreeSet<AuthorityEntryHash> = merged.keys().copied().collect();
@@ -188,11 +202,7 @@ impl Vault {
             self.privacy_posture(),
             &txn,
         )?;
-        for hash in &waiting {
-            if let Some((_, entry)) = merged.get(hash) {
-                request.missing.extend(entry.parent_hashes.iter().copied());
-            }
-        }
+        request.missing.extend(needed.missing);
         request
             .missing
             .retain(|hash| !resident.contains(hash) && !waiting.contains(hash));

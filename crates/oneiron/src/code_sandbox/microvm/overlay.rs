@@ -6,14 +6,13 @@ use std::os::unix::fs::FileTypeExt;
 use std::{
     collections::BTreeMap,
     fs,
-    io::Read,
     path::{Path, PathBuf},
 };
 
 use crate::code_sandbox::{
     SANDBOX_WORKSPACE_ROOT, SandboxBoundaryContract, SandboxDirectoryOpaqueProposal,
     SandboxFileDeleteProposal, SandboxFileWriteProposal, SandboxMount, SandboxMountTable,
-    SandboxProposalWrite, SandboxVirtualPath,
+    SandboxProposalBody, SandboxProposalWrite, SandboxVirtualPath,
 };
 use crate::{EntityId, Error, Result};
 
@@ -148,11 +147,9 @@ fn scratch_root_io_detail(root: &Path, operation: &str, error: &std::io::Error) 
     )
 }
 
-/// Maximum bytes accepted from one overlay file during proposal export.
+/// Maximum bytes the base-mount read door returns for one file. Proposal
+/// export spools overlay files instead and bounds none of them by size.
 pub(super) const MAX_OVERLAY_FILE_BYTES: u64 = 64 * 1024 * 1024;
-
-/// Maximum aggregate bytes accepted from one overlay during proposal export.
-pub(super) const MAX_OVERLAY_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Maximum regular-file count accepted from one overlay during proposal export.
 pub(super) const MAX_OVERLAY_FILES: usize = 8_192;
@@ -165,7 +162,6 @@ pub(super) const MAX_OVERLAY_DEPTH: usize = 64;
 
 #[derive(Default)]
 pub(super) struct OverlayWalkBounds {
-    pub(super) total_bytes: u64,
     pub(super) file_count: usize,
     pub(super) directory_count: usize,
 }
@@ -352,59 +348,23 @@ pub(super) fn walk_overlay_dir(
             )));
         }
 
-        let file_bytes = metadata.len();
-        if file_bytes > MAX_OVERLAY_FILE_BYTES {
-            return Err(overlay_error(format!(
-                "overlay file byte bound {MAX_OVERLAY_FILE_BYTES} exceeded at `{relative}` ({file_bytes} bytes)"
-            )));
-        }
         if bounds.file_count >= MAX_OVERLAY_FILES {
             return Err(overlay_error(format!(
                 "overlay file count bound {MAX_OVERLAY_FILES} exceeded at `{relative}`"
             )));
         }
-        let next_total = bounds.total_bytes.checked_add(file_bytes).ok_or_else(|| {
-            overlay_error(format!(
-                "overlay aggregate byte bound {MAX_OVERLAY_TOTAL_BYTES} exceeded at `{relative}`"
-            ))
-        })?;
-        if next_total > MAX_OVERLAY_TOTAL_BYTES {
-            return Err(overlay_error(format!(
-                "overlay aggregate byte bound {MAX_OVERLAY_TOTAL_BYTES} exceeded at `{relative}` ({next_total} bytes)"
-            )));
-        }
-
-        let remaining_total = MAX_OVERLAY_TOTAL_BYTES - bounds.total_bytes;
-        let read_limit = MAX_OVERLAY_FILE_BYTES.min(remaining_total);
-        let file = fs::File::open(&entry_path)
+        // The file is spooled as it is read, never held whole: a proposed
+        // file has no size bound (Rule 5).
+        let mut file = fs::File::open(&entry_path)
             .map_err(|error| overlay_error(overlay_io_detail("entry", &error)))?;
-        let mut bytes = Vec::new();
-        std::io::Read::read_to_end(&mut file.take(read_limit + 1), &mut bytes)
-            .map_err(|error| overlay_error(overlay_io_detail("entry", &error)))?;
-        let actual_bytes = u64::try_from(bytes.len()).map_err(|_| {
-            overlay_error(format!(
-                "overlay file byte bound {MAX_OVERLAY_FILE_BYTES} exceeded at `{relative}`"
-            ))
-        })?;
-        if actual_bytes > MAX_OVERLAY_FILE_BYTES {
-            return Err(overlay_error(format!(
-                "overlay file byte bound {MAX_OVERLAY_FILE_BYTES} exceeded at `{relative}`"
-            )));
-        }
-        let actual_total = bounds.total_bytes + actual_bytes;
-        if actual_total > MAX_OVERLAY_TOTAL_BYTES {
-            return Err(overlay_error(format!(
-                "overlay aggregate byte bound {MAX_OVERLAY_TOTAL_BYTES} exceeded at `{relative}` ({actual_total} bytes)"
-            )));
-        }
+        let body = SandboxProposalBody::copy_from(&mut file)?;
 
         bounds.file_count += 1;
-        bounds.total_bytes = actual_total;
         let path = SandboxVirtualPath::try_new(format!("{}/{relative}", mount.root()))?;
         if files
             .insert(
                 OverlayKey::File(path.as_str().to_owned()),
-                SandboxProposalWrite::FileWrite(SandboxFileWriteProposal::new(path, bytes)),
+                SandboxProposalWrite::FileWrite(SandboxFileWriteProposal::new(path, body)),
             )
             .is_some()
         {
