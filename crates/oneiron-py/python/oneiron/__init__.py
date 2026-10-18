@@ -615,6 +615,9 @@ class Oneiron:
         def members(self) -> "Oneiron._VaultMembersVerbs":
             return Oneiron._VaultMembersVerbs(self._client)
         @property
+        def trusted_contacts(self) -> "Oneiron._VaultTrustedContactsVerbs":
+            return Oneiron._VaultTrustedContactsVerbs(self._client)
+        @property
         def guests(self) -> "Oneiron._VaultGuestsVerbs":
             return Oneiron._VaultGuestsVerbs(self._client)
         @property
@@ -1295,6 +1298,51 @@ class Oneiron:
         def withdraw_invitation(self, spec):
             """An Admin with the add_member power takes back a pending invitation."""
             return json.loads(_translate(lambda: self._client.vault_members_withdraw_invitation(json.dumps(spec))))
+    class _VaultTrustedContactsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def name(self, spec):
+            """The vault owner names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again."""
+            return json.loads(_translate(lambda: self._client.vault_trusted_contacts_name(json.dumps(spec))))
+        def list(self, spec):
+            """A live person lists every trusted-contact relation they are a side of: those they named and those naming them, under their own credential."""
+            return json.loads(_translate(lambda: self._client.vault_trusted_contacts_list(json.dumps(spec))))
+        def consent(self, spec):
+            """The named contact, a live person under their own credential, accepts the naming version they were shown and attests they are an adult; the relation is live only after this."""
+            return json.loads(_translate(lambda: self._client.vault_trusted_contacts_consent(json.dumps(spec))))
+        def revoke(self, spec):
+            """Either side of a trusted-contact relation ends it under their own credential; no notice staged from it is sent after this returns, and its open asks close."""
+            return json.loads(_translate(lambda: self._client.vault_trusted_contacts_revoke(json.dumps(spec))))
+        @property
+        def dial(self) -> "Oneiron._VaultTrustedContactsDialVerbs":
+            return Oneiron._VaultTrustedContactsDialVerbs(self._client)
+        @property
+        def tier(self) -> "Oneiron._VaultTrustedContactsTierVerbs":
+            return Oneiron._VaultTrustedContactsTierVerbs(self._client)
+        @property
+        def concern(self) -> "Oneiron._VaultTrustedContactsConcernVerbs":
+            return Oneiron._VaultTrustedContactsConcernVerbs(self._client)
+    class _VaultTrustedContactsDialVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """The vault owner changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands."""
+            return json.loads(_translate(lambda: self._client.vault_trusted_contacts_dial_set(json.dumps(spec))))
+    class _VaultTrustedContactsTierVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """The vault owner names the trusted-contact tier (concern or imminent) of one RouteToHelp policy row; a row never named is a concern."""
+            return json.loads(_translate(lambda: self._client.vault_trusted_contacts_tier_set(json.dumps(spec))))
+    class _VaultTrustedContactsConcernVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def asks(self, spec):
+            """The vault owner reads their open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled."""
+            return json.loads(_translate(lambda: self._client.vault_trusted_contacts_concern_asks(json.dumps(spec))))
+        def authorize(self, spec):
+            """The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing."""
+            return json.loads(_translate(lambda: self._client.vault_trusted_contacts_concern_authorize(json.dumps(spec))))
     class _VaultGuestsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

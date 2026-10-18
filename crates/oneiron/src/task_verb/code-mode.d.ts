@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 508 code-mode rows (487 host rows, 21 run rows), 1820 declarations.
-// Replies: 445 fully typed, 59 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 516 code-mode rows (495 host rows, 21 run rows), 1842 declarations.
+// Replies: 453 fully typed, 59 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 91; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -648,6 +648,28 @@ declare namespace Sdk {
   type SharedActPolicyChange = { id: string; vault_id: string; act: string; policy?: SharedActPolicy | null; base_policy_hash: string; proposer: string; proposed_at: number; approvals: string[]; vetoed_by?: string | null; state: SharedActPolicyChangeState; settled_at?: number | null; awaiting?: string[] };
   type SharedActPolicyAnswerRequest = { change_id: string; approve: boolean };
   type SharedActPolicyChangeRequest = { change_id: string };
+  type TrustedContactReach = { sender: EntityId; channel: string; verb: string; target: string };
+  type TrustedContactDial = "ask_first" | "just_call";
+  type TrustedContactNameRequest = { contact_ref: string; reach: TrustedContactReach; dial: TrustedContactDial };
+  type TrustedContactAcceptance = { at: number; adult: boolean };
+  type TrustedContactParty = "person" | "contact";
+  type TrustedContactRevocation = { at: number; by: TrustedContactParty };
+  type TrustedContact = { person: EntityId; contact: EntityId; reach: TrustedContactReach; dial: TrustedContactDial; version: number; named_at: number; accepted?: TrustedContactAcceptance | null; revoked?: TrustedContactRevocation | null };
+  type TrustedContactsRequest = Record<string, never>;
+  type TrustedContactConsentRequest = { person_ref: string; version: number; adult: boolean };
+  type TrustedContactRevokeRequest = { person_ref: string; contact_ref: string };
+  type TrustedContactDialRequest = { contact_ref: string; dial: TrustedContactDial };
+  type TrustedContactTier = "concern" | "imminent";
+  type TrustedContactTierRequest = { row_ref: string; tier: TrustedContactTier };
+  type TrustedContactTierSet = { row_ref: string; tier: TrustedContactTier };
+  type TrustedContactAsksRequest = Record<string, never>;
+  type TrustedContactAnswer = { yes: boolean; at: number; notified: boolean };
+  type TrustedContactAsk = { ask: EntityId; person: EntityId; contact: EntityId; version: number; tier: TrustedContactTier; asked_at: number; answer?: TrustedContactAnswer | null; superseded?: number | null };
+  type TrustedContactAuthorizeRequest = { ask_ref: string; yes: boolean };
+  type TrustedContactAuthorizationOutcome = "staged" | "declined" | "superseded";
+  type GateSystemNoticeAction = { label: string; target: string };
+  type GateSystemNoticeRecord = { notice_type: string; channel: string; voice: string; audience: string; body: string; row_ref?: string | null; setting_change_offer?: GateSystemNoticeAction | null; policy_plane?: string | null; policy_version?: string | null; docs_url?: string | null };
+  type TrustedContactAuthorization = { ask_ref: string; yes: boolean; outcome: TrustedContactAuthorizationOutcome; system_notices: GateSystemNoticeRecord[] };
   type GuestRevokeRequest = { grant_ref: EntityId; peer?: string | null };
   type GuestPactStanding = "unpacted" | "active" | "suspended" | "promoted" | "disconnected" | "dissolved";
   type NotRecallable = boolean;
@@ -3053,6 +3075,30 @@ declare const vault: Sdk.VaultHost & {
       };
       /** One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts. */
       provenance(input: Sdk.LinearProvenanceRequest): Promise<Sdk.LinearProvenancePage | StoredResult>;
+    };
+  };
+  trusted_contacts: {
+    concern: {
+      /** The vault owner reads their open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled. */
+      asks(input: Sdk.TrustedContactAsksRequest): Promise<Sdk.TrustedContactAsk[] | StoredResult>;
+      /** The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing. */
+      authorize(input: Sdk.TrustedContactAuthorizeRequest): Promise<Sdk.TrustedContactAuthorization | StoredResult>;
+    };
+    /** The named contact, a live person under their own credential, accepts the naming version they were shown and attests they are an adult; the relation is live only after this. */
+    consent(input: Sdk.TrustedContactConsentRequest): Promise<Sdk.TrustedContact | StoredResult>;
+    dial: {
+      /** The vault owner changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands. */
+      set(input: Sdk.TrustedContactDialRequest): Promise<Sdk.TrustedContact | StoredResult>;
+    };
+    /** A live person lists every trusted-contact relation they are a side of: those they named and those naming them, under their own credential. */
+    list(input: Sdk.TrustedContactsRequest): Promise<Sdk.TrustedContact[] | StoredResult>;
+    /** The vault owner names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again. */
+    name(input: Sdk.TrustedContactNameRequest): Promise<Sdk.TrustedContact | StoredResult>;
+    /** Either side of a trusted-contact relation ends it under their own credential; no notice staged from it is sent after this returns, and its open asks close. */
+    revoke(input: Sdk.TrustedContactRevokeRequest): Promise<Sdk.TrustedContact | StoredResult>;
+    tier: {
+      /** The vault owner names the trusted-contact tier (concern or imminent) of one RouteToHelp policy row; a row never named is a concern. */
+      set(input: Sdk.TrustedContactTierRequest): Promise<Sdk.TrustedContactTierSet | StoredResult>;
     };
   };
   weave: {

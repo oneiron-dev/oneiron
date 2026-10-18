@@ -452,6 +452,32 @@ impl OneironClient {
                 "vault.shared.policy.change" => remote_agent_verb_output::<
                     oneiron::federation::SharedActPolicyChange,
                 >(client, verb, &input),
+                "vault.trusted_contacts.name" => remote_agent_verb_output::<
+                    oneiron::counterparty_contact::TrustedContact,
+                >(client, verb, &input),
+                "vault.trusted_contacts.list" => remote_agent_verb_output::<
+                    Vec<oneiron::counterparty_contact::TrustedContact>,
+                >(client, verb, &input),
+                "vault.trusted_contacts.consent" => remote_agent_verb_output::<
+                    oneiron::counterparty_contact::TrustedContact,
+                >(client, verb, &input),
+                "vault.trusted_contacts.revoke" => remote_agent_verb_output::<
+                    oneiron::counterparty_contact::TrustedContact,
+                >(client, verb, &input),
+                "vault.trusted_contacts.dial.set" => remote_agent_verb_output::<
+                    oneiron::counterparty_contact::TrustedContact,
+                >(client, verb, &input),
+                "vault.trusted_contacts.tier.set" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::TrustedContactTierSet,
+                >(client, verb, &input),
+                "vault.trusted_contacts.concern.asks" => remote_agent_verb_output::<
+                    Vec<oneiron::counterparty_contact::TrustedContactAsk>,
+                >(client, verb, &input),
+                "vault.trusted_contacts.concern.authorize" => {
+                    remote_agent_verb_output::<oneiron::task_verb::sdk::TrustedContactAuthorization>(
+                        client, verb, &input,
+                    )
+                }
                 "vault.guests.revoke" => remote_agent_verb_output::<
                     oneiron::receipt::GuestRevokeResponse,
                 >(client, verb, &input),
@@ -3130,6 +3156,102 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.shared.policy.change", value)
+    }
+    pub fn vault_trusted_contacts_name(
+        &self,
+        input: &oneiron::task_verb::sdk::TrustedContactNameRequest,
+    ) -> Result<oneiron::counterparty_contact::TrustedContact, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.trusted_contacts.name", value)
+    }
+    pub fn vault_trusted_contacts_list(
+        &self,
+        input: &oneiron::task_verb::sdk::TrustedContactsRequest,
+    ) -> Result<Vec<oneiron::counterparty_contact::TrustedContact>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.trusted_contacts.list", value)
+    }
+    pub fn vault_trusted_contacts_consent(
+        &self,
+        input: &oneiron::task_verb::sdk::TrustedContactConsentRequest,
+    ) -> Result<oneiron::counterparty_contact::TrustedContact, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.trusted_contacts.consent", value)
+    }
+    pub fn vault_trusted_contacts_revoke(
+        &self,
+        input: &oneiron::task_verb::sdk::TrustedContactRevokeRequest,
+    ) -> Result<oneiron::counterparty_contact::TrustedContact, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.trusted_contacts.revoke", value)
+    }
+    pub fn vault_trusted_contacts_dial_set(
+        &self,
+        input: &oneiron::task_verb::sdk::TrustedContactDialRequest,
+    ) -> Result<oneiron::counterparty_contact::TrustedContact, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.trusted_contacts.dial.set", value)
+    }
+    pub fn vault_trusted_contacts_tier_set(
+        &self,
+        input: &oneiron::task_verb::sdk::TrustedContactTierRequest,
+    ) -> Result<oneiron::task_verb::sdk::TrustedContactTierSet, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.trusted_contacts.tier.set", value)
+    }
+    pub fn vault_trusted_contacts_concern_asks(
+        &self,
+        input: &oneiron::task_verb::sdk::TrustedContactAsksRequest,
+    ) -> Result<Vec<oneiron::counterparty_contact::TrustedContactAsk>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.trusted_contacts.concern.asks", value)
+    }
+    pub fn vault_trusted_contacts_concern_authorize(
+        &self,
+        input: &oneiron::task_verb::sdk::TrustedContactAuthorizeRequest,
+    ) -> Result<oneiron::task_verb::sdk::TrustedContactAuthorization, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.trusted_contacts.concern.authorize", value)
     }
     pub fn vault_guests_revoke(
         &self,

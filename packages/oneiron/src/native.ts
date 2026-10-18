@@ -163,6 +163,14 @@ vaultSharedPolicyGet(input: unknown): unknown
 vaultSharedPolicyPropose(input: unknown): unknown
 vaultSharedPolicyAnswer(input: unknown): unknown
 vaultSharedPolicyChange(input: unknown): unknown
+vaultTrustedContactsName(input: unknown): unknown
+vaultTrustedContactsList(input: unknown): unknown
+vaultTrustedContactsConsent(input: unknown): unknown
+vaultTrustedContactsRevoke(input: unknown): unknown
+vaultTrustedContactsDialSet(input: unknown): unknown
+vaultTrustedContactsTierSet(input: unknown): unknown
+vaultTrustedContactsConcernAsks(input: unknown): unknown
+vaultTrustedContactsConcernAuthorize(input: unknown): unknown
 vaultGuestsRevoke(input: unknown): unknown
 vaultGuestsMintSlip(input: unknown): unknown
 vaultResidenceMode(input: unknown): unknown

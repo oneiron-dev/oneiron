@@ -961,6 +961,14 @@ fn mcp_agent_verb_input(
         "vault.shared.policy.propose" => a.spec.clone().ok_or_else(invalid),
         "vault.shared.policy.answer" => a.spec.clone().ok_or_else(invalid),
         "vault.shared.policy.change" => a.spec.clone().ok_or_else(invalid),
+        "vault.trusted_contacts.name" => a.spec.clone().ok_or_else(invalid),
+        "vault.trusted_contacts.list" => a.spec.clone().ok_or_else(invalid),
+        "vault.trusted_contacts.consent" => a.spec.clone().ok_or_else(invalid),
+        "vault.trusted_contacts.revoke" => a.spec.clone().ok_or_else(invalid),
+        "vault.trusted_contacts.dial.set" => a.spec.clone().ok_or_else(invalid),
+        "vault.trusted_contacts.tier.set" => a.spec.clone().ok_or_else(invalid),
+        "vault.trusted_contacts.concern.asks" => a.spec.clone().ok_or_else(invalid),
+        "vault.trusted_contacts.concern.authorize" => a.spec.clone().ok_or_else(invalid),
         "vault.guests.revoke" => a.spec.clone().ok_or_else(invalid),
         "vault.guests.mint_slip" => a.spec.clone().ok_or_else(invalid),
         "vault.residence.mode" => a.spec.clone().ok_or_else(invalid),
@@ -1861,6 +1869,30 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.shared.policy.change" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.trusted_contacts.name" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.trusted_contacts.list" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.trusted_contacts.consent" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.trusted_contacts.revoke" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.trusted_contacts.dial.set" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.trusted_contacts.tier.set" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.trusted_contacts.concern.asks" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.trusted_contacts.concern.authorize" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.guests.revoke" => {
@@ -5130,6 +5162,167 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_shared_policy_change(server, auth, input)
                     .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.trusted_contacts.name" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.name", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::TrustedContactNameRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_trusted_contacts_name(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.trusted_contacts.list" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.list", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::TrustedContactsRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_trusted_contacts_list(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.trusted_contacts.consent" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.consent", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::TrustedContactConsentRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_trusted_contacts_consent(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.trusted_contacts.revoke" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.revoke", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::TrustedContactRevokeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_trusted_contacts_revoke(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.trusted_contacts.dial.set" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.dial.set", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::TrustedContactDialRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_trusted_contacts_dial_set(
+                server, auth, input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.trusted_contacts.tier.set" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.tier.set", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::TrustedContactTierRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_trusted_contacts_tier_set(
+                server, auth, input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.trusted_contacts.concern.asks" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.concern.asks", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::TrustedContactAsksRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_trusted_contacts_concern_asks(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.trusted_contacts.concern.authorize" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input(
+                "vault.trusted_contacts.concern.authorize",
+                &input,
+            )
+            .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::TrustedContactAuthorizeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_trusted_contacts_concern_authorize(
+                    server, auth, input,
+                )
+                .await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)
