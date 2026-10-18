@@ -500,6 +500,18 @@ impl OneironClient {
                 "vault.records.erase_confirm" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::RecordEraseOutcome,
                 >(client, verb, &input),
+                "vault.research.create_child" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ResearchChildReceipt,
+                >(client, verb, &input),
+                "vault.research.archive" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ResearchArchive,
+                >(client, verb, &input),
+                "vault.evals.inventory" => remote_agent_verb_output::<
+                    oneiron::skill_optimize::EvalAuthoringInventory,
+                >(client, verb, &input),
+                "vault.evals.cohorts.setup" => remote_agent_verb_output::<
+                    oneiron::skill_optimize::EvalAuthoringReport,
+                >(client, verb, &input),
                 "vault.research.bind" => remote_agent_verb_output::<
                     oneiron::autoreason_campaign::research::ResearchBinding,
                 >(client, verb, &input),
@@ -3310,6 +3322,54 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.records.erase_confirm", value)
+    }
+    pub fn vault_research_create_child(
+        &self,
+        input: &oneiron::task_verb::sdk::ResearchChildWire,
+    ) -> Result<oneiron::task_verb::sdk::ResearchChildReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.research.create_child", value)
+    }
+    pub fn vault_research_archive(
+        &self,
+        input: &oneiron::task_verb::sdk::ResearchArchiveWire,
+    ) -> Result<oneiron::task_verb::sdk::ResearchArchive, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.research.archive", value)
+    }
+    pub fn vault_evals_inventory(
+        &self,
+        input: &oneiron::task_verb::sdk::EvalInventoryWire,
+    ) -> Result<oneiron::skill_optimize::EvalAuthoringInventory, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.evals.inventory", value)
+    }
+    pub fn vault_evals_cohorts_setup(
+        &self,
+        input: &oneiron::skill_optimize::EvalCohortSetup,
+    ) -> Result<oneiron::skill_optimize::EvalAuthoringReport, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.evals.cohorts.setup", value)
     }
     pub fn vault_research_bind(
         &self,

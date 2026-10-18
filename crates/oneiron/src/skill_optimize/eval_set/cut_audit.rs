@@ -113,11 +113,9 @@ pub struct EvalCutAudit {
     pub cut_at: u64,
     pub rubric_revision: String,
     pub membership_digest: String,
-    /// The authoring attempt, the skill revision it ran and the inventory
-    /// it read.
-    pub attempt: EntityId,
-    pub skill: EntityId,
-    pub skill_revision: String,
+    /// Who authorized the cut: the actual authoring skill, or the owner
+    /// explicitly setting up the cohort. Owner setup claims no skill use.
+    pub author: EvalCutAuthor,
     pub inventory_digest: String,
     pub members: Vec<AuditCase>,
     pub compared: Vec<AuditCase>,
@@ -129,13 +127,23 @@ pub struct EvalCutAudit {
     pub coverage: AuditCoverage,
 }
 
-/// Who authored a cut: the attempt, its skill revision and the inventory it
-/// read.
+/// The authenticated author of a sealed-cohort cut.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum EvalCutAuthor {
+    Skill {
+        attempt: EntityId,
+        skill: EntityId,
+        revision: String,
+    },
+    Owner {
+        person: EntityId,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct AuditProvenance {
-    pub(super) attempt: EntityId,
-    pub(super) skill: EntityId,
-    pub(super) revision: String,
+    pub(super) author: EvalCutAuthor,
     pub(super) inventory_digest: String,
 }
 
@@ -180,9 +188,7 @@ impl EvalCutAuditDraft {
             cut_at: cohort.cut_at,
             rubric_revision: cohort.rubric_revision.clone(),
             membership_digest: cohort.membership_digest.clone(),
-            attempt: self.provenance.attempt,
-            skill: self.provenance.skill,
-            skill_revision: self.provenance.revision.clone(),
+            author: self.provenance.author.clone(),
             inventory_digest: self.provenance.inventory_digest.clone(),
             members: self.members.clone(),
             compared: self.compared.clone(),

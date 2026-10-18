@@ -169,12 +169,13 @@ pub use self::eval_set::{
     AuditCase, AuditCoverage, AuditMethodPin, CandidateLabel, CaseDecision, CohortRetirement,
     CohortSummary, CoverageGap, CutDecision, DerivationKind, EvalAuthoringInventory,
     EvalAuthoringPlan, EvalAuthoringReport, EvalAuthoringSkip, EvalCandidate, EvalCase,
-    EvalCaseDraft, EvalCohort, EvalCohortDecision, EvalCutAudit, EvalCutAuditDraft, EvalExposure,
+    EvalCaseDraft, EvalCohort, EvalCohortDecision, EvalCohortSetup, EvalCutAudit, EvalCutAuditDraft,
+    EvalCutAuthor, EvalExposure,
     EvalExposureCounts, EvalExposureKind, EvalLabel, EvalLabelAsk, EvalLabelKind, EvalRelease,
     EvalSeat, EvalSourceGroup, FamilyDecision, FamilyPurpose, NearCopyFlag, PurposeCounts,
     SeatInventory, SourceFamily, SufficiencyCard, SufficiencyInput, SufficiencyVerdict,
     UncutFamily, UnknownReason, WaitingDecision, apply_eval_authoring_plan,
-    eval_authoring_inventory, sufficiency_card,
+    eval_authoring_inventory, setup_eval_cohorts, sufficiency_card,
 };
 pub use self::goal_axes::{
     AxisArm, AxisScores, ConfidenceInterval, GoalAxisBandit, GoalAxisBandits, GoalAxisPlan,

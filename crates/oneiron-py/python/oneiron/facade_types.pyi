@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 446 facade rows, 1708 declarations.
-Inputs: 397 of 446 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 394 of 446 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 450 facade rows, 1729 declarations.
+Inputs: 401 of 450 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 398 of 450 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 86; unread shapes: 0.
 """
 
@@ -3425,6 +3425,18 @@ class RecordEraseOutcome(TypedDict):
     first: DeleteReceipt
     first_act: NotRequired[str | None]
     same_bytes: list[EraseSameBytesRow]
+class ResearchChildWire(TypedDict):
+    root: EntityId
+    parent: EntityId
+    agent: EntityId
+    intent_key: str
+    briefing: str
+class ResearchChildReceipt(TypedDict):
+    root: EntityId
+    parent: EntityId
+    child: EntityId
+class ResearchArchiveWire(TypedDict):
+    root: EntityId
 class SearchAxis(TypedDict):
     name: str
     values: list[str]
@@ -3478,15 +3490,16 @@ class ResearchTargetConfigBody(TypedDict):
 class ResearchTargetConfig(TypedDict):
     config: ResearchTargetConfigBody
 ResearchTarget = ResearchTargetSkill | ResearchTargetConfig
+class ResearchGoalPin(TypedDict):
+    goal_id: EntityId
+    revision: str
+    project: NotRequired[tuple[EntityId, EntityId] | None]
 class EvalSeatNamed(TypedDict):
     named: str
 EvalSeat = Literal["companion", "decision", "extraction_tagger", "embedder", "router"] | EvalSeatNamed
 class ResearchConfirmationSeat(TypedDict):
     seat: EvalSeat
     cohort: EntityId
-class CandidateRef(TypedDict):
-    config_ref: str
-    config_sha256: str
 PriorRung = Literal["user", "persona", "global"]
 class PriorSeed(TypedDict):
     rung: PriorRung
@@ -3500,20 +3513,6 @@ class ResearchExecution(TypedDict):
     experiment_units: int
     measure_units: int
     confirm_units: int
-class ResearchBindWire(TypedDict):
-    root: EntityId
-    config: CampaignConfig
-    target: ResearchTarget
-    holder: NotRequired[str | None]
-    confirmation: NotRequired[ResearchConfirmationSeat | None]
-    share: NotRequired[str | None]
-    incumbent: CandidateRef
-    prior_ladder: NotRequired[list[PriorSeed]]
-    execution: NotRequired[ResearchExecution | None]
-class ResearchGoalPin(TypedDict):
-    goal_id: EntityId
-    revision: str
-    project: NotRequired[tuple[EntityId, EntityId] | None]
 class ResearchBinding(TypedDict):
     root: AttemptId
     run_id: str
@@ -3528,14 +3527,10 @@ class ResearchBinding(TypedDict):
     prior_ladder: list[PriorSeed]
     execution: NotRequired[ResearchExecution | None]
     bound_at: int
-ForkKind = Literal["variation", "debug"]
-class ResearchForkWire(TypedDict):
-    root: EntityId
-    parent: EntityId
-    child: EntityId
-    kind: ForkKind
-    candidate: CandidateRef
 ExperimentKind = Literal["root", "variation", "debug", "weave"]
+class CandidateRef(TypedDict):
+    config_ref: str
+    config_sha256: str
 class Measurement(TypedDict):
     dataset: CampaignDatasetRef
     metric_set_id: str
@@ -3593,6 +3588,241 @@ class ExperimentNode(TypedDict):
     weave: NotRequired[WeaveReceipt | None]
     pruned: NotRequired[PruneReceipt | None]
     recorded_at: int
+class ResearchStepForkBody(TypedDict):
+    parent: AttemptId
+    stagnation: bool
+class ResearchStepFork(TypedDict):
+    fork: ResearchStepForkBody
+ResearchStep = Literal["paused_budget", "stopped_plateau", "escalate_plateau", "stopped_oracle"] | ResearchStepFork
+class BranchBelief(TypedDict):
+    alpha: float
+    beta: float
+    p_beat: float
+    information_gain: float
+class BranchSnapshot(TypedDict):
+    attempt: AttemptId
+    reward: float
+    expected_gain: float
+    estimator_version: str
+    belief: NotRequired[BranchBelief | None]
+class SelectionRankingDgm(TypedDict):
+    kind: Literal["dgm"]
+class SelectionRankingInformationGain(TypedDict):
+    kind: Literal["information_gain"]
+    estimator_version: str
+SelectionRanking = SelectionRankingDgm | SelectionRankingInformationGain
+class SelectionReceipt(TypedDict):
+    root: AttemptId
+    round: int
+    step: ResearchStep
+    branches: list[BranchSnapshot]
+    best_quality: float
+    best_gain: float
+    ranking: SelectionRanking
+    policy_digest: str
+    budget_available: bool
+    oracle_goal_met: bool
+    at: int
+class ArchiveQualityMetric(TypedDict):
+    metric_id: str
+    revision: str
+class ArchiveOutputRef(TypedDict):
+    entity: EntityId
+    revision: str
+class ArchiveAxis(TypedDict):
+    name: str
+    bins: list[str]
+class ArchiveDescriptorAxes(TypedDict):
+    kind: Literal["axes"]
+    axes: list[ArchiveAxis]
+class ArchiveDescriptorEmbeddingClusters(TypedDict):
+    kind: Literal["embedding_clusters"]
+    model_revision: str
+    centers: list[list[float]]
+ArchiveDescriptor = ArchiveDescriptorAxes | ArchiveDescriptorEmbeddingClusters
+class CampaignArchivePin(TypedDict):
+    campaign_id: str
+    task: EntityId
+    goal_ref: EntityId
+    goal_digest: str
+    quality_metric: ArchiveQualityMetric
+    proposal_receipt: EntityId
+    sample_outputs: list[ArchiveOutputRef]
+    descriptor: ArchiveDescriptor
+HeldOutCall = Literal["promote", "reject", "escalate_tradeoff"]
+class ConfirmationReceipt(TypedDict):
+    cohort: EntityId
+    consumed_at: int
+    exposure: NotRequired[EntityId | None]
+class SufficiencyInput(TypedDict):
+    families: int
+    floor_slices: dict[str, int]
+    min_families_per_slice: int
+    retest_noise: NotRequired[float | None]
+    owner_margin: NotRequired[float | None]
+    paired_interval: NotRequired[tuple[float, float] | None]
+    detectable_effect: NotRequired[float | None]
+    set_changed: bool
+    rubric_changed: bool
+    canary_diverged: bool
+class UnknownReasonTooFewFamiliesBody(TypedDict):
+    slice: str
+    families: int
+class UnknownReasonTooFewFamilies(TypedDict):
+    too_few_families: UnknownReasonTooFewFamiliesBody
+UnknownReason = Literal["no_retest_noise", "no_interval", "interval_spans_margin", "set_changed", "rubric_changed", "canary_diverged"] | UnknownReasonTooFewFamilies
+class SufficiencyVerdictUnknown(TypedDict):
+    unknown: list[UnknownReason]
+SufficiencyVerdict = Literal["not_worse", "worse"] | SufficiencyVerdictUnknown
+class SufficiencyCard(TypedDict):
+    input: SufficiencyInput
+    margin: NotRequired[float | None]
+    verdict: SufficiencyVerdict
+PromotionDisposition = Literal["promoted", "lost_sealed", "held_insufficient", "held_gate"]
+class ResearchBudgetRead(TypedDict):
+    max_units: int
+    exploration_units: int
+    work_reserved: int
+    work_spent: int
+    exploration_reserved: int
+    exploration_spent: int
+class CampaignPromotionReceipt(TypedDict):
+    root: AttemptId
+    candidate: AttemptId
+    incumbent: AttemptId
+    candidate_pin: CandidateRef
+    parents: list[AttemptId]
+    config_sha256: str
+    goal: NotRequired[ResearchGoalPin | None]
+    policy_digest: str
+    archive: NotRequired[CampaignArchivePin | None]
+    archive_version: NotRequired[str | None]
+    cohort: EntityId
+    exposures: list[EntityId]
+    sufficiency: SufficiencyCard
+    sealed_won: bool
+    sealed_digest: str
+    referee_pin: str
+    skill_proposal: NotRequired[EntityId | None]
+    disposition: PromotionDisposition
+    budget: ResearchBudgetRead
+    at: int
+class PromotionBasis(TypedDict):
+    root: AttemptId
+    candidate: AttemptId
+    incumbent: AttemptId
+    candidate_pin: CandidateRef
+    incumbent_pin: CandidateRef
+    config_sha256: str
+    goal: NotRequired[ResearchGoalPin | None]
+    policy_digest: str
+    archive: NotRequired[CampaignArchivePin | None]
+    archive_version: NotRequired[str | None]
+    incumbent_held_out: Measurement
+    candidate_held_out: Measurement
+    call: HeldOutCall
+    merge_crossover_enabled: bool
+    decided_at: int
+    confirmation: NotRequired[ConfirmationReceipt | None]
+    promotion: NotRequired[CampaignPromotionReceipt | None]
+class ResearchArchive(TypedDict):
+    binding: ResearchBinding
+    experiments: list[ExperimentNode]
+    rounds: list[SelectionReceipt]
+    promotions: list[PromotionBasis]
+    incumbent: EntityId
+class EvalInventoryWire(TypedDict):
+    at: NotRequired[int | None]
+FamilyPurpose = Literal["development", "judge_audit", "sealed_confirmation"]
+class EvalSourceGroup(TypedDict):
+    id: str
+    seat: EvalSeat
+    candidates: int
+    labelled: int
+    roots: int
+    fresh_roots: int
+    family: NotRequired[EntityId | None]
+    purpose: NotRequired[FamilyPurpose | None]
+    blocked: NotRequired[str | None]
+EvalLabelKind = Literal["world_outcome", "owner_pick", "adjudicated_audit", "judge_verdict"]
+class CandidateLabel(TypedDict):
+    kind: EvalLabelKind
+    value: str
+    reference: str
+    at: int
+    held: bool
+class EvalCandidate(TypedDict):
+    id: str
+    seat: EvalSeat
+    group: str
+    at: int
+    labels: list[CandidateLabel]
+    case: NotRequired[EntityId | None]
+class PurposeCounts(TypedDict):
+    development: int
+    judge_audit: int
+    sealed_confirmation: int
+class EvalExposureCounts(TypedDict):
+    candidates: int
+    queries: int
+    promotions: int
+CohortSummary = TypedDict("CohortSummary", {"id": EntityId, "from": int, "until": int, "reference": bool, "retired": bool, "members": int, "families": int, "rubric_revision": str, "exposure": EvalExposureCounts})
+class UncutFamily(TypedDict):
+    family: EntityId
+    cases: int
+    first_at: int
+    last_at: int
+class SeatInventory(TypedDict):
+    seat: EvalSeat
+    families: PurposeCounts
+    cases: int
+    cohorts: list[CohortSummary]
+    uncut: list[UncutFamily]
+EvalAuthoringInventory = TypedDict("EvalAuthoringInventory", {"inventory_digest": str, "built_at": int, "from": int, "groups": list[EvalSourceGroup], "candidates": list[EvalCandidate], "seats": list[SeatInventory]})
+class FamilyDecision(TypedDict):
+    group: str
+    purpose: FamilyPurpose
+class CaseDecision(TypedDict):
+    candidate: str
+    stratum: NotRequired[str | None]
+CutDecision = TypedDict("CutDecision", {"seat": EvalSeat, "from": int, "until": int, "rubric_revision": str, "reference": bool})
+class EvalCohortSetup(TypedDict):
+    inventory_at: int
+    inventory_digest: str
+    families: NotRequired[list[FamilyDecision]]
+    cases: NotRequired[list[CaseDecision]]
+    cuts: list[CutDecision]
+class EvalAuthoringSkip(TypedDict):
+    item: str
+    reason: str
+class EvalAuthoringReport(TypedDict):
+    families_assigned: int
+    families_extended: int
+    cases_recorded: int
+    cases_reused: int
+    labels_added: int
+    cohorts_cut: list[EntityId]
+    cuts_with_coverage_gaps: int
+    cohorts_retired: list[EntityId]
+    cohorts_kept: int
+    skipped: list[EvalAuthoringSkip]
+class ResearchBindWire(TypedDict):
+    root: EntityId
+    config: CampaignConfig
+    target: ResearchTarget
+    holder: NotRequired[str | None]
+    confirmation: NotRequired[ResearchConfirmationSeat | None]
+    share: NotRequired[str | None]
+    incumbent: CandidateRef
+    prior_ladder: NotRequired[list[PriorSeed]]
+    execution: NotRequired[ResearchExecution | None]
+ForkKind = Literal["variation", "debug"]
+class ResearchForkWire(TypedDict):
+    root: EntityId
+    parent: EntityId
+    child: EntityId
+    kind: ForkKind
+    candidate: CandidateRef
 class ResearchWeaveWire(TypedDict):
     root: EntityId
     parents: list[EntityId]
@@ -3811,147 +4041,10 @@ class ResearchPruneWire(TypedDict):
 class ResearchSelectWire(TypedDict):
     root: EntityId
     goal_met: NotRequired[bool]
-class ResearchStepForkBody(TypedDict):
-    parent: AttemptId
-    stagnation: bool
-class ResearchStepFork(TypedDict):
-    fork: ResearchStepForkBody
-ResearchStep = Literal["paused_budget", "stopped_plateau", "escalate_plateau", "stopped_oracle"] | ResearchStepFork
-class BranchBelief(TypedDict):
-    alpha: float
-    beta: float
-    p_beat: float
-    information_gain: float
-class BranchSnapshot(TypedDict):
-    attempt: AttemptId
-    reward: float
-    expected_gain: float
-    estimator_version: str
-    belief: NotRequired[BranchBelief | None]
-class SelectionRankingDgm(TypedDict):
-    kind: Literal["dgm"]
-class SelectionRankingInformationGain(TypedDict):
-    kind: Literal["information_gain"]
-    estimator_version: str
-SelectionRanking = SelectionRankingDgm | SelectionRankingInformationGain
-class SelectionReceipt(TypedDict):
-    root: AttemptId
-    round: int
-    step: ResearchStep
-    branches: list[BranchSnapshot]
-    best_quality: float
-    best_gain: float
-    ranking: SelectionRanking
-    policy_digest: str
-    budget_available: bool
-    oracle_goal_met: bool
-    at: int
-class ArchiveQualityMetric(TypedDict):
-    metric_id: str
-    revision: str
-class ArchiveOutputRef(TypedDict):
-    entity: EntityId
-    revision: str
-class ArchiveAxis(TypedDict):
-    name: str
-    bins: list[str]
-class ArchiveDescriptorAxes(TypedDict):
-    kind: Literal["axes"]
-    axes: list[ArchiveAxis]
-class ArchiveDescriptorEmbeddingClusters(TypedDict):
-    kind: Literal["embedding_clusters"]
-    model_revision: str
-    centers: list[list[float]]
-ArchiveDescriptor = ArchiveDescriptorAxes | ArchiveDescriptorEmbeddingClusters
-class CampaignArchivePin(TypedDict):
-    campaign_id: str
-    task: EntityId
-    goal_ref: EntityId
-    goal_digest: str
-    quality_metric: ArchiveQualityMetric
-    proposal_receipt: EntityId
-    sample_outputs: list[ArchiveOutputRef]
-    descriptor: ArchiveDescriptor
 class ResearchBasisWire(TypedDict):
     root: EntityId
     candidate: EntityId
     archive: NotRequired[CampaignArchivePin | None]
-HeldOutCall = Literal["promote", "reject", "escalate_tradeoff"]
-class ConfirmationReceipt(TypedDict):
-    cohort: EntityId
-    consumed_at: int
-    exposure: NotRequired[EntityId | None]
-class SufficiencyInput(TypedDict):
-    families: int
-    floor_slices: dict[str, int]
-    min_families_per_slice: int
-    retest_noise: NotRequired[float | None]
-    owner_margin: NotRequired[float | None]
-    paired_interval: NotRequired[tuple[float, float] | None]
-    detectable_effect: NotRequired[float | None]
-    set_changed: bool
-    rubric_changed: bool
-    canary_diverged: bool
-class UnknownReasonTooFewFamiliesBody(TypedDict):
-    slice: str
-    families: int
-class UnknownReasonTooFewFamilies(TypedDict):
-    too_few_families: UnknownReasonTooFewFamiliesBody
-UnknownReason = Literal["no_retest_noise", "no_interval", "interval_spans_margin", "set_changed", "rubric_changed", "canary_diverged"] | UnknownReasonTooFewFamilies
-class SufficiencyVerdictUnknown(TypedDict):
-    unknown: list[UnknownReason]
-SufficiencyVerdict = Literal["not_worse", "worse"] | SufficiencyVerdictUnknown
-class SufficiencyCard(TypedDict):
-    input: SufficiencyInput
-    margin: NotRequired[float | None]
-    verdict: SufficiencyVerdict
-PromotionDisposition = Literal["promoted", "lost_sealed", "held_insufficient", "held_gate"]
-class ResearchBudgetRead(TypedDict):
-    max_units: int
-    exploration_units: int
-    work_reserved: int
-    work_spent: int
-    exploration_reserved: int
-    exploration_spent: int
-class CampaignPromotionReceipt(TypedDict):
-    root: AttemptId
-    candidate: AttemptId
-    incumbent: AttemptId
-    candidate_pin: CandidateRef
-    parents: list[AttemptId]
-    config_sha256: str
-    goal: NotRequired[ResearchGoalPin | None]
-    policy_digest: str
-    archive: NotRequired[CampaignArchivePin | None]
-    archive_version: NotRequired[str | None]
-    cohort: EntityId
-    exposures: list[EntityId]
-    sufficiency: SufficiencyCard
-    sealed_won: bool
-    sealed_digest: str
-    referee_pin: str
-    skill_proposal: NotRequired[EntityId | None]
-    disposition: PromotionDisposition
-    budget: ResearchBudgetRead
-    at: int
-class PromotionBasis(TypedDict):
-    root: AttemptId
-    candidate: AttemptId
-    incumbent: AttemptId
-    candidate_pin: CandidateRef
-    incumbent_pin: CandidateRef
-    config_sha256: str
-    goal: NotRequired[ResearchGoalPin | None]
-    policy_digest: str
-    archive: NotRequired[CampaignArchivePin | None]
-    archive_version: NotRequired[str | None]
-    incumbent_held_out: Measurement
-    candidate_held_out: Measurement
-    call: HeldOutCall
-    merge_crossover_enabled: bool
-    decided_at: int
-    confirmation: NotRequired[ConfirmationReceipt | None]
-    promotion: NotRequired[CampaignPromotionReceipt | None]
 class ResearchCandidateWire(TypedDict):
     root: EntityId
     candidate: EntityId
@@ -3964,7 +4057,6 @@ class EvalExposure(TypedDict):
     candidate_pin: NotRequired[str | None]
     at: int
 DerivationKind = Literal["receipt", "repair", "paraphrase", "summary", "translation", "synthetic", "rubric"]
-EvalLabelKind = Literal["world_outcome", "owner_pick", "adjudicated_audit", "judge_verdict"]
 class EvalLabel(TypedDict):
     kind: EvalLabelKind
     value: str
