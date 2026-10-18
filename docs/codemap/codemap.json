@@ -28530,14 +28530,61 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/linear_sync/facade.rs",
+     "purpose": "The TASK ↔ issue mirror doors (OF-427 C6, C7)",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LinearLinkView",
+      "LinearMappingEdit",
+      "LinearMappingEditReceipt",
+      "LinearMappingOp",
+      "LinearMappingRequest",
+      "LinearMappingView",
+      "LinearProvenanceEntry",
+      "LinearProvenancePage",
+      "LinearProvenanceRequest"
+     ],
+     "path": "src/linear_sync/facade_types.rs",
+     "purpose": "The wire shapes of the TASK ↔ issue mirror doors (OF-427 C6, C7): `vault.tasks.linear.mapping`…",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 1,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LinearMirrorEvent",
+      "LinearMirrorRecord"
+     ],
+     "path": "src/linear_sync/mirror_event.rs",
+     "purpose": "The mirror's durable event rows and each TASK's mirror control (OF-427)",
+     "surface": {
+      "crate-vis": 24,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/linear_sync/mod.rs",
      "purpose": "Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905…",
      "surface": {
-      "crate-vis": 2,
-      "re-export": 6
+      "crate-vis": 3,
+      "re-export": 9
      }
     },
     {
@@ -28604,6 +28651,24 @@
      "path": "src/linear_sync/tests.rs",
      "purpose": "Mirror-adapter tests (ONE-1905)",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LinearExternalActor",
+      "LinearWebhookEvent",
+      "LinearWebhookKind",
+      "LinearWebhookReceipt",
+      "LinearWebhookStatus"
+     ],
+     "path": "src/linear_sync/webhook.rs",
+     "purpose": "The engine half of the signed Linear webhook (OF-427 C1, C3–C5)",
+     "surface": {
+      "enum": 2,
+      "fn": 3,
+      "struct": 3
+     }
     },
     {
      "bucket": "m",
@@ -48571,9 +48636,19 @@
      "path": "src/task_verb/linear_store.rs",
      "purpose": "Vault storage for the tracker mirror: replicated fields, local OCC and CAS links",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 10,
       "fn": 5,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/mirror_edit.rs",
+     "purpose": "The owner's public title edit on `tasks.update` (OF-427 C8), and the Owner standing the mirror's mapping…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -48583,7 +48658,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 35,
+      "crate-vis": 36,
       "fn": 1,
       "mod": 2,
       "re-export": 25
@@ -49113,7 +49188,7 @@
      "purpose": "—",
      "surface": {
       "const": 3,
-      "fn": 455
+      "fn": 458
      }
     },
     {
@@ -55153,7 +55228,7 @@
      "purpose": "Traversal safety caps, defined in `oneiron-contracts`"
     },
     "linear_sync": {
-     "files": 8,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -55713,7 +55788,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 143,
+     "files": 144,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -55883,7 +55958,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3403,
+   "source_files": 3408,
    "test_files": 902
   },
   "oneiron-android": {
@@ -62678,9 +62753,10 @@
      "path": "src/http.rs",
      "purpose": "Bounded host-owned GraphQL transport; credentials never enter the engine",
      "surface": {
+      "const": 1,
       "crate-vis": 1,
       "enum": 1,
-      "fn": 2,
+      "fn": 3,
       "struct": 2,
       "trait": 1
      }
@@ -62702,7 +62778,7 @@
      "path": "src/lib.rs",
      "purpose": "Host-side Linear GraphQL adapter for the engine's TASK ↔ issue mirror",
      "surface": {
-      "re-export": 4
+      "re-export": 6
      }
     },
     {
@@ -62727,6 +62803,16 @@
      "path": "src/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/webhook.rs",
+     "purpose": "Normalizes one verified Linear webhook delivery for the engine (OF-427)",
+     "surface": {
+      "fn": 1
+     }
     }
    ],
    "modules": {
@@ -62771,11 +62857,18 @@
      "largest_src_bucket": "—",
      "layout": "file",
      "purpose": "—"
+    },
+    "webhook": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Normalizes one verified Linear webhook delivery for the engine (OF-427)"
     }
    },
    "over_bar": 0,
    "purpose": "Host-side Linear GraphQL adapter for the engine's TASK ↔ issue mirror",
-   "source_files": 6,
+   "source_files": 7,
    "test_files": 1
   },
   "oneiron-llm-anthropic": {
@@ -64278,7 +64371,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 405
+      "fn": 408
      }
     },
     {
@@ -65326,7 +65419,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 406
+      "fn": 409
      }
     },
     {
@@ -68419,7 +68512,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 81
+      "crate-vis": 82
      }
     },
     {
@@ -68440,6 +68533,16 @@
      "purpose": "The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`…",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/linear_doors.rs",
+     "purpose": "The host door of `vault.tasks.linear.mapping.edit` (OF-427 C6)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -72664,7 +72767,7 @@
      "path": "src/linear_host.rs",
      "purpose": "Opt-in scheduled Linear mirror over an authenticated host-owned bridge",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -72674,7 +72777,7 @@
      "path": "src/linear_host/direct.rs",
      "purpose": "The server's direct Linear GraphQL mirror, using the production adapter",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -72684,6 +72787,16 @@
      "path": "src/linear_host/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/linear_host/webhook.rs",
+     "purpose": "`POST /v1/hooks/linear`: the signed Linear webhook door (OF-427 C1–C4, C11)",
+     "surface": {
+      "crate-vis": 6
+     }
     },
     {
      "bucket": "m",
@@ -75714,7 +75827,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 336,
+     "files": 337,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -75945,7 +76058,7 @@
      "purpose": "OF-181: the lens frames this server holds for the cards it rendered"
     },
     "linear_host": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -76129,7 +76242,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 658,
+   "source_files": 660,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -77024,6 +77137,19 @@
       "LiftCounts",
       "LiftFamily",
       "LiftTrigger",
+      "LinearExternalActor",
+      "LinearFieldConflict",
+      "LinearIssueRef",
+      "LinearLinkView",
+      "LinearMappingEdit",
+      "LinearMappingEditReceipt",
+      "LinearMappingOp",
+      "LinearMappingRequest",
+      "LinearMappingView",
+      "LinearMirrorEvent",
+      "LinearProvenanceEntry",
+      "LinearProvenancePage",
+      "LinearProvenanceRequest",
       "LinkedText",
       "LiveRunRequestAgentSpawnInput",
       "LiveRunRequestLeaderSplitInput",
@@ -77817,8 +77943,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 421,
-      "struct": 1070
+      "enum": 422,
+      "struct": 1082
      }
     },
     {
