@@ -2,7 +2,7 @@
 
 use super::{McpCodeModeProvider, ReaderMeter, RunCompactionSeat};
 use oneiron::agent_dispatch::SpendScopeId;
-use oneiron::code_run::CodeRunDeterminism;
+use oneiron::code_run::{CodeRunDeterminism, CompactionHostBinding};
 use oneiron::code_sandbox::quickjs::QuickJsRuntimeFactory;
 use oneiron::code_sandbox::wasmtime_runtime::{ComponentBudget, WasmtimeComponentRuntime};
 use oneiron::engine_executor::{
@@ -12,7 +12,7 @@ use oneiron::engine_executor::{
 use oneiron::llm::SingleRouteBackend;
 use oneiron::llm::run_admission::{PayerPerson, RunReceiptSink};
 use oneiron::llm::seat::SeatDecisions;
-use oneiron::{BudgetGuard, BudgetLease, EntityId, LlmBackend, LlmError, Vault, WriteActor};
+use oneiron::{BudgetGuard, BudgetLease, EntityId, LlmBackend, LlmError, Vault};
 use oneiron_code_check::ShadowCheck;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -266,13 +266,13 @@ impl McpCodeModeProvider for McpQuickJsProvider {
     }
     fn compaction(
         &self,
-        byline: WriteActor,
+        host: CompactionHostBinding,
         credential: &str,
         spend: Option<&SpendScopeId>,
     ) -> Option<RunCompaction> {
         self.compaction
             .as_ref()
-            .map(|seat| seat(byline, credential, spend))
+            .map(|seat| seat(host, credential, spend))
     }
     fn lease(&self) -> &BudgetLease {
         &self.lease

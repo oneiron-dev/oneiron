@@ -2519,6 +2519,36 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_secrets_materialize(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.secrets.materialize", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_secrets_renew(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.secrets.renew", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_secrets_teardown(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.secrets.teardown", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_secrets_use(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.secrets.use", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_shares_create(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.shares.create", input)

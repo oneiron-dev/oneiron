@@ -386,6 +386,8 @@ fn retire_in(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, now_slot: u64) -> Result
         let key = sealed_generation_hex(&generation);
         GENERATIONS.delete(&vault.store, wtxn, &key)?;
         PARTS.delete_from(&vault.store, wtxn, format!("{key}:").as_bytes())?;
+        // Its late joiners' grants go with it (FIX 4271).
+        super::bundle_access::retire_in(vault, wtxn, &generation)?;
     }
     Ok(())
 }

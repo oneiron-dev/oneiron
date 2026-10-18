@@ -309,6 +309,7 @@ mod sdk_residence;
 mod sdk_retrieval;
 mod sdk_scratchpad;
 mod sdk_secret;
+mod sdk_secret_grant;
 mod sdk_secret_use;
 mod sdk_self;
 mod sdk_share;

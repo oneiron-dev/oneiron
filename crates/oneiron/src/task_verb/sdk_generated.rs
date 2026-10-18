@@ -1533,6 +1533,38 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.secrets.materialize",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::task_verb::sdk::SecretGrantMintRequest,
+                    >,
+                >(),
+            ),
+            (
+                "self.secrets.renew",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::task_verb::sdk::SecretGrantRenewRequest,
+                    >,
+                >(),
+            ),
+            (
+                "self.secrets.teardown",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::task_verb::sdk::SecretGrantTeardownRequest,
+                    >,
+                >(),
+            ),
+            (
+                "self.secrets.use",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::task_verb::sdk::SecretGrantUseRequest,
+                    >,
+                >(),
+            ),
+            (
                 "vault.shares.create",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ShareCreateRequest,
@@ -3508,6 +3540,10 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.learning.projection",
     "vault.claims.review",
     "vault.claims.settle",
+    "self.secrets.materialize",
+    "self.secrets.renew",
+    "self.secrets.teardown",
+    "self.secrets.use",
     "vault.artifacts.units",
     "vault.artifacts.anchors.pin",
     "vault.artifacts.threads.open",
@@ -3980,6 +4016,18 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.claims.settle" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ClaimSettlement>()
+        }
+        "self.secrets.materialize" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::SecretGrantView>()
+        }
+        "self.secrets.renew" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::SecretGrantView>()
+        }
+        "self.secrets.teardown" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::SecretGrantView>()
+        }
+        "self.secrets.use" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::SecretUseAnswer>()
         }
         "vault.artifacts.units" => crate::code_run::vault_read::request_schema::<
             crate::anchored_annotation::ArtifactUnitsView,
@@ -6391,6 +6439,34 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.use" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.secrets.materialize" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.secrets.renew" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.secrets.teardown" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.secrets.use" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -9520,6 +9596,26 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.use" => {
             let _input: crate::task_verb::sdk::SecretUseRequest = decode(value.clone())?;
         }
+        "self.secrets.materialize" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::task_verb::sdk::SecretGrantMintRequest,
+            > = decode(value.clone())?;
+        }
+        "self.secrets.renew" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::task_verb::sdk::SecretGrantRenewRequest,
+            > = decode(value.clone())?;
+        }
+        "self.secrets.teardown" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::task_verb::sdk::SecretGrantTeardownRequest,
+            > = decode(value.clone())?;
+        }
+        "self.secrets.use" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::task_verb::sdk::SecretGrantUseRequest,
+            > = decode(value.clone())?;
+        }
         "vault.shares.create" => {
             let _input: crate::task_verb::sdk::ShareCreateRequest = decode(value.clone())?;
         }
@@ -11163,6 +11259,10 @@ pub fn invoke(
         "reveal.wait" => encode(reveal_wait(memory, decode(value)?)?),
         "reveal.describe" => encode(reveal_describe(memory, decode(value)?)?),
         "self.use" => encode(self_use(memory, decode(value)?)?),
+        "self.secrets.materialize" => encode(self_secrets_materialize(memory, decode(value)?)?),
+        "self.secrets.renew" => encode(self_secrets_renew(memory, decode(value)?)?),
+        "self.secrets.teardown" => encode(self_secrets_teardown(memory, decode(value)?)?),
+        "self.secrets.use" => encode(self_secrets_use(memory, decode(value)?)?),
         "vault.shares.create" => encode(vault_shares_create(memory, decode(value)?)?),
         "vault.shares.revoke" => encode(vault_shares_revoke(memory, decode(value)?)?),
         "vault.shares.view" => encode(vault_shares_view(memory, decode(value)?)?),
@@ -14249,6 +14349,30 @@ pub fn self_use(
     input: crate::task_verb::sdk::SecretUseRequest,
 ) -> MemoryResult<crate::task_verb::sdk::SecretUseAnswer> {
     crate::task_verb::sdk::use_secret_as_caller(memory, input)
+}
+pub fn self_secrets_materialize(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::SecretGrantMintRequest>,
+) -> MemoryResult<crate::task_verb::sdk::SecretGrantView> {
+    crate::task_verb::sdk::host_only(memory, "self.secrets.materialize", &input)
+}
+pub fn self_secrets_renew(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::SecretGrantRenewRequest>,
+) -> MemoryResult<crate::task_verb::sdk::SecretGrantView> {
+    crate::task_verb::sdk::host_only(memory, "self.secrets.renew", &input)
+}
+pub fn self_secrets_teardown(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::SecretGrantTeardownRequest>,
+) -> MemoryResult<crate::task_verb::sdk::SecretGrantView> {
+    crate::task_verb::sdk::host_only(memory, "self.secrets.teardown", &input)
+}
+pub fn self_secrets_use(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::SecretGrantUseRequest>,
+) -> MemoryResult<crate::task_verb::sdk::SecretUseAnswer> {
+    crate::task_verb::sdk::host_only(memory, "self.secrets.use", &input)
 }
 pub fn vault_shares_create(
     memory: &Memory<'_>,

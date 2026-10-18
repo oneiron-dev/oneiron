@@ -38,6 +38,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use super::mode::RuntimeMode;
+use super::secret_destinations::RunSecretDestinations;
 
 /// The owner's settings for one official seat. Every field is a label, a
 /// choice, or a custody handle; there is no field a vendor token could go in.
@@ -284,6 +285,11 @@ const SEAT_ENV_REMOVED: [&str; 5] = [
 pub struct OfficialCliSeatExecutor {
     /// Directory the host resolved the live checkout into.
     pub workdir: PathBuf,
+    /// The T1 secret destinations the host registered for the run this
+    /// executor starts processes for (DOOR-124): each filled one is set in
+    /// the process's environment, and the variables the seat removes stay
+    /// removed. `None` for a run with none.
+    pub secret_destinations: Option<RunSecretDestinations>,
 }
 
 fn drain_capped(mut reader: impl Read + Send + 'static) -> std::thread::JoinHandle<Vec<u8>> {
@@ -338,6 +344,9 @@ impl ByoaCliExecutor for OfficialCliSeatExecutor {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if let Some(destinations) = &self.secret_destinations {
+            destinations.apply_env(&mut command);
+        }
         for name in SEAT_ENV_REMOVED {
             command.env_remove(name);
         }

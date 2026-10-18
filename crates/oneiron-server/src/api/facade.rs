@@ -84,6 +84,7 @@ mod residence_doors;
 mod result_doors;
 mod retrieval_doors;
 pub(super) mod role_picks;
+mod secret_grant_doors;
 mod secret_lift_doors;
 mod secret_use_doors;
 mod setting_doors;
