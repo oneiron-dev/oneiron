@@ -1291,6 +1291,51 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_gate_policy_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.gate.policy.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_gate_policy_put(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.gate.policy.put", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_gate_policy_propose(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.gate.policy.propose", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_gate_checker_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.gate.checker.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_gate_checker_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.gate.checker.set", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_settings_learning(
         &self,
         input: serde_json::Value,
