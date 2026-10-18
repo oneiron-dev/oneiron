@@ -8659,6 +8659,195 @@ async fn vault_code_checkout_bind(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_code_checkout_claim(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.checkout.claim")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.checkout.claim", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.checkout.claim", value).await?;
+    let (output, listed) = super::host_doors::vault_code_checkout_claim(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_checkout_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.checkout.get")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.checkout.get", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.checkout.get", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_code_checkout_get(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_checkout_renew(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.checkout.renew")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.checkout.renew", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.checkout.renew", value).await?;
+    let (output, listed) = super::host_doors::vault_code_checkout_renew(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_checkout_reclaim(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.checkout.reclaim")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.checkout.reclaim", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.checkout.reclaim", value).await?;
+    let (output, listed) = super::host_doors::vault_code_checkout_reclaim(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_checkout_takeover(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.checkout.takeover")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.checkout.takeover", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.checkout.takeover", value).await?;
+    let (output, listed) = super::host_doors::vault_code_checkout_takeover(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_checkout_publish(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.checkout.publish")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.checkout.publish", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.checkout.publish", value).await?;
+    let (output, listed) = super::host_doors::vault_code_checkout_publish(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_checkout_settle(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.checkout.settle")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.checkout.settle", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.checkout.settle", value).await?;
+    let (output, listed) = super::host_doors::vault_code_checkout_settle(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_checkout_teardown(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.checkout.teardown")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.checkout.teardown", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.checkout.teardown", value).await?;
+    let (output, listed) = super::host_doors::vault_code_checkout_teardown(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_code_snapshots_ingest(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -16566,6 +16755,14 @@ pub(crate) async fn call_verb(
             vault_code_origin_publications(server, call, input).await
         }
         "vault.code.checkout.bind" => vault_code_checkout_bind(server, call, input).await,
+        "vault.code.checkout.claim" => vault_code_checkout_claim(server, call, input).await,
+        "vault.code.checkout.get" => vault_code_checkout_get(server, call, input).await,
+        "vault.code.checkout.renew" => vault_code_checkout_renew(server, call, input).await,
+        "vault.code.checkout.reclaim" => vault_code_checkout_reclaim(server, call, input).await,
+        "vault.code.checkout.takeover" => vault_code_checkout_takeover(server, call, input).await,
+        "vault.code.checkout.publish" => vault_code_checkout_publish(server, call, input).await,
+        "vault.code.checkout.settle" => vault_code_checkout_settle(server, call, input).await,
+        "vault.code.checkout.teardown" => vault_code_checkout_teardown(server, call, input).await,
         "vault.code.snapshots.ingest" => vault_code_snapshots_ingest(server, call, input).await,
         "vault.code.snapshots.get" => vault_code_snapshots_get(server, call, input).await,
         "vault.code.snapshots.read" => vault_code_snapshots_read(server, call, input).await,

@@ -2332,6 +2332,30 @@ class Oneiron:
         def bind(self, spec):
             """Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential."""
             return json.loads(_translate(lambda: self._client.vault_code_checkout_bind(json.dumps(spec))))
+        def claim(self, spec):
+            """Claim the caller's checkout on an assigned task, with a bounded TTL and declared idempotence."""
+            return json.loads(_translate(lambda: self._client.vault_code_checkout_claim(json.dumps(spec))))
+        def get(self, spec):
+            """Read checkout custody and vault-clock expiry as a task party, without claiming or renewing it."""
+            return json.loads(_translate(lambda: self._client.vault_code_checkout_get(json.dumps(spec))))
+        def renew(self, spec):
+            """Renew the caller's still-live checkout under its exact holder and epoch fence."""
+            return json.loads(_translate(lambda: self._client.vault_code_checkout_renew(json.dumps(spec))))
+        def reclaim(self, spec):
+            """Reclaim an expired declared-idempotent build or verify checkout as an authorized successor at the named epoch."""
+            return json.loads(_translate(lambda: self._client.vault_code_checkout_reclaim(json.dumps(spec))))
+        def takeover(self, spec):
+            """Explicitly take over a checkout as its task owner, including effect work, at the named epoch."""
+            return json.loads(_translate(lambda: self._client.vault_code_checkout_takeover(json.dumps(spec))))
+        def publish(self, spec):
+            """Publish a stored candidate result for checkout settlement under the caller's live epoch; this does not export a Git head."""
+            return json.loads(_translate(lambda: self._client.vault_code_checkout_publish(json.dumps(spec))))
+        def settle(self, spec):
+            """Consume one published checkout result at its epoch as select, apply, release or discard; an identical retry returns its receipt."""
+            return json.loads(_translate(lambda: self._client.vault_code_checkout_settle(json.dumps(spec))))
+        def teardown(self, spec):
+            """Collect the caller's checkout only with a matching durable pushed-head receipt and clear custody; retain dirty or uncertain trees."""
+            return json.loads(_translate(lambda: self._client.vault_code_checkout_teardown(json.dumps(spec))))
     class _VaultCodeSnapshotsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
