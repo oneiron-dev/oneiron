@@ -771,3 +771,7 @@ both bindings and their export-census tests in one change.
 - `self.run.attach`
 - `self.folds.describe`
 - `self.history`
+- `vault.runs.review`
+- `vault.runs.settle`
+- `vault.runs.settlement`
+- `vault.revert_run`

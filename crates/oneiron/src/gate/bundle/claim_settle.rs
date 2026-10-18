@@ -153,11 +153,10 @@ impl Vault {
                 (resolved, tray_receipt)
             }
             GateConsentBundleAction::Decline => {
-                if pending.is_none() {
-                    return Err(Error::InvalidClaimBody(
-                        "claim decline requires its pending consent row",
-                    ));
-                }
+                // A Proposed claim may have no pending obligation (for
+                // example an explicit proposal). The same gate and signed
+                // rejection still apply; close_settled_tray_row handles the
+                // absent row without inventing consent.
                 // A MACHINE claim changes only through its signed history,
                 // whose fold rejects without retracting.
                 let machine =

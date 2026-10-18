@@ -6879,6 +6879,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_runs_review(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.runs.review")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.runs.review", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_runs_settle(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.runs.settle")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.runs.settle", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_runs_settlement(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.runs.settlement")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.runs.settlement", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_revert_run(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.revert_run")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.revert_run", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn self_browser_open(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "self.browser.open")?;
         let output = py
