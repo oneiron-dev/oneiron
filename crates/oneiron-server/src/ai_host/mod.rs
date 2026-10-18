@@ -155,10 +155,10 @@ impl AiHandle {
                 },
                 |models| models.chat,
             ),
-            raw_budget_units: models.map_or(
-                crate::config::models::DEFAULT_RAW_BUDGET_UNITS,
-                |models| models.raw_budget_units,
-            ),
+            raw_budget_units: models
+                .map_or(crate::config::models::DEFAULT_RAW_BUDGET_UNITS, |models| {
+                    models.raw_budget_units
+                }),
             rerank_budget_units: models.map_or(0, |models| models.recall.rerank_budget_units),
             turns: TurnTracker::new(),
             inbound: Arc::new(AtomicU64::new(unix_now())),
