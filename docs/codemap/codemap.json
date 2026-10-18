@@ -8331,6 +8331,25 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CalendarIcsFeedConfigureRequest",
+      "CalendarIcsFeedRegistration",
+      "CalendarIcsFeedRequest",
+      "CalendarIcsFeedStatus",
+      "CalendarIcsPollCompletion",
+      "CalendarIcsPollResult"
+     ],
+     "path": "src/calendar/ingest/feed_door.rs",
+     "purpose": "Owner-installed ICS feeds and public observations of completed polls",
+     "surface": {
+      "enum": 1,
+      "fn": 5,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "CustodyDoorIcsFeedFetcher",
       "IcsFeedFetcher",
       "IcsFeedSource",
@@ -8356,7 +8375,7 @@
      "purpose": "ICS feed poll runner and imported-claim admission (CAL-02, ONE-1784)",
      "surface": {
       "crate-vis": 7,
-      "mod": 1,
+      "mod": 2,
       "re-export": 3
      }
     },
@@ -8374,6 +8393,7 @@
      "purpose": "ICS feed poll queue, cursor store, and poll runner",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "enum": 1,
       "fn": 7,
       "struct": 4
@@ -8679,6 +8699,7 @@
      "purpose": "Calendar EVENT query + projection core (CAL-09)",
      "surface": {
       "crate-vis": 4,
+      "mod": 1,
       "re-export": 4
      }
     },
@@ -8690,6 +8711,20 @@
      "purpose": "Windowed occurrences from lane-admitted calendar facts",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CalendarPassportReadRequest",
+      "CalendarPassportRevision"
+     ],
+     "path": "src/calendar/query/passport.rs",
+     "purpose": "Typed passport heads and recorded revisions through the caller's own read lane",
+     "surface": {
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -52185,7 +52220,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 872
+      "fn": 877
      }
     },
     {
@@ -58317,7 +58352,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 65,
+     "files": 67,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -59705,7 +59740,7 @@
    },
    "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3643,
+   "source_files": 3645,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68249,7 +68284,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 841
+      "fn": 846
      }
     },
     {
@@ -69311,7 +69346,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 842
+      "fn": 847
      }
     },
     {
@@ -72318,13 +72353,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/calendar_doors.rs",
      "purpose": "Owner-authorized calendar file imports through the credential's own handle",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 12
      }
     },
     {
@@ -75362,7 +75397,7 @@
      "path": "src/calendar_host.rs",
      "purpose": "The calendar host's real CalDAV wire and iMIP submission transport",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -75371,6 +75406,16 @@
      "notable": [],
      "path": "src/calendar_host/caldav.rs",
      "purpose": "Real CalDAV discovery, sync-collection and conditional resource writes",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar_host/ics.rs",
+     "purpose": "Conditional ICS GET at the secret-custody door",
      "surface": {
       "crate-vis": 2
      }
@@ -80706,7 +80751,7 @@
      "purpose": "Bytes in memory the work under one row may hold at once: the embedder endpoint's request bodies or answers…"
     },
     "calendar_host": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -81093,7 +81138,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 753,
+   "source_files": 754,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -81564,8 +81609,14 @@
       "CalendarEventView",
       "CalendarFreebusyIntervalDto",
       "CalendarFreebusyRequest",
+      "CalendarIcsFeedConfigureRequest",
+      "CalendarIcsFeedRegistration",
+      "CalendarIcsFeedRequest",
+      "CalendarIcsFeedStatus",
       "CalendarIcsImportReceipt",
       "CalendarIcsImportRequest",
+      "CalendarIcsPollCompletion",
+      "CalendarIcsPollResult",
       "CalendarImipTransportConfig",
       "CalendarImportClaimReceipt",
       "CalendarImportedEvent",
@@ -81574,6 +81625,11 @@
       "CalendarInviteSurfaceMethod",
       "CalendarOccurrenceView",
       "CalendarOccurrencesRequest",
+      "CalendarPassportDirection",
+      "CalendarPassportPresence",
+      "CalendarPassportReadRequest",
+      "CalendarPassportRevision",
+      "CalendarPassportValue",
       "CalendarRangeDto",
       "CalendarReadRequest",
       "CalendarSearchRequest",
@@ -82473,6 +82529,8 @@
       "HydeHostWork",
       "HydeOptions",
       "HydeRequest",
+      "IcsFeedCursorSnapshot",
+      "IcsFeedPollConfig",
       "IdMarks",
       "IdentityActNow",
       "IdentityActNowRequest",
@@ -83474,12 +83532,14 @@
       "ScopedReadResultCalendarEventViewList",
       "ScopedReadResultCalendarFreebusyDto",
       "ScopedReadResultCalendarOccurrenceViewList",
+      "ScopedReadResultCalendarPassportRevisionList",
       "ScopedReadResultCoachInspectionView",
       "ScopedReadResultConsolidationEvidenceSourceList",
       "ScopedReadResultDiagnosticEventViewList",
       "ScopedReadResultHybridSearchHitList",
       "ScopedReadResultLensFrameCard",
       "ScopedReadResultOptionalCalendarEventView",
+      "ScopedReadResultOptionalCalendarPassportRevision",
       "ScopedReadResultOptionalClaimView",
       "ScopedReadResultOptionalDiagnosticEventView",
       "ScopedReadResultOptionalNoteEditorBinding",
@@ -84164,8 +84224,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 702,
-      "struct": 2171
+      "enum": 705,
+      "struct": 2183
      }
     },
     {
