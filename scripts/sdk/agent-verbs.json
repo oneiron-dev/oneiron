@@ -1845,6 +1845,48 @@
       }
     },
     {
+      "name": "vault.assets.ingest",
+      "description": "Lands typed text, image or audio bytes as an ASSET and optional source-bound text form, atomically under the caller's content gate.",
+      "input": "crate::memory::AssetIngestRequest",
+      "output": "crate::memory::AssetIngestReceipt",
+      "call": "memory.ingest_asset(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.assets.resolve",
+      "description": "Serves an admitted ASSET in the reader's declared image, audio or text form, with a handle and committed served-form receipt refs.",
+      "input": "crate::memory::AssetResolveRequest",
+      "output": "crate::claim::ScopedReadResult<crate::memory::AssetResolved>",
+      "call": "memory.resolve_asset_form(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "vault.search.vector",
+      "description": "Searches the text index or one declared embedding space through its query tower, with per-kind raw match evidence and the caller's read receipt.",
+      "input": "crate::memory::VectorSearchRequest",
+      "output": "crate::claim::ScopedReadResult<Vec<crate::memory::VectorSearchHit>>",
+      "call": "memory.query_vector(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true,
+        "validate": "input.validate()?;"
+      },
+      "section": false,
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
       "name": "vault.images.view",
       "description": "The full pixels behind an image's handle (the whole image, a crop or a zoom), recorded as a pull.",
       "input": "crate::memory::ImageViewRequest",
