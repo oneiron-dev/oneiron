@@ -163,6 +163,10 @@ impl ActionDispatch {
 pub struct ActionHostBinding<'a> {
     pub verb_door: Option<Arc<dyn AgentVerbDoor>>,
     pub owner: Option<&'a AuthenticatedOwner>,
+    /// Where the owner's say-so reached the host, beside `owner`: an owner
+    /// setting records it in the owner's act (WILL-PLAN L13 row 01), audit
+    /// only. Unset, the setting keeps no act record.
+    pub owner_surface: Option<crate::authority::ActSurface>,
     /// The live agent run the call acts for, as the host that runs it sealed
     /// its lease (`HostSelfDispatcher::task_host_binding`). Read live again
     /// at every call, and before any replay answers.
@@ -415,6 +419,7 @@ impl ActionRegistry {
         let binding = ActionHostBinding {
             verb_door: None,
             owner: Some(owner),
+            owner_surface: None,
             live_run: None,
             planner: None,
         };
@@ -431,6 +436,7 @@ impl ActionRegistry {
         let ActionHostBinding {
             verb_door,
             owner,
+            owner_surface,
             live_run,
             planner,
         } = binding;
@@ -589,7 +595,9 @@ impl ActionRegistry {
             None => GatedActorWrite::new(vault, actor, run_id.to_hex())?,
         };
         let dispatcher = match owner {
-            Some(proof) => dispatcher.with_authenticated_owner(proof),
+            Some(proof) => dispatcher
+                .with_authenticated_owner(proof)
+                .with_owner_surface(owner_surface),
             None => dispatcher,
         };
         let worded = verb_door.clone();

@@ -5,7 +5,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::attempt_queue::{AttemptId, AttemptQueue, EnqueueAttempt, EnqueueOutcome, RetryAttempt};
+use crate::attempt_queue::{
+    AttemptId, AttemptQueue, AttemptRecord, EnqueueAttempt, EnqueueOutcome, RetryAttempt,
+};
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::ports::EdgeDirection;
@@ -395,6 +397,21 @@ pub(super) fn retry_marker_in_txn(
         now.saturating_sub(history.max_age_secs),
     )?;
     Ok(())
+}
+
+impl Vault {
+    /// The live tagging marker owed for `turn` under the configured tagger,
+    /// when one is pending: queued, leased or scheduled for its retry. A
+    /// settled marker has left the job ledger, so `None` beside saved tags
+    /// or a settling trace reads as settled, and `None` alone as never
+    /// marked under the configured checkpoint. An unarmed vault has none.
+    pub fn tagging_marker(&self, turn: &EntityId) -> Result<Option<AttemptRecord>> {
+        let Some(tagging) = self.config.tagging.as_ref() else {
+            return Ok(None);
+        };
+        let queue = AttemptQueue::from_store(&self.store);
+        queue.pending_dedupe(TAGGING_MARKER_KIND, &dedupe_key(turn, tagging))
+    }
 }
 
 /// The turn doors' half of the outbox rule (a base witness, an off-record

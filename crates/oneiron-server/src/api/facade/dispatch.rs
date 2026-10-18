@@ -1176,6 +1176,112 @@ async fn vault_affect_annotations_put(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_tagging_status(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.tagging.status",
+        oneiron::memory::RoomTurnHandle::serves("vault.tagging.status"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "turn_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.tagging.status",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_tagging_tags(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.tagging.tags",
+        oneiron::memory::RoomTurnHandle::serves("vault.tagging.tags"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "turn_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.tagging.tags",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_tagging_history(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.tagging.history",
+        oneiron::memory::RoomTurnHandle::serves("vault.tagging.history"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "turn_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.tagging.history",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_tagging_mentions(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.tagging.mentions",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_affect_claims_consolidate(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -1463,9 +1569,15 @@ async fn vault_export(
                 .export_with_host_action_listing(&input, &action, auth.locality())?
         }
         (None, None, Some(owner)) => {
-            server
-                .vault
-                .export_with_authenticated_owner_listing(&input, &owner, auth.locality())?
+            // Its receipt records the owner's act, with where
+            // he spoke from (audit only).
+            let surface = super::owner_binding::act_surface(auth);
+            server.vault.export_with_authenticated_owner_listing(
+                &input,
+                &owner,
+                surface,
+                auth.locality(),
+            )?
         }
         (None, None, None) => {
             return Err(FacadeApiError::forbidden(
@@ -13590,6 +13702,28 @@ async fn vault_notes_create(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_notes_author_take(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.notes.author_take",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_notes_from_entity(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -14571,6 +14705,10 @@ pub(crate) async fn call_verb(
             vault_retrieval_weights_configure(server, call, input).await
         }
         "vault.affect.annotations.put" => vault_affect_annotations_put(server, call, input).await,
+        "vault.tagging.status" => vault_tagging_status(server, call, input).await,
+        "vault.tagging.tags" => vault_tagging_tags(server, call, input).await,
+        "vault.tagging.history" => vault_tagging_history(server, call, input).await,
+        "vault.tagging.mentions" => vault_tagging_mentions(server, call, input).await,
         "vault.affect.claims.consolidate" => {
             vault_affect_claims_consolidate(server, call, input).await
         }
@@ -15352,6 +15490,7 @@ pub(crate) async fn call_verb(
             vault_summaries_proposals_reject(server, call, input).await
         }
         "vault.notes.create" => vault_notes_create(server, call, input).await,
+        "vault.notes.author_take" => vault_notes_author_take(server, call, input).await,
         "vault.notes.from_entity" => vault_notes_from_entity(server, call, input).await,
         "vault.notes.read" => vault_notes_read(server, call, input).await,
         "vault.notes.history" => vault_notes_history(server, call, input).await,

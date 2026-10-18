@@ -80,6 +80,10 @@ vaultRecall(query: string, effort: string | undefined, scope: RecallScope | unde
 vaultRetrievalWeightsGet(input: unknown): unknown
 vaultRetrievalWeightsConfigure(input: unknown): unknown
 vaultAffectAnnotationsPut(input: unknown): unknown
+vaultTaggingStatus(input: unknown): unknown
+vaultTaggingTags(input: unknown): unknown
+vaultTaggingHistory(input: unknown): unknown
+vaultTaggingMentions(input: unknown): unknown
 vaultAffectClaimsConsolidate(input: unknown): unknown
 vaultRetrievalRecall(input: unknown): unknown
 vaultRetrievalRuns(input: unknown): unknown
@@ -615,6 +619,7 @@ vaultSummariesProposalsMerge(input: unknown): unknown
 vaultSummariesProposalsSwitch(input: unknown): unknown
 vaultSummariesProposalsReject(input: unknown): unknown
 vaultNotesCreate(input: unknown): unknown
+vaultNotesAuthorTake(input: unknown): unknown
 vaultNotesFromEntity(input: unknown): unknown
 vaultNotesRead(input: unknown): unknown
 vaultNotesHistory(input: unknown): unknown
