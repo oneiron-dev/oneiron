@@ -175,11 +175,8 @@ impl Vault {
         epoch_cutoff: u64,
     ) -> Result<Vec<EntityId>> {
         let txn = self.store.env.read_txn()?;
-        let worlds = crate::federation::courtesy_ask_worlds_here(
-            &self.authority_view_readonly_in_txn(&txn)?,
-            pact_id,
-            worlds,
-        )?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let worlds = crate::federation::courtesy_ask_worlds_here(&fold, pact_id, worlds)?;
         let prefix = format!("{}:", bytes_to_hex_lower(pact_id));
         let base = crate::claim::base_world_id();
         let mut candidates = BTreeSet::new();
