@@ -1575,6 +1575,8 @@ export class Oneiron {
     /** Retracts claims by exact claim or by subject and predicate; never a hard delete. */
     forget: (input: Facade.ForgetRequest): Facade.CommitReceipt[] => this.#call(() => this.#client.vaultForget(input) as Facade.CommitReceipt[]),
     booking: {
+      /** Parses one scheduling constraint on a live published booking page as the caller, returning public slot controls, an email continuation or a deflect; this never holds or confirms a booking. */
+      constraint_turn: (input: Facade.BookingConstraintTurnRequest): Facade.BookingConstraintTurnResponse => this.#call(() => this.#client.vaultBookingConstraintTurn(input) as Facade.BookingConstraintTurnResponse),
       /** The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority. */
       page_token: (input: Facade.BookingPageTokenRequest): Facade.BookingPageTokenResponse => this.#call(() => this.#client.vaultBookingPageToken(input) as Facade.BookingPageTokenResponse),
     },

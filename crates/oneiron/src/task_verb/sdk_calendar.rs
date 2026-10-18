@@ -23,3 +23,55 @@ pub struct CalendarFreebusyRequest {
     pub calendars: Vec<CalendarSel>,
     pub range: CalendarRangeDto,
 }
+
+/// One constraint-field turn, addressed by a live public booking-page token.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BookingConstraintTurnRequest {
+    pub page_token: String,
+    pub turn: BookingConstraintTurnInput,
+}
+
+/// The existing public constraint-turn body, shared by both transports.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BookingConstraintTurnInput {
+    pub event_type: crate::booking::EventTypeKey,
+    pub window: BookingConstraintTurnWindow,
+    pub visitor_tz: String,
+    pub free_text: String,
+    pub session_ref: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BookingConstraintTurnWindow {
+    pub start: u64,
+    pub end: u64,
+}
+
+/// Offers, an email continuation, or a deflect; never booking authority.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum BookingConstraintTurnResponse {
+    Slots {
+        card: crate::lens::GeneratedUiCard,
+        flex_used: bool,
+        hold: BookingConstraintHoldContext,
+    },
+    ContinueByEmail {
+        continuation: crate::booking::agent_front::ConstraintContinuation,
+    },
+    Deflect {
+        card: crate::lens::GeneratedUiCard,
+    },
+}
+
+/// The rest of an explicit slot selection's hold input, not a hold itself.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BookingConstraintHoldContext {
+    pub event_type: crate::booking::EventTypeKey,
+    pub visitor_tz: String,
+    pub constraint: crate::booking::ConstraintObject,
+    pub session_ref: String,
+}

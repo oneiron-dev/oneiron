@@ -21,7 +21,7 @@ macro_rules! lens_token_type {
     };
 
     ($name:ident, $context:literal, $reject_forbidden_capability:expr) => {
-        #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, schemars::JsonSchema)]
         pub struct $name(String);
 
         impl $name {
@@ -94,7 +94,7 @@ lens_token_type!(SelfUiActionId, "self.ui action id", true);
 lens_token_type!(SelfUiOptionValue, "self.ui option value");
 lens_token_type!(SelfUiStateKey, "self.ui state key");
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LensHandleRef {
     pub name: LensHandleName,
@@ -104,7 +104,7 @@ pub struct LensHandleRef {
 /// The ordering/hash derives are additive: they let a bound-read set be held in a
 /// canonical `BTreeSet`/`BTreeMap` so behavior diffs are deterministic. They add no
 /// wire meaning — a role is still an opaque closed token.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LensHandleRole {
     ClaimSet,

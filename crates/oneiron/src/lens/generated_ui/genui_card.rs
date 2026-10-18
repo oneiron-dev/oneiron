@@ -17,7 +17,7 @@ use crate::{Error, Result};
 use serde::{Deserialize, Deserializer, Serialize, de};
 use std::collections::HashSet;
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GeneratedUiCard {
     pub protocol_version: u16,

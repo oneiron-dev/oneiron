@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use tokio::time::Instant;
 
-use super::BookingTransportContext;
+use super::BookingAdmissionContext;
 use crate::api::booking_anti_abuse::BookingHttpDisposition;
 use crate::error::ApiError;
 use crate::server::SyncServer;
@@ -28,7 +28,11 @@ pub(super) struct Turn<'a> {
 }
 
 impl<'a> Turn<'a> {
-    pub(super) fn new(server: &'a SyncServer, transport: &BookingTransportContext) -> Self {
+    pub(super) fn new(
+        server: &'a SyncServer,
+        transport: impl Into<BookingAdmissionContext>,
+    ) -> Self {
+        let transport = transport.into();
         Self {
             server,
             authenticated: transport.credential.is_some(),

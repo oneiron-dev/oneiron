@@ -24,7 +24,7 @@ const MAX_STATE_PATCH_PATH_BYTES: usize =
 
 /// Ruled interaction tiers (ONEIRON-ARCH-0048 G2). Deterministic and model tiers
 /// yield triggers only; execution stays behind the host-stamped write chokepoints.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GeneratedUiActionTier {
     Local,
@@ -32,7 +32,7 @@ pub enum GeneratedUiActionTier {
     ModelRoundTrip,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GeneratedUiActionDeclaration {
     pub element_id: LensAtomId,
@@ -98,7 +98,7 @@ pub struct GeneratedUiActionEvent {
     pub occurred_at: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, schemars::JsonSchema)]
 #[serde(
     tag = "type",
     content = "value",
@@ -144,7 +144,7 @@ impl Serialize for SelfUiStateValue {
 
 /// The closed set of control properties a `$bind` descriptor may drive. There is no
 /// expression language: a binding names one state key and one property, nothing else.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SelfUiBindableProperty {
     Checked,
@@ -167,7 +167,7 @@ impl SelfUiBindableProperty {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SelfUiBinding {
     pub state_key: SelfUiStateKey,
@@ -176,7 +176,8 @@ pub struct SelfUiBinding {
 
 /// Typed `$state` snapshot. The wire shape is the map itself — `{"$state":{"<key>":…}}`
 /// — so `/$state/<key>` addresses an entry with no `values` wrapper segment.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, schemars::JsonSchema)]
+#[schemars(transparent)]
 pub struct GeneratedUiStateSnapshot {
     values: BTreeMap<SelfUiStateKey, SelfUiStateValue>,
 }

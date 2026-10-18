@@ -11525,6 +11525,30 @@ async fn vault_forget(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_booking_constraint_turn(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.booking.constraint_turn")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.booking.constraint_turn", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.booking.constraint_turn", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_booking_constraint_turn(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn vault_booking_page_token(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -15541,6 +15565,7 @@ pub(crate) async fn call_verb(
         "vault.remember" => vault_remember(server, call, input).await,
         "vault.claims.retract" => vault_claims_retract(server, call, input).await,
         "vault.forget" => vault_forget(server, call, input).await,
+        "vault.booking.constraint_turn" => vault_booking_constraint_turn(server, call, input).await,
         "vault.booking.page_token" => vault_booking_page_token(server, call, input).await,
         "vault.calendar.create" => vault_calendar_create(server, call, input).await,
         "vault.calendar.ics.import" => vault_calendar_ics_import(server, call, input).await,

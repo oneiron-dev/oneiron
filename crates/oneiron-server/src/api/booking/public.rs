@@ -55,7 +55,7 @@ async fn public_booking_not_found_response() -> ApiError {
 
 /// Configuration locates the internal subject; only the durable owner claim
 /// grants public access. Every miss has the same response and no token echo.
-pub(super) fn resolve_public_booking_page(
+pub(crate) fn resolve_public_booking_page(
     server: &SyncServer,
     page_token: &str,
 ) -> Result<(EntityId, BookingPagePublication), ApiError> {
@@ -208,6 +208,7 @@ async fn public_booking_constraint_turn(
         page_ref,
         publication,
     };
+    let transport = BookingAdmissionContext::from(&transport);
     super::front::run_public_constraint_turn(&server, authority, input, &transport)
         .await
         .map(Json)

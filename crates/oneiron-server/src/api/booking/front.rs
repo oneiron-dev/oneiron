@@ -23,17 +23,20 @@ use oneiron::booking::agent_api::{
     BookingAvailabilityInput, BookingConstraintInput, BookingOperationRequest,
 };
 use oneiron::booking::agent_front::{
-    ConstraintContinuation, ConstraintFrontConfig, ConstraintFrontOutcome, ConstraintTurnRequest,
-    constraint_deflect, run_constraint_turn,
+    ConstraintFrontConfig, ConstraintFrontOutcome, ConstraintTurnRequest, constraint_deflect,
+    run_constraint_turn,
 };
 use oneiron::booking::constraint::ConstraintSessionState;
 use oneiron::booking::publication::PublicBookingAuthority;
 use oneiron::booking::{
-    BookingError, ConstraintObject, EventTypeKey, RungProjection, SessionKey, SlotOracle,
-    SolveRequest, SolveResult, bounded_public_slots, slot_mask,
+    BookingError, RungProjection, SessionKey, SlotOracle, SolveRequest, SolveResult,
+    bounded_public_slots, slot_mask,
 };
-use oneiron::lens::GeneratedUiCard;
-use serde::{Deserialize, Serialize};
+use oneiron::task_verb::sdk::BookingConstraintHoldContext as HoldContext;
+pub(super) use oneiron::task_verb::sdk::{
+    BookingConstraintTurnInput as ConstraintTurnInput,
+    BookingConstraintTurnResponse as ConstraintTurnResponse,
+};
 
 use super::admission::{admission_facts, admission_short_circuit};
 use super::free_text::{on_parse_seat, parse_seat_settings};
@@ -41,7 +44,7 @@ use super::helpers::{booking_error, now_secs};
 use super::lifecycle::{ServerBookingOracle, booking_oracle};
 use super::subject::session_key;
 use super::validate::validate_operation_shape;
-use super::{BookingTransportContext, public_availability, turn};
+use super::{BookingAdmissionContext, public_availability, turn};
 use crate::api::booking_anti_abuse::enforce_slot_list;
 use crate::error::ApiError;
 use crate::ladder_poll::block_on;
@@ -60,68 +63,17 @@ struct FrontSessionBound {
     idle_expiry_secs: u64,
 }
 
-/// One visitor turn on a published page's constraint field.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct ConstraintTurnInput {
-    event_type: EventTypeKey,
-    window: TurnWindow,
-    /// The zone the page detected. The sentence may name another.
-    visitor_tz: String,
-    free_text: String,
-    session_ref: String,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct TurnWindow {
-    start: u64,
-    end: u64,
-}
-
-/// The three terminal shapes of a turn, on the wire. The oracle's raw solve
-/// never travels: the card holds the offers.
-#[derive(Debug, Serialize)]
-#[serde(tag = "outcome", rename_all = "snake_case")]
-pub(super) enum ConstraintTurnResponse {
-    /// One voice line and up to three slot buttons, each a real public slot.
-    Slots {
-        card: GeneratedUiCard,
-        flex_used: bool,
-        hold: HoldContext,
-    },
-    /// No fit: the canonical constraint the email continuation carries. No
-    /// raw sentence.
-    ContinueByEmail {
-        continuation: ConstraintContinuation,
-    },
-    /// Off-topic: the one configured line, and no control.
-    Deflect { card: GeneratedUiCard },
-}
-
-/// The rest of a `verbs/hold` input for a `booking.select_slot` click: the
-/// click supplies `selected_slot` from the button's two arguments and its own
-/// `idempotency_key`. The constraint is the one the oracle solved, so the
-/// hold's offerability check re-solves the same bytes.
-#[derive(Debug, Serialize)]
-pub(super) struct HoldContext {
-    event_type: EventTypeKey,
-    visitor_tz: String,
-    constraint: ConstraintObject,
-    session_ref: String,
-}
-
-/// Runs one admitted turn for an anonymous visitor of a live publication.
+/// Runs one admitted public turn for a visitor or credential-bound caller.
 ///
 /// Order: the listing's shape and publication checks (the event card is
 /// listed, the constraint field enabled), the owner's front config and the
 /// parse seat, the one admission call, then the turn on a blocking thread,
 /// then a recheck that the publication did not change while it ran.
-pub(super) async fn run_public_constraint_turn(
+pub(crate) async fn run_public_constraint_turn(
     server: &Arc<SyncServer>,
     authority: PublicBookingAuthority,
     input: ConstraintTurnInput,
-    transport: &BookingTransportContext,
+    transport: &BookingAdmissionContext,
 ) -> Result<ConstraintTurnResponse, ApiError> {
     let page_ref = authority.page_ref;
     let window = TimeRange {

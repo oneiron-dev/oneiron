@@ -70,6 +70,7 @@ mod turn;
 mod validate;
 
 use self::admission::{admission_facts, admission_short_circuit};
+pub(crate) use self::front::run_public_constraint_turn;
 pub(crate) use self::constants::BOOKING_ROUTE_PREFIX;
 use self::helpers::{booking_error, now_secs, slot_range};
 pub(crate) use self::instructions::{
@@ -80,6 +81,8 @@ use self::lifecycle::{booking_oracle, run_booking_verb};
 use self::offerability::unoffered_slot_answer;
 pub(crate) use self::page_token::{booking_page_token, resolve_booking_page};
 pub(super) use self::public::public_booking_router;
+pub(crate) use self::public::resolve_public_booking_page;
+pub(crate) use self::transport::{BookingAdmissionContext, credential_transport_context};
 #[cfg(test)]
 pub(crate) use self::public::turn_tests::cross_the_booking_windows;
 use self::subject::{resolve_booker_contact, session_key};
@@ -107,6 +110,7 @@ const _: fn(EntityId) -> String = booking_page_token;
 pub(crate) enum BookingTransport {
     PublicHttp,
     AnonymousHttp,
+    Credential,
 }
 
 impl BookingTransport {
@@ -114,6 +118,7 @@ impl BookingTransport {
         match self {
             Self::PublicHttp => "public_http",
             Self::AnonymousHttp => "anonymous_http",
+            Self::Credential => "credential",
         }
     }
 }

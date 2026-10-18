@@ -10,7 +10,7 @@ use crate::lens::validate::validate_lens_tree;
 use crate::lens::wire_ids::{LensAtomId, LensHandleRef, MAX_LENS_TREE_DEPTH};
 use crate::lens::wire_limits::{LimitedVecSeed, next_bounded_lens_entries, with_lens_tree_budget};
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct LensNode {
     pub id: LensAtomId,
     pub atom: LensAtom,

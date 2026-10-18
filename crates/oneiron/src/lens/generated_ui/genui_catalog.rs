@@ -12,7 +12,7 @@ use crate::lens::wire_ids::LensAtomId;
 use crate::lens::wire_limits::deserialize_limited_vec;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GeneratedUiCatalog {
     LensAtomKit,

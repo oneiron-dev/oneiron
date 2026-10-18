@@ -15,7 +15,8 @@ use crate::lens::self_ui::SelfUiControl;
 use crate::lens::validate::{LensBudget, fallback_lens_text};
 use crate::lens::wire_limits::serialize_tagged;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, schemars::JsonSchema)]
+#[schemars(tag = "kind", content = "props", rename_all = "snake_case")]
 pub enum LensAtom {
     TextBlock(TextBlockAtom),
     LedgerRow(LedgerRowAtom),

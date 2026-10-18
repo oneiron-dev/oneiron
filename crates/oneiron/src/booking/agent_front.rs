@@ -165,7 +165,7 @@ pub struct ConstraintSlotReply {
 
 /// The rung-2 envelope. It carries the same canonical constraint the oracle
 /// saw and no raw free text.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, schemars::JsonSchema)]
 pub struct ConstraintContinuation {
     pub event_type: EventTypeKey,
     pub visitor_tz: String,
