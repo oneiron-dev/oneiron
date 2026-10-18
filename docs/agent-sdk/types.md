@@ -987,6 +987,8 @@ class Oneiron:
         @property
         def research(self) -> "Oneiron._VaultResearchVerbs": ...
         @property
+        def evals(self) -> "Oneiron._VaultEvalsVerbs": ...
+        @property
         def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs": ...
         @property
         def courtesy_delete(self) -> "Oneiron._VaultCourtesyDeleteVerbs": ...
@@ -1419,6 +1421,10 @@ class Oneiron:
         def erase_confirm(self, spec: Facade.RecordEraseConfirmRequest) -> Facade.RecordEraseOutcome:
             """Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead."""
     class _VaultResearchVerbs:
+        def create_child(self, spec: Facade.ResearchChildWire) -> Facade.ResearchChildReceipt:
+            """The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave."""
+        def archive(self, spec: Facade.ResearchArchiveWire) -> Facade.ResearchArchive:
+            """Reads the complete retained campaign record, including every pruned, buggy and woven candidate, original search and held-out evidence, selection rounds and promotion receipts, under the controller gate."""
         def bind(self, spec: Facade.ResearchBindWire) -> Facade.ResearchBinding:
             """Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it."""
         def fork(self, spec: Facade.ResearchForkWire) -> Facade.ExperimentNode:
@@ -1451,6 +1457,14 @@ class Oneiron:
             """Refunds a work reservation nothing was spent on."""
         def record_benchmark(self, spec: Facade.ResearchBenchmarkWire) -> Facade.SelectionBenchmark:
             """Records an estimator version's held-out selection benchmark against the DGM parent formula, once per version; a win of at least 30 cases lets its information gain rank parents."""
+    class _VaultEvalsVerbs:
+        def inventory(self, spec: Facade.EvalInventoryWire) -> Facade.EvalAuthoringInventory:
+            """The owner reads the metadata-only eval-authoring inventory: real receipt families, grounded case candidates, date-cut cohorts and exposure counts. Pin its built_at and digest for cohort setup."""
+        @property
+        def cohorts(self) -> "Oneiron._VaultEvalsCohortsVerbs": ...
+    class _VaultEvalsCohortsVerbs:
+        def setup(self, spec: Facade.EvalCohortSetup) -> Facade.EvalAuthoringReport:
+            """The owner sets up sealed cohorts from a pinned real inventory through the existing family, case and audited cut doors. Reports refused decisions; never serves sealed content or fabricates labels or skill provenance."""
     class _VaultLegalHoldsVerbs:
         def place(self, spec: Facade.LegalHoldPlaceRequest) -> Facade.LegalHold:
             """The owner places a customer legal hold on the named records or gate partitions."""
@@ -1671,6 +1685,8 @@ class Oneiron:
         def origin(self) -> "Oneiron._VaultCodeOriginVerbs": ...
         @property
         def checkout(self) -> "Oneiron._VaultCodeCheckoutVerbs": ...
+        @property
+        def snapshots(self) -> "Oneiron._VaultCodeSnapshotsVerbs": ...
     class _VaultCodeSymbolsVerbs:
         def declare(self, spec: Facade.CodeSymbolsDeclareRequest) -> Facade.CodeSymbolsDeclared:
             """Declare the current repository symbols a task will touch, held by the caller until host time plus ttl_seconds. Owner only. An overlap waits behind the tasks it names, never refused; it grants no write, approval or landing."""
@@ -1678,6 +1694,8 @@ class Oneiron:
             """Renew the live symbol declaration the caller holds for one task by its declared lifetime. Owner only."""
         def release(self, spec: Facade.CodeSymbolsTaskRequest) -> Facade.CodeSymbolsReleased:
             """Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing."""
+        def definitions(self, spec: Facade.CodeSnapshotDefinitionsRequest) -> Facade.CodeSnapshotDefinitionsView:
+            """Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language."""
     class _VaultCodeOriginVerbs:
         @property
         def authority(self) -> "Oneiron._VaultCodeOriginAuthorityVerbs": ...
@@ -1691,6 +1709,13 @@ class Oneiron:
     class _VaultCodeCheckoutVerbs:
         def bind(self, spec: Facade.CheckoutDoorBindRequest) -> Facade.CheckoutDoorBinding:
             """Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential."""
+    class _VaultCodeSnapshotsVerbs:
+        def ingest(self, spec: Facade.CodeSnapshotIngestRequest) -> Facade.CodeSnapshotView:
+            """Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt."""
+        def get(self, spec: Facade.CodeSnapshotRequest) -> Facade.CodeSnapshotView | None:
+            """Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant."""
+        def read(self, spec: Facade.CodeSnapshotReadRequest) -> Facade.CodeSnapshotPinnedFile | None:
+            """Read one UTF-8 file and its SHA-256 from the frozen blobs of a pinned code snapshot, never from the folder on disk. Owner only."""
     class _VaultAgentsVerbs:
         def create(self, spec: Facade.AgentDefinitionCreateRequest) -> Facade.AgentDefinitionView:
             """The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched."""
