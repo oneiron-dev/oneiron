@@ -312,6 +312,9 @@ class Oneiron:
     @property
     def reveal(self) -> "Oneiron._RevealVerbs":
         return Oneiron._RevealVerbs(self._client)
+    @property
+    def host(self) -> "Oneiron._HostVerbs":
+        return Oneiron._HostVerbs(self._client)
     def execute_code(self, spec):
         """Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent."""
         return json.loads(_translate(lambda: self._client.execute_code(json.dumps(spec))))
@@ -4183,6 +4186,24 @@ class Oneiron:
         def describe(self, spec):
             """What a secret handle names, where it was found and what a reveal of it would do now; never the value."""
             return json.loads(_translate(lambda: self._client.reveal_describe(json.dumps(spec))))
+    class _HostVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def compact(self, spec):
+            """Compacts a conversation window on the configured cheap backend, preserving add-only hook pins through the existing gate and keyframe mint."""
+            return json.loads(_translate(lambda: self._client.host_compact(json.dumps(spec))))
+        def wake(self, spec):
+            """Schedules the host wake through its typed trigger; pre-hook Skip keeps its reason and Timer includes the engine maintenance lanes."""
+            return json.loads(_translate(lambda: self._client.host_wake(json.dumps(spec))))
+        @property
+        def budget(self) -> "Oneiron._HostBudgetVerbs":
+            return Oneiron._HostBudgetVerbs(self._client)
+    class _HostBudgetVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def hit(self, spec):
+            """Notifies a spent durable budget seat under Suspend, retaining the original line, root payer, cap and accounting for hook follow-up work."""
+            return json.loads(_translate(lambda: self._client.host_budget_hit(json.dumps(spec))))
     class _AiVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

@@ -2121,6 +2121,21 @@ export_facade! {
     let output = client.vault_shares_view(&input)?;
     crate::codec::lift_record("vault.shares.view", &output)
 };
+"host.compact" => fn host_compact(&self, input: HostCompactRequest) -> HostCompactResult = |client| {
+    let input: oneiron::runtime_hooks::host_doors::HostCompactRequest = crate::codec::lower_record("host.compact", input)?;
+    let output = client.host_compact(&input)?;
+    crate::codec::lift_record("host.compact", &output)
+};
+"host.wake" => fn host_wake(&self, input: HostWakeRequest) -> HostWakeResult = |client| {
+    let input: oneiron::runtime_hooks::host_doors::HostWakeRequest = crate::codec::lower_record("host.wake", input)?;
+    let output = client.host_wake(&input)?;
+    crate::codec::lift_record("host.wake", &output)
+};
+"host.budget.hit" => fn host_budget_hit(&self, input: HostBudgetHitRequest) -> HostBudgetHitResult = |client| {
+    let input: oneiron::runtime_hooks::host_doors::HostBudgetHitRequest = crate::codec::lower_record("host.budget.hit", input)?;
+    let output = client.host_budget_hit(&input)?;
+    crate::codec::lift_record("host.budget.hit", &output)
+};
 "vault.hooks.replay" => fn vault_hooks_replay(&self, input: HooksReplayRequest) -> Vec<HookReplayRow> = |client| {
     let input: oneiron::task_verb::sdk::HooksReplayRequest = crate::codec::lower_record("vault.hooks.replay", input)?;
     let output = client.vault_hooks_replay(&input)?;
