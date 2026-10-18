@@ -3828,7 +3828,9 @@ impl AgentVerb {
             Self::SelfBrowserObserve => {
                 "Observes the current page of the run's browser session, in pages: an answer with next goes on, and observe with that cursor reads the next page."
             }
-            Self::SelfBrowserFind => "Finds the page rows whose role and name match.",
+            Self::SelfBrowserFind => {
+                "Finds the page rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page."
+            }
             Self::SelfBrowserClick => {
                 "Clicks one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor."
             }
@@ -3842,7 +3844,7 @@ impl AgentVerb {
                 "Picks the option of a select element by its label, text or value; a long page's observation comes in pages, read on with observe and its next cursor."
             }
             Self::SelfBrowserWaitFor => {
-                "Waits until a page row its refs name, or else some row matching a role and name, is there."
+                "Waits until a page row its refs name, or else some row matching a role and name, is there; many rows come in pages, read on with find and its next cursor."
             }
             Self::SelfBrowserExpect => {
                 "Checks that a page row is present or absent, and holds a given value."
@@ -3875,25 +3877,37 @@ impl AgentVerb {
                 "Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record."
             }
             Self::SelfDesktopOpen => {
-                "Opens an app of the run's own desktop guest by app:name and observes its window."
+                "Opens an app of the run's own desktop guest by app:name and observes its window; a long window's observation comes in pages, read on with observe and its next cursor."
             }
-            Self::SelfDesktopObserve => "Observes the current window of the run's desktop guest.",
-            Self::SelfDesktopFind => "Finds the window rows whose role and name match.",
-            Self::SelfDesktopClick => "Clicks one window target and observes the result.",
+            Self::SelfDesktopObserve => {
+                "Observes the current window of the run's desktop guest, in pages: an answer with next goes on, and observe with that cursor reads the next page."
+            }
+            Self::SelfDesktopFind => {
+                "Finds the window rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page."
+            }
+            Self::SelfDesktopClick => {
+                "Clicks one window target and observes the result; a long window's observation comes in pages, read on with observe and its next cursor."
+            }
             Self::SelfDesktopClickAt => {
-                "Clicks a point of a held screenshot, mapped onto the window."
+                "Clicks a point of a held screenshot, mapped onto the window; a long window's observation comes in pages, read on with observe and its next cursor."
             }
-            Self::SelfDesktopType => "Types text into one window target and observes the result.",
+            Self::SelfDesktopType => {
+                "Types text into one window target and observes the result; a long window's observation comes in pages, read on with observe and its next cursor."
+            }
             Self::SelfDesktopSelect => {
-                "Sets the value of a combo box or list target by its option label."
+                "Sets the value of a combo box or list target by its option label; a long window's observation comes in pages, read on with observe and its next cursor."
             }
             Self::SelfDesktopKey => {
-                "Presses one key, with modifiers, on a window target or the window's focus."
+                "Presses one key, with modifiers, on a window target or the window's focus; a long window's observation comes in pages, read on with observe and its next cursor."
             }
-            Self::SelfDesktopHotkey => "Presses a key combination in the current window.",
-            Self::SelfDesktopScroll => "Scrolls a window target, or the window, by steps.",
+            Self::SelfDesktopHotkey => {
+                "Presses a key combination in the current window; a long window's observation comes in pages, read on with observe and its next cursor."
+            }
+            Self::SelfDesktopScroll => {
+                "Scrolls a window target, or the window, by steps; a long window's observation comes in pages, read on with observe and its next cursor."
+            }
             Self::SelfDesktopWaitFor => {
-                "Waits until a window row its refs name, or else some row matching a role and name, is there."
+                "Waits until a window row its refs name, or else some row matching a role and name, is there; many rows come in pages, read on with find and its next cursor."
             }
             Self::SelfDesktopExpect => {
                 "Checks that a window row is present or absent, and holds a given value."
@@ -3905,11 +3919,11 @@ impl AgentVerb {
             Self::SelfDesktopCrop => "Crops a held image to a rectangle.",
             Self::SelfDesktopZoom => "Zooms into a rectangle of a held image.",
             Self::SelfDesktopBatch => {
-                "Runs one batched program of desktop steps for a subgoal, stopping at the first step that fails."
+                "Runs one batched program of desktop steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor."
             }
             Self::SelfDesktopWindows => "Lists the desktop guest's windows, or one app's.",
             Self::SelfDesktopWindow => {
-                "Moves the session onto another desktop window and observes it."
+                "Moves the session onto another desktop window and observes it; a long window's observation comes in pages, read on with observe and its next cursor."
             }
             Self::SelfDesktopHandover => {
                 "Asks a person to take the desktop over, saying why; until they hand it back, every desktop verb refuses desktop_taken_over, and the answer after carries the takeover's record."

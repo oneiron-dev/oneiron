@@ -52,7 +52,7 @@ declare namespace Sdk {
   type IdentityActNow = { state: "settled"; entity: string } | { state: "unknown" } | { state: "deciding"; ask: string } | { state: "needs_person"; ask: string; card: unknown };
   type InboxListRequest = { after?: string | null; limit?: number | null };
   type NotificationKind = "job_completed" | "job_failed" | "job_cancelled" | "job_abandoned" | "finding" | "event_received" | "import_finished" | "digest" | "ask";
-  type NotificationSource = { producer: string; event: string; job_kind?: string | null; attempt?: string | null; run?: string | null; result?: string | null };
+  type NotificationSource = { producer: string; event: string; job_kind?: string | null; attempt?: string | null; run?: string | null; result?: string | null; detail?: string | null };
   type NotificationRow = { id: string; learned_at: number; kind: NotificationKind; source: NotificationSource; subject_refs: string[]; created_at: number; origin_conversation?: string | null; seen: boolean; acked: boolean };
   type NotificationPage = { rows: NotificationRow[]; next_after?: string | null };
   type NotificationMark = "seen" | "acked";
@@ -1044,14 +1044,14 @@ declare namespace Sdk {
   type Observation = { seq: number; url: string; title: string; full: boolean; rows: Row[]; removed?: string[]; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean };
   type ObservationPage = Observation & { next?: string | null };
   type ObserveInput = { since?: number | null; cursor?: string | null };
-  type FindInput = { role?: string | null; name?: string | null };
-  type FindOutput = { rows: Row[] };
+  type FindInput = { role?: string | null; name?: string | null; cursor?: string | null };
+  type FindOutput = { rows: Row[]; next?: string | null };
   type ClickInput = { ref: string };
   type PointInput = { image: string; x: number; y: number };
   type TypeInput = { ref: string; text: string; clear?: boolean };
   type SelectInput = { ref: string; option: string };
-  type WaitForInput = { targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null };
-  type WaitForOutput = { rows: Row[]; timed_out: boolean; waited_ms: number };
+  type WaitForInput = { targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null; cursor?: string | null };
+  type WaitForOutput = { rows: Row[]; timed_out: boolean; waited_ms: number; next?: string | null };
   type ExpectInput = { ref?: string | null; role?: string | null; name?: string | null; value?: string | null; absent?: boolean };
   type ExpectOutput = { met: boolean; row?: Row | null };
   type ScreenshotTrigger = "outline_thin" | "no_postcondition" | "decider_reobserve" | "no_accessibility_tree" | "effect_receipt";
@@ -1415,7 +1415,7 @@ declare namespace self {
     crop(input: Sdk.CropInput): Promise<Sdk.ImageOutput | StoredResult>;
     /** Checks that a page row is present or absent, and holds a given value. */
     expect(input: Sdk.ExpectInput): Promise<Sdk.ExpectOutput | StoredResult>;
-    /** Finds the page rows whose role and name match. */
+    /** Finds the page rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page. */
     find(input: Sdk.FindInput): Promise<Sdk.FindOutput | StoredResult>;
     /** Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record. */
     handover(input: Sdk.HandoverInput): Promise<Sdk.HandoverOutput | StoredResult>;
@@ -1443,7 +1443,7 @@ declare namespace self {
     type(input: Sdk.TypeInput): Promise<Sdk.ObservationPage | StoredResult>;
     /** Reads back a held image by its ref. */
     view(input: Sdk.ViewInput): Promise<Sdk.ImageOutput | StoredResult>;
-    /** Waits until a page row its refs name, or else some row matching a role and name, is there. */
+    /** Waits until a page row its refs name, or else some row matching a role and name, is there; many rows come in pages, read on with find and its next cursor. */
     wait_for(input: Sdk.WaitForInput): Promise<Sdk.WaitForOutput | StoredResult>;
     /** Zooms into a rectangle of a held image. */
     zoom(input: Sdk.ZoomInput): Promise<Sdk.ImageOutput | StoredResult>;
@@ -1453,42 +1453,42 @@ declare namespace self {
     asks(input: Sdk.EmptyRequest): Promise<Sdk.DecisionAsk[] | StoredResult>;
   };
   const desktop: {
-    /** Runs one batched program of desktop steps for a subgoal, stopping at the first step that fails. */
+    /** Runs one batched program of desktop steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor. */
     batch(input: Sdk.BatchInput): Promise<Sdk.BatchOutput | StoredResult>;
-    /** Clicks one window target and observes the result. */
-    click(input: Sdk.ClickInput): Promise<Sdk.Observation | StoredResult>;
-    /** Clicks a point of a held screenshot, mapped onto the window. */
-    click_at(input: Sdk.PointInput): Promise<Sdk.Observation | StoredResult>;
+    /** Clicks one window target and observes the result; a long window's observation comes in pages, read on with observe and its next cursor. */
+    click(input: Sdk.ClickInput): Promise<Sdk.ObservationPage | StoredResult>;
+    /** Clicks a point of a held screenshot, mapped onto the window; a long window's observation comes in pages, read on with observe and its next cursor. */
+    click_at(input: Sdk.PointInput): Promise<Sdk.ObservationPage | StoredResult>;
     /** Crops a held image to a rectangle. */
     crop(input: Sdk.CropInput): Promise<Sdk.ImageOutput | StoredResult>;
     /** Checks that a window row is present or absent, and holds a given value. */
     expect(input: Sdk.ExpectInput): Promise<Sdk.ExpectOutput | StoredResult>;
-    /** Finds the window rows whose role and name match. */
+    /** Finds the window rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page. */
     find(input: Sdk.FindInput): Promise<Sdk.FindOutput | StoredResult>;
     /** Asks a person to take the desktop over, saying why; until they hand it back, every desktop verb refuses desktop_taken_over, and the answer after carries the takeover's record. */
     handover(input: Sdk.HandoverInput): Promise<Sdk.HandoverOutput | StoredResult>;
-    /** Presses a key combination in the current window. */
-    hotkey(input: Sdk.HotkeyInput): Promise<Sdk.Observation | StoredResult>;
-    /** Presses one key, with modifiers, on a window target or the window's focus. */
-    key(input: Sdk.KeyInput): Promise<Sdk.Observation | StoredResult>;
-    /** Observes the current window of the run's desktop guest. */
-    observe(input: Sdk.ObserveInput): Promise<Sdk.Observation | StoredResult>;
-    /** Opens an app of the run's own desktop guest by app:name and observes its window. */
-    open(input: Sdk.OpenInput): Promise<Sdk.Observation | StoredResult>;
+    /** Presses a key combination in the current window; a long window's observation comes in pages, read on with observe and its next cursor. */
+    hotkey(input: Sdk.HotkeyInput): Promise<Sdk.ObservationPage | StoredResult>;
+    /** Presses one key, with modifiers, on a window target or the window's focus; a long window's observation comes in pages, read on with observe and its next cursor. */
+    key(input: Sdk.KeyInput): Promise<Sdk.ObservationPage | StoredResult>;
+    /** Observes the current window of the run's desktop guest, in pages: an answer with next goes on, and observe with that cursor reads the next page. */
+    observe(input: Sdk.ObserveInput): Promise<Sdk.ObservationPage | StoredResult>;
+    /** Opens an app of the run's own desktop guest by app:name and observes its window; a long window's observation comes in pages, read on with observe and its next cursor. */
+    open(input: Sdk.OpenInput): Promise<Sdk.ObservationPage | StoredResult>;
     /** Takes a screenshot of the window the session holds, by image ref and never captioned. */
     screenshot(input: Sdk.ScreenshotInput): Promise<Sdk.ScreenshotOutput | StoredResult>;
-    /** Scrolls a window target, or the window, by steps. */
-    scroll(input: Sdk.ScrollInput): Promise<Sdk.Observation | StoredResult>;
-    /** Sets the value of a combo box or list target by its option label. */
-    select(input: Sdk.SelectInput): Promise<Sdk.Observation | StoredResult>;
-    /** Types text into one window target and observes the result. */
-    type(input: Sdk.TypeInput): Promise<Sdk.Observation | StoredResult>;
+    /** Scrolls a window target, or the window, by steps; a long window's observation comes in pages, read on with observe and its next cursor. */
+    scroll(input: Sdk.ScrollInput): Promise<Sdk.ObservationPage | StoredResult>;
+    /** Sets the value of a combo box or list target by its option label; a long window's observation comes in pages, read on with observe and its next cursor. */
+    select(input: Sdk.SelectInput): Promise<Sdk.ObservationPage | StoredResult>;
+    /** Types text into one window target and observes the result; a long window's observation comes in pages, read on with observe and its next cursor. */
+    type(input: Sdk.TypeInput): Promise<Sdk.ObservationPage | StoredResult>;
     /** Reads back a held image by its ref. */
     view(input: Sdk.ViewInput): Promise<Sdk.ImageOutput | StoredResult>;
-    /** Waits until a window row its refs name, or else some row matching a role and name, is there. */
+    /** Waits until a window row its refs name, or else some row matching a role and name, is there; many rows come in pages, read on with find and its next cursor. */
     wait_for(input: Sdk.WaitForInput): Promise<Sdk.WaitForOutput | StoredResult>;
-    /** Moves the session onto another desktop window and observes it. */
-    window(input: Sdk.WindowInput): Promise<Sdk.Observation | StoredResult>;
+    /** Moves the session onto another desktop window and observes it; a long window's observation comes in pages, read on with observe and its next cursor. */
+    window(input: Sdk.WindowInput): Promise<Sdk.ObservationPage | StoredResult>;
     /** Lists the desktop guest's windows, or one app's. */
     windows(input: Sdk.WindowsInput): Promise<Sdk.WindowsOutput | StoredResult>;
     /** Zooms into a rectangle of a held image. */

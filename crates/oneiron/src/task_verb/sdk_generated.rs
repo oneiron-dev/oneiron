@@ -8009,14 +8009,14 @@ pub fn self_browser_handover(
 pub fn self_desktop_open(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::OpenInput,
-) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
-    driver.open(input)
+) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
+    oneiron_browser::paged(driver, |driver| driver.open(input))
 }
 pub fn self_desktop_observe(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::ObserveInput,
-) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
-    driver.observe(input)
+) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
+    driver.observe_page(input)
 }
 pub fn self_desktop_find(
     driver: &mut dyn oneiron_browser::BrowserDriver,
@@ -8027,44 +8027,44 @@ pub fn self_desktop_find(
 pub fn self_desktop_click(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::ClickInput,
-) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
-    driver.click(input)
+) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
+    oneiron_browser::paged(driver, |driver| driver.click(input))
 }
 pub fn self_desktop_click_at(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::PointInput,
-) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
-    driver.click_at(input)
+) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
+    oneiron_browser::paged(driver, |driver| driver.click_at(input))
 }
 pub fn self_desktop_type(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::TypeInput,
-) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
-    driver.type_text(input)
+) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
+    oneiron_browser::paged(driver, |driver| driver.type_text(input))
 }
 pub fn self_desktop_select(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::SelectInput,
-) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
-    driver.select(input)
+) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
+    oneiron_browser::paged(driver, |driver| driver.select(input))
 }
 pub fn self_desktop_key(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::KeyInput,
-) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
-    driver.press_key(input)
+) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
+    oneiron_browser::paged(driver, |driver| driver.press_key(input))
 }
 pub fn self_desktop_hotkey(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::HotkeyInput,
-) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
-    driver.hotkey(input)
+) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
+    oneiron_browser::paged(driver, |driver| driver.hotkey(input))
 }
 pub fn self_desktop_scroll(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::ScrollInput,
-) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
-    driver.scroll(input)
+) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
+    oneiron_browser::paged(driver, |driver| driver.scroll(input))
 }
 pub fn self_desktop_wait_for(
     driver: &mut dyn oneiron_browser::BrowserDriver,
@@ -8117,8 +8117,8 @@ pub fn self_desktop_windows(
 pub fn self_desktop_window(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::WindowInput,
-) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
-    driver.window(input)
+) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
+    oneiron_browser::paged(driver, |driver| driver.window(input))
 }
 pub fn self_desktop_handover(
     driver: &mut dyn oneiron_browser::BrowserDriver,
