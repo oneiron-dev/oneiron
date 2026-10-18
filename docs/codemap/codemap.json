@@ -45165,7 +45165,7 @@
      "path": "src/sync/client/base.rs",
      "purpose": "SyncClient construction, window and ephemeral accessors, and root persistence",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 16,
       "struct": 1
      }
@@ -45435,7 +45435,7 @@
      "path": "src/sync/connection/session.rs",
      "purpose": "Session types: WS aliases, pump budget, convergence session, resync markers",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -45688,7 +45688,7 @@
      "path": "src/sync/ingest/mod.rs",
      "purpose": "One ingest entry per replicated container: every entities-map value and every tombstone takes the same…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -45709,6 +45709,16 @@
      "purpose": "Which rows of a window a federation peer's import brought (Docs Q04)",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/ingest/promotion.rs",
+     "purpose": "What a promotion owes the TURNs it lands (OF-534)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -54829,7 +54839,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 170,
+     "files": 171,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55027,7 +55037,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3350,
+   "source_files": 3351,
    "test_files": 902
   },
   "oneiron-android": {
