@@ -41,6 +41,13 @@ impl RawValue for SettlementRecord {
     }
 }
 
+/// OF-222 (FIX 3681) archive seam: the consume-once settlement ledger an archive carries
+/// beside each artifact, lent with its own key type and codec. The live settle work
+/// (pending, stranded, undo, withdrawals, organ waits) is runtime work and is not lent.
+pub(crate) fn archive_settlement_table() -> crate::batch::export::LentSideTable {
+    &RECORD
+}
+
 pub(super) fn settlement_key_parts(
     artifact_id: &EntityId,
     proposal_ref: &str,

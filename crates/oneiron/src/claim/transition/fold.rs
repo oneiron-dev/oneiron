@@ -12,8 +12,6 @@ use super::event::{
     machine_claim_transition_event_hash, verify_machine_claim_transition_event,
 };
 
-const MAX_EVENTS: usize = 1024;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TransitionFoldError {
     InvalidBirth,
@@ -241,7 +239,8 @@ impl ClaimTransitionProjection {
 /// `authorized`. No current-roster or timestamp shortcut is allowed.
 ///
 /// Input order has no meaning. Missing parents and omitted tips fail closed.
-/// An authorized signature alone does not grant a transition kind.
+/// An authorized signature alone does not grant a transition kind. The fold
+/// takes a history of any length: `events` is the whole chain's union.
 #[expect(
     clippy::too_many_arguments,
     reason = "pure fold needs birth, pinned identity/closure, and historical authority callback as separate axes"
@@ -257,8 +256,7 @@ pub(crate) fn fold_machine_claim_transitions(
     mut authorized: impl FnMut(&SignedClaimTransitionEvent) -> bool,
 ) -> Result<ClaimTransitionProjection, TransitionFoldError> {
     let base = ClaimTransitionProjection::initial(birth, initial_claim_of_weight)?;
-    if events.len() > MAX_EVENTS
-        || *vault_id == [0; 32]
+    if *vault_id == [0; 32]
         || *birth_digest == [0; 32]
         || pinned_frontier.windows(2).any(|pair| pair[0] >= pair[1])
     {

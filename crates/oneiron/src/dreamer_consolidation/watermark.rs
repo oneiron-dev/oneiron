@@ -287,7 +287,7 @@ pub(crate) fn advance_watermark_in_txn(
         Some(upper_learned_at),
         effective_dirty_turn_limit(scope, usize::MAX),
     )?;
-    if !round.is_empty() {
+    if round.iter().any(|row| !row.deferred) {
         return settle_round_in_txn(vault, wtxn, scope, &round);
     }
     if upper_learned_at < current.last_learned_at {
@@ -295,6 +295,7 @@ pub(crate) fn advance_watermark_in_txn(
             "dreamer watermark cannot settle behind its own position",
         ));
     }
+    park_deferred_in_txn(vault, wtxn, &round)?;
     write_watermark_position_in_txn(vault, wtxn, scope, upper_learned_at, None)
 }
 
@@ -302,15 +303,17 @@ pub(crate) fn advance_watermark_in_txn(
 /// order: the cursor moves to the round's last TEMPORAL key, so it only ever
 /// names a TURN's own key, and each TURN taken at a re-dirty carrier consumes
 /// that carrier instead. A round of carriers alone leaves the cursor where it
-/// is. A passed TURN without its conversation edge is parked on a carrier.
+/// is. A passed TURN without its conversation edge is parked on a carrier,
+/// and so is a passed TURN whose tagged MESSAGE is away.
 fn settle_round_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     scope: DreamerConsolidationScope,
     round: &[AdmissibleTurnRow],
 ) -> Result<()> {
-    let passed = round.iter().filter(|row| !row.carried);
+    let passed = round.iter().filter(|row| !row.carried && !row.deferred);
     super::redirty::park_edgeless_in_txn(vault, wtxn, passed.map(|row| row.turn_id))?;
+    park_deferred_in_txn(vault, wtxn, round)?;
     if let Some(last) = round.iter().rev().find(|row| !row.carried) {
         write_watermark_position_in_txn(vault, wtxn, scope, last.learned_at, Some(last.turn_id))?;
     }
@@ -324,6 +327,22 @@ fn settle_round_in_txn(
             .filter(|row| row.carried)
             .map(|row| (row.turn_id, row.key)),
     )
+}
+
+/// Parks each deferred temporal entry of `round` on the carrier as a cursor
+/// settles past it. A TURN whose tagged MESSAGE is away from this replica
+/// (OF-534) is pending there for every scope: selection leaves it out while
+/// the MESSAGE is away, and the first round after a promotion brings the
+/// row back takes it.
+fn park_deferred_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    round: &[AdmissibleTurnRow],
+) -> Result<()> {
+    for row in round.iter().filter(|row| row.deferred) {
+        super::redirty::park_turn_in_txn(vault, wtxn, &row.turn_id)?;
+    }
+    Ok(())
 }
 
 /// Writes the exact cursor position for `scope`. `turn_id = None` is the
@@ -372,6 +391,10 @@ struct AdmissibleTurnRow {
     learned_at: u64,
     key: EntityId,
     carried: bool,
+    /// A temporal entry whose tagged MESSAGE is away from this replica
+    /// (OF-534): no round takes it and the cap does not count it; it is
+    /// listed so the round a cursor settles past it parks it on the carrier.
+    deferred: bool,
     turn_id: EntityId,
     role: DreamerTurnRole,
 }
@@ -409,6 +432,11 @@ const fn effective_dirty_turn_limit(scope: DreamerConsolidationScope, requested:
 /// GATE-10; only the round BOUND the caller resolves is scope-keyed. Scan,
 /// snapshot fence, and settlement all read through here so the capped prefix
 /// they each see cannot drift.
+///
+/// A TURN whose tagged MESSAGE is away from this replica (OF-534) reads only
+/// partly here, so no round takes it: a carried one keeps its carrier
+/// pending, and a temporal one comes back marked `deferred`, outside the
+/// cap, for settlement to park. Scan and fence drop those rows.
 fn enumerate_admissible_turns(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -451,8 +479,9 @@ fn enumerate_admissible_turns(
         vault.store.port_entity_timeline(txn, query)?
     };
     let mut admissible = Vec::new();
+    let mut taken = 0_usize;
     for entry in carriers.merge(timeline, upper_inclusive_second) {
-        if admissible.len() >= limit {
+        if taken >= limit {
             break;
         }
         let candidate = entry?;
@@ -485,10 +514,16 @@ fn enumerate_admissible_turns(
         {
             continue;
         }
+        let deferred = crate::tagging::tagged_messages_absent_in_txn(&vault.store, txn, &turn_id)?;
+        if deferred && candidate.carried {
+            continue;
+        }
+        taken += usize::from(!deferred);
         admissible.push(AdmissibleTurnRow {
             learned_at,
             key: candidate.key,
             carried: candidate.carried,
+            deferred,
             turn_id,
             role,
         });
@@ -528,7 +563,7 @@ pub fn scan_dirty_turns(
     };
 
     let mut out = Vec::with_capacity(admissible.len());
-    for row in admissible {
+    for row in admissible.into_iter().filter(|row| !row.deferred) {
         out.push(WorkingSetTurn {
             turn_id: row.turn_id,
             role: row.role,
@@ -574,7 +609,11 @@ pub(crate) fn collect_dirty_turn_ids_in_txn(
         Some(upper_inclusive),
         effective_dirty_turn_limit(scope, usize::MAX),
     )?;
-    Ok(admissible.into_iter().map(|row| row.turn_id).collect())
+    Ok(admissible
+        .into_iter()
+        .filter(|row| !row.deferred)
+        .map(|row| row.turn_id)
+        .collect())
 }
 
 pub(crate) struct TurnBodyFacts {

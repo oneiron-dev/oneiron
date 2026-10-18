@@ -806,13 +806,18 @@ fn next_epoch(prior: Option<PriorEpoch>) -> Result<u64> {
 /// Nothing reaches base: no pending embedding (a room has no `pe:`
 /// keyspace) and no withdrawal marker; the pass's intent NOTE and the
 /// summary's birth (Rule A) stamp in the overlay, and export and sync stay
-/// base-only. Each op is journaled under the run's compaction session and
-/// the summary itself, a turn no promotion names, so promoting the room's
-/// turns never carries it.
+/// base-only. The `vector` the pass embedded inline (K6) stages beside the
+/// summary's text. Each op is journaled under the run's compaction session
+/// and the summary itself, a turn no promotion names, so promoting the
+/// room's turns never carries it.
 ///
 /// A source withdrawn before the mint keeps its edge: base erasure cannot
 /// mark an overlay summary, so the room's render walks the lineage and the
-/// summary reads as withdrawn there.
+/// summary reads as withdrawn there. Such a summary takes no vector.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the base mint's arguments plus the room's route and inline vector"
+)]
 pub(super) fn mint_epoch_summary_in_overlay(
     session: &crate::off_record::OffRecordSession<'_>,
     route: &crate::session_overlay::SessionWriteRoute,
@@ -820,6 +825,7 @@ pub(super) fn mint_epoch_summary_in_overlay(
     byline: WriteActor,
     request: &CompactionRequest,
     product: &CompactionProduct,
+    vector: Option<&super::epoch_vector::EpochVector>,
     extra: impl FnOnce(
         &crate::store::SessionStoreView<'_>,
         &mut heed::RwTxn<'_>,
@@ -902,14 +908,18 @@ pub(super) fn mint_epoch_summary_in_overlay(
                 },
             ),
         )?;
+        let view = session.read_view()?;
+        let withdrawn = super::epoch_intent::any_withdrawn_in(&view, wtxn, &request.sources)?;
+        if let Some(op) = super::epoch_vector::room_vector_op(vector, summary_id, withdrawn) {
+            apply(wtxn, entry(JournalRole::TurnOwnedArtifact, op))?;
+        }
         // Rule A, as the base mint names it: the pass's intent NOTE is the
         // summary's prompt, and the run its trigger while its record stands.
-        let view = session.read_view()?;
         let intent = super::epoch_intent::intent_note_body(
             request,
             byline.entity_ref(),
             summary_id,
-            super::epoch_intent::any_withdrawn_in(&view, wtxn, &request.sources)?,
+            withdrawn,
         )?;
         for op in super::epoch_intent::intent_ops(
             intent_id,

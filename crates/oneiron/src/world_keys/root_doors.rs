@@ -158,6 +158,7 @@ fn carried_marks(
             vault_id,
             machine: *machine,
             machine_key: trusted.profile.machine_key,
+            device_class: trusted.profile.device_class,
             encryption_key: trusted.profile.encryption_key.clone(),
             machine_proof: trusted.profile.machine_proof,
         });

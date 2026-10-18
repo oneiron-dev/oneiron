@@ -4,8 +4,8 @@ use crate::error::{ApiError, EnvelopedApiError};
 use crate::server::SyncServer;
 use axum::{Json, extract::State, http::HeaderMap};
 use oneiron::authority::{
-    HostSlipIssuer, MachineEncryptionKey, MachineEnrolmentRequest, MachineOwnership,
-    PairingDescriptor, PairingPrincipal,
+    HostSlipIssuer, MachineDeviceClass, MachineEncryptionKey, MachineEnrolmentRequest,
+    MachineOwnership, PairingDescriptor, PairingPrincipal,
 };
 use oneiron::federation::Scope;
 use serde::{Deserialize, Serialize};
@@ -182,6 +182,9 @@ pub(super) struct MachineEnrolment {
     vault_id: String,
     machine: String,
     machine_key: String,
+    /// `phone` or `computer`, as the joining machine's host declares it and
+    /// signs it in `machine_proof`; required.
+    device_class: MachineDeviceClass,
     encryption_suite: u16,
     encryption_key: String,
     machine_proof: String,
@@ -196,6 +199,7 @@ impl MachineEnrolment {
             machine: oneiron::EntityId::from_hex(&self.machine)
                 .map_err(|_| ApiError::unauthorized())?,
             machine_key: parse_slip_id(&self.machine_key)?,
+            device_class: self.device_class,
             encryption_key: MachineEncryptionKey {
                 suite: self.encryption_suite,
                 key: base64::engine::general_purpose::STANDARD

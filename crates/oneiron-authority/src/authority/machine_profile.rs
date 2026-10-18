@@ -28,11 +28,12 @@ pub const MACHINE_ENCRYPTION_KEY_LEN: usize = 1568 + 32;
 /// At most this many world edits one profile revision lists as seen.
 pub const MACHINE_SEEN_WORLD_EDITS_MAX: usize = 4096;
 const SEEN_WORLD_EDITS_KEY: &str = "seen_world_edits";
-const MACHINE_PROFILE_KEYS: [&str; 9] = [
+const MACHINE_PROFILE_KEYS: [&str; 10] = [
     OP_KEY_KIND,
     "machine",
     "owner",
     "machine_key",
+    "device_class",
     "encryption_suite",
     "encryption_key",
     "role",
@@ -49,6 +50,39 @@ pub enum MachineOwnership {
     Yours,
     WorkSchool,
     Rented,
+}
+
+/// What kind of machine it is (FIX 3349). Its host declares it and the owner
+/// approves it by signing the enrolment that carries it; it is never read off
+/// the operating system (CALLS: MACHINE_DEVICE_CLASS_SOURCE). A sealed copy
+/// never goes to a phone (DEC-0005 "Sealed copies").
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum MachineDeviceClass {
+    Phone,
+    /// A desktop, a laptop or a server: a machine with room.
+    Computer,
+}
+
+impl MachineDeviceClass {
+    /// The name the wire spells it by.
+    #[must_use]
+    pub fn wire(self) -> &'static str {
+        match self {
+            Self::Phone => "phone",
+            Self::Computer => "computer",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "phone" => Self::Phone,
+            "computer" => Self::Computer,
+            _ => return None,
+        })
+    }
 }
 
 /// What a machine is to the vault's owner.
@@ -123,6 +157,9 @@ pub struct MachineProfile {
     /// The machine install's Ed25519 key: it proves the machine on a
     /// connection and signs that machine's world-settings edits.
     pub machine_key: [u8; 32],
+    /// The class the machine's host declared; the machine signs it with its
+    /// keys, and the owner's signature on the profile approves it.
+    pub device_class: MachineDeviceClass,
     pub encryption_key: MachineEncryptionKey,
     pub role: MachineRole,
     /// Strictly above the folded revision for this machine.
@@ -154,6 +191,7 @@ impl MachineProfile {
             vault_id,
             self.machine,
             &self.machine_key,
+            self.device_class,
             &self.encryption_key,
         );
         key.verify_strict(&transcript, &Signature::from_bytes(&self.machine_proof))
@@ -167,17 +205,21 @@ impl MachineProfile {
 }
 
 /// The bytes a machine signs to join a vault. They bind the vault, the
-/// machine row and both of its keys; the role and revision are the owner's.
+/// machine row, its class and both of its keys; the role and revision are the
+/// owner's.
 pub fn machine_profile_proof_transcript(
     vault_id: &[u8; 32],
     machine: EntityId,
     machine_key: &[u8; 32],
+    device_class: MachineDeviceClass,
     encryption_key: &MachineEncryptionKey,
 ) -> Vec<u8> {
     let mut bytes = MACHINE_PROFILE_PROOF_DOMAIN.to_vec();
     bytes.extend_from_slice(vault_id);
     bytes.extend_from_slice(machine.as_bytes());
     bytes.extend_from_slice(machine_key);
+    bytes.extend_from_slice(device_class.wire().as_bytes());
+    bytes.push(0);
     bytes.extend_from_slice(&encryption_key.suite.to_be_bytes());
     bytes.extend_from_slice(&encryption_key.key);
     bytes
@@ -197,6 +239,10 @@ pub(super) fn machine_profile_value(profile: &MachineProfile) -> Value {
         (
             Value::from("machine_key"),
             binary_value(profile.machine_key),
+        ),
+        (
+            Value::from("device_class"),
+            Value::from(profile.device_class.wire()),
         ),
         (
             Value::from("encryption_suite"),
@@ -264,6 +310,10 @@ pub(super) fn decode_machine_profile(entries: &[(Value, Value)]) -> Result<Autho
         machine: decode_canonical_id(required(entries, "machine")?)?,
         owner: decode_canonical_id(required(entries, "owner")?)?,
         machine_key: decode_hash(required(entries, "machine_key")?)?,
+        device_class: required(entries, "device_class")?
+            .as_str()
+            .and_then(MachineDeviceClass::parse)
+            .ok_or_else(invalid_authority)?,
         encryption_key: MachineEncryptionKey {
             suite: required(entries, "encryption_suite")?
                 .as_u64()
