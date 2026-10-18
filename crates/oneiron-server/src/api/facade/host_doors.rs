@@ -84,6 +84,7 @@ pub(crate) use super::support_grant_doors::*;
 // The owner's residence doors (OF-534), likewise.
 pub(crate) use super::fold_doors::*;
 pub(crate) use super::note_doors::*;
+pub(crate) use super::summary_doors::*;
 pub(crate) use super::off_record_doors::*;
 pub(crate) use super::residence_doors::*;
 // The weave lens's human doors, likewise.

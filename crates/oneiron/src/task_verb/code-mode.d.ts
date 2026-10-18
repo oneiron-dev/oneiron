@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 622 code-mode rows (601 host rows, 21 run rows), 2253 declarations.
-// Replies: 544 fully typed, 74 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 633 code-mode rows (612 host rows, 21 run rows), 2286 declarations.
+// Replies: 555 fully typed, 74 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 94; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2014,8 +2014,9 @@ declare namespace Sdk {
   type OfficeBodyEditRequest = { artifact_ref: string; base?: number[] | null; ops: OfficeBodyOps; made_by?: unknown | null };
   type OfficeBodyEdit = { frontier: number[]; minted: string[]; receipt: TextCommitReceipt; effects: string[] };
   type OfficeBodyForkOpenRequest = { artifact_ref: string; run_root_ref?: string | null; proposal_ref?: string | null };
-  type ForkState = { state: "open" } | { state: "merged"; by: EntityId; at: number; head: number[] } | { state: "discarded"; by: EntityId; at: number };
-  type OfficeBodyFork = { id: EntityId; artifact: EntityId; opener: EntityId; base: number[]; commits: number; opened_at: number; state: ForkState; run_root?: EntityId | null };
+  type BodyActor = string;
+  type ForkState = { state: "open" } | { state: "merged"; by: BodyActor; at: number; head: number[] } | { state: "discarded"; by: BodyActor; at: number };
+  type OfficeBodyFork = { id: EntityId; artifact: EntityId; opener: BodyActor; base: number[]; commits: number; opened_at: number; state: ForkState; run_root?: EntityId | null };
   type OfficeBodyForkEditRequest = { artifact_ref: string; fork_ref: string; ops: OfficeBodyOps; made_by?: unknown | null };
   type OfficeBodyForkRequest = { artifact_ref: string; fork_ref: string };
   type ChangeKind = "added" | "deleted" | "moved" | "text" | "cells";
@@ -2025,11 +2026,11 @@ declare namespace Sdk {
   type OfficeBodyDiff = { base: number[]; head: number[]; fork_head: number[]; proposal: BlockChange[]; current: BlockChange[]; conflicts: BodyConflict[] };
   type OfficeBodyForkMergeRequest = { artifact_ref: string; fork_ref: string; reviewed_head: number[]; reviewed_fork: number[] };
   type OfficeBodyProposalRequest = { artifact_ref: string; proposal_ref: string };
-  type ProposalHeader = { proposal: EntityId; artifact: EntityId; opener: EntityId; run_root?: EntityId | null; opened_at: number };
+  type ProposalHeader = { proposal: EntityId; artifact: EntityId; opener: BodyActor; run_root?: EntityId | null; opened_at: number };
   type MemberVerdict = "waiting" | "landed" | "rejected" | "let_go";
-  type AnsweringAuthority = { kind: "word"; person: EntityId } | { kind: "grant"; grant_ref: string; decision: string };
-  type MemberAnswer = { by: AnsweringAuthority; caller: EntityId; head: number[]; fork_head: number[]; landed?: number[] | null; at: number };
-  type ProposalMember = { fork: EntityId; opener: EntityId; run_root?: EntityId | null; verdict: MemberVerdict; answer?: MemberAnswer | null };
+  type AnsweringAuthority = { kind: "word"; person: BodyActor } | { kind: "grant"; grant_ref: string; decision: string };
+  type MemberAnswer = { by: AnsweringAuthority; caller: BodyActor; head: number[]; fork_head: number[]; landed?: number[] | null; at: number };
+  type ProposalMember = { fork: EntityId; opener: BodyActor; run_root?: EntityId | null; verdict: MemberVerdict; answer?: MemberAnswer | null };
   type BundleVerdict = "landed" | "rejected" | "mixed" | "let_go";
   type ProposalSettlement = { verdict: BundleVerdict; at: number; reason?: string | null };
   type ProposalAsk = { ask: EntityId; forks: EntityId[]; at: number };
@@ -2040,7 +2041,7 @@ declare namespace Sdk {
   type OfficeBodyReviewedFork = { fork_ref: string; reviewed_fork: number[] };
   type OfficeBodyProposalSettleRequest = { artifact_ref: string; proposal_ref: string; verdict: SettleVerdict; scope?: ApproveScope | null; reviewed_head: number[]; reviewed: OfficeBodyReviewedFork[]; reason?: string | null };
   type OfficeBodyExportVerbRequest = { artifact_ref: string; run_ref: string; author?: string | null; made_by?: unknown | null; utc_offset_minutes?: number | null; iana_timezone?: string | null };
-  type OfficeBodyExportRecord = { artifact: EntityId; version: number; frontier: number[]; source_version: number; actor: EntityId; author: string; at: number; changes: number; recalc?: string | null; effects: string[] };
+  type OfficeBodyExportRecord = { artifact: EntityId; version: number; frontier: number[]; source_version: number; actor: BodyActor; author: string; at: number; changes: number; recalc?: string | null; effects: string[] };
   type OfficeBodyExportView = { frontier: number[]; record?: OfficeBodyExportRecord | null };
   type OfficeBodyPreviewRequest = { artifact_ref: string; utc_offset_minutes?: number | null; iana_timezone?: string | null };
   type XlsxCell = { col: number; row: number; value: XlsxValue; formula?: string | null; style?: number | null; locked?: XlsxLock | null };
@@ -2150,6 +2151,38 @@ declare namespace Sdk {
   type DeliveryWindowPreview = { policy_refs: EntityId[]; resolution: DeliveryWindowResolution };
   type OutboundScheduleRequest = { verb: string; channel: string; target: string; on_behalf_of?: string | null; content_ref?: string | null; idempotency_key?: string | null; dedupe_key?: string | null; trigger: string; trigger_ref: string; job_ref?: string | null; occurred_at?: number | null; mention?: MentionProvenance | null };
   type OutboundIntentReceipt = { intent_ref: string; outcome: string; gate_outcome?: string | null; gate_decision_ref?: string | null; gate_reason_codes: string[]; deduped: boolean };
+  type SummaryPath = "canonical" | { branch: string } | { branch_span: { after: string; through: string } } | { sub_session: string };
+  type SummaryScope = { conversation_ref: string; path: SummaryPath; session?: string | null; include_forks?: boolean };
+  type SummaryCreateRequest = { scope: SummaryScope; purpose?: string | null; land_on?: string | null; as_record?: boolean };
+  type SummaryQueued = { attempt: string; status: string; coalesced: boolean };
+  type SummarySpan = { start: number; end: number };
+  type SummaryReadRequest = { summary_ref: string; spans?: SummarySpan[] };
+  type SummaryPurpose = { id: string; description: string };
+  type SummarySourceVersion = { id: string; entity_type?: number | null; learned_at?: number | null; revision?: number[] | null; record_hash?: number[] | null; frontier?: number[] | null; projected_text?: number[] | null };
+  type SummaryDerivation = { request: number[]; trigger: number[]; content_hash: number[]; params_hash: number[]; instruction: string; model: string; policy_frontier: number[]; sources: SummarySourceVersion[]; previous?: string | null; recorded_at: number; generated_text_hash: number[]; generated_keep_hash: number[] };
+  type ScopeSummaryMetadata = { purpose: SummaryPurpose; keep: string; derivation: SummaryDerivation };
+  type TextAnchor = { entity: string; frontier: number[]; start: number[]; end: number[]; quote: string; hash: number[] };
+  type Birth = { entity: string; actor: string; at: number };
+  type SummaryReadView = { summary_ref: string; document: string; frontier: number[]; text: string; metadata: ScopeSummaryMetadata; covers: string[]; read_refs: string[]; anchors: TextAnchor[]; birth: Birth };
+  type SummaryStatusRequest = { attempt: string };
+  type ScopeSummaryResult = { summary: string; claim?: string | null; record?: string | null };
+  type ScopeSummaryStatus = { attempt: string; requester: string; current_attempt: string; state: string; result?: ScopeSummaryResult | null; failure?: string | null; retry_at?: number | null; updated_at: number };
+  type SummaryKeepRequest = { summary_ref: string; frontier: number[]; keep: string };
+  type SummaryKeepResult = { summary_ref: string; frontier: number[]; keep: string };
+  type SummaryEdit = { kind: "append_to_section"; section: TextAnchor; text: string } | { kind: "replace_quoted_span"; span: TextAnchor; text: string } | { kind: "insert_after_anchor"; anchor: TextAnchor; text: string };
+  type SummaryEditRequest = { summary_ref: string; base: number[]; edits: SummaryEdit[] };
+  type DocActor = string;
+  type ForkStatus = "Pending" | "Merged" | "Switched" | "Rejected";
+  type ForkRecord = { fork: string; proposal: string; entity: string; parent_document: string; base: number[]; actor: DocActor; opened_at: number; rewrite: boolean; status: ForkStatus; read_refs: string[]; keep?: string | null };
+  type ProposalBundle = { proposal: string; author: DocActor; forks: ForkRecord[]; settled: boolean };
+  type SummaryForkView = { record: ForkRecord; text?: string | null };
+  type SettleVerb = "Merge" | "Switch" | "Reject";
+  type TextReceipt = { receipt: string; proposal: string; fork: string; entity: string; actor: DocActor; verb: SettleVerb; at: number; before: number[]; after: number[]; read_refs: string[] };
+  type SummaryProposalView = { bundle: ProposalBundle; forks: SummaryForkView[]; receipts: TextReceipt[] };
+  type SummaryPatchRequest = { summary_ref: string; base: number[]; keep: string; edits: SummaryEdit[]; read_refs: string[] };
+  type SummaryMutationResult = { proposal: SummaryProposalView; read_refs: string[] };
+  type SummaryRegenerateRequest = { summary_ref: string; base: number[]; keep: string; text: string; read_refs: string[] };
+  type SummaryProposalRequest = { proposal_ref: string };
   type CreateNoteFromEntityRequest = { source_ref: string; kind: string };
   type NoteReadRequest = { note_ref: string; reason?: string | null; version?: NoteVersion | null; spans?: NoteReadSpan[] };
   type NoteAccessRequest = { note_ref: string; reason?: string | null };
@@ -3705,6 +3738,32 @@ declare const vault: Sdk.VaultHost & {
   structural: {
     /** Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit. */
     put(input: Sdk.StructuralPutInput): Promise<Sdk.EntityRefReceipt | StoredResult>;
+  };
+  summaries: {
+    /** Declares a readable source scope; only the configured Dreamer writes and source-links the SUMMARY birth. */
+    create(input: Sdk.SummaryCreateRequest): Promise<Sdk.SummaryQueued | StoredResult>;
+    /** Applies attributed anchored SUMMARY edits through existing grants; ungranted edits remain a typed review proposal. */
+    edit(input: Sdk.SummaryEditRequest): Promise<Sdk.SummaryProposalView | StoredResult>;
+    /** Edits the SUMMARY keep memo at the exact frontier read, under the caller's owner proof or entity-bound text grant. */
+    keep(input: Sdk.SummaryKeepRequest): Promise<Sdk.SummaryKeepResult | StoredResult>;
+    /** Applies generated anchored SUMMARY operations after a keep fence and source admission; durable receipts name the sources read. */
+    patch(input: Sdk.SummaryPatchRequest): Promise<Sdk.SummaryMutationResult | StoredResult>;
+    proposals: {
+      /** Merges the complete SUMMARY proposal under existing entity grants, preserving concurrent head edits and durable receipts. */
+      merge(input: Sdk.SummaryProposalRequest): Promise<Sdk.SummaryProposalView | StoredResult>;
+      /** Reads a SUMMARY proposal's fork provenance, retained text and durable receipts only when every member is readable. */
+      read(input: Sdk.SummaryProposalRequest): Promise<Sdk.SummaryProposalView | StoredResult>;
+      /** Rejects the complete SUMMARY proposal under existing entity grants, dropping pending fork text without moving live heads. */
+      reject(input: Sdk.SummaryProposalRequest): Promise<Sdk.SummaryProposalView | StoredResult>;
+      /** Explicitly switches the complete SUMMARY proposal under existing entity grants; a stale causal base refuses the entire set. */
+      switch(input: Sdk.SummaryProposalRequest): Promise<Sdk.SummaryProposalView | StoredResult>;
+    };
+    /** Reads SUMMARY text, keep, derivation, covers and stable edit anchors in one caller-scoped snapshot. */
+    read(input: Sdk.SummaryReadRequest): Promise<Sdk.ScopedReadResult<Sdk.SummaryReadView | null> | StoredResult>;
+    /** Retains generated SUMMARY text as a source-linked rewrite fork after reading keep; no head moves without explicit switch. */
+    regenerate(input: Sdk.SummaryRegenerateRequest): Promise<Sdk.SummaryMutationResult | StoredResult>;
+    /** Reads the calling principal's own summary declaration and its retained completion or failure. */
+    status(input: Sdk.SummaryStatusRequest): Promise<Sdk.ScopeSummaryStatus | StoredResult>;
   };
   support_grants: {
     /** The owner lists the vault's support grants, newest first, with each one's bounds, deadline, status and revoke command. */

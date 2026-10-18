@@ -424,6 +424,10 @@ pub(crate) async fn start_desktop_workers(
         .await?;
     let linear_handle = crate::linear_host::spawn(sync_server.clone()).await?;
     let lifecycle = sync_server.spawn_lifecycle_scheduler(lifecycle_admission());
+    // An answered code consent wait's effect runs on this server, whatever
+    // hooks or models it serves, before the connector settler starts
+    // (DOOR-079 1a).
+    crate::code_consent_host::ServerCodeConsentHost::install(&sync_server);
     let mut workers = sync_server.spawn_slot_workers();
     workers.extend(gpu_poller);
     workers.push(sync_server.spawn_board_publisher());
