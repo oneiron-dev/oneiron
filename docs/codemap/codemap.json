@@ -18262,10 +18262,11 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ResidentDreamModel",
+      "ResidentDreamPartial",
       "ResidentDreamProgress"
      ],
      "path": "src/dreamer_consolidation/resident_dream.rs",
@@ -18274,7 +18275,7 @@
       "const": 1,
       "crate-vis": 3,
       "fn": 3,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -54934,7 +54935,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 192,
+   "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3344,
    "test_files": 902
