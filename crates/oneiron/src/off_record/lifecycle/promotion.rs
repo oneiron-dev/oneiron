@@ -203,6 +203,10 @@ impl OffRecordSession<'_> {
     /// receipt that answers for a turn keeps only the closure it names, and
     /// an entry of the plan base does not hold stays in the room.
     ///
+    /// A result MESSAGE a plan keeps lands with its hold on the body, read
+    /// out of this room (FIX 365); a body the room spilled to a file is in
+    /// the vault's `bodies/` before the transaction, pinned until it commits.
+    ///
     /// [`appends`]: crate::session_overlay::PromotePlan::appends
     pub(super) fn promote_plans<T>(
         &self,
@@ -211,9 +215,11 @@ impl OffRecordSession<'_> {
         initiator: &PromoteInitiator,
         check: impl FnOnce(&heed::RwTxn<'_>) -> Result<T>,
     ) -> Result<(Vec<(EntityId, PromoteOutcome)>, T)> {
+        let floor = FloorWrites::new(&self.vault.store).saving(self.entry.overlay.clone());
+        #[cfg(unix)]
+        let _bodies = floor.import_result_bodies(self.vault, &self.session_ref, &plans)?;
         let (landed, checked) = self.vault.with_write_txn_grouped(|wtxn| {
             let checked = check(wtxn)?;
-            let floor = FloorWrites::new(&self.vault.store);
             let promoted_at = self.vault.store.clock.now_recorded_at();
             plans
                 .iter()
