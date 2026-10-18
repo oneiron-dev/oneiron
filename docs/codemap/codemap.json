@@ -702,6 +702,32 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "AgentBudgetView",
+      "BudgetHoldRequest",
+      "BudgetLandRequest",
+      "LocalRunnerBudgetCounter",
+      "LocalRunnerBudgetRequest",
+      "LocalRunnerBudgetView",
+      "OpenSpendLeaseRequest",
+      "RunRungSettlement",
+      "RunSettlementsRequest",
+      "RunSettlementsView",
+      "SelfBudgetRequest",
+      "SpendLeaseView",
+      "SpendScopeRequest",
+      "TopUpSpendLeaseRequest"
+     ],
+     "path": "src/agent_dispatch/budget_doors.rs",
+     "purpose": "Typed doors over launch spend leases, budget holds and the local runner counter",
+     "surface": {
+      "fn": 8,
+      "struct": 14
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "BudgetHoldLease",
       "BudgetHoldNotice",
       "BudgetHoldState",
@@ -907,7 +933,7 @@
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
       "crate-vis": 9,
-      "mod": 1,
+      "mod": 2,
       "re-export": 23
      }
     },
@@ -1071,7 +1097,7 @@
      "purpose": "Spend scopes: each launch's lease tree under one hard cap (OF-532, ARCH-0079 #budget, #reader-forks)",
      "surface": {
       "crate-vis": 12,
-      "fn": 16
+      "fn": 17
      }
     },
     {
@@ -48982,7 +49008,7 @@
      "purpose": "—",
      "surface": {
       "const": 3,
-      "fn": 435
+      "fn": 444
      }
     },
     {
@@ -54245,7 +54271,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 44,
+     "files": 45,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55752,7 +55778,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3395,
+   "source_files": 3396,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64147,7 +64173,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 385
+      "fn": 394
      }
     },
     {
@@ -65195,7 +65221,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 386
+      "fn": 395
      }
     },
     {
@@ -68072,6 +68098,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/budget_doors.rs",
+     "purpose": "Credential-backed budget controls, beside the owner's held-run routes",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -68258,7 +68294,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 77
+      "crate-vis": 78
      }
     },
     {
@@ -74875,7 +74911,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SeatUsage",
@@ -74886,7 +74922,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -75543,7 +75579,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 332,
+     "files": 333,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -75958,7 +75994,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 654,
+   "source_files": 655,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -76156,6 +76192,7 @@
       "ActorCeiling",
       "AdmissionBasis",
       "AdmissionConsent",
+      "AgentBudgetView",
       "AgentCeilingInput",
       "AgentDefinitionCreateRequest",
       "AgentDefinitionLifecycle",
@@ -76235,8 +76272,13 @@
       "AskTo",
       "AsofScrubberAtom",
       "AssetRef",
+      "AttemptCancelReceipt",
+      "AttemptCancelReceiptKind",
       "AttemptHandle",
       "AttemptId",
+      "AttemptLanding",
+      "AttemptLandingReserve",
+      "AttemptResumePoint",
       "AttemptView",
       "AuthoringStrategyPin",
       "AuthorityAuditEventKind",
@@ -76267,6 +76309,10 @@
       "BriefIntent",
       "BriefStamp",
       "BudgetDenied",
+      "BudgetHoldNotice",
+      "BudgetHoldRequest",
+      "BudgetHoldState",
+      "BudgetLandRequest",
       "BudgetLease",
       "BundleVerdict",
       "BundledSkillPermissions",
@@ -76307,8 +76353,10 @@
       "CampaignSplits",
       "CampaignTaste",
       "CancelRejectionPathology",
+      "CancelStanding",
       "CandidateRef",
       "Care",
+      "CareLevel",
       "CellTypeRef",
       "ChangeKind",
       "ChannelCeiling",
@@ -76427,6 +76475,7 @@
       "ConversationCreateInput",
       "ConversationTurnCreateInput",
       "CooperativeDeletionDispositionKind",
+      "CoordinationPattern",
       "CoreBatchEntityInput",
       "CoreBatchEntityReceipt",
       "CoreBatchWriteInput",
@@ -76435,6 +76484,7 @@
       "CoreDagQuoteInput",
       "CoreEntityWriteReceipt",
       "CoreWriteTextField",
+      "CostEnvelope",
       "CourtesyDeleteAnswerRequest",
       "CourtesyDeleteAskedWorld",
       "CourtesyDeleteChoice",
@@ -76638,6 +76688,7 @@
       "FoldUnfoldRequest",
       "FoldUnfolded",
       "FolderItemInput",
+      "ForceCancelGrounds",
       "ForkKind",
       "ForkState",
       "GateCheckerReceipt",
@@ -76677,6 +76728,7 @@
       "GuestSlipMintRequest",
       "GuestSlipMinted",
       "HandoffAlarmRequest",
+      "HeldAttempt",
       "HeldMedia",
       "HeldOutCall",
       "HeldOutEvidence",
@@ -76765,6 +76817,7 @@
       "LadderTerminalDisposition",
       "Landing",
       "LandingReceipt",
+      "LandingTrigger",
       "LaunchStatement",
       "LeaderSplitInput",
       "LeaderSplitOutput",
@@ -76827,6 +76880,9 @@
       "LiveRunRequestLeaderSplitInput",
       "LlmCapability",
       "LlmError",
+      "LocalRunnerBudgetCounter",
+      "LocalRunnerBudgetRequest",
+      "LocalRunnerBudgetView",
       "MadeBy",
       "MadeByClass",
       "MadeByInput",
@@ -76956,6 +77012,7 @@
       "OfficeBodyView",
       "OmittedKnowledge",
       "OpaqueChange",
+      "OpenSpendLeaseRequest",
       "OracleReceipt",
       "OrganWaitView",
       "OutcomeBinding",
@@ -76999,9 +77056,11 @@
       "PairedInterval",
       "PairedReading",
       "Paragraph",
+      "PartialResultHold",
       "ParticipantView",
       "ParticipantsPage",
       "ParticipantsRequest",
+      "PatternSkillRef",
       "PeerCount",
       "PendingActMatured",
       "PendingActStarted",
@@ -77016,6 +77075,7 @@
       "PinnedPack",
       "PinnedRef",
       "PixelRegion",
+      "PlannerRung",
       "PolicyActionOutcome",
       "PolicyAxes",
       "PolicyCeiling",
@@ -77095,6 +77155,7 @@
       "QuoteStripStatus",
       "Reasoning",
       "ReasoningCause",
+      "ReasoningEffort",
       "RecallWorlds",
       "ReceiptAtom",
       "ReceiptKind",
@@ -77215,6 +77276,9 @@
       "Run",
       "RunAttachRequest",
       "RunAttached",
+      "RunRungSettlement",
+      "RunSettlementsRequest",
+      "RunSettlementsView",
       "RunSignalState",
       "RunTree",
       "RunTreeEvent",
@@ -77281,6 +77345,7 @@
       "SelectionReceipt",
       "SelectionRuleScope",
       "SelectionRuleWriterKind",
+      "SelfBudgetRequest",
       "SelfDurableWait",
       "SelfDurableWaitReason",
       "SelfEffect",
@@ -77399,6 +77464,13 @@
       "SpendBasis",
       "SpendCapView",
       "SpendConsent",
+      "SpendLeaseView",
+      "SpendPayer",
+      "SpendRead",
+      "SpendScope",
+      "SpendScopeRequest",
+      "SpendSignal",
+      "SpendState",
       "SpentKind",
       "StateFamilyRef",
       "StatusDotAtom",
@@ -77478,6 +77550,8 @@
       "TaskWaveRequest",
       "TasksOverflow",
       "TasksSection",
+      "TeamPlan",
+      "TeamShape",
       "TextBlockAtom",
       "TextBody",
       "TextCommitReceipt",
@@ -77491,6 +77565,7 @@
       "ThreadPassportsView",
       "ThrobberAtom",
       "ToggleControl",
+      "TopUpSpendLeaseRequest",
       "TrackedHubRef",
       "TranscriptFileDropInput",
       "TranscriptIngestOutcome",
@@ -77582,8 +77657,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 407,
-      "struct": 1020
+      "enum": 418,
+      "struct": 1048
      }
     },
     {
