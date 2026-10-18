@@ -95,7 +95,16 @@ pub(crate) const MAX_CLEANUP_SCAN_ROWS: usize = 50_000;
 
 /// Which ratified emptiness arm matched a row.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
     schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
