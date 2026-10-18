@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "oracle": "Fictional owner-authored corrections. Consent and record status are inputs to public setup, never privileged stored rows.",
+  "pairs": [
+    {
+      "label": "on-record-consented-a",
+      "source_family": "train-a",
+      "on_record": true,
+      "training_consent": true,
+      "input": "Is 3 + 2 equal to 5?",
+      "before": "No.",
+      "after": "Yes.",
+      "expected_export": true
+    },
+    {
+      "label": "on-record-consented-b",
+      "source_family": "train-b",
+      "on_record": true,
+      "training_consent": true,
+      "input": "Is 9 less than 4?",
+      "before": "Yes.",
+      "after": "No.",
+      "expected_export": true
+    },
+    {
+      "label": "off-record-consented",
+      "source_family": "excluded-off-record",
+      "on_record": false,
+      "training_consent": true,
+      "input": "Private rehearsal: the invented token is ORBIT.",
+      "before": "COMET",
+      "after": "ORBIT",
+      "expected_export": false
+    },
+    {
+      "label": "private-without-source-consent",
+      "source_family": "excluded-private",
+      "on_record": true,
+      "training_consent": false,
+      "private_source": true,
+      "input": "Fictional private source: project marker is LILAC.",
+      "before": "TEAL",
+      "after": "LILAC",
+      "expected_export": false
+    },
+    {
+      "label": "on-record-unconsented",
+      "source_family": "excluded-unconsented",
+      "on_record": true,
+      "training_consent": false,
+      "input": "Is 4 + 4 equal to 8?",
+      "before": "No.",
+      "after": "Yes.",
+      "expected_export": false
+    },
+    {
+      "label": "other-person-without-consent",
+      "source_family": "excluded-other-person",
+      "on_record": true,
+      "training_consent": true,
+      "contains_other_people": true,
+      "source_consent_obtained": false,
+      "input": "Fictional contributor note: the project marker is COPPER.",
+      "before": "SILVER",
+      "after": "COPPER",
+      "expected_export": false
+    }
+  ],
+  "expected": {
+    "permitted_labels": [
+      "on-record-consented-a",
+      "on-record-consented-b"
+    ],
+    "holdout_exact_overlaps": 0,
+    "holdout_source_family_overlaps": 0,
+    "private_source_can_be_explicitly_consented": true,
+    "export_to_local_connector_only": true,
+    "secrets_sent_to_compute": false
+  }
+}
