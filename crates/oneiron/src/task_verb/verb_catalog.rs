@@ -156,6 +156,8 @@ pub enum AgentVerb {
     VaultTrustedContactsTierSet,
     VaultTrustedContactsConcernAsks,
     VaultTrustedContactsConcernAuthorize,
+    VaultTrustedContactsConcernPropose,
+    VaultTrustedContactsConcernDeliver,
     VaultGuestsRevoke,
     VaultGuestsMintSlip,
     VaultSupportGrantsMint,
@@ -219,6 +221,11 @@ pub enum AgentVerb {
     VaultEmbeddingSpacesProbesList,
     VaultEmbeddingSpacesProbesPut,
     VaultEmbeddingSpacesProbesDelete,
+    VaultPolicyOwnerGet,
+    VaultPolicyOwnerConfigure,
+    VaultPolicyOwnerRowChange,
+    VaultPolicyOutboundDecide,
+    VaultPolicyRelayDecide,
     VaultGatePolicyGet,
     VaultGatePolicyPut,
     VaultGatePolicyPropose,
@@ -720,6 +727,8 @@ impl AgentVerb {
         Self::VaultTrustedContactsTierSet,
         Self::VaultTrustedContactsConcernAsks,
         Self::VaultTrustedContactsConcernAuthorize,
+        Self::VaultTrustedContactsConcernPropose,
+        Self::VaultTrustedContactsConcernDeliver,
         Self::VaultGuestsRevoke,
         Self::VaultGuestsMintSlip,
         Self::VaultSupportGrantsMint,
@@ -783,6 +792,11 @@ impl AgentVerb {
         Self::VaultEmbeddingSpacesProbesList,
         Self::VaultEmbeddingSpacesProbesPut,
         Self::VaultEmbeddingSpacesProbesDelete,
+        Self::VaultPolicyOwnerGet,
+        Self::VaultPolicyOwnerConfigure,
+        Self::VaultPolicyOwnerRowChange,
+        Self::VaultPolicyOutboundDecide,
+        Self::VaultPolicyRelayDecide,
         Self::VaultGatePolicyGet,
         Self::VaultGatePolicyPut,
         Self::VaultGatePolicyPropose,
@@ -1289,6 +1303,8 @@ impl AgentVerb {
             Self::VaultTrustedContactsConcernAuthorize => {
                 "vault.trusted_contacts.concern.authorize"
             }
+            Self::VaultTrustedContactsConcernPropose => "vault.trusted_contacts.concern.propose",
+            Self::VaultTrustedContactsConcernDeliver => "vault.trusted_contacts.concern.deliver",
             Self::VaultGuestsRevoke => "vault.guests.revoke",
             Self::VaultGuestsMintSlip => "vault.guests.mint_slip",
             Self::VaultSupportGrantsMint => "vault.support_grants.mint",
@@ -1354,6 +1370,11 @@ impl AgentVerb {
             Self::VaultEmbeddingSpacesProbesList => "vault.embedding_spaces.probes.list",
             Self::VaultEmbeddingSpacesProbesPut => "vault.embedding_spaces.probes.put",
             Self::VaultEmbeddingSpacesProbesDelete => "vault.embedding_spaces.probes.delete",
+            Self::VaultPolicyOwnerGet => "vault.policy.owner.get",
+            Self::VaultPolicyOwnerConfigure => "vault.policy.owner.configure",
+            Self::VaultPolicyOwnerRowChange => "vault.policy.owner.row.change",
+            Self::VaultPolicyOutboundDecide => "vault.policy.outbound.decide",
+            Self::VaultPolicyRelayDecide => "vault.policy.relay.decide",
             Self::VaultGatePolicyGet => "vault.gate.policy.get",
             Self::VaultGatePolicyPut => "vault.gate.policy.put",
             Self::VaultGatePolicyPropose => "vault.gate.policy.propose",
@@ -1860,6 +1881,8 @@ impl AgentVerb {
                 | Self::VaultTrustedContactsTierSet
                 | Self::VaultTrustedContactsConcernAsks
                 | Self::VaultTrustedContactsConcernAuthorize
+                | Self::VaultTrustedContactsConcernPropose
+                | Self::VaultTrustedContactsConcernDeliver
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultSupportGrantsMint
@@ -1923,6 +1946,11 @@ impl AgentVerb {
                 | Self::VaultEmbeddingSpacesProbesList
                 | Self::VaultEmbeddingSpacesProbesPut
                 | Self::VaultEmbeddingSpacesProbesDelete
+                | Self::VaultPolicyOwnerGet
+                | Self::VaultPolicyOwnerConfigure
+                | Self::VaultPolicyOwnerRowChange
+                | Self::VaultPolicyOutboundDecide
+                | Self::VaultPolicyRelayDecide
                 | Self::VaultGatePolicyGet
                 | Self::VaultGatePolicyPut
                 | Self::VaultGatePolicyPropose
@@ -2431,6 +2459,8 @@ impl AgentVerb {
                 | Self::VaultTrustedContactsTierSet
                 | Self::VaultTrustedContactsConcernAsks
                 | Self::VaultTrustedContactsConcernAuthorize
+                | Self::VaultTrustedContactsConcernPropose
+                | Self::VaultTrustedContactsConcernDeliver
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultSupportGrantsMint
@@ -2494,6 +2524,11 @@ impl AgentVerb {
                 | Self::VaultEmbeddingSpacesProbesList
                 | Self::VaultEmbeddingSpacesProbesPut
                 | Self::VaultEmbeddingSpacesProbesDelete
+                | Self::VaultPolicyOwnerGet
+                | Self::VaultPolicyOwnerConfigure
+                | Self::VaultPolicyOwnerRowChange
+                | Self::VaultPolicyOutboundDecide
+                | Self::VaultPolicyRelayDecide
                 | Self::VaultGatePolicyGet
                 | Self::VaultGatePolicyPut
                 | Self::VaultGatePolicyPropose
@@ -3051,6 +3086,8 @@ impl AgentVerb {
                 | Self::VaultTrustedContactsTierSet
                 | Self::VaultTrustedContactsConcernAsks
                 | Self::VaultTrustedContactsConcernAuthorize
+                | Self::VaultTrustedContactsConcernPropose
+                | Self::VaultTrustedContactsConcernDeliver
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultSupportGrantsMint
@@ -3114,6 +3151,11 @@ impl AgentVerb {
                 | Self::VaultEmbeddingSpacesProbesList
                 | Self::VaultEmbeddingSpacesProbesPut
                 | Self::VaultEmbeddingSpacesProbesDelete
+                | Self::VaultPolicyOwnerGet
+                | Self::VaultPolicyOwnerConfigure
+                | Self::VaultPolicyOwnerRowChange
+                | Self::VaultPolicyOutboundDecide
+                | Self::VaultPolicyRelayDecide
                 | Self::VaultGatePolicyGet
                 | Self::VaultGatePolicyPut
                 | Self::VaultGatePolicyPropose
@@ -3534,6 +3576,8 @@ impl AgentVerb {
                 | Self::VaultTrustedContactsDialSet
                 | Self::VaultTrustedContactsTierSet
                 | Self::VaultTrustedContactsConcernAuthorize
+                | Self::VaultTrustedContactsConcernPropose
+                | Self::VaultTrustedContactsConcernDeliver
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultSupportGrantsMint
@@ -3583,6 +3627,10 @@ impl AgentVerb {
                 | Self::VaultEmbeddingSpacesMoveAbandon
                 | Self::VaultEmbeddingSpacesProbesPut
                 | Self::VaultEmbeddingSpacesProbesDelete
+                | Self::VaultPolicyOwnerConfigure
+                | Self::VaultPolicyOwnerRowChange
+                | Self::VaultPolicyOutboundDecide
+                | Self::VaultPolicyRelayDecide
                 | Self::VaultGatePolicyPut
                 | Self::VaultGatePolicyPropose
                 | Self::VaultGateCheckerSet
@@ -3974,6 +4022,8 @@ impl AgentVerb {
             Self::VaultTrustedContactsTierSet => &["spec"],
             Self::VaultTrustedContactsConcernAsks => &["spec"],
             Self::VaultTrustedContactsConcernAuthorize => &["spec"],
+            Self::VaultTrustedContactsConcernPropose => &["spec"],
+            Self::VaultTrustedContactsConcernDeliver => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultSupportGrantsMint => &["spec"],
@@ -4037,6 +4087,11 @@ impl AgentVerb {
             Self::VaultEmbeddingSpacesProbesList => &[],
             Self::VaultEmbeddingSpacesProbesPut => &["spec"],
             Self::VaultEmbeddingSpacesProbesDelete => &["spec"],
+            Self::VaultPolicyOwnerGet => &["spec"],
+            Self::VaultPolicyOwnerConfigure => &["spec"],
+            Self::VaultPolicyOwnerRowChange => &["spec"],
+            Self::VaultPolicyOutboundDecide => &["spec"],
+            Self::VaultPolicyRelayDecide => &["spec"],
             Self::VaultGatePolicyGet => &["spec"],
             Self::VaultGatePolicyPut => &["spec"],
             Self::VaultGatePolicyPropose => &["spec"],
@@ -4539,6 +4594,8 @@ impl AgentVerb {
             Self::VaultTrustedContactsTierSet => &["spec"],
             Self::VaultTrustedContactsConcernAsks => &["spec"],
             Self::VaultTrustedContactsConcernAuthorize => &["spec"],
+            Self::VaultTrustedContactsConcernPropose => &["spec"],
+            Self::VaultTrustedContactsConcernDeliver => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultSupportGrantsMint => &["spec"],
@@ -4602,6 +4659,11 @@ impl AgentVerb {
             Self::VaultEmbeddingSpacesProbesList => &[],
             Self::VaultEmbeddingSpacesProbesPut => &["spec"],
             Self::VaultEmbeddingSpacesProbesDelete => &["spec"],
+            Self::VaultPolicyOwnerGet => &["spec"],
+            Self::VaultPolicyOwnerConfigure => &["spec"],
+            Self::VaultPolicyOwnerRowChange => &["spec"],
+            Self::VaultPolicyOutboundDecide => &["spec"],
+            Self::VaultPolicyRelayDecide => &["spec"],
             Self::VaultGatePolicyGet => &["spec"],
             Self::VaultGatePolicyPut => &["spec"],
             Self::VaultGatePolicyPropose => &["spec"],
@@ -5393,6 +5455,12 @@ impl AgentVerb {
             Self::VaultTrustedContactsConcernAuthorize => {
                 "The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing."
             }
+            Self::VaultTrustedContactsConcernPropose => {
+                "The owner's policy gate reads one message the caller reads, fresh; a RouteToHelp asks the owner or stages a just-call notice, and the answer carries only the fact of concern, the gate receipt, open asks and notices."
+            }
+            Self::VaultTrustedContactsConcernDeliver => {
+                "The caller sends the next staged fact-of-concern notice it is the stored sender of, as itself, through the consent-checked outbound dispatch; null when none is eligible, never another sender's notice."
+            }
             Self::VaultGuestsRevoke => "",
             Self::VaultGuestsMintSlip => {
                 "The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."
@@ -5569,6 +5637,21 @@ impl AgentVerb {
             }
             Self::VaultEmbeddingSpacesProbesDelete => {
                 "Removes one stored embedding space probe by its id."
+            }
+            Self::VaultPolicyOwnerGet => {
+                "The owner reads the content-policy configuration, default manifest hash and effective off/on state."
+            }
+            Self::VaultPolicyOwnerConfigure => {
+                "The owner configures or toggles content policy against the current manifest hash without changing other policy tables."
+            }
+            Self::VaultPolicyOwnerRowChange => {
+                "The owner adds, edits or removes a scoped content-policy row through its existing holder-governed writer and receives its change receipt."
+            }
+            Self::VaultPolicyOutboundDecide => {
+                "Decide an outbound candidate under owner policy with system notices and hash-only receipts; Warn and Skipped preserve its exact bytes."
+            }
+            Self::VaultPolicyRelayDecide => {
+                "Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer."
             }
             Self::VaultGatePolicyGet => {
                 "The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions."

@@ -158,6 +158,8 @@ both bindings and their export-census tests in one change.
 - `vault.trusted_contacts.tier.set`
 - `vault.trusted_contacts.concern.asks`
 - `vault.trusted_contacts.concern.authorize`
+- `vault.trusted_contacts.concern.propose`
+- `vault.trusted_contacts.concern.deliver`
 - `vault.guests.revoke`
 - `vault.guests.mint_slip`
 - `vault.support_grants.mint`
@@ -221,6 +223,11 @@ both bindings and their export-census tests in one change.
 - `vault.embedding_spaces.probes.list`
 - `vault.embedding_spaces.probes.put`
 - `vault.embedding_spaces.probes.delete`
+- `vault.policy.owner.get`
+- `vault.policy.owner.configure`
+- `vault.policy.owner.row.change`
+- `vault.policy.outbound.decide`
+- `vault.policy.relay.decide`
 - `vault.gate.policy.get`
 - `vault.gate.policy.put`
 - `vault.gate.policy.propose`

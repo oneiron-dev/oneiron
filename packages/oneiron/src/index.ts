@@ -726,6 +726,10 @@ export class Oneiron {
         asks: (input: Facade.TrustedContactAsksRequest): Facade.TrustedContactAsk[] => this.#call(() => this.#client.vaultTrustedContactsConcernAsks(input) as Facade.TrustedContactAsk[]),
         /** The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing. */
         authorize: (input: Facade.TrustedContactAuthorizeRequest): Facade.TrustedContactAuthorization => this.#call(() => this.#client.vaultTrustedContactsConcernAuthorize(input) as Facade.TrustedContactAuthorization),
+        /** The owner's policy gate reads one message the caller reads, fresh; a RouteToHelp asks the owner or stages a just-call notice, and the answer carries only the fact of concern, the gate receipt, open asks and notices. */
+        propose: (input: Facade.TrustedContactConcernRequest): Facade.TrustedContactConcernProposal => this.#call(() => this.#client.vaultTrustedContactsConcernPropose(input) as Facade.TrustedContactConcernProposal),
+        /** The caller sends the next staged fact-of-concern notice it is the stored sender of, as itself, through the consent-checked outbound dispatch; null when none is eligible, never another sender's notice. */
+        deliver: (input: Facade.TrustedContactDeliverRequest): Facade.TrustedContactDeliveryReceipt | null => this.#call(() => this.#client.vaultTrustedContactsConcernDeliver(input) as Facade.TrustedContactDeliveryReceipt | null),
       },
     },
     guests: {
@@ -873,6 +877,26 @@ export class Oneiron {
         put: (input: Facade.EmbeddingSpaceProbePutRequest): Facade.EmbeddingSpaceProbe => this.#call(() => this.#client.vaultEmbeddingSpacesProbesPut(input) as Facade.EmbeddingSpaceProbe),
         /** Removes one stored embedding space probe by its id. */
         delete: (input: Facade.EmbeddingSpaceProbeDeleteRequest): Facade.EmbeddingSpaceProbeDeleted => this.#call(() => this.#client.vaultEmbeddingSpacesProbesDelete(input) as Facade.EmbeddingSpaceProbeDeleted),
+      },
+    },
+    policy: {
+      owner: {
+        /** The owner reads the content-policy configuration, default manifest hash and effective off/on state. */
+        get: (input: Facade.EmptyRequest = {}): Facade.OwnerPolicyConfigurationView => this.#call(() => this.#client.vaultPolicyOwnerGet(input) as Facade.OwnerPolicyConfigurationView),
+        /** The owner configures or toggles content policy against the current manifest hash without changing other policy tables. */
+        configure: (input: Facade.OwnerPolicyConfigureRequest): Facade.OwnerPolicyConfigurationReceipt => this.#call(() => this.#client.vaultPolicyOwnerConfigure(input) as Facade.OwnerPolicyConfigurationReceipt),
+        row: {
+          /** The owner adds, edits or removes a scoped content-policy row through its existing holder-governed writer and receives its change receipt. */
+          change: (input: Facade.PolicyRowChangeRequest): Facade.PolicyRowReceipt => this.#call(() => this.#client.vaultPolicyOwnerRowChange(input) as Facade.PolicyRowReceipt),
+        },
+      },
+      outbound: {
+        /** Decide an outbound candidate under owner policy with system notices and hash-only receipts; Warn and Skipped preserve its exact bytes. */
+        decide: (input: Facade.PolicyOutboundRequest): Facade.PolicyModelEnforcement => this.#call(() => this.#client.vaultPolicyOutboundDecide(input) as Facade.PolicyModelEnforcement),
+      },
+      relay: {
+        /** Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer. */
+        decide: (input: Facade.PolicyOutboundRequest): Facade.HostedRelayDecision => this.#call(() => this.#client.vaultPolicyRelayDecide(input) as Facade.HostedRelayDecision),
       },
     },
     gate: {

@@ -1,6 +1,8 @@
 //! Typed policy reads, owner edits and inert untrusted contributions.
 //! The owner writer is the same one `install_owner_policy_manifest` takes;
 //! composition and validation remain the existing manifest resolver's.
+mod content_policy;
+pub use content_policy::*;
 mod types;
 pub use types::*;
 

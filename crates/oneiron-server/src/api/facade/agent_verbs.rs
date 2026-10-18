@@ -163,6 +163,14 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             "/vault.trusted_contacts.concern.authorize",
             post(facade_route),
         )
+        .route(
+            "/vault.trusted_contacts.concern.propose",
+            post(facade_route),
+        )
+        .route(
+            "/vault.trusted_contacts.concern.deliver",
+            post(facade_route),
+        )
         .route("/vault.guests.revoke", post(facade_route))
         .route("/vault.guests.mint_slip", post(facade_route))
         .route("/vault.support_grants.mint", post(facade_route))
@@ -229,6 +237,11 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.embedding_spaces.probes.list", post(facade_route))
         .route("/vault.embedding_spaces.probes.put", post(facade_route))
         .route("/vault.embedding_spaces.probes.delete", post(facade_route))
+        .route("/vault.policy.owner.get", post(facade_route))
+        .route("/vault.policy.owner.configure", post(facade_route))
+        .route("/vault.policy.owner.row.change", post(facade_route))
+        .route("/vault.policy.outbound.decide", post(facade_route))
+        .route("/vault.policy.relay.decide", post(facade_route))
         .route("/vault.gate.policy.get", post(facade_route))
         .route("/vault.gate.policy.put", post(facade_route))
         .route("/vault.gate.policy.propose", post(facade_route))

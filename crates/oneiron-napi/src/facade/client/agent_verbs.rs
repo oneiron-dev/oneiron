@@ -1360,6 +1360,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_trusted_contacts_concern_propose(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.trusted_contacts.concern.propose", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_trusted_contacts_concern_deliver(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.trusted_contacts.concern.deliver", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_guests_revoke(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.guests.revoke", input)
@@ -1915,6 +1933,51 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.embedding_spaces.probes.delete", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_policy_owner_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.policy.owner.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_policy_owner_configure(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.policy.owner.configure", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_policy_owner_row_change(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.policy.owner.row.change", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_policy_outbound_decide(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.policy.outbound.decide", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_policy_relay_decide(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.policy.relay.decide", input)
             .map_err(facade_error)
     }
     #[napi]
