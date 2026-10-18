@@ -280,7 +280,8 @@ impl Once {
 /// `merged` (the merge of every surviving state) as it was, given the confirms
 /// already in the log (which it joins): an agent enrollment, a fresh binding,
 /// a slip mint or consume, a critical-write confirm, a fresh federation
-/// confirm, a grant travel choice (it judges only its own grant's choices).
+/// confirm, a grant travel choice (it judges only its own grant's choices),
+/// an owner work request or result (each judges only its own work).
 /// A resumed fold and a fold past an adopted checkpoint take only these.
 pub(super) fn admits_past(
     merged: &FoldState,
@@ -309,7 +310,9 @@ pub(super) fn admits_past(
         AuthorityOp::SlipMint(_)
         | AuthorityOp::SlipConsume { .. }
         | AuthorityOp::CriticalWriteConfirm(_)
-        | AuthorityOp::GrantTravelSet(_) => true,
+        | AuthorityOp::GrantTravelSet(_)
+        | AuthorityOp::OwnerWorkRequest(_)
+        | AuthorityOp::OwnerWorkResult(_) => true,
         AuthorityOp::FederationConfirm(action) => {
             confirms.0.insert(action.confirm_id) && confirms.1.insert(action.nonce)
         }
@@ -545,10 +548,11 @@ impl<'a> RowMeta<'a> {
 }
 
 /// Whether a fold past the base reads `op`'s row whole: the approvals and
-/// revocations stale-roster expiry and renewal weigh (`stale_roster`), and
-/// the world-key records whose envelopes a folded key carries
-/// (`world_key_fold::folded_world_keys`). Every other row's summary is all
-/// a later fold reads of it.
+/// revocations stale-roster expiry and renewal weigh (`stale_roster`), the
+/// world-key records whose envelopes a folded key carries
+/// (`world_key_fold::folded_world_keys`), and the owner work requests and
+/// results an executor and a receipt read past the base. Every other row's
+/// summary is all a later fold reads of it.
 pub(super) fn is_projected(op: &AuthorityOp) -> bool {
     matches!(
         op,
@@ -561,6 +565,8 @@ pub(super) fn is_projected(op: &AuthorityOp) -> bool {
             | AuthorityOp::RotateKey { .. }
             | AuthorityOp::ReRoot { .. }
             | AuthorityOp::WorldKeyWraps(_)
+            | AuthorityOp::OwnerWorkRequest(_)
+            | AuthorityOp::OwnerWorkResult(_)
     )
 }
 

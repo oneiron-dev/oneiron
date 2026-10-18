@@ -85,6 +85,7 @@ mod observation_policy;
 mod op_apply;
 mod owner_act;
 mod owner_project_slip;
+mod owner_work;
 mod owner_roots;
 mod pinned_root;
 mod readonly_fold;
@@ -136,7 +137,8 @@ pub use oneiron_authority::authority::{
     MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MACHINE_SEEN_WORLD_EDITS_MAX,
     MAX_PACT_SCOPE_BYTES, MachineDeviceClass, MachineEncryptionKey, MachineOwnership,
     MachineProfile, MachineRole, ModelOrder, OWNER_HANDOVER_REF_MAX, OwnerAct, OwnerActKind,
-    OwnerHandover, OwnerHandoverCause, OwnerRootRecord, RESIDENCE_REASON_MAX,
+    OwnerHandover, OwnerHandoverCause, OwnerRootRecord, OwnerWorkBody, OwnerWorkKind,
+    OwnerWorkOutcome, OwnerWorkRefusal, OwnerWorkRequest, OwnerWorkResult, RESIDENCE_REASON_MAX,
     RESIDENCE_WINDOW_KEY_MAX, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY,
     ReadLocation, RecoveryRootId, ResidenceAct, ResidenceDirective, ResidenceResult,
     ResidenceResultStatus, SUPPORT_GRANT_DEFAULT_TTL_SECS, SUPPORT_GRANT_MAX_TTL_SECS,
