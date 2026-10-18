@@ -910,6 +910,93 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_weave_enqueue(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.weave.enqueue", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_weave_schedules_list(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.weave.schedules.list", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_weave_schedules_put(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.weave.schedules.put", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_weave_schedules_clear(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.weave.schedules.clear", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_weave_owner_digest_render(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.weave.owner.digest.render", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_inbox_concerns_review(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.inbox.concerns.review", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_inbox_lens(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.inbox.lens", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_inbox_groups(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.inbox.groups", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_weave_digest_render(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.weave.digest.render", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_weave_link_corrections(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.weave.link.corrections", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_inbox_lens(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.inbox.lens", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_skill_hubs_put(
         &self,
         input: serde_json::Value,

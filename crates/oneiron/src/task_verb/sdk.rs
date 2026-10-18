@@ -588,6 +588,7 @@ pub use super::sdk_standing::*;
 pub use super::sdk_support_grant::*;
 pub use super::sdk_trusted_contact::*;
 pub use super::sdk_voice_bank::*;
+pub use super::sdk_weave::*;
 pub use super::sdk_workflows::*;
 pub use super::sdk_workspace::*;
 

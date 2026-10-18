@@ -1805,6 +1805,173 @@
       "section": false
     },
     {
+      "name": "vault.weave.enqueue",
+      "description": "Admits a generated candidate weave recipe under the owner's proof and queues its pinned execution; poll vault.consolidation.status for completion.",
+      "input": "crate::task_verb::sdk::WeaveEnqueueRequest",
+      "output": "crate::memory::DreamerAttemptRef",
+      "call": "crate::task_verb::sdk::weave_enqueue(memory, &memory.embedded_owner(\"vault.weave.enqueue\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.weave.schedules.list",
+      "description": "Lists every reader's daily or weekly weave digest schedule under the owner's proof.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::claim::WeaveScheduleView>",
+      "call": "crate::task_verb::sdk::weave_schedules(memory, &memory.embedded_owner(\"vault.weave.schedules.list\")?)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.weave.schedules.put",
+      "description": "Sets one reader's daily or weekly digest schedule and section recipe under the owner's proof.",
+      "input": "crate::claim::WeaveScheduleView",
+      "output": "crate::claim::WeaveScheduleView",
+      "call": "crate::task_verb::sdk::weave_schedule_put(memory, &memory.embedded_owner(\"vault.weave.schedules.put\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.weave.schedules.clear",
+      "description": "Stops one reader's digest schedule under the owner's proof, keeping its saved periods.",
+      "input": "crate::claim::WeaveReaderRef",
+      "output": "crate::task_verb::sdk::WeaveScheduleCleared",
+      "call": "crate::task_verb::sdk::weave_schedule_clear(memory, &memory.embedded_owner(\"vault.weave.schedules.clear\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.weave.owner.digest.render",
+      "description": "Publishes the owner's due digest through the live owner lens and returns the saved period and narrowing receipt, or null when nothing is due.",
+      "input": "EmptyRequest",
+      "output": "Option<crate::claim::WeaveDigestRendered>",
+      "call": "memory.weave_digest_render(Some(&memory.embedded_owner(\"vault.weave.owner.digest.render\")?))?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.inbox.concerns.review",
+      "description": "Queues the Coach's real health review under the owner's proof; findings and recipients come from engine evidence, never supplied concern rows.",
+      "input": "EmptyRequest",
+      "output": "crate::memory::DreamerAttemptRef",
+      "call": "crate::task_verb::sdk::inbox_concerns_review(memory, &memory.embedded_owner(\"vault.inbox.concerns.review\")?)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.inbox.lens",
+      "description": "Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent.",
+      "input": "crate::agent_inbox_lens::InboxLensRequest",
+      "output": "crate::agent_inbox_lens::InboxLensPage",
+      "call": "memory.inbox_lens_as_owner(&memory.embedded_owner(\"vault.inbox.lens\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.inbox.groups",
+      "description": "Reads membership of real gate-held Dreamer consent proposals grouped by run, under the owner's proof.",
+      "input": "crate::agent_inbox_lens::InboxRunGroupsRequest",
+      "output": "Vec<crate::inbox::InboxGroup>",
+      "call": "memory.inbox_run_groups(&memory.embedded_owner(\"vault.inbox.groups\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.weave.digest.render",
+      "description": "Publishes the bound reader's due digest through the same live scoped lens and returns its saved period and narrowing receipt, or null when nothing is due.",
+      "input": "EmptyRequest",
+      "output": "Option<crate::claim::WeaveDigestRendered>",
+      "call": "memory.weave_digest_render(None)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.weave.link.corrections",
+      "description": "Reads persisted wrong-link labels for a link still admitted by the caller's live weave lens, without changing the link.",
+      "input": "crate::claim::WeaveWrongLinkRequest",
+      "output": "Vec<crate::claim::WeaveLinkCorrectionView>",
+      "call": "memory.weave_link_corrections(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "self.inbox.lens",
+      "description": "Reads the bound actor's own identity inbox slice in impact order, with optional identity filtering and concern groups; not a delivered-notification page.",
+      "input": "crate::agent_inbox_lens::InboxLensRequest",
+      "output": "crate::agent_inbox_lens::InboxLensPage",
+      "call": "memory.inbox_lens(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.skill_hubs.put",
       "description": "The owner registers or revises a hub source; hub trust never grants activation authority.",
       "input": "SkillHubPutRequest",

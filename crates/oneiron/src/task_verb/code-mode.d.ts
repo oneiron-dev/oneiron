@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 731 code-mode rows (710 host rows, 21 run rows), 2564 declarations.
-// Replies: 647 fully typed, 80 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 742 code-mode rows (721 host rows, 21 run rows), 2588 declarations.
+// Replies: 658 fully typed, 80 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 97; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -583,6 +583,33 @@ declare namespace Sdk {
   type WeaveLinkCorrectionView = { label_ref: string; source_ref: string; kind: string; target_ref: string; actor_ref: string; recorded_at: number };
   type WeaveWrongItemRequest = { item: string; item_ref: string; project_ref?: string | null };
   type WeaveItemCorrectionView = { label_ref: string; item: string; item_ref: string; project_ref?: string | null; actor_ref: string; recorded_at: number };
+  type WeaveEnqueueRequest = { skill_ref: string; subject_ref: string; evidence_ref: string };
+  type DreamerAttemptRef = { job_ref: string; state: string; existing: boolean };
+  type WeaveReaderKind = "person" | "owner" | "agent";
+  type WeaveReaderRef = { kind: WeaveReaderKind; reader_ref: string };
+  type WeaveDigestCadence = "daily" | "weekly";
+  type WeaveScheduleHold = { until: number; because?: string | null };
+  type WeaveScheduleView = { reader: WeaveReaderRef; cadence: WeaveDigestCadence; next_due_at: number; sections: WeaveSectionInput[]; held?: WeaveScheduleHold | null };
+  type WeaveScheduleCleared = { cleared: boolean };
+  type WeaveDigestRendered = { scheduled_for: number; rendered_at: number; narrowing: ScopedReadReceipt };
+  type InboxLensRequest = { identity?: string | null; agent?: string | null; limit?: number | null; before_impact?: number | null; before_at?: number | null; before_id?: string | null };
+  type InboxLensKind = "conversation" | "waiting_on_you" | "coordination_update" | "concern";
+  type InboxLensPile = "conversations" | "waiting_on_you" | "updates";
+  type InboxLensParticipant = { identity: string; actor: string };
+  type InboxLensConcern = { agent: string; signal: string; tone: string };
+  type InboxLensDiaryReview = { request: string; reader: string; reader_class: string; reason: string };
+  type InboxLensRow = { item_id: string; kind: InboxLensKind; pile: InboxLensPile; thread_ref?: string | null; identity: string; actor: string; facet?: string | null; participants: InboxLensParticipant[]; impact: number; occurred_at: number; receipt_ref?: string | null; payload_ref?: string | null; concern?: InboxLensConcern | null; diary_review?: InboxLensDiaryReview | null };
+  type InboxConcernGroup = { agent: string; items: string[] };
+  type InboxLensPage = { items: InboxLensRow[]; concern_groups: InboxConcernGroup[] };
+  type InboxRunGroupsRequest = { limit?: number | null };
+  type InboxExceptionClass = "checker_hedge" | "manifest_critical" | "supersedes_user_stated" | "conflict" | "meeting_outcome_check_in" | "plugin_install";
+  type ReceiptKind = "outbound" | "gate" | "identity_lifecycle" | "scoped_read" | "share" | "artifact_settle" | "proposal_outcome" | "commitment_lifecycle" | "extraction" | "served_form" | "hook" | "reference_refusal" | "task_lifecycle";
+  type ReceiptRecord = { receipt_id: string; receipt_kind: ReceiptKind; occurred_at: number; actor?: string | null; on_behalf_of?: string | null; outcome: string; job_ref?: string | null; trigger_ref?: string | null; policy_trace?: string[]; fields?: Record<string, string> };
+  type ReceiptView = { component: string; receipt: ReceiptRecord };
+  type InboxGroupMember = { claim_id: string; created_at: number; age_secs: number; hold_reasons?: string[]; exception_classes?: InboxExceptionClass[]; verb_class: string; duplicate_claim_ids?: string[]; receipt_view: ReceiptView };
+  type InboxPointerRow = { claim_id: string; duplicate_of_claim_id: string; duplicate_of_group_key: string };
+  type InboxSubCluster = { key: string; member_claim_ids: string[] };
+  type InboxGroup = { group_key: string; run_id: string; headline: string; created_at: number; members?: InboxGroupMember[]; held_member_count: number; pointer_rows?: InboxPointerRow[]; sub_clusters?: InboxSubCluster[]; new_claim_count: number; update_count: number; conflict_count: number };
   type SkillHubKind = "git" | "http-index" | "local-dir";
   type SkillHubTrustTier = "untrusted" | "community" | "verified";
   type HubSyncPolicy = "pinned-ref" | "pinned-commit" | "content-hash-frozen" | "mirror-of-hub";
@@ -1710,8 +1737,6 @@ declare namespace Sdk {
   type DeckProposeRejection = { inspection: DeckRejectionSummary; report: DeckRejectionReport; refusal: DeckTransactionRefusal };
   type DeckProposeOutcome = { proposed?: PendingProposalView | null; rejected?: DeckProposeRejection | null };
   type NativeOutputRequest = { artifact_ref: string; run_ref: string; name: string; media_type: string; content_base64: string; report?: unknown; made_by?: unknown | null };
-  type ReceiptKind = "outbound" | "gate" | "identity_lifecycle" | "scoped_read" | "share" | "artifact_settle" | "proposal_outcome" | "commitment_lifecycle" | "extraction" | "served_form" | "hook" | "reference_refusal" | "task_lifecycle";
-  type ReceiptRecord = { receipt_id: string; receipt_kind: ReceiptKind; occurred_at: number; actor?: string | null; on_behalf_of?: string | null; outcome: string; job_ref?: string | null; trigger_ref?: string | null; policy_trace?: string[]; fields?: Record<string, string> };
   type KeptProposal = { version: ArtifactVersionView; stranded: boolean; remapped: number; drifted: number; receipt: ReceiptRecord };
   type DiscardedProposal = { receipt: ReceiptRecord };
   type KeepUndo = { proposal_ref: string; kept_version: number; restored_version: number; version: number; actor: EntityId; at: number };
@@ -2343,7 +2368,6 @@ declare namespace Sdk {
   type ReadBlobVersionRequest = { artifact_ref: string; version: number };
   type BlobContent = { content_base64: string };
   type ConsolidationEnqueueRequest = { scope: string; input: unknown; run_id?: string | null; dedupe_key?: string | null; now?: number | null };
-  type DreamerAttemptRef = { job_ref: string; state: string; existing: boolean };
   type ConsolidationStatusRequest = { job_ref: string };
   type DreamerParkCauseView = "provider_unavailable" | "executor_error" | "checkpoint" | "cancelled" | "signal" | "other";
   type DreamerParkedAttemptView = { job_ref: string; cause: DreamerParkCauseView; parked_at: number };
@@ -2824,6 +2848,8 @@ declare namespace self {
       move(input: Sdk.ConcernMoveRequest): Promise<Sdk.ConcernMoveOutcome | StoredResult>;
       outcome(input: Sdk.ConcernOutcomeRequest): Promise<Sdk.ConcernCardSummary | StoredResult>;
     };
+    /** Reads the bound actor's own identity inbox slice in impact order, with optional identity filtering and concern groups; not a delivered-notification page. */
+    lens(input: Sdk.InboxLensRequest): Promise<Sdk.InboxLensPage | StoredResult>;
     /** Lists one page of notifications delivered to the bound actor, without marking them. */
     list(input: Sdk.InboxListRequest): Promise<Sdk.NotificationPage | StoredResult>;
     /** Marks one delivered notification seen or acknowledged for the bound actor. */
@@ -3596,6 +3622,16 @@ declare const vault: Sdk.VaultHost & {
     /** The full pixels behind an image's handle (the whole image, a crop or a zoom), recorded as a pull. */
     view(input: Sdk.ImageViewRequest): Promise<Sdk.PulledImage | StoredResult>;
   };
+  inbox: {
+    concerns: {
+      /** Queues the Coach's real health review under the owner's proof; findings and recipients come from engine evidence, never supplied concern rows. */
+      review(input: Sdk.EmptyRequest): Promise<Sdk.DreamerAttemptRef | StoredResult>;
+    };
+    /** Reads membership of real gate-held Dreamer consent proposals grouped by run, under the owner's proof. */
+    groups(input: Sdk.InboxRunGroupsRequest): Promise<Sdk.InboxGroup[] | StoredResult>;
+    /** Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent. */
+    lens(input: Sdk.InboxLensRequest): Promise<Sdk.InboxLensPage | StoredResult>;
+  };
   inspection: {
     /** Resolves an inspection handle for the caller; unreadable, missing and wrong-kind targets all answer with no item. */
     resolve(input: Sdk.InspectionResolveRequest): Promise<Sdk.InspectionResolved | StoredResult>;
@@ -4361,7 +4397,12 @@ declare const vault: Sdk.VaultHost & {
   };
   weave: {
     /** One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none. */
-    digest(input: Sdk.WeaveDigestRequest): Promise<Sdk.WeaveDigestView | null | StoredResult>;
+    digest: ((input: Sdk.WeaveDigestRequest) => Promise<Sdk.WeaveDigestView | null | StoredResult>) & {
+      /** Publishes the bound reader's due digest through the same live scoped lens and returns its saved period and narrowing receipt, or null when nothing is due. */
+      render(input: Sdk.EmptyRequest): Promise<Sdk.WeaveDigestRendered | null | StoredResult>;
+    };
+    /** Admits a generated candidate weave recipe under the owner's proof and queues its pinned execution; poll vault.consolidation.status for completion. */
+    enqueue(input: Sdk.WeaveEnqueueRequest): Promise<Sdk.DreamerAttemptRef | StoredResult>;
     item: {
       /** A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays. */
       wrong(input: Sdk.WeaveWrongItemRequest): Promise<Sdk.WeaveItemCorrectionView | StoredResult>;
@@ -4369,10 +4410,16 @@ declare const vault: Sdk.VaultHost & {
     /** Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events. */
     lens(input: Sdk.WeaveReportRequest): Promise<Sdk.LensFrameCard | StoredResult>;
     link: {
+      /** Reads persisted wrong-link labels for a link still admitted by the caller's live weave lens, without changing the link. */
+      corrections(input: Sdk.WeaveWrongLinkRequest): Promise<Sdk.WeaveLinkCorrectionView[] | StoredResult>;
       /** A person labels a link in their own lens as wrong; the label teaches the loops and the link stays. */
       wrong(input: Sdk.WeaveWrongLinkRequest): Promise<Sdk.WeaveLinkCorrectionView | StoredResult>;
     };
     owner: {
+      digest: {
+        /** Publishes the owner's due digest through the live owner lens and returns the saved period and narrowing receipt, or null when nothing is due. */
+        render(input: Sdk.EmptyRequest): Promise<Sdk.WeaveDigestRendered | null | StoredResult>;
+      };
       item: {
         /** The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays. */
         wrong(input: Sdk.WeaveWrongItemRequest): Promise<Sdk.WeaveItemCorrectionView | StoredResult>;
@@ -4384,6 +4431,14 @@ declare const vault: Sdk.VaultHost & {
     };
     /** The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role. */
     report(input: Sdk.WeaveReportRequest): Promise<Sdk.WeaveReportView | StoredResult>;
+    schedules: {
+      /** Stops one reader's digest schedule under the owner's proof, keeping its saved periods. */
+      clear(input: Sdk.WeaveReaderRef): Promise<Sdk.WeaveScheduleCleared | StoredResult>;
+      /** Lists every reader's daily or weekly weave digest schedule under the owner's proof. */
+      list(input: Sdk.EmptyRequest): Promise<Sdk.WeaveScheduleView[] | StoredResult>;
+      /** Sets one reader's daily or weekly digest schedule and section recipe under the owner's proof. */
+      put(input: Sdk.WeaveScheduleView): Promise<Sdk.WeaveScheduleView | StoredResult>;
+    };
   };
   /** The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined. */
   widen_proposals: ((input: Sdk.WidenProposalsRequest) => Promise<Sdk.WidenProposalsView | StoredResult>) & {

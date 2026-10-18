@@ -106,6 +106,17 @@ pub enum AgentVerb {
     VaultWeaveOwnerLinkWrong,
     VaultWeaveItemWrong,
     VaultWeaveOwnerItemWrong,
+    VaultWeaveEnqueue,
+    VaultWeaveSchedulesList,
+    VaultWeaveSchedulesPut,
+    VaultWeaveSchedulesClear,
+    VaultWeaveOwnerDigestRender,
+    VaultInboxConcernsReview,
+    VaultInboxLens,
+    VaultInboxGroups,
+    VaultWeaveDigestRender,
+    VaultWeaveLinkCorrections,
+    SelfInboxLens,
     VaultSkillHubsPut,
     VaultSkillHubsGet,
     VaultSkillHubsPublishersAdmit,
@@ -828,6 +839,17 @@ impl AgentVerb {
         Self::VaultWeaveOwnerLinkWrong,
         Self::VaultWeaveItemWrong,
         Self::VaultWeaveOwnerItemWrong,
+        Self::VaultWeaveEnqueue,
+        Self::VaultWeaveSchedulesList,
+        Self::VaultWeaveSchedulesPut,
+        Self::VaultWeaveSchedulesClear,
+        Self::VaultWeaveOwnerDigestRender,
+        Self::VaultInboxConcernsReview,
+        Self::VaultInboxLens,
+        Self::VaultInboxGroups,
+        Self::VaultWeaveDigestRender,
+        Self::VaultWeaveLinkCorrections,
+        Self::SelfInboxLens,
         Self::VaultSkillHubsPut,
         Self::VaultSkillHubsGet,
         Self::VaultSkillHubsPublishersAdmit,
@@ -1553,6 +1575,17 @@ impl AgentVerb {
             Self::VaultWeaveOwnerLinkWrong => "vault.weave.owner.link.wrong",
             Self::VaultWeaveItemWrong => "vault.weave.item.wrong",
             Self::VaultWeaveOwnerItemWrong => "vault.weave.owner.item.wrong",
+            Self::VaultWeaveEnqueue => "vault.weave.enqueue",
+            Self::VaultWeaveSchedulesList => "vault.weave.schedules.list",
+            Self::VaultWeaveSchedulesPut => "vault.weave.schedules.put",
+            Self::VaultWeaveSchedulesClear => "vault.weave.schedules.clear",
+            Self::VaultWeaveOwnerDigestRender => "vault.weave.owner.digest.render",
+            Self::VaultInboxConcernsReview => "vault.inbox.concerns.review",
+            Self::VaultInboxLens => "vault.inbox.lens",
+            Self::VaultInboxGroups => "vault.inbox.groups",
+            Self::VaultWeaveDigestRender => "vault.weave.digest.render",
+            Self::VaultWeaveLinkCorrections => "vault.weave.link.corrections",
+            Self::SelfInboxLens => "self.inbox.lens",
             Self::VaultSkillHubsPut => "vault.skill_hubs.put",
             Self::VaultSkillHubsGet => "vault.skill_hubs.get",
             Self::VaultSkillHubsPublishersAdmit => "vault.skill_hubs.publishers.admit",
@@ -2290,6 +2323,17 @@ impl AgentVerb {
                 | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultWeaveItemWrong
                 | Self::VaultWeaveOwnerItemWrong
+                | Self::VaultWeaveEnqueue
+                | Self::VaultWeaveSchedulesList
+                | Self::VaultWeaveSchedulesPut
+                | Self::VaultWeaveSchedulesClear
+                | Self::VaultWeaveOwnerDigestRender
+                | Self::VaultInboxConcernsReview
+                | Self::VaultInboxLens
+                | Self::VaultInboxGroups
+                | Self::VaultWeaveDigestRender
+                | Self::VaultWeaveLinkCorrections
+                | Self::SelfInboxLens
                 | Self::VaultSkillHubsPut
                 | Self::VaultSkillHubsGet
                 | Self::VaultSkillHubsPublishersAdmit
@@ -3034,6 +3078,17 @@ impl AgentVerb {
                 | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultWeaveItemWrong
                 | Self::VaultWeaveOwnerItemWrong
+                | Self::VaultWeaveEnqueue
+                | Self::VaultWeaveSchedulesList
+                | Self::VaultWeaveSchedulesPut
+                | Self::VaultWeaveSchedulesClear
+                | Self::VaultWeaveOwnerDigestRender
+                | Self::VaultInboxConcernsReview
+                | Self::VaultInboxLens
+                | Self::VaultInboxGroups
+                | Self::VaultWeaveDigestRender
+                | Self::VaultWeaveLinkCorrections
+                | Self::SelfInboxLens
                 | Self::VaultSkillHubsPut
                 | Self::VaultSkillHubsGet
                 | Self::VaultSkillHubsPublishersAdmit
@@ -3655,6 +3710,9 @@ impl AgentVerb {
                 | Self::VaultReceipts
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultWeaveSchedulesList
+                | Self::VaultInboxGroups
+                | Self::VaultWeaveLinkCorrections
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksList
                 | Self::VaultMeshPathReceipts
@@ -3838,6 +3896,17 @@ impl AgentVerb {
                 | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultWeaveItemWrong
                 | Self::VaultWeaveOwnerItemWrong
+                | Self::VaultWeaveEnqueue
+                | Self::VaultWeaveSchedulesList
+                | Self::VaultWeaveSchedulesPut
+                | Self::VaultWeaveSchedulesClear
+                | Self::VaultWeaveOwnerDigestRender
+                | Self::VaultInboxConcernsReview
+                | Self::VaultInboxLens
+                | Self::VaultInboxGroups
+                | Self::VaultWeaveDigestRender
+                | Self::VaultWeaveLinkCorrections
+                | Self::SelfInboxLens
                 | Self::VaultSkillHubsPut
                 | Self::VaultSkillHubsGet
                 | Self::VaultSkillHubsPublishersAdmit
@@ -4482,6 +4551,12 @@ impl AgentVerb {
                 | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultWeaveItemWrong
                 | Self::VaultWeaveOwnerItemWrong
+                | Self::VaultWeaveEnqueue
+                | Self::VaultWeaveSchedulesPut
+                | Self::VaultWeaveSchedulesClear
+                | Self::VaultWeaveOwnerDigestRender
+                | Self::VaultInboxConcernsReview
+                | Self::VaultWeaveDigestRender
                 | Self::VaultSkillHubsPut
                 | Self::VaultSkillHubsPublishersAdmit
                 | Self::VaultSkillHubsPublishersRevoke
@@ -5007,6 +5082,17 @@ impl AgentVerb {
             Self::VaultWeaveOwnerLinkWrong => &["spec"],
             Self::VaultWeaveItemWrong => &["spec"],
             Self::VaultWeaveOwnerItemWrong => &["spec"],
+            Self::VaultWeaveEnqueue => &["spec"],
+            Self::VaultWeaveSchedulesList => &["spec"],
+            Self::VaultWeaveSchedulesPut => &["spec"],
+            Self::VaultWeaveSchedulesClear => &["spec"],
+            Self::VaultWeaveOwnerDigestRender => &["spec"],
+            Self::VaultInboxConcernsReview => &["spec"],
+            Self::VaultInboxLens => &["spec"],
+            Self::VaultInboxGroups => &["spec"],
+            Self::VaultWeaveDigestRender => &["spec"],
+            Self::VaultWeaveLinkCorrections => &["spec"],
+            Self::SelfInboxLens => &["spec"],
             Self::VaultSkillHubsPut => &["spec"],
             Self::VaultSkillHubsGet => &["spec"],
             Self::VaultSkillHubsPublishersAdmit => &["spec"],
@@ -5730,6 +5816,17 @@ impl AgentVerb {
             Self::VaultWeaveOwnerLinkWrong => &["spec"],
             Self::VaultWeaveItemWrong => &["spec"],
             Self::VaultWeaveOwnerItemWrong => &["spec"],
+            Self::VaultWeaveEnqueue => &["spec"],
+            Self::VaultWeaveSchedulesList => &["spec"],
+            Self::VaultWeaveSchedulesPut => &["spec"],
+            Self::VaultWeaveSchedulesClear => &["spec"],
+            Self::VaultWeaveOwnerDigestRender => &["spec"],
+            Self::VaultInboxConcernsReview => &["spec"],
+            Self::VaultInboxLens => &["spec"],
+            Self::VaultInboxGroups => &["spec"],
+            Self::VaultWeaveDigestRender => &["spec"],
+            Self::VaultWeaveLinkCorrections => &["spec"],
+            Self::SelfInboxLens => &["spec"],
             Self::VaultSkillHubsPut => &["spec"],
             Self::VaultSkillHubsGet => &["spec"],
             Self::VaultSkillHubsPublishersAdmit => &["spec"],
@@ -6651,6 +6748,39 @@ impl AgentVerb {
             }
             Self::VaultWeaveOwnerItemWrong => {
                 "The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays."
+            }
+            Self::VaultWeaveEnqueue => {
+                "Admits a generated candidate weave recipe under the owner's proof and queues its pinned execution; poll vault.consolidation.status for completion."
+            }
+            Self::VaultWeaveSchedulesList => {
+                "Lists every reader's daily or weekly weave digest schedule under the owner's proof."
+            }
+            Self::VaultWeaveSchedulesPut => {
+                "Sets one reader's daily or weekly digest schedule and section recipe under the owner's proof."
+            }
+            Self::VaultWeaveSchedulesClear => {
+                "Stops one reader's digest schedule under the owner's proof, keeping its saved periods."
+            }
+            Self::VaultWeaveOwnerDigestRender => {
+                "Publishes the owner's due digest through the live owner lens and returns the saved period and narrowing receipt, or null when nothing is due."
+            }
+            Self::VaultInboxConcernsReview => {
+                "Queues the Coach's real health review under the owner's proof; findings and recipients come from engine evidence, never supplied concern rows."
+            }
+            Self::VaultInboxLens => {
+                "Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent."
+            }
+            Self::VaultInboxGroups => {
+                "Reads membership of real gate-held Dreamer consent proposals grouped by run, under the owner's proof."
+            }
+            Self::VaultWeaveDigestRender => {
+                "Publishes the bound reader's due digest through the same live scoped lens and returns its saved period and narrowing receipt, or null when nothing is due."
+            }
+            Self::VaultWeaveLinkCorrections => {
+                "Reads persisted wrong-link labels for a link still admitted by the caller's live weave lens, without changing the link."
+            }
+            Self::SelfInboxLens => {
+                "Reads the bound actor's own identity inbox slice in impact order, with optional identity filtering and concern groups; not a delivered-notification page."
             }
             Self::VaultSkillHubsPut => {
                 "The owner registers or revises a hub source; hub trust never grants activation authority."

@@ -132,6 +132,17 @@ vaultWeaveLinkWrong(input: unknown): unknown
 vaultWeaveOwnerLinkWrong(input: unknown): unknown
 vaultWeaveItemWrong(input: unknown): unknown
 vaultWeaveOwnerItemWrong(input: unknown): unknown
+vaultWeaveEnqueue(input: unknown): unknown
+vaultWeaveSchedulesList(input: unknown): unknown
+vaultWeaveSchedulesPut(input: unknown): unknown
+vaultWeaveSchedulesClear(input: unknown): unknown
+vaultWeaveOwnerDigestRender(input: unknown): unknown
+vaultInboxConcernsReview(input: unknown): unknown
+vaultInboxLens(input: unknown): unknown
+vaultInboxGroups(input: unknown): unknown
+vaultWeaveDigestRender(input: unknown): unknown
+vaultWeaveLinkCorrections(input: unknown): unknown
+selfInboxLens(input: unknown): unknown
 vaultSkillHubsPut(input: unknown): unknown
 vaultSkillHubsGet(input: unknown): unknown
 vaultSkillHubsPublishersAdmit(input: unknown): unknown
