@@ -710,6 +710,14 @@ fn mcp_compaction_value(report: &oneiron::engine_executor::CompactionReport) -> 
     if let Some(suppression) = report.suppressed {
         value["suppressed"] = mcp_suppression_value(suppression);
     }
+    // FIX 4465: who wrote the last self-written pass and what ran it, as the
+    // host recorded it; unknown counters stay null, never zero.
+    if let Some(execution) = &report.last_self_pass {
+        value["self_writer"] = serde_json::to_value(execution).unwrap_or(Value::Null);
+    }
+    if let Some(why) = report.self_unavailable {
+        value["self_unavailable"] = json!(why.as_str());
+    }
     value
 }
 
