@@ -4,8 +4,9 @@
 //! this reads a byte of it. An `Issue` update of the configured team becomes
 //! the same [`oneiron::LinearIssueChange`] a scheduled pull builds, through
 //! the poller's own field mapping and its fail-closed checks, under the
-//! delivery's id as its event id. Every other type or action, and an issue of
-//! another team, is carried as ignored. Nothing here writes.
+//! delivery's id as its event id; a field the delivery omits reads as the
+//! poller's `null`. Every other type or action, and an issue of another
+//! team, is carried as ignored. Nothing here writes.
 
 use oneiron::LinearSyncResult;
 use oneiron::linear_sync::{
@@ -55,6 +56,27 @@ fn nest(data: &mut Map<String, Value>, nested: &str, flat: &str) {
     data.insert(nested.to_owned(), value);
 }
 
+/// A delivery's issue entity omits the fields it holds no value for, where
+/// the poller's query reads `null`; and an older payload names no
+/// `identifier`, only the team key and the issue number.
+fn fill_absent(data: &mut Map<String, Value>) {
+    for key in ["description", "priority", "assignee"] {
+        data.entry(key).or_insert(Value::Null);
+    }
+    if data.contains_key("identifier") {
+        return;
+    }
+    let key = data
+        .get("team")
+        .and_then(|team| team.get("key"))
+        .and_then(Value::as_str);
+    let number = data.get("number").and_then(Value::as_u64);
+    if let (Some(key), Some(number)) = (key, number) {
+        let identifier = format!("{key}-{number}");
+        data.insert("identifier".to_owned(), Value::String(identifier));
+    }
+}
+
 /// The issue's team id, nested or flat.
 fn team_of(data: &Map<String, Value>) -> Option<&str> {
     data.get("team")
@@ -94,6 +116,7 @@ pub fn normalize_issue_webhook(
             nest(&mut data, "team", "teamId");
             nest(&mut data, "state", "stateId");
             nest(&mut data, "assignee", "assigneeId");
+            fill_absent(&mut data);
             let mut change = config.issue(&Value::Object(data))?;
             change.event_id = delivery_id.to_owned();
             kind = LinearWebhookKind::Issue(change);
