@@ -277,6 +277,10 @@ pub enum AgentVerb {
     VaultCodeProposalSubmit,
     VaultCodeOplog,
     VaultCodeModelHealCount,
+    VaultResultsStatus,
+    VaultResultsRecover,
+    VaultResultsRead,
+    VaultResultsSlice,
     VaultCodeRepoDiff,
     VaultCodeExport,
     VaultCodeOriginAuthorityGet,
@@ -856,6 +860,10 @@ impl AgentVerb {
         Self::VaultCodeProposalSubmit,
         Self::VaultCodeOplog,
         Self::VaultCodeModelHealCount,
+        Self::VaultResultsStatus,
+        Self::VaultResultsRecover,
+        Self::VaultResultsRead,
+        Self::VaultResultsSlice,
         Self::VaultCodeRepoDiff,
         Self::VaultCodeExport,
         Self::VaultCodeOriginAuthorityGet,
@@ -1444,6 +1452,10 @@ impl AgentVerb {
             Self::VaultCodeProposalSubmit => "vault.code.proposal_submit",
             Self::VaultCodeOplog => "vault.code.oplog",
             Self::VaultCodeModelHealCount => "vault.code.model_heal_count",
+            Self::VaultResultsStatus => "vault.results.status",
+            Self::VaultResultsRecover => "vault.results.recover",
+            Self::VaultResultsRead => "vault.results.read",
+            Self::VaultResultsSlice => "vault.results.slice",
             Self::VaultCodeRepoDiff => "vault.code.repo_diff",
             Self::VaultCodeExport => "vault.code.export",
             Self::VaultCodeOriginAuthorityGet => "vault.code.origin.authority.get",
@@ -2026,6 +2038,10 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSubmit
                 | Self::VaultCodeOplog
                 | Self::VaultCodeModelHealCount
+                | Self::VaultResultsStatus
+                | Self::VaultResultsRecover
+                | Self::VaultResultsRead
+                | Self::VaultResultsSlice
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginAuthorityGet
@@ -2612,6 +2628,10 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSubmit
                 | Self::VaultCodeOplog
                 | Self::VaultCodeModelHealCount
+                | Self::VaultResultsStatus
+                | Self::VaultResultsRecover
+                | Self::VaultResultsRead
+                | Self::VaultResultsSlice
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginAuthorityGet
@@ -3247,6 +3267,10 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSubmit
                 | Self::VaultCodeOplog
                 | Self::VaultCodeModelHealCount
+                | Self::VaultResultsStatus
+                | Self::VaultResultsRecover
+                | Self::VaultResultsRead
+                | Self::VaultResultsSlice
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginAuthorityGet
@@ -4197,6 +4221,10 @@ impl AgentVerb {
             Self::VaultCodeProposalSubmit => &["spec"],
             Self::VaultCodeOplog => &["spec"],
             Self::VaultCodeModelHealCount => &["spec"],
+            Self::VaultResultsStatus => &["spec"],
+            Self::VaultResultsRecover => &["spec"],
+            Self::VaultResultsRead => &["spec"],
+            Self::VaultResultsSlice => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultCodeExport => &["spec"],
             Self::VaultCodeOriginAuthorityGet => &["spec"],
@@ -4777,6 +4805,10 @@ impl AgentVerb {
             Self::VaultCodeProposalSubmit => &["spec"],
             Self::VaultCodeOplog => &["spec"],
             Self::VaultCodeModelHealCount => &["spec"],
+            Self::VaultResultsStatus => &["spec"],
+            Self::VaultResultsRecover => &["spec"],
+            Self::VaultResultsRead => &["spec"],
+            Self::VaultResultsSlice => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultCodeExport => &["spec"],
             Self::VaultCodeOriginAuthorityGet => &["spec"],
@@ -5871,6 +5903,18 @@ impl AgentVerb {
             }
             Self::VaultCodeModelHealCount => {
                 "Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."
+            }
+            Self::VaultResultsStatus => {
+                "The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run."
+            }
+            Self::VaultResultsRecover => {
+                "The owner reopens retained result status after restart; it never resumes the producer or replays an effect to regenerate output."
+            }
+            Self::VaultResultsRead => {
+                "The owner reads one exact retained result occurrence card under its current taint and source-row fence, never by content authority alone."
+            }
+            Self::VaultResultsSlice => {
+                "The owner reads a typed byte or line range of one exact result occurrence, with bounded continuations and current taint withholding."
             }
             Self::VaultCodeRepoDiff => {
                 "Every file changed between two repository trees, each a code revision or a git snapshot: added, removed, modified or renamed, each unit with the operations that wrote it."

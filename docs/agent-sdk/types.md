@@ -1030,6 +1030,8 @@ class Oneiron:
         @property
         def code(self) -> "Oneiron._VaultCodeVerbs": ...
         @property
+        def results(self) -> "Oneiron._VaultResultsVerbs": ...
+        @property
         def agents(self) -> "Oneiron._VaultAgentsVerbs": ...
         @property
         def workflows(self) -> "Oneiron._VaultWorkflowsVerbs": ...
@@ -1854,6 +1856,15 @@ class Oneiron:
             """Settle stored slow results in landing order: green advances past passing ones, and a red one rolls the ungreen suffix back. Owner only. The caller names no commit or result."""
         def recover(self, spec: Facade.MergeQueueRepoRequest) -> Facade.MergeQueuePointersView:
             """Reconcile an interrupted landing or rollback with its persisted mutation receipts. Owner only. Unreceipted divergence refuses; nothing is approved or rebased."""
+    class _VaultResultsVerbs:
+        def status(self, spec: Facade.ResultRunRequest) -> Facade.ResultRunStatus:
+            """The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run."""
+        def recover(self, spec: Facade.ResultRunRequest) -> Facade.ResultRunStatus:
+            """The owner reopens retained result status after restart; it never resumes the producer or replays an effect to regenerate output."""
+        def read(self, spec: Facade.ResultOccurrenceRequest) -> Facade.ResultReadView:
+            """The owner reads one exact retained result occurrence card under its current taint and source-row fence, never by content authority alone."""
+        def slice(self, spec: Facade.ResultSliceRequest) -> Facade.ResultSliceView:
+            """The owner reads a typed byte or line range of one exact result occurrence, with bounded continuations and current taint withholding."""
     class _VaultAgentsVerbs:
         def create(self, spec: Facade.AgentDefinitionCreateRequest) -> Facade.AgentDefinitionView:
             """The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched."""
@@ -2265,6 +2276,8 @@ class Oneiron:
         def steps(self) -> "Oneiron._AiStepsVerbs": ...
         def reply(self, spec: Facade.AiReplyRequest) -> Facade.AiReply:
             """Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs."""
+        @property
+        def voice(self) -> "Oneiron._AiVoiceVerbs": ...
         def options(self, spec: Facade.AiOptionsRequest) -> Facade.AiOptions:
             """The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."""
         def image(self, spec: Facade.AiCallRequest) -> Facade.AiAnswer:
@@ -2284,6 +2297,23 @@ class Oneiron:
             """Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result."""
         def receipt(self, spec: Facade.ModelStepReceiptRequest) -> Facade.ModelStepReceipt:
             """Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease."""
+    class _AiVoiceVerbs:
+        def start(self, spec: Facade.LiveVoiceStartRequest) -> Facade.LiveVoiceSession:
+            """Opens an owner-bound live media session on the configured voice routes, using the caller credential, room audience and existing budget gates."""
+        def audio(self, spec: Facade.LiveVoiceAudioRequest) -> Facade.LiveVoiceProcessed:
+            """Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech retires old output through the shared cancellation path."""
+        def events(self, spec: Facade.LiveVoiceEventsRequest) -> Facade.LiveVoiceEvents:
+            """Reads ordered utterance and epoch events, PCM, flushes, playout stops, safeguard receipts and notices; advancing the cursor releases consumed events."""
+        def ack(self, spec: Facade.LiveVoiceAckRequest) -> Facade.LiveVoiceProcessed:
+            """Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed."""
+        def usage(self, spec: Facade.LiveVoiceUsageRequest) -> Facade.LiveVoiceUsage:
+            """Observes actual voice-brain run settlements and a terminal boundary after producer teardown, epoch retirement, TTS cancel and client playout acknowledgment."""
+        def tool(self, spec: Facade.LiveVoiceToolRequest) -> Facade.LiveVoiceToolReply:
+            """Calls a connector under the caller grant and carries its delivered result, marked foreign, into the next voice utterance for parallel sentence safeguards."""
+        def end(self, spec: Facade.LiveVoiceSessionRequest) -> Facade.LiveVoiceProcessed:
+            """Ends live voice through the shared cancellation path; keeps the session available for final playout acknowledgment and usage observation."""
+        def close(self, spec: Facade.LiveVoiceSessionRequest) -> Facade.LiveVoiceProcessed:
+            """Ends and releases a live voice session and its retained events; read terminal usage and acknowledge playout before closing."""
     class _AiVideoVerbs:
         def __call__(self, spec: Facade.AiCallRequest) -> Facade.AiVideoTicket:
             """Starts a video render as a provider job and answers with its ticket."""
