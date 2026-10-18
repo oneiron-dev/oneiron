@@ -2591,6 +2591,12 @@ class Oneiron:
         def checkout(self) -> "Oneiron._VaultCodeCheckoutVerbs":
             return Oneiron._VaultCodeCheckoutVerbs(self._client)
         @property
+        def views(self) -> "Oneiron._VaultCodeViewsVerbs":
+            return Oneiron._VaultCodeViewsVerbs(self._client)
+        @property
+        def cache(self) -> "Oneiron._VaultCodeCacheVerbs":
+            return Oneiron._VaultCodeCacheVerbs(self._client)
+        @property
         def snapshots(self) -> "Oneiron._VaultCodeSnapshotsVerbs":
             return Oneiron._VaultCodeSnapshotsVerbs(self._client)
         @property
@@ -2668,6 +2674,33 @@ class Oneiron:
         def teardown(self, spec):
             """Collect the caller's checkout only with a matching durable pushed-head receipt and clear custody; retain dirty or uncertain trees."""
             return json.loads(_translate(lambda: self._client.vault_code_checkout_teardown(json.dumps(spec))))
+    class _VaultCodeViewsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def materialize(self, spec):
+            """Materialize a private linked working view from verified tested file frontiers in the authenticated owner account."""
+            return json.loads(_translate(lambda: self._client.vault_code_views_materialize(json.dumps(spec))))
+        def get(self, spec):
+            """Read one working view and its immutable tested base under the authenticated owner account."""
+            return json.loads(_translate(lambda: self._client.vault_code_views_get(json.dumps(spec))))
+        def read(self, spec):
+            """Read the current bytes of one selected input in the authenticated owner working view."""
+            return json.loads(_translate(lambda: self._client.vault_code_views_read(json.dumps(spec))))
+        def action(self, spec):
+            """Freeze current view input identities and return the REAPI action digest with its exact command bytes and input root digest."""
+            return json.loads(_translate(lambda: self._client.vault_code_views_action(json.dumps(spec))))
+        def build(self, spec):
+            """Run a pinned native owner build or verify leg, reusing clean account-local results and retaining secret-consuming exhaust as tainted."""
+            return json.loads(_translate(lambda: self._client.vault_code_views_build(json.dumps(spec))))
+    class _VaultCodeCacheVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """Read one clean immutable account-local build result by action key without executing a command."""
+            return json.loads(_translate(lambda: self._client.vault_code_cache_get(json.dumps(spec))))
+        def reuse(self, spec):
+            """Reuse an authorized clean action result into another matching working view without dispatching a cold build."""
+            return json.loads(_translate(lambda: self._client.vault_code_cache_reuse(json.dumps(spec))))
     class _VaultCodeSnapshotsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

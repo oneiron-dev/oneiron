@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 816 code-mode rows (793 host rows, 23 run rows), 2766 declarations.
-// Replies: 729 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 823 code-mode rows (800 host rows, 23 run rows), 2786 declarations.
+// Replies: 736 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 101; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1684,6 +1684,26 @@ declare namespace Sdk {
   type CheckoutTeardownInput = { checkout: string; epoch: number; pushed_head_receipt?: EntityId | null };
   type CheckoutRetention = "missing_pushed_head_receipt" | "receipt_mismatch" | "live_occupant" | "dirty_or_uncertain";
   type CheckoutTornDown = { status: "collected"; checkout: string; epoch: number } | { status: "retained"; checkout: string; epoch: number; reason: CheckoutRetention };
+  type VisibleFilePolicy = { version: number; include_prefixes: string[]; exclude_prefixes: string[] };
+  type CodeViewMaterializeRequest = { repo: EntityId; tested: EntityId; account: EntityId; policy: VisibleFilePolicy };
+  type CodeDocumentFrontier = { document_id: number[]; repo: string; path: string; version: [number, number][]; op_fold: number[]; text_hash: number[] };
+  type CodeViewFile = { path: string; content_hash_blake3: string; frontier: CodeDocumentFrontier; text_sha256: string };
+  type CodeWorkingView = { view: EntityId; repo: EntityId; base: EntityId; account: EntityId; fork_hash: string; files: CodeViewFile[]; receipt: EntityId; host_path: string };
+  type CodeViewRequest = { view: EntityId; repo: EntityId; tested: EntityId; account: EntityId };
+  type CodeViewReadRequest = { view: CodeViewRequest; path: string };
+  type CodeViewFileBytes = { path: string; bytes: number[]; sha256: string };
+  type CodeSecretTaintRef = { secret_ref: string; rotation_generation: number };
+  type CodeBuildClass = "build" | "verify";
+  type CodeBuildSpec = { argv: string[]; env_allowlist: Record<string, string>; platform: Record<string, string>; declared_outputs: string[]; secret_taint_refs: CodeSecretTaintRef[]; class: CodeBuildClass };
+  type CodeViewActionRequest = { view: CodeViewRequest; spec: CodeBuildSpec };
+  type CodeActionDigest = { hash: string; size_bytes: number };
+  type CodeViewAction = { action_digest: CodeActionDigest; command_bytes: number[]; input_root_digest: CodeActionDigest };
+  type CodeViewBuildRequest = { view: CodeViewRequest; spec: CodeBuildSpec; action_digest: CodeActionDigest };
+  type CodeCacheState = "hit" | "miss" | "denied";
+  type CodeBuildOutput = { artifact_ref: string; output_sha256: string };
+  type CodeBuildEntry = { action_digest: CodeActionDigest; account: EntityId; exit_code: number; outputs: Record<string, CodeBuildOutput>; stdout_ref?: string | null; stderr_ref?: string | null; secret_taint_refs: CodeSecretTaintRef[]; reusable: boolean; receipt: string };
+  type CodeCacheOutcome = { state: CodeCacheState; entry?: CodeBuildEntry | null; receipt?: string | null };
+  type CodeCacheReadRequest = { account: EntityId; action_digest: CodeActionDigest };
   type CodeRepoPointer = { local_folder: string; commit: string };
   type CodeSnapshotIngestRequest = { project_id: string; pointer: CodeRepoPointer };
   type CodeSnapshotFile = { path: string; content_hash_blake3: string; size_bytes: number };
@@ -3507,6 +3527,12 @@ declare const vault: Sdk.VaultHost & {
   code: {
     /** Every unit of one tested state of a code file, with the runs of text each operation wrote, and who made each operation and why. */
     blame(input: Sdk.CodeStateRequest): Promise<Sdk.CodeBlameView | null | StoredResult>;
+    cache: {
+      /** Read one clean immutable account-local build result by action key without executing a command. */
+      get(input: Sdk.CodeCacheReadRequest): Promise<Sdk.CodeCacheOutcome | StoredResult>;
+      /** Reuse an authorized clean action result into another matching working view without dispatching a cold build. */
+      reuse(input: Sdk.CodeViewBuildRequest): Promise<Sdk.CodeCacheOutcome | StoredResult>;
+    };
     checkout: {
       /** Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential. */
       bind(input: Sdk.CheckoutDoorBindRequest): Promise<Sdk.CheckoutDoorBinding | StoredResult>;
@@ -3596,6 +3622,18 @@ declare const vault: Sdk.VaultHost & {
       release(input: Sdk.CodeSymbolsTaskRequest): Promise<Sdk.CodeSymbolsReleased | StoredResult>;
       /** Renew the live symbol declaration the caller holds for one task by its declared lifetime. Owner only. */
       renew(input: Sdk.CodeSymbolsTaskRequest): Promise<Sdk.CodeSymbolLeaseView | StoredResult>;
+    };
+    views: {
+      /** Freeze current view input identities and return the REAPI action digest with its exact command bytes and input root digest. */
+      action(input: Sdk.CodeViewActionRequest): Promise<Sdk.CodeViewAction | StoredResult>;
+      /** Run a pinned native owner build or verify leg, reusing clean account-local results and retaining secret-consuming exhaust as tainted. */
+      build(input: Sdk.CodeViewBuildRequest): Promise<Sdk.CodeCacheOutcome | StoredResult>;
+      /** Read one working view and its immutable tested base under the authenticated owner account. */
+      get(input: Sdk.CodeViewRequest): Promise<Sdk.CodeWorkingView | StoredResult>;
+      /** Materialize a private linked working view from verified tested file frontiers in the authenticated owner account. */
+      materialize(input: Sdk.CodeViewMaterializeRequest): Promise<Sdk.CodeWorkingView | StoredResult>;
+      /** Read the current bytes of one selected input in the authenticated owner working view. */
+      read(input: Sdk.CodeViewReadRequest): Promise<Sdk.CodeViewFileBytes | StoredResult>;
     };
     waits: {
       /** Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait. */

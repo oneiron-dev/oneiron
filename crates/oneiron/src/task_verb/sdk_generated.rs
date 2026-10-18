@@ -2420,6 +2420,48 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.views.materialize",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_view_doors::CodeViewMaterializeRequest,
+                >(),
+            ),
+            (
+                "vault.code.views.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_view_doors::CodeViewRequest,
+                >(),
+            ),
+            (
+                "vault.code.views.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_view_doors::CodeViewReadRequest,
+                >(),
+            ),
+            (
+                "vault.code.views.action",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_view_doors::CodeViewActionRequest,
+                >(),
+            ),
+            (
+                "vault.code.views.build",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_view_doors::CodeViewBuildRequest,
+                >(),
+            ),
+            (
+                "vault.code.cache.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_view_doors::CodeCacheReadRequest,
+                >(),
+            ),
+            (
+                "vault.code.cache.reuse",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_view_doors::CodeViewBuildRequest,
+                >(),
+            ),
+            (
                 "vault.code.snapshots.ingest",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::codebase_doors::CodeSnapshotIngestRequest,
@@ -4669,6 +4711,13 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.checkout.publish",
     "vault.code.checkout.settle",
     "vault.code.checkout.teardown",
+    "vault.code.views.materialize",
+    "vault.code.views.get",
+    "vault.code.views.read",
+    "vault.code.views.action",
+    "vault.code.views.build",
+    "vault.code.cache.get",
+    "vault.code.cache.reuse",
     "vault.code.snapshots.ingest",
     "vault.code.snapshots.get",
     "vault.code.snapshots.read",
@@ -5642,6 +5691,27 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.code.checkout.teardown" => crate::code_run::vault_read::request_schema::<
             crate::memory::checkout_doors::CheckoutTornDown,
+        >(),
+        "vault.code.views.materialize" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_view_doors::CodeWorkingView,
+        >(),
+        "vault.code.views.get" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_view_doors::CodeWorkingView,
+        >(),
+        "vault.code.views.read" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_view_doors::CodeViewFileBytes,
+        >(),
+        "vault.code.views.action" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_view_doors::CodeViewAction,
+        >(),
+        "vault.code.views.build" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_view_doors::CodeCacheOutcome,
+        >(),
+        "vault.code.cache.get" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_view_doors::CodeCacheOutcome,
+        >(),
+        "vault.code.cache.reuse" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_view_doors::CodeCacheOutcome,
         >(),
         "vault.code.snapshots.ingest" => crate::code_run::vault_read::request_schema::<
             crate::memory::codebase_doors::CodeSnapshotView,
@@ -9272,6 +9342,55 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.checkout.teardown" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.views.materialize" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.views.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.views.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.views.action" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.views.build" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.cache.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.cache.reuse" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -13173,6 +13292,33 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::checkout_doors::CheckoutTeardownInput =
                 decode(value.clone())?;
         }
+        "vault.code.views.materialize" => {
+            let _input: crate::memory::code_view_doors::CodeViewMaterializeRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.views.get" => {
+            let _input: crate::memory::code_view_doors::CodeViewRequest = decode(value.clone())?;
+        }
+        "vault.code.views.read" => {
+            let _input: crate::memory::code_view_doors::CodeViewReadRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.views.action" => {
+            let _input: crate::memory::code_view_doors::CodeViewActionRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.views.build" => {
+            let _input: crate::memory::code_view_doors::CodeViewBuildRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.cache.get" => {
+            let _input: crate::memory::code_view_doors::CodeCacheReadRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.cache.reuse" => {
+            let _input: crate::memory::code_view_doors::CodeViewBuildRequest =
+                decode(value.clone())?;
+        }
         "vault.code.snapshots.ingest" => {
             let _input: crate::memory::codebase_doors::CodeSnapshotIngestRequest =
                 decode(value.clone())?;
@@ -15324,6 +15470,15 @@ pub fn invoke(
         "vault.code.checkout.teardown" => {
             encode(vault_code_checkout_teardown(memory, decode(value)?)?)
         }
+        "vault.code.views.materialize" => {
+            encode(vault_code_views_materialize(memory, decode(value)?)?)
+        }
+        "vault.code.views.get" => encode(vault_code_views_get(memory, decode(value)?)?),
+        "vault.code.views.read" => encode(vault_code_views_read(memory, decode(value)?)?),
+        "vault.code.views.action" => encode(vault_code_views_action(memory, decode(value)?)?),
+        "vault.code.views.build" => encode(vault_code_views_build(memory, decode(value)?)?),
+        "vault.code.cache.get" => encode(vault_code_cache_get(memory, decode(value)?)?),
+        "vault.code.cache.reuse" => encode(vault_code_cache_reuse(memory, decode(value)?)?),
         "vault.code.snapshots.ingest" => {
             encode(vault_code_snapshots_ingest(memory, decode(value)?)?)
         }
@@ -19756,6 +19911,51 @@ pub fn vault_code_checkout_teardown(
     input: crate::memory::checkout_doors::CheckoutTeardownInput,
 ) -> MemoryResult<crate::memory::checkout_doors::CheckoutTornDown> {
     crate::task_verb::sdk::host_only(memory, "vault.code.checkout.teardown", &input)
+}
+pub fn vault_code_views_materialize(
+    memory: &Memory<'_>,
+    input: crate::memory::code_view_doors::CodeViewMaterializeRequest,
+) -> MemoryResult<crate::memory::code_view_doors::CodeWorkingView> {
+    memory.code_view_materialize_as(
+        &memory.embedded_owner("vault.code.views.materialize")?,
+        input,
+    )
+}
+pub fn vault_code_views_get(
+    memory: &Memory<'_>,
+    input: crate::memory::code_view_doors::CodeViewRequest,
+) -> MemoryResult<crate::memory::code_view_doors::CodeWorkingView> {
+    memory.code_view_get_as(&memory.embedded_owner("vault.code.views.get")?, input)
+}
+pub fn vault_code_views_read(
+    memory: &Memory<'_>,
+    input: crate::memory::code_view_doors::CodeViewReadRequest,
+) -> MemoryResult<crate::memory::code_view_doors::CodeViewFileBytes> {
+    memory.code_view_read_as(&memory.embedded_owner("vault.code.views.read")?, input)
+}
+pub fn vault_code_views_action(
+    memory: &Memory<'_>,
+    input: crate::memory::code_view_doors::CodeViewActionRequest,
+) -> MemoryResult<crate::memory::code_view_doors::CodeViewAction> {
+    memory.code_view_action_as(&memory.embedded_owner("vault.code.views.action")?, input)
+}
+pub fn vault_code_views_build(
+    memory: &Memory<'_>,
+    input: crate::memory::code_view_doors::CodeViewBuildRequest,
+) -> MemoryResult<crate::memory::code_view_doors::CodeCacheOutcome> {
+    memory.code_view_build_as(&memory.embedded_owner("vault.code.views.build")?, input)
+}
+pub fn vault_code_cache_get(
+    memory: &Memory<'_>,
+    input: crate::memory::code_view_doors::CodeCacheReadRequest,
+) -> MemoryResult<crate::memory::code_view_doors::CodeCacheOutcome> {
+    memory.code_cache_get_as(&memory.embedded_owner("vault.code.cache.get")?, input)
+}
+pub fn vault_code_cache_reuse(
+    memory: &Memory<'_>,
+    input: crate::memory::code_view_doors::CodeViewBuildRequest,
+) -> MemoryResult<crate::memory::code_view_doors::CodeCacheOutcome> {
+    memory.code_cache_reuse_as(&memory.embedded_owner("vault.code.cache.reuse")?, input)
 }
 pub fn vault_code_snapshots_ingest(
     memory: &Memory<'_>,

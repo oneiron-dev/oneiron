@@ -142,6 +142,7 @@ pub(crate) use super::checkout_doors::*;
 pub(crate) use super::origin_doors::*;
 // The owner's code snapshot doors (DOOR-118), likewise.
 pub(crate) use super::codebase_doors::*;
+pub(crate) use super::code_view_doors::*;
 // The owner's task-type tree doors (DOOR-111) and run doors (DOOR-100),
 // likewise.
 pub(crate) use super::coordination_doors::*;
@@ -1404,6 +1405,13 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.artifacts.live_preview.revoke_invite"
         | "vault.artifacts.live_preview.share"
         | "vault.artifacts.live_preview.revoke_share"
+        | "vault.code.views.materialize"
+        | "vault.code.views.get"
+        | "vault.code.views.read"
+        | "vault.code.views.action"
+        | "vault.code.views.build"
+        | "vault.code.cache.get"
+        | "vault.code.cache.reuse"
         | "vault.code.snapshots.ingest"
         | "vault.code.snapshots.get"
         | "vault.code.snapshots.read"

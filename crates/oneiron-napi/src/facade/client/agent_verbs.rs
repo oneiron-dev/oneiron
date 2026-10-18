@@ -3871,6 +3871,69 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_code_views_materialize(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.views.materialize", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_views_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.views.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_views_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.views.read", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_views_action(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.views.action", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_views_build(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.views.build", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_cache_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.cache.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_cache_reuse(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.cache.reuse", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_code_snapshots_ingest(
         &self,
         input: serde_json::Value,

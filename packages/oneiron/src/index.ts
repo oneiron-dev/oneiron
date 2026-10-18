@@ -1426,6 +1426,24 @@ export class Oneiron {
         /** Collect the caller's checkout only with a matching durable pushed-head receipt and clear custody; retain dirty or uncertain trees. */
         teardown: (input: Facade.CheckoutTeardownInput): Facade.CheckoutTornDown => this.#call(() => this.#client.vaultCodeCheckoutTeardown(input) as Facade.CheckoutTornDown),
       },
+      views: {
+        /** Materialize a private linked working view from verified tested file frontiers in the authenticated owner account. */
+        materialize: (input: Facade.CodeViewMaterializeRequest): Facade.CodeWorkingView => this.#call(() => this.#client.vaultCodeViewsMaterialize(input) as Facade.CodeWorkingView),
+        /** Read one working view and its immutable tested base under the authenticated owner account. */
+        get: (input: Facade.CodeViewRequest): Facade.CodeWorkingView => this.#call(() => this.#client.vaultCodeViewsGet(input) as Facade.CodeWorkingView),
+        /** Read the current bytes of one selected input in the authenticated owner working view. */
+        read: (input: Facade.CodeViewReadRequest): Facade.CodeViewFileBytes => this.#call(() => this.#client.vaultCodeViewsRead(input) as Facade.CodeViewFileBytes),
+        /** Freeze current view input identities and return the REAPI action digest with its exact command bytes and input root digest. */
+        action: (input: Facade.CodeViewActionRequest): Facade.CodeViewAction => this.#call(() => this.#client.vaultCodeViewsAction(input) as Facade.CodeViewAction),
+        /** Run a pinned native owner build or verify leg, reusing clean account-local results and retaining secret-consuming exhaust as tainted. */
+        build: (input: Facade.CodeViewBuildRequest): Facade.CodeCacheOutcome => this.#call(() => this.#client.vaultCodeViewsBuild(input) as Facade.CodeCacheOutcome),
+      },
+      cache: {
+        /** Read one clean immutable account-local build result by action key without executing a command. */
+        get: (input: Facade.CodeCacheReadRequest): Facade.CodeCacheOutcome => this.#call(() => this.#client.vaultCodeCacheGet(input) as Facade.CodeCacheOutcome),
+        /** Reuse an authorized clean action result into another matching working view without dispatching a cold build. */
+        reuse: (input: Facade.CodeViewBuildRequest): Facade.CodeCacheOutcome => this.#call(() => this.#client.vaultCodeCacheReuse(input) as Facade.CodeCacheOutcome),
+      },
       snapshots: {
         /** Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt. */
         ingest: (input: Facade.CodeSnapshotIngestRequest): Facade.CodeSnapshotView => this.#call(() => this.#client.vaultCodeSnapshotsIngest(input) as Facade.CodeSnapshotView),
