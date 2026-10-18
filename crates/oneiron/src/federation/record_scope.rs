@@ -251,6 +251,8 @@ pub(crate) fn stamp_put(
 }
 /// A TURN/MESSAGE body never proposes an audience: only
 /// `stamp_leader_project` settles a non-default one, at the record's birth.
+/// A BLOB_ARTIFACT's likewise: only `stamp_blob_project` settles one, in
+/// the transaction that binds the blob to its project.
 /// A SUMMARY body never proposes a world or facet: only `settle_epoch_birth`
 /// settles them. An ASSET body never proposes a sensitivity either: a raise
 /// (a secret-bearing ASSET marked Restricted, OF-560) leaves its stamp at a
@@ -265,7 +267,9 @@ fn settled_at_birth(kind: u8, prior: &Scope, proposed: &Scope) -> bool {
                     ..prior.clone()
                 } == *proposed
         }
-        crate::registry::ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_MESSAGE => {
+        crate::registry::ENTITY_TYPE_TURN
+        | crate::registry::ENTITY_TYPE_MESSAGE
+        | crate::registry::ENTITY_TYPE_BLOB_ARTIFACT => {
             Scope {
                 audience: proposed.audience.clone(),
                 ..prior.clone()
