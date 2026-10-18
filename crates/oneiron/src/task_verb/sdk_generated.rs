@@ -1459,6 +1459,77 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.evals.author_now",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::eval_doors::EvalAuthorNowRequest,
+                >(),
+            ),
+            (
+                "vault.evals.authoring.result",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::eval_doors::EvalAuthoringRef,
+                >(),
+            ),
+            (
+                "vault.evals.families",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::eval_doors::EvalSeatRequest,
+                >(),
+            ),
+            (
+                "vault.evals.families.assign",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::eval_doors::EvalFamilyAssignRequest,
+                >(),
+            ),
+            (
+                "vault.evals.cases",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::eval_doors::EvalCasesRequest,
+                >(),
+            ),
+            (
+                "vault.evals.cases.record",
+                crate::code_run::vault_read::request_schema::<crate::skill_optimize::EvalCaseDraft>(
+                ),
+            ),
+            (
+                "vault.evals.cohorts",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::eval_doors::EvalSeatRequest,
+                >(),
+            ),
+            (
+                "vault.evals.cohorts.open",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::eval_doors::EvalCohortOpenRequest,
+                >(),
+            ),
+            (
+                "vault.evals.exposure",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::eval_doors::EvalCohortRef,
+                >(),
+            ),
+            (
+                "vault.evals.sufficiency",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::SufficiencyInput,
+                >(),
+            ),
+            (
+                "vault.evals.labels.blocked",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::eval_doors::EvalBlockedLabelsRequest,
+                >(),
+            ),
+            (
+                "vault.evals.labels.pick",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_optimize::eval_doors::EvalLabelPickRequest,
+                >(),
+            ),
+            (
                 "vault.coach.training_offers",
                 crate::code_run::vault_read::request_schema::<
                     crate::skill_optimize::offer_doors::OfferListRequest,
@@ -2054,6 +2125,22 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::lens::LensListRequest>(),
             ),
             (
+                "vault.lenses.select",
+                crate::code_run::vault_read::request_schema::<crate::lens::LensSelectRequest>(),
+            ),
+            (
+                "vault.lenses.resolve",
+                crate::code_run::vault_read::request_schema::<
+                    crate::lens::LensSelectionResolveRequest,
+                >(),
+            ),
+            (
+                "vault.lenses.result_set.action",
+                crate::code_run::vault_read::request_schema::<
+                    crate::lens::LensResultSetActionRequest,
+                >(),
+            ),
+            (
                 "vault.lenses.default",
                 crate::code_run::vault_read::request_schema::<crate::lens::LensDefaultRequest>(),
             ),
@@ -2369,6 +2456,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.code.oplog",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::code_doors::CodeRepoRequest,
+                >(),
+            ),
+            (
+                "execute_code",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::foreign_code::ForeignCodeRunRequest,
                 >(),
             ),
             (
@@ -4561,6 +4654,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.budgets.hold.resume",
     "vault.budgets.local",
     "vault.budgets.settlements",
+    "vault.recall",
     "vault.retrieval.aging.get",
     "vault.retrieval.aging.configure",
     "vault.retrieval.weights.get",
@@ -4708,6 +4802,18 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.research.archive.coverage",
     "vault.evals.inventory",
     "vault.evals.cohorts.setup",
+    "vault.evals.author_now",
+    "vault.evals.authoring.result",
+    "vault.evals.families",
+    "vault.evals.families.assign",
+    "vault.evals.cases",
+    "vault.evals.cases.record",
+    "vault.evals.cohorts",
+    "vault.evals.cohorts.open",
+    "vault.evals.exposure",
+    "vault.evals.sufficiency",
+    "vault.evals.labels.blocked",
+    "vault.evals.labels.pick",
     "vault.coach.training_offers",
     "vault.coach.training_offers.get",
     "vault.coach.training_offers.trigger",
@@ -4755,6 +4861,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.seal.complete",
     "vault.claims.review",
     "vault.claims.settle",
+    "vault.lenses.select",
+    "vault.lenses.resolve",
+    "vault.lenses.result_set.action",
     "self.secrets.materialize",
     "self.secrets.renew",
     "self.secrets.teardown",
@@ -4790,6 +4899,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.proposal_review",
     "vault.code.proposal_settle",
     "vault.code.proposal_settlement",
+    "execute_code",
     "vault.code.model_heal_count",
     "vault.code.waits.resolve",
     "vault.code.waits.receipt",
@@ -5072,6 +5182,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.budgets.settlements" => crate::code_run::vault_read::request_schema::<
             crate::agent_dispatch::budget_doors::RunSettlementsView,
         >(),
+        "vault.recall" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::MemoryPack>()
+        }
         "vault.retrieval.aging.get" => crate::code_run::vault_read::request_schema::<
             crate::policy_manifest_doors::ClaimAgingProfilesView,
         >(),
@@ -5517,6 +5630,42 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.evals.cohorts.setup" => crate::code_run::vault_read::request_schema::<
             crate::skill_optimize::EvalAuthoringReport,
         >(),
+        "vault.evals.author_now" => crate::code_run::vault_read::request_schema::<
+            crate::skill_optimize::eval_doors::EvalAuthoringRef,
+        >(),
+        "vault.evals.authoring.result" => crate::code_run::vault_read::request_schema::<
+            Option<crate::skill_optimize::eval_doors::EvalAuthoringResult>,
+        >(),
+        "vault.evals.families" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::skill_optimize::eval_doors::EvalFamilyView>,
+        >(),
+        "vault.evals.families.assign" => {
+            crate::code_run::vault_read::request_schema::<crate::skill_optimize::SourceFamily>()
+        }
+        "vault.evals.cases" => {
+            crate::code_run::vault_read::request_schema::<Vec<crate::skill_optimize::EvalCase>>()
+        }
+        "vault.evals.cases.record" => {
+            crate::code_run::vault_read::request_schema::<crate::skill_optimize::EvalCase>()
+        }
+        "vault.evals.cohorts" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::skill_optimize::eval_doors::EvalCohortView>,
+        >(),
+        "vault.evals.cohorts.open" => {
+            crate::code_run::vault_read::request_schema::<crate::skill_optimize::EvalRelease>()
+        }
+        "vault.evals.exposure" => crate::code_run::vault_read::request_schema::<
+            crate::skill_optimize::eval_doors::EvalExposureLedger,
+        >(),
+        "vault.evals.sufficiency" => {
+            crate::code_run::vault_read::request_schema::<crate::skill_optimize::SufficiencyCard>()
+        }
+        "vault.evals.labels.blocked" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::skill_optimize::EvalLabelAsk>,
+        >(),
+        "vault.evals.labels.pick" => {
+            crate::code_run::vault_read::request_schema::<crate::skill_optimize::EvalCase>()
+        }
         "vault.coach.training_offers" => crate::code_run::vault_read::request_schema::<
             Vec<crate::skill_optimize::offer_doors::OfferView>,
         >(),
@@ -5664,6 +5813,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.claims.settle" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ClaimSettlement>()
         }
+        "vault.lenses.select" => {
+            crate::code_run::vault_read::request_schema::<crate::lens::LensSelection>()
+        }
+        "vault.lenses.resolve" => {
+            crate::code_run::vault_read::request_schema::<crate::lens::LensSelectionResolved>()
+        }
+        "vault.lenses.result_set.action" => {
+            crate::code_run::vault_read::request_schema::<crate::lens::LensResultSetActionResult>()
+        }
         "self.secrets.materialize" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::SecretGrantView>()
         }
@@ -5772,6 +5930,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.code.proposal_settlement" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_doors::CodeProposalSettlementView,
+        >(),
+        "execute_code" => crate::code_run::vault_read::request_schema::<
+            crate::memory::foreign_code::ForeignCodeRunResult,
         >(),
         "vault.code.model_heal_count" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_run_doors::CodeRunModelHealCountView,
@@ -8385,6 +8546,90 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.evals.author_now" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.evals.authoring.result" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.evals.families" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.evals.families.assign" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.evals.cases" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.evals.cases.record" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.evals.cohorts" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.evals.cohorts.open" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.evals.exposure" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.evals.sufficiency" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.evals.labels.blocked" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.evals.labels.pick" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.coach.training_offers" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -9072,6 +9317,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.lenses.select" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.lenses.resolve" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.lenses.result_set.action" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.lenses.default" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -9437,6 +9703,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.oplog" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "execute_code" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -12976,6 +13249,49 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.evals.cohorts.setup" => {
             let _input: crate::skill_optimize::EvalCohortSetup = decode(value.clone())?;
         }
+        "vault.evals.author_now" => {
+            let _input: crate::skill_optimize::eval_doors::EvalAuthorNowRequest =
+                decode(value.clone())?;
+        }
+        "vault.evals.authoring.result" => {
+            let _input: crate::skill_optimize::eval_doors::EvalAuthoringRef =
+                decode(value.clone())?;
+        }
+        "vault.evals.families" => {
+            let _input: crate::skill_optimize::eval_doors::EvalSeatRequest = decode(value.clone())?;
+        }
+        "vault.evals.families.assign" => {
+            let _input: crate::skill_optimize::eval_doors::EvalFamilyAssignRequest =
+                decode(value.clone())?;
+        }
+        "vault.evals.cases" => {
+            let _input: crate::skill_optimize::eval_doors::EvalCasesRequest =
+                decode(value.clone())?;
+        }
+        "vault.evals.cases.record" => {
+            let _input: crate::skill_optimize::EvalCaseDraft = decode(value.clone())?;
+        }
+        "vault.evals.cohorts" => {
+            let _input: crate::skill_optimize::eval_doors::EvalSeatRequest = decode(value.clone())?;
+        }
+        "vault.evals.cohorts.open" => {
+            let _input: crate::skill_optimize::eval_doors::EvalCohortOpenRequest =
+                decode(value.clone())?;
+        }
+        "vault.evals.exposure" => {
+            let _input: crate::skill_optimize::eval_doors::EvalCohortRef = decode(value.clone())?;
+        }
+        "vault.evals.sufficiency" => {
+            let _input: crate::skill_optimize::SufficiencyInput = decode(value.clone())?;
+        }
+        "vault.evals.labels.blocked" => {
+            let _input: crate::skill_optimize::eval_doors::EvalBlockedLabelsRequest =
+                decode(value.clone())?;
+        }
+        "vault.evals.labels.pick" => {
+            let _input: crate::skill_optimize::eval_doors::EvalLabelPickRequest =
+                decode(value.clone())?;
+        }
         "vault.coach.training_offers" => {
             let _input: crate::skill_optimize::offer_doors::OfferListRequest =
                 decode(value.clone())?;
@@ -13325,6 +13641,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.lenses.list" => {
             let _input: crate::lens::LensListRequest = decode(value.clone())?;
         }
+        "vault.lenses.select" => {
+            let _input: crate::lens::LensSelectRequest = decode(value.clone())?;
+        }
+        "vault.lenses.resolve" => {
+            let _input: crate::lens::LensSelectionResolveRequest = decode(value.clone())?;
+        }
+        "vault.lenses.result_set.action" => {
+            let _input: crate::lens::LensResultSetActionRequest = decode(value.clone())?;
+        }
         "vault.lenses.default" => {
             let _input: crate::lens::LensDefaultRequest = decode(value.clone())?;
         }
@@ -13517,6 +13842,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.code.oplog" => {
             let _input: crate::memory::code_doors::CodeRepoRequest = decode(value.clone())?;
+        }
+        "execute_code" => {
+            let _input: crate::memory::foreign_code::ForeignCodeRunRequest = decode(value.clone())?;
         }
         "vault.code.model_heal_count" => {
             let _input: crate::memory::code_run_doors::CodeRunModelHealCountRequest =
@@ -15437,6 +15765,22 @@ pub fn invoke(
         }
         "vault.evals.inventory" => encode(vault_evals_inventory(memory, decode(value)?)?),
         "vault.evals.cohorts.setup" => encode(vault_evals_cohorts_setup(memory, decode(value)?)?),
+        "vault.evals.author_now" => encode(vault_evals_author_now(memory, decode(value)?)?),
+        "vault.evals.authoring.result" => {
+            encode(vault_evals_authoring_result(memory, decode(value)?)?)
+        }
+        "vault.evals.families" => encode(vault_evals_families(memory, decode(value)?)?),
+        "vault.evals.families.assign" => {
+            encode(vault_evals_families_assign(memory, decode(value)?)?)
+        }
+        "vault.evals.cases" => encode(vault_evals_cases(memory, decode(value)?)?),
+        "vault.evals.cases.record" => encode(vault_evals_cases_record(memory, decode(value)?)?),
+        "vault.evals.cohorts" => encode(vault_evals_cohorts(memory, decode(value)?)?),
+        "vault.evals.cohorts.open" => encode(vault_evals_cohorts_open(memory, decode(value)?)?),
+        "vault.evals.exposure" => encode(vault_evals_exposure(memory, decode(value)?)?),
+        "vault.evals.sufficiency" => encode(vault_evals_sufficiency(memory, decode(value)?)?),
+        "vault.evals.labels.blocked" => encode(vault_evals_labels_blocked(memory, decode(value)?)?),
+        "vault.evals.labels.pick" => encode(vault_evals_labels_pick(memory, decode(value)?)?),
         "vault.coach.training_offers" => {
             encode(vault_coach_training_offers(memory, decode(value)?)?)
         }
@@ -15667,6 +16011,11 @@ pub fn invoke(
         "vault.lenses.activate" => encode(vault_lenses_activate(memory, decode(value)?)?),
         "vault.lenses.deactivate" => encode(vault_lenses_deactivate(memory, decode(value)?)?),
         "vault.lenses.list" => encode(vault_lenses_list(memory, decode(value)?)?),
+        "vault.lenses.select" => encode(vault_lenses_select(memory, decode(value)?)?),
+        "vault.lenses.resolve" => encode(vault_lenses_resolve(memory, decode(value)?)?),
+        "vault.lenses.result_set.action" => {
+            encode(vault_lenses_result_set_action(memory, decode(value)?)?)
+        }
         "vault.lenses.default" => encode(vault_lenses_default(memory, decode(value)?)?),
         "vault.disclosure.offer" => encode(vault_disclosure_offer(memory, decode(value)?)?),
         "reveal" => encode(reveal(memory, decode(value)?)?),
@@ -15755,6 +16104,7 @@ pub fn invoke(
             encode(vault_code_proposal_settlement(memory, decode(value)?)?)
         }
         "vault.code.oplog" => encode(vault_code_oplog(memory, decode(value)?)?),
+        "execute_code" => encode(execute_code(memory, decode(value)?)?),
         "vault.code.model_heal_count" => {
             encode(vault_code_model_heal_count(memory, decode(value)?)?)
         }
@@ -18857,6 +19207,138 @@ pub fn vault_evals_cohorts_setup(
 ) -> MemoryResult<crate::skill_optimize::EvalAuthoringReport> {
     crate::task_verb::sdk::host_only(memory, "vault.evals.cohorts.setup", &input)
 }
+pub fn vault_evals_author_now(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::eval_doors::EvalAuthorNowRequest,
+) -> MemoryResult<crate::skill_optimize::eval_doors::EvalAuthoringRef> {
+    crate::skill_optimize::eval_doors::author_now(
+        memory.vault(),
+        &memory.embedded_owner("vault.evals.author_now")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_evals_authoring_result(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::eval_doors::EvalAuthoringRef,
+) -> MemoryResult<Option<crate::skill_optimize::eval_doors::EvalAuthoringResult>> {
+    crate::skill_optimize::eval_doors::authoring_result(
+        memory.vault(),
+        &memory.embedded_owner("vault.evals.authoring.result")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_evals_families(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::eval_doors::EvalSeatRequest,
+) -> MemoryResult<Vec<crate::skill_optimize::eval_doors::EvalFamilyView>> {
+    crate::skill_optimize::eval_doors::families(
+        memory.vault(),
+        &memory.embedded_owner("vault.evals.families")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_evals_families_assign(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::eval_doors::EvalFamilyAssignRequest,
+) -> MemoryResult<crate::skill_optimize::SourceFamily> {
+    crate::skill_optimize::eval_doors::assign_family(
+        memory.vault(),
+        &memory.embedded_owner("vault.evals.families.assign")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_evals_cases(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::eval_doors::EvalCasesRequest,
+) -> MemoryResult<Vec<crate::skill_optimize::EvalCase>> {
+    crate::skill_optimize::eval_doors::cases(
+        memory.vault(),
+        &memory.embedded_owner("vault.evals.cases")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_evals_cases_record(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::EvalCaseDraft,
+) -> MemoryResult<crate::skill_optimize::EvalCase> {
+    crate::skill_optimize::eval_doors::record_case(
+        memory.vault(),
+        &memory.embedded_owner("vault.evals.cases.record")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_evals_cohorts(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::eval_doors::EvalSeatRequest,
+) -> MemoryResult<Vec<crate::skill_optimize::eval_doors::EvalCohortView>> {
+    crate::skill_optimize::eval_doors::cohorts(
+        memory.vault(),
+        &memory.embedded_owner("vault.evals.cohorts")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_evals_cohorts_open(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::eval_doors::EvalCohortOpenRequest,
+) -> MemoryResult<crate::skill_optimize::EvalRelease> {
+    crate::skill_optimize::eval_doors::open_cohort(
+        memory.vault(),
+        &memory.embedded_owner("vault.evals.cohorts.open")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_evals_exposure(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::eval_doors::EvalCohortRef,
+) -> MemoryResult<crate::skill_optimize::eval_doors::EvalExposureLedger> {
+    crate::skill_optimize::eval_doors::exposure(
+        memory.vault(),
+        &memory.embedded_owner("vault.evals.exposure")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_evals_sufficiency(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::SufficiencyInput,
+) -> MemoryResult<crate::skill_optimize::SufficiencyCard> {
+    crate::skill_optimize::eval_doors::sufficiency(
+        memory.vault(),
+        &memory.embedded_owner("vault.evals.sufficiency")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_evals_labels_blocked(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::eval_doors::EvalBlockedLabelsRequest,
+) -> MemoryResult<Vec<crate::skill_optimize::EvalLabelAsk>> {
+    crate::skill_optimize::eval_doors::blocked_labels(
+        memory.vault(),
+        &memory.embedded_owner("vault.evals.labels.blocked")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_evals_labels_pick(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::eval_doors::EvalLabelPickRequest,
+) -> MemoryResult<crate::skill_optimize::EvalCase> {
+    crate::skill_optimize::eval_doors::pick_label(
+        memory.vault(),
+        &memory.embedded_owner("vault.evals.labels.pick")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
 pub fn vault_coach_training_offers(
     memory: &Memory<'_>,
     input: crate::skill_optimize::offer_doors::OfferListRequest,
@@ -19807,6 +20289,24 @@ pub fn vault_lenses_list(
 ) -> MemoryResult<crate::lens::LensListPage> {
     memory.lenses_list(input)
 }
+pub fn vault_lenses_select(
+    memory: &Memory<'_>,
+    input: crate::lens::LensSelectRequest,
+) -> MemoryResult<crate::lens::LensSelection> {
+    crate::task_verb::sdk::host_only(memory, "vault.lenses.select", &input)
+}
+pub fn vault_lenses_resolve(
+    memory: &Memory<'_>,
+    input: crate::lens::LensSelectionResolveRequest,
+) -> MemoryResult<crate::lens::LensSelectionResolved> {
+    crate::task_verb::sdk::host_only(memory, "vault.lenses.resolve", &input)
+}
+pub fn vault_lenses_result_set_action(
+    memory: &Memory<'_>,
+    input: crate::lens::LensResultSetActionRequest,
+) -> MemoryResult<crate::lens::LensResultSetActionResult> {
+    crate::task_verb::sdk::host_only(memory, "vault.lenses.result_set.action", &input)
+}
 pub fn vault_lenses_default(
     memory: &Memory<'_>,
     input: crate::lens::LensDefaultRequest,
@@ -20195,6 +20695,12 @@ pub fn vault_code_oplog(
     input: crate::memory::code_doors::CodeRepoRequest,
 ) -> MemoryResult<crate::memory::code_doors::CodeMutationLog> {
     memory.code_mutation_log_as(&memory.embedded_owner("vault.code.oplog")?, input)
+}
+pub fn execute_code(
+    memory: &Memory<'_>,
+    input: crate::memory::foreign_code::ForeignCodeRunRequest,
+) -> MemoryResult<crate::memory::foreign_code::ForeignCodeRunResult> {
+    crate::task_verb::sdk::host_only(memory, "execute_code", &input)
 }
 pub fn vault_code_model_heal_count(
     memory: &Memory<'_>,

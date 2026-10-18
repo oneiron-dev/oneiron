@@ -279,6 +279,18 @@ both bindings and their export-census tests in one change.
 - `vault.research.archive.coverage`
 - `vault.evals.inventory`
 - `vault.evals.cohorts.setup`
+- `vault.evals.author_now`
+- `vault.evals.authoring.result`
+- `vault.evals.families`
+- `vault.evals.families.assign`
+- `vault.evals.cases`
+- `vault.evals.cases.record`
+- `vault.evals.cohorts`
+- `vault.evals.cohorts.open`
+- `vault.evals.exposure`
+- `vault.evals.sufficiency`
+- `vault.evals.labels.blocked`
+- `vault.evals.labels.pick`
 - `vault.coach.training_offers`
 - `vault.coach.training_offers.get`
 - `vault.coach.training_offers.trigger`
@@ -384,6 +396,9 @@ both bindings and their export-census tests in one change.
 - `vault.lenses.activate`
 - `vault.lenses.deactivate`
 - `vault.lenses.list`
+- `vault.lenses.select`
+- `vault.lenses.resolve`
+- `vault.lenses.result_set.action`
 - `vault.lenses.default`
 - `vault.disclosure.offer`
 - `reveal`
@@ -437,6 +452,7 @@ both bindings and their export-census tests in one change.
 - `vault.code.proposal_settle`
 - `vault.code.proposal_settlement`
 - `vault.code.oplog`
+- `execute_code`
 - `vault.code.model_heal_count`
 - `vault.code.waits.resolve`
 - `vault.code.waits.receipt`

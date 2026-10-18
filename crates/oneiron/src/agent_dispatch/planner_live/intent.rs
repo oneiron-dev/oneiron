@@ -23,14 +23,16 @@
 //! start is frozen first, with the exact pack it ran on, the first pair
 //! frozen winning; the launched row, with the identities the launch queued,
 //! is written in the launch's own group writer. A launched intent answers
-//! them and never launches again.
+//! them and never launches again. Its leader's run reads the frozen pack
+//! from the row (`child`, S4c-5), and the row keeps where that run put the
+//! pack's SKILL.md in its task, which a continuation of the run reuses.
 
 mod child;
 
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptId, AttemptRecord};
-use crate::code_run::SelfSpawnAsk;
+use crate::code_run::{SelfSpawnAsk, TaskExposure};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
@@ -38,13 +40,13 @@ use crate::side_table::{self, Named, SideTable};
 use crate::skill::LoadedSkillPack;
 use crate::task_type::TaskTypeRef;
 use crate::team::{
-    PatternLaunchSpec, PlannedIntentView, PlannedSpawnHost, PlannedSpawnRequest, SpawnPhase,
+    FrozenPatternPack, PatternLaunchSpec, PlannedIntentView, PlannedSpawnHost, PlannedSpawnRequest,
+    SpawnPhase,
 };
 
 use super::super::widen_record::invalid;
 use super::super::{AgentDispatcher, SpawnPlanReceipt};
 use super::LivePlanRequest;
-use child::FrozenPatternPack;
 
 /// Domain of an intent's row key.
 const INTENT_KEY_CONTEXT: &str = "oneiron spawn planned intent key v1";
@@ -144,6 +146,9 @@ struct PlannedIntent {
     /// pack it ran on, frozen with it as one pair.
     pattern_launch: Option<PatternLaunchSpec>,
     pattern_pack: Option<FrozenPatternPack>,
+    /// Where a launched team's leader's last fresh run put the frozen
+    /// pack's SKILL.md in its task (S4c-5).
+    leader_exposure: Option<TaskExposure>,
     /// What the launch queued and bound: the leader, or a solo's one agent,
     /// each member in launch order, and the team.
     root_attempt: Option<AttemptId>,
@@ -331,6 +336,7 @@ impl AgentDispatcher<'_> {
                 refusal: None,
                 pattern_launch: None,
                 pattern_pack: None,
+                leader_exposure: None,
                 root_attempt: None,
                 member_attempts: Vec::new(),
                 team_ref: None,
