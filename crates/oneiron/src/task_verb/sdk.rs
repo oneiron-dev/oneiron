@@ -572,6 +572,7 @@ pub use super::sdk_secret::*;
 pub use super::sdk_secret_use::*;
 pub use super::sdk_self::*;
 pub use super::sdk_share::*;
+pub use super::sdk_skill_execution::*;
 pub use super::sdk_shared::*;
 pub use super::sdk_shared_members::*;
 pub use super::sdk_shared_policy::*;

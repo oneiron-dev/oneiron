@@ -2124,6 +2124,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
             (
+                "vault.skills.pack_receipt",
+                crate::code_run::vault_read::request_schema::<SkillPackReceiptRequest>(),
+            ),
+            (
+                "vault.skills.outcomes.project",
+                crate::code_run::vault_read::request_schema::<SkillPackOutcomeRequest>(),
+            ),
+            (
+                "vault.skills.outcomes.get",
+                crate::code_run::vault_read::request_schema::<SkillPackCreditRequest>(),
+            ),
+            (
                 "ai.steps.submit",
                 crate::code_run::vault_read::request_schema::<
                     crate::llm::model_step::ModelStepSubmit,
@@ -3237,6 +3249,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.skills.call",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<crate::code_run::SkillCallInput>,
+                >(),
+            ),
+            (
                 "connector.answer",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ConnectorAnswerRequest,
@@ -3266,10 +3284,6 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "self.leader.pattern",
                 crate::code_run::vault_read::request_schema::<crate::code_run::LeaderPatternInput>(
                 ),
-            ),
-            (
-                "self.skills.call",
-                crate::code_run::vault_read::request_schema::<crate::code_run::SkillCallInput>(),
             ),
             (
                 "self.team.start",
@@ -7046,6 +7060,27 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.skills.callables" => &[],
+        "vault.skills.pack_receipt" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.outcomes.project" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.outcomes.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "ai.steps.submit" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -8300,6 +8335,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.leader.split" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.skills.call" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -9595,6 +9637,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.skills.callables" => {
             let _input: EmptyRequest = decode(value.clone())?;
         }
+        "vault.skills.pack_receipt" => {
+            let _input: SkillPackReceiptRequest = decode(value.clone())?;
+        }
+        "vault.skills.outcomes.project" => {
+            let _input: SkillPackOutcomeRequest = decode(value.clone())?;
+        }
+        "vault.skills.outcomes.get" => {
+            let _input: SkillPackCreditRequest = decode(value.clone())?;
+        }
         "ai.steps.submit" => {
             let _input: crate::llm::model_step::ModelStepSubmit = decode(value.clone())?;
         }
@@ -10304,6 +10355,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::LeaderSplitInput> =
                 decode(value.clone())?;
         }
+        "self.skills.call" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::SkillCallInput> =
+                decode(value.clone())?;
+        }
         _ => {
             return Err(wrong_root(verb)
                 .unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb")));
@@ -10992,6 +11047,11 @@ pub fn invoke(
         "self.skills.save" => encode(self_skills_save(memory, decode(value)?)?),
         "self.skills.fork" => encode(self_skills_fork(memory, decode(value)?)?),
         "self.skills.callables" => encode(self_skills_callables(memory, decode(value)?)?),
+        "vault.skills.pack_receipt" => encode(vault_skills_pack_receipt(memory, decode(value)?)?),
+        "vault.skills.outcomes.project" => {
+            encode(vault_skills_outcomes_project(memory, decode(value)?)?)
+        }
+        "vault.skills.outcomes.get" => encode(vault_skills_outcomes_get(memory, decode(value)?)?),
         "ai.steps.submit" => encode(ai_steps_submit(memory, decode(value)?)?),
         "ai.steps.receipt" => encode(ai_steps_receipt(memory, decode(value)?)?),
         "ai.reply" => encode(ai_reply(memory, decode(value)?)?),
@@ -11297,6 +11357,7 @@ pub fn invoke(
         "self.folds" => encode(self_folds(memory, decode(value)?)?),
         "self.agents.spawn" => encode(self_agents_spawn(memory, decode(value)?)?),
         "self.leader.split" => encode(self_leader_split(memory, decode(value)?)?),
+        "self.skills.call" => encode(self_skills_call(memory, decode(value)?)?),
         _ => Err(MemoryError::bad_request("unknown SDK agent verb")),
     })
 }
@@ -14780,6 +14841,36 @@ pub fn self_skills_callables(
 ) -> MemoryResult<Vec<crate::skill::helper::CallableCardView>> {
     memory.skill_callables()
 }
+pub fn vault_skills_pack_receipt(
+    memory: &Memory<'_>,
+    input: SkillPackReceiptRequest,
+) -> MemoryResult<crate::task_verb::sdk::SkillPackReceipt> {
+    crate::task_verb::sdk::skill_pack_receipt_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.pack_receipt")?,
+        &input,
+    )
+}
+pub fn vault_skills_outcomes_project(
+    memory: &Memory<'_>,
+    input: SkillPackOutcomeRequest,
+) -> MemoryResult<crate::task_verb::sdk::SkillPackOutcomeProjection> {
+    crate::task_verb::sdk::skill_pack_outcome_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.outcomes.project")?,
+        &input,
+    )
+}
+pub fn vault_skills_outcomes_get(
+    memory: &Memory<'_>,
+    input: SkillPackCreditRequest,
+) -> MemoryResult<Option<crate::skill_attribution::LateCreditReceipt>> {
+    crate::task_verb::sdk::skill_pack_credit_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.outcomes.get")?,
+        &input,
+    )
+}
 pub fn ai_steps_submit(
     memory: &Memory<'_>,
     input: crate::llm::model_step::ModelStepSubmit,
@@ -16504,4 +16595,10 @@ pub fn self_leader_split(
     input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::LeaderSplitInput>,
 ) -> MemoryResult<crate::code_run::LeaderSplitOutput> {
     crate::task_verb::sdk::host_only(memory, "self.leader.split", &input)
+}
+pub fn self_skills_call(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::SkillCallInput>,
+) -> MemoryResult<serde_json::Value> {
+    crate::task_verb::sdk::host_only(memory, "self.skills.call", &input)
 }

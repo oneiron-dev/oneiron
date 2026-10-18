@@ -87,6 +87,7 @@ mod secret_use_doors;
 mod setting_doors;
 mod slim_doors;
 mod share_doors;
+mod skill_execution_doors;
 mod shared_act_doors;
 mod shared_member_doors;
 mod shared_policy_doors;
@@ -789,11 +790,17 @@ pub(crate) fn row_door_admits(
 }
 
 /// Whole-vault export's owner admission, as the export runs it in its own
-/// snapshot: the host's root, or the owner's own live slip. The route has
-/// already refused a credential short of owner-grade or with no verified
-/// slip.
+/// snapshot: the host's root, the owner's own live slip, or a managed
+/// vault's attested owner's request proof. The route has already refused a
+/// credential short of owner-grade or with none of those.
 fn export_admits(server: &SyncServer, auth: &CoreAuth) -> Result<(), FacadeApiError> {
     let Some(proof) = auth.verified_slip() else {
+        // The attested owner carries no slip: its request's own owner
+        // proof, as the export revalidates it in its snapshot.
+        if auth.managed_owner().is_some() {
+            let owner = host_doors::owner_proof(auth, server, "vault.export")?;
+            server.vault.admit_authenticated_owner_export(&owner)?;
+        }
         return Ok(());
     };
     if proof.claims().holder_ref == "host" {
