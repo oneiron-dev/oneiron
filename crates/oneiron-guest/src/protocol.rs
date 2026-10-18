@@ -11,8 +11,8 @@ use std::{
 pub(crate) const MAX_FRAME: usize = oneiron_sandbox_contract::MAX_FRAME_BYTES;
 pub(crate) const MAX_COMPONENT: usize = oneiron_sandbox_contract::MAX_COMPONENT_BYTES;
 pub(crate) const MAX_FILE: usize = oneiron_sandbox_contract::MAX_FILE_BYTES;
+pub(crate) const MAX_CHUNK: usize = oneiron_sandbox_contract::MAX_CHUNK_BYTES;
 pub(crate) const MAX_TOTAL: usize = oneiron_sandbox_contract::MAX_WORKSPACE_BYTES;
-pub(crate) const MAX_FILES: usize = oneiron_sandbox_contract::MAX_WORKSPACE_FILES;
 pub(crate) const MAX_REQUESTS: usize = oneiron_sandbox_contract::MAX_REQUESTS;
 pub(crate) const MAX_SOURCE: usize = oneiron_sandbox_contract::MAX_PROGRAM_BYTES;
 
@@ -55,10 +55,14 @@ enum GuestFrame<'a> {
         scheme: &'a str,
         host: &'a str,
     },
-    Write {
+    /// A proposed file streams out: its path, then its frames, then its end.
+    WriteOpen {
         path: &'a str,
+    },
+    WriteChunk {
         bytes: &'a [u8],
     },
+    WriteClose,
     Delete {
         path: &'a str,
     },
@@ -174,8 +178,25 @@ impl<T: Read + Write> Session<T> {
         })
     }
 
-    pub(crate) fn write(&mut self, path: &str, bytes: &[u8]) -> Result<()> {
-        if !self.request(&GuestFrame::Write { path, bytes })? {
+    /// Opens the one proposed file that the following chunks fill.
+    pub(crate) fn open_write(&mut self, path: &str) -> Result<()> {
+        if !self.request(&GuestFrame::WriteOpen { path })? {
+            return Err(Error::Protocol("host refused proposal"));
+        }
+        Ok(())
+    }
+
+    /// One frame of the open file. Frames are not requests: the host answers
+    /// none, and a file of any size spends no request budget.
+    pub(crate) fn write_chunk(&mut self, bytes: &[u8]) -> Result<()> {
+        if self.finished || bytes.len() > MAX_CHUNK {
+            return Err(Error::Protocol("proposal frame bounds"));
+        }
+        self.send(&GuestFrame::WriteChunk { bytes })
+    }
+
+    pub(crate) fn close_write(&mut self) -> Result<()> {
+        if !self.request(&GuestFrame::WriteClose)? {
             return Err(Error::Protocol("host refused proposal"));
         }
         Ok(())

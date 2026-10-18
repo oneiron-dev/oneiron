@@ -484,6 +484,12 @@ impl OfferLadder {
         }
     }
 
+    /// The provider of its first rung: for a model the mesh discovered, the
+    /// owner's node that offers it (FIX 3229).
+    pub(super) fn first_provider(&self) -> Option<&str> {
+        self.rungs.first().map(|rung| rung.provider.as_str())
+    }
+
     /// Each built rung's live health at its configured position, for the
     /// status route. Read-only.
     pub(super) fn health(&self) -> Vec<(usize, RungHealth)> {

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 314 facade rows, 1228 declarations.
-Inputs: 271 of 314 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 271 of 314 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 315 facade rows, 1229 declarations.
+Inputs: 272 of 315 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 272 of 315 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 72; unread shapes: 0.
 """
 
@@ -2650,6 +2650,13 @@ class PriorSeed(TypedDict):
     alpha: float
     beta: float
     source_ref: str
+class ResearchExecution(TypedDict):
+    experimenter: EntityId
+    scorer: EntityId
+    referee: NotRequired[EntityId | None]
+    experiment_units: int
+    measure_units: int
+    confirm_units: int
 class ResearchBindWire(TypedDict):
     root: EntityId
     config: CampaignConfig
@@ -2659,6 +2666,7 @@ class ResearchBindWire(TypedDict):
     share: NotRequired[str | None]
     incumbent: CandidateRef
     prior_ladder: NotRequired[list[PriorSeed]]
+    execution: NotRequired[ResearchExecution | None]
 class ResearchGoalPin(TypedDict):
     goal_id: EntityId
     revision: str
@@ -2675,6 +2683,7 @@ class ResearchBinding(TypedDict):
     confirmation: NotRequired[ResearchConfirmationSeat | None]
     share: NotRequired[str | None]
     prior_ladder: list[PriorSeed]
+    execution: NotRequired[ResearchExecution | None]
     bound_at: int
 ForkKind = Literal["variation", "debug"]
 class ResearchForkWire(TypedDict):
@@ -6424,6 +6433,7 @@ class DeckOracleRequest(TypedDict):
     receipt: OracleReceipt
 class DeckPreviewRequest(TypedDict):
     artifact_ref: str
+    fork_ref: NotRequired[str | None]
     slides: list[int]
 class DeckPreviewSlide(TypedDict):
     slide: int

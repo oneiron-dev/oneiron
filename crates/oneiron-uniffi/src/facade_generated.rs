@@ -1031,6 +1031,11 @@ export_facade! {
     let output = client.vault_rooms_join(&input)?;
     crate::codec::lift_record("vault.rooms.join", &output)
 };
+"vault.rooms.invite" => fn vault_rooms_invite(&self, input: JoinRequest) -> JoinOutcome = |client| {
+    let input: oneiron::workspace_roster::JoinRequest = crate::codec::lower_record("vault.rooms.invite", input)?;
+    let output = client.vault_rooms_invite(&input)?;
+    crate::codec::lift_record("vault.rooms.invite", &output)
+};
 "vault.rooms.consent" => fn vault_rooms_consent(&self, input: ConsentAnswer) -> JoinOutcome = |client| {
     let input: oneiron::workspace_roster::ConsentAnswer = crate::codec::lower_record("vault.rooms.consent", input)?;
     let output = client.vault_rooms_consent(&input)?;

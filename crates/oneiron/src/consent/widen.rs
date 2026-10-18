@@ -2,6 +2,7 @@
 //! can turn a frozen canonical delta into a standing grant.
 use super::codec::{decode_bound_value, encode_bound_value};
 use super::contact_clearance::{CONTACT_DISCLOSURE_WIDEN_KIND, ContactDisclosureProposal};
+use super::effect::EffectDigest;
 use super::support::{invalid_row, normalized_ref};
 use super::{
     AuthenticatedOwner, ConsentDomain, ConsentReceipt, GrantBound, bound_catastrophe_class,
@@ -18,6 +19,13 @@ use std::io::Cursor;
 /// Parked authority-widening request, keyed by its own hex64 reference.
 const WIDEN_PROPOSALS: SideTable<String, StoredProposal, LegacyJson> =
     SideTable::new(&side_table::CONSENT_WIDEN_PROPOSAL);
+
+/// The verdict a proposal the owner declined settles with
+/// ([`Vault::reject_widen`]).
+pub const WIDEN_REJECTED: &str = "rejected";
+
+/// Domain of the effect digest a widen rejection's denial names.
+const WIDEN_REJECT_DIGEST_DOMAIN: &[u8] = b"oneiron/consent/widen-reject/v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -174,6 +182,20 @@ fn validate_reference_shape(reference: &str) -> Result<()> {
         return Err(invalid_row());
     }
     Ok(())
+}
+/// The effect a rejection of `proposal` denies: its reference and its
+/// frozen delta, so the denial receipt names exactly what was declined.
+fn widen_rejection_digest(proposal: &WidenProposal) -> EffectDigest {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(WIDEN_REJECT_DIGEST_DOMAIN);
+    for field in [
+        proposal.proposal_ref.as_bytes(),
+        proposal.canonical_delta.as_slice(),
+    ] {
+        hasher.update(&(field.len() as u64).to_be_bytes());
+        hasher.update(field);
+    }
+    EffectDigest::from_bytes(*hasher.finalize().as_bytes())
 }
 fn validate_row(row: StoredProposal, reference: &str) -> Result<StoredProposal> {
     let p = &row.proposal;
@@ -435,6 +457,17 @@ impl Vault {
         reference: &str,
         expected_delta: &[u8],
     ) -> Result<ConsentReceipt> {
+        self.require_widen_holder_credential(owner, credential)?;
+        self.accept_widen_checked(owner, Some(credential), reference, expected_delta)
+    }
+
+    /// The holder credential a widen answer on the HTTP route needs: a
+    /// reusable human slip of this owner that allows `core:auth`.
+    fn require_widen_holder_credential(
+        &self,
+        owner: &AuthenticatedOwner,
+        credential: &VerifiedSlip,
+    ) -> Result<()> {
         let claims = credential.claims();
         if claims.single_use
             || claims.holder_ref != owner.revalidate(self)?.to_hex()
@@ -445,7 +478,99 @@ impl Vault {
                 "holder credential does not authorize a widen",
             )));
         }
-        self.accept_widen_checked(owner, Some(credential), reference, expected_delta)
+        Ok(())
+    }
+
+    /// The stored proposal `reference` names, opened for an answer in the
+    /// answering txn: `credential`, when the route passed one, is still
+    /// live, and the proposal is this owner's.
+    fn owned_widen_row_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &AuthenticatedOwner,
+        credential: Option<&VerifiedSlip>,
+        reference: &str,
+    ) -> Result<StoredProposal> {
+        let principal_ref = owner.principal_ref_in_txn(self, txn)?;
+        if let Some(credential) = credential
+            && !self.capability_slip_is_live_in_txn(txn, credential)?
+        {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "holder credential is no longer live",
+            )));
+        }
+        let row = WIDEN_PROPOSALS
+            .get(&self.store, txn, &reference.to_owned())?
+            .ok_or_else(invalid_row)?;
+        let row = validate_row(row, reference)?;
+        if row.proposal.owner_ref != principal_ref {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "widen proposal belongs to another holder",
+            )));
+        }
+        Ok(row)
+    }
+
+    /// Declines one frozen proposal: it settles [`WIDEN_REJECTED`], so no
+    /// later accept mints it, and the owner's denial of exactly that
+    /// proposal is the receipt. A decline grants nothing, so it takes no
+    /// lineage check, and it may answer a proposal that lapsed unanswered.
+    /// A contact-disclosure offer declines through
+    /// `confirm_contact_disclosure` instead.
+    pub fn reject_widen(
+        &self,
+        owner: &AuthenticatedOwner,
+        reference: &str,
+    ) -> Result<ConsentReceipt> {
+        self.reject_widen_checked(owner, None, reference)
+    }
+
+    /// [`Self::reject_widen`] on the HTTP holder route, under the holder
+    /// credential [`Self::accept_credential_widen`] needs, rechecked in the
+    /// same transaction as the decline.
+    pub fn reject_credential_widen(
+        &self,
+        owner: &AuthenticatedOwner,
+        credential: &VerifiedSlip,
+        reference: &str,
+    ) -> Result<ConsentReceipt> {
+        self.require_widen_holder_credential(owner, credential)?;
+        self.reject_widen_checked(owner, Some(credential), reference)
+    }
+
+    fn reject_widen_checked(
+        &self,
+        owner: &AuthenticatedOwner,
+        credential: Option<&VerifiedSlip>,
+        reference: &str,
+    ) -> Result<ConsentReceipt> {
+        validate_reference_shape(reference)?;
+        let key = reference.to_owned();
+        self.with_write_txn_grouped(|txn| {
+            let mut row = self.owned_widen_row_in_txn(&*txn, owner, credential, reference)?;
+            if row.resolved {
+                return Err(Error::Gate(GateError::InvalidConsentBound(
+                    "widen proposal is already resolved",
+                )));
+            }
+            if matches!(
+                decode_delta(&row.proposal.canonical_delta)?,
+                WidenDelta::ContactDisclosure(_)
+            ) {
+                return Err(Error::Gate(GateError::InvalidConsentBound(
+                    "a contact-disclosure offer settles through confirm_contact_disclosure",
+                )));
+            }
+            let receipt =
+                self.deny_consent_in_txn(txn, owner, widen_rejection_digest(&row.proposal))?;
+            row.resolved = true;
+            row.settlement = Some(StoredSettlement {
+                verdict: WIDEN_REJECTED.to_owned(),
+                decision_id: receipt.decision_id().as_bytes(),
+            });
+            WIDEN_PROPOSALS.put(&self.store, txn, &key, &row)?;
+            Ok(receipt)
+        })
     }
 
     fn accept_widen_checked(
@@ -458,24 +583,8 @@ impl Vault {
         validate_reference_shape(reference)?;
         let key = reference.to_owned();
         self.with_write_txn_grouped(|txn| {
-            let principal_ref = owner.principal_ref_in_txn(self, &*txn)?;
-            if let Some(credential) = credential
-                && !self.capability_slip_is_live_in_txn(&*txn, credential)?
-            {
-                return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
-                    "holder credential is no longer live",
-                )));
-            }
-            let row = WIDEN_PROPOSALS
-                .get(&self.store, &*txn, &key)?
-                .ok_or_else(invalid_row)?;
-            let mut row = validate_row(row, reference)?;
+            let mut row = self.owned_widen_row_in_txn(&*txn, owner, credential, reference)?;
             let proposal = &row.proposal;
-            if proposal.owner_ref != principal_ref {
-                return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
-                    "widen proposal belongs to another holder",
-                )));
-            }
             if row.resolved
                 || proposal.expires_at <= self.store.clock.now_recorded_at()
                 || proposal.canonical_delta != expected_delta
