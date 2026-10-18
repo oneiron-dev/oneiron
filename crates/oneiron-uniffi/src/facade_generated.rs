@@ -4106,6 +4106,56 @@ export_facade! {
     let output = client.vault_revert_run(&input)?;
     crate::codec::lift_record("vault.revert_run", &output)
 };
+"vault.identity.merge" => fn vault_identity_merge(&self, input: IdentityMergeRequest) -> IdentityTopologyResult = |client| {
+    let input: oneiron::task_verb::sdk::IdentityMergeRequest = crate::codec::lower_record("vault.identity.merge", input)?;
+    let output = client.vault_identity_merge(&input)?;
+    crate::codec::lift_record("vault.identity.merge", &output)
+};
+"vault.identity.split" => fn vault_identity_split(&self, input: IdentitySplitRequest) -> IdentityTopologyResult = |client| {
+    let input: oneiron::task_verb::sdk::IdentitySplitRequest = crate::codec::lower_record("vault.identity.split", input)?;
+    let output = client.vault_identity_split(&input)?;
+    crate::codec::lift_record("vault.identity.split", &output)
+};
+"vault.identity.facet" => fn vault_identity_facet(&self, input: IdentityFacetRequest) -> IdentityTopologyResult = |client| {
+    let input: oneiron::task_verb::sdk::IdentityFacetRequest = crate::codec::lower_record("vault.identity.facet", input)?;
+    let output = client.vault_identity_facet(&input)?;
+    crate::codec::lift_record("vault.identity.facet", &output)
+};
+"vault.identity.assert_distinct" => fn vault_identity_assert_distinct(&self, input: IdentityAssertDistinctRequest) -> IdentityTopologyResult = |client| {
+    let input: oneiron::task_verb::sdk::IdentityAssertDistinctRequest = crate::codec::lower_record("vault.identity.assert_distinct", input)?;
+    let output = client.vault_identity_assert_distinct(&input)?;
+    crate::codec::lift_record("vault.identity.assert_distinct", &output)
+};
+"vault.identity.propose" => fn vault_identity_propose(&self, input: IdentityProposeRequest) -> IdentityTopologyResult = |client| {
+    let input: oneiron::task_verb::sdk::IdentityProposeRequest = crate::codec::lower_record("vault.identity.propose", input)?;
+    let output = client.vault_identity_propose(&input)?;
+    crate::codec::lift_record("vault.identity.propose", &output)
+};
+"vault.identity.undo" => fn vault_identity_undo(&self, input: IdentityUndoRequest) -> IdentityTopologyResult = |client| {
+    let input: oneiron::task_verb::sdk::IdentityUndoRequest = crate::codec::lower_record("vault.identity.undo", input)?;
+    let output = client.vault_identity_undo(&input)?;
+    crate::codec::lift_record("vault.identity.undo", &output)
+};
+"vault.identity.resolve" => fn vault_identity_resolve(&self, input: IdentityEntityRequest) -> IdentityResolution = |client| {
+    let input: oneiron::task_verb::sdk::IdentityEntityRequest = crate::codec::lower_record("vault.identity.resolve", input)?;
+    let output = client.vault_identity_resolve(&input)?;
+    crate::codec::lift_record("vault.identity.resolve", &output)
+};
+"vault.identity.events.get" => fn vault_identity_events_get(&self, input: IdentityEventRequest) -> IdentityTopologyReceipt = |client| {
+    let input: oneiron::task_verb::sdk::IdentityEventRequest = crate::codec::lower_record("vault.identity.events.get", input)?;
+    let output = client.vault_identity_events_get(&input)?;
+    crate::codec::lift_record("vault.identity.events.get", &output)
+};
+"vault.identity.proposals.resolve" => fn vault_identity_proposals_resolve(&self, input: IdentityProposalResolveRequest) -> IdentityProposalResolutionResult = |client| {
+    let input: oneiron::task_verb::sdk::IdentityProposalResolveRequest = crate::codec::lower_record("vault.identity.proposals.resolve", input)?;
+    let output = client.vault_identity_proposals_resolve(&input)?;
+    crate::codec::lift_record("vault.identity.proposals.resolve", &output)
+};
+"vault.identity.proposals.for_pair" => fn vault_identity_proposals_for_pair(&self, input: IdentityPairRequest) -> IdentityPairProposals = |client| {
+    let input: oneiron::task_verb::sdk::IdentityPairRequest = crate::codec::lower_record("vault.identity.proposals.for_pair", input)?;
+    let output = client.vault_identity_proposals_for_pair(&input)?;
+    crate::codec::lift_record("vault.identity.proposals.for_pair", &output)
+};
 "self.browser.open" => fn self_browser_open(&self, input: LiveRunRequestOpenInput) -> ObservationPage = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserOpenInput> = crate::codec::lower_record("self.browser.open", input)?;
     let output = client.self_browser_open(&input)?;

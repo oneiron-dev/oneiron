@@ -2117,6 +2117,32 @@ export class Oneiron {
     },
     /** The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why. */
     revert_run: (input: Facade.RevertRunRequest): Facade.RevertRunOutcome => this.#call(() => this.#client.vaultRevertRun(input) as Facade.RevertRunOutcome),
+    identity: {
+      /** The owner merges source identities into a survivor, retaining claim subjects and append-only evidence. */
+      merge: (input: Facade.IdentityMergeRequest): Facade.IdentityTopologyResult => this.#call(() => this.#client.vaultIdentityMerge(input) as Facade.IdentityTopologyResult),
+      /** The owner splits an identity into zero, one or many heads using an evidence-guided reassignment map. */
+      split: (input: Facade.IdentitySplitRequest): Facade.IdentityTopologyResult => this.#call(() => this.#client.vaultIdentitySplit(input) as Facade.IdentityTopologyResult),
+      /** The owner mints identity facets and forks assigned claims under their masks without restamping original claims. */
+      facet: (input: Facade.IdentityFacetRequest): Facade.IdentityTopologyResult => this.#call(() => this.#client.vaultIdentityFacet(input) as Facade.IdentityTopologyResult),
+      /** The owner asserts two identities are distinct through one symmetric claim that suppresses merge re-proposals. */
+      assert_distinct: (input: Facade.IdentityAssertDistinctRequest): Facade.IdentityTopologyResult => this.#call(() => this.#client.vaultIdentityAssertDistinct(input) as Facade.IdentityTopologyResult),
+      /** The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals. */
+      propose: (input: Facade.IdentityProposeRequest): Facade.IdentityTopologyResult => this.#call(() => this.#client.vaultIdentityPropose(input) as Facade.IdentityTopologyResult),
+      /** The owner undoes one current topology event by appending a counter-event under its observed revision. */
+      undo: (input: Facade.IdentityUndoRequest): Facade.IdentityTopologyResult => this.#call(() => this.#client.vaultIdentityUndo(input) as Facade.IdentityTopologyResult),
+      /** The owner resolves an identity to its current head set and reads shell edges, facets and evidence assignments. */
+      resolve: (input: Facade.IdentityEntityRequest): Facade.IdentityResolution => this.#call(() => this.#client.vaultIdentityResolve(input) as Facade.IdentityResolution),
+      events: {
+        /** The owner reads one topology decision with its actor, evidence, action and current decision revision. */
+        get: (input: Facade.IdentityEventRequest): Facade.IdentityTopologyReceipt => this.#call(() => this.#client.vaultIdentityEventsGet(input) as Facade.IdentityTopologyReceipt),
+      },
+      proposals: {
+        /** The owner approves, amends then approves, or rejects a parked topology proposal under its observed revision. */
+        resolve: (input: Facade.IdentityProposalResolveRequest): Facade.IdentityProposalResolutionResult => this.#call(() => this.#client.vaultIdentityProposalsResolve(input) as Facade.IdentityProposalResolutionResult),
+        /** The owner reads open merge proposals and effective distinctness claims for an unordered identity pair. */
+        for_pair: (input: Facade.IdentityPairRequest): Facade.IdentityPairProposals => this.#call(() => this.#client.vaultIdentityProposalsForPair(input) as Facade.IdentityPairProposals),
+      },
+    },
   }
   readonly self = {
     focus: {

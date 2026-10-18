@@ -27437,7 +27437,7 @@
      "path": "src/identity_topology/distinct_claim.rs",
      "purpose": "The ARCH-0055 §6 anti-merge assertion: the normalized `entity.distinct_from` pair key, its claim wire value…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 3
      }
     },
@@ -27497,7 +27497,7 @@
      "path": "src/identity_topology/mod.rs",
      "purpose": "ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "re-export": 12
      }
     },
@@ -27639,7 +27639,7 @@
      "path": "src/identity_topology/topology_queries.rs",
      "purpose": "Read-only vault queries over the ledger and the reassignment projection: one event record, the claims a…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 6,
       "fn": 5
      }
     },
@@ -51837,7 +51837,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 61,
+      "re-export": 62,
       "struct": 36
      }
     },
@@ -52274,7 +52274,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 877
+      "fn": 887
      }
     },
     {
@@ -52417,6 +52417,58 @@
       "enum": 2,
       "fn": 20,
       "struct": 23
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "IdentityAmendment",
+      "IdentityAssertDistinctRequest",
+      "IdentityEntityRequest",
+      "IdentityEventAction",
+      "IdentityEventRequest",
+      "IdentityEvidence",
+      "IdentityFacetRequest",
+      "IdentityFacetSpec",
+      "IdentityLifecycle",
+      "IdentityMergeRequest",
+      "IdentityPairProposals",
+      "IdentityPairRequest",
+      "IdentityProposalOutcome",
+      "IdentityProposalResolutionResult",
+      "IdentityProposalResolveRequest",
+      "IdentityProposalRuling",
+      "IdentityProposeRequest",
+      "IdentityProposedOp",
+      "IdentityReassignment",
+      "IdentityReassignmentItem",
+      "IdentityReassignmentTarget",
+      "IdentityResolution",
+      "IdentitySplitRequest",
+      "IdentitySurvivorshipPlan",
+      "IdentityTopologyReceipt",
+      "IdentityTopologyResult",
+      "IdentityTransition",
+      "IdentityUndoRequest"
+     ],
+     "path": "src/task_verb/sdk_identity_topology.rs",
+     "purpose": "Typed identity-topology calls over the engine's append-only op family",
+     "surface": {
+      "enum": 10,
+      "fn": 5,
+      "re-export": 1,
+      "struct": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/sdk_identity_topology/ops.rs",
+     "purpose": "Owner authority and DTO projection; topology effects stay in the owning engine doors",
+     "surface": {
+      "fn": 10
      }
     },
     {
@@ -59624,7 +59676,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 177,
+     "files": 179,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -59794,7 +59846,7 @@
    },
    "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3649,
+   "source_files": 3651,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68338,7 +68390,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 846
+      "fn": 856
      }
     },
     {
@@ -68348,7 +68400,7 @@
      "path": "src/facade/convert.rs",
      "purpose": "DTO to/from engine converters plus the forget paging helper",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -68378,6 +68430,7 @@
       "NapiDeleteReceipt",
       "NapiDreamerJobRef",
       "NapiDreamerJobView",
+      "NapiDreamerParkedJobView",
       "NapiEntityRead",
       "NapiEntityRefReceipt",
       "NapiEntityView",
@@ -68419,7 +68472,7 @@
      "path": "src/facade/dtos.rs",
      "purpose": "All napi(object) DTO structs for the actor-scoped surface",
      "surface": {
-      "struct": 60
+      "struct": 61
      }
     },
     {
@@ -69400,7 +69453,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 847
+      "fn": 857
      }
     },
     {
@@ -72873,7 +72926,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 142
+      "crate-vis": 143
      }
     },
     {
@@ -72904,6 +72957,16 @@
      "purpose": "Typed host configuration, work and completion receipts for HydeExpander",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/identity_topology_doors.rs",
+     "purpose": "Typed identity-topology host doors under the caller's own owner proof",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -73963,7 +74026,7 @@
      "path": "src/api/openapi/endpoints_merge.rs",
      "purpose": "OpenAPI endpoint wiring and component merges",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -80773,7 +80836,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 406,
+     "files": 407,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -81202,7 +81265,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 755,
+   "source_files": 756,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -81841,11 +81904,13 @@
       "ClaimSettlementReason",
       "ClaimSettlementRevert",
       "ClaimSettlementVerdict",
+      "ClaimSource",
       "CleanupCandidate",
       "CleanupKind",
       "CleanupPosture",
       "CleanupRunView",
       "ClickInput",
+      "CloseLensFrameReply",
       "CoachInspectRequest",
       "CoachInspectionView",
       "CoachProposalView",
@@ -82598,9 +82663,37 @@
       "IdMarks",
       "IdentityActNow",
       "IdentityActNowRequest",
+      "IdentityAmendment",
       "IdentityAnswerRequest",
+      "IdentityAssertDistinctRequest",
       "IdentityEffect",
+      "IdentityEntityRequest",
+      "IdentityEventAction",
+      "IdentityEventRequest",
+      "IdentityEvidence",
+      "IdentityFacetRequest",
+      "IdentityFacetSpec",
+      "IdentityLifecycle",
+      "IdentityMergeRequest",
+      "IdentityPairProposals",
+      "IdentityPairRequest",
+      "IdentityProposalOutcome",
+      "IdentityProposalResolutionResult",
+      "IdentityProposalResolveRequest",
+      "IdentityProposalRuling",
+      "IdentityProposeRequest",
+      "IdentityProposedOp",
+      "IdentityReassignment",
+      "IdentityReassignmentItem",
+      "IdentityReassignmentTarget",
+      "IdentityResolution",
       "IdentitySettled",
+      "IdentitySplitRequest",
+      "IdentitySurvivorshipPlan",
+      "IdentityTopologyReceipt",
+      "IdentityTopologyResult",
+      "IdentityTransition",
+      "IdentityUndoRequest",
       "ImageBox",
       "ImageContent",
       "ImageOutput",
@@ -82717,6 +82810,8 @@
       "LensDefaultRequest",
       "LensDossierSource",
       "LensFrameCard",
+      "LensFrameEventReply",
+      "LensFrameEventRequest",
       "LensHandleRef",
       "LensHandleRole",
       "LensListPage",
@@ -84288,8 +84383,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 705,
-      "struct": 2183
+      "enum": 717,
+      "struct": 2203
      }
     },
     {

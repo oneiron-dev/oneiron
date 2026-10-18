@@ -744,6 +744,11 @@ both bindings and their export-census tests in one change.
 - `vault.runs.checkpoint`
 - `vault.consolidation.promote`
 - `vault.consolidation.evidence`
+- `vault.sieve.evidence`
+- `vault.sieve.evidence.replay`
+- `vault.sieve.cadence`
+- `vault.sieve.settlements`
+- `vault.sieve.settlements.get`
 - `vault.sieve.queue`
 - `vault.sieve.retained`
 - `vault.sieve.receipts`
@@ -822,3 +827,13 @@ both bindings and their export-census tests in one change.
 - `vault.runs.settle`
 - `vault.runs.settlement`
 - `vault.revert_run`
+- `vault.identity.merge`
+- `vault.identity.split`
+- `vault.identity.facet`
+- `vault.identity.assert_distinct`
+- `vault.identity.propose`
+- `vault.identity.undo`
+- `vault.identity.resolve`
+- `vault.identity.events.get`
+- `vault.identity.proposals.resolve`
+- `vault.identity.proposals.for_pair`

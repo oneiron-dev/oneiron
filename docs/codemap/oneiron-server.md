@@ -218,10 +218,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/guest_document_doors.rs` | src | s | 4 crate-vis | — | Guest document envelopes under the owner's or the recipient's own proof |
 | `src/api/facade/guest_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's guest revoke row (OF-232): `vault.guests.revoke` |
 | `src/api/facade/hook_regen_doors.rs` | src | s | 3 crate-vis | — | Credential-bound host projections of the typed hook regeneration doors (DOOR-077): the due list, one… |
-| `src/api/facade/host_doors.rs` | src | XL | 142 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | XL | 143 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/host_trigger_doors.rs` | src | s | 3 crate-vis | — | The owner's typed host triggers |
 | `src/api/facade/hub_doors.rs` | src | m | 19 crate-vis | — | Owner-proof facade doors for configured hubs and pinned foreign imports |
 | `src/api/facade/hyde_doors.rs` | src | s | 6 crate-vis | — | Typed host configuration, work and completion receipts for HydeExpander |
+| `src/api/facade/identity_topology_doors.rs` | src | s | 10 crate-vis | — | Typed identity-topology host doors under the caller's own owner proof |
 | `src/api/facade/learning_doors.rs` | src | s | 2 crate-vis | — | Read-only measured-learning doors under the vault owner's existing proof |
 | `src/api/facade/legal_hold_doors.rs` | src | s | 8 crate-vis | — | The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`… |
 | `src/api/facade/lens_selection_doors.rs` | src | s | 3 crate-vis | — | Frame-bound selections and result-set actions on the caller's held card |
@@ -328,7 +329,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/openapi/anonymous_chat_paths.rs` | src | s | 1 crate-vis | — | The standalone anonymous-chat routes: their schemas are the verb table's real request and reply/block types… |
 | `src/api/openapi/booking_schemas.rs` | src | s | 5 crate-vis | — | Booking schema blocks for the OpenAPI doc |
 | `src/api/openapi/descriptions.rs` | src | m | 1 crate-vis | — | Schema description-gap filler |
-| `src/api/openapi/endpoints_merge.rs` | src | m | 13 crate-vis | — | OpenAPI endpoint wiring and component merges |
+| `src/api/openapi/endpoints_merge.rs` | src | m | 14 crate-vis | — | OpenAPI endpoint wiring and component merges |
 | `src/api/openapi/facade_paths.rs` | src | s | 1 crate-vis | — | The facade rows the OpenAPI document publishes (DOOR-115): each row the verb table marks `openapi` is `POST… |
 | `src/api/openapi/mod.rs` | src | s | 2 crate-vis | — | OpenAPI document assembly for the HTTP API |
 | `src/api/openapi/owner_paths.rs` | src | XL | 4 crate-vis | — | The owner surface in the OpenAPI document (FIX 1755): every `/v1/owner` route, with the SDK row whose input… |
