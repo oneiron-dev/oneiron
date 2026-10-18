@@ -11399,7 +11399,7 @@
      "path": "src/code_run/dispatcher/agent_verb.rs",
      "purpose": "Code mode's verb-table calls: the run's write origin and the receipt a write keeps",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -11498,7 +11498,7 @@
      "path": "src/code_run/dispatcher/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 9,
       "re-export": 2,
       "struct": 1,
@@ -11598,7 +11598,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "mod": 5,
       "re-export": 17
      }
@@ -11703,6 +11703,7 @@
      "notable": [
       "CapsuleHost",
       "CapsuleRungBinding",
+      "ExecutorStepStart",
       "ExposureKind",
       "ExposureSlot",
       "StepReplayCapsule",
@@ -11711,10 +11712,10 @@
      "path": "src/code_run/replay_capsule.rs",
      "purpose": "Step replay capsules (FIX 3028, ARCH-0037 #lineage-credit, ARCH-0053): the exact model input of a canonical…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 4,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -11867,6 +11868,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_run/storage/continuation.rs",
+     "purpose": "A successor attempt's approved continuation of a failed run (FIX 3694, OF-568): the run it forks from, the…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_run/storage/folds.rs",
      "purpose": "One executor run's fold ledger (ARCH-0067 §2.2), where the run's rows are: base, or its off-record room's…",
      "surface": {
@@ -11890,7 +11901,7 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "re-export": 4
      }
     },
@@ -11931,7 +11942,7 @@
      "path": "src/code_run/storage/records.rs",
      "purpose": "The code-run vault_meta row families: replay records, raw output, taint refs and heal counts",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 35,
       "fn": 11,
       "struct": 2
      }
@@ -11943,7 +11954,7 @@
      "path": "src/code_run/storage/replay_capsule.rs",
      "purpose": "The step replay capsule and contribution fork rows (FIX 3028): each capsule's metadata keyed by its attempt…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 13,
       "fn": 1
      }
     },
@@ -22098,7 +22109,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/engine_executor/capture.rs",
-     "purpose": "The executor's step replay capture (FIX 3028): the first step of a leased attempt's canonical run, captured…",
+     "purpose": "The executor's step replay capture (FIX 3028, FIX 3694): each step of a leased attempt's canonical run…",
      "surface": {
       "crate-vis": 1
      }
@@ -22146,6 +22157,24 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ContinuationRefusal",
+      "ExecutorCheckpointRef",
+      "PreparedExecutorContinuation",
+      "RunContinuation"
+     ],
+     "path": "src/engine_executor/continuation.rs",
+     "purpose": "Prompt continuations of failed agent runs (FIX 3694, OF-568)",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 7,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "EngineNativeExecutor"
      ],
      "path": "src/engine_executor/driver.rs",
@@ -22174,6 +22203,7 @@
      "purpose": "Engine-native JS code-mode executor",
      "surface": {
       "crate-vis": 2,
+      "mod": 1,
       "re-export": 4
      }
     },
@@ -53993,7 +54023,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 75,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54315,7 +54345,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 24,
+     "files": 25,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -55276,7 +55306,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3366,
+   "source_files": 3368,
    "test_files": 902
   },
   "oneiron-android": {
