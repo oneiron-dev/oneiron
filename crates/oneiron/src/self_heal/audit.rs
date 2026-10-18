@@ -207,65 +207,74 @@ impl Vault {
         confession: &AttemptConfession,
         now: u64,
     ) -> Result<SealedAttemptReceipt> {
-        validate_confession(confession)?;
         self.with_write_txn_grouped(|txn| {
-            let key = *confession.attempt.as_bytes();
-            if let Some(receipt) = SEALS.get(&self.store, txn, &key)? {
-                return if receipt.confession == *confession {
-                    Ok(receipt)
-                } else {
-                    Err(invalid("an attempt's confession is immutable"))
-                };
-            }
-            let attempt = AttemptQueue::new(self)
-                .get_in_txn(txn, confession.attempt)?
-                .ok_or(Error::EntityNotFound)?;
-            if !attempt.state.is_terminal() {
-                return Err(invalid("a confession requires a terminal attempt"));
-            }
-            if !crate::vault::live_entity_row_in_txn(&self.store, txn, &confession.subject)?
-                .is_live()
-            {
-                return Err(Error::EntityNotFound);
-            }
-            let result_ref = attempt
-                .result_ref
-                .as_ref()
-                .ok_or(invalid(
-                    "a confession requires the attempt's durable result",
-                ))?
-                .as_str()
-                .to_owned();
-            let executor = attempt.executor_model.ok_or(invalid(
-                "a confession requires the attempt's executor revision",
-            ))?;
-            reference(&executor)?;
-            let mut receipt = SealedAttemptReceipt {
-                confession: confession.clone(),
-                executor,
-                result_ref,
-                sealed_at: now,
-                // Eligibility comes from the durable attempt, never its
-                // self-report: confessing cannot opt out of a random audit.
-                passing: attempt.state == AttemptState::Completed,
-                draw: None,
-                checks: Vec::new(),
-            };
-            if confession
-                .objectives
-                .iter()
-                .any(ObjectiveConfession::needs_recheck)
-            {
-                receipt.checks.push(request(
-                    &receipt,
-                    SealCheckKind::ConfessionRecheck,
-                    1.0,
-                    now,
-                ));
-            }
-            SEALS.put(&self.store, txn, &key, &receipt)?;
-            Ok(receipt)
+            self.record_attempt_confession_in_txn(txn, confession, now)
         })
+    }
+
+    /// [`Self::record_attempt_confession`] in the caller's write, so a
+    /// producer can seal in the commit that closes the attempt.
+    pub(crate) fn record_attempt_confession_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        confession: &AttemptConfession,
+        now: u64,
+    ) -> Result<SealedAttemptReceipt> {
+        validate_confession(confession)?;
+        let key = *confession.attempt.as_bytes();
+        if let Some(receipt) = SEALS.get(&self.store, txn, &key)? {
+            return if receipt.confession == *confession {
+                Ok(receipt)
+            } else {
+                Err(invalid("an attempt's confession is immutable"))
+            };
+        }
+        let attempt = AttemptQueue::new(self)
+            .get_in_txn(txn, confession.attempt)?
+            .ok_or(Error::EntityNotFound)?;
+        if !attempt.state.is_terminal() {
+            return Err(invalid("a confession requires a terminal attempt"));
+        }
+        if !crate::vault::live_entity_row_in_txn(&self.store, txn, &confession.subject)?.is_live() {
+            return Err(Error::EntityNotFound);
+        }
+        let result_ref = attempt
+            .result_ref
+            .as_ref()
+            .ok_or(invalid(
+                "a confession requires the attempt's durable result",
+            ))?
+            .as_str()
+            .to_owned();
+        let executor = attempt.executor_model.ok_or(invalid(
+            "a confession requires the attempt's executor revision",
+        ))?;
+        reference(&executor)?;
+        let mut receipt = SealedAttemptReceipt {
+            confession: confession.clone(),
+            executor,
+            result_ref,
+            sealed_at: now,
+            // Eligibility comes from the durable attempt, never its
+            // self-report: confessing cannot opt out of a random audit.
+            passing: attempt.state == AttemptState::Completed,
+            draw: None,
+            checks: Vec::new(),
+        };
+        if confession
+            .objectives
+            .iter()
+            .any(ObjectiveConfession::needs_recheck)
+        {
+            receipt.checks.push(request(
+                &receipt,
+                SealCheckKind::ConfessionRecheck,
+                1.0,
+                now,
+            ));
+        }
+        SEALS.put(&self.store, txn, &key, &receipt)?;
+        Ok(receipt)
     }
 
     pub fn sealed_attempt_receipt(

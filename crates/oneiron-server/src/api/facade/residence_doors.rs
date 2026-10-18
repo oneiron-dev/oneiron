@@ -6,6 +6,11 @@
 //! connection registered here gets the row as the owner's residence
 //! directive instead, which that machine's own connection applies once when
 //! it next syncs; no other machine is ever acted on.
+//!
+//! Each lists its rows (`host_door_lists`): the item an open fetched, and
+//! each entry the thin index shows (its title is that row's). A mode switch
+//! and a prune answer the machine's windows and counts, and list none; a
+//! relayed directive answers its refusal, which lists none.
 use std::sync::Arc;
 
 use oneiron::authority::{HostSlipIssuer, ResidenceAct};
@@ -21,6 +26,7 @@ use oneiron::task_verb::sdk::{
     ResidencePruned,
 };
 
+use super::host_doors::{Listed, naming};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -107,8 +113,8 @@ fn refused(verb: &str, error: &oneiron::sync::TransportError) -> MemoryError {
     )
 }
 
-/// `vault.residence.mode`: switches the named machine's residence mode.
-pub(crate) async fn vault_residence_mode(
+/// [`vault_residence_mode`]'s answer: switches the named machine's residence mode.
+async fn residence_mode(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: ResidenceModeRequest,
@@ -126,8 +132,8 @@ pub(crate) async fn vault_residence_mode(
         .into())
 }
 
-/// `vault.residence.open`: opens one item on the named machine.
-pub(crate) async fn vault_residence_open(
+/// [`vault_residence_open`]'s answer: opens one item on the named machine.
+async fn residence_open(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: ResidenceOpenRequest,
@@ -147,8 +153,8 @@ pub(crate) async fn vault_residence_open(
         .into())
 }
 
-/// `vault.residence.index`: the named machine's thin index.
-pub(crate) async fn vault_residence_index(
+/// [`vault_residence_index`]'s answer: the named machine's thin index.
+async fn residence_index(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: ResidenceMachineRequest,
@@ -161,9 +167,9 @@ pub(crate) async fn vault_residence_index(
         .into())
 }
 
-/// `vault.residence.prune`: drops the named machine's opened-item caches
+/// [`vault_residence_prune`]'s answer: drops the named machine's opened-item caches
 /// last touched before `before`.
-pub(crate) async fn vault_residence_prune(
+async fn residence_prune(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: ResidencePruneRequest,
@@ -178,4 +184,50 @@ pub(crate) async fn vault_residence_prune(
             .prune_opened_items(input.before)
             .map_err(|error| refused(VERB, &error))?,
     })
+}
+
+/// `vault.residence.mode`: switches the named machine's residence mode, listing no row.
+pub(crate) async fn vault_residence_mode(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ResidenceModeRequest,
+) -> Listed<ResidenceModeChanged> {
+    naming(residence_mode(server, auth, input).await, |_| Vec::new())
+}
+
+/// `vault.residence.open`: opens one item on the named machine, listing it.
+pub(crate) async fn vault_residence_open(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ResidenceOpenRequest,
+) -> Listed<ResidenceOpened> {
+    naming(residence_open(server, auth, input).await, |opened| {
+        vec![opened.item]
+    })
+}
+
+/// `vault.residence.index`: the named machine's thin index, listing each row it shows.
+pub(crate) async fn vault_residence_index(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ResidenceMachineRequest,
+) -> Listed<ResidenceIndex> {
+    naming(residence_index(server, auth, input).await, |index| {
+        index
+            .windows
+            .iter()
+            .flat_map(|window| window.items.iter())
+            .filter_map(|entry| oneiron::EntityId::from_hex(&entry.entity_id).ok())
+            .collect()
+    })
+}
+
+/// `vault.residence.prune`: drops the named machine's opened-item caches
+/// last touched before `before`, listing no row.
+pub(crate) async fn vault_residence_prune(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ResidencePruneRequest,
+) -> Listed<ResidencePruned> {
+    naming(residence_prune(server, auth, input).await, |_| Vec::new())
 }
