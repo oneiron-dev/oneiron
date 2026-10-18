@@ -286,6 +286,7 @@
       "output": "crate::vault_shape::ShapeApplyReceipt",
       "call": "memory.shape_apply(&input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true

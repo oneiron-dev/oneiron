@@ -715,6 +715,52 @@ pub(crate) fn resolve_policy_manifest(
     Ok(resolution)
 }
 
+/// The stored manifests [`resolve_policy_manifest`] folds on `txn`, by id:
+/// each row it reads into the resolution, trusted or not, and each one whose
+/// shape only sets a diagnostic. A quarantined manifest and a project-depth
+/// row its own causal fold resolves contribute nothing, so they are left
+/// out. A listing door names these as the rows a resolved frontier is read
+/// from; the frontier's hash is no row.
+///
+/// # Errors
+///
+/// A store failure, as the fold's own.
+pub(crate) fn policy_manifest_contributors(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<crate::EntityId>> {
+    let mut ids = Vec::new();
+    for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {
+        let id = match index_entry {
+            Ok(id) => id,
+            Err(Error::CorruptedIndex(_)) => continue,
+            Err(error) => return Err(error),
+        };
+        let raw = match store.port_entity_record(txn, &id) {
+            Ok(Some(row)) => row,
+            Ok(None) | Err(Error::CorruptedIndex("entity header")) => continue,
+            Err(error) => return Err(error),
+        };
+        if raw.entity_type == ENTITY_TYPE_POLICY_MANIFEST {
+            let decoded_row = store.manifest_memo().row(&raw.body);
+            if crate::gate::project_depth::is_project_depth_id(&id) || decoded_row.project_depth {
+                if matches!(
+                    &decoded_row.carrier,
+                    Some(DecodedManifestCarrier::ProjectDepth(_))
+                ) {
+                    continue;
+                }
+            } else if crate::gate::manifest_authenticity::manifest_is_quarantined(
+                store, txn, &id, &raw.body,
+            )? {
+                continue;
+            }
+        }
+        ids.push(id);
+    }
+    Ok(ids)
+}
+
 /// Resolve the trusted retention setting in the caller's transaction, so a
 /// sweep observes the same committed owner setting as the rows it examines.
 /// A missing setting never authorizes age pruning; a malformed or ambiguous

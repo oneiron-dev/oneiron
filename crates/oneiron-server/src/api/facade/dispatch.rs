@@ -422,13 +422,13 @@ async fn vault_shape_apply(
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.shape.apply", &value)?;
     let hooks = facade_hooks_pre(server, call, "vault.shape.apply", value).await?;
-    let output = facade_output(
-        super::host_doors::vault_shape_apply(server, auth, facade_input(hooks.args.clone())?)
-            .await?,
-    )?;
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let (output, listed) =
+        super::host_doors::vault_shape_apply(server, auth, facade_input(hooks.args.clone())?).await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
 }
 async fn self_message(
     server: &Arc<SyncServer>,
