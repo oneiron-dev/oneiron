@@ -103,6 +103,7 @@ pub(crate) use super::residence_doors::*;
 pub(crate) use super::summary_doors::*;
 // The weave lens's human doors, likewise.
 pub(crate) use super::weave_doors::*;
+pub(crate) use super::web_fetch_doors::*;
 // The graph ask and standing-question doors (OF-506), likewise.
 pub(crate) use super::graph_ask_doors::*;
 // The share doors past create (OF-491), likewise.
@@ -1486,6 +1487,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.decisions.asks.climb"
         | "self.decisions.asks"
         | "vault.fanout.resume_as" => super::decision_ask_doors::holder(auth, verb).map(drop),
+        "fetch" | "crawl" => super::facade_actor(server, auth)
+            .map(drop)
+            .map_err(super::FacadeApiError::into_memory_error),
         "ai.verdict" => asking(auth, server).map(drop),
         "ai.image" | "ai.speech" | "ai.transcribe" | "ai.embed" | "ai.video" => {
             owner_grade(auth, MEDIA_OWNERS)
