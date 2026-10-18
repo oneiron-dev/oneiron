@@ -10,6 +10,11 @@
 //! [`project_guest_revoke`] turns what the withdrawing door did into the
 //! response. The door reports each fact it made true; nothing here infers
 //! one.
+//!
+//! Each pact the grant governed and that now stands ended is a courtesy
+//! target (FIX 1634): the typed handoff the courtesy-delete courier takes
+//! (`POST /v1/owner/courtesy-delete/send`, with the peer host's origin, which
+//! no grant or pact records).
 
 use serde::{Deserialize, Serialize};
 
@@ -35,6 +40,31 @@ pub struct GuestRevokeOutcome {
     pub pact: FederationGrantActivation,
     /// Whether the door asked the guest to delete its copy.
     pub deletion_request: GuestDeletionRequestStatus,
+    /// The ended pacts a courtesy delete may ask the guest's host about.
+    pub courtesy_targets: Vec<GuestRevokeCourtesyTarget>,
+}
+
+/// One ended pact the revoked grant governed: what the courtesy-delete
+/// courier asks a peer to drop, everything the pact delivered through
+/// `epoch_cutoff`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GuestRevokeCourtesyTarget {
+    pub pact_id: [u8; 32],
+    pub peer_vault_id: [u8; 32],
+    /// The epoch the pact ended at.
+    pub epoch_cutoff: u64,
+}
+
+/// A courtesy target as the response names it, in the courtesy-delete send
+/// request's own field names.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GuestRevokeCourtesyTargetView {
+    /// The ended pact (hex).
+    pub pact: String,
+    /// The peer vault the pact ran with (hex).
+    pub peer_vault_id: String,
+    pub epoch_cutoff: u64,
 }
 
 /// Whether a deletion request went to the guest. None of these states says
@@ -150,6 +180,9 @@ pub struct GuestRevokeResponse {
     pub revoked_slip_refs: Vec<String>,
     pub pact_standing: GuestPactStanding,
     pub disclosure: GuestRevokeDisclosure,
+    /// The ended pacts the owner may send a courtesy delete for.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub courtesy_targets: Vec<GuestRevokeCourtesyTargetView>,
 }
 
 /// The response for what a guest revoke did.
@@ -167,5 +200,14 @@ pub fn project_guest_revoke(outcome: GuestRevokeOutcome) -> GuestRevokeResponse 
             .collect(),
         pact_standing: outcome.pact.into(),
         disclosure: GuestRevokeDisclosure::new(outcome.deletion_request),
+        courtesy_targets: outcome
+            .courtesy_targets
+            .iter()
+            .map(|target| GuestRevokeCourtesyTargetView {
+                pact: hex_lower(&target.pact_id),
+                peer_vault_id: hex_lower(&target.peer_vault_id),
+                epoch_cutoff: target.epoch_cutoff,
+            })
+            .collect(),
     }
 }

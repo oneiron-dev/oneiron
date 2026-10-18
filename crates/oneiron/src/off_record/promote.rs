@@ -6,6 +6,7 @@
 //! finds an overlay -> base write anywhere else is a defect.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use heed::RwTxn;
 use serde::{Deserialize, Serialize};
@@ -16,9 +17,13 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, OffRecordError, Result};
 
-use crate::session_overlay::PromotePlan;
+use crate::session_overlay::{PromotePlan, SessionOverlay};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::{GateDecisionRecord, Store};
+
+mod result_holds;
+
+use self::result_holds::message_results;
 
 mod floor_writes_seal {
     pub(super) struct Seal;
@@ -31,9 +36,14 @@ mod floor_writes_seal {
 /// `pub` constructor, and the borrowed `store` never escapes — so no caller
 /// can reach raw base access through this type. `gate.rs` and `deletion.rs`
 /// hold the crate-visible call sites, which reach it through the stable
-/// `crate::off_record::FloorWrites` re-export.
+/// `crate::off_record::FloorWrites` re-export. A save names the room it
+/// keeps turns out of with [`Self::saving`].
 pub(crate) struct FloorWrites<'store> {
     store: &'store Store,
+    /// The room a save keeps turns out of: the result bodies its MESSAGEs
+    /// hold are its rows and files until the save brings them into base
+    /// (FIX 365). `None` on a floor that saves no turn.
+    room: Option<Arc<SessionOverlay>>,
     _seal: floor_writes_seal::Seal,
 }
 
@@ -42,8 +52,25 @@ impl<'store> FloorWrites<'store> {
     pub(crate) fn new(store: &'store Store) -> Self {
         Self {
             store,
+            room: None,
             _seal: floor_writes_seal::Seal,
         }
+    }
+
+    /// This floor, saving out of `room`: what a result MESSAGE it keeps
+    /// holds of its body is read there.
+    pub(crate) fn saving(self, room: Arc<SessionOverlay>) -> Self {
+        Self {
+            room: Some(room),
+            ..self
+        }
+    }
+
+    /// The room this floor saves out of.
+    fn room(&self) -> Result<Arc<SessionOverlay>> {
+        self.room.clone().ok_or(Error::InvariantViolation(
+            "a saved result MESSAGE needs the room it was said in",
+        ))
     }
 
     /// Floor operation 1/3 (K1): append one evaluated EGRESS gate decision.
@@ -302,11 +329,13 @@ impl FloorWrites<'_> {
     /// Everything durable this promotion does lands in the caller's `wtxn`:
     /// the ordinary subgraph replay (through the standard write door, with the
     /// standard gates, validators, index maintenance, counters, and decision
-    /// receipts), the turn's tagging marker on an armed vault, the
-    /// [`OffRecordPromoteReceipt`], and the deduplicated `pm:` pickup
-    /// markers. There is no migration transaction, no index-copy
+    /// receipts), the turn's tagging marker on an armed vault, each result
+    /// MESSAGE's hold on its body with the room's row and marks of it
+    /// (FIX 365), the [`OffRecordPromoteReceipt`], and the deduplicated `pm:`
+    /// pickup markers. There is no migration transaction, no index-copy
     /// transaction, and no receipt-after-commit transaction — a crash either
-    /// leaves the whole promotion or none of it.
+    /// leaves the whole promotion or none of it. Only a body the room spilled
+    /// to a file comes first, unnamed, through `import_result_bodies`.
     ///
     /// # Retry
     ///
@@ -377,6 +406,8 @@ impl FloorWrites<'_> {
         // above answers a retry first, so a retry owes nothing more.
         crate::tagging::mark_turn_in_txn(vault, wtxn, turn)?;
         crate::embed::mark_turn_in_txn(vault, wtxn, turn)?;
+        // A result MESSAGE lands with its hold on the body (FIX 365).
+        self.keep_message_results_in_txn(vault, wtxn, &message_results(&plan.ops))?;
 
         let mut short_id_mapping = Vec::with_capacity(plan.temporary_short_ids.len());
         for (id, temporary) in &plan.temporary_short_ids {
@@ -423,8 +454,9 @@ impl FloorWrites<'_> {
     /// a message base holds by an earlier save, under either receipt, is
     /// skipped rather than written again. The replay is the ordinary one
     /// promote runs: author check, the narrow replay grant, the ordinary
-    /// batch, the turn's tagging and embedding markers, and the `pm:`
-    /// markers of the messages' own windows.
+    /// batch, the turn's tagging and embedding markers, each copied result
+    /// MESSAGE's hold on its body, and the `pm:` markers of the messages' own
+    /// windows.
     ///
     /// The writer's checks of a witness that appends to a turn run here too,
     /// against base in this transaction (Astra on #1411). Nothing is copied
@@ -604,6 +636,9 @@ impl FloorWrites<'_> {
             .apply_recording_gate_decisions(wtxn)?;
         crate::tagging::mark_turn_in_txn(vault, wtxn, turn)?;
         crate::embed::mark_turn_in_txn(vault, wtxn, turn)?;
+        let mut results = message_results(&plan.ops);
+        results.retain(|(id, _)| fresh.contains(id));
+        self.keep_message_results_in_txn(vault, wtxn, &results)?;
 
         let replayed: Vec<EntityId> = plan
             .replayed

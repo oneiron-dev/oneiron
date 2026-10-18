@@ -366,8 +366,6 @@ pub(crate) const HARD_DELETE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
 /// Stages the hard erasure of an engine row the caller purged in this
 /// transaction: its permanent `dt:` marker, and its `pt:` propagation intent
 /// in the window of `learned_at`, which the window's next load publishes.
-/// A world's key pads go this way when the world is erased (fix 7); the erase
-/// door publishes theirs once it commits (FIX 343).
 pub(crate) fn stage_engine_row_hard_erasure_in_txn(
     store: &crate::store::Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -375,14 +373,31 @@ pub(crate) fn stage_engine_row_hard_erasure_in_txn(
     learned_at: u64,
     value: &TombstoneValueV2,
 ) -> crate::error::Result<()> {
+    stage_engine_row_hard_erasure_at_in_txn(
+        store,
+        wtxn,
+        id,
+        window_label_from_timestamp(learned_at),
+        value,
+    )
+}
+
+/// [`stage_engine_row_hard_erasure_in_txn`] in the window labelled `window`.
+/// A world's key pads go this way when the world is erased (fix 7), each in
+/// its world's window of the month it was learned; the erase door publishes
+/// theirs once it commits (FIX 343).
+pub(crate) fn stage_engine_row_hard_erasure_at_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    window: String,
+    value: &TombstoneValueV2,
+) -> crate::error::Result<()> {
     let marker = HexId(*id);
     if !HARD_DELETE_MARKER.contains(store, wtxn, &marker)? {
         HARD_DELETE_MARKER.put(store, wtxn, &marker, &value.encode().to_vec())?;
     }
-    let key = PendingTombstoneKey {
-        window: window_label_from_timestamp(learned_at),
-        id: *id,
-    };
+    let key = PendingTombstoneKey { window, id: *id };
     PENDING_TOMBSTONE.put(store, wtxn, &key, &value.encode().to_vec())
 }
 

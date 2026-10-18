@@ -2,7 +2,9 @@
 
 use super::{RAW_OUTPUT_SECRETS, ResultBodyPin, raw_output_handle};
 use crate::code_run::ResultOccurrence;
-use crate::{Error, Result, Vault};
+use crate::memory::MessageResultAttachment;
+use crate::side_table::SideTableDbs;
+use crate::{EntityId, Error, Result, Vault};
 
 impl Vault {
     /// Copies the result body `digest`, of `len` bytes, from the body
@@ -18,8 +20,6 @@ impl Vault {
     ///
     /// [`Error::CorruptedIndex`] when neither directory holds the body or the
     /// copy does not match its digest; storage errors as they occur.
-    // Off-record promotion calls it before a base row names the body (OF-597).
-    #[allow(dead_code)]
     pub(crate) fn promote_off_record_result_body(
         &self,
         session_ref: &str,
@@ -45,5 +45,46 @@ impl Vault {
             })?;
         }
         Ok(pin)
+    }
+
+    /// The body a result MESSAGE holds, before a save keeps the MESSAGE out
+    /// of the off-record session `session_ref` as `message` (FIX 365): a
+    /// body the room spilled to a file comes into `bodies/` through
+    /// [`Self::promote_off_record_result_body`], with the room's secret mark
+    /// on the producer's occurrence (read through `room`, the room's
+    /// composed view) kept on the MESSAGE's. An inline body travels in its
+    /// row, which the save copies in its own transaction. Either way the pin
+    /// keeps the collector off the body until that transaction commits.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::promote_off_record_result_body`].
+    pub(crate) fn promote_off_record_message_result_body(
+        &self,
+        session_ref: &str,
+        room: &impl SideTableDbs,
+        message: EntityId,
+        attachment: &MessageResultAttachment,
+    ) -> Result<ResultBodyPin> {
+        let output = attachment.output()?;
+        let spilled = match self.store.session_body_dir(session_ref, false)? {
+            Some(dir) => dir.open_body(&output.raw_blake3, output.raw_len)?.is_some(),
+            None => false,
+        };
+        if !spilled {
+            return Ok(self.pin_result_body(output.raw_blake3));
+        }
+        let producer = ResultOccurrence::of(Some(attachment.source.run_id), &output)?;
+        let secret = {
+            let rtxn = self.store.env.read_txn()?;
+            RAW_OUTPUT_SECRETS.get(room, &rtxn, &producer.mark_key(&output.handle))?
+        };
+        let held = ResultOccurrence::of(Some(message), &output)?;
+        self.promote_off_record_result_body(
+            session_ref,
+            &output.raw_blake3,
+            output.raw_len,
+            secret.as_deref().map(|reason| (held, reason)),
+        )
     }
 }
