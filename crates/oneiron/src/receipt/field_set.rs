@@ -23,6 +23,9 @@ const FIELD_MANIFEST_ATTRIBUTION: &str = "manifest.attribution";
 /// OF-541: the template seat the attempt's executor was configured with;
 /// `model` is what that seat ran.
 pub const FIELD_EXECUTOR_SEAT: &str = "executor_seat";
+/// OF-578: the functional role the attempt's executor ran as, frozen with
+/// `model` and `executor_seat`; its value is the role's serde token.
+pub const FIELD_EXECUTOR_ROLE: &str = "executor_role";
 /// OF-540: the exact `TeamReceipt.team_ref` of the attempt's team run.
 pub const FIELD_LEARNING_TEAM_REF: &str = "learning.team_ref";
 /// OF-540: the run's pattern token (`ceo_decides|committee|vote|market|rotation`).
@@ -379,6 +382,18 @@ impl ReceiptRecord {
             ));
         }
         Ok(fields)
+    }
+
+    /// The OF-578 functional role the attempt's executor ran as, read from the
+    /// recorded field alone. `None` when no role ran the attempt.
+    pub fn executor_role(&self) -> Result<Option<crate::llm::manifest::ModelRole>> {
+        self.fields
+            .get(FIELD_EXECUTOR_ROLE)
+            .map(|token| {
+                serde_json::from_value(serde_json::Value::String(token.clone()))
+                    .map_err(|_| Error::InvalidClaimBody("malformed pack receipt executor role"))
+            })
+            .transpose()
     }
 
     /// The complete index/pull/claim sequence frozen by the terminal transaction.

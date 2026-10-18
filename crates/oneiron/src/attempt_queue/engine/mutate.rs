@@ -128,6 +128,7 @@ impl AttemptQueue<'_> {
             manifest: Vec::new(),
             executor_model: None,
             executor_seat: None,
+            executor_role: None,
             // Likewise its cancel lifecycle: the new try inherits neither the
             // source's refusal history nor its spent landing reserve. It DOES
             // inherit the dial's VALUES, so a retried try lands on the same

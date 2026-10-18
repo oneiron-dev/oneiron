@@ -382,6 +382,11 @@ pub struct AttemptRecord {
     /// Absent when no run stamped the pair.
     #[serde(default)]
     pub executor_seat: Option<String>,
+    /// OF-578: the functional role the host ran the attempt as, frozen with
+    /// `executor_model` and `executor_seat` under the same lease. `None` for
+    /// work no role ran.
+    #[serde(default)]
+    pub executor_role: Option<crate::llm::manifest::ModelRole>,
     /// ONE-1896 two-rung graceful-cancel lifecycle: landing, resume point,
     /// terminal cancellation receipt, cancel pressure, and reserve accounting.
     /// Rows without the key decode as the default, so no migration is needed.
