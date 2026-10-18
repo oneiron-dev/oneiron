@@ -267,7 +267,6 @@ mod recall_door;
 pub mod sdk;
 mod sdk_agents;
 mod sdk_calendar;
-mod sdk_workspace;
 mod sdk_campaign_split;
 mod sdk_catalog_fragment;
 mod sdk_connector;
@@ -294,6 +293,7 @@ mod sdk_self;
 mod sdk_share;
 mod sdk_shared;
 mod sdk_shared_members;
+mod sdk_workspace;
 pub mod verb_hook_boundary;
 
 #[cfg(test)]

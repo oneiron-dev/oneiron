@@ -10,7 +10,9 @@ use super::*;
 /// member is onboarded into `workspace_ref`, or earlier when an owner
 /// establishes the workspace, and every later onboarding into the same
 /// `workspace_ref` must agree with it.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceRosterPreset {
     /// Host-side workspace handle (e.g. a Slack workspace key). Opaque here.

@@ -1031,6 +1031,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/run_objectives.rs",
+     "purpose": "The objectives an agent run confesses against (OF-544), kept with its attempt from its first claim",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -8294,7 +8304,21 @@
       "crate-vis": 1,
       "enum": 2,
       "fn": 6,
+      "re-export": 1,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TranscriptFileDropInput"
+     ],
+     "path": "src/calendar/transcript/door.rs",
+     "purpose": "Caller-bound file-drop ingestion over the calendar transcript landing",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -17702,7 +17726,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DeliveryWindowApnsInterruptionLevel",
@@ -30394,7 +30418,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ChannelIdentityBindRequest",
@@ -30443,7 +30467,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DeliveryWindowEvaluateRequest",
@@ -48686,7 +48710,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AgentCeilingInput",
@@ -48907,7 +48931,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 431
+      "fn": 432
      }
     },
     {
@@ -54170,7 +54194,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 43,
+     "files": 44,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54289,7 +54313,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 60,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -54606,7 +54630,7 @@
     "delivery_window": {
      "files": 8,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Delivery-window policy claims and evaluator for OF-327 O3"
     },
@@ -55677,7 +55701,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3390,
+   "source_files": 3392,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64072,7 +64096,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 382
+      "fn": 383
      }
     },
     {
@@ -65120,7 +65144,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 383
+      "fn": 384
      }
     },
     {
@@ -67947,7 +67971,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade.rs",
@@ -68177,7 +68201,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/hub_doors.rs",
@@ -77386,6 +77410,8 @@
       "ThrobberAtom",
       "ToggleControl",
       "TrackedHubRef",
+      "TranscriptFileDropInput",
+      "TranscriptIngestOutcome",
       "TravelChoice",
       "TurnAction",
       "TurnActionReceipt",
@@ -77474,8 +77500,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 402,
-      "struct": 1012
+      "enum": 403,
+      "struct": 1013
      }
     },
     {

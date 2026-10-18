@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 382 facade rows, 1496 declarations.
-Inputs: 339 of 382 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 339 of 382 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 383 facade rows, 1498 declarations.
+Inputs: 340 of 383 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 340 of 383 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 75; unread shapes: 0.
 """
 
@@ -6020,6 +6020,23 @@ class CalendarFreebusyIntervalDto(TypedDict):
     start_utc: int
     end_utc: int
 CalendarFreebusyDto = list[CalendarFreebusyIntervalDto]
+class TranscriptFileDropInput(TypedDict):
+    source_blob_ref: str
+    decoded_text: str
+    arrived_at_ms: int
+class TranscriptIngestOutcomeSession(TypedDict):
+    outcome: Literal["session"]
+    session_ref: EntityId
+    turn_refs: list[EntityId]
+    wake_turn_refs: list[EntityId]
+    extraction_enqueued: bool
+class TranscriptIngestOutcomeRetryOpenSession(TypedDict):
+    outcome: Literal["retry_open_session"]
+    open_session_ref: EntityId
+class TranscriptIngestOutcomeNoteFallback(TypedDict):
+    outcome: Literal["note_fallback"]
+    note_ref: EntityId
+TranscriptIngestOutcome = TranscriptIngestOutcomeSession | TranscriptIngestOutcomeRetryOpenSession | TranscriptIngestOutcomeNoteFallback
 class ClaimListFilter(TypedDict):
     subject_ref: NotRequired[str | None]
     predicate: NotRequired[str | None]

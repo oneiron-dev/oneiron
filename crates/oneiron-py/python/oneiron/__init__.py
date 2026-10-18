@@ -1892,6 +1892,15 @@ class Oneiron:
         def freebusy(self, spec):
             """Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt."""
             return json.loads(_translate(lambda: self._client.vault_calendar_freebusy(json.dumps(spec))))
+        @property
+        def transcript(self) -> "Oneiron._VaultCalendarTranscriptVerbs":
+            return Oneiron._VaultCalendarTranscriptVerbs(self._client)
+    class _VaultCalendarTranscriptVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def ingest(self, spec):
+            """Ingests an uploaded UTF-8 transcript as the caller, retaining source labels and atomically closing its SESSION with ordered TURNs and extraction wake receipts."""
+            return json.loads(_translate(lambda: self._client.vault_calendar_transcript_ingest(json.dumps(spec))))
     class _VaultWritesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
