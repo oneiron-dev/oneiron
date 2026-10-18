@@ -9,10 +9,10 @@
 use crate::cdp::Pipe;
 use crate::outline::{self, Line};
 use crate::{
-    BrowserDriver, BrowserError, ClickInput, CropInput, ExpectInput, ExpectOutput, FindInput,
-    FindOutput, ImageOutput, Observation, ObserveInput, OpenInput, PointInput, Row,
-    ScreenshotInput, ScreenshotOutput, SelectInput, TypeInput, ViewInput, WaitForInput,
-    WaitForOutput, ZoomInput,
+    BrowserDriver, BrowserError, BrowserPersonInput, ClickInput, CropInput, ExpectInput,
+    ExpectOutput, FindInput, FindOutput, ImageOutput, Observation, ObservationPage, ObserveInput,
+    OpenInput, PointInput, Row, ScreenshotInput, ScreenshotOutput, SelectInput, TypeInput,
+    ViewInput, WaitForInput, WaitForOutput, ZoomInput,
 };
 use base64::Engine as _;
 use serde_json::{Value, json};
@@ -35,6 +35,20 @@ const HEIGHT: u32 = 900;
 const HISTORY: usize = 8;
 /// Screenshots the driver holds for a later image read.
 const MEDIA: usize = 16;
+/// The most bytes of rows, then removed refs, as JSON, one observation
+/// answer carries (Rule 5: a long outline goes on in pages, never cut).
+/// Half the 512 KiB past which a code-mode answer crosses as a stored
+/// result, so a page crosses inline with its receipt and manifest.
+const OBSERVE_PAGE_BYTES: usize = 256 * 1024;
+/// Wheel notches a person's scroll moves when it names none, and the CSS
+/// pixels of one.
+const SCROLL_NOTCHES: u32 = 3;
+const NOTCH_PX: f64 = 100.0;
+/// CDP's modifier bits.
+const ALT: u32 = 1;
+const CTRL: u32 = 2;
+const META: u32 = 4;
+const SHIFT: u32 = 8;
 
 pub(crate) struct CdpDriver {
     pipe: Pipe,
@@ -43,7 +57,29 @@ pub(crate) struct CdpDriver {
     seq: u64,
     history: VecDeque<(u64, HashMap<String, Row>)>,
     media: VecDeque<Held>,
+    /// The paged observations whose later pages a cursor may still read,
+    /// the last [`HISTORY`] of them.
+    pages: VecDeque<Paged>,
     wait_cap: Duration,
+}
+
+/// An observation answered in pages: every row and removed ref it had, so
+/// a cursor reads on from where its page ended.
+struct Paged {
+    seq: u64,
+    url: String,
+    title: String,
+    full: bool,
+    rows: Vec<Row>,
+    removed: Vec<String>,
+}
+
+/// One key as CDP's key events name it.
+struct KeySpec {
+    key: String,
+    code: String,
+    vk: u32,
+    text: Option<String>,
 }
 
 /// An image the driver holds: its content ref, its PNG bytes and what of
@@ -109,6 +145,7 @@ impl CdpDriver {
             seq: 0,
             history: VecDeque::new(),
             media: VecDeque::new(),
+            pages: VecDeque::new(),
             wait_cap,
         };
         for (method, params) in [
@@ -460,6 +497,338 @@ impl CdpDriver {
             .filter(keep)
             .collect())
     }
+
+    /// The paged observation `cursor` reads on, and where its next page
+    /// starts. A cursor whose observation has left the held ones refuses.
+    fn continued(&self, cursor: &str) -> Result<(&Paged, (usize, usize)), BrowserError> {
+        let parsed = cursor.split_once('.').and_then(|(seq, at)| {
+            let (rows, removed) = at.split_once('.')?;
+            Some((
+                seq.parse::<u64>().ok()?,
+                (rows.parse::<usize>().ok()?, removed.parse::<usize>().ok()?),
+            ))
+        });
+        let Some((seq, from)) = parsed else {
+            return Err(BrowserError::Input(format!(
+                "{cursor} is no observation cursor"
+            )));
+        };
+        let held = self
+            .pages
+            .iter()
+            .find(|held| held.seq == seq)
+            .ok_or_else(|| {
+                BrowserError::Input(format!(
+                    "observation {seq} is no longer held for its later pages; observe again"
+                ))
+            })?;
+        Ok((held, from))
+    }
+
+    /// Forgets every observation, so the next one is whole: a person drove
+    /// the page meanwhile.
+    pub(crate) fn forget_observations(&mut self) {
+        self.history.clear();
+        self.pages.clear();
+    }
+
+    /// The viewport as a PNG for the person who holds the browser: unmasked,
+    /// never held among the driver's images and never a receipt.
+    pub(crate) fn person_screen(&self) -> Result<Vec<u8>, BrowserError> {
+        let shot = self.page("Page.captureScreenshot", json!({"format": "png"}))?;
+        let data = shot.get("data").and_then(Value::as_str).unwrap_or("");
+        base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .map_err(|e| BrowserError::Protocol(e.to_string()))
+    }
+
+    /// One input from the person who holds the browser, at viewport pixels:
+    /// sent as it is, with no settle, no observation and no receipt.
+    pub(crate) fn person_input(&self, input: BrowserPersonInput) -> Result<(), BrowserError> {
+        match input {
+            BrowserPersonInput::Click {
+                x,
+                y,
+                button,
+                count,
+            } => self.person_click(viewport_point(x, y)?, button.as_deref(), count),
+            BrowserPersonInput::Type { text } => self
+                .page("Input.insertText", json!({"text": text}))
+                .map(drop),
+            BrowserPersonInput::Key { key } => self.key_press(&key_of(&key)?, 0),
+            BrowserPersonInput::Hotkey { keys } => self.person_hotkey(&keys),
+            BrowserPersonInput::Scroll {
+                x,
+                y,
+                direction,
+                amount,
+            } => {
+                let (x, y) = viewport_point(x, y)?;
+                let (across, down) = match direction.as_str() {
+                    "up" => (0.0, -1.0),
+                    "down" => (0.0, 1.0),
+                    "left" => (-1.0, 0.0),
+                    "right" => (1.0, 0.0),
+                    other => {
+                        return Err(BrowserError::Input(format!(
+                            "{other} is no scroll direction: up, down, left or right"
+                        )));
+                    }
+                };
+                let px = f64::from(amount.unwrap_or(SCROLL_NOTCHES)) * NOTCH_PX;
+                self.page(
+                    "Input.dispatchMouseEvent",
+                    json!({"type": "mouseWheel", "x": x, "y": y, "deltaX": across * px, "deltaY": down * px}),
+                )
+                .map(drop)
+            }
+            BrowserPersonInput::Navigate { url } => {
+                let navigated = self.page("Page.navigate", json!({"url": url}))?;
+                match navigated.get("errorText").and_then(Value::as_str) {
+                    Some(error) => Err(BrowserError::Navigation(error.to_owned())),
+                    None => Ok(()),
+                }
+            }
+        }
+    }
+
+    fn person_click(
+        &self,
+        (x, y): (f64, f64),
+        button: Option<&str>,
+        count: Option<u32>,
+    ) -> Result<(), BrowserError> {
+        let button = button.unwrap_or("left");
+        if !matches!(button, "left" | "right" | "middle") {
+            return Err(BrowserError::Input(format!(
+                "{button} is no mouse button: left, right or middle"
+            )));
+        }
+        let count = count.unwrap_or(1);
+        if !(1..=3).contains(&count) {
+            return Err(BrowserError::Input(
+                "a click counts 1 to 3 presses".to_owned(),
+            ));
+        }
+        self.page(
+            "Input.dispatchMouseEvent",
+            json!({"type": "mouseMoved", "x": x, "y": y}),
+        )?;
+        for click in 1..=count {
+            for kind in ["mousePressed", "mouseReleased"] {
+                self.page(
+                    "Input.dispatchMouseEvent",
+                    json!({"type": kind, "x": x, "y": y, "button": button, "clickCount": click}),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Holds the modifiers `keys` names first, presses its last key, then
+    /// lets the modifiers go, even when the press failed.
+    fn person_hotkey(&self, keys: &[String]) -> Result<(), BrowserError> {
+        let Some((last, held)) = keys.split_last() else {
+            return Err(BrowserError::Input("a hotkey names its keys".to_owned()));
+        };
+        let held = held
+            .iter()
+            .map(String::as_str)
+            .map(modifier_of)
+            .collect::<Result<Vec<_>, _>>()?;
+        let key = key_of(last)?;
+        let mut modifiers = 0;
+        let mut down = Vec::new();
+        let mut pressed = Ok(());
+        for (bit, spec) in &held {
+            modifiers |= bit;
+            pressed = self.key_event("rawKeyDown", spec, modifiers);
+            if pressed.is_err() {
+                break;
+            }
+            down.push((*bit, spec));
+        }
+        if pressed.is_ok() {
+            pressed = self.key_press(&key, modifiers);
+        }
+        for (bit, spec) in down.into_iter().rev() {
+            modifiers &= !bit;
+            let released = self.key_event("keyUp", spec, modifiers);
+            if pressed.is_ok() {
+                pressed = released;
+            }
+        }
+        pressed
+    }
+
+    /// One key down and up under `modifiers`. It types its text unless a
+    /// modifier other than shift is held.
+    fn key_press(&self, key: &KeySpec, modifiers: u32) -> Result<(), BrowserError> {
+        let typed = modifiers & !SHIFT == 0 && key.text.is_some();
+        self.key_event(if typed { "keyDown" } else { "rawKeyDown" }, key, modifiers)?;
+        self.key_event("keyUp", key, modifiers)
+    }
+
+    fn key_event(&self, kind: &str, key: &KeySpec, modifiers: u32) -> Result<(), BrowserError> {
+        let mut event = json!({
+            "type": kind,
+            "key": key.key,
+            "code": key.code,
+            "windowsVirtualKeyCode": key.vk,
+            "modifiers": modifiers,
+        });
+        if kind == "keyDown"
+            && let Some(text) = &key.text
+        {
+            event["text"] = Value::from(text.as_str());
+            event["unmodifiedText"] = Value::from(text.as_str());
+        }
+        self.page("Input.dispatchKeyEvent", event).map(drop)
+    }
+}
+
+/// A point of the person's screen, which shows the viewport at one pixel
+/// per CSS pixel.
+fn viewport_point(x: u32, y: u32) -> Result<(f64, f64), BrowserError> {
+    if x >= WIDTH || y >= HEIGHT {
+        return Err(BrowserError::Input(format!(
+            "({x}, {y}) is off the {WIDTH} by {HEIGHT} screen"
+        )));
+    }
+    Ok((f64::from(x), f64::from(y)))
+}
+
+/// A named key, or one character, as CDP's key events take it.
+fn key_of(name: &str) -> Result<KeySpec, BrowserError> {
+    let named = |key: &str, vk: u32| KeySpec {
+        key: key.to_owned(),
+        code: key.to_owned(),
+        vk,
+        text: None,
+    };
+    let mut chars = name.chars();
+    if let (Some(ch), None) = (chars.next(), chars.next()) {
+        let upper = ch.to_ascii_uppercase();
+        let (code, vk) = if ch.is_ascii_alphabetic() {
+            (format!("Key{upper}"), u32::from(upper))
+        } else if ch.is_ascii_digit() {
+            (format!("Digit{ch}"), u32::from(ch))
+        } else if ch == ' ' {
+            ("Space".to_owned(), 32)
+        } else {
+            (String::new(), 0)
+        };
+        return Ok(KeySpec {
+            key: ch.to_string(),
+            code,
+            vk,
+            text: Some(ch.to_string()),
+        });
+    }
+    let lower = name.to_ascii_lowercase();
+    if let Some(n) = lower
+        .strip_prefix('f')
+        .and_then(|n| n.parse::<u32>().ok())
+        .filter(|n| (1..=12).contains(n))
+    {
+        return Ok(named(&format!("F{n}"), 111 + n));
+    }
+    Ok(match lower.as_str() {
+        "enter" | "return" => KeySpec {
+            text: Some("\r".to_owned()),
+            ..named("Enter", 13)
+        },
+        "tab" => named("Tab", 9),
+        "escape" | "esc" => named("Escape", 27),
+        "backspace" => named("Backspace", 8),
+        "delete" => named("Delete", 46),
+        "space" => KeySpec {
+            key: " ".to_owned(),
+            code: "Space".to_owned(),
+            vk: 32,
+            text: Some(" ".to_owned()),
+        },
+        "up" | "arrowup" => named("ArrowUp", 38),
+        "down" | "arrowdown" => named("ArrowDown", 40),
+        "left" | "arrowleft" => named("ArrowLeft", 37),
+        "right" | "arrowright" => named("ArrowRight", 39),
+        "home" => named("Home", 36),
+        "end" => named("End", 35),
+        "pageup" => named("PageUp", 33),
+        "pagedown" => named("PageDown", 34),
+        _ => {
+            return Err(BrowserError::Input(format!(
+                "{name} is no key the browser takes"
+            )));
+        }
+    })
+}
+
+/// A hotkey modifier: its CDP bit and its own key.
+fn modifier_of(name: &str) -> Result<(u32, KeySpec), BrowserError> {
+    let (bit, key, code, vk) = match name.to_ascii_lowercase().as_str() {
+        "ctrl" | "control" => (CTRL, "Control", "ControlLeft", 17),
+        "alt" | "option" => (ALT, "Alt", "AltLeft", 18),
+        "meta" | "cmd" | "command" | "super" => (META, "Meta", "MetaLeft", 91),
+        "shift" => (SHIFT, "Shift", "ShiftLeft", 16),
+        _ => {
+            return Err(BrowserError::Input(format!(
+                "{name} is no modifier: ctrl, alt, shift or meta"
+            )));
+        }
+    };
+    Ok((
+        bit,
+        KeySpec {
+            key: key.to_owned(),
+            code: code.to_owned(),
+            vk,
+            text: None,
+        },
+    ))
+}
+
+/// The page of `rows`, then `removed`, that starts at `from` and fits
+/// [`OBSERVE_PAGE_BYTES`] as JSON, and where the next page starts, when one
+/// does. A page takes at least one entry, so every page moves on.
+fn page_of(
+    rows: &[Row],
+    removed: &[String],
+    from: (usize, usize),
+) -> (Vec<Row>, Vec<String>, Option<(usize, usize)>) {
+    let mut bytes = 0;
+    let mut page_rows = Vec::new();
+    let mut page_removed = Vec::new();
+    let (mut at_row, mut at_removed) = (from.0.min(rows.len()), from.1.min(removed.len()));
+    while at_row < rows.len() {
+        let len = json_len(&rows[at_row]);
+        if !page_rows.is_empty() && bytes + len > OBSERVE_PAGE_BYTES {
+            return (page_rows, page_removed, Some((at_row, at_removed)));
+        }
+        bytes += len;
+        page_rows.push(rows[at_row].clone());
+        at_row += 1;
+    }
+    while at_removed < removed.len() {
+        let len = json_len(&removed[at_removed]);
+        let empty = page_rows.is_empty() && page_removed.is_empty();
+        if !empty && bytes + len > OBSERVE_PAGE_BYTES {
+            return (page_rows, page_removed, Some((at_row, at_removed)));
+        }
+        bytes += len;
+        page_removed.push(removed[at_removed].clone());
+        at_removed += 1;
+    }
+    (page_rows, page_removed, None)
+}
+
+/// One entry's bytes in a page's JSON, with its comma.
+fn json_len(value: &impl serde::Serialize) -> usize {
+    serde_json::to_vec(value).map_or(0, |bytes| bytes.len()) + 1
+}
+
+fn cursor_of(seq: u64, (rows, removed): (usize, usize)) -> String {
+    format!("{seq}.{rows}.{removed}")
 }
 
 impl BrowserDriver for CdpDriver {
@@ -488,7 +857,75 @@ impl BrowserDriver for CdpDriver {
     }
 
     fn observe(&mut self, input: ObserveInput) -> Result<Observation, BrowserError> {
-        self.observation(input.since)
+        let Some(cursor) = input.cursor.as_deref() else {
+            return self.observation(input.since);
+        };
+        // Unpaged, a cursor reads the whole rest of its observation.
+        let (held, (rows, removed)) = self.continued(cursor)?;
+        Ok(Observation {
+            seq: held.seq,
+            url: held.url.clone(),
+            title: held.title.clone(),
+            full: held.full,
+            rows: held.rows.get(rows..).unwrap_or_default().to_vec(),
+            removed: held.removed.get(removed..).unwrap_or_default().to_vec(),
+            receipt: None,
+            library: Vec::new(),
+            no_tree: false,
+        })
+    }
+
+    fn paged(&mut self, mut observation: Observation) -> ObservationPage {
+        let (rows, removed, Some(next)) = page_of(&observation.rows, &observation.removed, (0, 0))
+        else {
+            return ObservationPage::whole(observation);
+        };
+        let seq = observation.seq;
+        let held = Paged {
+            seq,
+            url: observation.url.clone(),
+            title: observation.title.clone(),
+            full: observation.full,
+            rows: std::mem::replace(&mut observation.rows, rows),
+            removed: std::mem::replace(&mut observation.removed, removed),
+        };
+        self.pages.retain(|paged| paged.seq != seq);
+        self.pages.push_back(held);
+        if self.pages.len() > HISTORY {
+            self.pages.pop_front();
+        }
+        ObservationPage {
+            observation,
+            next: Some(cursor_of(seq, next)),
+        }
+    }
+
+    fn observe_page(&mut self, input: ObserveInput) -> Result<ObservationPage, BrowserError> {
+        let Some(cursor) = input.cursor.as_deref() else {
+            let observation = self.observation(input.since)?;
+            return Ok(self.paged(observation));
+        };
+        if input.since.is_some() {
+            return Err(BrowserError::Input(
+                "observe reads since or a cursor, not both".to_owned(),
+            ));
+        }
+        let (held, from) = self.continued(cursor)?;
+        let (rows, removed, next) = page_of(&held.rows, &held.removed, from);
+        Ok(ObservationPage {
+            observation: Observation {
+                seq: held.seq,
+                url: held.url.clone(),
+                title: held.title.clone(),
+                full: held.full,
+                rows,
+                removed,
+                receipt: None,
+                library: Vec::new(),
+                no_tree: false,
+            },
+            next: next.map(|at| cursor_of(held.seq, at)),
+        })
     }
 
     fn find(&mut self, input: FindInput) -> Result<FindOutput, BrowserError> {

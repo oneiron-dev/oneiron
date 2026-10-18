@@ -37,6 +37,7 @@ use crate::owner::{
     off_record, pack_drift, persona, runs, secrets,
 };
 use crate::server::SyncServer;
+mod browser_takeover_routes;
 mod budget_hold_routes;
 mod commitment_routes;
 mod concern_routes;
@@ -144,6 +145,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(federation_connect_routes::routes())
         .merge(decision_ask_routes::routes())
         .merge(desktop_takeover_routes::routes())
+        .merge(browser_takeover_routes::routes())
         .merge(peer_confidence_routes::routes())
         .merge(skill_judge_routes::routes())
         .merge(wire_health_routes::routes())

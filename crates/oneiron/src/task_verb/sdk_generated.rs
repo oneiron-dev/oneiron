@@ -1406,8 +1406,17 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "self.browser.library.retired",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::LibraryRetiredInput>(
+                ),
+            ),
+            (
                 "self.browser.library.run",
                 crate::code_run::vault_read::request_schema::<oneiron_browser::LibraryRunInput>(),
+            ),
+            (
+                "self.browser.handover",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::HandoverInput>(),
             ),
             (
                 "self.desktop.open",
@@ -4938,8 +4947,14 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.browser.library.retire" => {
             let _input: oneiron_browser::LibraryRetireInput = decode(value.clone())?;
         }
+        "self.browser.library.retired" => {
+            let _input: oneiron_browser::LibraryRetiredInput = decode(value.clone())?;
+        }
         "self.browser.library.run" => {
             let _input: oneiron_browser::LibraryRunInput = decode(value.clone())?;
+        }
+        "self.browser.handover" => {
+            let _input: oneiron_browser::HandoverInput = decode(value.clone())?;
         }
         "self.desktop.open" => {
             let _input: oneiron_browser::OpenInput = decode(value.clone())?;
@@ -5779,7 +5794,15 @@ pub fn invoke_browser(
             driver,
             serde_json::from_value(value).map_err(invalid)?,
         )?),
+        "self.browser.library.retired" => serde_json::to_value(self_browser_library_retired(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
         "self.browser.library.run" => serde_json::to_value(self_browser_library_run(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.browser.handover" => serde_json::to_value(self_browser_handover(
             driver,
             serde_json::from_value(value).map_err(invalid)?,
         )?),
@@ -7866,14 +7889,14 @@ pub fn connector_call_status(
 pub fn self_browser_open(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::OpenInput,
-) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
-    driver.open(input)
+) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
+    oneiron_browser::paged(driver, |driver| driver.open(input))
 }
 pub fn self_browser_observe(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::ObserveInput,
-) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
-    driver.observe(input)
+) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
+    driver.observe_page(input)
 }
 pub fn self_browser_find(
     driver: &mut dyn oneiron_browser::BrowserDriver,
@@ -7884,26 +7907,26 @@ pub fn self_browser_find(
 pub fn self_browser_click(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::ClickInput,
-) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
-    driver.click(input)
+) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
+    oneiron_browser::paged(driver, |driver| driver.click(input))
 }
 pub fn self_browser_click_at(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::PointInput,
-) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
-    driver.click_at(input)
+) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
+    oneiron_browser::paged(driver, |driver| driver.click_at(input))
 }
 pub fn self_browser_type(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::TypeInput,
-) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
-    driver.type_text(input)
+) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
+    oneiron_browser::paged(driver, |driver| driver.type_text(input))
 }
 pub fn self_browser_select(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::SelectInput,
-) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
-    driver.select(input)
+) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
+    oneiron_browser::paged(driver, |driver| driver.select(input))
 }
 pub fn self_browser_wait_for(
     driver: &mut dyn oneiron_browser::BrowserDriver,
@@ -7965,11 +7988,23 @@ pub fn self_browser_library_retire(
 ) -> Result<oneiron_browser::LibraryRetireOutput, oneiron_browser::BrowserError> {
     driver.library_retire(input)
 }
+pub fn self_browser_library_retired(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::LibraryRetiredInput,
+) -> Result<oneiron_browser::LibraryRetiredOutput, oneiron_browser::BrowserError> {
+    driver.library_retired(input)
+}
 pub fn self_browser_library_run(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::LibraryRunInput,
 ) -> Result<oneiron_browser::LibraryRunOutput, oneiron_browser::BrowserError> {
     driver.library_run(input)
+}
+pub fn self_browser_handover(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::HandoverInput,
+) -> Result<oneiron_browser::HandoverOutput, oneiron_browser::BrowserError> {
+    driver.handover(input)
 }
 pub fn self_desktop_open(
     driver: &mut dyn oneiron_browser::BrowserDriver,
