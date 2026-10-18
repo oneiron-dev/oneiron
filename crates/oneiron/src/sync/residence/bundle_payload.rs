@@ -34,7 +34,6 @@ use super::policy::resolve_residence_mode;
 use crate::Vault;
 use crate::authority::{
     Destination, EditOrigin, EffectiveRead, decode_authority_log_entry_body, side_world,
-    world_control_world,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
@@ -98,8 +97,9 @@ pub struct SealedBundleTake {
     pub skipped: usize,
 }
 
-/// Each private world's signed settings and key wrap entries held here, parents
-/// first: what that world's authority capsule seals (FIX 4211).
+/// Each private world's signed key wrap entries held here, parents first: what
+/// that world's authority capsule seals (FIX 4211). Its settings ride the main
+/// log and the base (PR1a #2961).
 type WorldSides = BTreeMap<EntityId, Vec<Vec<u8>>>;
 
 /// What a kit restore from the sealed cloud bundle did.
@@ -359,8 +359,8 @@ impl WindowManager {
     /// the bundle carries for `holder` (FIX 922 item 11): nothing outside the
     /// world names it. Its settings edits are main-log metadata (the Engine
     /// call "OwnerAct world metadata to every linked machine"), so the base
-    /// always carries them, and the world's reader capsule keeps its copy
-    /// beside its wraps (FIX 4211).
+    /// always carries them, and the world's reader capsule seals its wraps
+    /// alone (FIX 4211, FIX 4271).
     fn sealed_bundle_base(
         &self,
         windows: &[WindowKey],
@@ -385,12 +385,11 @@ impl WindowManager {
             let mut authority = Vec::with_capacity(history.len());
             for bytes in history {
                 let op = decode_authority_log_entry_body(&bytes)?.op;
-                if let Some(world) = world_control_world(&op).filter(|world| !everywhere(*world)) {
-                    if eligible.contains(&world) {
-                        sides.entry(world).or_default().push(bytes.clone());
-                    } else if side_world(&op).is_some() {
+                if let Some(world) = side_world(&op).filter(|world| !everywhere(*world)) {
+                    if !eligible.contains(&world) {
                         continue;
                     }
+                    sides.entry(world).or_default().push(bytes.clone());
                 }
                 authority.push(bytes);
             }

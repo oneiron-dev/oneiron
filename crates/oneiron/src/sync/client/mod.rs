@@ -57,8 +57,8 @@ mod types;
 pub use self::base::SyncClient;
 pub use self::federated::ImportTier;
 pub use self::residence::{
-    OpenedItem, ResidenceHit, ResidenceIndexWindow, ResidenceSearch, SealedBundleRelay,
-    SearchSource, ThinItem, fetch_sealed_bundle_with_kit,
+    OpenedItem, PadAdmissionReport, ResidenceHit, ResidenceIndexWindow, ResidenceSearch,
+    SealedBundleRelay, SearchSource, ThinItem, fetch_sealed_bundle_with_kit,
 };
 pub(crate) use self::residence::{
     catch_up_authority, fetch_owed_machine_history, pinned_checkpoint_pending, relay_sealed_bundle,

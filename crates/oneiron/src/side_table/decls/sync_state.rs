@@ -292,6 +292,12 @@ side_tables! {
     /// Queued tombstone re-assertion for an entity whose local hard-delete residue reappeared in a
     /// window doc. Key: yyyy-mm ":" hex32 (entity id).
     SYNC_REASSERT_MARKER: SyncState b"ra:w:" Raw;
+    /// Late-joiner access to kept pad objects (FIX 4271): "q:" hex32 (machine) ":" hex64 (digest
+    /// of its encryption key), an admission this vault queued for the home, no secret (0 queued,
+    /// 1 acknowledged); and "g:" hex48 (generation) ":" hex32 ":" hex64, the home's custody of
+    /// one grant of that generation's pad object outer key to that machine: 0 pending, or 1 ‖ the
+    /// sealed grant. Key: string.
+    SYNC_RESIDENCE_BUNDLE_ACCESS: SyncState b"rb:a:" Raw;
     /// One generation of the vault's sealed cloud bundle the home keeps (FIX 922): u64be bundle
     /// length ‖ bundle digest (32) ‖ u64be pad object length ‖ pad object digest (32), then, when
     /// its publisher named a recovery root, the root id (32) ‖ its anchor key (32). Key: hex48

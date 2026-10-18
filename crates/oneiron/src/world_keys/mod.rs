@@ -47,6 +47,8 @@ pub use self::bundle::{
     SealedBundleSection, SealedKeyPads, SealedVaultBundle, SealedVaultUpload,
     retired_bundle_generations, sealed_bundle_slot,
 };
+#[cfg(feature = "sync")]
+pub use self::bundle::{PadAdmissionTarget, SealedPadAdmissionGrant};
 pub use self::doors::WorldKeyStatus;
 pub(crate) use self::doors::{MachineSecret, SequenceCounter, open_counted, recipients};
 pub use self::kit::{

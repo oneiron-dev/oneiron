@@ -501,16 +501,6 @@ pub(crate) fn side_world(op: &AuthorityOp) -> Option<EntityId> {
     }
 }
 
-/// The world a world-control op names, a main-log settings edit or a side
-/// key record: what a reader capsule of the sealed bundle files it under.
-#[cfg(feature = "sync")]
-pub(crate) fn world_control_world(op: &AuthorityOp) -> Option<EntityId> {
-    match op {
-        AuthorityOp::WorldPrivacy(edit) => Some(edit.world),
-        op => side_world(op),
-    }
-}
-
 /// Entries that break the side branches: any entry naming a side entry of a
 /// world other than its own as a parent, a main-log entry included. A replica
 /// that may not hold a world never receives its key records, so nothing
