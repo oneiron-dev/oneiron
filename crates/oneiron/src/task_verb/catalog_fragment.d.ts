@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 715 code-mode rows (694 host rows, 21 run rows), 2514 declarations.
-// Replies: 633 fully typed, 78 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 720 code-mode rows (699 host rows, 21 run rows), 2544 declarations.
+// Replies: 636 fully typed, 80 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 96; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 97; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -468,6 +468,28 @@ declare namespace Sdk {
   type KeyValueDeleteReceipt = { existed: boolean; receipt_refs: string[] };
   type KeyValueSearch = { namespace_prefix?: string[]; filter?: Record<string, unknown> | null; limit?: number; offset?: number };
   type KeyValueNamespaces = { prefix?: string[]; suffix?: string[]; max_depth?: number | null; limit?: number; offset?: number };
+  type CampaignMemberChannelSpec = { channel: string; basis_evidence: string; sender_ref: string };
+  type CampaignEnrollRequest = { campaign_ref: string; person_ref: string; channels: CampaignMemberChannelSpec[]; evidence_refs: string[] };
+  type CampaignEnrollmentState = "enrolled";
+  type CampaignActionProvenance = { actor_ref: string; evidence_refs: string[]; recorded_at: number };
+  type CampaignEnrollmentReceipt = { membership_claim_ref: string; person_ref: string; campaign_ref: string; state: CampaignEnrollmentState; channels: CampaignMemberChannelSpec[]; approval: string; provenance: CampaignActionProvenance; receipt_ref: string };
+  type StageKey = string;
+  type StageDefinition = { key: StageKey; label: string };
+  type StageEvidenceClass = "meaningful_reply" | "calendar_event" | "calendar_event_outcome" | "document_artifact_and_send_receipt" | "counterparty_ledger" | "task_list_progress" | "recurring_commitment";
+  type StageTransitionRule = { from?: StageKey | null; to: StageKey; evidence_class: StageEvidenceClass; owner_attested_allowed: boolean };
+  type ReplyCode = "positive_now" | "positive_later" | "referral" | "objection" | "not_interested" | "complaint";
+  type ReplyDisposition = { kind: "promote"; stage: StageKey } | { kind: "snooze" } | { kind: "route_referral" } | { kind: "record_only" } | { kind: "exit" } | { kind: "suppress" };
+  type ReplyRouteRule = { code: ReplyCode; disposition: ReplyDisposition };
+  type NoShowRecoveryRule = { same_day_reschedule: boolean; bump_after_secs: number; snooze_after_failed_bump: boolean };
+  type StageLadderDefinition = { key: string; stages: StageDefinition[]; transitions: StageTransitionRule[]; reply_routes: ReplyRouteRule[]; no_show_recovery: NoShowRecoveryRule };
+  type EvidenceBasis = "machine" | "owner_attested";
+  type CampaignStageEvidence = { class: StageEvidenceClass; basis: EvidenceBasis; evidence_refs: string[]; recorded_at: number };
+  type PromotionMode = "auto" | "propose";
+  type CampaignStageEvidenceRequest = { campaign_ref: string; person_ref: string; ladder: StageLadderDefinition; target_stage: StageKey; evidence: CampaignStageEvidence; mode?: PromotionMode };
+  type CampaignStageEvidenceOutcome = "advanced" | "proposed" | "no_change";
+  type CampaignStageEvidenceReceipt = { person_ref: string; campaign_ref: string; outcome: CampaignStageEvidenceOutcome; stage_claim_ref?: string | null; stage?: StageKey | null; evidence?: CampaignStageEvidence | null; provenance?: CampaignActionProvenance | null; receipt_ref?: string | null };
+  type CampaignUnsubscribeRequest = { campaign_ref: string; person_ref: string; channel: string; evidence_ref: string };
+  type CampaignUnsubscribeReceipt = { campaign_ref: string; person_ref: string; channel: string; evidence_ref: string; suppression_claim_ref: string; member_claim_refs: string[]; receipt_ref: string };
   type CampaignProgramOutboundSpec = { call_seq: number; verb: string; payload: string; idempotency_supported: boolean };
   type CampaignProgramStepSpec = { step_ref: string; channel: string; sender_ref: string; basis_evidence: string; outbound?: CampaignProgramOutboundSpec | null };
   type CampaignProgramAudienceSpec = { query_ref: string; entry_step_ref: string };
@@ -2303,7 +2325,15 @@ declare namespace Sdk {
   type ConsolidationEnqueueRequest = { scope: string; input: unknown; run_id?: string | null; dedupe_key?: string | null; now?: number | null };
   type DreamerAttemptRef = { job_ref: string; state: string; existing: boolean };
   type ConsolidationStatusRequest = { job_ref: string };
-  type DreamerAttemptView = { job_ref: string; state: string; kind: string; lease_owner?: string | null; attempt_count: number; run_id?: string | null; last_error?: string | null; created_at: number; updated_at: number };
+  type DreamerParkCauseView = "provider_unavailable" | "executor_error" | "checkpoint" | "cancelled" | "signal" | "other";
+  type DreamerParkedAttemptView = { job_ref: string; cause: DreamerParkCauseView; parked_at: number };
+  type DreamerAttemptView = { job_ref: string; state: string; kind: string; lease_owner?: string | null; attempt_count: number; run_id?: string | null; last_error?: string | null; created_at: number; updated_at: number; parked?: DreamerParkedAttemptView | null };
+  type SettledStepRequest = { job_ref: string; step_hash: string };
+  type SettledStepView = { job_ref: string; run_id?: string | null; claim_ref: string; step_hash: string; model: ModelId; purpose: string; params_hash: string; response: LlmResponse };
+  type CheckpointReadRequest = { run_ref: string; from_step?: number; limit?: number | null };
+  type CheckpointStepView = { step: number; label: string; state_hash: string; created_at_ms: number };
+  type CheckpointResumeView = { step: number; wait_ref: string; effect: string; output_handle: string; reply?: unknown | null };
+  type CheckpointView = { run_ref: string; completed_steps: number; steps: CheckpointStepView[]; resumed: CheckpointResumeView[]; next_step?: number | null };
   type EvidenceKind = "turn" | "message" | "note" | "asset_text" | "import_record";
   type CursorSpan = { start: number[]; end: number[] };
   type EvidenceRef = { kind: EvidenceKind; entity: string; doc: string; at: number[]; span?: CursorSpan | null; quote_sha256?: number[] | null };
@@ -3094,6 +3124,8 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   campaign: {
+    /** Enrolls a person in a campaign the caller owns, with evidence-backed channels and sticky senders. Writes no earned stage and sends nothing. */
+    enroll(input: Sdk.CampaignEnrollRequest): Promise<Sdk.CampaignEnrollmentReceipt | StoredResult>;
     program: {
       /** Archives a campaign program: it stays readable, enrolls no one, and its queued enrollment work stops. */
       archive(input: Sdk.ArchiveCampaignProgramRequest): Promise<Sdk.CampaignProgramRecord | StoredResult>;
@@ -3104,6 +3136,12 @@ declare const vault: Sdk.VaultHost & {
       /** Replaces a campaign program's name, steps and audience whole under a version check; work queued at a dropped step stops. */
       update(input: Sdk.UpdateCampaignProgramRequest): Promise<Sdk.CampaignProgramRecord | StoredResult>;
     };
+    stage: {
+      /** Records earned-stage evidence under an authored ladder transition, in AUTO or propose mode. Owner-attested evidence requires the request owner proof; elapsed time earns nothing. */
+      evidence(input: Sdk.CampaignStageEvidenceRequest): Promise<Sdk.CampaignStageEvidenceReceipt | StoredResult>;
+    };
+    /** Immediately honors an unsubscribe with a channel-scoped enforcement claim and every suppressed membership head in one transaction. */
+    unsubscribe(input: Sdk.CampaignUnsubscribeRequest): Promise<Sdk.CampaignUnsubscribeReceipt | StoredResult>;
   };
   channel_identities: {
     /** Bind a requested identity or an existing delegated account with transaction-verified custody. */
@@ -3991,6 +4029,10 @@ declare const vault: Sdk.VaultHost & {
       /** The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts. */
       get(input: Sdk.RunBranchesRequest): Promise<Sdk.RunBranchesView | StoredResult>;
     };
+    /** Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run. */
+    checkpoint(input: Sdk.CheckpointReadRequest): Promise<Sdk.CheckpointView | null | StoredResult>;
+    /** Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work. */
+    step(input: Sdk.SettledStepRequest): Promise<Sdk.SettledStepView | null | StoredResult>;
   };
   scope: {
     /** Reads the caller credential ceiling as a typed ceiling, never as a record position. */

@@ -92,6 +92,9 @@ both bindings and their export-census tests in one change.
 - `vault.kv.delete`
 - `vault.kv.search`
 - `vault.kv.namespaces`
+- `vault.campaign.enroll`
+- `vault.campaign.stage.evidence`
+- `vault.campaign.unsubscribe`
 - `vault.campaign.program.create`
 - `vault.campaign.program.read`
 - `vault.campaign.program.update`
@@ -593,6 +596,8 @@ both bindings and their export-census tests in one change.
 - `vault.artifacts.read`
 - `vault.consolidation.enqueue`
 - `vault.consolidation.status`
+- `vault.runs.step`
+- `vault.runs.checkpoint`
 - `vault.consolidation.promote`
 - `vault.consolidation.evidence`
 - `vault.claims.vet`

@@ -33,10 +33,13 @@
 mod audience;
 mod detection;
 mod home_node;
+mod manual;
 mod outbound_leg;
 mod program;
 mod runner;
 mod storage;
+
+pub(crate) use self::manual::manual_enrollment_candidate_in_txn;
 
 pub use self::audience::{AudienceWakeReport, audience_programs, enroll_audience_wake};
 pub use self::detection::{

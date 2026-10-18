@@ -90,6 +90,9 @@ pub enum AgentVerb {
     VaultKvDelete,
     VaultKvSearch,
     VaultKvNamespaces,
+    VaultCampaignEnroll,
+    VaultCampaignStageEvidence,
+    VaultCampaignUnsubscribe,
     VaultCampaignProgramCreate,
     VaultCampaignProgramRead,
     VaultCampaignProgramUpdate,
@@ -616,6 +619,8 @@ pub enum AgentVerb {
     VaultArtifactsRead,
     VaultConsolidationEnqueue,
     VaultConsolidationStatus,
+    VaultRunsStep,
+    VaultRunsCheckpoint,
     VaultConsolidationPromote,
     VaultConsolidationEvidence,
     VaultClaimsVet,
@@ -796,6 +801,9 @@ impl AgentVerb {
         Self::VaultKvDelete,
         Self::VaultKvSearch,
         Self::VaultKvNamespaces,
+        Self::VaultCampaignEnroll,
+        Self::VaultCampaignStageEvidence,
+        Self::VaultCampaignUnsubscribe,
         Self::VaultCampaignProgramCreate,
         Self::VaultCampaignProgramRead,
         Self::VaultCampaignProgramUpdate,
@@ -1322,6 +1330,8 @@ impl AgentVerb {
         Self::VaultArtifactsRead,
         Self::VaultConsolidationEnqueue,
         Self::VaultConsolidationStatus,
+        Self::VaultRunsStep,
+        Self::VaultRunsCheckpoint,
         Self::VaultConsolidationPromote,
         Self::VaultConsolidationEvidence,
         Self::VaultClaimsVet,
@@ -1505,6 +1515,9 @@ impl AgentVerb {
             Self::VaultKvDelete => "vault.kv.delete",
             Self::VaultKvSearch => "vault.kv.search",
             Self::VaultKvNamespaces => "vault.kv.namespaces",
+            Self::VaultCampaignEnroll => "vault.campaign.enroll",
+            Self::VaultCampaignStageEvidence => "vault.campaign.stage.evidence",
+            Self::VaultCampaignUnsubscribe => "vault.campaign.unsubscribe",
             Self::VaultCampaignProgramCreate => "vault.campaign.program.create",
             Self::VaultCampaignProgramRead => "vault.campaign.program.read",
             Self::VaultCampaignProgramUpdate => "vault.campaign.program.update",
@@ -2043,6 +2056,8 @@ impl AgentVerb {
             Self::VaultArtifactsRead => "vault.artifacts.read",
             Self::VaultConsolidationEnqueue => "vault.consolidation.enqueue",
             Self::VaultConsolidationStatus => "vault.consolidation.status",
+            Self::VaultRunsStep => "vault.runs.step",
+            Self::VaultRunsCheckpoint => "vault.runs.checkpoint",
             Self::VaultConsolidationPromote => "vault.consolidation.promote",
             Self::VaultConsolidationEvidence => "vault.consolidation.evidence",
             Self::VaultClaimsVet => "vault.claims.vet",
@@ -2226,6 +2241,9 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultCampaignEnroll
+                | Self::VaultCampaignStageEvidence
+                | Self::VaultCampaignUnsubscribe
                 | Self::VaultCampaignProgramCreate
                 | Self::VaultCampaignProgramRead
                 | Self::VaultCampaignProgramUpdate
@@ -2727,6 +2745,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultRunsStep
+                | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationEvidence
                 | Self::VaultClaimsVet
@@ -2954,6 +2974,9 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultCampaignEnroll
+                | Self::VaultCampaignStageEvidence
+                | Self::VaultCampaignUnsubscribe
                 | Self::VaultCampaignProgramCreate
                 | Self::VaultCampaignProgramRead
                 | Self::VaultCampaignProgramUpdate
@@ -3455,6 +3478,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultRunsStep
+                | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationEvidence
                 | Self::VaultClaimsVet
@@ -3743,6 +3768,9 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultCampaignEnroll
+                | Self::VaultCampaignStageEvidence
+                | Self::VaultCampaignUnsubscribe
                 | Self::VaultCampaignProgramCreate
                 | Self::VaultCampaignProgramRead
                 | Self::VaultCampaignProgramUpdate
@@ -4251,6 +4279,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultRunsStep
+                | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationEvidence
                 | Self::VaultClaimsVet
@@ -4376,6 +4406,9 @@ impl AgentVerb {
                 | Self::VaultRetrievalOutcomesEnd
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
+                | Self::VaultCampaignEnroll
+                | Self::VaultCampaignStageEvidence
+                | Self::VaultCampaignUnsubscribe
                 | Self::VaultCampaignProgramCreate
                 | Self::VaultCampaignProgramUpdate
                 | Self::VaultCampaignProgramArchive
@@ -4884,6 +4917,9 @@ impl AgentVerb {
             Self::VaultKvDelete => &["spec"],
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
+            Self::VaultCampaignEnroll => &["spec"],
+            Self::VaultCampaignStageEvidence => &["spec"],
+            Self::VaultCampaignUnsubscribe => &["spec"],
             Self::VaultCampaignProgramCreate => &["spec"],
             Self::VaultCampaignProgramRead => &["spec"],
             Self::VaultCampaignProgramUpdate => &["spec"],
@@ -5410,6 +5446,8 @@ impl AgentVerb {
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
             Self::VaultConsolidationStatus => &["spec"],
+            Self::VaultRunsStep => &["spec"],
+            Self::VaultRunsCheckpoint => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
             Self::VaultConsolidationEvidence => &["spec"],
             Self::VaultClaimsVet => &["spec"],
@@ -5591,6 +5629,9 @@ impl AgentVerb {
             Self::VaultKvDelete => &["spec"],
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
+            Self::VaultCampaignEnroll => &["spec"],
+            Self::VaultCampaignStageEvidence => &["spec"],
+            Self::VaultCampaignUnsubscribe => &["spec"],
             Self::VaultCampaignProgramCreate => &["spec"],
             Self::VaultCampaignProgramRead => &["spec"],
             Self::VaultCampaignProgramUpdate => &["spec"],
@@ -6117,6 +6158,8 @@ impl AgentVerb {
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
             Self::VaultConsolidationStatus => &["spec"],
+            Self::VaultRunsStep => &["spec"],
+            Self::VaultRunsCheckpoint => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
             Self::VaultConsolidationEvidence => &["spec"],
             Self::VaultClaimsVet => &["spec"],
@@ -6464,6 +6507,15 @@ impl AgentVerb {
             }
             Self::VaultKvNamespaces => {
                 "The caller's distinct live namespaces, with exact segment prefix and suffix matching."
+            }
+            Self::VaultCampaignEnroll => {
+                "Enrolls a person in a campaign the caller owns, with evidence-backed channels and sticky senders. Writes no earned stage and sends nothing."
+            }
+            Self::VaultCampaignStageEvidence => {
+                "Records earned-stage evidence under an authored ladder transition, in AUTO or propose mode. Owner-attested evidence requires the request owner proof; elapsed time earns nothing."
+            }
+            Self::VaultCampaignUnsubscribe => {
+                "Immediately honors an unsubscribe with a channel-scoped enforcement claim and every suppressed membership head in one transaction."
             }
             Self::VaultCampaignProgramCreate => {
                 "Creates a campaign program (ordered steps and an optional saved-query audience) under a campaign the caller owns."
@@ -7958,6 +8010,12 @@ impl AgentVerb {
             }
             Self::VaultConsolidationStatus => {
                 "Reads the status of one consolidation attempt by its durable job reference."
+            }
+            Self::VaultRunsStep => {
+                "Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work."
+            }
+            Self::VaultRunsCheckpoint => {
+                "Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run."
             }
             Self::VaultConsolidationPromote => {
                 "Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals."
