@@ -116,6 +116,17 @@ fn caller(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<Call
     })
 }
 
+/// [`caller`] as `door_admits` runs it before a row's hooks fire: a caller
+/// these rows admit at all. Each door admits it again for the stretch it
+/// binds.
+pub(super) fn off_record_admits(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+) -> MemoryResult<()> {
+    caller(server, auth, verb).map(drop)
+}
+
 /// A principal's slip, live again for this call: a revoked or lapsed slip
 /// manages nothing, whatever it started.
 fn live(vault: &Vault, credential: &VerifiedSlip, verb: &str) -> MemoryResult<()> {

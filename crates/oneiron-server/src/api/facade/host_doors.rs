@@ -1277,14 +1277,6 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.merge_queue.land_reviewed"
         | "vault.code.merge_queue.settle_slow"
         | "vault.code.merge_queue.recover"
-        | "vault.off_record.start"
-        | "vault.off_record.status"
-        | "vault.off_record.witness"
-        | "vault.off_record.discard"
-        | "vault.off_record.recall"
-        | "vault.off_record.notes.create"
-        | "vault.off_record.claims.upsert"
-        | "self.off_record.execute"
         | "vault.trusted_contacts.name"
         | "vault.trusted_contacts.dial.set"
         | "vault.trusted_contacts.tier.set"
@@ -1341,6 +1333,19 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.shared.policy.propose"
         | "vault.shared.policy.answer" => {
             super::shared_act_doors::person(server, auth, verb).map(drop)
+        }
+        // The off-record session rows admit their session's manager: the
+        // owner, or a person or agent who starts and keeps their own
+        // (WILL-PLAN L13 row 03). Each door binds the stretch for them again.
+        "vault.off_record.start"
+        | "vault.off_record.status"
+        | "vault.off_record.witness"
+        | "vault.off_record.discard"
+        | "vault.off_record.recall"
+        | "vault.off_record.notes.create"
+        | "vault.off_record.claims.upsert"
+        | "self.off_record.execute" => {
+            super::off_record_doors::off_record_admits(server, auth, verb)
         }
         "self.credential.attenuate" => super::credential_doors::holder(auth).map(drop),
         "vault.artifacts.review_slides" => slide_reviewer(server, auth).map(drop),
