@@ -20,8 +20,9 @@ pub const HUB_REF_KEYS: [&str; 3] = ["hubId", "refString", "pin"];
 pub const HUB_PIN_KEYS: [&str; 2] = ["type", "value"];
 
 /// Generic adapter kind stored on a SKILL_HUB record.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[non_exhaustive]
+#[serde(rename_all = "kebab-case")]
 pub enum SkillHubKind {
     Git,
     HttpIndex,
@@ -50,8 +51,9 @@ impl SkillHubKind {
 }
 
 /// Friction tier for one configurable hub endpoint.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[non_exhaustive]
+#[serde(rename_all = "lowercase")]
 pub enum SkillHubTrustTier {
     Untrusted,
     Community,
@@ -80,7 +82,8 @@ impl SkillHubTrustTier {
 }
 
 /// Default hub policy, overridden by the policy stored with each tracked ref.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case")]
 pub enum HubSyncPolicy {
     PinnedRef,
     PinnedCommit,
@@ -118,7 +121,8 @@ impl HubSyncPolicy {
 }
 
 /// Engine-authored maintenance record describing one configurable skill hub.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SkillHubRecord {
     pub kind: SkillHubKind,
     pub endpoint: String,
@@ -212,7 +216,8 @@ pub fn decode_skill_hub_record(bytes: &[u8]) -> Result<SkillHubRecord> {
 }
 
 /// Five-way provenance pin carried by a structured hub ref.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(tag = "type", content = "value", rename_all = "snake_case", deny_unknown_fields)]
 pub enum HubPin {
     Semver(String),
     Tag(String),
@@ -259,7 +264,8 @@ impl HubPin {
 }
 
 /// Mutable provenance pointer from one hub alias to canonical skill content.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct HubRef {
     pub hub_id: EntityId,
     pub ref_string: String,
@@ -377,7 +383,8 @@ impl HubRef {
 }
 
 /// Per-ref sync state. Seen and trusted observations never overwrite one another.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TrackedHubRef {
     pub hub_ref: HubRef,
     pub sync_policy: HubSyncPolicy,

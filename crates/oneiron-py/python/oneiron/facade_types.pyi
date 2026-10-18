@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 324 facade rows, 1298 declarations.
-Inputs: 281 of 324 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 281 of 324 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 340 facade rows, 1338 declarations.
+Inputs: 297 of 340 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 297 of 340 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 74; unread shapes: 0.
 """
 
@@ -1953,11 +1953,70 @@ class WeaveItemCorrectionView(TypedDict):
     project_ref: NotRequired[str | None]
     actor_ref: str
     recorded_at: int
-class PackFileInput(TypedDict):
-    path: str
-    text: str
-class PackPutRequest(TypedDict):
-    files: list[PackFileInput]
+SkillHubKind = Literal["git", "http-index", "local-dir"]
+SkillHubTrustTier = Literal["untrusted", "community", "verified"]
+HubSyncPolicy = Literal["pinned-ref", "pinned-commit", "content-hash-frozen", "mirror-of-hub"]
+class SkillHubPutRequest(TypedDict):
+    hub: EntityId
+    kind: SkillHubKind
+    endpoint: str
+    trust_tier: SkillHubTrustTier
+    sync_policy: HubSyncPolicy
+HubConsentOutcome = Literal["approved", "denied", "revoked"]
+class HubConsentReceipt(TypedDict):
+    outcome: HubConsentOutcome
+    decision: str
+    grant_ref: NotRequired[str | None]
+class SkillHubConfigured(TypedDict):
+    hub: EntityId
+    consent: HubConsentReceipt
+class SkillHubRequest(TypedDict):
+    hub: EntityId
+class SkillHubRecord(TypedDict):
+    kind: SkillHubKind
+    endpoint: str
+    trust_tier: SkillHubTrustTier
+    sync_policy: HubSyncPolicy
+class SkillPublisherRequest(TypedDict):
+    hub: EntityId
+    identity: str
+class SkillPublisherAdmission(TypedDict):
+    hub: EntityId
+    identity: str
+    grant_ref: str
+class HubRefRequest(TypedDict):
+    hub: EntityId
+    ref_string: str
+class HubPinSemver(TypedDict):
+    type: Literal["semver"]
+    value: str
+class HubPinTag(TypedDict):
+    type: Literal["tag"]
+    value: str
+class HubPinCommit(TypedDict):
+    type: Literal["commit"]
+    value: str
+class HubPinContentHash(TypedDict):
+    type: Literal["content_hash"]
+    value: str
+class HubPinNone(TypedDict):
+    type: Literal["none"]
+HubPin = HubPinSemver | HubPinTag | HubPinCommit | HubPinContentHash | HubPinNone
+class HubRef(TypedDict):
+    hub_id: EntityId
+    ref_string: str
+    pin: HubPin
+class TrackedHubRef(TypedDict):
+    hub_ref: HubRef
+    sync_policy: HubSyncPolicy
+    latest_seen: NotRequired[str | None]
+    latest_trusted: NotRequired[str | None]
+class HubRefSetRequest(TypedDict):
+    hub_ref: HubRef
+    sync_policy: HubSyncPolicy
+class HubImportRequest(TypedDict):
+    hub_ref: HubRef
+    publisher: str
 PackPutOutcome = Literal["installed", "candidate", "blocked"]
 PackKind = Literal["capability", "connector", "agent"]
 class PackAdapterBuiltin(TypedDict):
@@ -2041,6 +2100,151 @@ class PackPutReceipt(TypedDict):
     outcome: PackPutOutcome
     reason: NotRequired[str | None]
     receipt: NotRequired[PackInstallReceipt | None]
+class HubPackRequest(TypedDict):
+    name: str
+class HubSkillImported(TypedDict):
+    entity: EntityId
+class HubSkillRequest(TypedDict):
+    entity: EntityId
+HubSkillSyncOutcome = Literal["applied", "proposed", "refused_by_policy"]
+class HubSkillSyncReceipt(TypedDict):
+    outcome: HubSkillSyncOutcome
+    proposal: NotRequired[EntityId | None]
+    approval: NotRequired[ClaimApprovalStatus | None]
+InstallLifecycle = Literal["candidate", "active", "stale", "quarantined", "superseded"]
+InstallHoldReason = Literal["source_only", "rules_hit", "code_auto_install_off", "qualification_required", "no_fit", "local_approval", "unloadable_approval", "stale", "quarantined", "superseded", "advisories"]
+class InstallDispositionNotInstalled(TypedDict):
+    not_installed: InstallHoldReason
+InstallDisposition = Literal["installed", "already_installed", "pending_permission"] | InstallDispositionNotInstalled
+class HubImportReceipt(TypedDict):
+    entity: str
+    content_hash: str
+    hub_id: str
+    ref_string: str
+    pin_type: str
+    pin_value: NotRequired[str | None]
+    publisher: NotRequired[str | None]
+    publisher_grant: NotRequired[str | None]
+    installed_as: InstallLifecycle
+    disposition: InstallDisposition
+    fit_analysis: NotRequired[str | None]
+    requested_permissions: NotRequired[list[str]]
+    at: int
+class HubAdmissionReceipt(TypedDict):
+    receipt_id: str
+    candidate: str
+    content_hash: str
+    binding: str
+    consent_digest: str
+    publisher: str
+    publisher_grant: str
+    hub_id: str
+    hub_ref: str
+    evidence_skill: str
+    held_out_digest: str
+    held_out_count: int
+    before: float
+    after: float
+    accepted: bool
+    judge_revision: str
+    displaced_by_revision: NotRequired[str | None]
+    at: int
+class HubSkillReceipts(TypedDict):
+    sources: list[HubRef]
+    imports: list[HubImportReceipt]
+    admission: NotRequired[HubAdmissionReceipt | None]
+class HubSkillPermissionRequest(TypedDict):
+    entity: EntityId
+    hub_ref: HubRef
+class HubHookBindRequest(TypedDict):
+    pack: str
+HookActorClass = Literal["human", "agent", "system"]
+HookPhase = Literal["pre", "post", "fact"]
+HookOutcomeKind = Literal["continue", "rewrite", "skip", "ask", "add_block", "annotate", "redact", "propose", "enqueue", "effect", "nothing"]
+HookRenderClass = Literal["deterministic_eager", "generative"]
+class HookSelector(TypedDict):
+    verbs: list[str]
+    actors: list[HookActorClass]
+    scope: NotRequired[str | None]
+    phase: HookPhase
+    priority: int
+    budget_ms: int
+    blocking: bool
+    outcomes: list[HookOutcomeKind]
+    served: NotRequired[list[str]]
+    render_class: NotRequired[HookRenderClass]
+class HookAuthorOwner(TypedDict):
+    kind: Literal["owner"]
+class HookAuthorForeignActor(TypedDict):
+    kind: Literal["foreign_actor"]
+    actor_kind: str
+    identity: str
+    hub: str
+    grant: str
+    actor: str
+HookAuthor = HookAuthorOwner | HookAuthorForeignActor
+class PackHookBinding(TypedDict):
+    version: int
+    code: str
+    owner: str
+    source: str
+    pack: str
+    hook: str
+    hook_version: str
+    body_hash: str
+    selector: HookSelector
+    enabled: bool
+    author: HookAuthor
+class HubHookBindingRow(TypedDict):
+    id: EntityId
+    binding: PackHookBinding
+class HubHookQualifyRequest(TypedDict):
+    source: EntityId
+FactSource = Literal["claim_changelog", "settlement"]
+FactPositionHex = str
+FactKind = Literal["claim.landed", "claim.superseded", "proposal.settled"]
+class HookReplayCaseFact(TypedDict):
+    on: Literal["fact"]
+    source: FactSource
+    position: FactPositionHex
+    kind: FactKind
+    entity: str
+class HookReplayCaseVerb(TypedDict):
+    on: Literal["verb"]
+    run_key: str
+    invocation: str
+    verb: str
+    phase: HookPhase
+HookReplayCase = HookReplayCaseFact | HookReplayCaseVerb
+HookReplayCompare = Literal["same", "differs", "incomplete"]
+class HookReplayOutcomeRan(TypedDict):
+    status: Literal["ran"]
+    outcome_json: NotRequired[str | None]
+    outcome: str
+    reason: NotRequired[str | None]
+    recorded: NotRequired[str | None]
+    recorded_outcome_json: NotRequired[str | None]
+    compare: HookReplayCompare
+    from_memo: bool
+    reads_live: bool
+class HookReplayOutcomeMissingHistory(TypedDict):
+    status: Literal["missing_history"]
+    reason: str
+HookReplayOutcome = HookReplayOutcomeRan | HookReplayOutcomeMissingHistory
+class HookReplayRow(TypedDict):
+    case: HookReplayCase
+    result: HookReplayOutcome
+class HubHookReplay(TypedDict):
+    hook: str
+    entries: list[HookReplayRow]
+class HubHookQualificationReceipt(TypedDict):
+    put: PackPutReceipt
+    replays: list[HubHookReplay]
+class PackFileInput(TypedDict):
+    path: str
+    text: str
+class PackPutRequest(TypedDict):
+    files: list[PackFileInput]
 class PackRemoveRequest(TypedDict):
     pack: str
 class ChannelSubscriptionRequest(TypedDict):
@@ -3817,41 +4021,6 @@ class HooksReplayRequest(TypedDict):
     binding: str
     since: NotRequired[str | None]
     limit: NotRequired[int | None]
-FactSource = Literal["claim_changelog", "settlement"]
-FactPositionHex = str
-FactKind = Literal["claim.landed", "claim.superseded", "proposal.settled"]
-HookPhase = Literal["pre", "post", "fact"]
-class HookReplayCaseFact(TypedDict):
-    on: Literal["fact"]
-    source: FactSource
-    position: FactPositionHex
-    kind: FactKind
-    entity: str
-class HookReplayCaseVerb(TypedDict):
-    on: Literal["verb"]
-    run_key: str
-    invocation: str
-    verb: str
-    phase: HookPhase
-HookReplayCase = HookReplayCaseFact | HookReplayCaseVerb
-HookReplayCompare = Literal["same", "differs", "incomplete"]
-class HookReplayOutcomeRan(TypedDict):
-    status: Literal["ran"]
-    outcome_json: NotRequired[str | None]
-    outcome: str
-    reason: NotRequired[str | None]
-    recorded: NotRequired[str | None]
-    recorded_outcome_json: NotRequired[str | None]
-    compare: HookReplayCompare
-    from_memo: bool
-    reads_live: bool
-class HookReplayOutcomeMissingHistory(TypedDict):
-    status: Literal["missing_history"]
-    reason: str
-HookReplayOutcome = HookReplayOutcomeRan | HookReplayOutcomeMissingHistory
-class HookReplayRow(TypedDict):
-    case: HookReplayCase
-    result: HookReplayOutcome
 class ArtifactRefRequest(TypedDict):
     artifact_ref: str
 ArtifactKind = Literal["document", "sheet", "deck", "code", "canvas", "image", "file"]

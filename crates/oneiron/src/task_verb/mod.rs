@@ -273,6 +273,7 @@ mod sdk_explain;
 mod sdk_fanout_launch;
 mod sdk_guest_revoke;
 mod sdk_host;
+mod sdk_hub;
 mod sdk_legal_hold;
 mod sdk_mesh;
 mod sdk_record_erase;

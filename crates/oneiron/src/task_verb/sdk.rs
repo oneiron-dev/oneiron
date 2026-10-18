@@ -511,6 +511,7 @@ pub use super::sdk_explain::*;
 pub use super::sdk_fanout_launch::*;
 pub use super::sdk_guest_revoke::*;
 pub use super::sdk_host::*;
+pub use super::sdk_hub::*;
 pub use super::sdk_legal_hold::*;
 pub use super::sdk_mesh::*;
 pub use super::sdk_record_erase::*;

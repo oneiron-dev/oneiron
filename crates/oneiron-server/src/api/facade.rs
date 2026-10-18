@@ -40,6 +40,7 @@ mod embedding_space_doors;
 mod fanout_doors;
 mod graph_ask_doors;
 mod guest_doors;
+mod hub_doors;
 pub(super) mod host_doors;
 mod legal_hold_doors;
 mod policy_doors;
