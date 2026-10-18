@@ -85,6 +85,7 @@ impl ClaimLifecycleStatus {
 /// the auto-permit question is `requires_explicit_auto_permit` below.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ClaimSource {

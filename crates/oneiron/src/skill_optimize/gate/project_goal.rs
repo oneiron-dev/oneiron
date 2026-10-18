@@ -198,7 +198,7 @@ pub(super) fn project_rules(
 /// One rung of the responsible-role chain a tradeoff ask climbs. Live people
 /// and live bound agents are members (ROLES-EVERYWHERE): a pick by either
 /// becomes the role's preference.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TradeoffRole {
     /// The person who authored the goal's tradeoff preferences.

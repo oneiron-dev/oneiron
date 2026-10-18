@@ -32,25 +32,19 @@ use crate::skill_optimize::{EvalRelease, SufficiencyInput};
 #[serde(deny_unknown_fields)]
 pub struct ResearchBindWire {
     pub root: EntityId,
-    #[schemars(with = "serde_json::Value")]
     pub config: CampaignConfig,
-    #[schemars(with = "serde_json::Value")]
     pub target: ResearchTarget,
     pub holder: Option<String>,
-    #[schemars(with = "serde_json::Value")]
     pub confirmation: Option<ResearchConfirmationSeat>,
     pub share: Option<String>,
     /// The incumbent configuration, pinned as the root node.
-    #[schemars(with = "serde_json::Value")]
     pub incumbent: CandidateRef,
     /// The cold-start ladder the root's belief seeds from.
     #[serde(default)]
-    #[schemars(with = "serde_json::Value")]
     pub prior_ladder: Vec<PriorSeed>,
     /// The agents the Coach host drives the loop with; absent, the workflow
     /// drives its own record.
     #[serde(default)]
-    #[schemars(with = "serde_json::Value")]
     pub execution: Option<ResearchExecution>,
 }
 
@@ -61,9 +55,7 @@ pub struct ResearchForkWire {
     pub root: EntityId,
     pub parent: EntityId,
     pub child: EntityId,
-    #[schemars(with = "serde_json::Value")]
     pub kind: ForkKind,
-    #[schemars(with = "serde_json::Value")]
     pub candidate: CandidateRef,
 }
 
@@ -77,7 +69,6 @@ pub struct ResearchWeaveWire {
     pub child: EntityId,
     pub common_ancestor: EntityId,
     pub validation_overlap: f64,
-    #[schemars(with = "serde_json::Value")]
     pub candidate: CandidateRef,
     pub claim: EntityId,
 }
@@ -88,7 +79,6 @@ pub struct ResearchWeaveWire {
 pub struct ResearchSearchWire {
     pub root: EntityId,
     pub attempt: EntityId,
-    #[schemars(with = "serde_json::Value")]
     pub evidence: SearchEvidence,
 }
 
@@ -98,7 +88,6 @@ pub struct ResearchSearchWire {
 pub struct ResearchHeldOutWire {
     pub root: EntityId,
     pub attempt: EntityId,
-    #[schemars(with = "serde_json::Value")]
     pub measurement: Measurement,
     pub receipt_refs: Vec<String>,
 }
@@ -150,7 +139,6 @@ pub struct ResearchSelectWire {
 pub struct ResearchBasisWire {
     pub root: EntityId,
     pub candidate: EntityId,
-    #[schemars(with = "serde_json::Value")]
     pub archive: Option<CampaignArchivePin>,
 }
 
@@ -179,7 +167,6 @@ pub struct ResearchPromoteWire {
     pub root: EntityId,
     pub candidate: EntityId,
     pub referee: ResearchRefereeScores,
-    #[schemars(with = "serde_json::Value")]
     pub sufficiency: SufficiencyInput,
     /// A skill campaign's staged revision proposal; a config campaign none.
     pub skill_proposal: Option<EntityId>,
@@ -190,7 +177,6 @@ pub struct ResearchPromoteWire {
 #[serde(deny_unknown_fields)]
 pub struct ResearchWorkWire {
     pub root: EntityId,
-    #[schemars(with = "serde_json::Value")]
     pub purpose: RsiSpendPurpose,
     pub units: u64,
     /// The node the work is for, if one.
@@ -220,7 +206,6 @@ pub struct ResearchRefundWire {
 #[serde(deny_unknown_fields)]
 pub struct ResearchBenchmarkWire {
     pub estimator_version: String,
-    #[schemars(with = "serde_json::Value")]
     pub benchmark: CampaignDatasetRef,
     pub cases: u64,
     pub dgm_score: f64,
