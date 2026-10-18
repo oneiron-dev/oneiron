@@ -73,7 +73,10 @@ pub fn configure(
     owner: &AuthenticatedOwner,
     input: &CalendarIcsFeedConfigureRequest,
 ) -> MemoryResult<CalendarIcsFeedRegistration> {
-    input.config.validate().map_err(|error| MemoryError::bad_request(error.to_string()))?;
+    input
+        .config
+        .validate()
+        .map_err(|error| MemoryError::bad_request(error.to_string()))?;
     memory.with_verified_actor_write_txn(|txn| {
         check_owner(memory, owner, txn)?;
         let vault = memory.vault();
@@ -131,10 +134,13 @@ pub fn check_installed_feed(
 ) -> crate::Result<()> {
     let txn = vault.store.env.read_txn()?;
     owner.revalidate_in_txn(vault, &txn)?;
-    if FEEDS.get(&vault.store, &txn, &config.system)?
+    if FEEDS
+        .get(&vault.store, &txn, &config.system)?
         .is_none_or(|row| row.config != *config)
     {
-        return Err(crate::Error::InvalidConfig("ICS feed is not installed".into()));
+        return Err(crate::Error::InvalidConfig(
+            "ICS feed is not installed".into(),
+        ));
     }
     Ok(())
 }
@@ -149,17 +155,20 @@ pub fn observe_poll(
     let cursor = ics_feed_cursor_snapshot(memory.vault(), config)
         .map_err(|error| MemoryError::bad_request(error.to_string()))?;
     let result = match outcome {
-        IcsPollRunState::Reenqueued { next_not_before } =>
-            CalendarIcsPollResult::Reenqueued { next_not_before },
-        IcsPollRunState::PausedNeedsInput { inbox_exception_ref } =>
-            CalendarIcsPollResult::PausedNeedsInput {
-                inbox_exception_ref: inbox_exception_ref.to_hex(),
-            },
+        IcsPollRunState::Reenqueued { next_not_before } => {
+            CalendarIcsPollResult::Reenqueued { next_not_before }
+        }
+        IcsPollRunState::PausedNeedsInput {
+            inbox_exception_ref,
+        } => CalendarIcsPollResult::PausedNeedsInput {
+            inbox_exception_ref: inbox_exception_ref.to_hex(),
+        },
     };
     memory.with_verified_actor_write_txn(|txn| {
         check_owner(memory, owner, txn)?;
         let vault = memory.vault();
-        let mut row = FEEDS.get(&vault.store, txn, &config.system)?
+        let mut row = FEEDS
+            .get(&vault.store, txn, &config.system)?
             .ok_or_else(|| MemoryError::not_found("ICS feed is not configured"))?;
         if row.config != *config {
             return Err(MemoryError::bad_request("ICS feed moved during poll"));

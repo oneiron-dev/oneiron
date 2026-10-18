@@ -4,10 +4,10 @@ use serde::{Deserialize, Serialize};
 
 use super::asset_resolve::{AssetConsumer, ServedAssetForm, asset_body};
 use super::{Memory, MemoryError, MemoryResult, caps};
+use crate::EntityId;
 use crate::claim::ScopedReadResult;
 use crate::embed::InputKind;
 use crate::llm::{CallPurpose, LlmCapability};
-use crate::EntityId;
 
 /// Inline bytes become a real ASSET, not a BLOB_ARTIFACT. A supplied ref is
 /// a fresh 32-hex id; omission mints one. Text is a caption or transcript for
@@ -68,32 +68,50 @@ impl Memory<'_> {
         let kind = InputKind::for_media_type(&mime)
             .or_else(|| mime.starts_with("text/").then_some(InputKind::Text));
         if kind != Some(input.embedding_kind) {
-            return Err(MemoryError::bad_request("mime_type must match embedding_kind: text, image or audio"));
+            return Err(MemoryError::bad_request(
+                "mime_type must match embedding_kind: text, image or audio",
+            ));
         }
         if input.bytes_b64.len() > caps::MAX_BLOB_BASE64_LEN {
-            return Err(MemoryError::bad_request("asset bytes exceed the blob content bound"));
+            return Err(MemoryError::bad_request(
+                "asset bytes exceed the blob content bound",
+            ));
         }
-        let bytes = base64::engine::general_purpose::STANDARD.decode(&input.bytes_b64)
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&input.bytes_b64)
             .map_err(|_| MemoryError::bad_request("bytes_b64 must be standard base64"))?;
         caps::check_blob_bytes(bytes.len())?;
         if bytes.is_empty() {
             return Err(MemoryError::bad_request("an asset holds nonempty bytes"));
         }
         let text = match input.embedding_kind {
-            InputKind::Text => Some(std::str::from_utf8(&bytes)
-                .map_err(|_| MemoryError::bad_request("a text asset holds UTF-8 bytes"))?),
+            InputKind::Text => Some(
+                std::str::from_utf8(&bytes)
+                    .map_err(|_| MemoryError::bad_request("a text asset holds UTF-8 bytes"))?,
+            ),
             _ => input.text.as_deref(),
         };
         if text.is_some_and(|text| text.trim().is_empty()) {
             return Err(MemoryError::bad_request("an asset text form is nonempty"));
         }
         if input.embedding_kind == InputKind::Text
-            && input.text.as_deref().is_some_and(|supplied| Some(supplied) != text)
+            && input
+                .text
+                .as_deref()
+                .is_some_and(|supplied| Some(supplied) != text)
         {
-            return Err(MemoryError::bad_request("a text asset's text form is its UTF-8 content"));
+            return Err(MemoryError::bad_request(
+                "a text asset's text form is its UTF-8 content",
+            ));
         }
-        if let Some(text) = text { caps::check_payload_bytes("asset text", text.len())?; }
-        let id = input.asset_ref.as_deref().map(EntityId::from_hex).transpose()?;
+        if let Some(text) = text {
+            caps::check_payload_bytes("asset text", text.len())?;
+        }
+        let id = input
+            .asset_ref
+            .as_deref()
+            .map(EntityId::from_hex)
+            .transpose()?;
         let body = asset_body(input.embedding_kind, &mime, &bytes, "uploaded", None)?;
         let (asset, text) = self.land_asset_body(id, &body, text, input.occurred_at)?;
         Ok(AssetIngestReceipt {
@@ -106,18 +124,37 @@ impl Memory<'_> {
         })
     }
 
-    pub fn resolve_asset_form(&self, input: &AssetResolveRequest) -> MemoryResult<ScopedReadResult<AssetResolved>> {
+    pub fn resolve_asset_form(
+        &self,
+        input: &AssetResolveRequest,
+    ) -> MemoryResult<ScopedReadResult<AssetResolved>> {
         let mut consumer = AssetConsumer::text_only(CallPurpose::AnswerGen);
-        if input.image_input { consumer.capabilities.push(LlmCapability::ImageInput); }
-        if input.audio_input { consumer.capabilities.push(LlmCapability::AudioInput); }
+        if input.image_input {
+            consumer.capabilities.push(LlmCapability::ImageInput);
+        }
+        if input.audio_input {
+            consumer.capabilities.push(LlmCapability::AudioInput);
+        }
         let (served, receipt_refs) = self.serve_assets_with_receipts(
-            std::slice::from_ref(&input.asset_ref), &consumer, None, input.room_bytes,
+            std::slice::from_ref(&input.asset_ref),
+            &consumer,
+            None,
+            input.room_bytes,
         )?;
         let ScopedReadResult { value, receipt } = served;
-        let resolved = value.into_iter().next().ok_or_else(|| MemoryError::not_found("asset has no readable form"))?;
-        let bytes = resolved.image.map(|image| (image.media_type, image.bytes)).or(resolved.audio);
+        let resolved = value
+            .into_iter()
+            .next()
+            .ok_or_else(|| MemoryError::not_found("asset has no readable form"))?;
+        let bytes = resolved
+            .image
+            .map(|image| (image.media_type, image.bytes))
+            .or(resolved.audio);
         let (mime_type, bytes_b64) = match bytes {
-            Some((mime, bytes)) => (Some(mime), Some(base64::engine::general_purpose::STANDARD.encode(bytes))),
+            Some((mime, bytes)) => (
+                Some(mime),
+                Some(base64::engine::general_purpose::STANDARD.encode(bytes)),
+            ),
             None => (None, None),
         };
         Ok(ScopedReadResult {

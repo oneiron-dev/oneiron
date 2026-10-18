@@ -61,10 +61,21 @@ pub struct CommitmentBirthProvenance {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CommitmentSchedule {
-    Once { due: u64 },
-    Interval { period: u64, anchor: u64 },
-    Quota { count: u32, window: CommitmentQuotaWindow },
-    Rrule { rrule_string: String, tz: String },
+    Once {
+        due: u64,
+    },
+    Interval {
+        period: u64,
+        anchor: u64,
+    },
+    Quota {
+        count: u32,
+        window: CommitmentQuotaWindow,
+    },
+    Rrule {
+        rrule_string: String,
+        tz: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

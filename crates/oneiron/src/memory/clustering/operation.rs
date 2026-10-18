@@ -1,6 +1,7 @@
 //! Wire projection only. Topology validation and effects stay in identity_topology.
 
 use super::*;
+use crate::EntityId;
 use crate::claim::ClaimSubject;
 use crate::edge::EdgeKind;
 use crate::identity_topology::{
@@ -8,10 +9,10 @@ use crate::identity_topology::{
     ReassignmentTarget, SplitOp, SurvivorshipPlan,
 };
 use crate::memory::{MemoryError, MemoryResult};
-use crate::EntityId;
 
 pub(super) fn id(text: &str) -> MemoryResult<EntityId> {
-    EntityId::from_hex(text).map_err(|_| MemoryError::bad_request("topology refs are full 32-hex entity ids"))
+    EntityId::from_hex(text)
+        .map_err(|_| MemoryError::bad_request("topology refs are full 32-hex entity ids"))
 }
 
 pub(super) fn subject(text: &str) -> MemoryResult<ClaimSubject> {
@@ -20,23 +21,39 @@ pub(super) fn subject(text: &str) -> MemoryResult<ClaimSubject> {
     };
     let fields: Vec<_> = edge.split(':').collect();
     if let [source, kind, target] = fields.as_slice() {
-        let kind = kind.parse::<u8>().ok().and_then(EdgeKind::try_from_u8)
+        let kind = kind
+            .parse::<u8>()
+            .ok()
+            .and_then(EdgeKind::try_from_u8)
             .ok_or_else(|| MemoryError::bad_request("edge item needs a known edge-kind byte"))?;
-        return Ok(ClaimSubject::Edge { source: id(source)?, kind, target: id(target)? });
+        return Ok(ClaimSubject::Edge {
+            source: id(source)?,
+            kind,
+            target: id(target)?,
+        });
     }
-    Err(MemoryError::bad_request("edge item is edge:<source-hex>:<kind-byte>:<target-hex>"))
+    Err(MemoryError::bad_request(
+        "edge item is edge:<source-hex>:<kind-byte>:<target-hex>",
+    ))
 }
 
 impl ClusterEvidence {
     fn into_engine(&self) -> MemoryResult<IdentityOpEvidence> {
         Ok(IdentityOpEvidence {
-            refs: self.refs.iter().map(|reference| id(reference)).collect::<MemoryResult<_>>()?,
+            refs: self
+                .refs
+                .iter()
+                .map(|reference| id(reference))
+                .collect::<MemoryResult<_>>()?,
             rationale: self.rationale.clone(),
         })
     }
 
     fn from_engine(evidence: &IdentityOpEvidence) -> Self {
-        Self { refs: evidence.refs.iter().map(EntityId::to_hex).collect(), rationale: evidence.rationale.clone() }
+        Self {
+            refs: evidence.refs.iter().map(EntityId::to_hex).collect(),
+            rationale: evidence.rationale.clone(),
+        }
     }
 }
 
@@ -44,22 +61,42 @@ impl ClusterOperation {
     pub(super) fn into_engine(&self) -> MemoryResult<IdentityTopologyOp> {
         match self {
             Self::Merge(merge) => Ok(IdentityTopologyOp::Merge(MergeOp {
-                sources: merge.sources.iter().map(|reference| id(reference)).collect::<MemoryResult<_>>()?,
+                sources: merge
+                    .sources
+                    .iter()
+                    .map(|reference| id(reference))
+                    .collect::<MemoryResult<_>>()?,
                 survivor: id(&merge.survivor)?,
                 evidence: merge.evidence.into_engine()?,
-                survivorship_plan: match merge.survivorship_plan { ClusterSurvivorship::ReadThrough => SurvivorshipPlan::ReadThrough },
+                survivorship_plan: match merge.survivorship_plan {
+                    ClusterSurvivorship::ReadThrough => SurvivorshipPlan::ReadThrough,
+                },
             })),
             Self::Split(split) => Ok(IdentityTopologyOp::Split(SplitOp {
                 entity: id(&split.entity)?,
-                heads: split.heads.iter().map(|reference| id(reference)).collect::<MemoryResult<_>>()?,
+                heads: split
+                    .heads
+                    .iter()
+                    .map(|reference| id(reference))
+                    .collect::<MemoryResult<_>>()?,
                 reassignment: ReassignmentMap {
-                    entries: split.reassignment_map.iter().map(|entry| Ok(ReassignmentEntry {
-                        item: subject(&entry.item)?,
-                        target: match &entry.target {
-                            ClusterReassignmentTarget::Head { entity_ref } => ReassignmentTarget::Head(id(entity_ref)?),
-                            ClusterReassignmentTarget::Residue => ReassignmentTarget::Residue,
-                        },
-                    })).collect::<MemoryResult<_>>()?,
+                    entries: split
+                        .reassignment_map
+                        .iter()
+                        .map(|entry| {
+                            Ok(ReassignmentEntry {
+                                item: subject(&entry.item)?,
+                                target: match &entry.target {
+                                    ClusterReassignmentTarget::Head { entity_ref } => {
+                                        ReassignmentTarget::Head(id(entity_ref)?)
+                                    }
+                                    ClusterReassignmentTarget::Residue => {
+                                        ReassignmentTarget::Residue
+                                    }
+                                },
+                            })
+                        })
+                        .collect::<MemoryResult<_>>()?,
                 },
                 evidence: split.evidence.into_engine()?,
             })),
@@ -77,17 +114,32 @@ impl ClusterOperation {
             IdentityTopologyOp::Split(split) => Ok(Self::Split(ClusterSplit {
                 entity: split.entity.to_hex(),
                 heads: split.heads.iter().map(EntityId::to_hex).collect(),
-                reassignment_map: split.reassignment.entries.iter().map(|entry| Ok(ClusterReassignment {
-                    item: crate::memory::support::subject_ref_string(&entry.item),
-                    target: match entry.target {
-                        ReassignmentTarget::Head(head) => ClusterReassignmentTarget::Head { entity_ref: head.to_hex() },
-                        ReassignmentTarget::Residue => ClusterReassignmentTarget::Residue,
-                        ReassignmentTarget::Facet { .. } => return Err(MemoryError::bad_request("split cannot assign a facet")),
-                    },
-                })).collect::<MemoryResult<_>>()?,
+                reassignment_map: split
+                    .reassignment
+                    .entries
+                    .iter()
+                    .map(|entry| {
+                        Ok(ClusterReassignment {
+                            item: crate::memory::support::subject_ref_string(&entry.item),
+                            target: match entry.target {
+                                ReassignmentTarget::Head(head) => ClusterReassignmentTarget::Head {
+                                    entity_ref: head.to_hex(),
+                                },
+                                ReassignmentTarget::Residue => ClusterReassignmentTarget::Residue,
+                                ReassignmentTarget::Facet { .. } => {
+                                    return Err(MemoryError::bad_request(
+                                        "split cannot assign a facet",
+                                    ));
+                                }
+                            },
+                        })
+                    })
+                    .collect::<MemoryResult<_>>()?,
                 evidence: ClusterEvidence::from_engine(&split.evidence),
             })),
-            _ => Err(MemoryError::bad_request("clustering judgments are merge or split operations")),
+            _ => Err(MemoryError::bad_request(
+                "clustering judgments are merge or split operations",
+            )),
         }
     }
 }
@@ -107,7 +159,9 @@ pub(super) fn references(op: &IdentityTopologyOp) -> (Vec<EntityId>, Vec<ClaimSu
                         edges.push(entry.item);
                     }
                 }
-                if let ReassignmentTarget::Head(head) = entry.target { refs.push(head); }
+                if let ReassignmentTarget::Head(head) = entry.target {
+                    refs.push(head);
+                }
             }
         }
         _ => {}

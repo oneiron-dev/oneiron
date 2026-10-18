@@ -859,8 +859,13 @@ impl Memory<'_> {
                     pipeline = pipeline.hyde(expander, grounding.clone(), options);
                 }
                 for seed in execution.media {
-                    pipeline =
-                        pipeline.search_media(seed.space, seed.kind, seed.vector, seed.kinds, limit);
+                    pipeline = pipeline.search_media(
+                        seed.space,
+                        seed.kind,
+                        seed.vector,
+                        seed.kinds,
+                        limit,
+                    );
                 }
                 if !execution.phonetic_codes.is_empty() {
                     pipeline = pipeline.search_phonetic(execution.phonetic_codes);
@@ -905,7 +910,11 @@ impl Memory<'_> {
                         cited,
                         &mut receipt,
                     )? {
-                        item.embedding_matches = retrieval.embedding_matches.get(&hit.id).cloned().unwrap_or_default();
+                        item.embedding_matches = retrieval
+                            .embedding_matches
+                            .get(&hit.id)
+                            .cloned()
+                            .unwrap_or_default();
                         items.push(item);
                     }
                 }
@@ -966,7 +975,8 @@ impl Memory<'_> {
                     builder = builder.hyde(expander, grounding.clone(), options);
                 }
                 for seed in execution.media {
-                    builder = builder.search_media(seed.space, seed.kind, seed.vector, seed.kinds, limit);
+                    builder =
+                        builder.search_media(seed.space, seed.kind, seed.vector, seed.kinds, limit);
                 }
                 if !execution.phonetic_codes.is_empty() {
                     builder = builder.search_phonetic(execution.phonetic_codes);
@@ -1055,7 +1065,11 @@ impl Memory<'_> {
                     if let Some(mut item) =
                         self.memory_item_for(&lane, &entity.id, None, mode, cited, &mut receipt)?
                     {
-                        item.embedding_matches = status.embedding_matches.get(&entity.id).cloned().unwrap_or_default();
+                        item.embedding_matches = status
+                            .embedding_matches
+                            .get(&entity.id)
+                            .cloned()
+                            .unwrap_or_default();
                         items.push(item);
                     }
                 }

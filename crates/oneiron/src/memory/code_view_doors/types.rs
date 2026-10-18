@@ -1,8 +1,8 @@
 //! Account-local working views and immutable build results (ARCH-0050 / RC7).
-use std::collections::BTreeMap;
-use serde::{Deserialize, Serialize};
 use crate::EntityId;
 use crate::code_view::VisibleFilePolicy;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -63,7 +63,10 @@ pub struct CodeViewFileBytes {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum CodeBuildClass { Build, Verify }
+pub enum CodeBuildClass {
+    Build,
+    Verify,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -147,7 +150,11 @@ pub struct CodeBuildEntry {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum CodeCacheState { Hit, Miss, Denied }
+pub enum CodeCacheState {
+    Hit,
+    Miss,
+    Denied,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CodeCacheOutcome {
@@ -159,8 +166,12 @@ pub struct CodeCacheOutcome {
 
 impl CodeBuildSpec {
     pub(crate) fn engine_taint_refs(&self) -> Vec<crate::secret_lease::SecretTaintRef> {
-        self.secret_taint_refs.iter().map(|taint| crate::secret_lease::SecretTaintRef {
-            secret_ref: taint.secret_ref.clone(), generation: taint.rotation_generation,
-        }).collect()
+        self.secret_taint_refs
+            .iter()
+            .map(|taint| crate::secret_lease::SecretTaintRef {
+                secret_ref: taint.secret_ref.clone(),
+                generation: taint.rotation_generation,
+            })
+            .collect()
     }
 }

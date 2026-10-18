@@ -12,7 +12,8 @@ pub(super) struct AdmittedRevision {
 }
 
 pub(crate) struct RevisionedHits {
-    pub(crate) embedding_matches: std::collections::HashMap<EntityId, Vec<crate::embed::EmbeddingMatchEvidence>>,
+    pub(crate) embedding_matches:
+        std::collections::HashMap<EntityId, Vec<crate::embed::EmbeddingMatchEvidence>>,
     pub(crate) hits: Vec<ScoredEntity>,
     pub(crate) receipt: ScopedReadReceipt,
     pub(crate) revisions: std::collections::HashMap<EntityId, crate::vault::RevisionRef>,
@@ -68,7 +69,12 @@ impl ScopedRead<'_> {
         limit: usize,
         requested: Option<&RetrievalFilter>,
     ) -> Result<RevisionedHits> {
-        let channel = DenseChannel::Space { space_id, query_kind, query, kinds };
+        let channel = DenseChannel::Space {
+            space_id,
+            query_kind,
+            query,
+            kinds,
+        };
         self.search_dense_revisioned(channel, limit, requested)
     }
 

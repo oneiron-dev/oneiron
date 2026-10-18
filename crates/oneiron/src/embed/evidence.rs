@@ -1,6 +1,6 @@
 //! Raw match evidence stays keyed by the space and input kind that produced it.
-use serde::{Deserialize, Serialize};
 use super::InputKind;
+use serde::{Deserialize, Serialize};
 
 /// A cosine is meaningful only in this exact model@revision@where space.
 /// These are the floors the retrieval run actually used, before fusion.

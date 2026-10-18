@@ -10,7 +10,9 @@ pub const HYDE_MAX_SUBQUERIES: usize = 3;
 pub const HYDE_RETRY_LIMIT_MULTIPLIER: usize = 2;
 pub const HYDE_RETRY_MAX_LIMIT: usize = 200;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct GroundingContext {
     pub bindings: BTreeMap<String, String>,
 }
@@ -97,7 +99,9 @@ pub struct CompletionRequest {
     pub query: String,
     pub candidates: Vec<CompletionCandidate>,
 }
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub enum EvidenceVerdict {
     Sufficient,
     Insufficient { gaps: Vec<String> },
@@ -107,7 +111,9 @@ pub trait HydeExpander: Send + Sync {
     fn expand(&self, request: &HydeRequest) -> Result<HydeExpansion>;
     fn assess_evidence(&self, request: &CompletionRequest) -> Result<EvidenceVerdict>;
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct HydeOptions {
     pub channel_limit: usize,
     pub retry_once: bool,
@@ -130,7 +136,9 @@ impl HydeOptions {
 /// The same vector guards for a host completion and for the retrieval that consumes it.
 pub fn validate_hyde_expansion(vault: &crate::Vault, expansion: &HydeExpansion) -> Result<()> {
     if expansion.embedding.is_empty() {
-        return Err(Error::InvalidConfig("hyde embedding must not be empty".to_owned()));
+        return Err(Error::InvalidConfig(
+            "hyde embedding must not be empty".to_owned(),
+        ));
     }
     if expansion.embedding.len() != vault.config.dimensions
         && vault.config.fast_dims.map(usize::from) != Some(expansion.embedding.len())

@@ -192,7 +192,9 @@ impl CalendarPassportDirection {
 }
 
 /// Whether one source still reports the EVENT in its feed.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CalendarPassportPresence {
     /// The source still reports this UID. The default when the field is missing.

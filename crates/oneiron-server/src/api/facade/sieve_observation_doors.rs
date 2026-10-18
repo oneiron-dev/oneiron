@@ -46,9 +46,10 @@ pub(crate) async fn vault_sieve_evidence_replay(
     )
     .await;
     if answer.0.is_ok() {
-        server
-            .ai
-            .turn_landed(server.vault(), oneiron::dreamer_wake::WakeTurnSubject::Vault);
+        server.ai.turn_landed(
+            server.vault(),
+            oneiron::dreamer_wake::WakeTurnSubject::Vault,
+        );
     }
     answer
 }

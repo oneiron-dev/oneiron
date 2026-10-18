@@ -38,7 +38,8 @@ use super::{
 
 /// What a scoped pack run reports beside its pack.
 pub(crate) struct PackRunStatus {
-    pub(crate) embedding_matches: std::collections::HashMap<EntityId, Vec<crate::embed::EmbeddingMatchEvidence>>,
+    pub(crate) embedding_matches:
+        std::collections::HashMap<EntityId, Vec<crate::embed::EmbeddingMatchEvidence>>,
     /// Only the handle returned by successful post-filter finalization.
     pub(crate) run_id: Option<crate::store::RetrievalRunId>,
     /// Whether the vector channel completed.

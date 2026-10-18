@@ -81,7 +81,8 @@ impl<'a> CodeViewSet<'a> {
         let mut files = BTreeMap::new();
         for file in &mount.snapshot().files {
             if policy.selects(&file.path)? {
-                let bytes = mount.read_file(&file.path)?
+                let bytes = mount
+                    .read_file(&file.path)?
                     .ok_or(Error::CorruptedIndex("view blob absent"))?;
                 if *blake3::hash(&bytes).as_bytes() != file.content_hash {
                     return Err(Error::CorruptedIndex("view blob hash mismatch"));
@@ -103,7 +104,11 @@ impl<'a> CodeViewSet<'a> {
                         return Err(Error::CorruptedIndex("view set directory replaced"));
                     }
                 }
-                Ok(Self { vault, root, materialization: std::sync::Mutex::new(()) })
+                Ok(Self {
+                    vault,
+                    root,
+                    materialization: std::sync::Mutex::new(()),
+                })
             }
             Err(error) => Err(error),
         }
@@ -117,7 +122,9 @@ impl<'a> CodeViewSet<'a> {
         contents: &BTreeMap<String, Vec<u8>>,
         admit: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     ) -> Result<ViewReceipt> {
-        let _guard = self.materialization.lock()
+        let _guard = self
+            .materialization
+            .lock()
             .map_err(|_| Error::InvariantViolation("view lock poisoned"))?;
         let view_id = EntityId::now();
         let destination = self.root.join("views").join(view_id.to_hex());
@@ -211,12 +218,18 @@ impl<'a> CodeViewSet<'a> {
         self.build_inner(id, cache, class, action, Some(expected), execute)
     }
 
-    pub(crate) fn build_action(&self, id: EntityId, action: &BuildAction) -> BuildCacheResult<BuildAction> {
+    pub(crate) fn build_action(
+        &self,
+        id: EntityId,
+        action: &BuildAction,
+    ) -> BuildCacheResult<BuildAction> {
         view_build_action(action, &self.freeze_inputs(id, action)?)
     }
 
     fn freeze_inputs(&self, id: EntityId, action: &BuildAction) -> Result<ViewReceipt> {
-        let mut receipt = self.receipt(id)?.ok_or(Error::InvalidClaimBody("unknown view"))?;
+        let mut receipt = self
+            .receipt(id)?
+            .ok_or(Error::InvalidClaimBody("unknown view"))?;
         let root = self.view_path(id)?;
         if !std::fs::symlink_metadata(&root)?.is_dir() {
             return Err(Error::CorruptedIndex("view root was replaced"));
@@ -226,11 +239,21 @@ impl<'a> CodeViewSet<'a> {
         while let Some(directory) = directories.pop() {
             for entry in std::fs::read_dir(root.join(&directory))? {
                 let entry = entry?;
-                let name = entry.file_name().into_string()
+                let name = entry
+                    .file_name()
+                    .into_string()
                     .map_err(|_| Error::InvalidClaimBody("view path is not UTF-8"))?;
-                let path = if directory.is_empty() { name } else { format!("{directory}/{name}") };
+                let path = if directory.is_empty() {
+                    name
+                } else {
+                    format!("{directory}/{name}")
+                };
                 relative(&path)?;
-                if action.declared_outputs().iter().any(|output| output.as_str() == path) {
+                if action
+                    .declared_outputs()
+                    .iter()
+                    .any(|output| output.as_str() == path)
+                {
                     continue;
                 }
                 let kind = entry.file_type()?;
@@ -265,7 +288,9 @@ impl<'a> CodeViewSet<'a> {
         }
         let action = view_build_action(action, &receipt)?;
         if expected.is_some_and(|expected| action.action_key().as_ref().ok() != Some(expected)) {
-            return Err(crate::build_cache::BuildCacheError::InvalidAction("view action digest changed"));
+            return Err(crate::build_cache::BuildCacheError::InvalidAction(
+                "view action digest changed",
+            ));
         }
         let path = self.view_path(id)?;
         // Tools are trusted host code, not sandboxed guests. Still reject
@@ -327,10 +352,12 @@ impl<'a> CodeViewSet<'a> {
         }
         let outcome = serde_json::json!({"hit":leg.receipt.cache_hit,"producer":leg.receipt.producer_ref,"action":leg.cached.action_key.to_hex(),"reusable":leg.reusable});
         self.vault.with_write_txn_grouped(|txn| {
-            cache.admit_account_in_txn(txn).map_err(|error| match error {
-                crate::build_cache::BuildCacheError::Store(error) => error,
-                _ => Error::InvalidClaimBody("build account no longer admitted"),
-            })?;
+            cache
+                .admit_account_in_txn(txn)
+                .map_err(|error| match error {
+                    crate::build_cache::BuildCacheError::Store(error) => error,
+                    _ => Error::InvalidClaimBody("build account no longer admitted"),
+                })?;
             VIEW_BUILD_OUTCOMES.put(
                 &self.vault.store,
                 txn,

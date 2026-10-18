@@ -41,10 +41,14 @@ impl Memory<'_> {
             )
             .with_read_receipt(read.receipt));
         }
-        let event = input.event_ref.as_deref().map(|reference| {
-            EntityId::from_hex(reference)
-                .map_err(|_| MemoryError::bad_request("event_ref is not an entity id"))
-        }).transpose()?;
+        let event = input
+            .event_ref
+            .as_deref()
+            .map(|reference| {
+                EntityId::from_hex(reference)
+                    .map_err(|_| MemoryError::bad_request("event_ref is not an entity id"))
+            })
+            .transpose()?;
         let vault = self.vault();
         let head = vault.blob_artifact_head(&source)?.ok_or_else(|| {
             MemoryError::bad_request("transcript source has no uploaded blob version")
@@ -79,18 +83,37 @@ impl Memory<'_> {
                         ));
                     }
                     let current = crate::blob_artifact::read_blob_artifact_head_in_txn(
-                        &vault.store, txn, &source,
-                    )?.ok_or_else(|| MemoryError::bad_request("transcript source has no uploaded version"))?;
-                    let stored = vault.read_blob_artifact_version_in_txn(txn, &source, current.version)?;
+                        &vault.store,
+                        txn,
+                        &source,
+                    )?
+                    .ok_or_else(|| {
+                        MemoryError::bad_request("transcript source has no uploaded version")
+                    })?;
+                    let stored =
+                        vault.read_blob_artifact_version_in_txn(txn, &source, current.version)?;
                     if current != head || stored.as_deref() != Some(input.decoded_text.as_bytes()) {
-                        return Err(MemoryError::bad_request("transcript upload changed during ingestion"));
+                        return Err(MemoryError::bad_request(
+                            "transcript upload changed during ingestion",
+                        ));
                     }
-                    let meeting = event.map(|event| {
-                        let meeting = crate::calendar::meeting::meeting_event_in_txn(vault, txn, &lane, event)?
-                            .filter(|meeting| crate::calendar::prep_is_eligible(meeting, crate::calendar::PrepPolicy::default()))
-                            .ok_or_else(|| MemoryError::not_found("meeting is absent, ineligible or withheld"))?;
-                        Ok::<_, MemoryError>(meeting)
-                    }).transpose()?;
+                    let meeting = event
+                        .map(|event| {
+                            let meeting = crate::calendar::meeting::meeting_event_in_txn(
+                                vault, txn, &lane, event,
+                            )?
+                            .filter(|meeting| {
+                                crate::calendar::prep_is_eligible(
+                                    meeting,
+                                    crate::calendar::PrepPolicy::default(),
+                                )
+                            })
+                            .ok_or_else(|| {
+                                MemoryError::not_found("meeting is absent, ineligible or withheld")
+                            })?;
+                            Ok::<_, MemoryError>(meeting)
+                        })
+                        .transpose()?;
                     let machine = crate::identity::load_or_mint_machine_id_in_txn(vault, txn)?;
                     let outcome = super::ingest_parsed_transcript_in_txn(
                         vault,
@@ -107,28 +130,52 @@ impl Memory<'_> {
                         },
                         false,
                     )?;
-                    if let (Some(meeting), TranscriptIngestOutcome::Session { session_ref, .. }) = (meeting, &outcome) {
+                    if let (Some(meeting), TranscriptIngestOutcome::Session { session_ref, .. }) =
+                        (meeting, &outcome)
+                    {
                         let observed_at = vault.instant_in_txn(txn)?.secs();
                         let value = crate::calendar::outcome_from_machine_evidence(
                             meeting.start_utc,
                             &crate::calendar::MachineOutcomeEvidence::Transcript {
-                                evidence_ref: *session_ref, observed_at,
+                                evidence_ref: *session_ref,
+                                observed_at,
                             },
-                        ).ok_or_else(|| MemoryError::bad_request("transcript did not establish an outcome"))?;
+                        )
+                        .ok_or_else(|| {
+                            MemoryError::bad_request("transcript did not establish an outcome")
+                        })?;
                         // The engine observed a verified upload and closed SESSION. Neither
                         // the basis nor its timestamp is accepted from the caller.
                         let envelope = crate::WriteEnvelope::new(
                             crate::WriteActor::new(self.actor(), self.actor_class()),
                             crate::claim::ClaimSource::Observed,
-                            crate::WriteProvenance::new(rmpv::Value::from("vault.calendar.transcript.ingest"))?,
+                            crate::WriteProvenance::new(rmpv::Value::from(
+                                "vault.calendar.transcript.ingest",
+                            ))?,
                             crate::claim::ClaimApprovalStatus::Auto,
                         );
                         crate::calendar::outcome::record_event_outcome_as_in_txn(
-                            vault, txn, meeting.event_ref, &value, &envelope, Some(*session_ref),
+                            vault,
+                            txn,
+                            meeting.event_ref,
+                            &value,
+                            &envelope,
+                            Some(*session_ref),
                         )?;
-                        vault.batch_in()
-                            .edge(&meeting.event_ref, crate::edge::EdgeKind::DerivedFrom, session_ref, 1.0)
-                            .edge(session_ref, crate::edge::EdgeKind::DerivedFrom, &source, 1.0)
+                        vault
+                            .batch_in()
+                            .edge(
+                                &meeting.event_ref,
+                                crate::edge::EdgeKind::DerivedFrom,
+                                session_ref,
+                                1.0,
+                            )
+                            .edge(
+                                session_ref,
+                                crate::edge::EdgeKind::DerivedFrom,
+                                &source,
+                                1.0,
+                            )
                             .apply(txn)?;
                     }
                     Ok(outcome)

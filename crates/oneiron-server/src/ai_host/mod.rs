@@ -125,17 +125,21 @@ pub struct AiHandle {
     decisions: Arc<OnceLock<DecisionHost>>,
     /// The same cheap compactor code mode serves, exposed to typed host
     /// triggers once that route is bound. No route means MODEL_UNAVAILABLE.
-    host_compaction: Arc<OnceLock<(
-        Arc<dyn oneiron::compaction::CompactionBackend>,
-        oneiron::compaction::CompactionGatePolicy,
-    )>>,
+    host_compaction: Arc<
+        OnceLock<(
+            Arc<dyn oneiron::compaction::CompactionBackend>,
+            oneiron::compaction::CompactionGatePolicy,
+        )>,
+    >,
     /// The host syncs as a device of another home (`[device_sync]`): it
     /// defers to the elected home and never claims it.
     device: bool,
 }
 
 impl AiHandle {
-    pub(crate) fn host_compaction(&self) -> Option<(
+    pub(crate) fn host_compaction(
+        &self,
+    ) -> Option<(
         Arc<dyn oneiron::compaction::CompactionBackend>,
         oneiron::compaction::CompactionGatePolicy,
     )> {

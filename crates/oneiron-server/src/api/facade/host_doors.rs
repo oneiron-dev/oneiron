@@ -82,8 +82,8 @@ pub(crate) use super::model_step_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
 pub(crate) use super::run_read_doors::*;
 pub(crate) use super::run_review_doors::*;
-pub(crate) use super::skill_execution_doors::*;
 pub(crate) use super::sieve_observation_doors::*;
+pub(crate) use super::skill_execution_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
 // The owner's guest revoke door (OF-232) too.
@@ -148,8 +148,8 @@ pub(crate) use super::policy_doors::*;
 pub(crate) use super::checkout_doors::*;
 pub(crate) use super::origin_doors::*;
 // The owner's code snapshot doors (DOOR-118), likewise.
-pub(crate) use super::codebase_doors::*;
 pub(crate) use super::code_view_doors::*;
+pub(crate) use super::codebase_doors::*;
 // The owner's task-type tree doors (DOOR-111) and run doors (DOOR-100),
 // likewise.
 pub(crate) use super::coordination_doors::*;
@@ -174,9 +174,9 @@ pub(crate) use super::aging_doors::*;
 pub(crate) use super::campaign_split_doors::*;
 pub(crate) use super::coach_offer_doors::*;
 pub(crate) use super::eval_doors::*;
+pub(crate) use super::hyde_doors::*;
 pub(crate) use super::research_doors::*;
 pub(crate) use super::retrieval_doors::*;
-pub(crate) use super::hyde_doors::*;
 // The owner's project-card tap door (OF-501), likewise.
 pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.

@@ -42,7 +42,9 @@ impl BuildCache<'_> {
         {
             let mut txn = self.vault.store.env.write_txn()?;
             self.admit_account_in_txn(&txn)?;
-            if let Some(record) = BUILD_CACHE_REAPI_ROW.get(&self.vault.store, &txn, key.as_bytes())? {
+            if let Some(record) =
+                BUILD_CACHE_REAPI_ROW.get(&self.vault.store, &txn, key.as_bytes())?
+            {
                 return Ok(leg(self.admit_row_in_txn(&txn, &key, record)?, class, true));
             }
             if RUNNING_RESERVATION.contains(&self.vault.store, &txn, key.as_bytes())? {
@@ -66,25 +68,37 @@ impl BuildCache<'_> {
         {
             let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
             self.admit_account_in_txn(&txn)?;
-            let tainted = candidate.artifact_refs().iter().try_fold(false, |tainted, reference| {
-                match require_clean_in_txn(self.vault, &txn, reference) {
-                    Ok(()) => Ok(tainted),
-                    Err(BuildCacheError::TaintedResult { .. }) => Ok(true),
-                    Err(error) => Err(error),
-                }
-            })?;
+            let tainted =
+                candidate
+                    .artifact_refs()
+                    .iter()
+                    .try_fold(false, |tainted, reference| {
+                        match require_clean_in_txn(self.vault, &txn, reference) {
+                            Ok(()) => Ok(tainted),
+                            Err(BuildCacheError::TaintedResult { .. }) => Ok(true),
+                            Err(error) => Err(error),
+                        }
+                    })?;
             if tainted {
                 candidate.validate()?;
                 for path in candidate.outputs.keys() {
                     if action.declared_outputs().binary_search(path).is_err() {
-                        return Err(BuildCacheError::UndeclaredOutput { path: path.as_str().to_owned() });
+                        return Err(BuildCacheError::UndeclaredOutput {
+                            path: path.as_str().to_owned(),
+                        });
                     }
                 }
                 let referenced_bytes = inspect_result_in_txn(self.vault, &txn, &candidate, false)?;
-                let mut captured = leg(CachedActionResult {
-                    action_key: key, action_size_bytes: action.reapi_digest()?.size_bytes,
-                    result: candidate, referenced_bytes,
-                }, class, false);
+                let mut captured = leg(
+                    CachedActionResult {
+                        action_key: key,
+                        action_size_bytes: action.reapi_digest()?.size_bytes,
+                        result: candidate,
+                        referenced_bytes,
+                    },
+                    class,
+                    false,
+                );
                 captured.reusable = false;
                 return Ok(captured);
             }
@@ -107,5 +121,9 @@ fn leg(
         cache_hit,
         producer_ref: cached.result.producer_ref.clone(),
     };
-    CachedBuildLeg { cached, receipt, reusable: true }
+    CachedBuildLeg {
+        cached,
+        receipt,
+        reusable: true,
+    }
 }

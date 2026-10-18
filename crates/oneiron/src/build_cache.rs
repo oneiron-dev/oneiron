@@ -37,8 +37,14 @@ impl ActionKey {
     }
 
     pub fn parse(value: &str) -> BuildCacheResult<Self> {
-        if value.len() != 64 || !value.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
-            return Err(BuildCacheError::InvalidAction("action key must be 64 lower-hex characters"));
+        if value.len() != 64
+            || !value
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Err(BuildCacheError::InvalidAction(
+                "action key must be 64 lower-hex characters",
+            ));
         }
         let mut bytes = [0; 32];
         for (index, byte) in bytes.iter_mut().enumerate() {
@@ -47,7 +53,6 @@ impl ActionKey {
         }
         Ok(Self(bytes))
     }
-
 }
 
 /// Validated command inputs. Private fields prevent mutation after freezing.
@@ -354,7 +359,8 @@ impl<'a> BuildCache<'a> {
     pub fn get(&self, key: &ActionKey) -> BuildCacheResult<Option<CachedActionResult>> {
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
         self.admit_account_in_txn(&txn)?;
-        BUILD_CACHE_REAPI_ROW.get(&self.vault.store, &txn, key.as_bytes())?
+        BUILD_CACHE_REAPI_ROW
+            .get(&self.vault.store, &txn, key.as_bytes())?
             .map(|record| self.admit_row_in_txn(&txn, key, record))
             .transpose()
     }
@@ -385,8 +391,10 @@ impl<'a> BuildCache<'a> {
         }
         let referenced_bytes = inspect_result_in_txn(self.vault, &txn, &result, true)?;
         let candidate = CachedActionResult {
-            action_key: key, action_size_bytes: action.reapi_digest()?.size_bytes,
-            result, referenced_bytes,
+            action_key: key,
+            action_size_bytes: action.reapi_digest()?.size_bytes,
+            result,
+            referenced_bytes,
         };
         BUILD_CACHE_REAPI_ROW.put(store, &mut txn, key.as_bytes(), &candidate)?;
         txn.commit().map_err(Error::from)?;
@@ -403,7 +411,6 @@ impl<'a> BuildCache<'a> {
         admit_result_in_txn(self.vault, txn, &record.result)?;
         Ok(record)
     }
-
 }
 
 /// A cached build/verify action result, addressed by its content-derived action key. Key: bytes32
@@ -544,12 +551,16 @@ fn require_clean_in_txn(
     reference: &ArtifactVersionRef,
 ) -> BuildCacheResult<()> {
     let refs = crate::secret_rotation::exhaust_taint_refs_in_txn(
-        &vault.store, txn, reference.artifact_id(),
+        &vault.store,
+        txn,
+        reference.artifact_id(),
     )?;
     match crate::secret_rotation::taint_state_for_refs_in_txn(&vault.store, txn, &refs)? {
         ArtifactTaintState::Clean => Ok(()),
         ArtifactTaintState::TaintedLive | ArtifactTaintState::TaintedStale => {
-            Err(BuildCacheError::TaintedResult { artifact_ref: reference.to_result_ref() })
+            Err(BuildCacheError::TaintedResult {
+                artifact_ref: reference.to_result_ref(),
+            })
         }
     }
 }
@@ -562,23 +573,28 @@ fn inspect_result_in_txn(
 ) -> BuildCacheResult<u64> {
     let mut referenced_bytes = 0;
     for reference in result.artifact_refs() {
-        if vault.blob_artifact_version_metadata_in_txn(
-            txn, reference.artifact_id(), reference.version(),
-        )?.is_none() {
+        if vault
+            .blob_artifact_version_metadata_in_txn(
+                txn,
+                reference.artifact_id(),
+                reference.version(),
+            )?
+            .is_none()
+        {
             return Err(BuildCacheError::ArtifactUnavailable {
                 artifact_ref: reference.to_result_ref(),
             });
         }
-        let bytes = vault.read_blob_artifact_version_in_txn(
-            txn, reference.artifact_id(), reference.version(),
-        )?.ok_or_else(|| BuildCacheError::ArtifactUnavailable {
-            artifact_ref: reference.to_result_ref(),
-        })?;
+        let bytes = vault
+            .read_blob_artifact_version_in_txn(txn, reference.artifact_id(), reference.version())?
+            .ok_or_else(|| BuildCacheError::ArtifactUnavailable {
+                artifact_ref: reference.to_result_ref(),
+            })?;
         if clean {
             require_clean_in_txn(vault, txn, &reference)?;
         }
-        let size = u64::try_from(bytes.len())
-            .map_err(|_| BuildCacheError::ReferencedBytesOverflow)?;
+        let size =
+            u64::try_from(bytes.len()).map_err(|_| BuildCacheError::ReferencedBytesOverflow)?;
         referenced_bytes = sum_referenced_bytes([referenced_bytes, size])?;
     }
     Ok(referenced_bytes)
@@ -597,9 +613,14 @@ fn admit_result_in_txn(
     result: &ActionResult,
 ) -> BuildCacheResult<()> {
     for reference in result.artifact_refs() {
-        if vault.blob_artifact_version_metadata_in_txn(
-            txn, reference.artifact_id(), reference.version(),
-        )?.is_none() {
+        if vault
+            .blob_artifact_version_metadata_in_txn(
+                txn,
+                reference.artifact_id(),
+                reference.version(),
+            )?
+            .is_none()
+        {
             return Err(BuildCacheError::ArtifactUnavailable {
                 artifact_ref: reference.to_result_ref(),
             });

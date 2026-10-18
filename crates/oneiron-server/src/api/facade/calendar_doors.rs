@@ -244,7 +244,6 @@ pub(crate) async fn calendar_imip_get(
     .await
 }
 
-
 use oneiron::calendar::ingest::feed_door::{
     self as feed, CalendarIcsFeedConfigureRequest, CalendarIcsFeedRegistration,
     CalendarIcsFeedRequest, CalendarIcsFeedStatus, CalendarIcsPollCompletion,
@@ -297,11 +296,8 @@ pub(crate) async fn calendar_ics_poll(
                 row.config.clone(),
             )
             .map_err(MemoryError::bad_request)?;
-            let fetcher = CustodyDoorIcsFeedFetcher::new(
-                server.vault(),
-                "calendar.ics.poll",
-                transport,
-            );
+            let fetcher =
+                CustodyDoorIcsFeedFetcher::new(server.vault(), "calendar.ics.poll", transport);
             let poll_ref = oneiron::EntityId::now().to_hex();
             let now = server.vault().now_recorded_at();
             let outcome = run_ics_feed_poll(server.vault(), &fetcher, &row.config, now, now)

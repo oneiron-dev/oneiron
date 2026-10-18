@@ -4,7 +4,7 @@ use std::sync::Arc;
 use oneiron::task_verb::sdk::{
     self, IdentityAssertDistinctRequest, IdentityEntityRequest, IdentityEventRequest,
     IdentityFacetRequest, IdentityMergeRequest, IdentityPairProposals, IdentityPairRequest,
-    IdentityProposalResolveRequest, IdentityProposalResolutionResult, IdentityProposeRequest,
+    IdentityProposalResolutionResult, IdentityProposalResolveRequest, IdentityProposeRequest,
     IdentityResolution, IdentitySplitRequest, IdentityTopologyReceipt, IdentityTopologyResult,
     IdentityUndoRequest,
 };

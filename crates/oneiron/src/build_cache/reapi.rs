@@ -72,7 +72,8 @@ impl BuildAction {
     }
     /// The exact Directory digest fed into this action's REAPI protobuf.
     pub fn reapi_input_root_digest(&self) -> ReapiDigest {
-        self.reapi_input_root.unwrap_or_else(|| self.descriptor_directory_digest())
+        self.reapi_input_root
+            .unwrap_or_else(|| self.descriptor_directory_digest())
     }
     // Legacy engine snapshots have a blake3 manifest rather than a REAPI CAS
     // tree. Map their exact identity to a valid Directory containing one

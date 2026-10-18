@@ -43,7 +43,19 @@ pub const EMBEDDING_SPACE_MAX_DIMENSIONS: usize = 8192;
 pub const EMBEDDING_SETUP_LEARNED_AT: u64 = 0;
 
 /// One input modality a kind slot names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum InputKind {
     Text,
@@ -674,7 +686,9 @@ pub(crate) fn media_vector_kind_in_txn(
     space: &EmbeddingSpace,
     id: &EntityId,
 ) -> Result<Option<InputKind>> {
-    Ok(MEDIA_VECTOR.get(store, txn, &(space.key(), *id))?.map(|row| row.kind))
+    Ok(MEDIA_VECTOR
+        .get(store, txn, &(space.key(), *id))?
+        .map(|row| row.kind))
 }
 
 /// The text hash `id`'s text row in `space` was embedded from; `None` when it has no text row

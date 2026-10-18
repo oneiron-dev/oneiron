@@ -79,13 +79,19 @@ fn settlement_in_txn(
         || tree[&root].parent_attempt.is_some()
         || vault.dreamer_attempt_authority_in_txn(txn, root)?.is_none()
     {
-        return Err(Error::InvalidConfig("wake must name a shared-runner root".into()));
+        return Err(Error::InvalidConfig(
+            "wake must name a shared-runner root".into(),
+        ));
     }
     let input = if record.kind == DREAMER_RECIPE_WAKE_ATTEMPT_KIND {
         let payload = decode_dreamer_attempt_payload(&record.payload)?;
         let trigger: WakePolicyTrigger = serde_json::from_str(
-            payload.input.as_str().ok_or_else(|| Error::InvalidConfig("invalid recipe input".into()))?,
-        ).map_err(|_| Error::InvalidConfig("invalid recipe input".into()))?;
+            payload
+                .input
+                .as_str()
+                .ok_or_else(|| Error::InvalidConfig("invalid recipe input".into()))?,
+        )
+        .map_err(|_| Error::InvalidConfig("invalid recipe input".into()))?;
         Some(WakeRecipeInputView::from(&trigger))
     } else {
         None
@@ -94,7 +100,10 @@ fn settlement_in_txn(
     loop {
         let before = selected.len();
         for (id, link) in &tree {
-            if link.parent_attempt.is_some_and(|parent| selected.contains(&parent)) {
+            if link
+                .parent_attempt
+                .is_some_and(|parent| selected.contains(&parent))
+            {
                 selected.insert(*id);
             }
         }
@@ -105,13 +114,19 @@ fn settlement_in_txn(
     let mut jobs = Vec::new();
     let mut settled = true;
     for id in selected {
-        let record = queue.get_in_txn(txn, id)?.ok_or(Error::CorruptedIndex("recipe child missing"))?;
+        let record = queue
+            .get_in_txn(txn, id)?
+            .ok_or(Error::CorruptedIndex("recipe child missing"))?;
         let authority = vault.dreamer_attempt_authority_in_txn(txn, id)?;
         let park = PARKED.get(&vault.store, txn, &id)?;
         settled &= record.state.is_terminal();
         jobs.push(WakeRecipeJobView {
             attempt: entity(id)?,
-            parent: tree.get(&id).and_then(|link| link.parent_attempt).map(entity).transpose()?,
+            parent: tree
+                .get(&id)
+                .and_then(|link| link.parent_attempt)
+                .map(entity)
+                .transpose()?,
             kind: record.kind,
             state: record.state,
             created_at: record.created_at,
@@ -122,7 +137,9 @@ fn settlement_in_txn(
             park_cause: park.as_ref().map(|park| park.cause.into()),
             parked_at: park.as_ref().map(|park| park.parked_at),
             result_ref: record.result_ref.map(|reference| reference.into_string()),
-            conclusions: crate::dreamer_consolidation::nightly_merge::outputs_in_txn(vault, txn, id)?,
+            conclusions: crate::dreamer_consolidation::nightly_merge::outputs_in_txn(
+                vault, txn, id,
+            )?,
         });
     }
     Ok(Some(WakeSettlementView {
@@ -153,7 +170,9 @@ pub fn settlements_as_owner(
     let mut wakes = Vec::new();
     let mut more = false;
     if input.limit == 0 {
-        return Err(Error::InvalidConfig("settlement page limit must be positive".into()));
+        return Err(Error::InvalidConfig(
+            "settlement page limit must be positive".into(),
+        ));
     }
     for row in RUN_TREE.iter_from(&vault.store, &txn, &[])? {
         let (id, link) = row?;
@@ -175,6 +194,10 @@ pub fn settlements_as_owner(
             wakes.push(view);
         }
     }
-    let next = if more { wakes.last().map(|wake| wake.wake) } else { None };
+    let next = if more {
+        wakes.last().map(|wake| wake.wake)
+    } else {
+        None
+    };
     Ok(WakeSettlementsPage { wakes, next })
 }

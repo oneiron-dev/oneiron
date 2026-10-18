@@ -228,9 +228,8 @@ impl Vault {
         a: &EntityId,
         b: &EntityId,
     ) -> Result<Vec<EntityId>> {
-        let fold = fold_identity_topology_log(
-            &self.fold_effective_identity_topology_events_in_txn(rtxn)?,
-        );
+        let fold =
+            fold_identity_topology_log(&self.fold_effective_identity_topology_events_in_txn(rtxn)?);
         let mut open = Vec::new();
         for event in self.identity_topology_events_in_txn(&rtxn)? {
             let IdentityTopologyAction::Apply(IdentityTopologyOp::Merge(merge)) = &event.action
