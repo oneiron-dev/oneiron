@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 787 facade rows, 2702 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 743.
+// UniFFI census: 788 facade rows, 2714 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 744.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -24386,6 +24386,235 @@ pub struct CodeMutationLog {
     pub repo: String,
     #[serde(rename = "entries")]
     pub entries: Vec<CodeMutationEntry>,
+}
+
+/// `oneiron::memory::foreign_code::ForeignCodeRunRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ForeignCodeRunRequest {
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "reads", default, skip_serializing_if = "Option::is_none")]
+    pub reads: Option<Vec<String>>,
+}
+
+/// `oneiron::memory::foreign_code::ForeignCodeTier`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ForeignCodeTier {
+    #[serde(rename = "foreign")]
+    Foreign,
+}
+
+/// `oneiron::memory::foreign_code::ForeignCodeRead`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ForeignCodeRead {
+    #[serde(rename = "reference")]
+    pub reference: String,
+    #[serde(rename = "path")]
+    pub path: String,
+}
+
+/// `oneiron::memory::foreign_code::ForeignCodeOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ForeignCodeOutput {
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "bytes")]
+    pub bytes: Vec<u8>,
+}
+
+/// `oneiron::memory::foreign_code::ForeignCodeSource`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ForeignCodeSource {
+    #[serde(rename = "generated")]
+    Generated,
+}
+
+/// `oneiron::memory::foreign_code::ForeignCodeApproval`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ForeignCodeApproval {
+    #[serde(rename = "proposed")]
+    Proposed,
+}
+
+/// `oneiron::code_document::types::CodeFileEdit`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeFileEdit {
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "start")]
+    pub start: u64,
+    #[serde(rename = "end")]
+    pub end: u64,
+    #[serde(rename = "expected")]
+    pub expected: String,
+    #[serde(rename = "replacement")]
+    pub replacement: String,
+    #[serde(rename = "new_path", default, skip_serializing_if = "Option::is_none")]
+    pub new_path: Option<String>,
+}
+
+/// `oneiron::memory::claims::ClaimInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WireClaimInput {
+    #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(rename = "predicate")]
+    pub predicate: String,
+    #[serde(rename = "subject_ref")]
+    pub subject_ref: String,
+    #[serde(rename = "value")]
+    pub value: crate::WireJson,
+    #[serde(rename = "confidence")]
+    pub confidence: f64,
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "world_ref", default, skip_serializing_if = "Option::is_none")]
+    pub world_ref: Option<String>,
+    #[serde(
+        rename = "relationship_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub relationship_ref: Option<String>,
+    #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<crate::WireJson>,
+    #[serde(
+        rename = "valid_from",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub valid_from: Option<u64>,
+    #[serde(rename = "valid_to", default, skip_serializing_if = "Option::is_none")]
+    pub valid_to: Option<u64>,
+    #[serde(
+        rename = "occurred_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub occurred_at: Option<u64>,
+    #[serde(
+        rename = "learned_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub learned_at: Option<u64>,
+    #[serde(rename = "salience", default, skip_serializing_if = "Option::is_none")]
+    pub salience: Option<f64>,
+}
+
+/// `oneiron::memory::foreign_code::ForeignCodeEffect`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum ForeignCodeEffect {
+    #[serde(rename = "file_write")]
+    FileWrite {
+        #[serde(rename = "path")]
+        path: String,
+        #[serde(rename = "bytes")]
+        bytes: Vec<u8>,
+    },
+    #[serde(rename = "file_edit")]
+    FileEdit {
+        #[serde(rename = "path")]
+        path: String,
+        #[serde(rename = "base_content_hash")]
+        base_content_hash: String,
+        #[serde(rename = "edit")]
+        edit: CodeFileEdit,
+    },
+    #[serde(rename = "file_delete")]
+    FileDelete {
+        #[serde(rename = "path")]
+        path: String,
+    },
+    #[serde(rename = "file_rename")]
+    FileRename {
+        #[serde(rename = "from")]
+        from: String,
+        #[serde(rename = "to")]
+        to: String,
+    },
+    #[serde(rename = "directory_opaque")]
+    DirectoryOpaque {
+        #[serde(rename = "path")]
+        path: String,
+    },
+    #[serde(rename = "claim_candidate")]
+    ClaimCandidate {
+        #[serde(rename = "claim")]
+        claim: WireClaimInput,
+    },
+}
+
+/// `oneiron::memory::foreign_code::ForeignCodeProposal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ForeignCodeProposal {
+    #[serde(rename = "proposal_ref")]
+    pub proposal_ref: String,
+    #[serde(rename = "receipt_ref")]
+    pub receipt_ref: String,
+    #[serde(rename = "actor_ref")]
+    pub actor_ref: String,
+    #[serde(rename = "source")]
+    pub source: ForeignCodeSource,
+    #[serde(rename = "approval")]
+    pub approval: ForeignCodeApproval,
+    #[serde(rename = "effect")]
+    pub effect: ForeignCodeEffect,
+}
+
+/// `oneiron::memory::foreign_code::ForeignCodeIsolation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ForeignCodeIsolation {
+    #[serde(rename = "backend")]
+    pub backend: String,
+    #[serde(rename = "runtime")]
+    pub runtime: String,
+    #[serde(rename = "image")]
+    pub image: String,
+    #[serde(rename = "argv_digest")]
+    pub argv_digest: String,
+    #[serde(rename = "network")]
+    pub network: String,
+    #[serde(rename = "generation")]
+    pub generation: String,
+    #[serde(rename = "fence_proven")]
+    pub fence_proven: bool,
+}
+
+/// `oneiron::memory::foreign_code::ForeignCodeRunResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ForeignCodeRunResult {
+    #[serde(rename = "run_id")]
+    pub run_id: String,
+    #[serde(rename = "actor_ref")]
+    pub actor_ref: String,
+    #[serde(rename = "tier")]
+    pub tier: ForeignCodeTier,
+    #[serde(rename = "linked_imports")]
+    pub linked_imports: Vec<String>,
+    #[serde(rename = "reads")]
+    pub reads: Vec<ForeignCodeRead>,
+    #[serde(rename = "done")]
+    pub done: bool,
+    #[serde(rename = "observation")]
+    pub observation: String,
+    #[serde(rename = "outputs")]
+    pub outputs: Vec<ForeignCodeOutput>,
+    #[serde(rename = "proposals")]
+    pub proposals: Vec<ForeignCodeProposal>,
+    #[serde(rename = "isolation")]
+    pub isolation: ForeignCodeIsolation,
+    #[serde(rename = "receipt_ref")]
+    pub receipt_ref: String,
 }
 
 /// `oneiron::memory::code_run_doors::types::CodeRunModelHealCountRequest`.

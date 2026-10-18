@@ -1358,6 +1358,9 @@ impl OneironClient {
                 "vault.code.oplog" => remote_agent_verb_output::<
                     oneiron::memory::code_doors::CodeMutationLog,
                 >(client, verb, &input),
+                "execute_code" => remote_agent_verb_output::<
+                    oneiron::memory::foreign_code::ForeignCodeRunResult,
+                >(client, verb, &input),
                 "vault.code.model_heal_count" => remote_agent_verb_output::<
                     oneiron::memory::code_run_doors::CodeRunModelHealCountView,
                 >(client, verb, &input),
@@ -7733,6 +7736,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.code.oplog", value)
+    }
+    pub fn execute_code(
+        &self,
+        input: &oneiron::memory::foreign_code::ForeignCodeRunRequest,
+    ) -> Result<oneiron::memory::foreign_code::ForeignCodeRunResult, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("execute_code", value)
     }
     pub fn vault_code_model_heal_count(
         &self,

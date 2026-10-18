@@ -306,6 +306,9 @@ class Oneiron:
     @property
     def reveal(self) -> "Oneiron._RevealVerbs":
         return Oneiron._RevealVerbs(self._client)
+    def execute_code(self, spec):
+        """Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent."""
+        return json.loads(_translate(lambda: self._client.execute_code(json.dumps(spec))))
     def can(self, request: dict[str, Any]) -> dict[str, Any]:
         """Read-only ask routing or attributed partial answers."""
         return json.loads(_translate(lambda: self._client.can(json.dumps(request, allow_nan=False))))

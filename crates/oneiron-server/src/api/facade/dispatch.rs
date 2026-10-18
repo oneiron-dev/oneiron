@@ -10078,6 +10078,31 @@ async fn vault_code_oplog(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn execute_code(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    facade_outside_room_turn(call, "execute_code")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("execute_code", &value)?;
+    let hooks = facade_hooks_pre(server, call, "execute_code", value).await?;
+    let (output, listed) = super::host_doors::execute_code(
+        server,
+        auth,
+        call.session()?,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_code_model_heal_count(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -19186,6 +19211,7 @@ pub(crate) async fn call_verb(
             vault_code_proposal_settlement(server, call, input).await
         }
         "vault.code.oplog" => vault_code_oplog(server, call, input).await,
+        "execute_code" => execute_code(server, call, input).await,
         "vault.code.model_heal_count" => vault_code_model_heal_count(server, call, input).await,
         "vault.code.waits.resolve" => vault_code_waits_resolve(server, call, input).await,
         "vault.code.waits.receipt" => vault_code_waits_receipt(server, call, input).await,
