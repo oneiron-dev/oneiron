@@ -371,6 +371,21 @@ export_facade! {
     let output = client.vault_kv_namespaces(&input)?;
     crate::codec::lift_record("vault.kv.namespaces", &output)
 };
+"vault.campaign.enroll" => fn vault_campaign_enroll(&self, input: CampaignEnrollRequest) -> CampaignEnrollmentReceipt = |client| {
+    let input: oneiron::campaign::surface::CampaignEnrollRequest = crate::codec::lower_record("vault.campaign.enroll", input)?;
+    let output = client.vault_campaign_enroll(&input)?;
+    crate::codec::lift_record("vault.campaign.enroll", &output)
+};
+"vault.campaign.stage.evidence" => fn vault_campaign_stage_evidence(&self, input: CampaignStageEvidenceRequest) -> CampaignStageEvidenceReceipt = |client| {
+    let input: oneiron::campaign::surface::CampaignStageEvidenceRequest = crate::codec::lower_record("vault.campaign.stage.evidence", input)?;
+    let output = client.vault_campaign_stage_evidence(&input)?;
+    crate::codec::lift_record("vault.campaign.stage.evidence", &output)
+};
+"vault.campaign.unsubscribe" => fn vault_campaign_unsubscribe(&self, input: CampaignUnsubscribeRequest) -> CampaignUnsubscribeReceipt = |client| {
+    let input: oneiron::campaign::surface::CampaignUnsubscribeRequest = crate::codec::lower_record("vault.campaign.unsubscribe", input)?;
+    let output = client.vault_campaign_unsubscribe(&input)?;
+    crate::codec::lift_record("vault.campaign.unsubscribe", &output)
+};
 "vault.campaign.program.create" => fn vault_campaign_program_create(&self, input: CreateCampaignProgramRequest) -> CampaignProgramRecord = |client| {
     let input: oneiron::campaign::surface::CreateCampaignProgramRequest = crate::codec::lower_record("vault.campaign.program.create", input)?;
     let output = client.vault_campaign_program_create(&input)?;

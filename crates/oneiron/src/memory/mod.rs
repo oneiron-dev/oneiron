@@ -43,6 +43,7 @@ pub(crate) use booking::booking_error;
 pub(crate) use outbound::facade_error_from_outbound_dispatch;
 pub(crate) mod booking_publication;
 mod campaign;
+mod campaign_actions;
 pub mod caps;
 pub mod channel_doors;
 mod chat;

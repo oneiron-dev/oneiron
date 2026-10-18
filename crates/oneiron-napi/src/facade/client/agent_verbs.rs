@@ -688,6 +688,33 @@ impl NativeClient {
         serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
     }
     #[napi]
+    pub fn vault_campaign_enroll(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.campaign.enroll", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_campaign_stage_evidence(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.campaign.stage.evidence", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_campaign_unsubscribe(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.campaign.unsubscribe", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_campaign_program_create(
         &self,
         input: serde_json::Value,

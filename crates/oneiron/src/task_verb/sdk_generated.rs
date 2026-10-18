@@ -397,6 +397,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::KeyValueNamespaces>(),
             ),
             (
+                "vault.campaign.enroll",
+                crate::code_run::vault_read::request_schema::<
+                    crate::campaign::surface::CampaignEnrollRequest,
+                >(),
+            ),
+            (
+                "vault.campaign.stage.evidence",
+                crate::code_run::vault_read::request_schema::<
+                    crate::campaign::surface::CampaignStageEvidenceRequest,
+                >(),
+            ),
+            (
+                "vault.campaign.unsubscribe",
+                crate::code_run::vault_read::request_schema::<
+                    crate::campaign::surface::CampaignUnsubscribeRequest,
+                >(),
+            ),
+            (
                 "vault.campaign.program.create",
                 crate::code_run::vault_read::request_schema::<
                     crate::campaign::surface::CreateCampaignProgramRequest,
@@ -3581,6 +3599,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.credential.attenuate",
     "vault.scope.ceiling",
     "vault.export.scoped",
+    "vault.campaign.enroll",
+    "vault.campaign.stage.evidence",
+    "vault.campaign.unsubscribe",
     "vault.skill_hubs.put",
     "vault.skill_hubs.get",
     "vault.skill_hubs.publishers.admit",
@@ -3893,6 +3914,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.export.scoped" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ScopedExport>()
         }
+        "vault.campaign.enroll" => crate::code_run::vault_read::request_schema::<
+            crate::campaign::surface::CampaignEnrollmentReceipt,
+        >(),
+        "vault.campaign.stage.evidence" => crate::code_run::vault_read::request_schema::<
+            crate::campaign::surface::CampaignStageEvidenceReceipt,
+        >(),
+        "vault.campaign.unsubscribe" => crate::code_run::vault_read::request_schema::<
+            crate::campaign::surface::CampaignUnsubscribeReceipt,
+        >(),
         "vault.skill_hubs.put" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::SkillHubConfigured,
         >(),
@@ -5243,6 +5273,27 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.kv.namespaces" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.campaign.enroll" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.campaign.stage.evidence" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.campaign.unsubscribe" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -9318,6 +9369,17 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.kv.namespaces" => {
             let _input: crate::memory::KeyValueNamespaces = decode(value.clone())?;
         }
+        "vault.campaign.enroll" => {
+            let _input: crate::campaign::surface::CampaignEnrollRequest = decode(value.clone())?;
+        }
+        "vault.campaign.stage.evidence" => {
+            let _input: crate::campaign::surface::CampaignStageEvidenceRequest =
+                decode(value.clone())?;
+        }
+        "vault.campaign.unsubscribe" => {
+            let _input: crate::campaign::surface::CampaignUnsubscribeRequest =
+                decode(value.clone())?;
+        }
         "vault.campaign.program.create" => {
             let _input: crate::campaign::surface::CreateCampaignProgramRequest =
                 decode(value.clone())?;
@@ -11321,6 +11383,11 @@ pub fn invoke(
         "vault.kv.delete" => encode(vault_kv_delete(memory, decode(value)?)?),
         "vault.kv.search" => encode(vault_kv_search(memory, decode(value)?)?),
         "vault.kv.namespaces" => encode(vault_kv_namespaces(memory, decode(value)?)?),
+        "vault.campaign.enroll" => encode(vault_campaign_enroll(memory, decode(value)?)?),
+        "vault.campaign.stage.evidence" => {
+            encode(vault_campaign_stage_evidence(memory, decode(value)?)?)
+        }
+        "vault.campaign.unsubscribe" => encode(vault_campaign_unsubscribe(memory, decode(value)?)?),
         "vault.campaign.program.create" => {
             encode(vault_campaign_program_create(memory, decode(value)?)?)
         }
@@ -13118,6 +13185,24 @@ pub fn vault_kv_namespaces(
     input: crate::memory::KeyValueNamespaces,
 ) -> MemoryResult<Vec<Vec<String>>> {
     memory.key_value_namespaces(&input)
+}
+pub fn vault_campaign_enroll(
+    memory: &Memory<'_>,
+    input: crate::campaign::surface::CampaignEnrollRequest,
+) -> MemoryResult<crate::campaign::surface::CampaignEnrollmentReceipt> {
+    memory.campaign_enroll(&input)
+}
+pub fn vault_campaign_stage_evidence(
+    memory: &Memory<'_>,
+    input: crate::campaign::surface::CampaignStageEvidenceRequest,
+) -> MemoryResult<crate::campaign::surface::CampaignStageEvidenceReceipt> {
+    memory.campaign_stage_evidence(&input)
+}
+pub fn vault_campaign_unsubscribe(
+    memory: &Memory<'_>,
+    input: crate::campaign::surface::CampaignUnsubscribeRequest,
+) -> MemoryResult<crate::campaign::surface::CampaignUnsubscribeReceipt> {
+    memory.campaign_unsubscribe(&input)
 }
 pub fn vault_campaign_program_create(
     memory: &Memory<'_>,

@@ -928,6 +928,9 @@ fn mcp_agent_verb_input(
         "vault.kv.delete" => a.spec.clone().ok_or_else(invalid),
         "vault.kv.search" => a.spec.clone().ok_or_else(invalid),
         "vault.kv.namespaces" => a.spec.clone().ok_or_else(invalid),
+        "vault.campaign.enroll" => a.spec.clone().ok_or_else(invalid),
+        "vault.campaign.stage.evidence" => a.spec.clone().ok_or_else(invalid),
+        "vault.campaign.unsubscribe" => a.spec.clone().ok_or_else(invalid),
         "vault.campaign.program.create" => a.spec.clone().ok_or_else(invalid),
         "vault.campaign.program.read" => a.spec.clone().ok_or_else(invalid),
         "vault.campaign.program.update" => a.spec.clone().ok_or_else(invalid),
@@ -1888,6 +1891,15 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.kv.namespaces" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.campaign.enroll" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.campaign.stage.evidence" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.campaign.unsubscribe" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.campaign.program.create" => {
@@ -4827,6 +4839,46 @@ async fn execute_agent_verb_row(
             let output = oneiron::task_verb::sdk::vault_kv_namespaces(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.campaign.enroll" => {
+            let input: oneiron::campaign::surface::CampaignEnrollRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_campaign_enroll(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.campaign.stage.evidence" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.campaign.stage.evidence", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::campaign::surface::CampaignStageEvidenceRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_campaign_stage_evidence(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                memory.invocation(),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.campaign.unsubscribe" => {
+            let input: oneiron::campaign::surface::CampaignUnsubscribeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_campaign_unsubscribe(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
         "vault.campaign.program.create" => {

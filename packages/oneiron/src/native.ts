@@ -104,6 +104,9 @@ vaultKvPut(requestJson: string): string
 vaultKvDelete(requestJson: string): string
 vaultKvSearch(requestJson: string): string
 vaultKvNamespaces(requestJson: string): string
+vaultCampaignEnroll(input: unknown): unknown
+vaultCampaignStageEvidence(input: unknown): unknown
+vaultCampaignUnsubscribe(input: unknown): unknown
 vaultCampaignProgramCreate(input: unknown): unknown
 vaultCampaignProgramRead(input: unknown): unknown
 vaultCampaignProgramUpdate(input: unknown): unknown

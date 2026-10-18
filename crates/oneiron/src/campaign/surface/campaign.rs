@@ -237,7 +237,7 @@ fn validate_campaign_definition(definition: &CampaignDefinition) -> Result<()> {
 /// reports it as absent. Ownership is part of the read, not a post-filter.
 pub(crate) fn owned_campaign_in_txn(
     vault: &Vault,
-    wtxn: &heed::RwTxn<'_>,
+    wtxn: &heed::RoTxn<'_>,
     authenticated_principal: EntityId,
     campaign_ref: EntityId,
     kind: u8,

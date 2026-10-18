@@ -883,6 +883,30 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_campaign_enroll(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.campaign.enroll")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.campaign.enroll", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_campaign_stage_evidence(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.campaign.stage.evidence")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.campaign.stage.evidence", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_campaign_unsubscribe(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.campaign.unsubscribe")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.campaign.unsubscribe", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_campaign_program_create(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.campaign.program.create")?;
         let output = py
