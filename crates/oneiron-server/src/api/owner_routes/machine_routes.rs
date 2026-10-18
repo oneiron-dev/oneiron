@@ -117,7 +117,9 @@ struct RemoveMachine {
 struct MachineAnswer {
     machine: String,
     /// The roster chain's role: `yours`, `work_school`, `rented`,
-    /// `hosted_node`, `execution_node` or `removed`.
+    /// `hosted_node`, `execution_node`, `removed` or `unanswered` (an install
+    /// that serves the vault and carries the owner's acts, until he answers
+    /// whose it is with this route's POST).
     role: Option<&'static str>,
     /// The machine's revision, to present back as `seen`.
     revision: String,
@@ -135,6 +137,7 @@ fn role_name(role: MachineRole) -> &'static str {
         MachineRole::HostedNode => "hosted_node",
         MachineRole::ExecutionNode => "execution_node",
         MachineRole::Removed => "removed",
+        MachineRole::Unanswered => "unanswered",
     }
 }
 

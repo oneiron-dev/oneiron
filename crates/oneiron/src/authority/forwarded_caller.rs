@@ -268,12 +268,13 @@ impl Vault {
         let transcript = forwarded_request_transcript(&vault_id, machine_id, request, caller);
         // The live profile whose install key verified the request; the one
         // carrier rule then judges that key: any role, no chain removed, never
-        // a roster or root key (FIX 2222).
+        // a roster or root key (FIX 2222). An install the owner has not
+        // answered for forwards nothing, as an unprofiled one (selfprofile).
         let folded = fold.machine(machine_id);
         let profile = folded
             .into_iter()
             .flat_map(FoldedMachine::chains)
-            .filter(|(_, chain)| chain.is_live())
+            .filter(|(_, chain)| chain.is_live() && chain.profile.role.answered())
             .map(|(_, chain)| &chain.profile)
             .find(|profile| {
                 VerifyingKey::from_bytes(&profile.machine_key).is_ok_and(|key| {

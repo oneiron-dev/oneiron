@@ -111,6 +111,12 @@ pub enum MachineRole {
     ExecutionNode,
     /// Terminal: no later revision brings the machine back.
     Removed,
+    /// A linked install whose owner has not yet answered whose it is; never
+    /// mine. The install that serves a vault takes it at its first start
+    /// (FIX 4648) and carries the owner's acts under it, and nothing else:
+    /// it reaches as an unprofiled install does ([`Self::answered`]) until
+    /// his answer moves it to `Owned(..)`.
+    Unanswered,
 }
 
 impl MachineRole {
@@ -122,7 +128,19 @@ impl MachineRole {
             Self::HostedNode => "hosted_node",
             Self::ExecutionNode => "execution_node",
             Self::Removed => "removed",
+            Self::Unanswered => "unanswered",
         }
+    }
+
+    /// Whether the owner has said what this machine is to him, a removal
+    /// included: every role but [`Self::Unanswered`]. A live profile in an
+    /// unanswered role carries his acts and gets no reach beyond an
+    /// unprofiled install's: no connection proof, own-machine births,
+    /// authority tail, dialing, archive custody or forwarding (Engine,
+    /// CALLS "selfprofile serving-install role", amendment (a)).
+    #[must_use]
+    pub fn answered(self) -> bool {
+        self != Self::Unanswered
     }
 
     fn parse(value: &str) -> Option<Self> {
@@ -133,6 +151,7 @@ impl MachineRole {
             "hosted_node" => Self::HostedNode,
             "execution_node" => Self::ExecutionNode,
             "removed" => Self::Removed,
+            "unanswered" => Self::Unanswered,
             _ => return None,
         })
     }
