@@ -359,6 +359,10 @@ pub enum AgentVerb {
     ConnectorOutboundSchedule,
     VaultNotesCreate,
     VaultNotesFromEntity,
+    VaultNotesRead,
+    VaultNotesHistory,
+    VaultNotesEditorBind,
+    VaultNotesEditorClose,
     VaultNotesEdit,
     VaultNotesSeal,
     VaultNotesLifecycle,
@@ -725,6 +729,10 @@ impl AgentVerb {
         Self::ConnectorOutboundSchedule,
         Self::VaultNotesCreate,
         Self::VaultNotesFromEntity,
+        Self::VaultNotesRead,
+        Self::VaultNotesHistory,
+        Self::VaultNotesEditorBind,
+        Self::VaultNotesEditorClose,
         Self::VaultNotesEdit,
         Self::VaultNotesSeal,
         Self::VaultNotesLifecycle,
@@ -1098,6 +1106,10 @@ impl AgentVerb {
             Self::ConnectorOutboundSchedule => "connector.outbound.schedule",
             Self::VaultNotesCreate => "vault.notes.create",
             Self::VaultNotesFromEntity => "vault.notes.from_entity",
+            Self::VaultNotesRead => "vault.notes.read",
+            Self::VaultNotesHistory => "vault.notes.history",
+            Self::VaultNotesEditorBind => "vault.notes.editor.bind",
+            Self::VaultNotesEditorClose => "vault.notes.editor.close",
             Self::VaultNotesEdit => "vault.notes.edit",
             Self::VaultNotesSeal => "vault.notes.seal",
             Self::VaultNotesLifecycle => "vault.notes.lifecycle",
@@ -1423,6 +1435,10 @@ impl AgentVerb {
                 | Self::ConnectorOutboundSchedule
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
+                | Self::VaultNotesRead
+                | Self::VaultNotesHistory
+                | Self::VaultNotesEditorBind
+                | Self::VaultNotesEditorClose
                 | Self::VaultNotesEdit
                 | Self::VaultNotesSeal
                 | Self::VaultNotesLifecycle
@@ -1796,6 +1812,10 @@ impl AgentVerb {
                 | Self::ConnectorOutboundSchedule
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
+                | Self::VaultNotesRead
+                | Self::VaultNotesHistory
+                | Self::VaultNotesEditorBind
+                | Self::VaultNotesEditorClose
                 | Self::VaultNotesEdit
                 | Self::VaultNotesSeal
                 | Self::VaultNotesLifecycle
@@ -1883,6 +1903,10 @@ impl AgentVerb {
                 | Self::VaultRefsLinks
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
+                | Self::VaultNotesRead
+                | Self::VaultNotesHistory
+                | Self::VaultNotesEditorBind
+                | Self::VaultNotesEditorClose
         )
     }
     pub const fn requires_unscoped(self) -> bool {
@@ -2849,6 +2873,10 @@ impl AgentVerb {
             Self::ConnectorOutboundSchedule => &["spec"],
             Self::VaultNotesCreate => &["spec"],
             Self::VaultNotesFromEntity => &["spec"],
+            Self::VaultNotesRead => &["spec"],
+            Self::VaultNotesHistory => &["spec"],
+            Self::VaultNotesEditorBind => &["spec"],
+            Self::VaultNotesEditorClose => &["spec"],
             Self::VaultNotesEdit => &["spec"],
             Self::VaultNotesSeal => &["spec"],
             Self::VaultNotesLifecycle => &["spec"],
@@ -3216,6 +3244,10 @@ impl AgentVerb {
             Self::ConnectorOutboundSchedule => &["spec"],
             Self::VaultNotesCreate => &["spec"],
             Self::VaultNotesFromEntity => &["spec"],
+            Self::VaultNotesRead => &["spec"],
+            Self::VaultNotesHistory => &["spec"],
+            Self::VaultNotesEditorBind => &["spec"],
+            Self::VaultNotesEditorClose => &["spec"],
             Self::VaultNotesEdit => &["spec"],
             Self::VaultNotesSeal => &["spec"],
             Self::VaultNotesLifecycle => &["spec"],
@@ -3502,7 +3534,7 @@ impl AgentVerb {
                 "Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it."
             }
             Self::VaultResidenceOpen => {
-                "Opens one item on one of the owner's machines: its read cache, its local row, or a first touch at the home."
+                "Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors."
             }
             Self::VaultResidenceIndex => {
                 "The thin index one of the owner's machines holds, window by window: what exists, never a body."
@@ -4199,6 +4231,18 @@ impl AgentVerb {
             }
             Self::VaultNotesFromEntity => {
                 "Creates a NOTE of a registered kind from an existing entity."
+            }
+            Self::VaultNotesRead => {
+                "Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot."
+            }
+            Self::VaultNotesHistory => {
+                "Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented."
+            }
+            Self::VaultNotesEditorBind => {
+                "Binds a live NOTE editor to the caller and returns its typed text and base version; close the binding when the editor leaves."
+            }
+            Self::VaultNotesEditorClose => {
+                "Closes one live NOTE editor held by this caller; a binding id alone grants no authority."
             }
             Self::VaultNotesEdit => {
                 "Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending."

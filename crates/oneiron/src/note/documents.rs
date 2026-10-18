@@ -49,7 +49,7 @@ pub(super) const NOTE_HEAD_DOC: SideTable<(EntityId, EntityId), (), Raw> =
 pub(super) const NOTE_PROPOSAL_DOC: SideTable<HexPair, Vec<u8>, Raw> =
     SideTable::new(&side_table::NOTE_PROPOSAL_DOC);
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NoteAnchor {
     #[schemars(with = "String")]
     #[serde(with = "crate::entity_id::serde_hex")]
@@ -61,7 +61,7 @@ pub struct NoteAnchor {
 }
 
 /// The version against which a writer prepared whole-text output.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NoteVersion {
     #[schemars(with = "String")]
     #[serde(with = "crate::entity_id::serde_hex")]
@@ -126,6 +126,15 @@ impl NoteDocument {
             head: self.head,
             frontier: self.doc.state_frontiers().encode(),
         }
+    }
+    /// A retained version of this same head; an unavailable frontier refuses.
+    pub(super) fn at_version(&self, version: &NoteVersion) -> Result<Self> {
+        if version.note != self.note || version.head != self.head {
+            return Err(invalid("NOTE read version belongs to another head"));
+        }
+        let canonical = super::document::NoteDocument::from_loro(self.note, self.doc.fork())?;
+        let selected = canonical.fork_at(&version.frontier)?;
+        Ok(Self { note: self.note, head: self.head, doc: selected.doc })
     }
     pub fn head(&self) -> EntityId {
         self.head

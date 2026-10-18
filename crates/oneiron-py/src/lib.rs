@@ -2909,6 +2909,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_notes_read(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.notes.read")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.notes.read", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_notes_history(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.notes.history")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.notes.history", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_notes_editor_bind(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.notes.editor.bind")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.notes.editor.bind", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_notes_editor_close(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.notes.editor.close")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.notes.editor.close", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_notes_edit(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.notes.edit")?;
         let output = py

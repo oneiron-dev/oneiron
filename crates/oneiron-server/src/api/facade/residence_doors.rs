@@ -146,11 +146,21 @@ async fn residence_open(
         item: input.item,
     };
     let connection = machine_connection(server, auth, VERB, &input.machine, act)?;
-    Ok(connection
+    let local = connection.item_is_local(input.item).map_err(|error| refused(VERB, &error))?;
+    let opened = connection
         .open_item(&window, input.item)
         .await
-        .map_err(|error| refused(VERB, &error))?
-        .into())
+        .map_err(|error| refused(VERB, &error))?;
+    let (actor, class) = super::facade_actor(auth).map_err(|error| error.into_memory_error())?;
+    let source = if local { oneiron::note::NoteReadSource::Local } else { oneiron::note::NoteReadSource::Home };
+    let mut note = connection.opened_note_view(
+        &opened, oneiron::WriteActor::new(actor, class), auth.verified_slip(),
+        auth.locality(), input.reason.as_deref(), &input.spans,
+    )?;
+    if let Some(note) = &mut note {
+        note.source = source;
+    }
+    Ok(ResidenceOpened::from_opened(opened, source, note))
 }
 
 /// [`vault_residence_index`]'s answer: the named machine's thin index.

@@ -66,6 +66,12 @@ pub struct ResidenceOpenRequest {
     pub window: String,
     /// The item, 32 hex.
     pub item: EntityId,
+    /// The reason for reading a private NOTE body.
+    #[serde(default)]
+    pub reason: Option<String>,
+    /// Stable anchors to acquire in the opened NOTE's selected text.
+    #[serde(default)]
+    pub spans: Vec<crate::note::NoteReadSpan>,
 }
 
 /// `vault.residence.prune`'s input.
@@ -107,8 +113,8 @@ impl From<ResidenceModeChange> for ResidenceModeChanged {
 }
 
 /// Where the opened item came from on the machine: its canonical row, or a
-/// grant-checked read cache. Its bytes stay on the machine; reads reach the
-/// item through the usual doors.
+/// grant-checked read cache. NOTE bodies use the same typed editor view as
+/// `vault.notes.read`; no raw document bytes are exposed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResidenceOpened {
     pub item: EntityId,
@@ -117,10 +123,16 @@ pub struct ResidenceOpened {
     pub residence: String,
     /// The bytes the machine holds for it.
     pub bytes: usize,
+    pub source: crate::note::NoteReadSource,
+    pub note: Option<crate::note::NoteReadView>,
 }
 
-impl From<OpenedItem> for ResidenceOpened {
-    fn from(opened: OpenedItem) -> Self {
+impl ResidenceOpened {
+    pub fn from_opened(
+        opened: OpenedItem,
+        source: crate::note::NoteReadSource,
+        note: Option<crate::note::NoteReadView>,
+    ) -> Self {
         match opened {
             OpenedItem::Resident {
                 entity_id,
@@ -131,12 +143,16 @@ impl From<OpenedItem> for ResidenceOpened {
                 window: window.as_str().to_owned(),
                 residence: "resident".to_owned(),
                 bytes: raw.len(),
+                source,
+                note,
             },
             OpenedItem::Thin(thin) => Self {
                 item: thin.entity_id,
                 window: thin.window.as_str().to_owned(),
                 residence: "thin".to_owned(),
                 bytes: thin.raw.len() + thin.document.len(),
+                source,
+                note,
             },
         }
     }
