@@ -265,6 +265,7 @@ pub enum AgentVerb {
     VaultCodeSymbolsRelease,
     VaultCodeProposalSubmit,
     VaultCodeOplog,
+    VaultCodeModelHealCount,
     VaultCodeRepoDiff,
     VaultCodeExport,
     VaultCodeOriginAuthorityGet,
@@ -803,6 +804,7 @@ impl AgentVerb {
         Self::VaultCodeSymbolsRelease,
         Self::VaultCodeProposalSubmit,
         Self::VaultCodeOplog,
+        Self::VaultCodeModelHealCount,
         Self::VaultCodeRepoDiff,
         Self::VaultCodeExport,
         Self::VaultCodeOriginAuthorityGet,
@@ -1350,6 +1352,7 @@ impl AgentVerb {
             Self::VaultCodeSymbolsRelease => "vault.code.symbols.release",
             Self::VaultCodeProposalSubmit => "vault.code.proposal_submit",
             Self::VaultCodeOplog => "vault.code.oplog",
+            Self::VaultCodeModelHealCount => "vault.code.model_heal_count",
             Self::VaultCodeRepoDiff => "vault.code.repo_diff",
             Self::VaultCodeExport => "vault.code.export",
             Self::VaultCodeOriginAuthorityGet => "vault.code.origin.authority.get",
@@ -1891,6 +1894,7 @@ impl AgentVerb {
                 | Self::VaultCodeSymbolsRelease
                 | Self::VaultCodeProposalSubmit
                 | Self::VaultCodeOplog
+                | Self::VaultCodeModelHealCount
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginAuthorityGet
@@ -2436,6 +2440,7 @@ impl AgentVerb {
                 | Self::VaultCodeSymbolsRelease
                 | Self::VaultCodeProposalSubmit
                 | Self::VaultCodeOplog
+                | Self::VaultCodeModelHealCount
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginAuthorityGet
@@ -3026,6 +3031,7 @@ impl AgentVerb {
                 | Self::VaultCodeSymbolsRelease
                 | Self::VaultCodeProposalSubmit
                 | Self::VaultCodeOplog
+                | Self::VaultCodeModelHealCount
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginAuthorityGet
@@ -3904,6 +3910,7 @@ impl AgentVerb {
             Self::VaultCodeSymbolsRelease => &["spec"],
             Self::VaultCodeProposalSubmit => &["spec"],
             Self::VaultCodeOplog => &["spec"],
+            Self::VaultCodeModelHealCount => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultCodeExport => &["spec"],
             Self::VaultCodeOriginAuthorityGet => &["spec"],
@@ -4443,6 +4450,7 @@ impl AgentVerb {
             Self::VaultCodeSymbolsRelease => &["spec"],
             Self::VaultCodeProposalSubmit => &["spec"],
             Self::VaultCodeOplog => &["spec"],
+            Self::VaultCodeModelHealCount => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultCodeExport => &["spec"],
             Self::VaultCodeOriginAuthorityGet => &["spec"],
@@ -5472,6 +5480,9 @@ impl AgentVerb {
             }
             Self::VaultCodeOplog => {
                 "Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal."
+            }
+            Self::VaultCodeModelHealCount => {
+                "Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."
             }
             Self::VaultCodeRepoDiff => {
                 "Every file changed between two repository trees, each a code revision or a git snapshot: added, removed, modified or renamed, each unit with the operations that wrote it."
