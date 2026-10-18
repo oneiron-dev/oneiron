@@ -53,7 +53,7 @@ use oneiron::receipt::{
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::{
     self, AgentVerb, AiOptions, AiOptionsRequest, AiVerdictRequest, BoardRefreshRequest,
-    BoardSubscriptionRequest, DescribeRequest, TaskWaveRequest,
+    BoardSubscriptionRequest, ConnectorAnswerRequest, DescribeRequest, TaskWaveRequest,
 };
 use oneiron::task_verb::verb_hook_boundary;
 use oneiron::{BudgetGuard, EntityId, WriteActor};
@@ -211,6 +211,43 @@ impl AgentVerbDoor for RunHostDoor {
         _call: RunCall,
     ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
         Ok(None)
+    }
+
+    /// The run's answer to its own connector call's questions (ONE-2510),
+    /// for its agent: checked under that call's grant and sent through the
+    /// server's live question registry. It waits on the connector and maybe
+    /// the owner on one of the server's blocking threads, and the run's
+    /// thread waits for it.
+    fn connector_answer(
+        &self,
+        request: &ConnectorAnswerRequest,
+        invocation: InvocationId,
+    ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let server = Arc::clone(&self.server);
+        let actor = self.actor;
+        let request = request.clone();
+        self.runtime.spawn_blocking(move || {
+            let memory = server
+                .vault
+                .memory(actor.entity_ref(), actor.actor_class())
+                .at(CallerLocality::OnDevice)
+                .with_invocation(invocation);
+            let _ = sender
+                .send(crate::api::connector_answer_as(&server, &memory, request).and_then(encode));
+        });
+        Ok(match receiver.recv() {
+            // An answer serves no vault rows: the connector's reply is
+            // foreign data.
+            Ok(Ok(output)) => Ok(AgentVerbAnswer {
+                output,
+                rows: Some(Vec::new()),
+            }),
+            Ok(Err(error)) => Err(AgentVerbRefusal { code: error.code }),
+            Err(_) => Err(AgentVerbRefusal {
+                code: MEMORY_CODE_INTERNAL.to_owned(),
+            }),
+        })
     }
 }
 

@@ -534,6 +534,7 @@ fn hook_args(call: &SelfCall) -> Result<Value> {
         SelfCall::InferenceDefaultsReplace(text) => json!({"json": text}),
         SelfCall::WakePolicyWrite(write) => json!({"policy": to_json(&write.policy)?}),
         SelfCall::AgentVerb(verb) => json!({"verb": verb.verb.as_str(), "input": verb.input}),
+        SelfCall::ConnectorAnswer(request) => to_json(request)?,
         SelfCall::Fold(fold) => to_json(fold)?,
         SelfCall::ReaderSpawn(spawn) => json!({
             "source": spawn.source,
@@ -972,7 +973,9 @@ fn rewrite(call: &SelfCall, args: &Value) -> Rewritten<SelfCall> {
         // A reader's source and finding, and a summary's members, are
         // resolved by the host before the hooks run: a rewrite would name a
         // result nothing resolved.
+        // An answer is frozen once and checked as given (ONE-2510).
         SelfCall::AgentVerb(_)
+        | SelfCall::ConnectorAnswer(_)
         | SelfCall::ReaderSpawn(_)
         | SelfCall::ReaderReport(_)
         | SelfCall::Summarize(_)

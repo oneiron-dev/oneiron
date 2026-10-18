@@ -157,6 +157,10 @@ impl CodeRunBridgeCall {
             _ if self.effect == SelfEffect::WakePolicyWrite => Err(invalid_code_run_replay(
                 "wake policy effect carries another success outcome",
             )),
+            // `connector.answer`'s reply is the door's verb answer (ONE-2510).
+            SelfDispatchOutcome::AgentVerb(_) if self.effect == SelfEffect::ConnectorAnswer => {
+                Ok(())
+            }
             SelfDispatchOutcome::AgentVerb(_) if self.effect != SelfEffect::AgentVerb => Err(
                 invalid_code_run_replay("agent verb result belongs to another effect"),
             ),

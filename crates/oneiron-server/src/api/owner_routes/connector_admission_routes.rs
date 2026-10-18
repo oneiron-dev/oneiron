@@ -35,7 +35,8 @@ use oneiron::connector_key::qualification::ConnectorQualificationReceipt;
 use oneiron::connector_key::{
     ConnectorCallClass, ConnectorCatalogEntry, ConnectorGrantSlate, ConnectorKeyRecord,
     ConnectorKeySpec, ConnectorKeyStatus, ConnectorQualificationError, ConnectorSlateDrafter,
-    ProbeManifestQualifier, SlateDisposition, SlateOwnerOverride, SlateRow, SlateToolManifest,
+    ProbeManifestQualifier, SlateDisposition, SlateManifest, SlateOwnerOverride, SlateRow,
+    SlateToolManifest,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::llm::decision::DecisionRung;
@@ -100,7 +101,8 @@ struct AcceptRequest {
     /// The slate revision the owner reviewed.
     revision: u64,
     /// The owner's setting per row: `always_allow`, `auto`, `always_ask` or
-    /// `never_allow`. A row left out keeps its drafted setting.
+    /// `never_allow`. A row left out keeps its drafted setting. Rows go by
+    /// tool name; `@elicitation` names the elicitation row.
     #[serde(default)]
     rows: BTreeMap<String, SlateDisposition>,
     /// The facets the grant reaches, as 32 hex each; none: every facet.
@@ -438,7 +440,11 @@ fn register_connector(server: &SyncServer, request: RegisterRequest) -> OwnerRes
                 name: name.clone(),
                 connector: name.clone(),
                 summary: request.summary,
-                verbs: manifest.iter().map(|tool| tool.name.clone()).collect(),
+                verbs: manifest
+                    .tools
+                    .iter()
+                    .map(|tool| tool.name.clone())
+                    .collect(),
                 call_class: CATALOG_CALL_CLASS,
                 registered_at: now,
             },
@@ -651,7 +657,7 @@ fn probe(
         })
         .collect();
     let listed = host::slate_manifest(&resolved, &discovery.tools, &classes);
-    if by_name(&listed) != by_name(slate.manifest()) {
+    if !same_manifest(&listed, &slate) {
         return Err(OwnerError::Changed(
             "the connector's tools changed since it was registered".to_owned(),
         ));
@@ -770,7 +776,7 @@ fn refresh_connector(server: &SyncServer, request: RefreshRequest) -> OwnerResul
     classes.extend(request.tools);
     let resolved = host::resolve(&discovery.tools).map_err(|_| unresolvable())?;
     let listed = host::slate_manifest(&resolved, &discovery.tools, &classes);
-    if discovery.revision == pinned && by_name(&listed) == by_name(slate.manifest()) {
+    if discovery.revision == pinned && same_manifest(&listed, &slate) {
         return Ok(Refreshed {
             connector: name,
             changed: false,
@@ -882,6 +888,13 @@ fn by_name(manifest: &[SlateToolManifest]) -> BTreeMap<&str, &SlateToolManifest>
         .iter()
         .map(|tool| (tool.name.as_str(), tool))
         .collect()
+}
+
+/// The listed declaration is the slate's: the same tools by name and the
+/// same elicitation declaration.
+fn same_manifest(listed: &SlateManifest, slate: &ConnectorGrantSlate) -> bool {
+    by_name(&listed.tools) == by_name(slate.manifest())
+        && listed.elicitation.as_ref() == slate.elicitation_manifest()
 }
 
 /// Approves the exact candidate qualification staged: the owner's qualify

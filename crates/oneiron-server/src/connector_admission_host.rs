@@ -25,7 +25,8 @@ use oneiron::connector_key::qualification::{
     QualificationPlan,
 };
 use oneiron::connector_key::{
-    ConnectorToolSchema, ResolvedConnectorManifest, SlateDataClass, SlateToolManifest,
+    ConnectorToolSchema, ResolvedConnectorManifest, SlateDataClass, SlateManifest,
+    SlateToolManifest,
 };
 use oneiron::outbound_consent::CONNECTOR_REPLY_MAX_BYTES;
 use oneiron::skill_hub::pack_catalog::PackObservedTool;
@@ -246,9 +247,14 @@ pub(crate) fn discover(
     })
 }
 
-/// The listed tools resolved as the retained manifest resolves them.
+/// The listed tools resolved as the retained manifest resolves them, with
+/// the elicitation declaration MCP admission makes for every connector it
+/// admits (ARCH-0072). Elicitation is a client capability: `initialize`
+/// carries no server flag for it, and the call host decides per revision
+/// whether to declare it on the wire.
 pub(crate) fn resolve(tools: &[ListedTool]) -> oneiron::Result<ResolvedConnectorManifest> {
     ResolvedConnectorManifest::resolve(tools.iter().map(ListedTool::schema_row).collect())
+        .map(|manifest| manifest.with_elicitation(true))
 }
 
 /// What the owner names for one tool at registration. MCP declares neither.
@@ -276,13 +282,14 @@ fn default_data_class() -> SlateDataClass {
 }
 
 /// The slate manifest for the resolved tools: each resolved schema and its
-/// header parameters, the hints as effects, and the owner's classes.
+/// header parameters, the hints as effects, and the owner's classes, with
+/// the elicitation declaration the resolved manifest carries.
 pub(crate) fn slate_manifest(
     resolved: &ResolvedConnectorManifest,
     tools: &[ListedTool],
     classes: &BTreeMap<String, ToolClass>,
-) -> Vec<SlateToolManifest> {
-    resolved
+) -> SlateManifest {
+    let rows = resolved
         .tools()
         .iter()
         .filter_map(|row| {
@@ -302,7 +309,8 @@ pub(crate) fn slate_manifest(
                 idempotent: listed.idempotent,
             })
         })
-        .collect()
+        .collect();
+    SlateManifest::new(rows, resolved.declares_elicitation())
 }
 
 /// The parameters an `x-mcp-header` annotation sends as headers.

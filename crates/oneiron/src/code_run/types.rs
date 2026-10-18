@@ -72,6 +72,10 @@ pub enum SelfCall {
     WakePolicyWrite(SelfWakePolicyWriteCall),
     /// A verb at its SDK path (`vault.recall(input)`): one row of the SDK verb table.
     AgentVerb(SelfAgentVerbCall),
+    /// `connector.answer` (ONE-2510): the run's answer to the questions a
+    /// connector asked mid-call, sent through the bound door under the
+    /// original call's grant and principal.
+    ConnectorAnswer(crate::task_verb::sdk::ConnectorAnswerRequest),
     /// `self.fold`, `self.compact`, `self.unfold`, `self.folds` and
     /// `describe({fold})`: the run's own log (ARCH-0067 §2.2).
     Fold(crate::compaction::SelfFoldCall),
@@ -130,6 +134,7 @@ impl SelfCall {
             Self::InferenceDefaultsReplace(_) => SelfEffect::InferenceDefaultsReplace,
             Self::WakePolicyWrite(_) => SelfEffect::WakePolicyWrite,
             Self::AgentVerb(_) => SelfEffect::AgentVerb,
+            Self::ConnectorAnswer(_) => SelfEffect::ConnectorAnswer,
             Self::Fold(_) => SelfEffect::Fold,
             Self::ReaderSpawn(_) => SelfEffect::ReaderSpawn,
             Self::ReaderReport(_) => SelfEffect::ReaderReport,
@@ -204,6 +209,9 @@ pub enum SelfEffect {
     WakePolicyWrite,
     /// One SDK verb-table call, run by the host's bound verb door.
     AgentVerb,
+    /// An answer to a connector's mid-call questions, sent by the host's
+    /// bound verb door (ONE-2510).
+    ConnectorAnswer,
     /// A fold verb on the run's own log, answered by its fold ledger.
     Fold,
     /// A reader child queued over one of the run's results.
@@ -252,6 +260,7 @@ impl SelfEffect {
             Self::InferenceDefaultsReplace => "self.inference_defaults.replace",
             Self::WakePolicyWrite => "dreamer.wake_policy.set",
             Self::AgentVerb => "self.verbs.call",
+            Self::ConnectorAnswer => "connector.answer",
             Self::Fold => "self.fold",
             Self::ReaderSpawn => "self.spawn",
             Self::ReaderReport => "tasks.update",
@@ -294,7 +303,7 @@ impl SelfEffect {
             | Self::ReportBlocked
             | Self::InferenceDefaultsRead
             | Self::InferenceDefaultsReplace => None,
-            Self::WakePolicyWrite | Self::AgentVerb | Self::Fold => None,
+            Self::WakePolicyWrite | Self::AgentVerb | Self::ConnectorAnswer | Self::Fold => None,
             Self::ReaderSpawn | Self::ReaderReport | Self::TasksWaitSet | Self::Summarize => None,
             Self::Leader | Self::LeaderSplit => None,
             Self::Team => None,
@@ -614,6 +623,22 @@ pub trait AgentVerbDoor: Send + Sync {
     /// no refusal keeps none.
     fn refusal_words(&self) -> Option<AgentVerbRefusalWords> {
         None
+    }
+
+    /// Sends the run's answer to the questions one of its connector calls
+    /// waits on (`connector.answer`, ONE-2510), for the run's own caller:
+    /// the door checks it under the original call's grant and principal, and
+    /// its answer is `connector.call`'s reply. The run's admission and verb
+    /// hooks already ran around it. A door that sends no connector calls
+    /// refuses it as unbound.
+    fn connector_answer(
+        &self,
+        _request: &crate::task_verb::sdk::ConnectorAnswerRequest,
+        _invocation: crate::runtime_hooks::InvocationId,
+    ) -> crate::Result<std::result::Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        Ok(Err(AgentVerbRefusal {
+            code: AGENT_VERB_DOOR_UNBOUND.to_owned(),
+        }))
     }
 }
 

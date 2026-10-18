@@ -11,6 +11,7 @@ mod connector_call;
 mod connector_call_asks;
 mod connector_call_pending;
 mod connector_call_resume;
+mod connector_elicitation_asks;
 mod execution;
 mod recovery;
 mod result_scrub;
@@ -26,12 +27,15 @@ pub use self::authority::{
     FrozenMcpPayload, OutboundBindingAuthority, OutboundBindingValidation, ScopedMcpAuthorization,
 };
 pub use self::connector_call::{
-    CONNECTOR_REPLY_MAX_BYTES, ConnectorCallHost, ConnectorCallInvocation, ConnectorCallOutcome,
-    ConnectorCallRequest, ConnectorCallState, ConnectorToolSchema, PendingConnectorCallRef,
-    UntrustedToolResult,
+    CONNECTOR_REPLY_MAX_BYTES, ConnectorAwaitingInput, ConnectorCallCaller, ConnectorCallHost,
+    ConnectorCallInvocation, ConnectorCallOutcome, ConnectorCallRequest, ConnectorCallState,
+    ConnectorQuestion, ConnectorToolSchema, PendingConnectorCallRef, UntrustedToolResult,
 };
 pub(crate) use self::connector_call::{connector_call_effector, held_connector_call_in_txn};
-pub use self::execution::ScopedMcpDispatchResult;
+pub use self::connector_elicitation_asks::ConnectorElicitationAnswer;
+pub use self::execution::{
+    ConnectorElicitationBinding, ElicitationAnswerVerdict, ScopedMcpDispatchResult,
+};
 // Test-only execution entry point: the durable lane is driven by recovery in
 // production builds, so the re-export lives under the same cfg as its callers.
 #[cfg(test)]

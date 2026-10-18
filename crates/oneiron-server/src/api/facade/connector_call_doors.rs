@@ -20,7 +20,7 @@ use std::sync::Arc;
 use oneiron::memory::{Memory, MemoryError, MemoryResult};
 use oneiron::outbound_consent::ConnectorCallRequest;
 use oneiron::runtime_hooks::InvocationId;
-use oneiron::task_verb::sdk::{self, ConnectorCallReply};
+use oneiron::task_verb::sdk::{self, ConnectorAnswerRequest, ConnectorCallReply};
 use oneiron::{EdgeActorClass, EntityId};
 
 use super::host_doors::{Listed, credential_listing};
@@ -69,4 +69,19 @@ pub(crate) fn connector_call_as(
         .call_connector(memory, input, invocation, &mut host)
         .map_err(sdk::connector_call_error)?;
     Ok(ConnectorCallReply::project(&name, &tool, outcome))
+}
+
+/// `connector.answer` (ONE-2510) for the caller `memory` is bound to: its
+/// answer to the questions one of its connector calls waits on, by the
+/// handle the `awaiting_input` reply named, checked under that call's grant
+/// and principal and sent through this server's live question registry, the
+/// one every connector host here keeps its questions in. Holding the handle
+/// is not authority: only the call's own caller answers. Blocking: it waits
+/// on the connector and on the owner, so call it on a blocking worker.
+pub(crate) fn connector_answer_as(
+    server: &SyncServer,
+    memory: &Memory<'_>,
+    input: ConnectorAnswerRequest,
+) -> MemoryResult<ConnectorCallReply> {
+    crate::connector_elicitation::answer_connector_question(server, memory, input)
 }

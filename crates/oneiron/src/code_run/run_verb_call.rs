@@ -219,6 +219,8 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
                 step_key: args.step_key,
             })
         }
+        // ONE-2510: the run's answer to a connector's mid-call questions.
+        RunVerb::ConnectorAnswer => SelfCall::ConnectorAnswer(decode(input)?),
     })
 }
 

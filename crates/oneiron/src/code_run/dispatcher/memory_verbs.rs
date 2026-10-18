@@ -67,6 +67,7 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::WakePolicyWrite
             // The bound verb door runs against the canonical vault.
             | SelfEffect::AgentVerb
+            | SelfEffect::ConnectorAnswer
             | SelfEffect::AgentsSpawn
             | SelfEffect::AgentsPut
             | SelfEffect::TasksAsk

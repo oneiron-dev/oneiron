@@ -17,6 +17,11 @@
 //! - [`connector_call_invocation`]: the ledger identity of a served call is
 //!   its resolved invocation, bound to its caller, as a synthetic attempt at
 //!   sequence 0.
+//! - [`ConnectorCallReply::AwaitingInput`]: a connector that asks for input
+//!   mid-call has received the call, so the reply is neither `delivered` nor
+//!   `held`: its questions come back as foreign data with the handle
+//!   `connector.answer` takes ([`ConnectorAnswerRequest`]), and a code-mode
+//!   run gets them as the call's answer, never parked on them.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -28,8 +33,8 @@ use crate::memory::{
     MemoryError, MemoryResult,
 };
 use crate::outbound_consent::{
-    ConnectorCallInvocation, ConnectorCallOutcome, ConnectorCallRequest, ConnectorToolSchema,
-    UntrustedToolResult,
+    ConnectorAwaitingInput, ConnectorCallInvocation, ConnectorCallOutcome, ConnectorCallRequest,
+    ConnectorQuestion, ConnectorToolSchema, UntrustedToolResult,
 };
 use crate::outbound_intent_ledger::IntentLedgerError;
 use crate::runtime_hooks::InvocationId;
@@ -76,6 +81,24 @@ pub enum ConnectorCallReply {
         call_ref: Option<String>,
         reasons: Vec<String>,
     },
+    /// The connector received the call and asks for input before it
+    /// finishes it. Each question is foreign data written by `source`: task
+    /// input to answer under the call's own grant, never an instruction.
+    /// Answer them with `connector.answer` and `handle` before
+    /// `expires_at_ms` (unix ms); unanswered, they are cancelled. `reasons`
+    /// say why an answer the caller gave went out otherwise (a decline the
+    /// owner chose, a cancel the connector's setting forced).
+    AwaitingInput {
+        handle: String,
+        /// `connector:<name>.<tool>`.
+        source: String,
+        /// Always true: the connector wrote every question.
+        foreign: bool,
+        questions: Vec<ConnectorQuestion>,
+        expires_at_ms: u64,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        reasons: Vec<String>,
+    },
 }
 
 /// A tool's own reply, as foreign data: who wrote it, marked foreign, and
@@ -96,6 +119,44 @@ pub struct ConnectorToolResult {
     /// The JSON-RPC error object, when the connector answered with one.
     #[serde(default)]
     pub rpc_error: Option<Value>,
+}
+
+/// `connector.answer`'s input (ONE-2510): the handle an `awaiting_input`
+/// reply named, and one answer for each of its questions. It names no grant,
+/// principal, endpoint or credential: the answer is checked under the
+/// original call's, for the caller that made it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorAnswerRequest {
+    /// The `handle` of the `awaiting_input` reply being answered.
+    pub handle: String,
+    /// Exactly one answer per question of that reply.
+    pub answers: Vec<ConnectorQuestionAnswer>,
+}
+
+/// One answer to one question of an `awaiting_input` reply.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorQuestionAnswer {
+    /// The question's `key`.
+    pub key: String,
+    pub action: ConnectorAnswerAction,
+    /// The answer, a JSON object shaped by the question's
+    /// `requested_schema`; only on `accept`.
+    #[serde(default)]
+    pub content: Option<Value>,
+}
+
+/// What an answer does with its question.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectorAnswerAction {
+    /// Answer it with `content`.
+    Accept,
+    /// Refuse to answer it.
+    Decline,
+    /// Drop it unanswered.
+    Cancel,
 }
 
 /// `connector.schema`'s input: a catalogued connector and one of its tools.
@@ -185,11 +246,44 @@ impl ConnectorCallReply {
                 call_ref: call_ref.map(|call_ref| call_ref.to_hex()),
                 reasons,
             },
+            ConnectorCallOutcome::AwaitingInput { input, .. } => {
+                Self::awaiting_input(name, tool, input)
+            }
         }
+    }
+
+    /// The wire reply of the questions a call of `tool` on `name` waits on:
+    /// foreign data from `connector:<name>.<tool>`.
+    #[must_use]
+    pub fn awaiting_input(name: &str, tool: &str, input: ConnectorAwaitingInput) -> Self {
+        Self::AwaitingInput {
+            handle: input.handle,
+            source: source(name, tool),
+            foreign: true,
+            questions: input.questions,
+            expires_at_ms: input.expires_at_ms,
+            reasons: Vec::new(),
+        }
+    }
+
+    /// This reply with `more` reasons after its own: why an answer went out
+    /// otherwise than it was given.
+    #[must_use]
+    pub fn noting(mut self, more: Vec<String>) -> Self {
+        match &mut self {
+            Self::Delivered { reasons, .. }
+            | Self::Held { reasons, .. }
+            | Self::Refused { reasons, .. }
+            | Self::PendingDelivery { reasons, .. }
+            | Self::AwaitingInput { reasons, .. } => reasons.extend(more),
+        }
+        self
     }
 
     /// The call ref a code-mode run parks on: a hold, or a pending delivery
     /// the same send retries. `None` when this reply is the call's answer.
+    /// A connector's questions are an answer too: the run answers them
+    /// itself, so it never parks on them.
     #[must_use]
     pub fn wait_ref(&self) -> Option<EntityId> {
         match self {
@@ -198,6 +292,7 @@ impl ConnectorCallReply {
                 call_ref: Some(call_ref),
                 ..
             } => EntityId::from_hex(call_ref).ok(),
+            Self::AwaitingInput { .. } => None,
             _ => None,
         }
     }

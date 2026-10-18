@@ -4,6 +4,7 @@
 /// tool, route or binding carries them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunVerb {
+    ConnectorAnswer,
     VaultSearch,
     VaultClaimsPut,
     VaultClaimsSupersede,
@@ -27,6 +28,7 @@ pub enum RunVerb {
 }
 impl RunVerb {
     pub const ALL: &[Self] = &[
+        Self::ConnectorAnswer,
         Self::VaultSearch,
         Self::VaultClaimsPut,
         Self::VaultClaimsSupersede,
@@ -53,6 +55,7 @@ impl RunVerb {
     }
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::ConnectorAnswer => "connector.answer",
             Self::VaultSearch => "vault.search",
             Self::VaultClaimsPut => "vault.claims.put",
             Self::VaultClaimsSupersede => "vault.claims.supersede",
@@ -78,7 +81,8 @@ impl RunVerb {
     pub const fn writes(self) -> bool {
         matches!(
             self,
-            Self::VaultClaimsPut
+            Self::ConnectorAnswer
+                | Self::VaultClaimsPut
                 | Self::VaultClaimsSupersede
                 | Self::VaultEdgesPut
                 | Self::SelfFold
@@ -97,6 +101,7 @@ impl RunVerb {
     }
     pub const fn effect(self) -> crate::code_run::SelfEffect {
         match self {
+            Self::ConnectorAnswer => crate::code_run::SelfEffect::ConnectorAnswer,
             Self::VaultSearch => crate::code_run::SelfEffect::MemorySearch,
             Self::VaultClaimsPut => crate::code_run::SelfEffect::MemoryPutClaim,
             Self::VaultClaimsSupersede => crate::code_run::SelfEffect::MemorySupersedeClaim,

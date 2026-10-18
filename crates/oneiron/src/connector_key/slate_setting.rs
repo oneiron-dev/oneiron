@@ -4,7 +4,7 @@
 //! stays on the per-call verdict. No setting widens scope or passes the
 //! catastrophe floor: `always allow` is only a covering grant.
 use super::record::{ConnectorKeyRecord, ConnectorKeyStatus, ScopedCapabilityProvenance};
-use super::slate::{ConnectorGrantSlate, SlateDisposition, read_slate_in_store_txn};
+use super::slate::{ConnectorGrantSlate, SlateDisposition, SlateRow, read_slate_in_store_txn};
 use super::txn::{governing_connector_key, read_connector_key_in_txn};
 use crate::error::{Error, Result};
 use crate::store::Store;
@@ -96,6 +96,39 @@ pub(super) fn callable_verbs_in_txn(
         .collect())
 }
 
+/// The setting a foreign server's elicitation meets under `slate`, a key's
+/// governing slate: its elicitation row's effective setting. Both
+/// missing-row answers are canon-silent and live here alone:
+/// - no slate at either level: `auto`, as a tool call there meets ("starts
+///   at auto");
+/// - a slate without the row: `never allow`. The slate never admitted the
+///   capability, so the client does not declare it and the server cannot ask.
+fn elicitation_setting_of(slate: Option<&ConnectorGrantSlate>) -> SlateDisposition {
+    match slate {
+        None => SlateDisposition::Auto,
+        Some(slate) => slate.elicitation_row().map_or(
+            SlateDisposition::NeverAllow,
+            SlateRow::effective_disposition,
+        ),
+    }
+}
+
+/// The effective elicitation setting a call on key `id` meets: the row on
+/// the slate [`governing_slate_in_txn`] resolves (the key's own, else its
+/// catalog's), never one read by catalog name alone. A dangling slate ref
+/// errors.
+pub(crate) fn connector_elicitation_setting_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<SlateDisposition> {
+    let key = read_connector_key_in_txn(store, txn, id)?.ok_or(Error::EntityNotFound)?;
+    let governing = governing_slate_in_txn(store, txn, &key)?;
+    Ok(elicitation_setting_of(
+        governing.as_ref().map(|(_, slate)| slate),
+    ))
+}
+
 impl Vault {
     /// The capability setting a call on `tool` meets under key `id`.
     pub fn connector_tool_setting(&self, id: &EntityId, tool: &str) -> Result<SlateDisposition> {
@@ -103,5 +136,11 @@ impl Vault {
         let record =
             read_connector_key_in_txn(&self.store, &txn, id)?.ok_or(Error::EntityNotFound)?;
         connector_tool_setting_in_txn(&self.store, &txn, &record, tool)
+    }
+    /// The effective elicitation setting a call on key `id` meets: the
+    /// elicitation row of the slate its calls meet.
+    pub fn connector_elicitation_setting(&self, id: &EntityId) -> Result<SlateDisposition> {
+        let txn = self.store.env.read_txn()?;
+        connector_elicitation_setting_in_txn(&self.store, &txn, id)
     }
 }

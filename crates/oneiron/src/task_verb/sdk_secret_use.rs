@@ -192,7 +192,9 @@ fn secret_user(memory: &Memory<'_>) -> MemoryResult<SecretUser> {
 
 /// A connector call's reply as the use's answer: delivered is answered; a
 /// hold or a refusal sent nothing; an unsettled delivery failed. The reply
-/// rides along in each, so a hold's `call_ref` is the caller's.
+/// rides along in each, so a hold's `call_ref` is the caller's. A connector
+/// that asked for input mid-call received the call, but its questions are
+/// withheld: a send that presented a record's value serves no questions.
 fn connector_consumed(reply: &ConnectorCallReply) -> SecretUseConsumed {
     let (send, failure) = match reply {
         ConnectorCallReply::Delivered { .. } => (SecretUseSend::Answered, None),
@@ -211,6 +213,17 @@ fn connector_consumed(reply: &ConnectorCallReply) -> SecretUseConsumed {
             SecretUseSend::Failed,
             Some("the connector call's delivery is not settled"),
         ),
+        ConnectorCallReply::AwaitingInput { .. } => {
+            return SecretUseConsumed {
+                result: None,
+                failure: Some(
+                    "the connector asked for input mid-call; a call made with a secret's \
+                     handle answers no connector questions"
+                        .to_owned(),
+                ),
+                send: SecretUseSend::Withheld,
+            };
+        }
     };
     match serde_json::to_value(reply) {
         Ok(result) => SecretUseConsumed {

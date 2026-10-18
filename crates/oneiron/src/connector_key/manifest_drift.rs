@@ -1,6 +1,7 @@
 //! Resolved connector-schema snapshots and conservative, typed drift classification.
 //! A changed resolved schema is never treated as an unchanged grant, even when
 //! the literal document differs only in its reference target.
+use super::slate::ELICITATION_ROW_KEY;
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -23,6 +24,11 @@ pub struct ConnectorToolSchema {
 #[serde(deny_unknown_fields)]
 pub struct ResolvedConnectorManifest {
     tools: Vec<ConnectorToolSchema>,
+    /// The connector's elicitation declaration (ARCH-0072). Elicitation is
+    /// a client capability no server lists, so no tool listing proves or
+    /// refutes it: MCP admission declares it for every connector it admits.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    elicitation: bool,
 }
 impl ResolvedConnectorManifest {
     /// Resolve local references and composition before any comparison or
@@ -58,7 +64,19 @@ impl ResolvedConnectorManifest {
         if tools.windows(2).any(|w| w[0].name == w[1].name) {
             return Err(invalid());
         }
-        Ok(Self { tools })
+        Ok(Self {
+            tools,
+            elicitation: false,
+        })
+    }
+    /// The same snapshot, declaring elicitation or not.
+    #[must_use]
+    pub fn with_elicitation(mut self, declared: bool) -> Self {
+        self.elicitation = declared;
+        self
+    }
+    pub fn declares_elicitation(&self) -> bool {
+        self.elicitation
     }
     /// Mutable admission capacity comes from a vault policy snapshot. It is
     /// deliberately NOT used by persisted-body validation: later policy
@@ -80,13 +98,14 @@ impl ResolvedConnectorManifest {
     pub fn tools(&self) -> &[ConnectorToolSchema] {
         &self.tools
     }
-    /// Digest of the canonical, fully resolved consent-visible tool set.
+    /// Digest of the canonical, fully resolved consent-visible tool set and
+    /// elicitation declaration.
     pub fn hash(&self) -> Result<[u8; 32]> {
         self.validate_snapshot()?;
         Ok(*blake3::hash(&serde_json::to_vec(self).map_err(|_| invalid())?).as_bytes())
     }
     pub(crate) fn validate_snapshot(&self) -> Result<()> {
-        let resolved = Self::resolve(self.tools.clone())?;
+        let resolved = Self::resolve(self.tools.clone())?.with_elicitation(self.elicitation);
         if resolved != *self {
             return Err(invalid());
         }
@@ -494,16 +513,21 @@ pub enum ConnectorDriftKind {
 pub struct ConnectorManifestDrift {
     /// All detected changes, including narrows and removals.
     pub kinds: BTreeSet<ConnectorDriftKind>,
-    /// Rows held during qualification; a removed tool also belongs here.
+    /// Rows held during qualification, by row key (a tool name, or
+    /// [`ELICITATION_ROW_KEY`]); a removed row also belongs here.
     pub affected_tools: BTreeSet<String>,
-    /// Only widening or otherwise non-monotone rows need a new owner tap.
+    /// Only widening or otherwise non-monotone rows need a new owner tap:
+    /// a new elicitation declaration does, its removal does not.
     pub reconsent_tools: BTreeSet<String>,
     /// Revision changes need re-registration, independently of tool deltas.
     pub requires_reregistration: bool,
 }
 impl ConnectorManifestDrift {
     pub fn first_registration(manifest: &ResolvedConnectorManifest) -> Self {
-        let tools: BTreeSet<_> = manifest.tools().iter().map(|t| t.name.clone()).collect();
+        let mut tools: BTreeSet<_> = manifest.tools().iter().map(|t| t.name.clone()).collect();
+        if manifest.elicitation {
+            tools.insert(ELICITATION_ROW_KEY.to_owned());
+        }
         Self {
             kinds: [ConnectorDriftKind::Permission].into(),
             affected_tools: tools.clone(),
@@ -522,6 +546,13 @@ impl ConnectorManifestDrift {
         let mut reconsent_tools = BTreeSet::new();
         if old_revision != new_revision {
             kinds.insert(ConnectorDriftKind::ProtocolRevision);
+        }
+        if old.elicitation != new.elicitation {
+            kinds.insert(ConnectorDriftKind::Permission);
+            affected_tools.insert(ELICITATION_ROW_KEY.to_owned());
+            if new.elicitation {
+                reconsent_tools.insert(ELICITATION_ROW_KEY.to_owned());
+            }
         }
         let before: BTreeMap<_, _> = old.tools().iter().map(|t| (t.name.as_str(), t)).collect();
         let after: BTreeMap<_, _> = new.tools().iter().map(|t| (t.name.as_str(), t)).collect();

@@ -317,6 +317,9 @@ const fn bridge_call_is_external_effect(effect: SelfEffect) -> bool {
         // Reaches a counterparty outside the vault; the durable wait it parks
         // on is exactly the boundary crossing lineage records.
         SelfEffect::OutboundFixture => true,
+        // An answer goes to a connector, and its reply is the connector's
+        // (ONE-2510).
+        SelfEffect::ConnectorAnswer => true,
         // A callable skill's answer is its code's, and imported code runs on
         // the foreign tier with egress: what the run writes after it may carry
         // what the outside world said (OF-353).

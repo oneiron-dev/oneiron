@@ -10,12 +10,13 @@
 //! live route, grant and prepare path.
 
 use crate::Vault;
+use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::outbound_intent_ledger::{IntentLedgerError, read_intent_for_attempt_in_txn};
 
 use super::authority::OutboundBindingAuthority;
 use super::connector_call::{
-    ConnectorCallHost, PendingConnectorCall, Step, now_ms, step_from_dispatch,
+    ConnectorCallCaller, ConnectorCallHost, PendingConnectorCall, Step, now_ms, step_from_dispatch,
 };
 use super::execution::resume_scoped_mcp_outbound_intent;
 
@@ -36,11 +37,26 @@ impl Vault {
             return Ok(None);
         };
         let authority = OutboundBindingAuthority::for_vault(self)?;
+        // A question the connector asks binds to the caller and the grant
+        // the row admitted under; a row with no grant binds none.
+        host.bind_caller(
+            pending
+                .grant_id
+                .as_deref()
+                .and_then(|hex| EntityId::from_hex(hex).ok())
+                .map(|grant_id| ConnectorCallCaller {
+                    principal_ref: pending.principal_ref.clone(),
+                    grant_id,
+                    name: pending.name.clone(),
+                }),
+        );
         // A reply left from an earlier send is never this call's.
         drop(host.take_result());
+        drop(host.take_awaiting_input());
         let dispatch =
             resume_scoped_mcp_outbound_intent(self, &authority, record.id, now_ms(), &mut *host)?;
         let reply = host.take_result();
-        Ok(Some(step_from_dispatch(&dispatch, reply)))
+        let awaiting = host.take_awaiting_input();
+        Ok(Some(step_from_dispatch(&dispatch, reply, awaiting)))
     }
 }

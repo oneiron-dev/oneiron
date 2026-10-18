@@ -112,6 +112,11 @@ pub struct SyncServer {
     /// The live agent runs a harness may act for over HTTP (OF-181): each
     /// runner's lease proof, its attached credential and its guard.
     pub(crate) live_runs: Arc<super::LiveRuns>,
+    /// The questions connectors asked mid-call, live for their callers
+    /// (ONE-2510): every connector host this server builds keeps them here,
+    /// and `connector.answer` reads them.
+    pub(crate) connector_elicitations:
+        Arc<crate::connector_elicitation::ConnectorElicitationRegistry>,
     /// The `[browser]` guest each code run starts for its own browser verbs.
     /// `None` answers every browser call `browser_unbound`.
     pub(crate) browser_guest: Option<oneiron_browser::BrowserGuest>,
@@ -420,6 +425,7 @@ impl SyncServer {
             mcp_code_host: None,
             reader_runner,
             live_runs,
+            connector_elicitations: Arc::default(),
             browser_guest: None,
             desktop_guest: None,
             desktop_seats: Arc::default(),
