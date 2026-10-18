@@ -118,11 +118,14 @@ side_tables! {
     /// Text-index schema version stamp. Key: ().
     TEXT_INDEX_SCHEMA_VERSION: VaultMeta b"text_index_schema_version" Raw;
     /// Current owner-approved training checkpoint per model role. Key: serialized role string.
-    TRAINING_PACK_ROLE: VaultMeta b"training_pack:role:v1:" Named;
+    TRAINING_PACK_ROLE: VaultMeta b"training_pack:role:v1:" Named
+        => crate::training_pack::erase_role_actor_in_txn;
     /// Pinned corpus, compute, dispatch and evaluation of one training job. Key: id16 (run).
-    TRAINING_PACK_RUN: VaultMeta b"training_pack:run:v1:" Named;
+    TRAINING_PACK_RUN: VaultMeta b"training_pack:run:v1:" Named
+        => crate::training_pack::erase_run_actor_in_txn;
     /// Immutable owner-approved role-swap receipt. Key: id16 (receipt).
-    TRAINING_PACK_SWAP: VaultMeta b"training_pack:swap:v1:" Named;
+    TRAINING_PACK_SWAP: VaultMeta b"training_pack:swap:v1:" Named
+        => crate::training_pack::erase_swap_actor_in_txn;
     /// One open, answered or superseded "may I reach your trusted contact?" ask, raised by a
     /// `RouteToHelp` the person's dial or the row's tier says to ask about first. Key: id16(ask).
     TRUSTED_CONTACT_ASK: VaultMeta b"trusted_contact.ask.v1:" Named;
@@ -138,7 +141,8 @@ side_tables! {
     TYPED_BODY_DOC: VaultMeta b"typed_body:doc:v1:" Raw;
     /// Work on a typed body away from its head: opener, base frontier and state. Key: id16
     /// (entity) + id16 (fork).
-    TYPED_BODY_FORK: VaultMeta b"typed_body:fork:v1:" Named;
+    TYPED_BODY_FORK: VaultMeta b"typed_body:fork:v1:" Named
+        => crate::typed_body::erase_fork_actor_in_txn;
     /// An open typed-body fork's Loro snapshot. Key: id16 (entity) + id16 (fork).
     TYPED_BODY_FORK_DOC: VaultMeta b"typed_body:fork_doc:v1:" Raw;
     /// An entity's typed body: its schema tag, birth and head frontiers and commit count. Key:

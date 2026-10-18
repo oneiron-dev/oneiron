@@ -94,9 +94,12 @@ side_tables! {
     NOTE_TOMBSTONE_REVIEW: VaultMeta b"note_tombstone_review:v1" Named;
     /// The body frontier an office body export version projects. Key: id16 (artifact) + u64be
     /// (version).
-    OFFICE_BODY_EXPORT: VaultMeta b"office_body:export:v1:" Named;
-    /// Machine work on a live office body: opener, base frontier and state. Key: id16 (fork).
-    OFFICE_BODY_FORK: VaultMeta b"office_body:fork:v1:" Named;
+    OFFICE_BODY_EXPORT: VaultMeta b"office_body:export:v1:" Named
+        => crate::office_body::erase_export_actor_in_txn;
+    /// Machine work on a live office body: opener, base frontier and state. Key: id16 (artifact) +
+    /// id16 (fork).
+    OFFICE_BODY_FORK: VaultMeta b"office_body:fork:v1:" Named
+        => crate::office_body::erase_fork_actor_in_txn;
     /// The office proposal a DOCX or XLSX fork joined when it was opened. Key: id16 (artifact) +
     /// id16 (fork).
     OFFICE_BODY_FORK_PROPOSAL: VaultMeta b"office_body:fork_proposal:v1:" Named;
@@ -108,7 +111,8 @@ side_tables! {
     OFFICE_BODY_ORACLE: VaultMeta b"office_body:oracle:v1:" Named;
     /// An office proposal: its header (opener, run root, opened at), member forks with each one's
     /// verdict and answer, and its settlement. Key: id16 (artifact) + id16 (proposal).
-    OFFICE_BODY_PROPOSAL: VaultMeta b"office_body:proposal:v1:" Named;
+    OFFICE_BODY_PROPOSAL: VaultMeta b"office_body:proposal:v1:" Named
+        => crate::office_body::erase_proposal_actor_in_txn;
     /// Durable receipt that a later save copied one off-record message into a turn its stretch had
     /// already promoted. Key: id16 (the message).
     OFF_RECORD_COPY_RECEIPT: VaultMeta b"offrecord_copy:v0:" Named;

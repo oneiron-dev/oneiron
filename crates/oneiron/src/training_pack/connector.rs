@@ -15,8 +15,8 @@ use crate::llm::run_admission::{CallOutcome, PaidConnector, RunAdmission};
 use super::custody::{keep_checkpoint, read_pin};
 use super::{
     CheckpointUpload, ComputePin, ExportCheck, PinnedCheckpoint, ProbeMeasurement, RUNS, SourcePin,
-    TrainingDeclarationPin, TrainingDispatch, TrainingPlan, TrainingResult, TrainingRun,
-    TrainingState, hash_json, invalid, json_value, run_in_txn,
+    TrainingDeclarationPin, TrainingDispatch, TrainingOwner, TrainingPlan, TrainingResult,
+    TrainingRun, TrainingState, hash_json, invalid, json_value, run_in_txn,
 };
 
 #[derive(Debug)]
@@ -308,10 +308,15 @@ impl Vault {
                 }
                 return Ok(run);
             }
-            let training =
-                keep_checkpoint(self, txn, run.owner, run.id, &output.training_checkpoint)?;
-            let exported =
-                keep_checkpoint(self, txn, run.owner, run.id, &output.exported_checkpoint)?;
+            // The files are kept as the owner's; a run whose owner was erased
+            // keeps no late result under anyone else (FIX 3520).
+            let TrainingOwner::Actor(owner) = run.owner else {
+                return Err(invalid(
+                    "the training run's owner was erased; its result is not kept",
+                ));
+            };
+            let training = keep_checkpoint(self, txn, owner, run.id, &output.training_checkpoint)?;
+            let exported = keep_checkpoint(self, txn, owner, run.id, &output.exported_checkpoint)?;
             // Re-read stored files before accepting custody; producer hash mismatches
             // remain on the failed check, rather than dropping the evidence.
             for file in training.files.iter().chain(&exported.files) {

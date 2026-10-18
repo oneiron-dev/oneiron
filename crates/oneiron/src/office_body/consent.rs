@@ -34,7 +34,7 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::typed_body::{
-    TypedBodyFork, discard_typed_body_fork_in_txn, merge_admitted_typed_body_fork_in_txn,
+    BodyActor, TypedBodyFork, discard_typed_body_fork_in_txn, merge_admitted_typed_body_fork_in_txn,
 };
 use crate::write_envelope::WriteActor;
 
@@ -46,11 +46,11 @@ const MAX_PROPOSAL_MEMBERS: usize = 64;
 const MAX_REASON_BYTES: usize = 1024;
 
 /// Each proposal, by artifact and proposal id.
-const PROPOSALS: SideTable<(EntityId, EntityId), OfficeBodyProposal, Named> =
+pub(super) const PROPOSALS: SideTable<(EntityId, EntityId), OfficeBodyProposal, Named> =
     SideTable::new(&side_table::OFFICE_BODY_PROPOSAL);
 /// The proposal each DOCX or XLSX fork joined when it was opened, by artifact
 /// and fork.
-const MEMBERSHIP: SideTable<(EntityId, EntityId), EntityId, Named> =
+pub(super) const MEMBERSHIP: SideTable<(EntityId, EntityId), EntityId, Named> =
     SideTable::new(&side_table::OFFICE_BODY_FORK_PROPOSAL);
 
 /// Who opened a proposal, in which run, and when. A proposal opened by a
@@ -59,7 +59,7 @@ const MEMBERSHIP: SideTable<(EntityId, EntityId), EntityId, Named> =
 pub struct ProposalHeader {
     pub proposal: EntityId,
     pub artifact: EntityId,
-    pub opener: EntityId,
+    pub opener: BodyActor,
     pub run_root: Option<EntityId>,
     pub opened_at: u64,
 }
@@ -79,7 +79,7 @@ pub enum MemberVerdict {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AnsweringAuthority {
-    Word { person: EntityId },
+    Word { person: BodyActor },
     Grant { grant_ref: String, decision: String },
 }
 
@@ -87,7 +87,7 @@ pub enum AnsweringAuthority {
 pub struct MemberAnswer {
     pub by: AnsweringAuthority,
     /// Who called the settlement; under a grant, possibly the opener.
-    pub caller: EntityId,
+    pub caller: BodyActor,
     /// The live head and the fork head the review read.
     pub head: Vec<u8>,
     pub fork_head: Vec<u8>,
@@ -99,7 +99,7 @@ pub struct MemberAnswer {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProposalMember {
     pub fork: EntityId,
-    pub opener: EntityId,
+    pub opener: BodyActor,
     /// The run the fork was opened in, which a run-and-children scope names.
     pub run_root: Option<EntityId>,
     pub verdict: MemberVerdict,
@@ -450,6 +450,7 @@ pub(super) fn settle_in_txn(
         ));
     }
     let caller = actor.entity_ref();
+    let answerer = BodyActor::Actor(caller);
     let person = actor.actor_class() == EdgeActorClass::Human;
     let at = vault.now_recorded_at();
     let mut landed = Vec::new();
@@ -474,8 +475,8 @@ pub(super) fn settle_in_txn(
                 let member = &mut record.members[index];
                 member.verdict = MemberVerdict::Rejected;
                 member.answer = Some(MemberAnswer {
-                    by: AnsweringAuthority::Word { person: caller },
-                    caller,
+                    by: AnsweringAuthority::Word { person: answerer },
+                    caller: answerer,
                     head: request.head.to_vec(),
                     fork_head,
                     landed: None,
@@ -509,7 +510,7 @@ pub(super) fn settle_in_txn(
                 }
                 let excluded = lineage(&record.header, &member);
                 let by = if person && !excluded.contains(&caller) {
-                    AnsweringAuthority::Word { person: caller }
+                    AnsweringAuthority::Word { person: answerer }
                 } else if diff
                     .conflicts
                     .iter()
@@ -517,12 +518,15 @@ pub(super) fn settle_in_txn(
                 {
                     continue;
                 } else {
-                    let Some(grant_ref) =
-                        covering_grant(&grants, &excluded, artifact, &member.opener)?
+                    // A member whose opener was erased left its proposal.
+                    let Some(opener) = member.opener.id() else {
+                        continue;
+                    };
+                    let Some(grant_ref) = covering_grant(&grants, &excluded, artifact, &opener)?
                     else {
                         continue;
                     };
-                    let effect = office_effect(artifact, &member.opener)?;
+                    let effect = office_effect(artifact, &opener)?;
                     let used = vault.record_standing_grant_use_in_txn(
                         wtxn,
                         &grant_ref,
@@ -555,7 +559,7 @@ pub(super) fn settle_in_txn(
                 member.verdict = MemberVerdict::Landed;
                 member.answer = Some(MemberAnswer {
                     by,
-                    caller,
+                    caller: answerer,
                     head: request.head.to_vec(),
                     fork_head,
                     landed: Some(after.frontier),
@@ -574,13 +578,16 @@ pub(super) fn settle_in_txn(
 /// proposal's opener and the member's. No agent or run lineage resolver
 /// exists yet, so each is exactly itself (FIX-LIST).
 fn lineage(header: &ProposalHeader, member: &ProposalMember) -> BTreeSet<EntityId> {
-    BTreeSet::from([header.opener, member.opener])
+    [header.opener, member.opener]
+        .into_iter()
+        .filter_map(BodyActor::id)
+        .collect()
 }
 
 fn covers(scope: &ApproveScope, header: &ProposalHeader, member: &ProposalMember) -> bool {
     let named = |id: &EntityId, reference: &str| id.to_hex().eq_ignore_ascii_case(reference.trim());
     match scope {
-        ApproveScope::ThisActor(actor) => named(&member.opener, actor),
+        ApproveScope::ThisActor(actor) => member.opener.id().is_some_and(|id| named(&id, actor)),
         ApproveScope::ThisRunAndChildren(run) => {
             member.run_root.is_some_and(|root| named(&root, run))
         }
@@ -650,7 +657,7 @@ fn covering_grant(
 }
 
 /// Writes the settlement once no member waits.
-fn close_if_done(record: &mut OfficeBodyProposal, at: u64, reason: Option<String>) {
+pub(super) fn close_if_done(record: &mut OfficeBodyProposal, at: u64, reason: Option<String>) {
     if record.settlement.is_some()
         || record
             .members

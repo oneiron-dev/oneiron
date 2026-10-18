@@ -13,7 +13,7 @@ use crate::llm::run_admission::RunDeclaration;
 
 use super::{
     RUNS, TrainingAuthorization, TrainingAuthorizationSource, TrainingDeclarationPin, TrainingHold,
-    TrainingRun, TrainingState, TrainingTeachersPin, invalid, run_in_txn,
+    TrainingOwner, TrainingRun, TrainingState, TrainingTeachersPin, invalid, run_in_txn,
 };
 
 /// A `coach.training_run` job's input: the run and the spec its owner
@@ -108,7 +108,7 @@ impl Vault {
             ));
         }
         let authorization = TrainingAuthorization {
-            owner: actor,
+            owner: TrainingOwner::Actor(actor),
             at,
             spec_blake3: run.spec_blake3,
             declaration,

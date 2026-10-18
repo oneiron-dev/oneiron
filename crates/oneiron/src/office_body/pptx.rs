@@ -51,7 +51,7 @@ use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::typed_body::{
-    TypedBodyHead, discard_typed_body_fork_in_txn, edit_typed_body_fork_in_txn,
+    BodyActor, TypedBodyHead, discard_typed_body_fork_in_txn, edit_typed_body_fork_in_txn,
     edit_typed_body_in_txn, merge_typed_body_fork_in_txn, open_typed_body_fork_in_txn,
     typed_body_fork_in_txn,
 };
@@ -220,7 +220,7 @@ impl Vault {
         self.with_write_txn_grouped(|wtxn| {
             let key = (*artifact, *fork);
             let mut record = open_record(&self.store, wtxn, artifact, fork)?;
-            if record.opener != actor.entity_ref() {
+            if !record.opener.is(actor.entity_ref()) {
                 return Err(invalid("only the opener writes to its open fork"));
             }
             let writer = writer(OfficeBodyKind::Pptx, actor, made_by);
@@ -325,7 +325,7 @@ impl Vault {
             let key = (*artifact, *fork);
             let mut record = open_record(&self.store, wtxn, artifact, fork)?;
             // "The opener's lineage and its forks never settle their own proposal."
-            if record.opener == actor.entity_ref() {
+            if record.opener.is(actor.entity_ref()) {
                 return Err(invalid("a fork's opener cannot merge it"));
             }
             let (head, mut body) = self.deck_head(wtxn, artifact)?;
@@ -363,7 +363,7 @@ impl Vault {
                 commit.frontier
             };
             record.state = ForkState::Merged {
-                by: actor.entity_ref(),
+                by: BodyActor::Actor(actor.entity_ref()),
                 at,
                 head: frontier,
             };
@@ -497,7 +497,7 @@ impl Vault {
                 version: version.version,
                 frontier: export.frontier.clone(),
                 source_version: source(&self.store, wtxn, artifact)?.source_version,
-                actor: actor.entity_ref(),
+                actor: BodyActor::Actor(actor.entity_ref()),
                 author: actor.entity_ref().to_hex(),
                 at,
                 changes: export.outcome.changed_parts.len() as u64,
@@ -699,7 +699,7 @@ impl Vault {
         let mut record = open_record(&self.store, wtxn, artifact, fork)?;
         discard_typed_body_fork_in_txn(self, wtxn, artifact, fork, actor)?;
         record.state = ForkState::Discarded {
-            by: actor.entity_ref(),
+            by: BodyActor::Actor(actor.entity_ref()),
             at: self.now_recorded_at(),
         };
         FORKS.put(&self.store, wtxn, &(*artifact, *fork), &record)?;

@@ -28,7 +28,10 @@ use loro::{CommitOptions, ExportMode, Frontiers, LoroDoc};
 use serde::{Deserialize, Serialize};
 use std::ops::ControlFlow;
 
+mod body_actor;
 mod lift;
+pub use self::body_actor::BodyActor;
+pub(crate) use self::body_actor::{erase_fork_actor_in_txn, names_no_actor};
 pub(crate) use self::lift::{TypedBodyRows, lift_typed_body_in_txn, typed_body_lift_hit_in_txn};
 
 const HEADS: SideTable<EntityId, TypedBodyHead, Named> =
@@ -61,12 +64,12 @@ pub struct TypedBodyHead {
 pub enum TypedForkState {
     Open,
     Merged {
-        by: EntityId,
+        by: BodyActor,
         at: u64,
         head: Vec<u8>,
     },
     Discarded {
-        by: EntityId,
+        by: BodyActor,
         at: u64,
     },
 }
@@ -78,7 +81,7 @@ pub enum TypedForkState {
 pub struct TypedBodyFork {
     pub entity: EntityId,
     pub fork: EntityId,
-    pub opener: EntityId,
+    pub opener: BodyActor,
     pub base: Vec<u8>,
     pub commits: u64,
     pub opened_at: u64,
@@ -215,7 +218,7 @@ pub(crate) fn open_typed_body_fork_in_txn(
     let fork = TypedBodyFork {
         entity: *entity,
         fork: vault.new_entity_id()?,
-        opener: actor.entity_ref(),
+        opener: BodyActor::Actor(actor.entity_ref()),
         base: head.frontier,
         commits: 0,
         opened_at: vault.now_recorded_at(),
@@ -241,7 +244,7 @@ pub(crate) fn edit_typed_body_fork_in_txn<T>(
     let mut record = FORKS
         .get(&vault.store, txn, &key)?
         .ok_or(Error::EntityNotFound)?;
-    if record.state != TypedForkState::Open || record.opener != writer.actor.entity_ref() {
+    if record.state != TypedForkState::Open || !record.opener.is(writer.actor.entity_ref()) {
         return Err(invalid("only the opener writes to its open fork"));
     }
     let doc = load(FORK_DOCS.get(&vault.store, txn, &key)?, None)?;
@@ -298,7 +301,7 @@ pub(crate) fn merge_typed_body_fork_in_txn(
         return Err(invalid("the fork is not open"));
     }
     // "The opener's lineage and its forks never settle their own proposal."
-    if record.opener == actor.entity_ref() {
+    if record.opener.is(actor.entity_ref()) {
         return Err(invalid("a fork's opener cannot merge it"));
     }
     validate_actor(vault, txn, actor)?;
@@ -322,7 +325,7 @@ pub(crate) fn merge_typed_body_fork_in_txn(
     DOCS.put(&vault.store, txn, entity, &snapshot(&live)?)?;
     HEADS.put(&vault.store, txn, entity, &head)?;
     record.state = TypedForkState::Merged {
-        by: actor.entity_ref(),
+        by: BodyActor::Actor(actor.entity_ref()),
         at: vault.now_recorded_at(),
         head: head.frontier.clone(),
     };
@@ -376,7 +379,7 @@ pub(crate) fn merge_admitted_typed_body_fork_in_txn(
     DOCS.put(&vault.store, txn, entity, &snapshot(&live)?)?;
     HEADS.put(&vault.store, txn, entity, &head)?;
     record.state = TypedForkState::Merged {
-        by: actor.entity_ref(),
+        by: BodyActor::Actor(actor.entity_ref()),
         at: vault.now_recorded_at(),
         head: head.frontier.clone(),
     };
@@ -401,7 +404,7 @@ pub(crate) fn discard_typed_body_fork_in_txn(
         return Err(invalid("the fork is not open"));
     }
     record.state = TypedForkState::Discarded {
-        by: actor.entity_ref(),
+        by: BodyActor::Actor(actor.entity_ref()),
         at: vault.now_recorded_at(),
     };
     FORKS.put(&vault.store, txn, &key, &record)?;

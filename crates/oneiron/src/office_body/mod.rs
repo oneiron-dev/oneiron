@@ -25,6 +25,7 @@
 //! proposal artifact until the deck export gate opens. Erasing the artifact
 //! erases its office rows ([`erase_in_txn`]).
 
+mod actor_erase;
 mod consent;
 mod docx;
 mod fork;
@@ -33,6 +34,9 @@ mod pptx;
 mod verbs;
 mod xlsx;
 
+pub(crate) use actor_erase::{
+    erase_export_actor_in_txn, erase_fork_actor_in_txn, erase_proposal_actor_in_txn,
+};
 pub(crate) use consent::MergeAdmission;
 pub use consent::{
     AnsweringAuthority, BundleVerdict, MemberAnswer, MemberVerdict, OFFICE_BODY_EDIT_CLASS,
@@ -74,9 +78,9 @@ use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::typed_body::{
-    TypedBodyFork, TypedBodyHead, TypedBodyWriter, TypedForkState, birth_typed_body_in_txn,
-    discard_typed_body_fork_in_txn, edit_typed_body_fork_in_txn, edit_typed_body_in_txn,
-    open_typed_body_fork_in_txn, typed_body_fork_in_txn, typed_body_in_txn,
+    BodyActor, TypedBodyFork, TypedBodyHead, TypedBodyWriter, TypedForkState,
+    birth_typed_body_in_txn, discard_typed_body_fork_in_txn, edit_typed_body_fork_in_txn,
+    edit_typed_body_in_txn, open_typed_body_fork_in_txn, typed_body_fork_in_txn, typed_body_in_txn,
 };
 use crate::write_envelope::WriteActor;
 use heed::{RoTxn, RwTxn};
@@ -157,12 +161,12 @@ pub struct OfficeBodyEdit {
 pub enum ForkState {
     Open,
     Merged {
-        by: EntityId,
+        by: BodyActor,
         at: u64,
         head: Vec<u8>,
     },
     Discarded {
-        by: EntityId,
+        by: BodyActor,
         at: u64,
     },
 }
@@ -173,7 +177,7 @@ pub enum ForkState {
 pub struct OfficeBodyFork {
     pub id: EntityId,
     pub artifact: EntityId,
-    pub opener: EntityId,
+    pub opener: BodyActor,
     pub base: Vec<u8>,
     pub commits: u64,
     pub opened_at: u64,
@@ -241,7 +245,8 @@ pub struct OfficeBodyExportRecord {
     pub version: u64,
     pub frontier: Vec<u8>,
     pub source_version: u64,
-    pub actor: EntityId,
+    pub actor: BodyActor,
+    /// The author the export showed; empty once its actor was erased.
     pub author: String,
     pub at: u64,
     pub changes: u64,
@@ -727,7 +732,7 @@ impl Vault {
                 version: version.version,
                 frontier: head.frontier.clone(),
                 source_version: head.source_version,
-                actor: request.actor.entity_ref(),
+                actor: BodyActor::Actor(request.actor.entity_ref()),
                 author: request.author.to_owned(),
                 at,
                 changes: changes as u64,
