@@ -340,6 +340,11 @@ pub struct EffectorBudgetRead {
     /// Key budget rows and, when a charter is stamped, the compiled-cap rows
     /// at `0x8000 | i` (GOV-10) — ascending row index.
     pub rows: Vec<EffectorBudgetRowRead>,
+    /// A per-grant key's catalog pool (ONE-1794): the catalog key's own read,
+    /// under its `key_ref` and with its own row indices, beside this key's.
+    /// `None` for any other key, and when this key's charge left the pool to
+    /// another key of the same effect. A pool read has no pool of its own.
+    pub pool: Option<Box<EffectorBudgetRead>>,
 }
 
 /// The budget outcome the gate hands back to dispatch when a governing key's
@@ -358,6 +363,43 @@ pub struct EffectorBudgetCharge {
     /// Threshold events fired by this charge, for the host steering queue
     /// (same contract as `BudgetAdmission.ladder_events`).
     pub ladder_events: Vec<BudgetLadderEvent>,
+    /// The catalog pool's side of a per-grant key's charge (ONE-1794). Its
+    /// post-debit read rides `read.pool`. `None` for any other key, and when
+    /// the pool was charged through another key of the same effect.
+    pub pool: Option<EffectorPoolCharge>,
+}
+
+/// What one charge did to a per-grant key's catalog pool (ONE-1794). It is
+/// kept under the catalog key's ref because its row indices are the catalog
+/// key's own: a `BudgetLadderEvent` names a row but no key, so the pool's
+/// events never join the per-grant key's `ladder_events`. The intent ledger's
+/// `BudgetChargeMarker.key_ref` stays the per-grant key; recovery never
+/// reads this.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectorPoolCharge {
+    /// The catalog key whose rows hold the pool.
+    pub key_ref: EntityId,
+    /// 1 iff ≥1 of the pool's Sends-dimension rows debited, else 0.
+    pub sends_debit: u64,
+    /// The pool's `row_index` values matched by this dispatch.
+    pub matched_rows: Vec<u16>,
+    /// Threshold events fired on the pool's rows by this charge, for the
+    /// same steering queue as the per-grant key's.
+    pub ladder_events: Vec<BudgetLadderEvent>,
+}
+
+impl EffectorBudgetCharge {
+    /// Folds the catalog pool's own charge into this per-grant key's: the
+    /// pool's read rides `read.pool`, the rest `pool`.
+    fn meet_pool(&mut self, pool: Self) {
+        self.read.pool = Some(Box::new(pool.read));
+        self.pool = Some(EffectorPoolCharge {
+            key_ref: pool.key_ref,
+            sends_debit: pool.sends_debit,
+            matched_rows: pool.matched_rows,
+            ladder_events: pool.ladder_events,
+        });
+    }
 }
 
 /// Caller-declared observations that ride along with a dispatch batch.
@@ -381,6 +423,11 @@ pub struct ConnectorKeyDispatchTally {
     pub admitted: u64,
     pub refused: u64,
     pub ladder_events: Vec<BudgetLadderEvent>,
+    /// The catalog key of the pool this batch's per-grant key met (ONE-1794).
+    pub pool_key_ref: Option<EntityId>,
+    /// Ladder events the batch fired on that pool's rows. Their row indices
+    /// are the catalog key's own, so they never join `ladder_events`.
+    pub pool_ladder_events: Vec<BudgetLadderEvent>,
     /// The single engine-clock sample this batch was accounted against: every
     /// window selection, usage entry, suspension stamp, and op record in the
     /// batch carries it.
@@ -388,6 +435,17 @@ pub struct ConnectorKeyDispatchTally {
     /// Echo of `ConnectorDispatchTelemetry::caller_observed_at`. Telemetry
     /// only — it had no effect on any number above.
     pub caller_observed_at: Option<u64>,
+}
+
+impl ConnectorKeyDispatchTally {
+    /// Takes one charge's ladder events, the pool's under its catalog key.
+    pub(super) fn take_ladder_events(&mut self, charge: EffectorBudgetCharge) {
+        self.ladder_events.extend(charge.ladder_events);
+        if let Some(pool) = charge.pool {
+            self.pool_key_ref = Some(pool.key_ref);
+            self.pool_ladder_events.extend(pool.ladder_events);
+        }
+    }
 }
 
 /// Outcome of one budget-stage evaluation over a key's matched rows.
@@ -404,6 +462,14 @@ pub(crate) enum EffectorBudgetChargeOutcome {
         on_exhaust: EffectorBudgetOnExhaust,
         charge: EffectorBudgetCharge,
     },
+}
+
+impl EffectorBudgetChargeOutcome {
+    fn charge_mut(&mut self) -> &mut EffectorBudgetCharge {
+        match self {
+            Self::NoRows(charge) | Self::Charged(charge) | Self::Exhausted { charge, .. } => charge,
+        }
+    }
 }
 
 fn percent_used(used: u64, limit: u64) -> u64 {
@@ -563,7 +629,61 @@ pub(super) fn budget_read_from_states(
             .iter()
             .map(|state| budget_row_read(state.row_index, state.budget, &state.usage))
             .collect(),
+        pool: None,
     }
+}
+
+/// The read of a per-grant key's catalog pool at `now` (ONE-1794): the
+/// catalog key's own rows, no debit. `None` for any other key.
+pub(super) fn budget_pool_read_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key: &ConnectorKeyRecord,
+    now: u64,
+) -> Result<Option<Box<EffectorBudgetRead>>> {
+    let Some((catalog_id, catalog, _)) = catalog_budget_pool_in_txn(store, txn, key)? else {
+        return Ok(None);
+    };
+    let states = load_budget_row_states(store, txn, &catalog_id, &catalog, None, false, now)?;
+    Ok(Some(Box::new(budget_read_from_states(
+        &catalog_id,
+        &catalog,
+        &states,
+    ))))
+}
+
+/// One key's charge as evaluated and never applied: its read and matched
+/// rows, no debit and no ladder events (M5b carry-read-only).
+fn evaluated_charge(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key_id: &EntityId,
+    record: &ConnectorKeyRecord,
+    effect_channel: &str,
+    send_like: bool,
+    now: u64,
+) -> Result<EffectorBudgetCharge> {
+    let states = load_budget_row_states(
+        store,
+        txn,
+        key_id,
+        record,
+        Some(effect_channel),
+        send_like,
+        now,
+    )?;
+    Ok(EffectorBudgetCharge {
+        key_ref: *key_id,
+        sends_debit: 0,
+        read: budget_read_from_states(key_id, record, &states),
+        matched_rows: states
+            .iter()
+            .filter(|state| state.matched)
+            .map(|state| state.row_index)
+            .collect(),
+        ladder_events: Vec::new(),
+        pool: None,
+    })
 }
 
 /// The shared pool a per-grant key's charges also meet: its catalog
@@ -694,7 +814,9 @@ fn preflight_key_budgets(
 
 /// Charges one admitted external effect to a key's budget rows and, for a
 /// per-grant key, to its catalog's shared pool: both are evaluated before
-/// either debits. The charge and its read stay the key's own.
+/// either debits. The charge and its read stay the key's own; the pool's
+/// side rides `charge.pool` and `charge.read.pool` under the catalog key's
+/// ref (ONE-1794).
 ///
 /// An exhausted catalog pool comes back as `Exhausted` with `Refuse`, after
 /// the catalog row's own on-exhaust has run: a `Suspend` row suspends the
@@ -721,7 +843,7 @@ pub(crate) fn charge_effector_budgets(
         let held = on_exhaust == EffectorBudgetOnExhaust::Suspend
             && catalog.status == ConnectorKeyStatus::Active;
         if held {
-            suspend_connector_key_in_txn(
+            catalog = suspend_connector_key_in_txn(
                 store,
                 wtxn,
                 &catalog_id,
@@ -730,38 +852,33 @@ pub(crate) fn charge_effector_budgets(
                 now,
             )?;
         }
-        let states = load_budget_row_states(
+        let mut charge =
+            evaluated_charge(store, wtxn, key_id, key, effect_channel, send_like, now)?;
+        if held {
+            charge.read.status = ConnectorKeyStatus::Suspended;
+        }
+        charge.meet_pool(evaluated_charge(
             store,
             wtxn,
-            key_id,
-            key,
-            Some(effect_channel),
+            &catalog_id,
+            &catalog,
+            &channel,
             send_like,
             now,
-        )?;
-        let mut read = budget_read_from_states(key_id, key, &states);
-        if held {
-            read.status = ConnectorKeyStatus::Suspended;
-        }
+        )?);
         return Ok(EffectorBudgetChargeOutcome::Exhausted {
             row_index,
             on_exhaust: EffectorBudgetOnExhaust::Refuse,
-            charge: EffectorBudgetCharge {
-                key_ref: *key_id,
-                sends_debit: 0,
-                read,
-                matched_rows: states
-                    .iter()
-                    .filter(|state| state.matched)
-                    .map(|state| state.row_index)
-                    .collect(),
-                ladder_events: Vec::new(),
-            },
+            charge,
         });
     }
-    let outcome = charge_key_budgets(store, wtxn, key_id, key, effect_channel, send_like, now)?;
-    if !matches!(outcome, EffectorBudgetChargeOutcome::Exhausted { .. })
-        && let EffectorBudgetChargeOutcome::Exhausted { .. } = charge_key_budgets(
+    let mut outcome = charge_key_budgets(store, wtxn, key_id, key, effect_channel, send_like, now)?;
+    let pool = if matches!(outcome, EffectorBudgetChargeOutcome::Exhausted { .. }) {
+        // The key's own row refused first, so nothing debits, the pool
+        // included: echo the pool as evaluated.
+        evaluated_charge(store, wtxn, &catalog_id, &catalog, &channel, send_like, now)?
+    } else {
+        match charge_key_budgets(
             store,
             wtxn,
             &catalog_id,
@@ -769,14 +886,19 @@ pub(crate) fn charge_effector_budgets(
             &channel,
             send_like,
             now,
-        )?
-    {
-        // Preflighted above under this writer: fail the transaction rather
-        // than persist the key's debit alone.
-        return Err(Error::InvariantViolation(
-            "catalog budget changed inside the charge",
-        ));
-    }
+        )? {
+            EffectorBudgetChargeOutcome::NoRows(pool)
+            | EffectorBudgetChargeOutcome::Charged(pool) => pool,
+            // Preflighted above under this writer: fail the transaction
+            // rather than persist the key's debit alone.
+            EffectorBudgetChargeOutcome::Exhausted { .. } => {
+                return Err(Error::InvariantViolation(
+                    "catalog budget changed inside the charge",
+                ));
+            }
+        }
+    };
+    outcome.charge_mut().meet_pool(pool);
     Ok(outcome)
 }
 
@@ -817,6 +939,7 @@ fn charge_key_budgets(
             read,
             matched_rows,
             ladder_events: Vec::new(),
+            pool: None,
         }));
     }
 
@@ -849,6 +972,7 @@ fn charge_key_budgets(
                 read,
                 matched_rows,
                 ladder_events: Vec::new(),
+                pool: None,
             },
         });
     }
@@ -904,5 +1028,6 @@ fn charge_key_budgets(
         read,
         matched_rows,
         ladder_events,
+        pool: None,
     }))
 }

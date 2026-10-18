@@ -6,8 +6,8 @@ use crate::side_table::{self, Raw, SideTable};
 use super::meter::{
     CONNECTOR_KEY_CHARTER_ROW_BASE, ConnectorDispatchTelemetry, ConnectorKeyDispatchTally,
     EffectorBudgetCharge, EffectorBudgetChargeOutcome, EffectorBudgetRead, EffectorBudgetRowRead,
-    budget_exhausted_reason, budget_read_from_states, budget_row_read, charge_effector_budgets,
-    load_budget_row_states,
+    budget_exhausted_reason, budget_pool_read_in_txn, budget_read_from_states, budget_row_read,
+    charge_effector_budgets, load_budget_row_states,
 };
 use super::record::{
     ConnectorKeyStatus, EffectorBudgetDimension, EffectorBudgetOnExhaust, invalid_body,
@@ -58,8 +58,8 @@ pub enum ConnectorKeySendAdmission {
     Admitted(EffectorBudgetCharge),
     /// This logical send already debited the key. Nothing was written and
     /// nothing was charged: `sends_debit` is 0, `matched_rows` and
-    /// `ladder_events` are empty, and the carried `read` is a live read-only
-    /// echo of the key's meter.
+    /// `ladder_events` are empty, `pool` is `None`, and the carried `read` is
+    /// a live read-only echo of the key's meter (its catalog pool's too).
     Replayed(EffectorBudgetCharge),
     /// The send was refused. NO identity row is written, so the refusal does
     /// not poison a later admission of the same logical send.
@@ -109,7 +109,8 @@ impl Vault {
     /// threshold firing, no usage-row writes. Liveness (window rollover,
     /// rolling prune/re-arm) is computed on the read, never stored. Rows
     /// include the key budget rows and, when a charter is stamped (GOV-10),
-    /// the compiled-cap rows at `0x8000 | i`.
+    /// the compiled-cap rows at `0x8000 | i`. A per-grant key's read carries
+    /// its catalog pool's read as `pool` (ONE-1794).
     pub fn effector_budget_read(
         &self,
         connector: &str,
@@ -128,7 +129,9 @@ impl Vault {
         let now = self.store.clock.now_recorded_at();
         let states =
             load_budget_row_states(&self.store, &rtxn, &key_id, &record, None, false, now)?;
-        Ok(Some(budget_read_from_states(&key_id, &record, &states)))
+        let mut read = budget_read_from_states(&key_id, &record, &states);
+        read.pool = budget_pool_read_in_txn(&self.store, &rtxn, &record, now)?;
+        Ok(Some(read))
     }
 
     /// Applies the existing effector-budget charger sequentially to a batch
@@ -207,6 +210,8 @@ impl Vault {
             admitted: 0,
             refused: 0,
             ladder_events: Vec::new(),
+            pool_key_ref: None,
+            pool_ladder_events: Vec::new(),
             accounted_at: accounting_now,
             caller_observed_at: telemetry.caller_observed_at,
         };
@@ -228,7 +233,7 @@ impl Vault {
                 EffectorBudgetChargeOutcome::NoRows(charge)
                 | EffectorBudgetChargeOutcome::Charged(charge) => {
                     tally.admitted = tally.admitted.saturating_add(1);
-                    tally.ladder_events.extend(charge.ladder_events);
+                    tally.take_ladder_events(charge);
                 }
                 EffectorBudgetChargeOutcome::Exhausted {
                     row_index,
@@ -255,7 +260,7 @@ impl Vault {
                             accounting_now,
                         )?;
                     }
-                    tally.ladder_events.extend(charge.ladder_events);
+                    tally.take_ladder_events(charge);
                     tally.refused = tally.refused.saturating_add(count - i);
                     break;
                 }
@@ -355,13 +360,15 @@ impl Vault {
                 false,
                 accounting_now,
             )?;
-            let read = budget_read_from_states(id, &record, &states);
+            let mut read = budget_read_from_states(id, &record, &states);
+            read.pool = budget_pool_read_in_txn(&self.store, &wtxn, &record, accounting_now)?;
             return Ok(ConnectorKeySendAdmission::Replayed(EffectorBudgetCharge {
                 key_ref: *id,
                 sends_debit: 0,
                 read,
                 matched_rows: Vec::new(),
                 ladder_events: Vec::new(),
+                pool: None,
             }));
         }
 

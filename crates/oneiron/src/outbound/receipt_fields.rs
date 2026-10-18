@@ -316,6 +316,7 @@ pub(super) fn dispatch_result_receipt(
             resolution,
             effector_budget: None,
             budget_ladder_events: Vec::new(),
+            budget_pool: None,
         };
     }
     let window_decision = admission.map(|stage| &stage.window_decision);
@@ -417,6 +418,31 @@ pub(super) fn dispatch_result_receipt(
                 .fields
                 .insert("budget".to_owned(), binding_remaining.to_string());
         }
+        // ONE-1794: a per-grant key's catalog pool, beside the key's own
+        // echo and under the catalog key's ref. Stamped only when the pool's
+        // stage ran; `budget_debit` stays the key's own, so the receipt
+        // projections never count one send twice.
+        if let Some(pool) = charge.pool.as_ref() {
+            receipt.fields.insert(
+                "budget_pool_key_ref".to_owned(),
+                format!("ckey:{}", pool.key_ref.to_hex()),
+            );
+            receipt
+                .fields
+                .insert("budget_pool_debit".to_owned(), pool.sends_debit.to_string());
+            let pool_remaining = charge.read.pool.as_ref().and_then(|read| {
+                read.rows
+                    .iter()
+                    .filter(|row| pool.matched_rows.contains(&row.row_index))
+                    .map(|row| row.remaining)
+                    .min()
+            });
+            if let Some(pool_remaining) = pool_remaining {
+                receipt
+                    .fields
+                    .insert("budget_pool".to_owned(), pool_remaining.to_string());
+            }
+        }
     }
     receipt.fields.insert(
         "channel_call".to_owned(),
@@ -507,9 +533,9 @@ pub(super) fn dispatch_result_receipt(
         context.append_to_fields(&mut receipt.fields);
     }
 
-    let (effector_budget, budget_ladder_events) = match effector_charge {
-        Some(charge) => (Some(charge.read), charge.ladder_events),
-        None => (None, Vec::new()),
+    let (effector_budget, budget_ladder_events, budget_pool) = match effector_charge {
+        Some(charge) => (Some(charge.read), charge.ladder_events, charge.pool),
+        None => (None, Vec::new(), None),
     };
     OutboundDispatchResult {
         outcome,
@@ -520,5 +546,6 @@ pub(super) fn dispatch_result_receipt(
         resolution,
         effector_budget,
         budget_ladder_events,
+        budget_pool,
     }
 }
