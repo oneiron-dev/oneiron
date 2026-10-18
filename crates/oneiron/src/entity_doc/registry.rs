@@ -186,6 +186,19 @@ impl Vault {
         Ok(raw[crate::batch::ENTITY_METADATA_HEADER_LEN..].to_vec())
     }
 
+    /// The live text and metadata of `entity`'s document, read in the
+    /// caller's `txn`: no new snapshot and no cache, so they agree with the
+    /// rest of that read. The caller admits `entity` first.
+    pub(crate) fn entity_live_text_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        entity: &EntityId,
+    ) -> Result<(String, std::collections::BTreeMap<String, rmpv::Value>)> {
+        let head = storage::head(&self.store, txn, entity)?;
+        let live = storage::load(&self.store, txn, &head)?;
+        Ok((live.text(), live.metadata()?))
+    }
+
     /// Reads authoritative live text, lazily restoring a cold doc's snapshot
     /// before its ordered updates. A deleted entity cannot resolve from cache.
     pub fn entity_text(&self, entity: &EntityId) -> Result<String> {

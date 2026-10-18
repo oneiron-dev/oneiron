@@ -143,6 +143,19 @@ pub(crate) fn carried_born_with(vault: &Vault, id: &EntityId) -> Result<BornWith
         .unwrap_or_default())
 }
 
+/// [`carried_born_with`] in the caller's `txn`. The caller admits `id`
+/// first: the import-time check admitted the row for this vault, not for
+/// whoever shares it on.
+pub(crate) fn carried_born_with_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<BornWith> {
+    Ok(CARRIED
+        .get_lenient(&vault.store, txn, id)?
+        .unwrap_or_default())
+}
+
 /// Drops the text a copy carried for `id` when its row is erased; a no-op
 /// for any other row.
 pub(crate) fn erase_carried_born_with_in_txn(
