@@ -56,9 +56,6 @@ const WRONG_OWNER_ITEM_VERB: &str = "vault.weave.owner.item.wrong";
 const CONCERN_OUTCOME_VERB: &str = "self.inbox.concern.outcome";
 /// The skill file whose body is the instruction.
 const SKILL_FILE: &str = "SKILL.md";
-/// The most sections a plan holds, and summary lines per section.
-const MAX_PLAN_SECTIONS: usize = 64;
-const MAX_SUMMARY_LINES: usize = 16;
 
 fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(format!("weave lens: {reason}"))
@@ -157,16 +154,9 @@ fn required_text(value: &str, what: &str) -> Result<LensText> {
 
 impl WeaveLensPlan {
     /// The plan cites every admitted item of `report` exactly once, by key,
-    /// and nothing else; every text is a non-empty lens text.
+    /// and nothing else; every text is a non-empty lens text. A plan holds
+    /// however many sections and summary lines (rule 5).
     pub fn validate(&self, report: &WeaveReport) -> Result<()> {
-        if self.sections.len() > MAX_PLAN_SECTIONS
-            || self
-                .sections
-                .iter()
-                .any(|section| section.summary.len() > MAX_SUMMARY_LINES)
-        {
-            return Err(invalid("the plan is too large"));
-        }
         required_text(&self.title, "title")?;
         required_text(&self.wrong_label, "wrong label")?;
         let items = keyed_items(report);

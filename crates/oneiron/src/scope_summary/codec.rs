@@ -1,8 +1,8 @@
 //! Strict, versioned scope-summary MessagePack codec (distinct from epochs).
 
+use crate::EntityId;
 use crate::conversation_dag::{ScopePath, ScopeSelector};
 use crate::error::{Error, RecordError, Result};
-use crate::{EntityId, limits::MAX_ANCESTOR_DEPTH};
 use rmpv::Value;
 use std::collections::HashSet;
 
@@ -21,7 +21,7 @@ pub struct ScopeSummaryBody {
     pub text: String,
     /// Validated producer's 32-hex entity id.
     pub actor: String,
-    /// Complete, unique record list, independent of the edge cap.
+    /// Complete, unique record list.
     pub covers: Vec<EntityId>,
     /// Mint timestamp in Unix seconds.
     pub minted_at: u64,
@@ -150,9 +150,6 @@ fn validate(body: &ScopeSummaryBody) -> Result<()> {
         2 if body.memo.is_some() => {}
         _ => return Err(invalid("unsupported scope summary version")),
     }
-    if body.messages.len() > MAX_ANCESTOR_DEPTH {
-        return Err(invalid("summary messages exceed walk limit"));
-    }
     let unique: HashSet<_> = body.messages.iter().map(|message| message.id).collect();
     if unique.len() != body.messages.len() {
         return Err(invalid("duplicate source message"));
@@ -161,9 +158,6 @@ fn validate(body: &ScopeSummaryBody) -> Result<()> {
         return Err(invalid("summary text is blank"));
     }
     EntityId::from_hex(&body.actor).map_err(|_| invalid("invalid summary actor"))?;
-    if body.covers.len() > MAX_ANCESTOR_DEPTH {
-        return Err(invalid("summary covers exceed walk limit"));
-    }
     let unique: HashSet<_> = body.covers.iter().collect();
     if unique.len() != body.covers.len() {
         return Err(invalid("duplicate covered record"));
@@ -274,17 +268,11 @@ pub fn decode_scope_summary_body(bytes: &[u8]) -> Result<ScopeSummaryBody> {
     let covers = v[4]
         .as_array()
         .ok_or_else(|| invalid("covers must be an array"))?;
-    if covers.len() > MAX_ANCESTOR_DEPTH {
-        return Err(invalid("summary covers exceed walk limit"));
-    }
     let (messages, memo) = match (v.get(6), v.get(7)) {
         (Some(messages), Some(memo)) => {
             let messages = messages
                 .as_array()
                 .ok_or_else(|| invalid("messages must be an array"))?;
-            if messages.len() > MAX_ANCESTOR_DEPTH {
-                return Err(invalid("summary messages exceed walk limit"));
-            }
             let messages = messages
                 .iter()
                 .map(|pair| match pair.as_array().map(Vec::as_slice) {

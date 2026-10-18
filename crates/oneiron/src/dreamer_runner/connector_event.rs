@@ -60,7 +60,7 @@ impl ConnectorEventWake {
             &event.predicate,
         ]
         .iter()
-        .any(|s| s.trim().is_empty() || s.len() > 256 || s.contains('\0'))
+        .any(|s| s.trim().is_empty() || s.contains('\0'))
         {
             return Err(invalid());
         }

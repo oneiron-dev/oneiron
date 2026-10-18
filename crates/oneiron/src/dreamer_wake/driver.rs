@@ -50,31 +50,6 @@ pub const DREAMER_CANCELLED_PARK_REASON: &str = "wake-pass cancelled";
 /// attempt and refunds its reservation before the error propagates.
 pub const DREAMER_EXECUTOR_ERROR_PARK_REASON: &str = "executor error";
 
-/// Byte ceiling the runner store enforces on park reasons and progress
-/// messages (`MAX_DREAMER_PARK_REASON_LEN` / `MAX_DREAMER_PROGRESS_MESSAGE_LEN`
-/// in `dreamer_runner`, both 512 — private to that module, so mirrored here;
-/// `executor_error_with_oversized_display_still_parks` pins the mirror
-/// against the store's real validation).
-pub(super) const MAX_WAKE_PARK_REASON_BYTES: usize = 512;
-
-/// Clamps a park/progress reason to the runner store's validation ceiling,
-/// cutting at a UTF-8 character boundary. An unbounded reason (typically an
-/// executor error `Display`) must never fail park validation — a failed park
-/// after admission would leave the attempt leased and is exactly the leak the
-/// executor-error arm exists to close (ONE-1683). Only the durable reason
-/// string is shortened; the full error still propagates to the caller.
-pub(super) fn clamp_park_reason(mut reason: String) -> String {
-    if reason.len() <= MAX_WAKE_PARK_REASON_BYTES {
-        return reason;
-    }
-    let mut cut = MAX_WAKE_PARK_REASON_BYTES;
-    while !reason.is_char_boundary(cut) {
-        cut -= 1;
-    }
-    reason.truncate(cut);
-    reason
-}
-
 /// One `Pending` poll with an immediate self-wake — the runtime-agnostic
 /// equivalent of `tokio::task::yield_now` (the engine takes no runtime
 /// dependency). [`DreamerWakeDriver::run_wake_pass`] awaits this at every
@@ -757,14 +732,10 @@ impl<'a> DreamerWakeDriver<'a> {
                                 child_attempt: attempt_id,
                                 now: input.now,
                             })?;
-                        // The durable reason is clamped to the store's
-                        // validation ceiling: an oversized error Display
-                        // failing park validation here would reintroduce
-                        // the leaked-lease bug this arm fixes. The full
-                        // error propagates below untouched.
-                        let reason = clamp_park_reason(format!(
-                            "{DREAMER_EXECUTOR_ERROR_PARK_REASON}: {error}"
-                        ));
+                        // The durable reason keeps the whole error
+                        // Display; the full error propagates below
+                        // untouched.
+                        let reason = format!("{DREAMER_EXECUTOR_ERROR_PARK_REASON}: {error}");
                         if self.store.parked_attempt(attempt_id)?.is_some() {
                             // One park-owner: the step layer already parked
                             // this attempt (under a non-hard-cut reason) inside
@@ -879,7 +850,6 @@ impl<'a> DreamerWakeDriver<'a> {
                     // The in-flight call finished and was charged. Stop the run
                     // at this boundary without refunding its real spend or
                     // publishing post-deadline output.
-                    let reason = clamp_park_reason(reason);
                     self.store.settle_checkpoint_budget(
                         SettleDreamerBudget {
                             budget_id: line.clone(),
@@ -905,11 +875,6 @@ impl<'a> DreamerWakeDriver<'a> {
                     report.parked += 1;
                 }
                 DreamerAttemptExecution::Park { reason, cause } => {
-                    // Executor-authored reasons get the same clamp as the
-                    // error arm's: park validation failing on length here
-                    // would propagate AFTER the refund but BEFORE the park,
-                    // leaving the attempt leased.
-                    let reason = clamp_park_reason(reason);
                     // The lease is not settled as spent — refund the
                     // reservation.
                     self.store

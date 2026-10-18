@@ -1101,11 +1101,13 @@ impl ScopedRead<'_> {
         let lens = wire.lens.take();
         let lens_refused = wire.lens_refused.take();
         let report = wire.into_report()?;
-        if report.value.sections.len() > allowed.max_sections
-            || report.value.sections.iter().any(|section| {
-                !allowed.sections.contains(section.kind.policy_name())
-                    || section.items.len() > allowed.max_rows
-            })
+        // A saved digest is served whole, however many sections and items it
+        // holds (rule 5).
+        if report
+            .value
+            .sections
+            .iter()
+            .any(|section| !allowed.sections.contains(section.kind.policy_name()))
             || !sources_live_in_txn(&self.vault.store, &txn, &report.value)?
         {
             return Ok(None);

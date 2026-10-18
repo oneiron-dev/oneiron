@@ -511,6 +511,7 @@ pub(crate) use replica::{
 mod document_tests;
 #[cfg(all(test, feature = "sync"))]
 mod sync_tests;
+pub(crate) use document::MAX_NOTE_BYTES;
 pub use document::{NoteDocumentView, NoteEdit, NoteEditOutcome, NotePin, NoteSpanResolution};
 
 #[cfg(test)]

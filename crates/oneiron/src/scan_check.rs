@@ -128,11 +128,20 @@ pub enum EngineScan {
     /// The soft-confirm notice deliveries one retry sweep's page reads,
     /// settled ones included.
     AskSoftConfirmDeliveryRows,
+    /// One predicate's claims in the claim projection index, which a weave
+    /// report reads whole.
+    PredicateClaimRows,
+    /// Every edge in the vault, which a vault-wide walk (the owner weave
+    /// report's links) reads.
+    VaultEdgeRows,
+    /// The Dreamer prefilter's skip and round receipt rows a receipt query
+    /// walks.
+    PrefilterReceiptRows,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 39] = [
+    pub const ALL: [Self; 42] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -172,6 +181,9 @@ impl EngineScan {
         Self::PendingCommStops,
         Self::PartyContactClaims,
         Self::AskSoftConfirmDeliveryRows,
+        Self::PredicateClaimRows,
+        Self::VaultEdgeRows,
+        Self::PrefilterReceiptRows,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -225,6 +237,9 @@ impl EngineScan {
             Self::PendingCommStops => "pending_comm_stops",
             Self::PartyContactClaims => "party_contact_claims",
             Self::AskSoftConfirmDeliveryRows => "ask_soft_confirm_delivery_rows",
+            Self::PredicateClaimRows => "predicate_claim_rows",
+            Self::VaultEdgeRows => "vault_edge_rows",
+            Self::PrefilterReceiptRows => "prefilter_receipt_rows",
         }
     }
 
@@ -269,6 +284,9 @@ impl EngineScan {
             Self::PendingCommStops => 64,
             Self::PartyContactClaims => 65,
             Self::AskSoftConfirmDeliveryRows => 66,
+            Self::PredicateClaimRows => 67,
+            Self::VaultEdgeRows => 68,
+            Self::PrefilterReceiptRows => 69,
         }]
     }
 }
