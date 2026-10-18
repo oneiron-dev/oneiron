@@ -61,6 +61,7 @@ mod project_conversation;
 mod project_proposal;
 mod resident;
 mod room_join;
+mod run_objectives;
 mod spend_calibration;
 mod spend_lease;
 mod spend_record;

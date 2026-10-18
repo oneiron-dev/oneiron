@@ -22,6 +22,10 @@ side_tables! {
     /// ask and diagnostic it answered, the approving owner and when, the approval's fingerprint
     /// and id, and the successor attempt it enqueued. Key: id16(failed attempt).
     AGENT_DISPATCH_PROMPT_INJECT: VaultMeta b"agent.dispatch.prompt_inject.v1\0" Named Engine;
+    /// OF-544: the confession objectives one claimed agent run was asked, chosen at its first
+    /// claim and read back at every later one (a continued run inherits its predecessor's). Key:
+    /// id16(attempt).
+    AGENT_DISPATCH_RUN_OBJECTIVES: VaultMeta b"agent.dispatch.run_objectives.v1\0" Named Engine;
     /// Approved board-widened context slice override recorded for one parent attempt. Key: id16.
     AGENT_DISPATCH_WIDEN_SLICE: VaultMeta b"agent.dispatch.slice.v1\0" LegacyJson Authored;
     /// One node of a launch's spend lease tree (root launch or child attempt). Key: string.
