@@ -1,6 +1,7 @@
 //! Queue-transition guards and single-transition helpers (validate, scope-bind, fail/retry once).
 
 use std::num::NonZeroU16;
+use std::sync::Arc;
 
 use crate::Vault;
 use crate::agent_dispatch::{AGENT_DISPATCH_ATTEMPT_TYPE, decode_agent_dispatch_input};
@@ -8,6 +9,7 @@ use crate::attempt_queue::{AttemptRecord, FailAttempt, FailOutcome, RetryAttempt
 use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::work_line::TaskWorkTurn;
 
 use super::blocked_reports::{BlockedReportRef, BlockedReportVerification, verify_blocked_reports};
 use super::classify::{TypedFailureEvidence, TypedFailureVerdict};
@@ -104,10 +106,15 @@ pub(crate) fn verified_blocked_reports(
 
 /// The single terminal transition. `AlreadyFailed` means a concurrent failure
 /// input won it, so the loser routes NOTHING — no healer dispatch, no card, no
-/// surface — and returns the existing typed transition error.
-pub(super) fn fail_once(vault: &Vault, input: &HandleAttemptFailure) -> Result<AttemptRecord> {
+/// surface — and returns the existing typed transition error. `turn` is the
+/// task-work turn the ladder took for the try's TASK report (Rule 5).
+pub(super) fn fail_once(
+    vault: &Vault,
+    input: &HandleAttemptFailure,
+    turn: Option<&Arc<TaskWorkTurn>>,
+) -> Result<AttemptRecord> {
     let mut txn = vault.store.env.write_txn()?;
-    let failed = fail_once_in_txn(vault, &mut txn, input)?;
+    let failed = fail_once_in_txn(vault, &mut txn, input, turn)?;
     txn.commit()?;
     vault.store.notify_attempt_observers();
     Ok(failed)
@@ -117,6 +124,7 @@ pub(super) fn fail_once_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     input: &HandleAttemptFailure,
+    turn: Option<&Arc<TaskWorkTurn>>,
 ) -> Result<AttemptRecord> {
     // OF-220: the TASK fails before the try's lease clears.
     crate::task_verb::highway_runner::report_leased_task_in_txn(
@@ -127,6 +135,7 @@ pub(super) fn fail_once_in_txn(
             error: &input.evidence.stable_reason,
             retryable: false,
         },
+        turn,
     )?;
     let failed = new_failure(crate::ports::JobQueue::port_job_fail(
         vault,
@@ -172,17 +181,21 @@ pub(super) fn retry_once(
     vault: &Vault,
     input: HandleAttemptFailure,
     ordinal: NonZeroU16,
+    turn: Option<&Arc<TaskWorkTurn>>,
 ) -> Result<FailureLadderOutcome> {
     let source_attempt_id = input.attempt_id;
     let scheduled_attempt = crate::dreamer_runner::DreamerRunnerStore::new(vault)
-        .retry_agent_dispatch_failure(RetryAttempt {
-            id: source_attempt_id,
-            lease_owner: input.lease_owner,
-            attempt_count: input.attempt_count,
-            backoff_until: input.retry_at,
-            last_error: Some(input.evidence.stable_reason),
-            now: input.now,
-        })?;
+        .retry_agent_dispatch_failure(
+            RetryAttempt {
+                id: source_attempt_id,
+                lease_owner: input.lease_owner,
+                attempt_count: input.attempt_count,
+                backoff_until: input.retry_at,
+                last_error: Some(input.evidence.stable_reason),
+                now: input.now,
+            },
+            turn,
+        )?;
     Ok(FailureLadderOutcome::Retried {
         source_attempt_id,
         scheduled_attempt: Box::new(scheduled_attempt),
