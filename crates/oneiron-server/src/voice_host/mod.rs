@@ -20,11 +20,15 @@ mod connection;
 mod entry_barrier;
 mod extraction;
 mod media_bridge;
+mod public;
+mod public_loop;
+mod public_events;
 mod serve_bindings;
 mod speech;
 mod wire;
 
 pub(crate) use boot::VoiceBoot;
+pub(crate) use public::{LiveVoiceSessions, start_public};
 pub use brain::{ChatBrain, ChatBrainBindings};
 pub(crate) use entry_barrier::{EntryWake, EntryWakes, entry_wake, next_entry_wake};
 pub use media_bridge::{VoiceMediaBindings, VoiceMediaIn};
@@ -256,10 +260,11 @@ impl VoiceHost {
             endpoint_delay_ms: None,
             error: None,
         };
-        // The untrusted wire cannot clear context taint or assert owner identity.
+        // The admitted owner supplies speech, not a context-taint assertion.
+        // The brain marks retrieved/external context at its own boundary.
         let prepared = state
             .core
-            .prepare_asr(&handle, revision, event, true)?
+            .prepare_asr(&handle, revision, event, false)?
             .ok_or(HostError::Stale)?;
         Ok(EnrichmentWork {
             host: self,

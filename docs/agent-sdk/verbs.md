@@ -378,6 +378,14 @@ both bindings and their export-census tests in one change.
 - `ai.steps.receipt`
 - `ai.reply`
 - `vault.receipts.context`
+- `ai.voice.start`
+- `ai.voice.audio`
+- `ai.voice.events`
+- `ai.voice.ack`
+- `ai.voice.usage`
+- `ai.voice.tool`
+- `ai.voice.end`
+- `ai.voice.close`
 - `ai.options`
 - `ai.image`
 - `ai.speech`

@@ -568,7 +568,18 @@ impl VoiceHost {
         bridge: &mut MediaBridge,
         outputs: &mut VoiceOutputs<B, T, C>,
     ) {
-        let handled = match input {
+        if let Err(error) = self.apply_media_input(input, bridge, outputs) {
+            tracing::warn!(%error, "voice media input refused");
+        }
+    }
+
+    pub(super) fn apply_media_input<B: Brain, T: TtsSeamClient, C: CascadeControl>(
+        &self,
+        input: VoiceMediaIn,
+        bridge: &mut MediaBridge,
+        outputs: &mut VoiceOutputs<B, T, C>,
+    ) -> Result<(), HostError> {
+        match input {
             VoiceMediaIn::Pcm(pcm) => bridge.hear(&pcm).map_err(HostError::from),
             VoiceMediaIn::Cut => bridge.cut().map_err(HostError::from),
             VoiceMediaIn::Speaking(speaking) => {
@@ -587,9 +598,6 @@ impl VoiceHost {
                 self.drained(generation, bridge);
                 Ok(())
             }
-        };
-        if let Err(error) = handled {
-            tracing::warn!(%error, "voice media input refused");
         }
     }
 

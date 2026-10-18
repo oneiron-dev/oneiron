@@ -44,9 +44,8 @@ use crate::api::ai::chat::{chat_request, text_message};
 use crate::auth::CoreAuth;
 use crate::models::Seat;
 
-/// A turn that hears retrieved memories carries context from outside it,
-/// so its speech passes the outbound safeguard as a tool result's would.
-const MEMORIES_TAINT_TURN: bool = true;
+// Vault memory/diary material is exempt from the external/tool sentence
+// safeguard. Live connector results enter separately and always add taint.
 /// How an interrupted answer's history entry ends: the person cut in after
 /// the brain had said this much.
 const INTERRUPTED_MARK: &str = " [interrupted: the person cut in here]";
@@ -101,6 +100,8 @@ pub struct ChatBrain {
     /// in a room.
     history_live: Option<RoomLiveSpeakerEntries>,
     turn: Option<Running>,
+    retiring: Vec<JoinHandle<()>>,
+    foreign: Vec<oneiron::task_verb::sdk::ConnectorToolResult>,
 }
 
 /// The turn answering now.
@@ -145,6 +146,8 @@ impl ChatBrain {
             history_revision: None,
             history_live: None,
             turn: None,
+            retiring: Vec::new(),
+            foreign: Vec::new(),
         })
     }
 
@@ -159,6 +162,9 @@ impl ChatBrain {
     ) -> oneiron::Result<()> {
         if self.history_revision == Some(audience_revision) && self.history_live == live {
             return Ok(());
+        }
+        if self.history_revision.is_some() {
+            self.foreign.clear();
         }
         match PRIOR_TURNS_ON_NEW_AUDIENCE {
             PriorTurns::Dropped => self
@@ -205,6 +211,12 @@ impl ChatBrain {
         if let Some(memories) = &memories {
             messages.push(text_message(LlmMessageRole::User, memories.board.clone()));
         }
+        for context in &self.foreign {
+            // The connector's own source and foreign marker stay with every
+            // field. They are task data, never a System instruction.
+            let data = serde_json::to_string(context).map_err(refused)?;
+            messages.push(text_message(LlmMessageRole::User, data));
+        }
         messages.push(text_message(
             LlmMessageRole::User,
             request.transcript.clone(),
@@ -231,7 +243,7 @@ impl ChatBrain {
             .stream(&run, admitted.request, None)
             .map_err(|error| refused(format!("{error:?}")))?;
         let Some(memories) = memories else {
-            return Ok((stream, false, heard));
+            return Ok((stream, !self.foreign.is_empty(), heard));
         };
         // The rows are going out: a contact who heard one under standing
         // clearance gets its quiet receipt. The owner alone gets none.
@@ -243,7 +255,7 @@ impl ChatBrain {
                 &request.session_ref,
             )]),
         )?;
-        Ok((stream, MEMORIES_TAINT_TURN, heard))
+        Ok((stream, !self.foreign.is_empty(), heard))
     }
 
     /// The rows the turn's retrieval found, read under the call's credential,
@@ -339,6 +351,26 @@ impl ChatBrain {
         ))
     }
 
+    /// Only a host that actually delivered a connector reply supplies this.
+    /// Context stays foreign for every later turn that can still hear it.
+    pub(super) fn add_foreign(&mut self, result: oneiron::task_verb::sdk::ConnectorToolResult) {
+        self.foreign.push(result);
+    }
+
+    pub(super) fn producer_pending(&self, generation: GenerationEpoch) -> bool {
+        self.turn.as_ref().is_some_and(|turn| {
+            turn.generation == generation && !turn.handle.is_finished()
+        })
+    }
+
+    /// An abort only requests cancellation. Joining observes the stream drop,
+    /// including the existing exactly-once partial-usage settlement.
+    pub(super) async fn settle_retired(&mut self) {
+        for task in self.retiring.drain(..) {
+            let _ = task.await;
+        }
+    }
+
     /// Stops the turn answering. What it had handed the speech host enters
     /// the history, marked interrupted; the rest was never said.
     fn abort(&mut self) {
@@ -346,6 +378,7 @@ impl ChatBrain {
             return;
         };
         running.handle.abort();
+        self.retiring.push(running.handle);
         // A turn cancelled before its first event still owes the owner's
         // client its memories receipt. An empty delta carries it: the host
         // hands the receipt on first and says nothing for a cancelled turn.

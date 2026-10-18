@@ -67,24 +67,40 @@ pub struct PlayoutFrame {
     session: Weak<Mutex<SessionState>>,
 }
 
+/// A packet's weak epoch fence, kept without copying its audio.
+#[derive(Clone)]
+pub(super) struct PlayoutGate {
+    generation: GenerationEpoch,
+    session: Weak<Mutex<SessionState>>,
+}
+
+impl PlayoutGate {
+    pub(super) fn is_current(&self) -> bool {
+        let Some(session) = self.session.upgrade() else { return false };
+        let Ok(state) = session.lock() else { return false };
+        state.core.accepts_pcm(self.generation)
+    }
+}
+
 impl PlayoutFrame {
     #[must_use]
     pub fn generation(&self) -> GenerationEpoch {
         self.frame.generation
     }
 
-    /// Whether the frame's generation still plays. A stop, a newer
-    /// generation or the session's end closes it, as they close the
-    /// session's `accepts_pcm`. Check at each dequeue or device packet.
+    /// Check again at every transport or device dequeue.
     #[must_use]
     pub fn is_current(&self) -> bool {
-        let Some(session) = self.session.upgrade() else {
-            return false;
-        };
-        let Ok(state) = session.lock() else {
-            return false;
-        };
-        state.core.accepts_pcm(self.frame.generation)
+        self.public_gate().is_current()
+    }
+
+    fn public_gate(&self) -> PlayoutGate {
+        PlayoutGate { generation: self.frame.generation, session: self.session.clone() }
+    }
+
+    pub(super) fn public_parts(&self) -> Option<(&PcmFrame, PlayoutGate)> {
+        let gate = self.public_gate();
+        gate.is_current().then_some((&self.frame, gate))
     }
 
     /// The frame, while its generation still plays. Call right before it

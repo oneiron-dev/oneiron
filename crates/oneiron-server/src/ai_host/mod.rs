@@ -16,7 +16,7 @@ use oneiron::llm::run_admission::RunReceiptSink;
 use oneiron::{DreamerRunnerStore, EdgeActorClass, EntityId, ModelId, ModelLocality, Vault};
 use oneiron_driver::{HintPusher, IdleSample, SessionHint};
 
-use crate::config::models::{ChatSettings, ModelsConfig};
+use crate::config::models::{ChatSettings, ModelsConfig, VoiceSettings};
 use crate::decision_host::DecisionHost;
 use crate::models::{
     KeyDoor, LoggedReceipts, ModelRuntime, ModelsStatus, OfferCooldowns, RawInference, RoleCall,
@@ -107,6 +107,7 @@ pub struct AiHandle {
     status: Arc<StatusCell>,
     hints: Option<Arc<HintPusher>>,
     chat: ChatSettings,
+    voice: Option<VoiceSettings>,
     /// The raw routes' meter: `[models]`'s, else its default, so a device
     /// with no `[models]` serves the models the mesh discovered (FIX 3229).
     raw_budget_units: u64,
@@ -160,6 +161,7 @@ impl AiHandle {
                 },
                 |models| models.chat,
             ),
+            voice: models.map(|models| models.voice.clone()),
             raw_budget_units: models
                 .map_or(crate::config::models::DEFAULT_RAW_BUDGET_UNITS, |models| {
                     models.raw_budget_units
@@ -222,6 +224,11 @@ impl AiHandle {
     #[must_use]
     pub fn chat_settings(&self) -> ChatSettings {
         self.chat
+    }
+
+    /// The resolved voice settings; absent when no models are configured.
+    pub(crate) fn voice_settings(&self) -> Option<&VoiceSettings> {
+        self.voice.as_ref()
     }
 
     /// The line each recall at high, xhigh or max spends its rerank calls

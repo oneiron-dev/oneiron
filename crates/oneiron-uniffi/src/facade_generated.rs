@@ -1861,6 +1861,46 @@ export_facade! {
     let output = client.vault_receipts_context(&input)?;
     crate::codec::lift_record("vault.receipts.context", &output)
 };
+"ai.voice.start" => fn ai_voice_start(&self, input: LiveVoiceStartRequest) -> LiveVoiceSession = |client| {
+    let input: oneiron::task_verb::sdk::LiveVoiceStartRequest = crate::codec::lower_record("ai.voice.start", input)?;
+    let output = client.ai_voice_start(&input)?;
+    crate::codec::lift_record("ai.voice.start", &output)
+};
+"ai.voice.audio" => fn ai_voice_audio(&self, input: LiveVoiceAudioRequest) -> LiveVoiceProcessed = |client| {
+    let input: oneiron::task_verb::sdk::LiveVoiceAudioRequest = crate::codec::lower_record("ai.voice.audio", input)?;
+    let output = client.ai_voice_audio(&input)?;
+    crate::codec::lift_record("ai.voice.audio", &output)
+};
+"ai.voice.events" => fn ai_voice_events(&self, input: LiveVoiceEventsRequest) -> LiveVoiceEvents = |client| {
+    let input: oneiron::task_verb::sdk::LiveVoiceEventsRequest = crate::codec::lower_record("ai.voice.events", input)?;
+    let output = client.ai_voice_events(&input)?;
+    crate::codec::lift_record("ai.voice.events", &output)
+};
+"ai.voice.ack" => fn ai_voice_ack(&self, input: LiveVoiceAckRequest) -> LiveVoiceProcessed = |client| {
+    let input: oneiron::task_verb::sdk::LiveVoiceAckRequest = crate::codec::lower_record("ai.voice.ack", input)?;
+    let output = client.ai_voice_ack(&input)?;
+    crate::codec::lift_record("ai.voice.ack", &output)
+};
+"ai.voice.usage" => fn ai_voice_usage(&self, input: LiveVoiceUsageRequest) -> LiveVoiceUsage = |client| {
+    let input: oneiron::task_verb::sdk::LiveVoiceUsageRequest = crate::codec::lower_record("ai.voice.usage", input)?;
+    let output = client.ai_voice_usage(&input)?;
+    crate::codec::lift_record("ai.voice.usage", &output)
+};
+"ai.voice.tool" => fn ai_voice_tool(&self, input: LiveVoiceToolRequest) -> LiveVoiceToolReply = |client| {
+    let input: oneiron::task_verb::sdk::LiveVoiceToolRequest = crate::codec::lower_record("ai.voice.tool", input)?;
+    let output = client.ai_voice_tool(&input)?;
+    crate::codec::lift_record("ai.voice.tool", &output)
+};
+"ai.voice.end" => fn ai_voice_end(&self, input: LiveVoiceSessionRequest) -> LiveVoiceProcessed = |client| {
+    let input: oneiron::task_verb::sdk::LiveVoiceSessionRequest = crate::codec::lower_record("ai.voice.end", input)?;
+    let output = client.ai_voice_end(&input)?;
+    crate::codec::lift_record("ai.voice.end", &output)
+};
+"ai.voice.close" => fn ai_voice_close(&self, input: LiveVoiceSessionRequest) -> LiveVoiceProcessed = |client| {
+    let input: oneiron::task_verb::sdk::LiveVoiceSessionRequest = crate::codec::lower_record("ai.voice.close", input)?;
+    let output = client.ai_voice_close(&input)?;
+    crate::codec::lift_record("ai.voice.close", &output)
+};
 "ai.options" => fn ai_options(&self, input: AiOptionsRequest) -> AiOptions = |client| {
     let input: oneiron::task_verb::sdk::AiOptionsRequest = crate::codec::lower_record("ai.options", input)?;
     let output = client.ai_options(&input)?;
