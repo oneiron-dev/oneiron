@@ -63,16 +63,16 @@ pub(crate) use super::shared_policy_doors::*;
 // The trusted-contact doors (DOOR-140, OF-527) too.
 pub(crate) use super::trusted_contact_doors::*;
 // The owner's legal-hold doors (OF-470) too.
+pub(crate) use super::extraction_doors::*;
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
-pub(crate) use super::extraction_doors::*;
 pub(crate) use super::model_step_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
 // The owner's guest revoke door (OF-232) too.
-pub(crate) use super::guest_doors::*;
 pub(crate) use super::federation_connect_doors::*;
+pub(crate) use super::guest_doors::*;
 pub(crate) use super::hub_doors::*;
 // The owner's residence doors (OF-534), likewise.
 pub(crate) use super::fold_doors::*;
@@ -134,6 +134,8 @@ pub(crate) use super::project_card_doors::*;
 pub(crate) use super::claim_settle_doors::*;
 // The owner's symbol lease, proposal submit and oplog doors (DOOR-137), likewise.
 pub(crate) use super::code_doors::*;
+// The owner's speculative merge queue doors (DOOR-132), likewise.
+pub(crate) use super::merge_queue_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
 pub(crate) use super::ui_action_routes::vault_lenses_default;
 // The explain receipts' doors (OF-278), beside their HTTP routes, likewise.
@@ -1175,6 +1177,13 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.snapshots.get"
         | "vault.code.snapshots.read"
         | "vault.code.symbols.definitions"
+        | "vault.code.merge_queue.enqueue"
+        | "vault.code.merge_queue.stage"
+        | "vault.code.merge_queue.observe"
+        | "vault.code.merge_queue.requeue_survivors"
+        | "vault.code.merge_queue.land_reviewed"
+        | "vault.code.merge_queue.settle_slow"
+        | "vault.code.merge_queue.recover"
         | "vault.off_record.start"
         | "vault.off_record.status"
         | "vault.off_record.witness"

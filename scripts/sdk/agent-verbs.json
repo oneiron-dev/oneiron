@@ -2522,9 +2522,9 @@
     },
     {
       "name": "vault.residence.mode",
-      "description": "Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it.",
+      "description": "Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive.",
       "input": "crate::task_verb::sdk::ResidenceModeRequest",
-      "output": "crate::task_verb::sdk::ResidenceModeChanged",
+      "output": "crate::task_verb::sdk::ResidenceModeAnswer",
       "call": "crate::task_verb::sdk::residence_host_only(memory, \"vault.residence.mode\", &input)?",
       "host_door": true,
       "host_door_lists": true,
@@ -2536,9 +2536,9 @@
     },
     {
       "name": "vault.residence.open",
-      "description": "Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors.",
+      "description": "Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors. A machine this host does not reach answers state queued, naming the directive.",
       "input": "crate::task_verb::sdk::ResidenceOpenRequest",
-      "output": "crate::task_verb::sdk::ResidenceOpened",
+      "output": "crate::task_verb::sdk::ResidenceOpenAnswer",
       "call": "crate::task_verb::sdk::residence_host_only(memory, \"vault.residence.open\", &input)?",
       "host_door": true,
       "host_door_lists": true,
@@ -2550,9 +2550,9 @@
     },
     {
       "name": "vault.residence.index",
-      "description": "The thin index one of the owner's machines holds, window by window: what exists, never a body.",
+      "description": "The thin index one of the owner's machines holds, window by window: what exists, never a body. A machine this host does not reach answers state queued, naming the directive.",
       "input": "crate::task_verb::sdk::ResidenceMachineRequest",
-      "output": "crate::task_verb::sdk::ResidenceIndex",
+      "output": "crate::task_verb::sdk::ResidenceIndexAnswer",
       "call": "crate::task_verb::sdk::residence_host_only(memory, \"vault.residence.index\", &input)?",
       "host_door": true,
       "host_door_lists": true,
@@ -2564,9 +2564,9 @@
     },
     {
       "name": "vault.residence.prune",
-      "description": "Drops the opened-item caches one of the owner's machines last touched before a time.",
+      "description": "Drops the opened-item caches one of the owner's machines last touched before a time. A machine this host does not reach answers state queued, naming the directive.",
       "input": "crate::task_verb::sdk::ResidencePruneRequest",
-      "output": "crate::task_verb::sdk::ResidencePruned",
+      "output": "crate::task_verb::sdk::ResidencePruneAnswer",
       "call": "crate::task_verb::sdk::residence_host_only(memory, \"vault.residence.prune\", &input)?",
       "host_door": true,
       "host_door_lists": true,
@@ -4273,6 +4273,104 @@
       "host_door": true,
       "host_door_lists": true,
       "openapi": true
+    },
+    {
+      "name": "vault.code.merge_queue.enqueue",
+      "description": "Queue stored repository proposals as one batch on the queue green commit, one to six per call, with no batching window. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed.",
+      "input": "crate::memory::merge_queue_doors::MergeQueueEnqueueRequest",
+      "output": "crate::memory::merge_queue_doors::MergeQueueBatchView",
+      "call": "memory.merge_queue_enqueue_as(&memory.embedded_owner(\"vault.code.merge_queue.enqueue\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.merge_queue.stage",
+      "description": "Materialize every nonempty subset of one queued batch as a journaled detached speculative worktree. Owner only. Head and green do not move.",
+      "input": "crate::memory::merge_queue_doors::MergeQueueBatchRequest",
+      "output": "crate::memory::merge_queue_doors::MergeQueueBatchView",
+      "call": "memory.merge_queue_stage_as(&memory.embedded_owner(\"vault.code.merge_queue.stage\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.merge_queue.observe",
+      "description": "Read the queue head and green Git commits, the named batches in request order and the stored contract verdicts they name. Owner only. It never recovers or settles, and a verdict is no check execution receipt.",
+      "input": "crate::memory::merge_queue_doors::MergeQueueObserveRequest",
+      "output": "crate::memory::merge_queue_doors::MergeQueueObservation",
+      "call": "memory.merge_queue_observe_as(&memory.embedded_owner(\"vault.code.merge_queue.observe\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.merge_queue.requeue_survivors",
+      "description": "Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. No durable parent or child link is written.",
+      "input": "crate::memory::merge_queue_doors::MergeQueueBatchRequest",
+      "output": "crate::memory::merge_queue_doors::MergeQueueRequeueView",
+      "call": "memory.merge_queue_requeue_survivors_as(&memory.embedded_owner(\"vault.code.merge_queue.requeue_survivors\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.merge_queue.land_reviewed",
+      "description": "Advance the fast-tested head by one ready batch through reviewed-stack admission alone. Owner only. Each proposal still needs unanimous critic approval and exact bytes and base; the owner proof approves nothing.",
+      "input": "crate::memory::merge_queue_doors::MergeQueueBatchRequest",
+      "output": "crate::memory::merge_queue_doors::MergeQueueBatchView",
+      "call": "memory.merge_queue_land_reviewed_as(&memory.embedded_owner(\"vault.code.merge_queue.land_reviewed\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.merge_queue.settle_slow",
+      "description": "Settle stored slow results in landing order: green advances past passing ones, and a red one rolls the ungreen suffix back. Owner only. The caller names no commit or result.",
+      "input": "crate::memory::merge_queue_doors::MergeQueueRepoRequest",
+      "output": "crate::memory::merge_queue_doors::MergeQueuePointersView",
+      "call": "memory.merge_queue_settle_slow_as(&memory.embedded_owner(\"vault.code.merge_queue.settle_slow\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.merge_queue.recover",
+      "description": "Reconcile an interrupted landing or rollback with its persisted mutation receipts. Owner only. Unreceipted divergence refuses; nothing is approved or rebased.",
+      "input": "crate::memory::merge_queue_doors::MergeQueueRepoRequest",
+      "output": "crate::memory::merge_queue_doors::MergeQueuePointersView",
+      "call": "memory.merge_queue_recover_as(&memory.embedded_owner(\"vault.code.merge_queue.recover\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
     },
     {
       "name": "vault.artifacts.export",

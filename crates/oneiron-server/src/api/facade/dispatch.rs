@@ -6298,6 +6298,181 @@ async fn vault_code_symbols_definitions(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_code_merge_queue_enqueue(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.merge_queue.enqueue")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.merge_queue.enqueue", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.merge_queue.enqueue", value).await?;
+    let (output, listed) = super::host_doors::vault_code_merge_queue_enqueue(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_merge_queue_stage(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.merge_queue.stage")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.merge_queue.stage", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.merge_queue.stage", value).await?;
+    let (output, listed) = super::host_doors::vault_code_merge_queue_stage(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_merge_queue_observe(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.merge_queue.observe")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.merge_queue.observe", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.merge_queue.observe", value).await?;
+    let (output, listed) = super::host_doors::vault_code_merge_queue_observe(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_merge_queue_requeue_survivors(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.merge_queue.requeue_survivors")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.merge_queue.requeue_survivors", &value)?;
+    let hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.code.merge_queue.requeue_survivors",
+        value,
+    )
+    .await?;
+    let (output, listed) = super::host_doors::vault_code_merge_queue_requeue_survivors(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_merge_queue_land_reviewed(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.merge_queue.land_reviewed")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.merge_queue.land_reviewed", &value)?;
+    let hooks =
+        facade_hooks_pre(server, call, "vault.code.merge_queue.land_reviewed", value).await?;
+    let (output, listed) = super::host_doors::vault_code_merge_queue_land_reviewed(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_merge_queue_settle_slow(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.merge_queue.settle_slow")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.merge_queue.settle_slow", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.merge_queue.settle_slow", value).await?;
+    let (output, listed) = super::host_doors::vault_code_merge_queue_settle_slow(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_merge_queue_recover(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.merge_queue.recover")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.merge_queue.recover", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.merge_queue.recover", value).await?;
+    let (output, listed) = super::host_doors::vault_code_merge_queue_recover(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_artifacts_export(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -11573,6 +11748,25 @@ pub(crate) async fn call_verb(
         "vault.code.snapshots.read" => vault_code_snapshots_read(server, call, input).await,
         "vault.code.symbols.definitions" => {
             vault_code_symbols_definitions(server, call, input).await
+        }
+        "vault.code.merge_queue.enqueue" => {
+            vault_code_merge_queue_enqueue(server, call, input).await
+        }
+        "vault.code.merge_queue.stage" => vault_code_merge_queue_stage(server, call, input).await,
+        "vault.code.merge_queue.observe" => {
+            vault_code_merge_queue_observe(server, call, input).await
+        }
+        "vault.code.merge_queue.requeue_survivors" => {
+            vault_code_merge_queue_requeue_survivors(server, call, input).await
+        }
+        "vault.code.merge_queue.land_reviewed" => {
+            vault_code_merge_queue_land_reviewed(server, call, input).await
+        }
+        "vault.code.merge_queue.settle_slow" => {
+            vault_code_merge_queue_settle_slow(server, call, input).await
+        }
+        "vault.code.merge_queue.recover" => {
+            vault_code_merge_queue_recover(server, call, input).await
         }
         "vault.artifacts.export" => vault_artifacts_export(server, call, input).await,
         "vault.agents.create" => vault_agents_create(server, call, input).await,

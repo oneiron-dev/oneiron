@@ -277,6 +277,13 @@ both bindings and their export-census tests in one change.
 - `vault.code.snapshots.get`
 - `vault.code.snapshots.read`
 - `vault.code.symbols.definitions`
+- `vault.code.merge_queue.enqueue`
+- `vault.code.merge_queue.stage`
+- `vault.code.merge_queue.observe`
+- `vault.code.merge_queue.requeue_survivors`
+- `vault.code.merge_queue.land_reviewed`
+- `vault.code.merge_queue.settle_slow`
+- `vault.code.merge_queue.recover`
 - `vault.artifacts.export`
 - `vault.agents.create`
 - `vault.agents.get`
