@@ -450,6 +450,12 @@ pub(crate) struct ResolvedLiveRun {
 }
 
 impl ResolvedLiveRun {
+    /// The leased try the run's runner holds: the run a secret grant minted
+    /// through this handle is bound to (DOOR-124).
+    pub(crate) fn attempt(&self) -> oneiron::AttemptId {
+        self.entry.leased.id
+    }
+
     /// The executor whose lease and credential this handle resolved.
     pub(crate) fn run_id(&self) -> EntityId {
         self.entry.run
