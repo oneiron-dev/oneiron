@@ -178,6 +178,8 @@ vaultSecretsLiftHistory(input: unknown): unknown
 vaultWidenProposals(input: unknown): unknown
 vaultWidenProposalsApprove(input: unknown): unknown
 vaultWidenProposalsDecline(input: unknown): unknown
+vaultCraftCandidates(input: unknown): unknown
+vaultCraftCandidatesAnswer(input: unknown): unknown
 vaultSettingsWakePolicySet(input: unknown): unknown
 vaultSettingsInferenceDefaults(input: unknown): unknown
 vaultSettingsInferenceDefaultsReplace(input: unknown): unknown

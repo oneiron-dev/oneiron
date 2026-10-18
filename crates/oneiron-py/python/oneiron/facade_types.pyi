@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 318 facade rows, 1281 declarations.
-Inputs: 275 of 318 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 275 of 318 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 320 facade rows, 1287 declarations.
+Inputs: 277 of 320 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 277 of 320 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 74; unread shapes: 0.
 """
 
@@ -3563,6 +3563,29 @@ class WidenProposalsView(TypedDict):
     proposals: list[WidenProposalView]
 class WidenProposalAnswer(TypedDict):
     proposal_id: str
+class CraftCandidatesRequest(TypedDict):
+    resident: NotRequired[str | None]
+class CraftCandidateView(TypedDict):
+    candidate_id: str
+    content_hash: str
+    resident: str
+    predicate: str
+    text: str
+    attempt: str
+    proposed_at: int
+class CraftCandidatesView(TypedDict):
+    candidates: list[CraftCandidateView]
+CraftVerdict = Literal["approved", "rejected"]
+class CraftCandidateAnswer(TypedDict):
+    candidate_id: str
+    content_hash: str
+    verdict: CraftVerdict
+class CraftVerdictView(TypedDict):
+    candidate_id: str
+    verdict: CraftVerdict
+    verdict_id: str
+    receipt_ref: str
+    decided_at: int
 class WakePolicySetRequest(TypedDict):
     policy: Any
     idempotency_key: str

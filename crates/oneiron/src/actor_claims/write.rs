@@ -17,6 +17,7 @@ use crate::registry::{
 use crate::skill_attribution::{AttributionJudgment, AttributionVerdict, attribution_judgments};
 use crate::temporal::TimeRange;
 
+use super::candidate::is_approved_craft_verdict;
 use super::evidence::{ActorClaimEvidence, ActorClaimLane};
 use super::invalid;
 use super::rows::{
@@ -285,7 +286,9 @@ pub(super) fn scope_with_lineage(pair_scope: Option<Value>, meet: ClaimSource) -
     ));
     Value::Map(entries)
 }
-/// The active `(actor, predicate)` heads with their occurred-start stamps.
+/// The active `(actor, predicate)` heads with their occurred-start stamps:
+/// Auto rows, and on a lesson or failure mode the owner's Approved verdict
+/// on a craft candidate.
 fn active_heads_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -300,7 +303,7 @@ fn active_heads_in_txn(
         if body.predicate != predicate
             || body.lifecycle != ClaimLifecycleStatus::Active
             || body.source != Some(ClaimSource::Observed)
-            || body.approval != ClaimApprovalStatus::Auto
+            || (body.approval != ClaimApprovalStatus::Auto && !is_approved_craft_verdict(&body))
         {
             continue;
         }

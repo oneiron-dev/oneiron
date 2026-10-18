@@ -82,6 +82,8 @@ pub(crate) use super::secret_lift_doors::*;
 pub(crate) use super::wave_doors::*;
 // The owner's context-widen proposal doors (OF-568), likewise.
 pub(crate) use super::widen_proposal_doors::*;
+// The owner's craft-candidate review doors (OF-490), likewise.
+pub(crate) use super::craft_candidate_doors::*;
 // The app's policy-action doors (OF-181), likewise.
 pub(crate) use super::policy_doors::*;
 // The generic connector call's door (ONE-2510), likewise.
@@ -952,6 +954,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.widen_proposals"
         | "vault.widen_proposals.approve"
         | "vault.widen_proposals.decline"
+        | "vault.craft_candidates"
+        | "vault.craft_candidates.answer"
         | "vault.settings.wake_policy.set"
         | "vault.research.evaluate_split" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"

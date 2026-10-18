@@ -3413,6 +3413,51 @@ async fn vault_widen_proposals_decline(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_craft_candidates(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.craft_candidates")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.craft_candidates", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.craft_candidates", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_craft_candidates(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_craft_candidates_answer(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.craft_candidates.answer")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.craft_candidates.answer", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.craft_candidates.answer", value).await?;
+    let (output, listed) = super::host_doors::vault_craft_candidates_answer(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_settings_wake_policy_set(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -7501,6 +7546,8 @@ pub(crate) async fn call_verb(
         "vault.widen_proposals" => vault_widen_proposals(server, call, input).await,
         "vault.widen_proposals.approve" => vault_widen_proposals_approve(server, call, input).await,
         "vault.widen_proposals.decline" => vault_widen_proposals_decline(server, call, input).await,
+        "vault.craft_candidates" => vault_craft_candidates(server, call, input).await,
+        "vault.craft_candidates.answer" => vault_craft_candidates_answer(server, call, input).await,
         "vault.settings.wake_policy.set" => {
             vault_settings_wake_policy_set(server, call, input).await
         }

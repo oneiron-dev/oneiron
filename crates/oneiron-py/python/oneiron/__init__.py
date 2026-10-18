@@ -561,6 +561,9 @@ class Oneiron:
         def widen_proposals(self) -> "Oneiron._VaultWidenProposalsVerbs":
             return Oneiron._VaultWidenProposalsVerbs(self._client)
         @property
+        def craft_candidates(self) -> "Oneiron._VaultCraftCandidatesVerbs":
+            return Oneiron._VaultCraftCandidatesVerbs(self._client)
+        @property
         def lenses(self) -> "Oneiron._VaultLensesVerbs":
             return Oneiron._VaultLensesVerbs(self._client)
         @property
@@ -1204,6 +1207,15 @@ class Oneiron:
         def decline(self, spec):
             """The owner, as the board above, declines one context-widen proposal for good; the decline stays on record."""
             return json.loads(_translate(lambda: self._client.vault_widen_proposals_decline(json.dumps(spec))))
+    class _VaultCraftCandidatesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """The owner lists the craft notes residents' dreaming proposed about themselves that wait on a verdict, newest first, or one resident's, each with the content hash an answer pins."""
+            return json.loads(_translate(lambda: self._client.vault_craft_candidates(json.dumps(spec))))
+        def answer(self, spec):
+            """The owner approves or rejects one craft candidate, bound to the content hash its card showed: an Approved or Rejected row supersedes it, with one receipt. The same answer again returns the first."""
+            return json.loads(_translate(lambda: self._client.vault_craft_candidates_answer(json.dumps(spec))))
     class _VaultLensesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

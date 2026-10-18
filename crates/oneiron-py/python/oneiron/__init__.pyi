@@ -518,6 +518,8 @@ class Oneiron:
         @property
         def widen_proposals(self) -> "Oneiron._VaultWidenProposalsVerbs": ...
         @property
+        def craft_candidates(self) -> "Oneiron._VaultCraftCandidatesVerbs": ...
+        @property
         def lenses(self) -> "Oneiron._VaultLensesVerbs": ...
         @property
         def disclosure(self) -> "Oneiron._VaultDisclosureVerbs": ...
@@ -898,6 +900,11 @@ class Oneiron:
             """The owner, as the board above, approves one context-widen proposal: the parent's context widens and the child is enqueued."""
         def decline(self, spec: Facade.WidenProposalAnswer) -> Facade.WidenProposalView:
             """The owner, as the board above, declines one context-widen proposal for good; the decline stays on record."""
+    class _VaultCraftCandidatesVerbs:
+        def __call__(self, spec: Facade.CraftCandidatesRequest) -> Facade.CraftCandidatesView:
+            """The owner lists the craft notes residents' dreaming proposed about themselves that wait on a verdict, newest first, or one resident's, each with the content hash an answer pins."""
+        def answer(self, spec: Facade.CraftCandidateAnswer) -> Facade.CraftVerdictView:
+            """The owner approves or rejects one craft candidate, bound to the content hash its card showed: an Approved or Rejected row supersedes it, with one receipt. The same answer again returns the first."""
     class _VaultLensesVerbs:
         def propose(self, spec: Facade.LensProposeRequest) -> Facade.LensProposalReceipt:
             """Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it."""

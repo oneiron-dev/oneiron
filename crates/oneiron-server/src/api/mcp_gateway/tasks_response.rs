@@ -976,6 +976,8 @@ fn mcp_agent_verb_input(
         "vault.widen_proposals" => a.spec.clone().ok_or_else(invalid),
         "vault.widen_proposals.approve" => a.spec.clone().ok_or_else(invalid),
         "vault.widen_proposals.decline" => a.spec.clone().ok_or_else(invalid),
+        "vault.craft_candidates" => a.spec.clone().ok_or_else(invalid),
+        "vault.craft_candidates.answer" => a.spec.clone().ok_or_else(invalid),
         "vault.settings.wake_policy.set" => a.spec.clone().ok_or_else(invalid),
         "vault.settings.inference_defaults" => Ok(Value::Object(serde_json::Map::new())),
         "vault.settings.inference_defaults.replace" => a.spec.clone().ok_or_else(invalid),
@@ -1762,6 +1764,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.widen_proposals.decline" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.craft_candidates" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.craft_candidates.answer" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.settings.wake_policy.set" => {
@@ -4759,6 +4767,43 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
                 crate::api::facade::host_doors::vault_widen_proposals_decline(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.craft_candidates" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.craft_candidates", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::actor_claims::CraftCandidatesRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_craft_candidates(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.craft_candidates.answer" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.craft_candidates.answer", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::actor_claims::CraftCandidateAnswer =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_craft_candidates_answer(server, auth, input)
                     .await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(

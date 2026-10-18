@@ -46,6 +46,7 @@ mod connector_admission_routes;
 mod connector_consent_routes;
 mod connector_subscription_routes;
 pub(super) mod cooperative_deletion_routes;
+mod craft_candidate_routes;
 mod decision_ask_routes;
 mod desktop_takeover_routes;
 mod diary_routes;
@@ -136,6 +137,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(learning_setting_routes::routes())
         .merge(model_setting_routes::routes())
         .merge(widen_proposal_routes::routes())
+        .merge(craft_candidate_routes::routes())
         .merge(pad_routes::routes())
         .merge(legal_hold_routes::routes())
         .merge(guest_routes::routes())

@@ -75,7 +75,10 @@
 //! **A third, proposing inlet.** A resident's own dreaming proposes lessons
 //! and failure modes about itself ([`write_resident_craft_candidates_in_txn`],
 //! OF-490). They land Proposed, never through the Auto door above, so a
-//! resident's view of itself is a candidate until it is reviewed.
+//! resident's view of itself is a candidate until it is reviewed: the owner
+//! answers one on its card ([`answer_craft_candidate_as_owner`]), and the
+//! verdict lands through the same inlet as an Approved or Rejected row that
+//! supersedes it.
 //!
 //! **The engine distills nothing.** Turning a sitting into a craft note is a
 //! generative act, so [`run_session_end_actor_distill`] takes a
@@ -110,7 +113,13 @@ pub use self::rows::{
 pub use self::validate::{actor_claim_lineage, is_actor_claim_predicate};
 pub use self::write::{project_actor_claims_from_judgments, skill_fit_for, write_actor_claim};
 
-pub(crate) use self::candidate::{ResidentCraftCandidate, write_resident_craft_candidates_in_txn};
+pub use self::candidate::{
+    CraftCandidateAnswer, CraftCandidateView, CraftCandidatesRequest, CraftCandidatesView,
+    CraftVerdict, CraftVerdictView, answer_craft_candidate_as_owner, craft_candidates_as_owner,
+};
+pub(crate) use self::candidate::{
+    ResidentCraftCandidate, craft_candidate_inbox_items, write_resident_craft_candidates_in_txn,
+};
 pub(crate) use self::distill::register_session_end_distill_in_txn;
 pub(crate) use self::rows::edit_cost_scope;
 pub(crate) use self::validate::{edit_cost_scope_name, validate_actor_claim_structure};

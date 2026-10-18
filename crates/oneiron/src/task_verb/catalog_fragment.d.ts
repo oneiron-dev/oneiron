@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 382 code-mode rows (361 host rows, 21 run rows), 1393 declarations.
-// Replies: 328 fully typed, 50 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 384 code-mode rows (363 host rows, 21 run rows), 1399 declarations.
+// Replies: 330 fully typed, 50 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 81; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -705,6 +705,12 @@ declare namespace Sdk {
   type WidenProposalView = { proposal_id: string; state: WidenProposalState; parent_attempt: string; board_attempt?: string | null; target_kind: string; target: string; parent_context: unknown; requested_context: unknown; widened_parent_context: unknown; recorded_at: number; landed_attempt?: string | null; declined_by?: string | null; declined_at?: number | null };
   type WidenProposalsView = { proposals: WidenProposalView[] };
   type WidenProposalAnswer = { proposal_id: string };
+  type CraftCandidatesRequest = { resident?: string | null };
+  type CraftCandidateView = { candidate_id: string; content_hash: string; resident: string; predicate: string; text: string; attempt: string; proposed_at: number };
+  type CraftCandidatesView = { candidates: CraftCandidateView[] };
+  type CraftVerdict = "approved" | "rejected";
+  type CraftCandidateAnswer = { candidate_id: string; content_hash: string; verdict: CraftVerdict };
+  type CraftVerdictView = { candidate_id: string; verdict: CraftVerdict; verdict_id: string; receipt_ref: string; decided_at: number };
   type WakePolicySetRequest = { policy: unknown; idempotency_key: string };
   type PolicyActionOutcome = { outcome: unknown };
   type InferenceDefaultsReplaceRequest = { defaults: unknown; idempotency_key: string };
@@ -1848,6 +1854,11 @@ declare const vault: Sdk.VaultHost & {
     send(input: Sdk.CourtesyDeleteSendRequest): Promise<Sdk.CourtesyDeleteSent | StoredResult>;
     /** Every courtesy delete ask this vault sent, with its delivery status, for the owner. */
     sent(input: Sdk.EmptyRequest): Promise<Sdk.CourtesyDeleteSent[] | StoredResult>;
+  };
+  /** The owner lists the craft notes residents' dreaming proposed about themselves that wait on a verdict, newest first, or one resident's, each with the content hash an answer pins. */
+  craft_candidates: ((input: Sdk.CraftCandidatesRequest) => Promise<Sdk.CraftCandidatesView | StoredResult>) & {
+    /** The owner approves or rejects one craft candidate, bound to the content hash its card showed: an Approved or Rejected row supersedes it, with one receipt. The same answer again returns the first. */
+    answer(input: Sdk.CraftCandidateAnswer): Promise<Sdk.CraftVerdictView | StoredResult>;
   };
   critic: {
     /** Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target. */
