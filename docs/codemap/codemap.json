@@ -23890,6 +23890,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/gate/bundle/claim_settle.rs",
+     "purpose": "One proposed claim decided on its own (DOOR-115): the owner's approval or decline of a claim named by its…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/gate/carry_forward_policy.rs",
      "purpose": "Vault-resident confidence floors for carry-forward Auto admission",
      "surface": {
@@ -30632,6 +30642,30 @@
       "crate-vis": 5,
       "enum": 3,
       "fn": 4,
+      "re-export": 1,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ClaimChangeVerdict",
+      "ClaimProposalReview",
+      "ClaimProposalReviewRequest",
+      "ClaimSettleDecision",
+      "ClaimSettleRequest",
+      "ClaimSettlement",
+      "ClaimSettlementAnswer",
+      "ClaimSettlementReason",
+      "ClaimSettlementRevert",
+      "ClaimSettlementVerdict"
+     ],
+     "path": "src/memory/claims/settle.rs",
+     "purpose": "One proposed claim's review and settlement (DOOR-115, e2e MEMORY-01): `vault.claims.review` reads one…",
+     "surface": {
+      "enum": 4,
+      "fn": 3,
       "struct": 6
      }
     },
@@ -48947,8 +48981,8 @@
      "path": "src/task_verb/sdk_generated.rs",
      "purpose": "—",
      "surface": {
-      "const": 2,
-      "fn": 432
+      "const": 3,
+      "fn": 435
      }
     },
     {
@@ -54834,7 +54868,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 137,
+     "files": 138,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55037,7 +55071,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 143,
+     "files": 144,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55718,7 +55752,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3393,
+   "source_files": 3395,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64113,7 +64147,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 383
+      "fn": 385
      }
     },
     {
@@ -65161,7 +65195,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 384
+      "fn": 386
      }
     },
     {
@@ -68071,6 +68105,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/claim_settle_doors.rs",
+     "purpose": "The host doors of one proposed claim's review and settlement (DOOR-115): `vault.claims.review` and…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/connector_call_doors.rs",
      "purpose": "The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's…",
      "surface": {
@@ -68214,7 +68258,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 76
+      "crate-vis": 77
      }
     },
     {
@@ -68965,6 +69009,16 @@
      "purpose": "OpenAPI endpoint wiring and component merges",
      "surface": {
       "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openapi/facade_paths.rs",
+     "purpose": "The facade rows the OpenAPI document publishes (DOOR-115): each row the verb table marks `openapi` is `POST…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -75489,7 +75543,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 330,
+     "files": 332,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -75904,7 +75958,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 652,
+   "source_files": 654,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -76291,9 +76345,19 @@
       "ChartSource",
       "ChatProjection",
       "ClaimApprovalStatus",
+      "ClaimChangeVerdict",
       "ClaimLineAtom",
+      "ClaimProposalReview",
+      "ClaimProposalReviewRequest",
       "ClaimRelationships",
       "ClaimScope",
+      "ClaimSettleDecision",
+      "ClaimSettleRequest",
+      "ClaimSettlement",
+      "ClaimSettlementAnswer",
+      "ClaimSettlementReason",
+      "ClaimSettlementRevert",
+      "ClaimSettlementVerdict",
       "CodeBlameView",
       "CodeChangeView",
       "CodeDiffRequest",
@@ -77518,8 +77582,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 403,
-      "struct": 1014
+      "enum": 407,
+      "struct": 1020
      }
     },
     {
