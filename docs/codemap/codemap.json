@@ -51900,7 +51900,8 @@
      "path": "src/workspace_roster/rooms/audience.rs",
      "purpose": "Private thread audiences (FIX 2951)",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 17,
+      "fn": 1
      }
     },
     {
@@ -63313,6 +63314,24 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NapiCheckpointPin",
+      "NapiCheckpointPinBinding",
+      "NapiCheckpointPinKey",
+      "NapiCheckpointPinPolicy",
+      "NapiCheckpointPinRoot",
+      "NapiCheckpointPinSignature"
+     ],
+     "path": "src/facade/pairing.rs",
+     "purpose": "The checkpoint pin `NativeClient.pair` returns (OF-469, FIX 3376), lifted whole from…",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/facade/tests.rs",
@@ -63423,7 +63442,7 @@
      "purpose": "JS bindings for the typed `companion.expression.*` doors"
     },
     "facade": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -63446,7 +63465,7 @@
    },
    "over_bar": 2,
    "purpose": "—",
-   "source_files": 19,
+   "source_files": 20,
    "test_files": 1
   },
   "oneiron-organ-host": {
@@ -64184,20 +64203,30 @@
      "path": "src/lib.rs",
      "purpose": "`oneiron._native` — the private PyO3 extension behind the `oneiron` PyPI package (ONE-1441 WIRE-P1)",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pairing.rs",
+     "purpose": "What the native `pair` hands the Python wrapper (OF-469, FIX 3376): the origin, the credential, and the…",
+     "surface": {
+      "crate-vis": 2
+     }
     }
    ],
    "modules": {
-    "lib": {
+    "pairing": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "s",
      "layout": "file",
-     "purpose": "`oneiron._native` — the private PyO3 extension behind the `oneiron` PyPI package (ONE-1441 WIRE-P1)"
+     "purpose": "What the native `pair` hands the Python wrapper (OF-469, FIX 3376): the origin, the credential, and the…"
     }
    },
    "over_bar": 1,
    "purpose": "`oneiron._native` — the private PyO3 extension behind the `oneiron` PyPI package (ONE-1441 WIRE-P1)",
-   "source_files": 2,
+   "source_files": 3,
    "test_files": 0
   },
   "oneiron-remote": {
@@ -76160,8 +76189,29 @@
      "surface": {
       "const": 1,
       "fn": 10,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CheckpointPin",
+      "CheckpointPinBinding",
+      "CheckpointPinKey",
+      "CheckpointPinPolicy",
+      "CheckpointPinPosture",
+      "CheckpointPinRoot",
+      "CheckpointPinSignature",
+      "CheckpointPinSuite",
+      "CheckpointPinTier"
+     ],
+     "path": "src/pairing.rs",
+     "purpose": "The checkpoint pin `pair` returns (OF-469, FIX 3376), lifted whole from…",
+     "surface": {
+      "enum": 3,
+      "struct": 6
      }
     }
    ],
@@ -76214,11 +76264,18 @@
      "largest_src_bucket": "XL",
      "layout": "file",
      "purpose": "—"
+    },
+    "pairing": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The checkpoint pin `pair` returns (OF-469, FIX 3376), lifted whole from…"
     }
    },
    "over_bar": 4,
    "purpose": "The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound",
-   "source_files": 9,
+   "source_files": 10,
    "test_files": 0
   },
   "oneiron-vault-contract": {
