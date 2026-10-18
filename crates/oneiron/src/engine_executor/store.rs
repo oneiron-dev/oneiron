@@ -391,6 +391,59 @@ pub(super) fn load_observation_window(
     ))
 }
 
+/// Bytes of a finish answer a run's implicit bubble says (FIX 365). Past
+/// them the bubble says nothing of the answer as prose: it carries the
+/// stored answer as a typed result instead.
+pub(super) const IMPLICIT_SPEECH_TEXT_BYTES: u64 = COMPACTION_OBSERVATION_WINDOW_BYTES as u64;
+
+/// What a terminal checkpoint will say on a run's behalf (FIX 365): words,
+/// or the typed result that names a stored answer too large to say. Stored
+/// as its exact JSON, hashed into the checkpoint by those bytes, and decoded
+/// from them by a recovery, never rebuilt.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "intent", rename_all = "snake_case")]
+pub(super) enum ImplicitSpeechIntent {
+    Text {
+        text: String,
+    },
+    Result {
+        attachment: crate::memory::MessageResultAttachment,
+    },
+}
+
+impl ImplicitSpeechIntent {
+    /// The bytes a checkpoint stores and hashes.
+    pub(super) fn encode(&self) -> Result<String> {
+        serde_json::to_string(self)
+            .map_err(|_| Error::InvariantViolation("implicit speech intent encodes"))
+    }
+
+    pub(super) fn decode(stored: &str) -> Result<Self> {
+        serde_json::from_str(stored)
+            .map_err(|_| Error::CorruptedIndex("executor implicit speech intent"))
+    }
+}
+
+/// The attachment of run `record`'s `output` as its result MESSAGE carries
+/// it: the preview its card shows now, withheld while the body is not
+/// clean, and the facets that read the rest.
+pub(super) fn message_result_attachment(
+    storage: &ExecutorStorage<'_>,
+    record: &CodeRunReplayRecord,
+    output: &CodeRunRawOutput,
+) -> Result<crate::memory::MessageResultAttachment> {
+    let read =
+        crate::code_run::ResultRead::new(storage, record.run_id, output.clone(), None, None)?
+            .map_err(|_| Error::InvariantViolation("a whole result read is refused"))?;
+    let card = read.card(storage)?;
+    let preview = card["preview"]
+        .as_str()
+        .unwrap_or(CODE_RUN_OUTPUT_PREVIEW_WITHHELD)
+        .to_owned();
+    let truncated = output.preview.truncated || preview != output.preview.text;
+    crate::memory::MessageResultAttachment::of(record.run_id, output, preview, truncated)
+}
+
 /// The durable "this step already spoke its last word" marker (ONE-1686).
 ///
 /// Content-addressed into the run's own routed raw-output store, so its
@@ -519,7 +572,7 @@ pub(super) fn code_check_output_path(seq: u64) -> String {
 }
 
 pub(super) fn implicit_speak_output_path(seq: u64) -> String {
-    format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.implicit-speak.txt")
+    format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.implicit-speak.json")
 }
 
 pub(super) fn terminal_output_path(seq: u64) -> String {

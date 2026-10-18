@@ -166,10 +166,13 @@ impl Memory<'_> {
         )
     }
 
+    /// The executor's own door. `effect` shares the landing transaction: a
+    /// result MESSAGE publishes its hold on the body there (FIX 365).
     pub(crate) fn witness_host_executor(
         &self,
         turn: &WitnessTurn,
         session_route: Option<&SessionWriteRoute>,
+        effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
     ) -> MemoryResult<WitnessReceipt> {
         self.run_witness(
             turn,
@@ -179,7 +182,7 @@ impl Memory<'_> {
             WitnessDoor::HostExecutor,
             || {},
             |_| Ok(()),
-            |_| Ok(()),
+            effect,
         )
     }
 

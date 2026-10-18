@@ -79,6 +79,24 @@ pub struct OwnedBody {
     /// have different owners, births and grants.
     pub occurrence: EntityId,
     pub state: BodyState,
+    /// What a MESSAGE that holds a run's result keeps of where the body came
+    /// from (FIX 365), so a read reopens it after the run's replay is gone.
+    /// `None` on every other holder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<RetainedResultProvenance>,
+}
+
+/// A result hold's source: the producer run, its occurrence of the body and
+/// its path there, and the rows the run's answers were served from (`None`
+/// when the run kept no set, which is unknown, never public). It is no grant:
+/// a reader is admitted again under the taint the body has now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RetainedResultProvenance {
+    pub run_id: EntityId,
+    pub occurrence: EntityId,
+    pub path: String,
+    pub served_rows: Option<Vec<EntityId>>,
 }
 
 /// Body descriptors by owner. Key: id16 (owner) + id16 (occurrence).

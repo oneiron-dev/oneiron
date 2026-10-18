@@ -12,6 +12,7 @@
 //! checks for their verdict and reads no byte.
 
 mod chunks;
+mod outside;
 mod query;
 mod search;
 mod shape;
@@ -49,7 +50,10 @@ const WITHHELD_REASON: &str = "this result holds a secret or sits under a custod
      read shows its content; this is not a size limit";
 
 /// One of a result's `more` facets: a deterministic read of its body.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum ResultFacet {
     /// A range of the body, by bytes or by lines.
     Slice,
@@ -388,6 +392,44 @@ impl ResultRead {
             other => other,
         })
     }
+
+    /// One read for a caller outside the run, who has checked its grant and
+    /// the rows the run's answers were served from: `output` as `name` binds
+    /// it in run `owner`, narrowed to `range`, read under the taint of that
+    /// occurrence now. Its card, with no guest read path, when `facet` is
+    /// `None`, else that facet of it from `input`; a selection past one
+    /// reply pages, as nothing outside a run binds a new result. The reply
+    /// is the run's own: `{"output": ...}` or a `denied` refusal.
+    pub(crate) fn outside_run(
+        storage: &ExecutorStorage<'_>,
+        owner: EntityId,
+        output: CodeRunRawOutput,
+        name: Option<String>,
+        range: Option<(u64, u64)>,
+        facet: Option<ResultFacet>,
+        input: Value,
+    ) -> Result<Value> {
+        let read = match Self::new(storage, owner, output, name, range)? {
+            Ok(read) => read,
+            Err(refused) => return Ok(refused),
+        };
+        let Some(facet) = facet else {
+            let mut card = read.card(storage)?;
+            if let Some(fields) = card.as_object_mut() {
+                fields.remove("read");
+            }
+            return Ok(json!({"output": card}));
+        };
+        Ok(match read.read(storage, facet, input, None)? {
+            Reply::Output(output) => json!({"output": output}),
+            Reply::Denied(refused) => refused,
+            Reply::Spilled { .. } => {
+                return Err(Error::InvariantViolation(
+                    "a read with no sink spilled its selection",
+                ));
+            }
+        })
+    }
 }
 
 /// What the write door's rules find in what a read of a clean body shows
@@ -714,89 +756,4 @@ fn lfs_before(
         at.offset += piece.len() as u64;
     }
     Ok(Some(at.lfs))
-}
-
-impl Vault {
-    /// The cards of a code run's named results, newest first and at most
-    /// `limit` of them, and how many names it has: for a caller outside the
-    /// run, who releases them under the run's own checks. A card shows a
-    /// preview and a shape only of a clean body, and no guest read path.
-    pub fn code_run_result_cards(
-        &self,
-        record: &CodeRunReplayRecord,
-        limit: usize,
-    ) -> Result<(Vec<Value>, usize)> {
-        let storage = ExecutorStorage::Canonical(self);
-        let mut cards = Vec::new();
-        for binding in record.bindings.iter().rev().take(limit) {
-            let Some(output) = record.outputs.iter().find(|output| {
-                output.handle == binding.handle && is_result_output_path(&output.path)
-            }) else {
-                continue;
-            };
-            let mut card = card(&storage, record.run_id, output, Some(binding.name.as_str()))?;
-            if let Some(fields) = card.as_object_mut() {
-                fields.remove("read");
-            }
-            cards.push(card);
-        }
-        Ok((cards, record.bindings.len()))
-    }
-
-    /// One read of a code run's result for a caller outside the run (the
-    /// MCP door): its card when `facet` is `None`, else that facet of it,
-    /// with `input` less the reference. Only `run_id`'s own results resolve,
-    /// by a name it bound, a handle or a range of either. `withholds` says
-    /// whether the rows the run's answers were served from (`None` when one
-    /// kept no set) stay where the caller is not; then the result's taint
-    /// is checked as in the run. A selection past one reply pages, as
-    /// nothing outside a run binds a new result, and one picked value past
-    /// one reply comes back as a range ref over its own bytes, with its
-    /// first page. The reply is the run's own: `{"output": ...}` or a
-    /// `denied` refusal.
-    pub fn read_code_run_result(
-        &self,
-        run_id: EntityId,
-        reference: &str,
-        facet: Option<ResultFacet>,
-        input: Value,
-        withholds: impl FnOnce(Option<&[EntityId]>) -> Result<bool>,
-    ) -> Result<Value> {
-        let Some(record) = self.get_code_run_replay_record(&run_id)? else {
-            return Ok(unknown_handle(&[]));
-        };
-        let live: Vec<&CodeRunResultBinding> = record.bindings.iter().collect();
-        let target = JsResultTarget::parse(reference);
-        let outputs = record
-            .outputs
-            .iter()
-            .filter(|output| is_result_output_path(&output.path));
-        let Some((output, name)) = resolve(outputs, &live, &target.reference) else {
-            return Ok(unknown_handle(&live));
-        };
-        if withholds(record.agent_verb_rows().as_deref())? {
-            return Ok(refusal("result_withheld"));
-        }
-        let storage = ExecutorStorage::Canonical(self);
-        let read = match ResultRead::new(&storage, run_id, output, name, target.range)? {
-            Ok(read) => read,
-            Err(refused) => return Ok(refused),
-        };
-        let Some(facet) = facet else {
-            let mut card = read.card(&storage)?;
-            if let Some(fields) = card.as_object_mut() {
-                fields.remove("read");
-            }
-            return Ok(json!({"output": card}));
-        };
-        Ok(match read.read(&storage, facet, input, None)? {
-            Reply::Output(output) => json!({"output": output}),
-            Reply::Denied(refused) => refused,
-            Reply::Spilled { .. } => {
-                return Err(Error::InvariantViolation(
-                    "a read with no sink spilled its selection",
-                ));
-            }
-        })
-    }
 }

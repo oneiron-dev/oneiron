@@ -1014,6 +1014,24 @@ fn validate_witness_origin(turn: &WitnessTurn, host_executor: bool) -> MemoryRes
             "report-blocked receipts require the executor door",
         ));
     }
+    // A result attachment names a body its MESSAGE holds (FIX 365): only the
+    // executor writes one, and only one that decodes whole.
+    for message in &turn.messages {
+        let reserved = message
+            .metadata
+            .as_ref()
+            .is_some_and(|metadata| metadata.get(MESSAGE_RESULT_METADATA_KEY).is_some());
+        if !reserved {
+            continue;
+        }
+        if !host_executor {
+            return Err(MemoryError::bad_request(
+                "a result attachment requires the executor door",
+            ));
+        }
+        MessageResultAttachment::from_metadata(message.metadata.as_ref())
+            .map_err(MemoryError::bad_request)?;
+    }
     Ok(())
 }
 

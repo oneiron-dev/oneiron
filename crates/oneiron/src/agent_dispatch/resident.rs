@@ -544,6 +544,7 @@ impl AgentDispatcher<'_> {
                             location: BodyLocation::File,
                         },
                     },
+                    result: None,
                 })
             }
             _ => None,

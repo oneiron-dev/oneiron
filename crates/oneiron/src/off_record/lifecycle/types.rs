@@ -163,6 +163,9 @@ pub struct OffRecordTalkMessage {
     pub message_type: String,
     pub content: String,
     pub order: u64,
+    /// The result it carries in place of an answer too large to say (FIX
+    /// 365), its preview withheld while the room's marks taint the body.
+    pub result: Option<crate::memory::MessageResultAttachment>,
 }
 
 /// What evaporated at close and what was kept.

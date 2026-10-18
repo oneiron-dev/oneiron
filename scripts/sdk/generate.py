@@ -1501,6 +1501,13 @@ def outputs():
     # event, so it is a root here; their reply's `$state` and receipt are
     # reached already.
     INVENTORY.root_ir('crate::lens::GeneratedUiActionEvent')
+    # FIX 365: the hand-written transcript route (`GET
+    # /v1/core/conversations/{conversation_id}/transcript`, no verb row)
+    # answers with the engine's page, whose MESSAGE carries a typed result;
+    # the result is a root of its own for `POST
+    # /v1/core/messages/{message}/result`, which reads the body it names.
+    INVENTORY.root_ir('crate::memory::TranscriptPage')
+    INVENTORY.root_ir('crate::memory::MessageResultAttachment')
     census = INVENTORY.census(FACADE_ROWS)
     facade_types = INVENTORY.typescript(census)
     files['packages/oneiron/src/facade-types.ts'] = facade_types

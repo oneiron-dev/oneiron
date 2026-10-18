@@ -12,12 +12,13 @@ use super::record::{
     wait_key,
 };
 use super::store::{
-    COMPACTION_OBSERVATION_WINDOW_BYTES, ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES,
-    RESULT_REPLY_INLINE_BYTES, checkpoint_label, clean_for_context, fallback_speech_marker,
-    implicit_speak_output_path, load_context_output, load_observation_window, load_utf8_output,
-    observation_output_path, observation_ref, publish_output, record_reply_evidence,
-    record_script_output, record_text_output, recoverable_chunk_path, resumed_output_path,
-    resumed_output_wait, script_output_path, validate_runtime_outputs, write_json,
+    COMPACTION_OBSERVATION_WINDOW_BYTES, IMPLICIT_SPEECH_TEXT_BYTES, ImplicitSpeechIntent,
+    ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, RESULT_REPLY_INLINE_BYTES, checkpoint_label,
+    clean_for_context, fallback_speech_marker, implicit_speak_output_path, load_context_output,
+    load_observation_window, load_utf8_output, message_result_attachment, observation_output_path,
+    observation_ref, publish_output, record_reply_evidence, record_script_output,
+    record_text_output, recoverable_chunk_path, resumed_output_path, resumed_output_wait,
+    script_output_path, validate_runtime_outputs, write_json,
 };
 use super::types::{
     ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig,
@@ -438,7 +439,11 @@ impl EngineNativeExecutor<'_> {
             })
             .transpose()?
             .flatten();
-            if let Some(text) = implicit_speak.as_deref() {
+            let implicit_speak_bytes = implicit_speak
+                .as_ref()
+                .map(ImplicitSpeechIntent::encode)
+                .transpose()?;
+            if let Some(stored) = implicit_speak_bytes.as_deref() {
                 // The exact side-effect payload is part of the replay append,
                 // not ephemeral provider state. It is content-addressed like
                 // every other executor output and hashed into the checkpoint.
@@ -446,7 +451,7 @@ impl EngineNativeExecutor<'_> {
                     &self.storage,
                     &mut record,
                     implicit_speak_output_path(completed_steps),
-                    text,
+                    stored,
                 )?;
             }
             if let Some(status) = &terminal_status {
@@ -462,7 +467,7 @@ impl EngineNativeExecutor<'_> {
                     &request_hash,
                     &script,
                     &step_result,
-                    implicit_speak.as_deref(),
+                    implicit_speak_bytes.as_deref(),
                     &record.bridge_calls[bridge_start..],
                 )?,
                 config
@@ -488,8 +493,8 @@ impl EngineNativeExecutor<'_> {
             // compare-and-put failure emits nothing. A terminal retry replays
             // this delivery under stable witness ids, so it can recover a
             // missed emit without minting a duplicate bubble.
-            if let Some(text) = implicit_speak.as_deref() {
-                self.emit_trailing_speak_fallback(&record, completed_steps, text, config)?;
+            if let Some(intent) = &implicit_speak {
+                self.emit_trailing_speak_fallback(&record, completed_steps, intent, config)?;
             }
             steps_run += 1;
             if let Some(shadow) = &mut shadow {
@@ -622,18 +627,23 @@ impl EngineNativeExecutor<'_> {
     /// # How much is said
     ///
     /// An answer has no size limit, and a bubble is no place for a large one:
-    /// it says the answer whole up to a compaction window, read by range
-    /// from its stored body, and past that its head and the stored reference
-    /// to the rest.
+    /// it says the answer whole up to [`IMPLICIT_SPEECH_TEXT_BYTES`], and past
+    /// that says none of it as prose. The bubble carries the stored answer
+    /// as a typed result instead: a bounded preview, the run and occurrence
+    /// that produced it, and the facets that read the rest (FIX 365).
     fn prepare_trailing_speak_fallback(
         &self,
         record: &CodeRunReplayRecord,
         observation: &CodeRunRawOutput,
         trailing_speak: Option<&str>,
-    ) -> EngineExecutorResult<Option<String>> {
+    ) -> EngineExecutorResult<Option<ImplicitSpeechIntent>> {
         let answer;
         let text = match trailing_speak {
             Some(text) => text,
+            None if observation.raw_len > IMPLICIT_SPEECH_TEXT_BYTES => {
+                let attachment = message_result_attachment(&self.storage, record, observation)?;
+                return Ok(Some(ImplicitSpeechIntent::Result { attachment }));
+            }
             None => {
                 answer = load_observation_window(
                     &self.storage,
@@ -656,7 +666,9 @@ impl EngineNativeExecutor<'_> {
         {
             return Ok(None);
         }
-        Ok(Some(text.to_owned()))
+        Ok(Some(ImplicitSpeechIntent::Text {
+            text: text.to_owned(),
+        }))
     }
 
     /// Recovers a terminal checkpoint's implicit speech intent (ONE-1929).
@@ -685,8 +697,9 @@ impl EngineNativeExecutor<'_> {
         if !record.outputs.iter().any(|output| output.path == path) {
             return Ok(());
         }
-        let text = load_utf8_output(&self.storage, record, &path)?;
-        self.emit_trailing_speak_fallback(record, seq, &text, config)
+        let stored = load_utf8_output(&self.storage, record, &path)?;
+        let intent = ImplicitSpeechIntent::decode(&stored)?;
+        self.emit_trailing_speak_fallback(record, seq, &intent, config)
     }
 
     /// Materializes ONE already-checkpointed implicit bubble, at most once.
@@ -709,7 +722,7 @@ impl EngineNativeExecutor<'_> {
         &mut self,
         record: &CodeRunReplayRecord,
         step_seq: u64,
-        text: &str,
+        intent: &ImplicitSpeechIntent,
         config: &EngineExecutorConfig,
     ) -> EngineExecutorResult<()> {
         let order = u32::try_from(record.bridge_calls.len()).unwrap_or(u32::MAX);
@@ -743,13 +756,22 @@ impl EngineNativeExecutor<'_> {
             )
             .into());
         }
-        self.witness_turn_for_run_at(
-            Some(config.run_id),
-            ExecutorUtterance::Speak,
-            text,
-            occurred_at,
-            order,
-        )?;
+        match intent {
+            ImplicitSpeechIntent::Text { text } => self.witness_turn_for_run_at(
+                Some(config.run_id),
+                ExecutorUtterance::Speak,
+                text,
+                occurred_at,
+                order,
+            )?,
+            ImplicitSpeechIntent::Result { attachment } => self.witness_result_for_run_at(
+                config.run_id,
+                attachment,
+                record.agent_verb_rows().as_deref(),
+                occurred_at,
+                order,
+            )?,
+        };
         // Written AFTER the bubble, deliberately: a marker written first and
         // then orphaned by a crash would silence a run that never spoke, which
         // is the failure the fallback exists to prevent. Written second, the

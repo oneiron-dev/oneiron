@@ -483,6 +483,101 @@ impl Vault {
         Ok(wtxn.commit()?)
     }
 
+    /// MESSAGE `message`'s hold on the body `attachment` names, published in
+    /// the caller's transaction (FIX 365): its own occurrence of the body,
+    /// beside the producer's, carrying the producer's taint and secret marks
+    /// and what reopens it once the producer's replay is gone. The MESSAGE
+    /// keeps the body while it holds it; erasing the MESSAGE releases it.
+    pub(crate) fn retain_message_result_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        message: EntityId,
+        attachment: &crate::memory::MessageResultAttachment,
+        served_rows: Option<Vec<EntityId>>,
+    ) -> Result<()> {
+        let output = attachment.output()?;
+        let stored = RAW_OUTPUTS
+            .get(&self.store, wtxn, &output.handle)?
+            .ok_or(Error::CorruptedIndex("message result body"))?;
+        let (refs, secret) =
+            self.result_marks_in_txn(wtxn, Some(attachment.source.run_id), &output)?;
+        let key = ResultOccurrence::of(Some(message), &output)?.mark_key(&output.handle);
+        if !refs.is_empty() {
+            RAW_OUTPUT_TAINTS.put(&self.store, wtxn, &key, &refs)?;
+        }
+        if let Some(reason) = &secret {
+            RAW_OUTPUT_SECRETS.put(&self.store, wtxn, &key, reason)?;
+        }
+        let mut held = owned_body(message, &output, &stored)?;
+        held.result = Some(crate::provenance::body::RetainedResultProvenance {
+            run_id: attachment.source.run_id,
+            occurrence: attachment.source.occurrence,
+            path: attachment.source.path.clone(),
+            served_rows,
+        });
+        crate::provenance::body::publish_body_in_txn(&self.store, wtxn, &held)
+    }
+
+    /// [`Self::retain_message_result_in_txn`] for a MESSAGE a save keeps out
+    /// of an off-record room, in the save's transaction (FIX 365). The run
+    /// that made the body ran in the room, so `room`, the room's composed
+    /// view, holds the body's row, the producer's marks and the run's replay
+    /// record: the row lands in base unless base holds it already, the marks
+    /// land on the MESSAGE's occurrence, and the hold keeps the rows the
+    /// run's answers were served from while the room still holds its record.
+    /// A spilled body's file is in `bodies/` before this runs.
+    pub(crate) fn retain_saved_message_result_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        room: &impl side_table::SideTableDbs,
+        message: EntityId,
+        attachment: &crate::memory::MessageResultAttachment,
+    ) -> Result<()> {
+        let output = attachment.output()?;
+        let stored = match RAW_OUTPUTS.get(&self.store, wtxn, &output.handle)? {
+            Some(stored) => stored,
+            None => {
+                let stored = RAW_OUTPUTS
+                    .get(room, wtxn, &output.handle)?
+                    .ok_or(Error::CorruptedIndex("message result body"))?;
+                if matches!(stored, StoredBody::File { .. })
+                    && self
+                        .store
+                        .body_dir()?
+                        .open_body(&output.raw_blake3, output.raw_len)?
+                        .is_none()
+                {
+                    return Err(Error::CorruptedIndex("message result body file missing"));
+                }
+                RAW_OUTPUTS.put(&self.store, wtxn, &output.handle, &stored)?;
+                stored
+            }
+        };
+        let producer =
+            ResultOccurrence::of(Some(attachment.source.run_id), &output)?.mark_key(&output.handle);
+        let key = ResultOccurrence::of(Some(message), &output)?.mark_key(&output.handle);
+        if let Some(refs) = RAW_OUTPUT_TAINTS
+            .get(room, wtxn, &producer)?
+            .filter(|refs| !refs.is_empty())
+        {
+            RAW_OUTPUT_TAINTS.put(&self.store, wtxn, &key, &refs)?;
+        }
+        if let Some(reason) = RAW_OUTPUT_SECRETS.get(room, wtxn, &producer)? {
+            RAW_OUTPUT_SECRETS.put(&self.store, wtxn, &key, &reason)?;
+        }
+        let served_rows = REPLAY_RECORDS
+            .get(room, wtxn, &attachment.source.run_id)?
+            .and_then(|record| record.agent_verb_rows());
+        let mut held = owned_body(message, &output, &stored)?;
+        held.result = Some(crate::provenance::body::RetainedResultProvenance {
+            run_id: attachment.source.run_id,
+            occurrence: attachment.source.occurrence,
+            path: attachment.source.path.clone(),
+            served_rows,
+        });
+        crate::provenance::body::publish_body_in_txn(&self.store, wtxn, &held)
+    }
+
     /// Every run's result manifests in the base vault, from its replay
     /// record: an off-record run's records live in its room, never here.
     pub(crate) fn code_run_result_manifests_in_txn(
@@ -742,6 +837,7 @@ fn owned_body(
                 retained: Some(body),
             }
         },
+        result: None,
     })
 }
 

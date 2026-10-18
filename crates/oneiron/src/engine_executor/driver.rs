@@ -376,6 +376,34 @@ impl<'a> EngineNativeExecutor<'a> {
         )?))
     }
 
+    /// A run's answer said as its typed result (FIX 365), under the same
+    /// order and binding checks as a spoken bubble.
+    pub(super) fn witness_result_for_run_at(
+        &self,
+        run_id: EntityId,
+        attachment: &crate::memory::MessageResultAttachment,
+        served_rows: Option<&[EntityId]>,
+        occurred_at: u64,
+        order: u32,
+    ) -> EngineExecutorResult<Option<WitnessReceipt>> {
+        if order > crate::gate::MAX_WITNESS_MESSAGE_ORDER {
+            return Err(Error::InvalidConfig(
+                "engine executor witness order exceeds the MESSAGE order ceiling".to_owned(),
+            )
+            .into());
+        }
+        self.verify_storage_dispatcher_binding()?;
+        Ok(Some(self.storage.witness_executor_result(
+            self.gated_write.run_ref(),
+            run_id,
+            attachment,
+            served_rows,
+            occurred_at,
+            order,
+            self.gated_write.actor(),
+        )?))
+    }
+
     /// Refuses a mismatched storage/dispatcher pair before ANY read or write.
     ///
     /// Correctness must not rest on a caller having picked the matching

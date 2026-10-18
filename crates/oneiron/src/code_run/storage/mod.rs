@@ -36,7 +36,7 @@ pub(crate) use self::speech_identity::executor_speech_message_id;
 #[cfg(test)]
 pub(super) use self::speech_identity::executor_speech_turn_id;
 pub(crate) use self::speech_identity::{
-    executor_compaction_session_id, executor_speech_message_id_in_run,
+    ResultSpeech, executor_compaction_session_id, executor_speech_message_id_in_run,
     executor_speech_turn_id_for_run,
 };
 pub(crate) use self::wait_delivery::deliver_wait_in_txn;
