@@ -286,16 +286,24 @@ impl AuthenticatedOwner {
     }
 
     /// The credential slip this proof was carried under, and that slip's
-    /// parent. An offer refuses an answer from the lineage that opened it.
+    /// parent, or the host root a host action acts under (FIX 2222). An
+    /// offer refuses an answer from the lineage that opened it.
     pub(super) fn credential_lineage(&self) -> Vec<[u8; 32]> {
-        self.credential
+        let mut lineage = self
+            .credential
             .as_ref()
             .map_or_else(Vec::new, |credential| {
                 let claims = credential.claims();
                 std::iter::once(claims.slip_id)
                     .chain(claims.parent_id)
                     .collect()
-            })
+            });
+        lineage.extend(
+            self.host_action
+                .as_ref()
+                .and_then(|action| action.root_slip_id()),
+        );
+        lineage
     }
 
     pub(super) fn stamp(&self) -> ConsentOwnerStamp {

@@ -97,6 +97,12 @@ impl HostActionGuard {
     pub(crate) fn holds_in(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
         vault.host_action_still_holds_in_txn(txn, self.root.as_ref(), self.owner)
     }
+
+    /// The host root this action acts under, by slip id; `None` for the
+    /// dev mode. An offer refuses an answer from the lineage that opened it.
+    pub(crate) fn root_slip_id(&self) -> Option<[u8; 32]> {
+        self.root.as_ref().map(|root| root.claims().slip_id)
+    }
 }
 
 /// Whether `error` is a host action's refusal, the typed one or the owner
