@@ -169,6 +169,18 @@ pub struct ManagedArgs {
     pub artifact_domains: Vec<String>,
     /// The supervisor's `[models]` file (`--models-file`).
     pub models_file: Option<PathBuf>,
+    /// This vault's e-sign seal key file (`--seal-key-file`).
+    pub seal_key: Option<PathBuf>,
+    /// Its certificate chain file (`--seal-chain-file`).
+    pub seal_chain: Option<PathBuf>,
+    /// The seal's trust anchors file (`--seal-trust-file`).
+    pub seal_trust: Option<PathBuf>,
+    /// The seal's timestamp authority URL (`--seal-tsa-url`).
+    pub seal_tsa: Option<String>,
+    /// The signing page seal evidence names (`--seal-signing-url`).
+    pub seal_signing_url: Option<String>,
+    /// The seal organ's program (`--seal-organ`).
+    pub seal_organ: Option<PathBuf>,
 }
 
 /// A `--models-file`: the `[models]` table alone, as a config file writes it.
@@ -278,6 +290,12 @@ impl ManagedArgs {
                 .filter(|domain| !domain.is_empty())
                 .collect(),
             models_file: args.models_file.clone(),
+            seal_key: args.seal_key_file.clone(),
+            seal_chain: args.seal_chain_file.clone(),
+            seal_trust: args.seal_trust_file.clone(),
+            seal_tsa: nonempty(args.seal_tsa_url.as_deref()),
+            seal_signing_url: nonempty(args.seal_signing_url.as_deref()),
+            seal_organ: args.seal_organ.clone(),
         };
         if managed
             .artifact_socket
@@ -301,6 +319,10 @@ impl ManagedArgs {
             ("break-glass-recipient-file", &managed.break_glass_recipient),
             ("escrow-outbox-dir", &managed.escrow_outbox),
             ("models-file", &managed.models_file),
+            ("seal-key-file", &managed.seal_key),
+            ("seal-chain-file", &managed.seal_chain),
+            ("seal-trust-file", &managed.seal_trust),
+            ("seal-organ", &managed.seal_organ),
         ] {
             if path.as_deref().is_some_and(std::path::Path::is_relative) {
                 return Err(ManagedError::RelativeRecipientFile { flag });
@@ -391,6 +413,20 @@ impl ManagedArgs {
         Ok(Some(models))
     }
 
+    /// The vault's own e-sign seal settings, from its argv alone (FIX 3487).
+    #[cfg(unix)]
+    pub(crate) fn seal_config(&self) -> crate::api::EsignSealConfig {
+        crate::api::EsignSealConfig {
+            key: self.seal_key.clone(),
+            chain: self.seal_chain.clone(),
+            trust: self.seal_trust.clone(),
+            tsa: self.seal_tsa.clone(),
+            signing_url: self.seal_signing_url.clone(),
+            organ: self.seal_organ.clone(),
+            argv: true,
+        }
+    }
+
     pub fn serve_config(&self, args: &ServeArgs) -> ServeConfig {
         let defaults = ServeConfig::default();
         let mut config = ServeConfig {
@@ -434,6 +470,11 @@ impl ManagedArgs {
         }
         config
     }
+}
+
+/// An argv text that says something: an empty one is none.
+fn nonempty(text: Option<&str>) -> Option<String> {
+    text.filter(|text| !text.is_empty()).map(str::to_owned)
 }
 
 fn require<T>(value: Option<T>, flag: &'static str) -> Result<T, ManagedError> {
@@ -600,6 +641,36 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "models-file",
         |args| args.models_file.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "seal-key-file",
+        |args| args.seal_key_file.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "seal-chain-file",
+        |args| args.seal_chain_file.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "seal-trust-file",
+        |args| args.seal_trust_file.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "seal-tsa-url",
+        |args| args.seal_tsa_url.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "seal-signing-url",
+        |args| args.seal_signing_url.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "seal-organ",
+        |args| args.seal_organ.is_some(),
         ArgvUse::Read,
     ),
     // The bind: the supervisor's socket, never a host:port.

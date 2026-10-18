@@ -14,15 +14,12 @@ use oneiron::sync::residence::{
     home_search_candidates, index_selection_revision, promotion_snapshot_with,
     replace_sealed_bundle_pads, sealed_bundle_generations, sealed_bundle_part,
     sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex, sealed_generation_hex,
-    sealed_shelf_after, sealed_shelf_packet_part, selected_item_blob_with, shelve_sealed_window,
-    shelve_staged_sealed_window, stage_sealed_bundle_part, stage_sealed_part,
-    want_sealed_replacement, wanted_sealed_replacements, window_index_page,
+    selected_item_blob_with, stage_sealed_bundle_part, window_index_page,
     window_index_projection_with,
 };
 use oneiron::sync::residence_operation_budgets::ResidenceOperationBudgets;
 use oneiron::sync::schema::read_window_list;
 use oneiron::sync::{SyncSelector, WindowKey, decode_sync_selector};
-use oneiron::world_keys::SealedContentId;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -98,65 +95,6 @@ struct SearchRequest {
     limit: usize,
     selector: String,
 }
-
-/// A sealed packet of one private-world window, for the home to keep
-/// (OF-534 G7).
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct SealedPutRequest {
-    window: String,
-    packet: String,
-    #[serde(default)]
-    retire_through: Option<u64>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct SealedListRequest {
-    #[serde(default)]
-    after: u64,
-}
-
-/// One part of a sealed packet too large for one request: `upload` is the
-/// blake3 digest of the whole packet in hex, `offset` the bytes staged before.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct SealedStageRequest {
-    window: String,
-    upload: String,
-    offset: u64,
-    part: String,
-}
-
-/// The end of a packet put in parts: the home shelves what it staged.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct SealedCommitRequest {
-    window: String,
-    upload: String,
-    #[serde(default)]
-    retire_through: Option<u64>,
-}
-
-/// One slice of a shelved packet too large for one reply.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SealedReadRequest {
-    id: String,
-    offset: u64,
-}
-
-/// A reader's ask for a replacement of one window whose update it could not
-/// take in for want of its base.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SealedWantRequest {
-    window: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SealedWantsRequest {}
 
 /// One part of an upload of the vault's sealed bundle or its pad object
 /// (FIX 922): `digest` is the blake3 of the whole object in hex, `offset` the
@@ -295,13 +233,6 @@ pub(super) fn run(
             "residence.promote" => promote(server, auth, peer, request.params),
             "residence.window.vv" => window_vv(server, auth, peer, request.params),
             "residence.search" => search(server, auth, peer, request.params, budgets),
-            "residence.sealed.put" => sealed_put(server, auth, peer, request.params),
-            "residence.sealed.list" => sealed_list(server, peer, request.params),
-            "residence.sealed.stage" => sealed_stage(server, auth, peer, request.params),
-            "residence.sealed.commit" => sealed_commit(server, auth, peer, request.params),
-            "residence.sealed.read" => sealed_read(server, peer, request.params),
-            "residence.sealed.want" => sealed_want(server, auth, peer, request.params),
-            "residence.sealed.wants" => sealed_wants(server, peer, request.params),
             "residence.bundle.put" => bundle_put(server, auth, peer, request.params),
             "residence.bundle.commit" => bundle_commit(server, auth, peer, request.params),
             "residence.bundle.list" => bundle_list(server, peer, request.params),
@@ -849,141 +780,6 @@ fn search(
         json!({"hits": hits, "source": "home", "complete": true}),
         Some(rows),
     ))
-}
-
-/// Keeps a sealed packet of a private world's window that the sending
-/// machine reads (OF-534 G7). The home opens nothing; a refused sender,
-/// world or packet looks missing.
-fn sealed_put(
-    server: &SyncServer,
-    auth: &CoreAuth,
-    peer: PeerMachine,
-    params: Value,
-) -> Result<Answer, AppError> {
-    auth.require(CoreScope::Write)?;
-    let input: SealedPutRequest =
-        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
-    let window = WindowKey::try_new(input.window).ok_or_else(AppError::invalid_params)?;
-    let packet = base64::engine::general_purpose::STANDARD
-        .decode(input.packet)
-        .map_err(|_| AppError::invalid_params())?;
-    let (id, seq) =
-        shelve_sealed_window(&server.vault, peer, &window, &packet, input.retire_through)
-            .map_err(|_| AppError::not_found("sealed window", None))?;
-    Ok((json!({"id": id.to_hex(), "seq": seq}), Some(Vec::new())))
-}
-
-/// The live sealed packets after one arrival, of the worlds the proved
-/// machine reads.
-fn sealed_list(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<Answer, AppError> {
-    let input: SealedListRequest =
-        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
-    let entries = sealed_shelf_after(&server.vault, peer, input.after)
-        .map_err(|_| AppError::not_found("sealed shelf", None))?;
-    let entries: Vec<Value> = entries
-        .into_iter()
-        .map(|entry| {
-            json!({"id": entry.id.to_hex(), "window": entry.window.as_str(), "seq": entry.seq})
-        })
-        .collect();
-    Ok((json!({"entries": entries}), Some(Vec::new())))
-}
-
-/// Stages one part of a sealed packet too large for one request (OF-534 G7);
-/// refused as [`sealed_put`] refuses.
-fn sealed_stage(
-    server: &SyncServer,
-    auth: &CoreAuth,
-    peer: PeerMachine,
-    params: Value,
-) -> Result<Answer, AppError> {
-    auth.require(CoreScope::Write)?;
-    let input: SealedStageRequest =
-        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
-    let window = WindowKey::try_new(input.window).ok_or_else(AppError::invalid_params)?;
-    let upload = sealed_upload(&input.upload)?;
-    let part = base64::engine::general_purpose::STANDARD
-        .decode(input.part)
-        .map_err(|_| AppError::invalid_params())?;
-    let staged = stage_sealed_part(&server.vault, peer, &window, &upload, input.offset, &part)
-        .map_err(|_| AppError::not_found("sealed window", None))?;
-    Ok((json!({"staged": staged}), Some(Vec::new())))
-}
-
-/// Shelves a sealed packet staged in parts, as [`sealed_put`] shelves a whole
-/// one.
-fn sealed_commit(
-    server: &SyncServer,
-    auth: &CoreAuth,
-    peer: PeerMachine,
-    params: Value,
-) -> Result<Answer, AppError> {
-    auth.require(CoreScope::Write)?;
-    let input: SealedCommitRequest =
-        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
-    let window = WindowKey::try_new(input.window).ok_or_else(AppError::invalid_params)?;
-    let upload = sealed_upload(&input.upload)?;
-    let (id, seq) =
-        shelve_staged_sealed_window(&server.vault, peer, &window, &upload, input.retire_through)
-            .map_err(|_| AppError::not_found("sealed window", None))?;
-    Ok((json!({"id": id.to_hex(), "seq": seq}), Some(Vec::new())))
-}
-
-fn sealed_upload(hex: &str) -> Result<[u8; 32], AppError> {
-    blake3::Hash::from_hex(hex)
-        .map(|hash| *hash.as_bytes())
-        .map_err(|_| AppError::invalid_params())
-}
-
-/// One slice of a live or retired sealed packet from `offset`, with its whole
-/// length, for a proved machine that reads its world and a packet too large
-/// for one reply.
-fn sealed_read(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<Answer, AppError> {
-    let input: SealedReadRequest =
-        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
-    let id = SealedContentId::from_hex(&input.id).map_err(|_| AppError::invalid_params())?;
-    let (window, total, part) = sealed_shelf_packet_part(&server.vault, peer, &id, input.offset)
-        .map_err(|_| AppError::not_found("sealed packet", None))?
-        .ok_or_else(|| AppError::not_found("sealed packet", None))?;
-    Ok((
-        json!({
-            "id": id.to_hex(),
-            "window": window.as_str(),
-            "total": total,
-            "part": base64::engine::general_purpose::STANDARD.encode(part),
-        }),
-        Some(Vec::new()),
-    ))
-}
-
-/// Records a reader's ask for a replacement of one window (OF-534 G7);
-/// refused as [`sealed_put`] refuses.
-fn sealed_want(
-    server: &SyncServer,
-    auth: &CoreAuth,
-    peer: PeerMachine,
-    params: Value,
-) -> Result<Answer, AppError> {
-    auth.require(CoreScope::Write)?;
-    let input: SealedWantRequest =
-        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
-    let window = WindowKey::try_new(input.window).ok_or_else(AppError::invalid_params)?;
-    want_sealed_replacement(&server.vault, peer, &window)
-        .map_err(|_| AppError::not_found("sealed window", None))?;
-    Ok((json!({}), Some(Vec::new())))
-}
-
-/// The windows other machines asked a replacement of, of the worlds the
-/// proved machine reads, for it to put a replacement of each it seals.
-fn sealed_wants(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<Answer, AppError> {
-    let SealedWantsRequest {} =
-        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
-    let windows: Vec<String> = wanted_sealed_replacements(&server.vault, peer)
-        .map_err(|_| AppError::not_found("sealed shelf", None))?
-        .into_iter()
-        .map(|window| window.as_str().to_owned())
-        .collect();
-    Ok((json!({"windows": windows}), Some(Vec::new())))
 }
 
 fn bundle_generation(hex: &str) -> Result<oneiron::world_keys::SealedBundleGeneration, AppError> {
