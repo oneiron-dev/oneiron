@@ -32331,6 +32331,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/memory/recall/speculative.rs",
+     "purpose": "Bind OF-108 to the same credential, selected worlds and policy as recall",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "MemoryStaleStamp"
      ],
@@ -45804,10 +45814,21 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)",
      "surface": {
       "const": 2,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 5,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/speculative/scoped.rs",
+     "purpose": "Credential-bound candidate admission, inside every speculative pass",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 3
      }
     },
     {
@@ -50344,7 +50365,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 51,
+      "re-export": 52,
       "struct": 36
      }
     },
@@ -50387,6 +50408,28 @@
      "surface": {
       "enum": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AsrCloseRequest",
+      "AsrClosed",
+      "AsrFinalDecision",
+      "AsrFinalReceipt",
+      "AsrFireDecision",
+      "AsrHypothesisReceipt",
+      "AsrHypothesisRequest",
+      "AsrOpenRequest",
+      "AsrSession"
+     ],
+     "path": "src/task_verb/sdk_asr.rs",
+     "purpose": "Host-enriched ASR observations over one owner-bound speculative recall session",
+     "surface": {
+      "enum": 2,
+      "fn": 2,
+      "struct": 7
      }
     },
     {
@@ -50703,7 +50746,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 664
+      "fn": 668
      }
     },
     {
@@ -57253,7 +57296,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 171,
+     "files": 172,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57701,10 +57744,10 @@
      "purpose": "SLIM residency (ONE-1933 / OF-447): the engine half of the FULL → SLIM → REAPED ladder"
     },
     "speculative": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
@@ -57764,7 +57807,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 165,
+     "files": 166,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -57934,7 +57977,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3531,
+   "source_files": 3534,
    "test_files": 902
   },
   "oneiron-android": {
@@ -66443,7 +66486,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 614
+      "fn": 618
      }
     },
     {
@@ -67492,7 +67535,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 615
+      "fn": 619
      }
     },
     {
@@ -70355,7 +70398,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 33
+      "crate-vis": 34
      }
     },
     {
@@ -70406,6 +70449,16 @@
      "purpose": "Typed publication and private preview doors under each caller's own proof",
      "surface": {
       "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/asr_doors.rs",
+     "purpose": "The owner's host-enriched ASR door",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -70775,7 +70828,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 117
+      "crate-vis": 118
      }
     },
     {
@@ -78443,7 +78496,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 377,
+     "files": 378,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -78865,7 +78918,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 713,
+   "source_files": 714,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -79204,6 +79257,15 @@
       "AskRole",
       "AskTo",
       "AsofScrubberAtom",
+      "AsrCloseRequest",
+      "AsrClosed",
+      "AsrFinalDecision",
+      "AsrFinalReceipt",
+      "AsrFireDecision",
+      "AsrHypothesisReceipt",
+      "AsrHypothesisRequest",
+      "AsrOpenRequest",
+      "AsrSession",
       "AssetRef",
       "AttemptCancelPressure",
       "AttemptCancelReceipt",
@@ -81295,8 +81357,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 584,
-      "struct": 1648
+      "enum": 586,
+      "struct": 1655
      }
     },
     {
