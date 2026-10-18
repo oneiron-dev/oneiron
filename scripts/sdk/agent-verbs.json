@@ -16,6 +16,81 @@
       "server_door": "report_off_runtime"
     },
     {
+      "name": "feedback.preview",
+      "description": "The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval.",
+      "input": "crate::task_verb::sdk::FeedbackPreviewRequest",
+      "output": "crate::task_verb::sdk::FeedbackSubjectPreview",
+      "call": "crate::task_verb::sdk::host_only(memory, \"feedback.preview\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "feedback.send",
+      "description": "The owner sends exactly the previewed feedback bundle for one report issue to its publisher, once, through the ordinary outbound gate.",
+      "input": "crate::task_verb::sdk::FeedbackSendSubjectRequest",
+      "output": "crate::task_verb::sdk::FeedbackSubjectSent",
+      "call": "crate::task_verb::sdk::host_only(memory, \"feedback.send\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.reports.disclosure",
+      "description": "The owner decides whether one publisher-routed report's exact quoted text may cross to its publisher: approve once, stop asking, or deny.",
+      "input": "crate::task_verb::sdk::ReportDisclosureRequest",
+      "output": "crate::feedback::ReportIssue",
+      "call": "crate::task_verb::sdk::decide_report_disclosure_as_owner(memory.vault(), &memory.embedded_owner(\"vault.reports.disclosure\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.reports.route",
+      "description": "The owner replaces one durable subject's maker route: the owner inbox, or one admitted publisher its feedback is delivered to.",
+      "input": "crate::task_verb::sdk::ReportRouteRequest",
+      "output": "crate::task_verb::sdk::ReportRouteReceipt",
+      "call": "crate::task_verb::sdk::set_report_route_as_owner(memory.vault(), &memory.embedded_owner(\"vault.reports.route\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.reports.outbound",
+      "description": "The owner reads the content-free payload a publisher delivery for one report issue would carry now, with its quoted text only when disclosure approved it.",
+      "input": "crate::task_verb::sdk::ReportOutboundRequest",
+      "output": "crate::task_verb::sdk::ReportOutboundView",
+      "call": "crate::task_verb::sdk::report_outbound_as_owner(memory.vault(), &memory.embedded_owner(\"vault.reports.outbound\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "self.focus.refresh",
       "description": "Re-renders the run's context board as one frame, at the frame epoch the caller last saw.",
       "input": "BoardRefreshRequest",

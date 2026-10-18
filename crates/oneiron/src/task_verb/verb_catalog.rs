@@ -2,6 +2,11 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentVerb {
     Report,
+    FeedbackPreview,
+    FeedbackSend,
+    VaultReportsDisclosure,
+    VaultReportsRoute,
+    VaultReportsOutbound,
     SelfFocusRefresh,
     SelfFocusSubscribe,
     SelfFocusUnsubscribe,
@@ -662,6 +667,11 @@ pub enum AgentVerb {
 impl AgentVerb {
     pub const ALL: &[Self] = &[
         Self::Report,
+        Self::FeedbackPreview,
+        Self::FeedbackSend,
+        Self::VaultReportsDisclosure,
+        Self::VaultReportsRoute,
+        Self::VaultReportsOutbound,
         Self::SelfFocusRefresh,
         Self::SelfFocusSubscribe,
         Self::SelfFocusUnsubscribe,
@@ -1325,6 +1335,11 @@ impl AgentVerb {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Report => "report",
+            Self::FeedbackPreview => "feedback.preview",
+            Self::FeedbackSend => "feedback.send",
+            Self::VaultReportsDisclosure => "vault.reports.disclosure",
+            Self::VaultReportsRoute => "vault.reports.route",
+            Self::VaultReportsOutbound => "vault.reports.outbound",
             Self::SelfFocusRefresh => "self.focus.refresh",
             Self::SelfFocusSubscribe => "self.focus.subscribe",
             Self::SelfFocusUnsubscribe => "self.focus.unsubscribe",
@@ -2003,6 +2018,11 @@ impl AgentVerb {
         matches!(
             self,
             Self::Report
+                | Self::FeedbackPreview
+                | Self::FeedbackSend
+                | Self::VaultReportsDisclosure
+                | Self::VaultReportsRoute
+                | Self::VaultReportsOutbound
                 | Self::SelfFocusScratchpadRecall
                 | Self::SelfFocusScratchpadAppend
                 | Self::SelfFocusScratchpadSeal
@@ -2667,6 +2687,11 @@ impl AgentVerb {
         matches!(
             self,
             Self::Report
+                | Self::FeedbackPreview
+                | Self::FeedbackSend
+                | Self::VaultReportsDisclosure
+                | Self::VaultReportsRoute
+                | Self::VaultReportsOutbound
                 | Self::SelfFocusRefresh
                 | Self::SelfFocusSubscribe
                 | Self::SelfFocusUnsubscribe
@@ -3405,7 +3430,12 @@ impl AgentVerb {
     pub const fn requires_unscoped(self) -> bool {
         matches!(
             self,
-            Self::SelfFocusScratchpadRecall
+            Self::FeedbackPreview
+                | Self::FeedbackSend
+                | Self::VaultReportsDisclosure
+                | Self::VaultReportsRoute
+                | Self::VaultReportsOutbound
+                | Self::SelfFocusScratchpadRecall
                 | Self::SelfFocusScratchpadAppend
                 | Self::SelfFocusScratchpadSeal
                 | Self::SelfMemoryDiary
@@ -4028,7 +4058,10 @@ impl AgentVerb {
     pub const fn writes(self) -> bool {
         matches!(
             self,
-            Self::SelfFocusScratchpadAppend
+            Self::FeedbackSend
+                | Self::VaultReportsDisclosure
+                | Self::VaultReportsRoute
+                | Self::SelfFocusScratchpadAppend
                 | Self::SelfFocusScratchpadSeal
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReview
@@ -4450,6 +4483,11 @@ impl AgentVerb {
     pub const fn argument_fields(self) -> &'static [&'static str] {
         match self {
             Self::Report => &["spec"],
+            Self::FeedbackPreview => &["spec"],
+            Self::FeedbackSend => &["spec"],
+            Self::VaultReportsDisclosure => &["spec"],
+            Self::VaultReportsRoute => &["spec"],
+            Self::VaultReportsOutbound => &["spec"],
             Self::SelfFocusRefresh => &["frame_epoch"],
             Self::SelfFocusSubscribe => &["scopes"],
             Self::SelfFocusUnsubscribe => &["scopes"],
@@ -5128,6 +5166,11 @@ impl AgentVerb {
     pub const fn required_fields(self) -> &'static [&'static str] {
         match self {
             Self::Report => &["spec"],
+            Self::FeedbackPreview => &["spec"],
+            Self::FeedbackSend => &["spec"],
+            Self::VaultReportsDisclosure => &["spec"],
+            Self::VaultReportsRoute => &["spec"],
+            Self::VaultReportsOutbound => &["spec"],
             Self::SelfFocusRefresh => &[],
             Self::SelfFocusSubscribe => &["scopes"],
             Self::SelfFocusUnsubscribe => &["scopes"],
@@ -5791,6 +5834,21 @@ impl AgentVerb {
         match self {
             Self::Report => {
                 "Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor."
+            }
+            Self::FeedbackPreview => {
+                "The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval."
+            }
+            Self::FeedbackSend => {
+                "The owner sends exactly the previewed feedback bundle for one report issue to its publisher, once, through the ordinary outbound gate."
+            }
+            Self::VaultReportsDisclosure => {
+                "The owner decides whether one publisher-routed report's exact quoted text may cross to its publisher: approve once, stop asking, or deny."
+            }
+            Self::VaultReportsRoute => {
+                "The owner replaces one durable subject's maker route: the owner inbox, or one admitted publisher its feedback is delivered to."
+            }
+            Self::VaultReportsOutbound => {
+                "The owner reads the content-free payload a publisher delivery for one report issue would carry now, with its quoted text only when disclosure approved it."
             }
             Self::SelfFocusRefresh => {
                 "Re-renders the run's context board as one frame, at the frame epoch the caller last saw."

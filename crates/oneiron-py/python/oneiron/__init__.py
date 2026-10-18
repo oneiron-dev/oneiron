@@ -283,11 +283,14 @@ class Oneiron:
         """Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor."""
         return json.loads(_translate(lambda: self._client.report(json.dumps(spec))))
     @property
-    def self(self) -> "Oneiron._SelfVerbs":
-        return Oneiron._SelfVerbs(self._client)
+    def feedback(self) -> "Oneiron._FeedbackVerbs":
+        return Oneiron._FeedbackVerbs(self._client)
     @property
     def vault(self) -> "Oneiron._VaultVerbs":
         return Oneiron._VaultVerbs(self._client)
+    @property
+    def self(self) -> "Oneiron._SelfVerbs":
+        return Oneiron._SelfVerbs(self._client)
     def cancel(self, task_ref: str) -> dict[str, Any]:
         """Cancels one task under the ladder's ``auto`` default. The receipt says what stopped and what became a proposal instead."""
         return json.loads(_translate(lambda: self._client.cancel(json.dumps({"task_ref": task_ref}))))
@@ -326,233 +329,21 @@ class Oneiron:
     @property
     def connector(self) -> "Oneiron._ConnectorVerbs":
         return Oneiron._ConnectorVerbs(self._client)
-    class _SelfVerbs:
+    class _FeedbackVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
-        @property
-        def focus(self) -> "Oneiron._SelfFocusVerbs":
-            return Oneiron._SelfFocusVerbs(self._client)
-        @property
-        def memory(self) -> "Oneiron._SelfMemoryVerbs":
-            return Oneiron._SelfMemoryVerbs(self._client)
-        @property
-        def identity(self) -> "Oneiron._SelfIdentityVerbs":
-            return Oneiron._SelfIdentityVerbs(self._client)
-        @property
-        def inbox(self) -> "Oneiron._SelfInboxVerbs":
-            return Oneiron._SelfInboxVerbs(self._client)
-        def message(self, spec):
-            """Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use."""
-            return json.loads(_translate(lambda: self._client.self_message(json.dumps(spec))))
-        @property
-        def grants(self) -> "Oneiron._SelfGrantsVerbs":
-            return Oneiron._SelfGrantsVerbs(self._client)
-        @property
-        def budget(self) -> "Oneiron._SelfBudgetVerbs":
-            return Oneiron._SelfBudgetVerbs(self._client)
-        @property
-        def credential(self) -> "Oneiron._SelfCredentialVerbs":
-            return Oneiron._SelfCredentialVerbs(self._client)
-        @property
-        def off_record(self) -> "Oneiron._SelfOffRecordVerbs":
-            return Oneiron._SelfOffRecordVerbs(self._client)
-        def use(self, spec):
-            """Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value."""
-            return json.loads(_translate(lambda: self._client.self_use(json.dumps(spec))))
-        @property
-        def secrets(self) -> "Oneiron._SelfSecretsVerbs":
-            return Oneiron._SelfSecretsVerbs(self._client)
-        @property
-        def skills(self) -> "Oneiron._SelfSkillsVerbs":
-            return Oneiron._SelfSkillsVerbs(self._client)
-        @property
-        def decisions(self) -> "Oneiron._SelfDecisionsVerbs":
-            return Oneiron._SelfDecisionsVerbs(self._client)
-        @property
-        def run(self) -> "Oneiron._SelfRunVerbs":
-            return Oneiron._SelfRunVerbs(self._client)
-        @property
-        def folds(self) -> "Oneiron._SelfFoldsVerbs":
-            return Oneiron._SelfFoldsVerbs(self._client)
-        def history(self, spec):
-            """Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled."""
-            return json.loads(_translate(lambda: self._client.self_history(json.dumps(spec))))
-        def fold(self, spec):
-            """Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands."""
-            return json.loads(_translate(lambda: self._client.self_fold(json.dumps(spec))))
-        def compact(self, spec):
-            """Asks the attached run to fold its pending marks in one batch at its next step boundary; read self.history for landed folds and epochs."""
-            return json.loads(_translate(lambda: self._client.self_compact(json.dumps(spec))))
-        def unfold(self, spec):
-            """Appends a fold of the attached run after its current tail, without replacing the earlier stub."""
-            return json.loads(_translate(lambda: self._client.self_unfold(json.dumps(spec))))
-        @property
-        def agents(self) -> "Oneiron._SelfAgentsVerbs":
-            return Oneiron._SelfAgentsVerbs(self._client)
-        @property
-        def leader(self) -> "Oneiron._SelfLeaderVerbs":
-            return Oneiron._SelfLeaderVerbs(self._client)
-    class _SelfFocusVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        @property
-        def scratchpad(self) -> "Oneiron._SelfFocusScratchpadVerbs":
-            return Oneiron._SelfFocusScratchpadVerbs(self._client)
-    class _SelfFocusScratchpadVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def recall(self, spec):
-            """Searches the bound actor's whole session scratchpad, live or sealed, for the lines holding every query word, folded lines in full."""
-            return json.loads(_translate(lambda: self._client.self_focus_scratchpad_recall(json.dumps(spec))))
-        def append(self, spec):
-            """Appends one line, with an optional keep or scratch mark and pin, to the bound actor's session scratchpad; the session's first line opens the pad, and a sealed pad is refused."""
-            return json.loads(_translate(lambda: self._client.self_focus_scratchpad_append(json.dumps(spec))))
-        def seal(self, spec):
-            """Seals the bound actor's session scratchpad, ending the run's pad; a session with no pad answers no pad."""
-            return json.loads(_translate(lambda: self._client.self_focus_scratchpad_seal(json.dumps(spec))))
-    class _SelfMemoryVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        @property
-        def diary(self) -> "Oneiron._SelfMemoryDiaryVerbs":
-            return Oneiron._SelfMemoryDiaryVerbs(self._client)
-    class _SelfMemoryDiaryVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def __call__(self, spec):
-            """Writes one private entry in the bound actor's own diary, as an actor-private NOTE."""
-            return json.loads(_translate(lambda: self._client.self_memory_diary(json.dumps(spec))))
-        def reads(self, spec):
-            """This agent's diary read log: who read its diary and why, newest first, and the reasons its review holds."""
-            return json.loads(_translate(lambda: self._client.self_memory_diary_reads(json.dumps(spec))))
-        def review(self, spec):
-            """This agent's yes or no to a reader's reason for reading its diary; only the diary's own agent answers."""
-            return json.loads(_translate(lambda: self._client.self_memory_diary_review(json.dumps(spec))))
-        def query(self, spec):
-            """Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log."""
-            return json.loads(_translate(lambda: self._client.self_memory_diary_query(json.dumps(spec))))
-    class _SelfIdentityVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def answer(self, spec):
-            """A vault owner's tap on an identity choice card: who a person named in their conversations is."""
-            return json.loads(_translate(lambda: self._client.self_identity_answer(json.dumps(spec))))
-        def settle(self, spec):
-            """Before acting on a person known only by a name, settles who that name is from its newest saved mention, or opens an ask."""
-            return json.loads(_translate(lambda: self._client.self_identity_settle(json.dumps(spec))))
-    class _SelfInboxVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def list(self, spec):
-            """Lists one page of notifications delivered to the bound actor, without marking them."""
-            return json.loads(_translate(lambda: self._client.self_inbox_list(json.dumps(spec))))
-        def mark(self, spec):
-            """Marks one delivered notification seen or acknowledged for the bound actor."""
-            return json.loads(_translate(lambda: self._client.self_inbox_mark(json.dumps(spec))))
-        @property
-        def concern(self) -> "Oneiron._SelfInboxConcernVerbs":
-            return Oneiron._SelfInboxConcernVerbs(self._client)
-    class _SelfInboxConcernVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def __call__(self, spec):
-            return json.loads(_translate(lambda: self._client.self_inbox_concern(json.dumps(spec))))
-        def outcome(self, spec):
-            return json.loads(_translate(lambda: self._client.self_inbox_concern_outcome(json.dumps(spec))))
-        def move(self, spec):
-            return json.loads(_translate(lambda: self._client.self_inbox_concern_move(json.dumps(spec))))
-    class _SelfGrantsVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def ask(self, spec):
-            """Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it."""
-            return json.loads(_translate(lambda: self._client.self_grants_ask(json.dumps(spec))))
-    class _SelfBudgetVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def __call__(self, spec):
-            """The caller's own dispatched attempt: its persisted spend allowance, landing reserve, checkpoint and saved hold, without substituting a token meter for money."""
-            return json.loads(_translate(lambda: self._client.self_budget(json.dumps(spec))))
-        def land(self, spec):
-            """The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later."""
-            return json.loads(_translate(lambda: self._client.self_budget_land(json.dumps(spec))))
-    class _SelfCredentialVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def attenuate(self, spec):
-            """Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted."""
-            return json.loads(_translate(lambda: self._client.self_credential_attenuate(json.dumps(spec))))
-    class _SelfOffRecordVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def execute(self, spec):
-            """The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""
-            return json.loads(_translate(lambda: self._client.self_off_record_execute(json.dumps(spec))))
-    class _SelfSecretsVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def materialize(self, spec):
-            """Mints a value-free grant on a secret for this credential's attached run, to one purpose: an operation or connector (door), a host destination (leased) or a declared file (local); the answer never holds the value."""
-            return json.loads(_translate(lambda: self._client.self_secrets_materialize(json.dumps(spec))))
-        def renew(self, spec):
-            """Renews a grant the attached run holds: a fresh grant at the secret's current generation in its place, never a longer life for bytes already handed out."""
-            return json.loads(_translate(lambda: self._client.self_secrets_renew(json.dumps(spec))))
-        def teardown(self, spec):
-            """Tears down a grant the attached run holds, whatever its state: revokes it and its lease, removes its file or clears its destination, and says what the cleanup found."""
-            return json.loads(_translate(lambda: self._client.self_secrets_teardown(json.dumps(spec))))
-        def use(self, spec):
-            """Hands the secret a door grant redeems to one trusted operation or connector call, for the attached run; a grant minted before a rotation refuses until renewed, and the answer never holds the value."""
-            return json.loads(_translate(lambda: self._client.self_secrets_use(json.dumps(spec))))
-    class _SelfSkillsVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def save(self, spec):
-            """An agent saves a skill it wrote, SKILL.md and scripts together; it lands as a proposed candidate and nothing activates it."""
-            return json.loads(_translate(lambda: self._client.self_skills_save(json.dumps(spec))))
-        def fork(self, spec):
-            """An agent forks a stored skill under its own identity, keeping its import ancestry."""
-            return json.loads(_translate(lambda: self._client.self_skills_fork(json.dumps(spec))))
-        def callables(self, spec=None):
-            """Every loadable callable helper skill and its call contract: what it takes and returns."""
-            return json.loads(_translate(lambda: self._client.self_skills_callables(json.dumps({} if spec is None else spec))))
-        def call(self, spec):
-            """Runs a callable skill on this credential's attached leased run with its existing sandbox and gates; the result follows the stored return contract, while anchored outcomes settle separately."""
-            return json.loads(_translate(lambda: self._client.self_skills_call(json.dumps(spec))))
-    class _SelfDecisionsVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def asks(self, spec=None):
-            return json.loads(_translate(lambda: self._client.self_decisions_asks(json.dumps({} if spec is None else spec))))
-    class _SelfRunVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def attach(self, spec):
-            """Attaches the caller's own credential to its leased live run and returns the handle required by the public fold and history calls."""
-            return json.loads(_translate(lambda: self._client.self_run_attach(json.dumps(spec))))
-    class _SelfFoldsVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def __call__(self, spec):
-            """Lists the attached run's landed folds, pending marks and outstanding compact ask."""
-            return json.loads(_translate(lambda: self._client.self_folds(json.dumps(spec))))
-        def describe(self, spec):
-            """Reads one pending mark or landed fold of the attached run, with its Generated stub, source ids and retained result handles."""
-            return json.loads(_translate(lambda: self._client.self_folds_describe(json.dumps(spec))))
-    class _SelfAgentsVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def spawn(self, spec):
-            """Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity."""
-            return json.loads(_translate(lambda: self._client.self_agents_spawn(json.dumps(spec))))
-    class _SelfLeaderVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def split(self, spec):
-            """Splits the attached leader run into a subproject inside its own TASK wrapper; spec may name only the child leader and a narrower scope."""
-            return json.loads(_translate(lambda: self._client.self_leader_split(json.dumps(spec))))
+        def preview(self, spec):
+            """The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval."""
+            return json.loads(_translate(lambda: self._client.feedback_preview(json.dumps(spec))))
+        def send(self, spec):
+            """The owner sends exactly the previewed feedback bundle for one report issue to its publisher, once, through the ordinary outbound gate."""
+            return json.loads(_translate(lambda: self._client.feedback_send(json.dumps(spec))))
     class _VaultVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        @property
+        def reports(self) -> "Oneiron._VaultReportsVerbs":
+            return Oneiron._VaultReportsVerbs(self._client)
         @property
         def people(self) -> "Oneiron._VaultPeopleVerbs":
             return Oneiron._VaultPeopleVerbs(self._client)
@@ -861,6 +652,18 @@ class Oneiron:
         @property
         def notes(self) -> "Oneiron._VaultNotesVerbs":
             return Oneiron._VaultNotesVerbs(self._client)
+    class _VaultReportsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def disclosure(self, spec):
+            """The owner decides whether one publisher-routed report's exact quoted text may cross to its publisher: approve once, stop asking, or deny."""
+            return json.loads(_translate(lambda: self._client.vault_reports_disclosure(json.dumps(spec))))
+        def route(self, spec):
+            """The owner replaces one durable subject's maker route: the owner inbox, or one admitted publisher its feedback is delivered to."""
+            return json.loads(_translate(lambda: self._client.vault_reports_route(json.dumps(spec))))
+        def outbound(self, spec):
+            """The owner reads the content-free payload a publisher delivery for one report issue would carry now, with its quoted text only when disclosure approved it."""
+            return json.loads(_translate(lambda: self._client.vault_reports_outbound(json.dumps(spec))))
     class _VaultPeopleVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3201,6 +3004,230 @@ class Oneiron:
         def close(self, spec):
             """Closes one live NOTE editor held by this caller; a binding id alone grants no authority."""
             return json.loads(_translate(lambda: self._client.vault_notes_editor_close(json.dumps(spec))))
+    class _SelfVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def focus(self) -> "Oneiron._SelfFocusVerbs":
+            return Oneiron._SelfFocusVerbs(self._client)
+        @property
+        def memory(self) -> "Oneiron._SelfMemoryVerbs":
+            return Oneiron._SelfMemoryVerbs(self._client)
+        @property
+        def identity(self) -> "Oneiron._SelfIdentityVerbs":
+            return Oneiron._SelfIdentityVerbs(self._client)
+        @property
+        def inbox(self) -> "Oneiron._SelfInboxVerbs":
+            return Oneiron._SelfInboxVerbs(self._client)
+        def message(self, spec):
+            """Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use."""
+            return json.loads(_translate(lambda: self._client.self_message(json.dumps(spec))))
+        @property
+        def grants(self) -> "Oneiron._SelfGrantsVerbs":
+            return Oneiron._SelfGrantsVerbs(self._client)
+        @property
+        def budget(self) -> "Oneiron._SelfBudgetVerbs":
+            return Oneiron._SelfBudgetVerbs(self._client)
+        @property
+        def credential(self) -> "Oneiron._SelfCredentialVerbs":
+            return Oneiron._SelfCredentialVerbs(self._client)
+        @property
+        def off_record(self) -> "Oneiron._SelfOffRecordVerbs":
+            return Oneiron._SelfOffRecordVerbs(self._client)
+        def use(self, spec):
+            """Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value."""
+            return json.loads(_translate(lambda: self._client.self_use(json.dumps(spec))))
+        @property
+        def secrets(self) -> "Oneiron._SelfSecretsVerbs":
+            return Oneiron._SelfSecretsVerbs(self._client)
+        @property
+        def skills(self) -> "Oneiron._SelfSkillsVerbs":
+            return Oneiron._SelfSkillsVerbs(self._client)
+        @property
+        def decisions(self) -> "Oneiron._SelfDecisionsVerbs":
+            return Oneiron._SelfDecisionsVerbs(self._client)
+        @property
+        def run(self) -> "Oneiron._SelfRunVerbs":
+            return Oneiron._SelfRunVerbs(self._client)
+        @property
+        def folds(self) -> "Oneiron._SelfFoldsVerbs":
+            return Oneiron._SelfFoldsVerbs(self._client)
+        def history(self, spec):
+            """Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled."""
+            return json.loads(_translate(lambda: self._client.self_history(json.dumps(spec))))
+        def fold(self, spec):
+            """Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands."""
+            return json.loads(_translate(lambda: self._client.self_fold(json.dumps(spec))))
+        def compact(self, spec):
+            """Asks the attached run to fold its pending marks in one batch at its next step boundary; read self.history for landed folds and epochs."""
+            return json.loads(_translate(lambda: self._client.self_compact(json.dumps(spec))))
+        def unfold(self, spec):
+            """Appends a fold of the attached run after its current tail, without replacing the earlier stub."""
+            return json.loads(_translate(lambda: self._client.self_unfold(json.dumps(spec))))
+        @property
+        def agents(self) -> "Oneiron._SelfAgentsVerbs":
+            return Oneiron._SelfAgentsVerbs(self._client)
+        @property
+        def leader(self) -> "Oneiron._SelfLeaderVerbs":
+            return Oneiron._SelfLeaderVerbs(self._client)
+    class _SelfFocusVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def scratchpad(self) -> "Oneiron._SelfFocusScratchpadVerbs":
+            return Oneiron._SelfFocusScratchpadVerbs(self._client)
+    class _SelfFocusScratchpadVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def recall(self, spec):
+            """Searches the bound actor's whole session scratchpad, live or sealed, for the lines holding every query word, folded lines in full."""
+            return json.loads(_translate(lambda: self._client.self_focus_scratchpad_recall(json.dumps(spec))))
+        def append(self, spec):
+            """Appends one line, with an optional keep or scratch mark and pin, to the bound actor's session scratchpad; the session's first line opens the pad, and a sealed pad is refused."""
+            return json.loads(_translate(lambda: self._client.self_focus_scratchpad_append(json.dumps(spec))))
+        def seal(self, spec):
+            """Seals the bound actor's session scratchpad, ending the run's pad; a session with no pad answers no pad."""
+            return json.loads(_translate(lambda: self._client.self_focus_scratchpad_seal(json.dumps(spec))))
+    class _SelfMemoryVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def diary(self) -> "Oneiron._SelfMemoryDiaryVerbs":
+            return Oneiron._SelfMemoryDiaryVerbs(self._client)
+    class _SelfMemoryDiaryVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Writes one private entry in the bound actor's own diary, as an actor-private NOTE."""
+            return json.loads(_translate(lambda: self._client.self_memory_diary(json.dumps(spec))))
+        def reads(self, spec):
+            """This agent's diary read log: who read its diary and why, newest first, and the reasons its review holds."""
+            return json.loads(_translate(lambda: self._client.self_memory_diary_reads(json.dumps(spec))))
+        def review(self, spec):
+            """This agent's yes or no to a reader's reason for reading its diary; only the diary's own agent answers."""
+            return json.loads(_translate(lambda: self._client.self_memory_diary_review(json.dumps(spec))))
+        def query(self, spec):
+            """Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log."""
+            return json.loads(_translate(lambda: self._client.self_memory_diary_query(json.dumps(spec))))
+    class _SelfIdentityVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def answer(self, spec):
+            """A vault owner's tap on an identity choice card: who a person named in their conversations is."""
+            return json.loads(_translate(lambda: self._client.self_identity_answer(json.dumps(spec))))
+        def settle(self, spec):
+            """Before acting on a person known only by a name, settles who that name is from its newest saved mention, or opens an ask."""
+            return json.loads(_translate(lambda: self._client.self_identity_settle(json.dumps(spec))))
+    class _SelfInboxVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def list(self, spec):
+            """Lists one page of notifications delivered to the bound actor, without marking them."""
+            return json.loads(_translate(lambda: self._client.self_inbox_list(json.dumps(spec))))
+        def mark(self, spec):
+            """Marks one delivered notification seen or acknowledged for the bound actor."""
+            return json.loads(_translate(lambda: self._client.self_inbox_mark(json.dumps(spec))))
+        @property
+        def concern(self) -> "Oneiron._SelfInboxConcernVerbs":
+            return Oneiron._SelfInboxConcernVerbs(self._client)
+    class _SelfInboxConcernVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            return json.loads(_translate(lambda: self._client.self_inbox_concern(json.dumps(spec))))
+        def outcome(self, spec):
+            return json.loads(_translate(lambda: self._client.self_inbox_concern_outcome(json.dumps(spec))))
+        def move(self, spec):
+            return json.loads(_translate(lambda: self._client.self_inbox_concern_move(json.dumps(spec))))
+    class _SelfGrantsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def ask(self, spec):
+            """Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it."""
+            return json.loads(_translate(lambda: self._client.self_grants_ask(json.dumps(spec))))
+    class _SelfBudgetVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """The caller's own dispatched attempt: its persisted spend allowance, landing reserve, checkpoint and saved hold, without substituting a token meter for money."""
+            return json.loads(_translate(lambda: self._client.self_budget(json.dumps(spec))))
+        def land(self, spec):
+            """The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later."""
+            return json.loads(_translate(lambda: self._client.self_budget_land(json.dumps(spec))))
+    class _SelfCredentialVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def attenuate(self, spec):
+            """Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted."""
+            return json.loads(_translate(lambda: self._client.self_credential_attenuate(json.dumps(spec))))
+    class _SelfOffRecordVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def execute(self, spec):
+            """The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""
+            return json.loads(_translate(lambda: self._client.self_off_record_execute(json.dumps(spec))))
+    class _SelfSecretsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def materialize(self, spec):
+            """Mints a value-free grant on a secret for this credential's attached run, to one purpose: an operation or connector (door), a host destination (leased) or a declared file (local); the answer never holds the value."""
+            return json.loads(_translate(lambda: self._client.self_secrets_materialize(json.dumps(spec))))
+        def renew(self, spec):
+            """Renews a grant the attached run holds: a fresh grant at the secret's current generation in its place, never a longer life for bytes already handed out."""
+            return json.loads(_translate(lambda: self._client.self_secrets_renew(json.dumps(spec))))
+        def teardown(self, spec):
+            """Tears down a grant the attached run holds, whatever its state: revokes it and its lease, removes its file or clears its destination, and says what the cleanup found."""
+            return json.loads(_translate(lambda: self._client.self_secrets_teardown(json.dumps(spec))))
+        def use(self, spec):
+            """Hands the secret a door grant redeems to one trusted operation or connector call, for the attached run; a grant minted before a rotation refuses until renewed, and the answer never holds the value."""
+            return json.loads(_translate(lambda: self._client.self_secrets_use(json.dumps(spec))))
+    class _SelfSkillsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def save(self, spec):
+            """An agent saves a skill it wrote, SKILL.md and scripts together; it lands as a proposed candidate and nothing activates it."""
+            return json.loads(_translate(lambda: self._client.self_skills_save(json.dumps(spec))))
+        def fork(self, spec):
+            """An agent forks a stored skill under its own identity, keeping its import ancestry."""
+            return json.loads(_translate(lambda: self._client.self_skills_fork(json.dumps(spec))))
+        def callables(self, spec=None):
+            """Every loadable callable helper skill and its call contract: what it takes and returns."""
+            return json.loads(_translate(lambda: self._client.self_skills_callables(json.dumps({} if spec is None else spec))))
+        def call(self, spec):
+            """Runs a callable skill on this credential's attached leased run with its existing sandbox and gates; the result follows the stored return contract, while anchored outcomes settle separately."""
+            return json.loads(_translate(lambda: self._client.self_skills_call(json.dumps(spec))))
+    class _SelfDecisionsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def asks(self, spec=None):
+            return json.loads(_translate(lambda: self._client.self_decisions_asks(json.dumps({} if spec is None else spec))))
+    class _SelfRunVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def attach(self, spec):
+            """Attaches the caller's own credential to its leased live run and returns the handle required by the public fold and history calls."""
+            return json.loads(_translate(lambda: self._client.self_run_attach(json.dumps(spec))))
+    class _SelfFoldsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Lists the attached run's landed folds, pending marks and outstanding compact ask."""
+            return json.loads(_translate(lambda: self._client.self_folds(json.dumps(spec))))
+        def describe(self, spec):
+            """Reads one pending mark or landed fold of the attached run, with its Generated stub, source ids and retained result handles."""
+            return json.loads(_translate(lambda: self._client.self_folds_describe(json.dumps(spec))))
+    class _SelfAgentsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def spawn(self, spec):
+            """Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity."""
+            return json.loads(_translate(lambda: self._client.self_agents_spawn(json.dumps(spec))))
+    class _SelfLeaderVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def split(self, spec):
+            """Splits the attached leader run into a subproject inside its own TASK wrapper; spec may name only the child leader and a narrower scope."""
+            return json.loads(_translate(lambda: self._client.self_leader_split(json.dumps(spec))))
     class _TasksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

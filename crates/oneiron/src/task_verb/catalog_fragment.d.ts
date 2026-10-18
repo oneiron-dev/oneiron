@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 669 code-mode rows (648 host rows, 21 run rows), 2380 declarations.
-// Replies: 590 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 674 code-mode rows (653 host rows, 21 run rows), 2395 declarations.
+// Replies: 594 fully typed, 76 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 95; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 96; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -24,6 +24,21 @@ declare namespace Sdk {
   type ReportRoute = { destination: "owner_inbox" } | { destination: "publisher"; publisher_ref: string };
   type ReportDisclosure = "local" | "content_free" | "needs_approval" | "approved" | "denied";
   type ReportReceipt = { issue_ref: string; already_submitted: boolean; status: ReportStatus; quality_score?: number | null; duplicate_of?: string | null; route: ReportRoute; disclosure: ReportDisclosure };
+  type FeedbackCategory = "bug" | "papercut" | "confusion" | "feature-wish";
+  type FeedbackPreviewRequest = { issue_ref: string; category: FeedbackCategory; include_text?: boolean };
+  type FeedbackSubjectPreview = { issue_ref: string; subject_ref: string; publisher_ref: string; disclosure: ReportDisclosure; includes_text: boolean; digest: string; encoding: string; bundle: unknown; destination: string; approval: string; previewed_at: number };
+  type FeedbackSendSubjectRequest = { issue_ref: string; category: FeedbackCategory; include_text?: boolean; digest: string; approval: string; previewed_at: number };
+  type FeedbackSubjectSent = { issue_ref: string; subject_ref: string; publisher_ref: string; digest: string; outcome: string; gate_reasons: string[]; approval_receipt_ref: string; logical_send_ref: string };
+  type ReportDisclosureChoice = "approve_once" | "stop_asking_for_publisher" | "deny";
+  type ReportDisclosureRequest = { issue_ref: string; choice: ReportDisclosureChoice };
+  type ReportReview = { status: ReportStatus; quality_score?: number | null; duplicate_of?: string | null };
+  type ReportIssue = { issue_ref: string; actor_ref: string; request: ReportRequest; received_at: number; route: ReportRoute; review: ReportReview; disclosure: ReportDisclosure };
+  type ReportRouteRequest = { subject_ref: string; route: ReportRoute };
+  type ReportRouteReceipt = { subject_ref: string; route: ReportRoute; updated: boolean };
+  type ReportOutboundRequest = { issue_ref: string };
+  type ReportSignatureView = { issue_ref: string; subject_hash: string; category: IssueCategory; kind: ReportKind };
+  type ReportPayloadView = { route: ReportRoute; signature: ReportSignatureView; disclosed?: ReportRequest | null };
+  type ReportOutboundView = { issue_ref: string; payload?: ReportPayloadView | null };
   type BoardRefreshRequest = { frame_epoch?: number | null };
   type BoardVerbOutput = unknown;
   type SubscriptionScope = "my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts";
@@ -2472,6 +2487,12 @@ declare const connector: { readonly [name: string]: { readonly [tool: string]: (
 /** Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), a task highway handle as its status (`after` polls it), or the whole TASKS section when nothing is named. */
 declare function describe(input: Sdk.DescribeRequest & { fold: NonNullable<Sdk.DescribeRequest["fold"]> }): Promise<Sdk.FoldReply<Sdk.FoldDescription> | StoredResult>;
 declare function describe(input: Sdk.DescribeRequest): Promise<Sdk.TaskDescription | StoredResult>;
+declare const feedback: {
+  /** The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval. */
+  preview(input: Sdk.FeedbackPreviewRequest): Promise<Sdk.FeedbackSubjectPreview | StoredResult>;
+  /** The owner sends exactly the previewed feedback bundle for one report issue to its publisher, once, through the ordinary outbound gate. */
+  send(input: Sdk.FeedbackSendSubjectRequest): Promise<Sdk.FeedbackSubjectSent | StoredResult>;
+};
 /** An ask's attributed partial words so far, then explicit unknowns at cutoff; reading it never settles the ask. */
 declare function peek(input: Sdk.TaskAskHandle): Promise<Sdk.TaskAskPersonEvidence[] | StoredResult>;
 /** Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor. */
@@ -3629,6 +3650,14 @@ declare const vault: Sdk.VaultHost & {
   };
   /** Commits one claim through the gate, the same as vault.claims.upsert. */
   remember(input: Sdk.ClaimInput): Promise<Sdk.CommitReceipt | StoredResult>;
+  reports: {
+    /** The owner decides whether one publisher-routed report's exact quoted text may cross to its publisher: approve once, stop asking, or deny. */
+    disclosure(input: Sdk.ReportDisclosureRequest): Promise<Sdk.ReportIssue | StoredResult>;
+    /** The owner reads the content-free payload a publisher delivery for one report issue would carry now, with its quoted text only when disclosure approved it. */
+    outbound(input: Sdk.ReportOutboundRequest): Promise<Sdk.ReportOutboundView | StoredResult>;
+    /** The owner replaces one durable subject's maker route: the owner inbox, or one admitted publisher its feedback is delivered to. */
+    route(input: Sdk.ReportRouteRequest): Promise<Sdk.ReportRouteReceipt | StoredResult>;
+  };
   research: {
     /** Reads the complete retained campaign record, including every pruned, buggy and woven candidate, original search and held-out evidence, selection rounds and promotion receipts, under the controller gate. */
     archive(input: Sdk.ResearchArchiveWire): Promise<Sdk.ResearchArchive | StoredResult>;

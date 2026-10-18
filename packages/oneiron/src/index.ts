@@ -244,115 +244,21 @@ export class Oneiron {
   // BEGIN GENERATED FACADE VERBS
   /** Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor. */
   report(input: Facade.ReportRequest): Facade.ReportReceipt { return this.#call(() => this.#client.report(input) as Facade.ReportReceipt) }
-  readonly self = {
-    focus: {
-      scratchpad: {
-        /** Searches the bound actor's whole session scratchpad, live or sealed, for the lines holding every query word, folded lines in full. */
-        recall: (input: Facade.ScratchpadRecallRequest): Facade.ScratchpadRecallReply => this.#call(() => this.#client.selfFocusScratchpadRecall(input) as Facade.ScratchpadRecallReply),
-        /** Appends one line, with an optional keep or scratch mark and pin, to the bound actor's session scratchpad; the session's first line opens the pad, and a sealed pad is refused. */
-        append: (input: Facade.ScratchpadAppendRequest): Facade.ScratchpadWriteReply => this.#call(() => this.#client.selfFocusScratchpadAppend(input) as Facade.ScratchpadWriteReply),
-        /** Seals the bound actor's session scratchpad, ending the run's pad; a session with no pad answers no pad. */
-        seal: (input: Facade.ScratchpadSealRequest): Facade.ScratchpadWriteReply => this.#call(() => this.#client.selfFocusScratchpadSeal(input) as Facade.ScratchpadWriteReply),
-      },
-    },
-    memory: {
-      /** Writes one private entry in the bound actor's own diary, as an actor-private NOTE. */
-      diary: Object.assign((input: Facade.DiaryEntryRequest): Facade.DiaryEntryReceipt => this.#call(() => this.#client.selfMemoryDiary(input) as Facade.DiaryEntryReceipt), {
-        /** This agent's diary read log: who read its diary and why, newest first, and the reasons its review holds. */
-        reads: (input: Facade.DiaryReadsRequest): Facade.DiaryReadsView => this.#call(() => this.#client.selfMemoryDiaryReads(input) as Facade.DiaryReadsView),
-        /** This agent's yes or no to a reader's reason for reading its diary; only the diary's own agent answers. */
-        review: (input: Facade.DiaryReviewAnswer): Facade.DiaryReadRequest => this.#call(() => this.#client.selfMemoryDiaryReview(input) as Facade.DiaryReadRequest),
-        /** Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log. */
-        query: (input: Facade.DiaryQueryRequest): Facade.DiaryQueryOutcome => this.#call(() => this.#client.selfMemoryDiaryQuery(input) as Facade.DiaryQueryOutcome),
-      }),
-    },
-    identity: {
-      /** A vault owner's tap on an identity choice card: who a person named in their conversations is. */
-      answer: (input: Facade.IdentityAnswerRequest): Facade.IdentitySettled => this.#call(() => this.#client.selfIdentityAnswer(input) as Facade.IdentitySettled),
-      /** Before acting on a person known only by a name, settles who that name is from its newest saved mention, or opens an ask. */
-      settle: (input: Facade.IdentityActNowRequest): Facade.IdentityActNow => this.#call(() => this.#client.selfIdentitySettle(input) as Facade.IdentityActNow),
-    },
-    inbox: {
-      /** Lists one page of notifications delivered to the bound actor, without marking them. */
-      list: (input: Facade.InboxListRequest): Facade.NotificationPage => this.#call(() => this.#client.selfInboxList(input) as Facade.NotificationPage),
-      /** Marks one delivered notification seen or acknowledged for the bound actor. */
-      mark: (input: Facade.InboxMarkRequest): Facade.NotificationRow => this.#call(() => this.#client.selfInboxMark(input) as Facade.NotificationRow),
-      concern: Object.assign((input: Facade.ConcernCardRequest): Facade.AgentHealthCardView => this.#call(() => this.#client.selfInboxConcern(input) as Facade.AgentHealthCardView), {
-        outcome: (input: Facade.ConcernOutcomeRequest): Facade.ConcernCardSummary => this.#call(() => this.#client.selfInboxConcernOutcome(input) as Facade.ConcernCardSummary),
-        move: (input: Facade.ConcernMoveRequest): Facade.ConcernMoveOutcome => this.#call(() => this.#client.selfInboxConcernMove(input) as Facade.ConcernMoveOutcome),
-      }),
-    },
-    /** Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use. */
-    message: (input: Facade.MessagePersonRequest): Facade.MessagePersonReceipt => this.#call(() => this.#client.selfMessage(input) as Facade.MessagePersonReceipt),
-    grants: {
-      /** Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it. */
-      ask: (input: Facade.GrantAskRequest): Facade.GrantAskReceipt => this.#call(() => this.#client.selfGrantsAsk(input) as Facade.GrantAskReceipt),
-    },
-    /** The caller's own dispatched attempt: its persisted spend allowance, landing reserve, checkpoint and saved hold, without substituting a token meter for money. */
-    budget: Object.assign((input: Facade.SelfBudgetRequest): Facade.AgentBudgetView => this.#call(() => this.#client.selfBudget(input) as Facade.AgentBudgetView), {
-      /** The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later. */
-      land: (input: Facade.BudgetLandRequest): Facade.PartialResultHold => this.#call(() => this.#client.selfBudgetLand(input) as Facade.PartialResultHold),
-    }),
-    credential: {
-      /** Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted. */
-      attenuate: (input: Facade.CredentialAttenuationRequest): Facade.CredentialAttenuated => this.#call(() => this.#client.selfCredentialAttenuate(input) as Facade.CredentialAttenuated),
-    },
-    off_record: {
-      /** The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
-      execute: (input: Facade.OffRecordExecuteRequest): Facade.OffRecordExecuted => this.#call(() => this.#client.selfOffRecordExecute(input) as Facade.OffRecordExecuted),
-    },
-    /** Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value. */
-    use: (input: Facade.SecretUseRequest): Facade.SecretUseAnswer => this.#call(() => this.#client.selfUse(input) as Facade.SecretUseAnswer),
-    secrets: {
-      /** Mints a value-free grant on a secret for this credential's attached run, to one purpose: an operation or connector (door), a host destination (leased) or a declared file (local); the answer never holds the value. */
-      materialize: (input: Facade.LiveRunRequest<Facade.SecretGrantMintRequest>): Facade.SecretGrantView => this.#call(() => this.#client.selfSecretsMaterialize(input) as Facade.SecretGrantView),
-      /** Renews a grant the attached run holds: a fresh grant at the secret's current generation in its place, never a longer life for bytes already handed out. */
-      renew: (input: Facade.LiveRunRequest<Facade.SecretGrantRenewRequest>): Facade.SecretGrantView => this.#call(() => this.#client.selfSecretsRenew(input) as Facade.SecretGrantView),
-      /** Tears down a grant the attached run holds, whatever its state: revokes it and its lease, removes its file or clears its destination, and says what the cleanup found. */
-      teardown: (input: Facade.LiveRunRequest<Facade.SecretGrantTeardownRequest>): Facade.SecretGrantView => this.#call(() => this.#client.selfSecretsTeardown(input) as Facade.SecretGrantView),
-      /** Hands the secret a door grant redeems to one trusted operation or connector call, for the attached run; a grant minted before a rotation refuses until renewed, and the answer never holds the value. */
-      use: (input: Facade.LiveRunRequest<Facade.SecretGrantUseRequest>): Facade.SecretUseAnswer => this.#call(() => this.#client.selfSecretsUse(input) as Facade.SecretUseAnswer),
-    },
-    skills: {
-      /** An agent saves a skill it wrote, SKILL.md and scripts together; it lands as a proposed candidate and nothing activates it. */
-      save: (input: Facade.SkillSaveRequest): Facade.SkillAuthoringReceipt => this.#call(() => this.#client.selfSkillsSave(input) as Facade.SkillAuthoringReceipt),
-      /** An agent forks a stored skill under its own identity, keeping its import ancestry. */
-      fork: (input: Facade.SkillForkRequest): Facade.SkillAuthoringReceipt => this.#call(() => this.#client.selfSkillsFork(input) as Facade.SkillAuthoringReceipt),
-      /** Every loadable callable helper skill and its call contract: what it takes and returns. */
-      callables: (input: Facade.EmptyRequest = {}): Facade.CallableCardView[] => this.#call(() => this.#client.selfSkillsCallables(input) as Facade.CallableCardView[]),
-      /** Runs a callable skill on this credential's attached leased run with its existing sandbox and gates; the result follows the stored return contract, while anchored outcomes settle separately. */
-      call: (input: Facade.LiveRunRequest<Facade.SkillCallInput>): unknown => this.#call(() => this.#client.selfSkillsCall(input) as unknown),
-    },
-    decisions: {
-      asks: (input: Facade.EmptyRequest = {}): Facade.DecisionAsk[] => this.#call(() => this.#client.selfDecisionsAsks(input) as Facade.DecisionAsk[]),
-    },
-    run: {
-      /** Attaches the caller's own credential to its leased live run and returns the handle required by the public fold and history calls. */
-      attach: (input: Facade.RunAttachRequest): Facade.RunAttached => this.#call(() => this.#client.selfRunAttach(input) as Facade.RunAttached),
-    },
-    /** Lists the attached run's landed folds, pending marks and outstanding compact ask. */
-    folds: Object.assign((input: Facade.FoldRunRequest): Facade.FoldReply<Facade.FoldList> => this.#call(() => this.#client.selfFolds(input) as Facade.FoldReply<Facade.FoldList>), {
-      /** Reads one pending mark or landed fold of the attached run, with its Generated stub, source ids and retained result handles. */
-      describe: (input: Facade.FoldUnfoldRequest): Facade.FoldReply<Facade.FoldDescription> => this.#call(() => this.#client.selfFoldsDescribe(input) as Facade.FoldReply<Facade.FoldDescription>),
-    }),
-    /** Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled. */
-    history: (input: Facade.FoldHistoryRequest): Facade.FoldHistory => this.#call(() => this.#client.selfHistory(input) as Facade.FoldHistory),
-    /** Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands. */
-    fold: (input: Facade.FoldMarkRequest): Facade.FoldReply<Facade.FoldMarked> => this.#call(() => this.#client.selfFold(input) as Facade.FoldReply<Facade.FoldMarked>),
-    /** Asks the attached run to fold its pending marks in one batch at its next step boundary; read self.history for landed folds and epochs. */
-    compact: (input: Facade.FoldCompactRequest): Facade.FoldReply<Facade.FoldCompactAsked> => this.#call(() => this.#client.selfCompact(input) as Facade.FoldReply<Facade.FoldCompactAsked>),
-    /** Appends a fold of the attached run after its current tail, without replacing the earlier stub. */
-    unfold: (input: Facade.FoldUnfoldRequest): Facade.FoldReply<Facade.FoldUnfolded> => this.#call(() => this.#client.selfUnfold(input) as Facade.FoldReply<Facade.FoldUnfolded>),
-    agents: {
-      /** Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity. */
-      spawn: (input: Facade.LiveRunRequest<Facade.AgentSpawnInput>): Facade.AgentSpawnOutput => this.#call(() => this.#client.selfAgentsSpawn(input) as Facade.AgentSpawnOutput),
-    },
-    leader: {
-      /** Splits the attached leader run into a subproject inside its own TASK wrapper; spec may name only the child leader and a narrower scope. */
-      split: (input: Facade.LiveRunRequest<Facade.LeaderSplitInput>): Facade.LeaderSplitOutput => this.#call(() => this.#client.selfLeaderSplit(input) as Facade.LeaderSplitOutput),
-    },
+  readonly feedback = {
+    /** The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval. */
+    preview: (input: Facade.FeedbackPreviewRequest): Facade.FeedbackSubjectPreview => this.#call(() => this.#client.feedbackPreview(input) as Facade.FeedbackSubjectPreview),
+    /** The owner sends exactly the previewed feedback bundle for one report issue to its publisher, once, through the ordinary outbound gate. */
+    send: (input: Facade.FeedbackSendSubjectRequest): Facade.FeedbackSubjectSent => this.#call(() => this.#client.feedbackSend(input) as Facade.FeedbackSubjectSent),
   }
   readonly vault = {
+    reports: {
+      /** The owner decides whether one publisher-routed report's exact quoted text may cross to its publisher: approve once, stop asking, or deny. */
+      disclosure: (input: Facade.ReportDisclosureRequest): Facade.ReportIssue => this.#call(() => this.#client.vaultReportsDisclosure(input) as Facade.ReportIssue),
+      /** The owner replaces one durable subject's maker route: the owner inbox, or one admitted publisher its feedback is delivered to. */
+      route: (input: Facade.ReportRouteRequest): Facade.ReportRouteReceipt => this.#call(() => this.#client.vaultReportsRoute(input) as Facade.ReportRouteReceipt),
+      /** The owner reads the content-free payload a publisher delivery for one report issue would carry now, with its quoted text only when disclosure approved it. */
+      outbound: (input: Facade.ReportOutboundRequest): Facade.ReportOutboundView => this.#call(() => this.#client.vaultReportsOutbound(input) as Facade.ReportOutboundView),
+    },
     people: {
       /** One page of the people the caller reads, in handle order. */
       list: (input: Facade.PeopleListRequest): Facade.PeoplePage => this.#call(() => this.#client.vaultPeopleList(input) as Facade.PeoplePage),
@@ -1756,6 +1662,114 @@ export class Oneiron {
       set_overrides: (request: Facade.SetNoteOverridesRequest): Facade.NoteDefaultsView => this.#call(() => {  const result = JSON.parse(this.#client.vaultNotesSetOverrides(keyedJson(request))) as Facade.NoteDefaultsView; return result }),
       /** One NOTE's overrides and the defaults its gates read after them. */
       defaults: (request: Facade.NoteRefRequest): Facade.NoteDefaultsView => this.#call(() => {  const result = JSON.parse(this.#client.vaultNotesDefaults(keyedJson(request))) as Facade.NoteDefaultsView; return result }),
+    },
+  }
+  readonly self = {
+    focus: {
+      scratchpad: {
+        /** Searches the bound actor's whole session scratchpad, live or sealed, for the lines holding every query word, folded lines in full. */
+        recall: (input: Facade.ScratchpadRecallRequest): Facade.ScratchpadRecallReply => this.#call(() => this.#client.selfFocusScratchpadRecall(input) as Facade.ScratchpadRecallReply),
+        /** Appends one line, with an optional keep or scratch mark and pin, to the bound actor's session scratchpad; the session's first line opens the pad, and a sealed pad is refused. */
+        append: (input: Facade.ScratchpadAppendRequest): Facade.ScratchpadWriteReply => this.#call(() => this.#client.selfFocusScratchpadAppend(input) as Facade.ScratchpadWriteReply),
+        /** Seals the bound actor's session scratchpad, ending the run's pad; a session with no pad answers no pad. */
+        seal: (input: Facade.ScratchpadSealRequest): Facade.ScratchpadWriteReply => this.#call(() => this.#client.selfFocusScratchpadSeal(input) as Facade.ScratchpadWriteReply),
+      },
+    },
+    memory: {
+      /** Writes one private entry in the bound actor's own diary, as an actor-private NOTE. */
+      diary: Object.assign((input: Facade.DiaryEntryRequest): Facade.DiaryEntryReceipt => this.#call(() => this.#client.selfMemoryDiary(input) as Facade.DiaryEntryReceipt), {
+        /** This agent's diary read log: who read its diary and why, newest first, and the reasons its review holds. */
+        reads: (input: Facade.DiaryReadsRequest): Facade.DiaryReadsView => this.#call(() => this.#client.selfMemoryDiaryReads(input) as Facade.DiaryReadsView),
+        /** This agent's yes or no to a reader's reason for reading its diary; only the diary's own agent answers. */
+        review: (input: Facade.DiaryReviewAnswer): Facade.DiaryReadRequest => this.#call(() => this.#client.selfMemoryDiaryReview(input) as Facade.DiaryReadRequest),
+        /** Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log. */
+        query: (input: Facade.DiaryQueryRequest): Facade.DiaryQueryOutcome => this.#call(() => this.#client.selfMemoryDiaryQuery(input) as Facade.DiaryQueryOutcome),
+      }),
+    },
+    identity: {
+      /** A vault owner's tap on an identity choice card: who a person named in their conversations is. */
+      answer: (input: Facade.IdentityAnswerRequest): Facade.IdentitySettled => this.#call(() => this.#client.selfIdentityAnswer(input) as Facade.IdentitySettled),
+      /** Before acting on a person known only by a name, settles who that name is from its newest saved mention, or opens an ask. */
+      settle: (input: Facade.IdentityActNowRequest): Facade.IdentityActNow => this.#call(() => this.#client.selfIdentitySettle(input) as Facade.IdentityActNow),
+    },
+    inbox: {
+      /** Lists one page of notifications delivered to the bound actor, without marking them. */
+      list: (input: Facade.InboxListRequest): Facade.NotificationPage => this.#call(() => this.#client.selfInboxList(input) as Facade.NotificationPage),
+      /** Marks one delivered notification seen or acknowledged for the bound actor. */
+      mark: (input: Facade.InboxMarkRequest): Facade.NotificationRow => this.#call(() => this.#client.selfInboxMark(input) as Facade.NotificationRow),
+      concern: Object.assign((input: Facade.ConcernCardRequest): Facade.AgentHealthCardView => this.#call(() => this.#client.selfInboxConcern(input) as Facade.AgentHealthCardView), {
+        outcome: (input: Facade.ConcernOutcomeRequest): Facade.ConcernCardSummary => this.#call(() => this.#client.selfInboxConcernOutcome(input) as Facade.ConcernCardSummary),
+        move: (input: Facade.ConcernMoveRequest): Facade.ConcernMoveOutcome => this.#call(() => this.#client.selfInboxConcernMove(input) as Facade.ConcernMoveOutcome),
+      }),
+    },
+    /** Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use. */
+    message: (input: Facade.MessagePersonRequest): Facade.MessagePersonReceipt => this.#call(() => this.#client.selfMessage(input) as Facade.MessagePersonReceipt),
+    grants: {
+      /** Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it. */
+      ask: (input: Facade.GrantAskRequest): Facade.GrantAskReceipt => this.#call(() => this.#client.selfGrantsAsk(input) as Facade.GrantAskReceipt),
+    },
+    /** The caller's own dispatched attempt: its persisted spend allowance, landing reserve, checkpoint and saved hold, without substituting a token meter for money. */
+    budget: Object.assign((input: Facade.SelfBudgetRequest): Facade.AgentBudgetView => this.#call(() => this.#client.selfBudget(input) as Facade.AgentBudgetView), {
+      /** The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later. */
+      land: (input: Facade.BudgetLandRequest): Facade.PartialResultHold => this.#call(() => this.#client.selfBudgetLand(input) as Facade.PartialResultHold),
+    }),
+    credential: {
+      /** Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted. */
+      attenuate: (input: Facade.CredentialAttenuationRequest): Facade.CredentialAttenuated => this.#call(() => this.#client.selfCredentialAttenuate(input) as Facade.CredentialAttenuated),
+    },
+    off_record: {
+      /** The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
+      execute: (input: Facade.OffRecordExecuteRequest): Facade.OffRecordExecuted => this.#call(() => this.#client.selfOffRecordExecute(input) as Facade.OffRecordExecuted),
+    },
+    /** Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value. */
+    use: (input: Facade.SecretUseRequest): Facade.SecretUseAnswer => this.#call(() => this.#client.selfUse(input) as Facade.SecretUseAnswer),
+    secrets: {
+      /** Mints a value-free grant on a secret for this credential's attached run, to one purpose: an operation or connector (door), a host destination (leased) or a declared file (local); the answer never holds the value. */
+      materialize: (input: Facade.LiveRunRequest<Facade.SecretGrantMintRequest>): Facade.SecretGrantView => this.#call(() => this.#client.selfSecretsMaterialize(input) as Facade.SecretGrantView),
+      /** Renews a grant the attached run holds: a fresh grant at the secret's current generation in its place, never a longer life for bytes already handed out. */
+      renew: (input: Facade.LiveRunRequest<Facade.SecretGrantRenewRequest>): Facade.SecretGrantView => this.#call(() => this.#client.selfSecretsRenew(input) as Facade.SecretGrantView),
+      /** Tears down a grant the attached run holds, whatever its state: revokes it and its lease, removes its file or clears its destination, and says what the cleanup found. */
+      teardown: (input: Facade.LiveRunRequest<Facade.SecretGrantTeardownRequest>): Facade.SecretGrantView => this.#call(() => this.#client.selfSecretsTeardown(input) as Facade.SecretGrantView),
+      /** Hands the secret a door grant redeems to one trusted operation or connector call, for the attached run; a grant minted before a rotation refuses until renewed, and the answer never holds the value. */
+      use: (input: Facade.LiveRunRequest<Facade.SecretGrantUseRequest>): Facade.SecretUseAnswer => this.#call(() => this.#client.selfSecretsUse(input) as Facade.SecretUseAnswer),
+    },
+    skills: {
+      /** An agent saves a skill it wrote, SKILL.md and scripts together; it lands as a proposed candidate and nothing activates it. */
+      save: (input: Facade.SkillSaveRequest): Facade.SkillAuthoringReceipt => this.#call(() => this.#client.selfSkillsSave(input) as Facade.SkillAuthoringReceipt),
+      /** An agent forks a stored skill under its own identity, keeping its import ancestry. */
+      fork: (input: Facade.SkillForkRequest): Facade.SkillAuthoringReceipt => this.#call(() => this.#client.selfSkillsFork(input) as Facade.SkillAuthoringReceipt),
+      /** Every loadable callable helper skill and its call contract: what it takes and returns. */
+      callables: (input: Facade.EmptyRequest = {}): Facade.CallableCardView[] => this.#call(() => this.#client.selfSkillsCallables(input) as Facade.CallableCardView[]),
+      /** Runs a callable skill on this credential's attached leased run with its existing sandbox and gates; the result follows the stored return contract, while anchored outcomes settle separately. */
+      call: (input: Facade.LiveRunRequest<Facade.SkillCallInput>): unknown => this.#call(() => this.#client.selfSkillsCall(input) as unknown),
+    },
+    decisions: {
+      asks: (input: Facade.EmptyRequest = {}): Facade.DecisionAsk[] => this.#call(() => this.#client.selfDecisionsAsks(input) as Facade.DecisionAsk[]),
+    },
+    run: {
+      /** Attaches the caller's own credential to its leased live run and returns the handle required by the public fold and history calls. */
+      attach: (input: Facade.RunAttachRequest): Facade.RunAttached => this.#call(() => this.#client.selfRunAttach(input) as Facade.RunAttached),
+    },
+    /** Lists the attached run's landed folds, pending marks and outstanding compact ask. */
+    folds: Object.assign((input: Facade.FoldRunRequest): Facade.FoldReply<Facade.FoldList> => this.#call(() => this.#client.selfFolds(input) as Facade.FoldReply<Facade.FoldList>), {
+      /** Reads one pending mark or landed fold of the attached run, with its Generated stub, source ids and retained result handles. */
+      describe: (input: Facade.FoldUnfoldRequest): Facade.FoldReply<Facade.FoldDescription> => this.#call(() => this.#client.selfFoldsDescribe(input) as Facade.FoldReply<Facade.FoldDescription>),
+    }),
+    /** Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled. */
+    history: (input: Facade.FoldHistoryRequest): Facade.FoldHistory => this.#call(() => this.#client.selfHistory(input) as Facade.FoldHistory),
+    /** Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands. */
+    fold: (input: Facade.FoldMarkRequest): Facade.FoldReply<Facade.FoldMarked> => this.#call(() => this.#client.selfFold(input) as Facade.FoldReply<Facade.FoldMarked>),
+    /** Asks the attached run to fold its pending marks in one batch at its next step boundary; read self.history for landed folds and epochs. */
+    compact: (input: Facade.FoldCompactRequest): Facade.FoldReply<Facade.FoldCompactAsked> => this.#call(() => this.#client.selfCompact(input) as Facade.FoldReply<Facade.FoldCompactAsked>),
+    /** Appends a fold of the attached run after its current tail, without replacing the earlier stub. */
+    unfold: (input: Facade.FoldUnfoldRequest): Facade.FoldReply<Facade.FoldUnfolded> => this.#call(() => this.#client.selfUnfold(input) as Facade.FoldReply<Facade.FoldUnfolded>),
+    agents: {
+      /** Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity. */
+      spawn: (input: Facade.LiveRunRequest<Facade.AgentSpawnInput>): Facade.AgentSpawnOutput => this.#call(() => this.#client.selfAgentsSpawn(input) as Facade.AgentSpawnOutput),
+    },
+    leader: {
+      /** Splits the attached leader run into a subproject inside its own TASK wrapper; spec may name only the child leader and a narrower scope. */
+      split: (input: Facade.LiveRunRequest<Facade.LeaderSplitInput>): Facade.LeaderSplitOutput => this.#call(() => this.#client.selfLeaderSplit(input) as Facade.LeaderSplitOutput),
     },
   }
   /** Cancels one task under the ladder's `auto` default. The receipt says what stopped and what became a proposal instead. */
