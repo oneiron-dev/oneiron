@@ -1673,6 +1673,51 @@ impl NativeClient {
         serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
     }
     #[napi]
+    pub fn vault_agents_create(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.agents.create", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_agents_get(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.agents.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_agents_update(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.agents.update", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_workspace_establish(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.workspace.establish", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_workspace_members_onboard(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.workspace.members.onboard", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_workspace_roster(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.workspace.roster", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_agents_export_pack(&self, request_json: String) -> napi::Result<String> {
         let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
             facade_error(oneiron::memory::MemoryError {

@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 409 code-mode rows (388 host rows, 21 run rows), 1489 declarations.
-// Replies: 355 fully typed, 50 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 415 code-mode rows (394 host rows, 21 run rows), 1508 declarations.
+// Replies: 361 fully typed, 50 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 79; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -834,6 +834,26 @@ declare namespace Sdk {
   type CodeRepoDiffView = { files: CodeFileDiffView[]; not_text: string[]; rendered: string };
   type ArtifactExportRequest = { artifact_ref: string; version?: number | null; travel?: TravelChoice | null; why?: string | null };
   type ArtifactExportFile = { artifact_ref: string; version: number; kind: ArtifactKind; name: string; media_type: string; content_hash: string; born_with: BornWith; content_base64: string };
+  type AgentSkillInput = { skill_id: string; min_version?: string | null };
+  type AgentMcpInput = { key: string; min_version?: string | null };
+  type AgentScopeInput = { kind: "all" } | { kind: "base" } | { kind: "world"; world: EntityId };
+  type AgentCeilingInput = "auto" | "proposed";
+  type AgentDefinitionSpec = { agent_id: string; desc: string; version: string; instructions?: string | null; skills?: AgentSkillInput[]; connectors?: string[]; code_mode_mcps?: AgentMcpInput[]; model_tier?: string | null; scope?: AgentScopeInput; ceiling?: AgentCeilingInput; forked_from?: EntityId | null; enabled?: boolean; display_name?: string | null };
+  type AgentDefinitionCreateRequest = { agent_def_ref: EntityId; definition: AgentDefinitionSpec };
+  type AgentDefinitionLifecycle = "active" | "superseded" | "retracted";
+  type AgentDefinitionView = { agent_def_ref: EntityId; definition: AgentDefinitionSpec; approval_status: ClaimApprovalStatus; lifecycle_status: AgentDefinitionLifecycle };
+  type AgentDefinitionRequest = { agent_def_ref: EntityId };
+  type AgentDefinitionUpdateRequest = { agent_def_ref: EntityId; expected_version: string; definition: AgentDefinitionSpec };
+  type WorkspaceRosterPreset = { workspace_ref: string; workspace_vault_id: string; org_ref: EntityId; venture_name: string; house_display_name?: string | null; house_actor_ref: EntityId; house_identity_ref?: EntityId | null };
+  type WorkCompanionPolicy = "choose" | "suggest" | "require";
+  type WorkspacePresetRequest = { preset: WorkspaceRosterPreset; work_companion?: WorkCompanionPolicy };
+  type WorkspacePresetReceipt = { workspace_ref: string; work_companion: WorkCompanionPolicy };
+  type WorkspaceCompanionInput = { kind: "work"; person_ref: EntityId; actor_ref: EntityId; work_facet_ref: EntityId; profile_grant_ref: EntityId; actor_definition: AgentDefinitionSpec; display_name: string } | { kind: "bring"; person_ref: EntityId; actor_ref: EntityId; work_facet_ref: EntityId };
+  type WorkspaceMemberOnboardRequest = { onboarding_id: string; workspace: WorkspaceRosterPreset; person_ref: EntityId; actor_ref: EntityId; actor_definition: AgentDefinitionSpec; work_facet_ref: EntityId; federation_grant_ref: EntityId; companion: WorkspaceCompanionInput; occurred_at: number };
+  type MemberOnboardingOutcome = { onboarding_id: string; person_ref: EntityId; actor_ref: EntityId; federation_grant_ref: EntityId; companion_person_ref?: EntityId | null; companion_actor_ref?: EntityId | null; work_companion_suggested: boolean; delegated_identity_ref?: EntityId | null; completed_at: number };
+  type WorkspaceRosterRequest = { workspace_ref: string };
+  type WorkspaceRosterRole = "house_mind" | "principal_companion";
+  type WorkspaceRosterEntry = { workspace_ref: string; role: WorkspaceRosterRole; principal_ref?: EntityId | null; actor_ref: EntityId; subject_ref: EntityId; facet_ref?: EntityId | null; identity_ref?: EntityId | null; display_name: string };
   type AgentPackExportRequest = { agent_ref: string; travel?: TravelChoice | null };
   type OmittedKnowledge = { claim: string; reason: string };
   type AgentPackExportFile = { path: string; content_base64: string };
@@ -1025,7 +1045,6 @@ declare namespace Sdk {
   type CompanionSharingView = { target: CompanionSharingTarget; stored?: CompanionSharingStored | null; effective: Scope };
   type CompanionSharingSetRequest = { companion_ref: string; contact_ref: string; proposal_ref: string; expected_delta: string };
   type WorkspaceRefRequest = { workspace_ref: string };
-  type WorkCompanionPolicy = "choose" | "suggest" | "require";
   type WorkCompanionSetRequest = { workspace_ref: string; policy: WorkCompanionPolicy };
   type SkillSourceFile = { path: string; content: string };
   type SkillSaveRequest = { id?: string | null; files: SkillSourceFile[]; expected_version?: string | null };
@@ -1755,8 +1774,14 @@ declare const tasks: {
 };
 declare const vault: Sdk.VaultHost & {
   agents: {
+    /** The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched. */
+    create(input: Sdk.AgentDefinitionCreateRequest): Promise<Sdk.AgentDefinitionView | StoredResult>;
     /** An agent's travelling AgentPack folder, read through the caller's admission, with the born-with text the caller chose and a share receipt listing it and the knowledge kept home. */
     export_pack(input: Sdk.AgentPackExportRequest): Promise<Sdk.AgentPackExport | StoredResult>;
+    /** The owner reads one saved agent composition and its version and approval state. */
+    get(input: Sdk.AgentDefinitionRequest): Promise<Sdk.AgentDefinitionView | StoredResult>;
+    /** The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision. */
+    update(input: Sdk.AgentDefinitionUpdateRequest): Promise<Sdk.AgentDefinitionView | StoredResult>;
   };
   artifacts: {
     /** Appends one version of bytes to a blob artifact's append-only chain. */
@@ -2492,6 +2517,14 @@ declare const vault: Sdk.VaultHost & {
   /** Witnesses one conversational turn: its conversation, turn and gated messages, edges and text index, in one atomic batch. */
   witness(input: Sdk.WitnessTurn): Promise<Sdk.WitnessReceipt | StoredResult>;
   workspace: {
+    /** The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted. */
+    establish(input: Sdk.WorkspacePresetRequest): Promise<Sdk.WorkspacePresetReceipt | StoredResult>;
+    members: {
+      /** A holder of the workspace AddMember power runs resumable member and companion onboarding. Bringing an existing companion requires the member's own caller proof; mailbox enrollment is separate. */
+      onboard(input: Sdk.WorkspaceMemberOnboardRequest): Promise<Sdk.MemberOnboardingOutcome | StoredResult>;
+    };
+    /** The owner reads the workspace house and companion roster with their actor, subject and facet refs. */
+    roster(input: Sdk.WorkspaceRosterRequest): Promise<Sdk.WorkspaceRosterEntry[] | StoredResult>;
     work_companion: {
       /** A workspace's work_companion policy, readable by every member it governs. */
       get(input: Sdk.WorkspaceRefRequest): Promise<Sdk.WorkCompanionPolicy | StoredResult>;

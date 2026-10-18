@@ -2620,6 +2620,90 @@
       }
     },
     {
+      "name": "vault.agents.create",
+      "description": "The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched.",
+      "input": "crate::task_verb::sdk::AgentDefinitionCreateRequest",
+      "output": "crate::task_verb::sdk::AgentDefinitionView",
+      "call": "crate::task_verb::sdk::create_agent_definition_as(memory.vault(), &memory.embedded_owner(\"vault.agents.create\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.agents.get",
+      "description": "The owner reads one saved agent composition and its version and approval state.",
+      "input": "crate::task_verb::sdk::AgentDefinitionRequest",
+      "output": "crate::task_verb::sdk::AgentDefinitionView",
+      "call": "crate::task_verb::sdk::read_agent_definition_as(memory.vault(), &memory.embedded_owner(\"vault.agents.get\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.agents.update",
+      "description": "The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision.",
+      "input": "crate::task_verb::sdk::AgentDefinitionUpdateRequest",
+      "output": "crate::task_verb::sdk::AgentDefinitionView",
+      "call": "crate::task_verb::sdk::update_agent_definition_as(memory.vault(), &memory.embedded_owner(\"vault.agents.update\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.workspace.establish",
+      "description": "The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted.",
+      "input": "crate::task_verb::sdk::WorkspacePresetRequest",
+      "output": "crate::task_verb::sdk::WorkspacePresetReceipt",
+      "call": "crate::task_verb::sdk::establish_workspace_as(memory.vault(), &memory.embedded_owner(\"vault.workspace.establish\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.workspace.members.onboard",
+      "description": "A holder of the workspace AddMember power runs resumable member and companion onboarding. Bringing an existing companion requires the member's own caller proof; mailbox enrollment is separate.",
+      "input": "crate::task_verb::sdk::WorkspaceMemberOnboardRequest",
+      "output": "crate::workspace_roster::MemberOnboardingOutcome",
+      "call": "crate::task_verb::sdk::onboard_workspace_member_as(memory.vault(), &memory.embedded_owner(\"vault.workspace.members.onboard\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.workspace.roster",
+      "description": "The owner reads the workspace house and companion roster with their actor, subject and facet refs.",
+      "input": "crate::task_verb::sdk::WorkspaceRosterRequest",
+      "output": "Vec<crate::workspace_roster::WorkspaceRosterEntry>",
+      "call": "crate::task_verb::sdk::read_workspace_roster_as(memory.vault(), &memory.embedded_owner(\"vault.workspace.roster\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.agents.export_pack",
       "description": "An agent's travelling AgentPack folder, read through the caller's admission, with the born-with text the caller chose and a share receipt listing it and the knowledge kept home.",
       "input": "crate::share_travel::AgentPackExportRequest",

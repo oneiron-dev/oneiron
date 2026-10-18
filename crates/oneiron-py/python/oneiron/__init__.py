@@ -606,6 +606,9 @@ class Oneiron:
         def agents(self) -> "Oneiron._VaultAgentsVerbs":
             return Oneiron._VaultAgentsVerbs(self._client)
         @property
+        def workspace(self) -> "Oneiron._VaultWorkspaceVerbs":
+            return Oneiron._VaultWorkspaceVerbs(self._client)
+        @property
         def critic(self) -> "Oneiron._VaultCriticVerbs":
             return Oneiron._VaultCriticVerbs(self._client)
         @property
@@ -623,9 +626,6 @@ class Oneiron:
         @property
         def companions(self) -> "Oneiron._VaultCompanionsVerbs":
             return Oneiron._VaultCompanionsVerbs(self._client)
-        @property
-        def workspace(self) -> "Oneiron._VaultWorkspaceVerbs":
-            return Oneiron._VaultWorkspaceVerbs(self._client)
         @property
         def graph(self) -> "Oneiron._VaultGraphVerbs":
             return Oneiron._VaultGraphVerbs(self._client)
@@ -1469,9 +1469,48 @@ class Oneiron:
     class _VaultAgentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def create(self, spec):
+            """The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched."""
+            return json.loads(_translate(lambda: self._client.vault_agents_create(json.dumps(spec))))
+        def get(self, spec):
+            """The owner reads one saved agent composition and its version and approval state."""
+            return json.loads(_translate(lambda: self._client.vault_agents_get(json.dumps(spec))))
+        def update(self, spec):
+            """The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision."""
+            return json.loads(_translate(lambda: self._client.vault_agents_update(json.dumps(spec))))
         def export_pack(self, request: dict[str, Any]) -> dict[str, Any]:
             """The agent's travelling AgentPack folder (files base64) and what stayed home."""
             return json.loads(_translate(lambda: self._client.vault_agents_export_pack(json.dumps(request, allow_nan=False))))
+    class _VaultWorkspaceVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def establish(self, spec):
+            """The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted."""
+            return json.loads(_translate(lambda: self._client.vault_workspace_establish(json.dumps(spec))))
+        @property
+        def members(self) -> "Oneiron._VaultWorkspaceMembersVerbs":
+            return Oneiron._VaultWorkspaceMembersVerbs(self._client)
+        def roster(self, spec):
+            """The owner reads the workspace house and companion roster with their actor, subject and facet refs."""
+            return json.loads(_translate(lambda: self._client.vault_workspace_roster(json.dumps(spec))))
+        @property
+        def work_companion(self) -> "Oneiron._VaultWorkspaceWorkCompanionVerbs":
+            return Oneiron._VaultWorkspaceWorkCompanionVerbs(self._client)
+    class _VaultWorkspaceMembersVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def onboard(self, spec):
+            """A holder of the workspace AddMember power runs resumable member and companion onboarding. Bringing an existing companion requires the member's own caller proof; mailbox enrollment is separate."""
+            return json.loads(_translate(lambda: self._client.vault_workspace_members_onboard(json.dumps(spec))))
+    class _VaultWorkspaceWorkCompanionVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """A workspace's work_companion policy, readable by every member it governs."""
+            return json.loads(_translate(lambda: self._client.vault_workspace_work_companion_get(json.dumps(spec))))
+        def set(self, spec):
+            """The owner, or an Admin holding the workspace-settings power, sets a workspace's work_companion policy in person."""
+            return json.loads(_translate(lambda: self._client.vault_workspace_work_companion_set(json.dumps(spec))))
     class _VaultCriticVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1658,21 +1697,6 @@ class Oneiron:
         def set(self, spec):
             """The owner's standing yes to one frozen clearance offer for a companion's contact."""
             return json.loads(_translate(lambda: self._client.vault_companions_sharing_set(json.dumps(spec))))
-    class _VaultWorkspaceVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        @property
-        def work_companion(self) -> "Oneiron._VaultWorkspaceWorkCompanionVerbs":
-            return Oneiron._VaultWorkspaceWorkCompanionVerbs(self._client)
-    class _VaultWorkspaceWorkCompanionVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def get(self, spec):
-            """A workspace's work_companion policy, readable by every member it governs."""
-            return json.loads(_translate(lambda: self._client.vault_workspace_work_companion_get(json.dumps(spec))))
-        def set(self, spec):
-            """The owner, or an Admin holding the workspace-settings power, sets a workspace's work_companion policy in person."""
-            return json.loads(_translate(lambda: self._client.vault_workspace_work_companion_set(json.dumps(spec))))
     class _VaultGraphVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

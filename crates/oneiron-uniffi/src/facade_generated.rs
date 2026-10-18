@@ -891,6 +891,36 @@ export_facade! {
     let output = client.vault_artifacts_export(&input)?;
     crate::codec::lift_record("vault.artifacts.export", &output)
 };
+"vault.agents.create" => fn vault_agents_create(&self, input: AgentDefinitionCreateRequest) -> AgentDefinitionView = |client| {
+    let input: oneiron::task_verb::sdk::AgentDefinitionCreateRequest = crate::codec::lower_record("vault.agents.create", input)?;
+    let output = client.vault_agents_create(&input)?;
+    crate::codec::lift_record("vault.agents.create", &output)
+};
+"vault.agents.get" => fn vault_agents_get(&self, input: AgentDefinitionRequest) -> AgentDefinitionView = |client| {
+    let input: oneiron::task_verb::sdk::AgentDefinitionRequest = crate::codec::lower_record("vault.agents.get", input)?;
+    let output = client.vault_agents_get(&input)?;
+    crate::codec::lift_record("vault.agents.get", &output)
+};
+"vault.agents.update" => fn vault_agents_update(&self, input: AgentDefinitionUpdateRequest) -> AgentDefinitionView = |client| {
+    let input: oneiron::task_verb::sdk::AgentDefinitionUpdateRequest = crate::codec::lower_record("vault.agents.update", input)?;
+    let output = client.vault_agents_update(&input)?;
+    crate::codec::lift_record("vault.agents.update", &output)
+};
+"vault.workspace.establish" => fn vault_workspace_establish(&self, input: WorkspacePresetRequest) -> WorkspacePresetReceipt = |client| {
+    let input: oneiron::task_verb::sdk::WorkspacePresetRequest = crate::codec::lower_record("vault.workspace.establish", input)?;
+    let output = client.vault_workspace_establish(&input)?;
+    crate::codec::lift_record("vault.workspace.establish", &output)
+};
+"vault.workspace.members.onboard" => fn vault_workspace_members_onboard(&self, input: WorkspaceMemberOnboardRequest) -> MemberOnboardingOutcome = |client| {
+    let input: oneiron::task_verb::sdk::WorkspaceMemberOnboardRequest = crate::codec::lower_record("vault.workspace.members.onboard", input)?;
+    let output = client.vault_workspace_members_onboard(&input)?;
+    crate::codec::lift_record("vault.workspace.members.onboard", &output)
+};
+"vault.workspace.roster" => fn vault_workspace_roster(&self, input: WorkspaceRosterRequest) -> Vec<WorkspaceRosterEntry> = |client| {
+    let input: oneiron::task_verb::sdk::WorkspaceRosterRequest = crate::codec::lower_record("vault.workspace.roster", input)?;
+    let output = client.vault_workspace_roster(&input)?;
+    crate::codec::lift_record("vault.workspace.roster", &output)
+};
 "vault.agents.export_pack" => fn vault_agents_export_pack(&self, input: AgentPackExportRequest) -> AgentPackExport = |client| {
     let input: oneiron::share_travel::AgentPackExportRequest = crate::codec::lower_record("vault.agents.export_pack", input)?;
     let output = client.vault_agents_export_pack(&input)?;

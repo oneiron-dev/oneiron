@@ -25,6 +25,7 @@
 //! edited to admit these codes; that is the whole point of the local type.
 
 pub(super) mod action_routes;
+mod agent_definition_doors;
 mod agent_verbs;
 mod call_context;
 mod campaign_split_doors;

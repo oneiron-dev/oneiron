@@ -837,6 +837,10 @@ class Oneiron:
         def skills(self) -> "Oneiron._SelfSkillsVerbs": ...
         @property
         def decisions(self) -> "Oneiron._SelfDecisionsVerbs": ...
+        @property
+        def agents(self) -> "Oneiron._SelfAgentsVerbs": ...
+        @property
+        def leader(self) -> "Oneiron._SelfLeaderVerbs": ...
     class _SelfFocusVerbs:
         @property
         def scratchpad(self) -> "Oneiron._SelfFocusScratchpadVerbs": ...
@@ -887,6 +891,12 @@ class Oneiron:
             """Every loadable callable helper skill and its call contract: what it takes and returns."""
     class _SelfDecisionsVerbs:
         def asks(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.DecisionAsk]: ...
+    class _SelfAgentsVerbs:
+        def spawn(self, spec: Facade.LiveRunRequest[Facade.AgentSpawnInput]) -> Facade.AgentSpawnOutput:
+            """Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity."""
+    class _SelfLeaderVerbs:
+        def split(self, spec: Facade.LiveRunRequest[Facade.LeaderSplitInput]) -> Facade.LeaderSplitOutput:
+            """Splits the attached leader run into a subproject inside its own TASK wrapper; spec may name only the child leader and a narrower scope."""
     class _VaultVerbs:
         @property
         def people(self) -> "Oneiron._VaultPeopleVerbs": ...
@@ -964,6 +974,8 @@ class Oneiron:
         @property
         def agents(self) -> "Oneiron._VaultAgentsVerbs": ...
         @property
+        def workspace(self) -> "Oneiron._VaultWorkspaceVerbs": ...
+        @property
         def critic(self) -> "Oneiron._VaultCriticVerbs": ...
         @property
         def rooms(self) -> "Oneiron._VaultRoomsVerbs": ...
@@ -975,8 +987,6 @@ class Oneiron:
         def messages(self) -> "Oneiron._VaultMessagesVerbs": ...
         @property
         def companions(self) -> "Oneiron._VaultCompanionsVerbs": ...
-        @property
-        def workspace(self) -> "Oneiron._VaultWorkspaceVerbs": ...
         @property
         def graph(self) -> "Oneiron._VaultGraphVerbs": ...
         @property
@@ -1439,7 +1449,30 @@ class Oneiron:
         def proposal_view(self, request: Facade.CodeProposalViewRequest) -> Facade.CodeProposalView | None: ...
         def repo_diff(self, request: Facade.CodeRepoDiffRequest) -> Facade.CodeRepoDiffView | None: ...
     class _VaultAgentsVerbs:
+        def create(self, spec: Facade.AgentDefinitionCreateRequest) -> Facade.AgentDefinitionView:
+            """The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched."""
+        def get(self, spec: Facade.AgentDefinitionRequest) -> Facade.AgentDefinitionView:
+            """The owner reads one saved agent composition and its version and approval state."""
+        def update(self, spec: Facade.AgentDefinitionUpdateRequest) -> Facade.AgentDefinitionView:
+            """The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision."""
         def export_pack(self, request: Facade.AgentPackExportRequest) -> Facade.AgentPackExport: ...
+    class _VaultWorkspaceVerbs:
+        def establish(self, spec: Facade.WorkspacePresetRequest) -> Facade.WorkspacePresetReceipt:
+            """The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted."""
+        @property
+        def members(self) -> "Oneiron._VaultWorkspaceMembersVerbs": ...
+        def roster(self, spec: Facade.WorkspaceRosterRequest) -> list[Facade.WorkspaceRosterEntry]:
+            """The owner reads the workspace house and companion roster with their actor, subject and facet refs."""
+        @property
+        def work_companion(self) -> "Oneiron._VaultWorkspaceWorkCompanionVerbs": ...
+    class _VaultWorkspaceMembersVerbs:
+        def onboard(self, spec: Facade.WorkspaceMemberOnboardRequest) -> Facade.MemberOnboardingOutcome:
+            """A holder of the workspace AddMember power runs resumable member and companion onboarding. Bringing an existing companion requires the member's own caller proof; mailbox enrollment is separate."""
+    class _VaultWorkspaceWorkCompanionVerbs:
+        def get(self, spec: Facade.WorkspaceRefRequest) -> Facade.WorkCompanionPolicy:
+            """A workspace's work_companion policy, readable by every member it governs."""
+        def set(self, spec: Facade.WorkCompanionSetRequest) -> Facade.WorkCompanionPolicy:
+            """The owner, or an Admin holding the workspace-settings power, sets a workspace's work_companion policy in person."""
     class _VaultCriticVerbs:
         def review(self, spec: Facade.CriticReviewSubmit) -> Facade.CriticReviewOutcome:
             """Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target."""
@@ -1550,14 +1583,6 @@ class Oneiron:
             """One contact's clearance in a companion's source vault, for the principal who controls that vault."""
         def set(self, spec: Facade.CompanionSharingSetRequest) -> Facade.CompanionSharingView:
             """The owner's standing yes to one frozen clearance offer for a companion's contact."""
-    class _VaultWorkspaceVerbs:
-        @property
-        def work_companion(self) -> "Oneiron._VaultWorkspaceWorkCompanionVerbs": ...
-    class _VaultWorkspaceWorkCompanionVerbs:
-        def get(self, spec: Facade.WorkspaceRefRequest) -> Facade.WorkCompanionPolicy:
-            """A workspace's work_companion policy, readable by every member it governs."""
-        def set(self, spec: Facade.WorkCompanionSetRequest) -> Facade.WorkCompanionPolicy:
-            """The owner, or an Admin holding the workspace-settings power, sets a workspace's work_companion policy in person."""
     class _VaultGraphVerbs:
         def ask(self, spec: Facade.GraphAskRequest) -> Facade.GraphAskOutcome: ...
     class _VaultQuestionsVerbs:
