@@ -41904,7 +41904,7 @@
      "purpose": "Every hook has a grant (ARCH-0080 §6)",
      "surface": {
       "crate-vis": 2,
-      "fn": 3,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -45497,7 +45497,7 @@
      "purpose": "The `hooks/` folder a pack carries (ARCH-0053 §7; ARCH-0080 §8, PACK-HOOKS = A)",
      "surface": {
       "const": 1,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 5,
       "fn": 6,
       "struct": 3
@@ -52126,7 +52126,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 862
+      "fn": 864
      }
     },
     {
@@ -52237,6 +52237,9 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "HookGrantRequest",
+      "HookGrantSetRequest",
+      "HookGrantView",
       "HubConsentOutcome",
       "HubConsentReceipt",
       "HubHookBindRequest",
@@ -52264,8 +52267,8 @@
      "purpose": "Typed owner doors over configured hubs, foreign publishers and pinned imports",
      "surface": {
       "enum": 2,
-      "fn": 18,
-      "struct": 20
+      "fn": 20,
+      "struct": 23
      }
     },
     {
@@ -68187,7 +68190,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 831
+      "fn": 833
      }
     },
     {
@@ -69249,7 +69252,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 832
+      "fn": 834
      }
     },
     {
@@ -72722,7 +72725,7 @@
      "path": "src/api/facade/hub_doors.rs",
      "purpose": "Owner-proof facade doors for configured hubs and pinned foreign imports",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 19
      }
     },
     {
@@ -82298,6 +82301,10 @@
       "HookAuthor",
       "HookContractStamp",
       "HookGoldenDiff",
+      "HookGrant",
+      "HookGrantRequest",
+      "HookGrantSetRequest",
+      "HookGrantView",
       "HookOutcomeKind",
       "HookPhase",
       "HookRegenAdoptRequest",
@@ -84042,7 +84049,7 @@
      "purpose": "—",
      "surface": {
       "enum": 696,
-      "struct": 2146
+      "struct": 2150
      }
     },
     {
