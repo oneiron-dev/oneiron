@@ -323,6 +323,17 @@ pub(super) fn verify(
                 part.clone(),
                 rels_name(part),
             ]);
+            // The app properties count one slide more when they changed.
+            if let Some(props) = related(input, "", "extended-properties")?
+                && changed.contains(&props)
+            {
+                if super::slides::slide_count(&candidate)?
+                    != super::slides::slide_count(input)?.map(|count| count.saturating_add(1))
+                {
+                    return Err(fault("the app properties do not count the slide in"));
+                }
+                allowed.push(props);
+            }
             let at = anchor
                 .map(|slide| {
                     before

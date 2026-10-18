@@ -101,6 +101,9 @@ pub enum EngineLimit {
     /// it. An image whose header declares a raster past it asks whether
     /// everything is okay, and is decoded whole.
     SignatureDecodeBytes,
+    /// Stored cells one workbook import writes into a live office body,
+    /// every sheet together. Past it the workbook is imported whole.
+    ImportXlsxLiveCells,
     /// Bytes of one foreign pack script run's typed output. Past it the
     /// output is read whole, up to the sandbox's own file bound.
     PackScriptOutputBytes,
@@ -111,7 +114,7 @@ pub enum EngineLimit {
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 24] = [
+    pub const ALL: [Self; 25] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -134,6 +137,7 @@ impl EngineLimit {
         Self::ImportDecodedMessages,
         Self::ImportDecodedBytes,
         Self::SignatureDecodeBytes,
+        Self::ImportXlsxLiveCells,
         Self::PackScriptOutputBytes,
         Self::PackScriptOutputRows,
     ];
@@ -163,6 +167,7 @@ impl EngineLimit {
             Self::ImportDecodedMessages => "limits.import_decoded_messages",
             Self::ImportDecodedBytes => "limits.import_decoded_bytes",
             Self::SignatureDecodeBytes => "limits.signature_decode_bytes",
+            Self::ImportXlsxLiveCells => "limits.import_xlsx_live_cells",
             Self::PackScriptOutputBytes => "limits.pack_script_output_bytes",
             Self::PackScriptOutputRows => "limits.pack_script_output_rows",
         }
@@ -194,6 +199,7 @@ impl EngineLimit {
             Self::ImportDecodedMessages => 1_000_000,
             Self::ImportDecodedBytes => 1 << 30,
             Self::SignatureDecodeBytes => 1 << 30,
+            Self::ImportXlsxLiveCells => 200_000,
             Self::PackScriptOutputBytes => 64 << 10,
             Self::PackScriptOutputRows => 16,
         }

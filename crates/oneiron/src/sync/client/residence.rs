@@ -4,13 +4,10 @@
 mod authority;
 mod bundle;
 mod index;
-mod sealed;
 pub(crate) use authority::{catch_up_authority, pinned_checkpoint_pending};
 pub use bundle::SealedBundleRelay;
 pub(crate) use bundle::relay_sealed_bundle;
 pub use index::ResidenceIndexWindow;
-pub use sealed::SealedRelay;
-pub(crate) use sealed::relay_sealed_windows;
 
 use std::collections::HashSet;
 use std::time::Duration;
@@ -356,7 +353,7 @@ const RETAIN_REFUSED_PREFIX: &str = "rr:w:";
 
 /// Asks the home again to retain each window it refused, on an opened
 /// machine; returns how many it retains now. Off the live sync loop, on the
-/// window manager and a client config alone, like [`relay_sealed_windows`].
+/// window manager and a client config alone, like [`relay_sealed_bundle`].
 pub(crate) async fn retry_refused_retains(
     manager: &std::sync::Arc<crate::sync::manager::WindowManager>,
     config: &SyncClientConfig,
@@ -619,9 +616,9 @@ impl SyncClient {
         Ok(())
     }
 
-    /// The sealed packets this machine took in while `window` stood
+    /// The bundle sections this machine took in while `window` stood
     /// unpromoted wait in its mirror: the promoted window holds their rows
-    /// now. A failure leaves them there for the next packet's import.
+    /// now. A failure leaves them there for the next take.
     fn materialize_sealed_mirror(&self, window: &WindowKey) {
         let Some(world) = window.world() else {
             return;
@@ -846,7 +843,7 @@ impl SyncClient {
         query: &str,
         limit: usize,
     ) -> Result<ResidenceSearch, TransportError> {
-        search_resident(&self.vault, &self.config, query, limit).await
+        search_resident(&self.vault, &self.config, query, limit, None).await
     }
 }
 
@@ -903,13 +900,20 @@ fn read_thin_item(
 }
 
 /// Home results when reachable; offline results are explicitly local-only.
-/// On the vault and a client config alone, like [`relay_sealed_windows`], so
+/// On the vault and a client config alone, like [`relay_sealed_bundle`], so
 /// a query door asks the home without a sync client.
+///
+/// With `caller`, the search is that caller's (FIX 2907): its own holder
+/// proof goes to the home unchanged, with this install's forwarding proof
+/// over it and the request, and the home answers within the caller's reach
+/// and this device's selector. A forwarded search never falls back to this
+/// device's own scan: no home is no hits.
 pub(crate) async fn search_resident(
     vault: &crate::Vault,
     config: &SyncClientConfig,
     query: &str,
     limit: usize,
+    caller: Option<&crate::authority::ForwardedCallerProof>,
 ) -> Result<ResidenceSearch, TransportError> {
     if config.residence_mode != SyncResidenceMode::Opened {
         return Err(refused());
@@ -923,20 +927,29 @@ pub(crate) async fn search_resident(
         return Err(refused());
     }
     let selector = config.residence_selector.as_ref().ok_or_else(refused)?;
-    let selector = base64::engine::general_purpose::STANDARD
-        .encode(encode_sync_selector(selector).map_err(|_| refused())?);
+    let selector_wire = encode_sync_selector(selector).map_err(|_| refused())?;
+    let mut params = json!({
+        "query": query,
+        "limit": limit,
+        "selector": base64::engine::general_purpose::STANDARD.encode(&selector_wire),
+    });
+    if let Some(caller) = caller {
+        let machine = crate::sync::residence::with_forwarded_search(
+            query,
+            limit,
+            &selector_wire,
+            |request| vault.forwarding_machine_proof(request, caller),
+        )
+        .map_err(|e| TransportError::Storage(e.to_string()))?
+        .ok_or_else(refused)?;
+        params["forwarded"] = serde_json::to_value(caller).map_err(|_| refused())?;
+        params["machine_proof"] = serde_json::to_value(machine).map_err(|_| refused())?;
+    }
     match ResidenceRpc::connect(vault, config, budgets).await? {
         Some(mut rpc) => {
-            let reply: SearchReply = serde_json::from_value(
-                rpc.request(
-                    "residence.search",
-                    json!({
-                        "query": query, "limit": limit, "selector": selector
-                    }),
-                )
-                .await?,
-            )
-            .map_err(|_| refused())?;
+            let reply: SearchReply =
+                serde_json::from_value(rpc.request("residence.search", params).await?)
+                    .map_err(|_| refused())?;
             if reply.source != "home" || !reply.complete || reply.hits.len() > limit {
                 return Err(refused());
             }
@@ -959,6 +972,7 @@ pub(crate) async fn search_resident(
                 complete: true,
             })
         }
+        None if caller.is_some() => Err(refused()),
         None => {
             let opened: HashSet<_> = vault
                 .sync_state_keys_with_prefix("ro:e:")

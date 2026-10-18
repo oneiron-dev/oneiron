@@ -277,6 +277,16 @@ impl EngineNativeExecutor<'_> {
                         }
                         return Ok(self.outcome(status, steps_run + 1, record));
                     }
+                    // A step a provider outage ended stops on that outage,
+                    // which parks its run, however its guest took the
+                    // failure (FIX 3194).
+                    if let Some(outage) = host
+                        .hard_failure
+                        .take()
+                        .filter(|failure| matches!(failure, Error::ProviderUnavailable { .. }))
+                    {
+                        return Err(outage.into());
+                    }
                     return Err(err.into());
                 }
             };

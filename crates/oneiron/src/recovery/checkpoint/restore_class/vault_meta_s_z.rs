@@ -218,6 +218,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::TASK_PROJECT_TRADEOFF_TURN, CONTENT),
     (&t::TASK_REPORT_JOURNAL, CONTENT),
     (&t::TASK_SYMBOL_LEASE, CONTENT),
+    (&t::TASK_TRAINING_OFFER_ASK, CONTENT),
+    (&t::TASK_TRAINING_OFFER_ASK_GROUP, CONTENT),
     (&t::TASK_ASK_WAIT, CONTENT),
     // An approved, denied or launched hold never rewinds to waiting.
     (&t::TASK_FANOUT_LAUNCH, LIVE),
@@ -295,10 +297,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::WORLD_KEY_DELETED, CONTENT),
     // A destroyed world stays destroyed: no image restores its keys.
     (&t::WORLD_KEY_DESTROYED, LIVE),
-    // Sealed copies and their mirrors follow the live vault: an image never brings
-    // back a copy a delete or the 30-day expiry purged.
+    // Sealing mirrors follow the live vault: an image never brings back a mirror
+    // an erase purged.
     (&t::WORLD_KEY_SEALED_MIRROR, LIVE),
-    (&t::WORLD_KEY_SEALED_RETIRED, LIVE),
-    (&t::WORLD_KEY_SEALED, LIVE),
-    (&t::WORLD_KEY_SEALED_WINDOW, LIVE),
 ];

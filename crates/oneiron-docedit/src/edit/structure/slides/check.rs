@@ -4,7 +4,8 @@
 //! A copy may change only the presentation (the input's bytes plus the
 //! copy's entries, right after its source's in the slide list and in its
 //! section), the presentation's relationships (one new slide relationship),
-//! the content types (overrides for created parts) and the parts it creates.
+//! the content types (overrides for created parts), the app properties (one
+//! slide more) and the parts it creates.
 //! Each created part is its original byte for byte, but the copy slide,
 //! whose bytes differ only in creation id values and the dropped comment
 //! extension. Each copy keeps its original's relationship ids and kinds,
@@ -20,9 +21,11 @@
 use super::super::super::check::{
     Added, content_types, declared_type, outside, relationships, timing as index,
 };
+use super::super::super::media::related;
 use super::super::super::xml::{self, R};
 use super::super::StructureEdit;
 use super::super::check::diff;
+use super::app_props::slide_count;
 use super::{
     A16, CHART_COLORS, CHART_STYLE, Duplicate, Lists, MODERN_COMMENTS, comment_ext, slide_creation,
 };
@@ -119,11 +122,22 @@ pub(in crate::edit::structure) fn duplicated(
             created.push(rels_name(to));
         }
     }
-    let edited = [
+    let mut edited = vec![
         presentation.to_owned(),
         rels_name(presentation),
         TYPES.to_owned(),
     ];
+    // The app properties count one slide more when they changed.
+    if let Some(props) = related(input, "", "extended-properties")?
+        && changed.contains(&props)
+    {
+        if slide_count(&candidate)? != slide_count(input)?.map(|count| count.saturating_add(1)) {
+            return Err(EditRefusal::ReadBack(
+                "the app properties do not count the copy in",
+            ));
+        }
+        edited.push(props);
+    }
     for part in &changed {
         let allowed = match input.part(part)? {
             Some(_) => edited.contains(part),

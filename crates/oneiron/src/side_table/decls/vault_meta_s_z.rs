@@ -570,6 +570,12 @@ side_tables! {
     TASK_REPORT_JOURNAL: VaultMeta b"tasks.report.journal.v1/" Named;
     /// Task symbol-overlap declaration. Key: id16.
     TASK_SYMBOL_LEASE: VaultMeta b"tasks.symbol_lease.v1/" LegacyJson;
+    /// One pending training offer asked of one owner (OF-577): the question TURN and MESSAGE ids
+    /// and time reserved before the witness, the owner's conversation, and the ask group once
+    /// admitted. Key: id16 (offer) + id16 (owner) + offer digest (64 hex).
+    TASK_TRAINING_OFFER_ASK: VaultMeta b"tasks.training_offer_ask.v1/" Named;
+    /// The training offer ask one ask group carries, by its reservation key. Key: id16 (ask group).
+    TASK_TRAINING_OFFER_ASK_GROUP: VaultMeta b"tasks.training_offer_ask_group.v1/" Named;
     /// Registered external ask wait. Key: id16 + bytes32.
     TASK_ASK_WAIT: VaultMeta b"tasks.wait/" Named;
     /// Fan-out launch held for, or launched past, the approval mode: its frozen payload, plan,
@@ -760,17 +766,8 @@ side_tables! {
     /// Permanent fact that a world's keys were destroyed with the world, with its ids-only
     /// receipt. Refuses a late pad, a remint and an open for that world. Key: id16 hex (world).
     WORLD_KEY_DESTROYED: VaultMeta b"world_keys:destroyed:v1:" Named;
-    /// A reader's own Loro document of one sealed private-world window: the history its sealed
-    /// packets continue. Purged with the world. Key: hex32 (world) ":" string (window label).
+    /// A reader's own Loro document of one sealed private-world window, which the sealed cloud
+    /// bundle's world section carries whole (FIX 922). Purged with an erased world. Key: hex32
+    /// (world) ":" string (window label).
     WORLD_KEY_SEALED_MIRROR: VaultMeta b"world_keys:mirror:v1:" Raw;
-    /// When a shelved sealed packet was retired (u64be vault seconds); it is purged 30 days on.
-    /// Key: hex64 (tag) ":" hex64 (packet digest).
-    WORLD_KEY_SEALED_RETIRED: VaultMeta b"world_keys:sealed-retired:v1:" Raw;
-    /// The newest shelved sealed packet of one window (its shelf id, `tag:digest` hex), so a
-    /// relay node that may not read the world can answer a reader's request for that window.
-    /// Key: string (window label).
-    WORLD_KEY_SEALED_WINDOW: VaultMeta b"world_keys:sealed-window:v1:" Raw;
-    /// One sealed packet of a private world's window, kept for a reader by a node that may not
-    /// read the world (OF-570). Key: hex64 (tag) ":" hex64 (packet digest).
-    WORLD_KEY_SEALED: VaultMeta b"world_keys:sealed:v1:" Raw Ciphertext;
 }

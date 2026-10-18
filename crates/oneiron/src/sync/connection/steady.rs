@@ -44,7 +44,7 @@ impl SyncConnection {
             tokio::time::interval(Duration::from_secs(EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS));
         ephemeral_housekeeping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         // One residence upkeep at a time (authority catch-up, then the sealed
-        // relay), on its own sockets, off this loop.
+        // bundle relay), on its own sockets, off this loop.
         let mut sealed_relay =
             tokio::time::interval(Duration::from_secs(SEALED_RELAY_INTERVAL_SECS));
         sealed_relay.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -261,6 +261,7 @@ impl SyncConnection {
                         let manager = std::sync::Arc::clone(&self.manager);
                         let config = self.client_config();
                         let events = event_tx.clone();
+                        let directives = std::sync::Arc::clone(&self.directive_wake);
                         sealed_task = Some(tokio::spawn(async move {
                             // An opened machine's windows carry only the
                             // authority rows they hold: take the rest first
@@ -285,6 +286,9 @@ impl SyncConnection {
                                     "Authority catch-up failed: {error}"
                                 )));
                             }
+                            // The owner's residence directives naming this
+                            // machine run once its history is in (OF-534).
+                            directives.notify_one();
                             // A machine those rows made mine gets each portable
                             // credential's value sealed to it again (OF-422).
                             let vault = std::sync::Arc::clone(manager.vault());
@@ -298,14 +302,6 @@ impl SyncConnection {
                                 Err(error) => {
                                     let _ = events.send(SyncEvent::Error(format!(
                                         "Custody re-seal stopped: {error}"
-                                    )));
-                                }
-                            }
-                            match crate::sync::client::relay_sealed_windows(&manager, &config).await {
-                                Ok(_) | Err(crate::sync::TransportError::InvalidPayload(_)) => {}
-                                Err(error) => {
-                                    let _ = events.send(SyncEvent::Error(format!(
-                                        "Sealed window relay failed: {error}"
                                     )));
                                 }
                             }

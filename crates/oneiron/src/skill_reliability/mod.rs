@@ -34,7 +34,7 @@ pub use self::ledger::{
 };
 pub(crate) use self::ledger::{
     attributed_outcome_receipts, attributed_outcome_results, attributed_outcomes_weighted,
-    mark_displaced_outcome_in_txn,
+    mark_displaced_outcome_in_txn, record_skill_settled_loss,
 };
 pub use self::posterior::{
     ProvenanceTrustClass, SKILL_RELIABILITY_SCHEMA_VERSION, SkillReliabilityPosterior,
