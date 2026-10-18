@@ -139,6 +139,25 @@ pub(crate) fn channel_identity_facts_in_txn(
     }))
 }
 
+/// The claim ids of the identity's live heads: the rows
+/// [`channel_identity_facts_in_txn`] reads its facts from on the same
+/// snapshot, none when it has no heads. A listing door names them beside
+/// what the facts derive (a binding, a state).
+///
+/// # Errors
+///
+/// As [`channel_identity_facts_in_txn`]'s own head read.
+pub(crate) fn channel_identity_fact_head_ids_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    identity_ref: &EntityId,
+) -> Result<Vec<EntityId>> {
+    Ok(live_heads_in_txn(store, txn, identity_ref)?
+        .into_values()
+        .map(|(claim_id, _)| claim_id)
+        .collect())
+}
+
 /// Each live head of the identity's family: Active and not stale.
 fn for_each_live_head(
     store: &Store,

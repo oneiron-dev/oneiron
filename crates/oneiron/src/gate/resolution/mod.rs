@@ -9,6 +9,7 @@ mod weave_reach;
 
 pub(super) use self::frontier_hash::{hash_bool, hash_bytes, hash_opt_str, hash_str};
 pub(super) use self::manifest_fold::check_claim_source_trust;
+pub(crate) use self::manifest_fold::policy_manifest_contributors;
 pub(crate) use self::manifest_fold::{
     resolve_credential_lifetimes, resolve_gate_decision_retention, resolve_policy_manifest,
     resolve_project_depth_max, retention_edit_target,
