@@ -54,7 +54,7 @@ const WORK: SideTable<EntityId, CodeFixWork, Named> =
 const BLOCKED_WORK_DOMAIN: &[u8] = b"oneiron.code-fix.blocked.v1\0";
 /// Blocked reports one job carries.
 const JOB_REPORTS: usize = 8;
-/// Most work rows one owner read returns.
+/// Work rows one owner read returns when its caller names no limit.
 pub const MAX_CODE_FIX_WORK: usize = 256;
 /// Work rows one catch-up step reads, and top-up runs it queues: a newly
 /// pinned candidate reaches past failures a few at a time.
@@ -654,8 +654,7 @@ pub(super) fn wake_blocked_in_txn(
 
 impl Vault {
     /// The Coach's code-fix work for the owner, newest queued first, at most
-    /// `limit` (capped at [`MAX_CODE_FIX_WORK`]): each case's or blocked
-    /// report's heal and, once
+    /// the caller's `limit`: each case's or blocked report's heal and, once
     /// its run settled, the failure's class, the invented example's verdict
     /// and each candidate's shadow result. No text of the failure is in it.
     ///
@@ -669,7 +668,7 @@ impl Vault {
             .map(|row| row.map(|(_, work)| work))
             .collect::<Result<_>>()?;
         rows.sort_by(|a, b| b.queued_at.cmp(&a.queued_at));
-        rows.truncate(limit.min(MAX_CODE_FIX_WORK));
+        rows.truncate(limit);
         Ok(rows)
     }
 
