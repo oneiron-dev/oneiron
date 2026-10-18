@@ -313,9 +313,16 @@ fn pinned(
     let Some(pin) = vault.message_quote_pin_in_txn(&txn, &message, &citation)? else {
         return Ok((QuoteStripStatus::Drifted, None));
     };
+    let held = crate::entity_doc::has_record_head(&vault.store, &txn, &message)?;
     drop(txn);
     // The pin's quote was proven against the pinned version.
     let excerpt = Some(pin.anchor.quote().to_owned());
+    // A pin from another of the owner's machines can reach a vault that
+    // holds no document for the message (FIX 853): its excerpt stands, and
+    // nothing here maps the span.
+    if !held {
+        return Ok((QuoteStripStatus::Drifted, excerpt));
+    }
     let status = if vault.entity_text_frontier(&message)? == pin.anchor.frontier() {
         QuoteStripStatus::Live
     } else {

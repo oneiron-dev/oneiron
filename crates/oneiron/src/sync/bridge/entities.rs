@@ -11,7 +11,7 @@ use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::sync::ingest::{
     IngestCtx, Residence, authority_parent_order, ingest_entity_in_savepoint, is_authority_row,
-    note_born, waits_for_sibling_row, watches,
+    note_born, note_delivered_in_txn, waits_for_sibling_row, watches,
 };
 use crate::sync::loro_support::TombstoneIndex;
 use crate::sync::pack_sync;
@@ -149,6 +149,7 @@ pub(super) fn materialize_entities_with_changes(
                 if unborn {
                     born.push((id, blob.to_vec()));
                 }
+                note_delivered_in_txn(vault, wtxn, id, blob)?;
                 applied_ops.push((id, blob.to_vec()));
                 // The savepoint has no postcommit owner. Carry its
                 // claim change to the outer transaction's watch,

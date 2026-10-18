@@ -124,6 +124,7 @@ fn decode<'de, T: Deserialize<'de>>(json: &'de str, what: &str) -> PyResult<T> {
             policy_denial: None,
             wrong_root: None,
             hook: None,
+            retry_after: None,
         })
     })
 }
@@ -140,6 +141,7 @@ fn encode_error(error: serde_json::Error) -> PyErr {
         policy_denial: None,
         wrong_root: None,
         hook: None,
+        retry_after: None,
     })
 }
 
@@ -2483,6 +2485,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.artifacts.create")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.artifacts.create", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_esign_create(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.esign.create")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.esign.create", input))
             .map_err(raise)?;
         encode(&output)
     }

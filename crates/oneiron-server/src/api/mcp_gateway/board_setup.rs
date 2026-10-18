@@ -644,10 +644,11 @@ fn mcp_board_sections(
     Ok((sections, omissions, hooks))
 }
 
-/// The fan-out launches that wait on the owner, as TASKS lead rows (OF-393):
-/// the agent's own, or every one for an owner's connector. They are
-/// actor-wide, as its children are, so a world/facet-narrowed or
-/// record-restricted connector reads none.
+/// The fan-out launches that wait on an approver, as TASKS lead rows
+/// (OF-393): the agent's own and those whose bound project lead or board role
+/// it holds live, or every one for an owner's connector. They are actor-wide,
+/// as its children are, so a world/facet-narrowed or record-restricted
+/// connector reads none.
 fn mcp_fanout_rows(
     server: &SyncServer,
     actor: &McpResolvedActor,
@@ -1398,7 +1399,8 @@ fn run_board_sections(
             .board_section()
             .map_err(mcp_board_frame_error)?
     };
-    // The agent's own fan-out launches that wait on the owner (OF-393).
+    // The fan-out launches that wait on an approver (OF-393): the agent's own
+    // and those whose bound project lead or board role it holds live.
     let launches = server
         .vault
         .memory(actor.entity_ref(), actor.actor_class())

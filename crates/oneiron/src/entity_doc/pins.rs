@@ -26,6 +26,42 @@ pub struct CitationPin {
     pub actor: String,
 }
 
+#[cfg(feature = "sync")]
+impl CitationPin {
+    /// The quoted entity and the citing record, when the pin is whole: its
+    /// ids each in their one spelling, its anchor on its own entity at a
+    /// version that decodes, and a nonempty quote its hash proves (FIX 853).
+    pub(crate) fn carried_ids(&self) -> Option<(EntityId, EntityId)> {
+        let named = |hex: &str| EntityId::from_hex(hex).ok().filter(|id| id.to_hex() == hex);
+        let entity = named(&self.entity)?;
+        let citation = named(&self.citation)?;
+        named(&self.document)?;
+        named(&self.actor)?;
+        let anchor = &self.anchor;
+        let whole = anchor.entity == self.entity
+            && !anchor.quote.is_empty()
+            && blake3::hash(anchor.quote.as_bytes()).as_bytes() == &anchor.hash
+            && decode_frontier(&anchor.frontier).is_ok()
+            && loro::cursor::Cursor::decode(&anchor.start).is_ok()
+            && loro::cursor::Cursor::decode(&anchor.end).is_ok();
+        whole.then_some((entity, citation))
+    }
+}
+
+/// What merging one pin a window carried did (FIX 853).
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PinMerge {
+    /// The pin was new here, and is held now.
+    Written,
+    /// This vault already held the same pin.
+    Held,
+    /// This vault holds another pin for the same quote, and it stands.
+    Conflict,
+    /// The pin does not merge here.
+    Refused(&'static str),
+}
+
 /// Unmappable cursors keep both the quote and the original frontier.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CursorResolution {
@@ -241,9 +277,11 @@ impl Vault {
             .map_err(|_| invalid("document registry poisoned"))?;
         let receipt = self.with_write_txn_grouped(|txn| {
             let owner_actor = super::forks::owner_in_txn(self, txn, owner)?;
-            // A held record keeps its history (OF-470).
+            // A held record keeps its history, and so does a pad whose world
+            // or sealed claim is held (OF-470).
             self.store
                 .reject_legal_hold_in_txn(txn, entity.as_bytes())?;
+            crate::world_keys::reject_held_pad_world_in_txn(&self.store, txn, &[*entity])?;
             let receipt_id = EntityId::now();
             super::admit_history_erase_in_txn(
                 self,
@@ -426,6 +464,10 @@ impl Vault {
             actor: actor.entity_ref().to_hex(),
         };
         ENTITY_DOC_PIN.put(&self.store, txn, &key, &pin)?;
+        // The pin rides beside the message (FIX 853): the live mirror takes
+        // it into the loaded window that carries the message.
+        #[cfg(feature = "sync")]
+        crate::batch::queue_committed_rows(self, txn, std::iter::once(*message).collect());
         Ok(pin)
     }
 
@@ -442,6 +484,82 @@ impl Vault {
             &HexPair(HexId(*message), HexId(*citation)),
         )
     }
+
+    /// Every citation pin held on `message`, in the caller's snapshot.
+    #[cfg(feature = "sync")]
+    pub(crate) fn message_quote_pins_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        message: &EntityId,
+    ) -> Result<Vec<CitationPin>> {
+        pins(self, txn, message)
+    }
+
+    /// Installs `pin`, which a window brought from another of the owner's
+    /// machines, in the caller's write transaction (FIX 853). A pin is
+    /// written once: an equal one is held, and a different one for the same
+    /// quote leaves the one held here standing. Erase wins: a pin of a
+    /// message or reply this vault erased is refused. Where this vault holds
+    /// the message's document, the pin must quote it at its version, as
+    /// [`Self::pin_entity_text`] proves one. Where it holds none, the pin
+    /// stands on its own quote.
+    #[cfg(feature = "sync")]
+    pub(crate) fn merge_replicated_quote_pin_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        pin: &CitationPin,
+    ) -> Result<PinMerge> {
+        let Some((message, citation)) = pin.carried_ids() else {
+            return Ok(PinMerge::Refused("not a whole pin"));
+        };
+        for id in [message, citation] {
+            if crate::ports::removed_in_txn(&self.store, txn, &id)? {
+                return Ok(PinMerge::Refused("erased here"));
+            }
+        }
+        let key = HexPair(HexId(message), HexId(citation));
+        if let Some(prior) = ENTITY_DOC_PIN.get(&self.store, txn, &key)? {
+            return Ok(if prior == *pin {
+                PinMerge::Held
+            } else {
+                PinMerge::Conflict
+            });
+        }
+        let entity_type =
+            crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &message)?
+                .and_then(|raw| crate::batch::EntityMetadataHeader::parse(&raw))
+                .map(|header| header.entity_type);
+        if entity_type.is_some_and(|kind| kind != crate::registry::ENTITY_TYPE_MESSAGE) {
+            return Ok(PinMerge::Refused("quotes no MESSAGE"));
+        }
+        if storage::has_record_head(&self.store, txn, &message)?
+            && !quotes_document(self, txn, &message, pin)
+        {
+            return Ok(PinMerge::Refused("does not quote this vault's document"));
+        }
+        ENTITY_DOC_PIN.put(&self.store, txn, &key, pin)?;
+        Ok(PinMerge::Written)
+    }
+}
+
+/// Whether `pin` quotes `entity`'s document as this vault holds it: the
+/// document retains its version, and its span there reads its quote.
+#[cfg(feature = "sync")]
+fn quotes_document(vault: &Vault, txn: &RoTxn<'_>, entity: &EntityId, pin: &CitationPin) -> bool {
+    let proven = || -> Result<bool> {
+        let h = storage::head(&vault.store, txn, entity)?;
+        let doc = storage::load(&vault.store, txn, &h)?;
+        let origin = doc.fork(&pin.anchor.frontier)?;
+        let (start, end) = super::verbs::resolve(&origin, *entity, &pin.anchor)?;
+        let quote: String = origin
+            .text()
+            .chars()
+            .skip(start)
+            .take(end - start)
+            .collect();
+        Ok(quote == pin.anchor.quote)
+    };
+    proven().unwrap_or(false)
 }
 
 pub(super) fn entity_type(vault: &Vault, entity: &EntityId) -> Result<Option<u8>> {

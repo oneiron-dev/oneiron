@@ -19,7 +19,7 @@ use crate::autoreason_campaign::research::{
     self, CampaignPromotionReceipt, CandidateRef, ConfirmationOutcome, ExperimentNode, ForkInput,
     ForkKind, PriorSeed, PromotionBasis, PruneReason, ResearchBindRequest, ResearchBinding,
     ResearchConfirmationSeat, ResearchReservation, ResearchTarget, SearchEvidence,
-    SelectionBenchmark, SelectionReceipt, WeaveInput,
+    SelectionBenchmark, SelectionReceipt, WeaveInput, WeaveWriter,
 };
 use crate::autoreason_campaign::selection::OracleSignal;
 use crate::entity_id::EntityId;
@@ -330,7 +330,12 @@ pub fn research_weave(
     input: ResearchWeaveWire,
 ) -> MemoryResult<ExperimentNode> {
     let root = attempt(input.root)?;
-    controller(memory, Some(root))?;
+    let writer = match controller(memory, Some(root))? {
+        Caller::Owner => WeaveWriter::Owner,
+        Caller::Controller => WeaveWriter::Controller {
+            actor: memory.actor(),
+        },
+    };
     let weave = WeaveInput {
         parents: input
             .parents
@@ -346,6 +351,7 @@ pub fn research_weave(
     Ok(research::record_weave(
         memory.vault(),
         root,
+        writer,
         weave,
         now(memory),
     )?)
