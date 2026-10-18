@@ -258,9 +258,19 @@ fn mcp_code_execution_error(error: &crate::mcp::McpCodeExecutionError) -> McpGat
         | crate::mcp::McpCodeExecutionError::RunBusy
         | crate::mcp::McpCodeExecutionError::RunWaitedOut => -32020,
         crate::mcp::McpCodeExecutionError::RunBinding(_)
-        | crate::mcp::McpCodeExecutionError::Run(_) => -32603,
+        | crate::mcp::McpCodeExecutionError::Run(_)
+        | crate::mcp::McpCodeExecutionError::ProviderUnavailable { .. } => -32603,
     };
-    McpGatewayError::new(code, error.error_code(), error.to_string())
+    let retry_after = match error {
+        crate::mcp::McpCodeExecutionError::ProviderUnavailable { retry_after } => {
+            Some(*retry_after)
+        }
+        _ => None,
+    };
+    McpGatewayError {
+        retry_after,
+        ..McpGatewayError::new(code, error.error_code(), error.to_string())
+    }
 }
 
 /// The health a run's own terminal state forces. A parked or yielded run has

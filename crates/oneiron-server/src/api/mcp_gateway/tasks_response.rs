@@ -425,7 +425,11 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
         _ => None,
     };
     if let Some(kind) = kind {
-        return McpGatewayError::new(code, kind, error.message);
+        // A model that did not answer says when to call again (FIX 3194).
+        return McpGatewayError {
+            retry_after: error.retry_after,
+            ..McpGatewayError::new(code, kind, error.message)
+        };
     }
     // A facade refusal carrying a successor keeps the same stable kind and
     // typed data the engine-error path emits (ONE-1936) — one vocabulary for
@@ -541,6 +545,11 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
         && let Some(object) = data.as_object_mut()
     {
         object.insert("hook".to_owned(), json!(*stop));
+    }
+    if let Some(retry_after) = error.retry_after
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("retry_after".to_owned(), json!(retry_after));
     }
     json!({
         "jsonrpc": "2.0",
