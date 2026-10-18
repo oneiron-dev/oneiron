@@ -3,7 +3,8 @@
 //! dismissed or unresolved. A settled card leaves "Waiting on you" until its
 //! evidence grows. The outcome never moves `learning.reliability`. The owner
 //! may also take the card's `ask_coach` move: the Coach's proposal lands on
-//! the card.
+//! the card. Only the owner applies a `skill_edit` proposal, as an approval of
+//! one exact edit that the held-out gate then rules on.
 
 use std::sync::Arc;
 
@@ -13,8 +14,8 @@ use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::dreamer_runner::maintenance::agent_health::{
-    AgentHealthCardView, AgentHealthMove, AgentHealthOutcome, ConcernCardSummary, ConcernMove,
-    ConcernMoveOutcome,
+    AgentHealthCardView, AgentHealthMove, AgentHealthOutcome, ConcernApplyOutcome,
+    ConcernApplyRequest, ConcernCardSummary, ConcernMove, ConcernMoveOutcome,
 };
 use serde::Deserialize;
 
@@ -29,6 +30,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/inbox/concern", get(card))
         .route("/inbox/concern/outcome", post(set_outcome))
         .route("/inbox/concern/move", post(take_move))
+        .route("/inbox/concern/apply", post(apply_edit))
 }
 
 #[derive(Debug, Deserialize)]
@@ -124,6 +126,34 @@ async fn take_move(
             ));
         }
         match vault.ask_coach_on_agent_health_card(&owner, &request.card) {
+            Ok(outcome) => Ok(outcome),
+            Err(error) if error.kind() == oneiron::ErrorKind::EntityNotFound => {
+                Err(OwnerError::NotFound("concern_card", request.card))
+            }
+            Err(error) => Err(error.into()),
+        }
+    })
+    .await?;
+    Ok(Json(outcome))
+}
+
+/// `POST /v1/owner/inbox/concern/apply`: applies the Coach's `skill_edit` on
+/// one card as the owner approves it: the ask they read, the skill and
+/// version the edit replaces, and the whole replacement instructions. The
+/// edit lands as a gated candidate, and only the held-out gate's acceptance
+/// admits it; applying the same approval again returns the same candidate.
+async fn apply_edit(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<ConcernApplyRequest>, JsonRejection>,
+) -> OwnerReply<ConcernApplyOutcome> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let outcome = blocking(move || -> OwnerResult<ConcernApplyOutcome> {
+        match server
+            .vault()
+            .apply_coach_skill_edit_on_agent_health_card(&owner, &request)
+        {
             Ok(outcome) => Ok(outcome),
             Err(error) if error.kind() == oneiron::ErrorKind::EntityNotFound => {
                 Err(OwnerError::NotFound("concern_card", request.card))

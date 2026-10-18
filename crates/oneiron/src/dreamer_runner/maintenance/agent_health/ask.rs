@@ -4,11 +4,13 @@
 //! Coach, the agent's sealed pads (never its diary), and its model drafts one
 //! proposal: a skill edit, or a prompt to inject before a fork-resume. The
 //! answer lands on the card for its reader. Nothing is edited or resumed
-//! here, and no judge grades the draft in v1.
+//! here, and no judge grades the draft in v1: the owner applies a skill edit
+//! through `apply.rs`, where the held-out gate rules on it.
 
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
+use super::apply::{AgentHealthApplicationState, AgentHealthCoachApplication};
 use super::{AgentHealthCard, AgentHealthMove, CARDS, card_ref, may_read, parse_card_ref};
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::{
@@ -33,6 +35,10 @@ pub struct AgentHealthCoachAsk {
     /// The `coach.agent_health_ask` attempt that answers, as 32 hex.
     pub attempt: String,
     pub answer: Option<AgentHealthCoachAnswer>,
+    /// The owner's approval of the answer's skill edit, once given, and where
+    /// the gate took it.
+    #[serde(default)]
+    pub application: Option<AgentHealthCoachApplication>,
 }
 
 /// What the Coach read and what it proposes.
@@ -74,7 +80,8 @@ pub enum AgentHealthCoachRoute {
     Neither,
 }
 
-/// One proposal in the Coach's words. The reader decides; nothing applies it.
+/// One proposal in the Coach's words. The reader decides; only the owner's
+/// approval applies a skill edit (`apply.rs`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentHealthCoachDraft {
@@ -138,7 +145,9 @@ fn hex(id: crate::attempt_queue::AttemptId) -> String {
 
 /// Queues the Coach's answer, unless an ask on the same evidence stands: one
 /// still waiting, or one the Coach drafted on the card's newest DIAGNOSTIC.
-/// An answer with no draft (no seat served the Coach) may be asked again.
+/// An answer with no draft (no seat served the Coach) may be asked again. An
+/// ask whose approved edit waits on the gate stands whatever the evidence, so
+/// the approval keeps its candidate.
 fn ask_coach_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -149,9 +158,16 @@ fn ask_coach_in_txn(
 ) -> Result<ConcernMoveOutcome> {
     let handle = card_ref(key);
     let newest = card.diagnostics.last().copied();
-    if let Some(ask) = card.coach.as_ref().filter(|ask| match &ask.answer {
-        None => true,
-        Some(answer) => answer.draft.is_some() && ask.diagnostic == newest,
+    if let Some(ask) = card.coach.as_ref().filter(|ask| {
+        let applying = ask
+            .application
+            .as_ref()
+            .is_some_and(|application| application.state == AgentHealthApplicationState::Pending);
+        applying
+            || match &ask.answer {
+                None => true,
+                Some(answer) => answer.draft.is_some() && ask.diagnostic == newest,
+            }
     }) {
         return Ok(ConcernMoveOutcome {
             card: handle,
@@ -184,6 +200,7 @@ fn ask_coach_in_txn(
         diagnostic: newest,
         attempt: hex(status.attempt.id),
         answer: None,
+        application: None,
     };
     card.coach = Some(ask.clone());
     card.updated_at = at;

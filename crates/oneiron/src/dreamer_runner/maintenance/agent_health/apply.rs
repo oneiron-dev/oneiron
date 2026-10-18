@@ -1,0 +1,408 @@
+//! The owner applies the Coach's `skill_edit` draft on an agent-health card
+//! (OF-568, FIX 1849). The Coach only drafts (`ask.rs`); this door is the
+//! owner's approval of one exact edit: the card's answered ask, a skill the
+//! card's run loaded at the version the owner read, and the whole
+//! replacement instructions. The optimizer's exact-target writer lands the
+//! edit as a gated candidate under the Coach's ask attempt, the held-out gate
+//! scores it, and only an accepting verdict admits the candidate and
+//! supersedes the skill, in one transaction. A confirmed outcome or an ask is
+//! never an approval.
+//!
+//! The approval is stored on the ask, so applying it again returns the same
+//! candidate. A gate that has not ruled, or deferred, leaves the application
+//! pending, and applying again carries it on. A rejection or a refusal leaves
+//! the skill as it was.
+
+use serde::{Deserialize, Serialize};
+
+use super::ask::{AgentHealthCoachAsk, AgentHealthCoachRoute, COACH_AGENT_HEALTH_ASK_FACET};
+use super::{AgentHealthCard, CARDS, card_ref, parse_card_ref};
+use crate::attempt_queue::AttemptId;
+use crate::consent::AuthenticatedOwner;
+use crate::error::ArtifactError;
+use crate::skill::{SkillLifecycle, SkillRecord};
+use crate::skill_optimize::{
+    SkillRepairStamp, propose_skill_repair_in_txn, proven_cycle, score_gate_skill_edit,
+    skill_edit_verdict_in_txn, skill_repair_brief, validate_skill_draft,
+};
+use crate::temporal::TimeRange;
+use crate::{EntityId, Error, Result, Vault};
+
+type CardKey = ([u8; 16], [u8; 1], [u8; 16]);
+
+/// `/v1/owner/inbox/concern/apply`'s input: the one edit the owner approves.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConcernApplyRequest {
+    /// The card's `health:` handle, the row's `payload_ref`.
+    pub card: String,
+    /// The Coach ask the owner read: its `attempt`, as 32 hex.
+    pub ask: String,
+    /// The skill revision the edit replaces, as 32 hex.
+    pub skill: String,
+    /// That revision's version, as the owner read it.
+    pub version: String,
+    /// The whole replacement instructions the owner approved.
+    pub instructions: String,
+}
+
+/// Where an approved edit stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentHealthApplicationState {
+    /// The candidate waits on the gate: not yet ruled, deferred, or short of
+    /// evidence. Applying again carries it on.
+    Pending,
+    /// The gate accepted it: the candidate is the skill's active revision.
+    Admitted,
+    /// The gate rejected or refused it; the skill is as it was.
+    Rejected,
+}
+
+/// The owner's approval of one ask's skill edit, and where the gate took it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentHealthCoachApplication {
+    /// The owner who approved it.
+    pub by: EntityId,
+    pub at: u64,
+    /// The skill revision it replaces, at the version the owner read.
+    pub skill: EntityId,
+    pub version: String,
+    /// The approved instructions' blake3, as hex: applying the same bytes
+    /// again is the same application.
+    pub instructions: String,
+    /// The gated candidate the edit landed as.
+    pub candidate: EntityId,
+    pub state: AgentHealthApplicationState,
+    /// The gate's standing ruling, once it ruled: its row and disposition.
+    pub verdict: Option<EntityId>,
+    pub disposition: Option<String>,
+    pub updated_at: u64,
+}
+
+/// The card's application after the owner's call.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConcernApplyOutcome {
+    /// The card's `health:` handle.
+    pub card: String,
+    pub application: AgentHealthCoachApplication,
+}
+
+fn refused(why: &str) -> Error {
+    Error::InvalidConfig(why.into())
+}
+
+fn digest(instructions: &str) -> String {
+    blake3::hash(instructions.as_bytes()).to_hex().to_string()
+}
+
+/// The ask the owner read, still standing, with a `skill_edit` draft.
+fn approved_ask<'a>(card: &'a AgentHealthCard, ask: &str) -> Result<&'a AgentHealthCoachAsk> {
+    let Some(standing) = card
+        .coach
+        .as_ref()
+        .filter(|standing| standing.attempt == ask)
+    else {
+        return Err(refused(
+            "the Coach's ask on this card moved since you read it",
+        ));
+    };
+    let draft = standing
+        .answer
+        .as_ref()
+        .and_then(|answer| answer.draft.as_ref());
+    if draft.is_none_or(|draft| draft.route != AgentHealthCoachRoute::SkillEdit) {
+        return Err(refused(
+            "the Coach's answer on this card proposes no skill edit",
+        ));
+    }
+    Ok(standing)
+}
+
+/// The application standing on the ask for this approval, if any. One that
+/// approved other bytes refuses unless the gate rejected it: an ask carries
+/// one edit in flight, and an admitted edit is done.
+fn standing_for(
+    ask: &AgentHealthCoachAsk,
+    skill: &EntityId,
+    version: &str,
+    instructions: &str,
+) -> Result<Option<AgentHealthCoachApplication>> {
+    match &ask.application {
+        Some(standing)
+            if standing.skill == *skill
+                && standing.version == version
+                && standing.instructions == instructions =>
+        {
+            Ok(Some(standing.clone()))
+        }
+        Some(standing) if standing.state != AgentHealthApplicationState::Rejected => Err(refused(
+            "another skill edit is already pending or applied on this ask",
+        )),
+        _ => Ok(None),
+    }
+}
+
+/// Whether the run the card's evidence came from loaded `record`: its
+/// attempt's pack manifest names the skill, and a fork is that run's
+/// resident's own. A card with no attempt, or a run with no pack, loaded none.
+fn run_loaded(vault: &Vault, card: &AgentHealthCard, record: &SkillRecord) -> Result<bool> {
+    let Some(attempt) = card.attempt else {
+        return Ok(false);
+    };
+    let attempt = AttemptId::from_bytes(attempt.as_bytes())?;
+    let receipt_id = crate::receipt::attempt_pack_receipt_id(&attempt);
+    let Some(receipt) = crate::receipt::attempt_pack_receipt(vault, &receipt_id)? else {
+        return Ok(false);
+    };
+    let Some(manifest) = receipt.pack_manifest_skills() else {
+        return Ok(false);
+    };
+    if !manifest
+        .iter()
+        .any(|entry| crate::skill_attribution::manifest_entry_names_skill(entry, record))
+    {
+        return Ok(false);
+    }
+    let fork_of = crate::skill::resident_of(record)?;
+    Ok(fork_of.is_none()
+        || fork_of == crate::skill::resident::receipt_resident(vault, &receipt_id)?)
+}
+
+impl Vault {
+    /// The owner applies the `skill_edit` the Coach drafted on one card, as
+    /// they approve it in `approval`. A new approval lands as a gated
+    /// candidate; the gate then rules, and an accepting verdict admits the
+    /// candidate and supersedes the skill. Applying the same approval again
+    /// returns its application, carrying a pending one on.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::EntityNotFound`] for an unknown card; [`Error::InvalidConfig`]
+    /// when the approval no longer matches the card (another ask, no
+    /// `skill_edit` draft, a skill the card's run did not load, a skill that
+    /// moved since the owner read it, another edit standing on the ask, a
+    /// candidate whose instructions are not the approved ones); the drafting
+    /// door's refusals; owner revalidation errors; a gate error that ruled
+    /// nothing, after the application stays pending; storage errors.
+    pub fn apply_coach_skill_edit_on_agent_health_card(
+        &self,
+        owner: &AuthenticatedOwner,
+        approval: &ConcernApplyRequest,
+    ) -> Result<ConcernApplyOutcome> {
+        let key = parse_card_ref(&approval.card).ok_or(Error::EntityNotFound)?;
+        let skill = EntityId::from_hex(&approval.skill)
+            .map_err(|_| refused("skill is a 32-hex entity id"))?;
+        let instructions = digest(&approval.instructions);
+        let card = self
+            .agent_health_card(&approval.card)?
+            .ok_or(Error::EntityNotFound)?;
+        let ask = approved_ask(&card, &approval.ask)?;
+        let application = match standing_for(ask, &skill, &approval.version, &instructions)? {
+            Some(standing) if standing.state != AgentHealthApplicationState::Pending => {
+                return Ok(ConcernApplyOutcome {
+                    card: card_ref(&key),
+                    application: standing,
+                });
+            }
+            Some(standing) => standing,
+            None => {
+                self.land_approved_skill_edit(owner, &key, &card, approval, skill, instructions)?
+            }
+        };
+        self.settle_approved_skill_edit(owner, &key, &approval.ask, &application.candidate)
+    }
+
+    /// Lands a new approval as a gated candidate of its skill, stamped with
+    /// the Coach's ask attempt, and stores it on the ask as pending.
+    fn land_approved_skill_edit(
+        &self,
+        owner: &AuthenticatedOwner,
+        key: &CardKey,
+        card: &AgentHealthCard,
+        approval: &ConcernApplyRequest,
+        skill: EntityId,
+        instructions: String,
+    ) -> Result<AgentHealthCoachApplication> {
+        let record = self
+            .get_skill_record(&skill)?
+            .ok_or_else(|| refused("no such skill"))?;
+        if record.lifecycle_status != SkillLifecycle::Active || record.version != approval.version {
+            return Err(refused("the skill moved since you read it"));
+        }
+        if !run_loaded(self, card, &record)? {
+            return Err(refused("the card's run did not load this skill"));
+        }
+        let now = self.store.clock.now_recorded_at();
+        let brief = skill_repair_brief(self, &skill, now)?;
+        if brief.version != approval.version {
+            return Err(refused("the skill moved since you read it"));
+        }
+        let rationale = format!(
+            "The owner approved the Coach's skill edit on {}.",
+            card_ref(key)
+        );
+        validate_skill_draft(&brief, &approval.instructions, &rationale)?;
+        let ask = approved_ask(card, &approval.ask)?;
+        let attempt = AttemptId::from_bytes(
+            EntityId::from_hex(&ask.attempt)
+                .map_err(|_| refused("the Coach's ask names no attempt"))?
+                .as_bytes(),
+        )?;
+        let actor = self.dreamer_actor_for_attempt(attempt)?;
+        let cycle = proven_cycle(self, attempt)?;
+        let resident = crate::skill::resident_of(&record)?;
+        let candidate = self.store.clock.entity_id()?;
+        self.with_write_txn_grouped(|txn| {
+            let by = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+            let mut card = CARDS
+                .get(&self.store, txn, key)?
+                .ok_or(Error::EntityNotFound)?;
+            // An apply of the same bytes that landed first is this one.
+            let ask = approved_ask(&card, &approval.ask)?;
+            if let Some(standing) = standing_for(ask, &skill, &approval.version, &instructions)? {
+                return Ok(standing);
+            }
+            let stamp = SkillRepairStamp {
+                actor,
+                facet: COACH_AGENT_HEALTH_ASK_FACET,
+                attempt,
+                cycle: &cycle,
+                owner: None,
+                resident,
+            };
+            propose_skill_repair_in_txn(
+                self,
+                txn,
+                &brief,
+                &approval.instructions,
+                &rationale,
+                &stamp,
+                &candidate,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+            )?;
+            let application = AgentHealthCoachApplication {
+                by,
+                at: now,
+                skill,
+                version: approval.version.clone(),
+                instructions,
+                candidate,
+                state: AgentHealthApplicationState::Pending,
+                verdict: None,
+                disposition: None,
+                updated_at: now,
+            };
+            if let Some(ask) = card.coach.as_mut() {
+                ask.application = Some(application.clone());
+            }
+            card.updated_at = now;
+            CARDS.put(&self.store, txn, key, &card)?;
+            Ok(application)
+        })
+    }
+
+    /// Puts a pending application's candidate to the held-out gate, outside
+    /// any write transaction, then settles the application on the gate's
+    /// standing ruling: an acceptance admits the candidate and supersedes
+    /// the skill, a rejection or refusal closes it, anything else leaves it
+    /// pending.
+    fn settle_approved_skill_edit(
+        &self,
+        owner: &AuthenticatedOwner,
+        key: &CardKey,
+        ask: &str,
+        candidate: &EntityId,
+    ) -> Result<ConcernApplyOutcome> {
+        let gated = score_gate_skill_edit(self, candidate);
+        let now = self.store.clock.now_recorded_at();
+        let occurred = TimeRange {
+            start: now,
+            end: now,
+        };
+        let settled = self.with_write_txn_grouped(|txn| {
+            owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+            let mut card = CARDS
+                .get(&self.store, txn, key)?
+                .ok_or(Error::EntityNotFound)?;
+            let Some(mut settled) = approved_ask(&card, ask)?
+                .application
+                .clone()
+                .filter(|standing| standing.candidate == *candidate)
+            else {
+                return Err(refused(
+                    "the approval on this card moved since you applied it",
+                ));
+            };
+            if settled.state != AgentHealthApplicationState::Pending {
+                return Ok(settled);
+            }
+            let verdict = skill_edit_verdict_in_txn(self, txn, candidate)?;
+            if let Some(verdict) = &verdict {
+                settled.verdict = Some(verdict.id);
+                settled.disposition = Some(verdict.disposition.as_str().to_owned());
+            }
+            match verdict {
+                Some(verdict)
+                    if verdict.disposition.admits() && verdict.displaced_by_revision.is_none() =>
+                {
+                    // The bytes the gate admits are the bytes the owner
+                    // approved, or the old permission is refused.
+                    let staged = self.read_skill_record_in_txn(txn, candidate)?;
+                    if digest(&staged.desc) != settled.instructions {
+                        return Err(refused(
+                            "the candidate's instructions are not the ones you approved",
+                        ));
+                    }
+                    match self.admit_optimized_skill_in_txn(txn, candidate, occurred, now)? {
+                        Some(refusal) => {
+                            settled.state = AgentHealthApplicationState::Rejected;
+                            settled.verdict = skill_edit_verdict_in_txn(self, txn, candidate)?
+                                .map(|verdict| verdict.id);
+                            settled.disposition = Some(refusal.as_str().to_owned());
+                        }
+                        None => {
+                            self.supersede_skill_record_in_txn(
+                                txn,
+                                &settled.skill,
+                                candidate,
+                                occurred,
+                                now,
+                            )?;
+                            settled.state = AgentHealthApplicationState::Admitted;
+                        }
+                    }
+                }
+                Some(verdict) if verdict.disposition.closes_proposal() => {
+                    settled.state = AgentHealthApplicationState::Rejected;
+                }
+                _ => {}
+            }
+            settled.updated_at = now;
+            if let Some(ask) = card.coach.as_mut() {
+                ask.application = Some(settled.clone());
+            }
+            card.updated_at = now;
+            CARDS.put(&self.store, txn, key, &card)?;
+            Ok(settled)
+        })?;
+        // A gate that failed without ruling (no judge registered, a failed
+        // judgment) is the owner's answer; a raced snapshot or missing
+        // evidence is only "pending".
+        if settled.state == AgentHealthApplicationState::Pending
+            && let Err(error) = gated
+            && !matches!(error, Error::Artifact(ArtifactError::SkillEditGateRetry(_)))
+        {
+            return Err(error);
+        }
+        Ok(ConcernApplyOutcome {
+            card: card_ref(key),
+            application: settled,
+        })
+    }
+}
