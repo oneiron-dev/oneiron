@@ -630,7 +630,7 @@ fn reverse_rematerialize_scan(
     // commit, so no one update outgrows a frame.
     for id in &messages {
         crate::sync::message_docs::mirror_message_document(vault, doc, id, window_key)?;
-        crate::sync::document_pins::mirror_document_pins(vault, doc, id)?;
+        crate::sync::document_pins::mirror_document_pins(vault, doc, id, window_key)?;
     }
     Ok(count)
 }

@@ -10,9 +10,12 @@
 //! a pin holds the quoted text and the quoting actor.
 //!
 //! - A pin is written once. It rides under its message, its citation and the
-//!   digest of its bytes, so an equal pin dedupes and a different one for the
-//!   same quote rides beside it; neither replaces the other. Each machine
-//!   keeps the pin it holds and logs the other.
+//!   digest of its bytes naming no one, so an equal pin dedupes and a
+//!   different one for the same quote rides beside it; neither replaces the
+//!   other. Each machine keeps the pin it holds and logs the other. Pins that
+//!   differ only in their actor ride under one key: one naming no one
+//!   replaces its live twin, never the other way, and two live actors
+//!   conflict (FIX 4247).
 //! - A pin larger than a part rides as linked parts (`carrier_parts`), its
 //!   key holding their manifest, so no quote is too long to travel.
 //! - Admission refuses every insert into the map that is not a whole pin or
@@ -26,7 +29,8 @@
 //!   (`Vault::merge_replicated_quote_pin_in_txn`).
 //! - Every export, and the erase sweep, drop each pin of a message or reply
 //!   this vault erased, and each pin of a message the window does not carry,
-//!   with the parts no pin lists.
+//!   with the parts no pin lists. A pin whose actor this vault erased, or
+//!   whose erased twin it holds, rides naming no one.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -39,7 +43,7 @@ use super::carrier_parts::{
     PART_BYTES, Parts, admit_part, is_part_key, join_parts, split_parts, unreferenced_parts,
     write_parts,
 };
-use super::loro_support::{map_contains_binary, map_delete, map_insert_bytes};
+use super::loro_support::{map_contains_binary, map_delete, map_get_bytes, map_insert_bytes};
 use super::types::WindowKey;
 use crate::Vault;
 use crate::entity_doc::{CitationPin, PinMerge};
@@ -90,18 +94,21 @@ fn decode_carried(bytes: &[u8]) -> Result<Carried> {
     Ok(Carried::Parted(parts))
 }
 
-/// The key a pin of `message` cited by `citation`, encoded as `bytes`, rides
-/// under: the two ids, then its own digest.
-fn carrier_key(message: EntityId, citation: EntityId, bytes: &[u8]) -> String {
+/// The key `pin`, of `message` cited by `citation`, rides under: the two
+/// ids, then the digest of its one spelling naming no one, so the pin and
+/// its erased twin ride under one key (FIX 4247).
+fn carrier_key(message: EntityId, citation: EntityId, pin: &CitationPin) -> Result<String> {
+    let bytes =
+        rmp_serde::to_vec_named(&pin.actor_erased()).map_err(|_| refused("does not encode"))?;
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"oneiron.document_pins.v1");
-    hasher.update(bytes);
-    format!(
+    hasher.update(&bytes);
+    Ok(format!(
         "{}/{}/{}",
         message.to_hex(),
         citation.to_hex(),
         bytes_to_hex_lower(&hasher.finalize().as_bytes()[..16])
-    )
+    ))
 }
 
 /// The message and citation a pin key names, when it is one's spelling.
@@ -121,17 +128,16 @@ fn key_ids(map_key: &str) -> Option<(EntityId, EntityId)> {
 /// The pin under `map_key`, joined from `map`'s parts when it rides in
 /// them; `Ok(None)` while a part has not landed.
 fn carried_pin(map: &LoroMap, map_key: &str, bytes: &[u8]) -> Result<Option<CitationPin>> {
-    let (pin, message, citation, whole) = match decode_carried(bytes)? {
-        Carried::Whole(pin, message, citation) => (pin, message, citation, bytes.to_vec()),
+    let (pin, message, citation) = match decode_carried(bytes)? {
+        Carried::Whole(pin, message, citation) => (pin, message, citation),
         Carried::Parted(parts) => {
             let Some(whole) = join_parts(map, &parts) else {
                 return Ok(None);
             };
-            let (pin, message, citation) = decode_pin(&whole)?;
-            (pin, message, citation, whole)
+            decode_pin(&whole)?
         }
     };
-    if carrier_key(message, citation, &whole) != map_key {
+    if carrier_key(message, citation, &pin)? != map_key {
         return Err(refused("filed under another key"));
     }
     Ok(Some(pin))
@@ -154,8 +160,8 @@ pub(crate) fn admit_document_pin_carrier(
         return Err(refused("not bytes"));
     };
     match decode_carried(bytes)? {
-        Carried::Whole(_, message, citation) => {
-            if carrier_key(message, citation, bytes) != map_key {
+        Carried::Whole(pin, message, citation) => {
+            if carrier_key(message, citation, &pin)? != map_key {
                 return Err(refused("filed under another key"));
             }
         }
@@ -188,12 +194,15 @@ pub(crate) fn admit_document_pin_map(key: Option<&WindowKey>, map: &LoroMap) -> 
 
 /// Writes into `doc` each pin this vault holds on MESSAGE `message` that the
 /// window lacks, in parts when it is larger than one. A pin of a reply this
-/// vault erased stays out. Each pin and part commits on its own. Returns
-/// whether it wrote.
+/// vault erased stays out. An erased pin here takes its live twin's place,
+/// with `window` pinned history-free first, as the twin's bytes stay in its
+/// history (FIX 4247). Each pin and part commits on its own. Returns whether
+/// it wrote.
 pub(crate) fn mirror_document_pins(
     vault: &Vault,
     doc: &LoroDoc,
     message: &EntityId,
+    window: &WindowKey,
 ) -> Result<bool> {
     let pins = {
         let rtxn = vault.store.env.read_txn()?;
@@ -216,6 +225,7 @@ pub(crate) fn mirror_document_pins(
     }
     let map = doc.get_map(DOCUMENT_PINS_MAP);
     let mut wrote = false;
+    let mut replaced = false;
     for pin in &pins {
         let bytes = rmp_serde::to_vec_named(pin).map_err(|_| refused("does not encode"))?;
         let Ok((_, message, citation)) = decode_pin(&bytes) else {
@@ -226,25 +236,71 @@ pub(crate) fn mirror_document_pins(
             );
             continue;
         };
-        let key = carrier_key(message, citation, &bytes);
-        if map_contains_binary(&map, &key) {
-            continue;
+        let key = carrier_key(message, citation, pin)?;
+        if let Some(held) = map_get_bytes(&map, &key) {
+            if !replaces(&map, &key, &held, pin) {
+                continue;
+            }
+            if !replaced {
+                super::window::require_history_free_window(vault, window)?;
+                replaced = true;
+            }
         }
-        let commit = || doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
-        if bytes.len() <= PART_BYTES {
-            map_insert_bytes(&map, &key, &bytes)?;
-            commit();
-        } else {
-            let (parts, pieces) = split_parts(&bytes)?;
-            let manifest =
-                rmp_serde::to_vec_named(&parts).map_err(|_| refused("does not encode"))?;
-            map_insert_bytes(&map, &key, &manifest)?;
-            commit();
-            write_parts(&map, &pieces, commit)?;
-        }
+        write_carrier(doc, &map, &key, &bytes)?;
         wrote = true;
     }
+    if replaced {
+        // And the live twins' parts, which no pin lists now.
+        for part in unreferenced_parts(&map, &listed_parts(&map)) {
+            map_delete(&map, &part)?;
+        }
+        doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+    }
     Ok(wrote)
+}
+
+/// Whether `pin`, held here, takes the place of `held`, the carrier the
+/// window holds under its key: only an erased pin over its live twin
+/// ([`CitationPin::erased_wins`]).
+fn replaces(map: &LoroMap, map_key: &str, held: &[u8], pin: &CitationPin) -> bool {
+    carried_pin(map, map_key, held)
+        .ok()
+        .flatten()
+        .is_some_and(|twin| twin.erased_wins(pin).is_some_and(|stands| *stands != twin))
+}
+
+/// Writes `bytes`, a pin, under `map_key`, in parts when it is larger than
+/// one; the pin and each part commit on their own. Returns the parts it
+/// lists.
+fn write_carrier(
+    doc: &LoroDoc,
+    map: &LoroMap,
+    map_key: &str,
+    bytes: &[u8],
+) -> Result<BTreeSet<String>> {
+    let commit = || doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+    if bytes.len() <= PART_BYTES {
+        map_insert_bytes(map, map_key, bytes)?;
+        commit();
+        return Ok(BTreeSet::new());
+    }
+    let (parts, pieces) = split_parts(bytes)?;
+    let manifest = rmp_serde::to_vec_named(&parts).map_err(|_| refused("does not encode"))?;
+    map_insert_bytes(map, map_key, &manifest)?;
+    commit();
+    write_parts(map, &pieces, commit)?;
+    Ok(parts.keys().collect())
+}
+
+/// Every part a pin key in `map` lists.
+fn listed_parts(map: &LoroMap) -> BTreeSet<String> {
+    let mut listed = BTreeSet::new();
+    for (_, bytes) in pin_rows(map, |_, _| true) {
+        if let Ok(Carried::Parted(parts)) = decode_carried(&bytes) {
+            listed.extend(parts.keys());
+        }
+    }
+    listed
 }
 
 /// Merges every pin window `key`'s document carries into this vault's, as a
@@ -354,10 +410,13 @@ fn merge_pins(vault: &Vault, map: &LoroMap, window: &str, rows: Vec<(String, Vec
 /// Drops from `doc` each pin of a message or reply this vault erased, and
 /// each pin of a message the window no longer carries, with every part no
 /// remaining pin lists: erase wins over a pin, and a pin never rides where
-/// its message does not. A live doc keeps the old pins in its history, so
-/// `history_free` names the window pinned history-free before any row goes,
-/// as `room_facts::scrub_room_facts` does; the sweep, whose shallow cut
-/// drops that history, passes `None`. Returns whether a row went, committed.
+/// its message does not. A pin whose actor this vault erased, or whose
+/// erased twin it holds, is rewritten naming no one (FIX 4247). A live doc
+/// keeps the old pins in its history, so `history_free` names the window
+/// pinned history-free before any row goes or changes, as
+/// `room_facts::scrub_room_facts` does; the sweep, whose shallow cut drops
+/// that history, passes `None`. Returns whether a row went or changed,
+/// committed.
 pub(crate) fn scrub_document_pins(
     vault: &Vault,
     doc: &LoroDoc,
@@ -374,37 +433,69 @@ pub(crate) fn scrub_document_pins(
                 Ok(Carried::Parted(parts)) => parts.keys().collect(),
                 _ => Vec::new(),
             };
-            carried.push((map_key, message, citation, parts));
+            let pin = carried_pin(&map, &map_key, &bytes).ok().flatten();
+            carried.push((map_key, message, citation, parts, pin));
         }
     }
     let entities = doc.get_map("entities");
     let mut gone = Vec::new();
+    let mut erased = Vec::new();
     let mut referenced = BTreeSet::new();
     {
         let rtxn = vault.store.env.read_txn()?;
-        for (map_key, message, citation, parts) in carried {
+        for (map_key, message, citation, parts, pin) in carried {
             if !map_contains_binary(&entities, &message.to_hex())
                 || crate::ports::removed_in_txn(&vault.store, &rtxn, &message)?
                 || crate::ports::removed_in_txn(&vault.store, &rtxn, &citation)?
             {
                 gone.push(map_key);
+            } else if let Some(pin) = pin
+                && let Some(twin) = erased_twin(vault, &rtxn, &message, &citation, &pin)?
+            {
+                erased.push((map_key, twin));
             } else {
                 referenced.extend(parts);
             }
         }
     }
-    gone.extend(unreferenced_parts(&map, &referenced));
-    if gone.is_empty() {
+    let mut stale = unreferenced_parts(&map, &referenced);
+    if gone.is_empty() && erased.is_empty() && stale.is_empty() {
         return Ok(false);
     }
     if let Some(key) = history_free {
         super::window::require_history_free_window(vault, key)?;
     }
-    for map_key in &gone {
+    // The erased twin rides under the live one's key.
+    for (map_key, twin) in &erased {
+        let bytes = rmp_serde::to_vec_named(twin).map_err(|_| refused("does not encode"))?;
+        let listed = write_carrier(doc, &map, map_key, &bytes)?;
+        stale.retain(|part| !listed.contains(part));
+    }
+    for map_key in gone.iter().chain(&stale) {
         map_delete(&map, map_key)?;
     }
     doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     Ok(true)
+}
+
+/// `carried`, a pin of `message` cited by `citation` the window holds,
+/// naming no one, when this vault erased its actor or holds its erased twin
+/// ([`CitationPin::erased_wins`]); `None` when it rides as it is.
+fn erased_twin(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    message: &EntityId,
+    citation: &EntityId,
+    carried: &CitationPin,
+) -> Result<Option<CitationPin>> {
+    let mut here = carried.clone();
+    here.actor = here.actor.erased_here(vault, txn)?;
+    let held = vault.message_quote_pin_in_txn(txn, message, citation)?;
+    let stands = match &held {
+        Some(held) => held.erased_wins(&here).unwrap_or(&here),
+        None => &here,
+    };
+    Ok((stands != carried).then(|| stands.clone()))
 }
 
 /// The pin rows among `rows` a canonical snapshot keeps as the window holds
@@ -412,6 +503,8 @@ pub(crate) fn scrub_document_pins(
 /// snapshot captures, in `documents`, and the parts only such pins list.
 /// That pin rides in the document's history and takes fresh cursors as the
 /// document is restored; the window's reverse pass then mirrors it again.
+/// The live twin of a pin held erased goes with it; an erased twin of one
+/// held live stays, as the document's copy names the actor (FIX 4247).
 pub(crate) fn canonical_pin_rows(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -434,9 +527,8 @@ pub(crate) fn canonical_pin_rows(
         if let Ok(Some(pin)) = carried_pin(&map, key, row)
             && let Some((message, citation)) = pin.carried_ids()
             && documents.contains(&message)
-            && vault
-                .message_quote_pin_in_txn(txn, &message, &citation)?
-                .is_some_and(|held| held == pin)
+            && let Some(held) = vault.message_quote_pin_in_txn(txn, &message, &citation)?
+            && held.erased_wins(&pin) == Some(&held)
         {
             continue;
         }
