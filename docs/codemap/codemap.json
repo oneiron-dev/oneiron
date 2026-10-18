@@ -4072,10 +4072,10 @@
      "path": "src/autoreason_campaign/archive.rs",
      "purpose": "OF-545: a rebuildable output archive, joined from placement and scoring receipts",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 20,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 7,
       "trait": 1
      }
@@ -4098,6 +4098,29 @@
       "fn": 1,
       "struct": 3,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CampaignArchiveAdmission",
+      "CampaignArchiveBest",
+      "CampaignArchiveCoverage",
+      "CampaignArchiveInstall",
+      "CampaignArchiveOutput",
+      "CampaignArchivePlacement",
+      "CampaignArchiveRecord",
+      "CampaignArchiveReproposal",
+      "CampaignArchiveRequest",
+      "CampaignArchiveView"
+     ],
+     "path": "src/autoreason_campaign/archive/records.rs",
+     "purpose": "Retained descriptor and source receipts for the public campaign archive",
+     "surface": {
+      "crate-vis": 8,
+      "enum": 1,
+      "struct": 9
      }
     },
     {
@@ -4163,7 +4186,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CoverageFloorComparison",
@@ -4173,7 +4196,7 @@
      "path": "src/autoreason_campaign/coverage.rs",
      "purpose": "Coverage is a goal-record floor, not a skill quality-diversity archive",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 9,
       "struct": 3
      }
@@ -4271,7 +4294,7 @@
      "path": "src/autoreason_campaign/research.rs",
      "purpose": "The autoresearch loop's record over the existing run tree (OF-351)",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 13,
       "enum": 6,
       "fn": 15,
       "re-export": 5,
@@ -4359,7 +4382,7 @@
      "path": "src/autoreason_campaign/research/promotion.rs",
      "purpose": "Promotion under the campaign's goal: an untouched held-out decision, one sealed confirmation on OF-578's…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 5,
       "struct": 4
@@ -45245,7 +45268,7 @@
      "purpose": "SKILL-OPT-2 (ONE-1449, ARCH-0026 dreamer-v2 / ARCH-0053 §6): the held-out score gate that arms `candidate →…",
      "surface": {
       "const": 5,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "re-export": 11
      }
     },
@@ -45301,7 +45324,7 @@
      "path": "src/skill_optimize/gate/goal_axis.rs",
      "purpose": "Goal-axis replay scores",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 2,
       "struct": 3
@@ -45528,7 +45551,7 @@
      "path": "src/skill_optimize/mod.rs",
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "re-export": 17
      }
     },
@@ -50559,7 +50582,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 55,
+      "re-export": 56,
       "struct": 36
      }
     },
@@ -50668,6 +50691,16 @@
      "surface": {
       "enum": 1,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/sdk_campaign_archive.rs",
+     "purpose": "Typed output-archive doors under the existing research-controller gate",
+     "surface": {
+      "fn": 6
      }
     },
     {
@@ -50956,7 +50989,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 688
+      "fn": 694
      }
     },
     {
@@ -51268,6 +51301,7 @@
      "path": "src/task_verb/sdk_research.rs",
      "purpose": "`vault.research.*` (OF-351): the autoresearch workflow skill's verbs over the campaign record…",
      "surface": {
+      "crate-vis": 2,
       "enum": 1,
       "fn": 17,
       "struct": 20
@@ -56816,7 +56850,7 @@
      "purpose": "AUTHORITY_LOG record substrate"
     },
     "autoreason_campaign": {
-     "files": 19,
+     "files": 20,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -58097,7 +58131,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 169,
+     "files": 170,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -58267,7 +58301,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3554,
+   "source_files": 3556,
    "test_files": 902
   },
   "oneiron-android": {
@@ -66797,7 +66831,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 652
+      "fn": 658
      }
     },
     {
@@ -67846,7 +67880,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 653
+      "fn": 659
      }
     },
     {
@@ -79584,10 +79618,14 @@
       "AnsweringAuthority",
       "ApproveOnceRequest",
       "ApproveScope",
+      "ArchiveAxesProposal",
       "ArchiveAxis",
       "ArchiveCampaignProgramRequest",
+      "ArchiveCell",
+      "ArchiveCellJudgment",
       "ArchiveDescriptor",
       "ArchiveOutputRef",
+      "ArchiveOutputScore",
       "ArchiveQualityMetric",
       "ArtifactAskOutcome",
       "ArtifactAskRecord",
@@ -79733,7 +79771,17 @@
       "CallReceiptRequest",
       "CallTransport",
       "CallableCardView",
+      "CampaignArchiveAdmission",
+      "CampaignArchiveBest",
+      "CampaignArchiveCoverage",
+      "CampaignArchiveInstall",
+      "CampaignArchiveOutput",
       "CampaignArchivePin",
+      "CampaignArchivePlacement",
+      "CampaignArchiveRecord",
+      "CampaignArchiveReproposal",
+      "CampaignArchiveRequest",
+      "CampaignArchiveView",
       "CampaignConfig",
       "CampaignCost",
       "CampaignDatasetRef",
@@ -81840,8 +81888,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 602,
-      "struct": 1750
+      "enum": 604,
+      "struct": 1762
      }
     },
     {
