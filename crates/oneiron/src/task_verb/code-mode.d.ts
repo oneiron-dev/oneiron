@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 384 code-mode rows (363 host rows, 21 run rows), 1400 declarations.
-// Replies: 330 fully typed, 50 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 388 code-mode rows (367 host rows, 21 run rows), 1411 declarations.
+// Replies: 334 fully typed, 50 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 81; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -500,8 +500,14 @@ declare namespace Sdk {
   type ResidenceModeName = "opened" | "all";
   type ResidenceModeRequest = { machine: EntityId; mode: ResidenceModeName };
   type ResidenceModeChanged = { mode: ResidenceModeName; retained: string[]; unsynced: string[]; pruned_items: number };
-  type ResidenceOpenRequest = { machine: EntityId; window: string; item: EntityId };
-  type ResidenceOpened = { item: EntityId; window: string; residence: string; bytes: number };
+  type NoteReadSpan = { start: number; end: number };
+  type ResidenceOpenRequest = { machine: EntityId; window: string; item: EntityId; reason?: string | null; spans?: NoteReadSpan[] };
+  type NoteReadSource = "local" | "home";
+  type NoteVersion = { note: string; head: string; frontier: number[] };
+  type NoteAnchor = { note: string; head: string; cursor: number[] };
+  type NoteAnchoredSpan = { start: NoteAnchor; end: NoteAnchor };
+  type NoteReadView = { version: NoteVersion; markdown: string; title?: string | null; spans: NoteAnchoredSpan[]; source: NoteReadSource };
+  type ResidenceOpened = { item: EntityId; window: string; residence: string; bytes: number; source: NoteReadSource; note?: NoteReadView | null };
   type ResidenceMachineRequest = { machine: EntityId };
   type ResidenceIndexEntry = { entity_id: string; title?: string | null; learned_at: number };
   type ResidenceIndexWindowView = { window: string; items: ResidenceIndexEntry[] };
@@ -1338,8 +1344,13 @@ declare namespace Sdk {
   type OutboundIntentReceipt = { intent_ref: string; outcome: string; gate_outcome?: string | null; gate_decision_ref?: string | null; gate_reason_codes: string[]; deduped: boolean };
   type CreateNoteRequest = { kind: string; markdown: string };
   type CreateNoteFromEntityRequest = { source_ref: string; kind: string };
-  type NoteAnchor = { note: string; head: string; cursor: number[] };
-  type NoteVersion = { note: string; head: string; frontier: number[] };
+  type NoteReadRequest = { note_ref: string; reason?: string | null; version?: NoteVersion | null; spans?: NoteReadSpan[] };
+  type NoteAccessRequest = { note_ref: string; reason?: string | null };
+  type NoteAuthorship = { operation: string; actor: string; actor_class: string; grant?: string | null; command_hash: number[] };
+  type NoteHistoryView = { version: NoteVersion; operations: NoteAuthorship[]; shallow_since: number[]; complete: boolean };
+  type NoteEditorBinding = { binding: string; note: NoteReadView };
+  type NoteEditorCloseRequest = { binding: string };
+  type NoteEditorClosed = { closed: boolean };
   type NoteEdit = { kind: "replace_span"; start: NoteAnchor; end: NoteAnchor; text: string } | { kind: "insert_after"; anchor: NoteAnchor; text: string } | { kind: "append_to_section"; end: NoteAnchor; text: string } | { kind: "whole_text"; text: string; timeout_ms: number; base?: NoteVersion | null } | { kind: "rewrite"; text: string };
   type EditNoteRequest = { note_ref: string; edit: NoteEdit };
   type NoteEditOutcome = { outcome: "edited"; head: EntityId } | { outcome: "rewrite_fork"; fork: EntityId } | { outcome: "proposed_fork"; fork: EntityId } | { outcome: "review_required"; receipt: CommitReceipt };
@@ -2047,10 +2058,20 @@ declare const vault: Sdk.VaultHost & {
     defaults(input: Sdk.NoteRefRequest): Promise<Sdk.NoteDefaultsView | StoredResult>;
     /** Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending. */
     edit(input: Sdk.EditNoteRequest): Promise<Sdk.NoteEditOutcome | StoredResult>;
+    editor: {
+      /** Binds a live NOTE editor to the caller and returns its typed text and base version; close the binding when the editor leaves. */
+      bind(input: Sdk.NoteAccessRequest): Promise<Sdk.ScopedReadResult<Sdk.NoteEditorBinding | null> | StoredResult>;
+      /** Closes one live NOTE editor held by this caller; a binding id alone grants no authority. */
+      close(input: Sdk.NoteEditorCloseRequest): Promise<Sdk.NoteEditorClosed | StoredResult>;
+    };
     /** Creates a NOTE of a registered kind from an existing entity. */
     from_entity(input: Sdk.CreateNoteFromEntityRequest): Promise<Sdk.EntityRefReceipt | StoredResult>;
+    /** Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented. */
+    history(input: Sdk.NoteAccessRequest): Promise<Sdk.ScopedReadResult<Sdk.NoteHistoryView | null> | StoredResult>;
     /** Where one NOTE stands (active, sealed, archived or tombstoned) and its seal, if it has one. */
     lifecycle(input: Sdk.NoteRefRequest): Promise<Sdk.NoteLifecycleView | StoredResult>;
+    /** Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot. */
+    read(input: Sdk.NoteReadRequest): Promise<Sdk.ScopedReadResult<Sdk.NoteReadView | null> | StoredResult>;
     /** Seals one NOTE by its author or the owner: its document freezes at the current frontier, a later edit opens a fork, and the seal stays. */
     seal(input: Sdk.NoteRefRequest): Promise<Sdk.NoteSeal | StoredResult>;
     /** Sets the extraction, context and retention defaults one NOTE overrides over its kind's, by its author or the owner; empty overrides clear them. An override never widens a scope or grant check. */
@@ -2172,7 +2193,7 @@ declare const vault: Sdk.VaultHost & {
     index(input: Sdk.ResidenceMachineRequest): Promise<Sdk.ResidenceIndex | StoredResult>;
     /** Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. */
     mode(input: Sdk.ResidenceModeRequest): Promise<Sdk.ResidenceModeChanged | StoredResult>;
-    /** Opens one item on one of the owner's machines: its read cache, its local row, or a first touch at the home. */
+    /** Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors. */
     open(input: Sdk.ResidenceOpenRequest): Promise<Sdk.ResidenceOpened | StoredResult>;
     /** Drops the opened-item caches one of the owner's machines last touched before a time. */
     prune(input: Sdk.ResidencePruneRequest): Promise<Sdk.ResidencePruned | StoredResult>;

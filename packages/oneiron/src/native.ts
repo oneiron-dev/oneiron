@@ -345,6 +345,10 @@ vaultClaimsSeed(input: unknown): unknown
 connectorOutboundSchedule(input: unknown): unknown
 vaultNotesCreate(input: unknown): unknown
 vaultNotesFromEntity(input: unknown): unknown
+vaultNotesRead(input: unknown): unknown
+vaultNotesHistory(input: unknown): unknown
+vaultNotesEditorBind(input: unknown): unknown
+vaultNotesEditorClose(input: unknown): unknown
 vaultNotesEdit(input: unknown): unknown
 vaultNotesSeal(requestJson: string): string
 vaultNotesLifecycle(requestJson: string): string
