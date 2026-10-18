@@ -57,6 +57,7 @@ pub struct FanoutAckRequest {
 
 /// The durable hold of a launch that waits.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(schemars::JsonSchema)]
 pub struct FanoutLaunchHold {
     pub surface_ref: String,
     pub denied: bool,
@@ -65,6 +66,7 @@ pub struct FanoutLaunchHold {
 /// What the launch doors answer: the launch as it stands, with the
 /// statement frozen before anything launched.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(schemars::JsonSchema)]
 pub struct FanoutLaunchView {
     pub launch_ref: EntityId,
     pub plan_digest: String,

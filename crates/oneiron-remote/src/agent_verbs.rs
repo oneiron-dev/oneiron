@@ -124,6 +124,12 @@ impl OneironClient {
                         client, verb, &input,
                     )
                 }
+                "vault.fanout.spawn" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::FanoutBatchView,
+                >(client, verb, &input),
+                "vault.fanout.slots" => remote_agent_verb_output::<
+                    Option<oneiron::task_verb::sdk::FanoutBatchView>,
+                >(client, verb, &input),
                 "vault.fanout.launch" => remote_agent_verb_output::<
                     Option<oneiron::task_verb::sdk::FanoutLaunchView>,
                 >(client, verb, &input),
@@ -2304,6 +2310,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("tasks.wave", value)
+    }
+    pub fn vault_fanout_spawn(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::FanoutBatchInput>,
+    ) -> Result<oneiron::task_verb::sdk::FanoutBatchView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.fanout.spawn", value)
+    }
+    pub fn vault_fanout_slots(
+        &self,
+        input: &oneiron::task_verb::sdk::FanoutLaunchRequest,
+    ) -> Result<Option<oneiron::task_verb::sdk::FanoutBatchView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.fanout.slots", value)
     }
     pub fn vault_fanout_launch(
         &self,

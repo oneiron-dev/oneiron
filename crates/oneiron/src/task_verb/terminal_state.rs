@@ -11,6 +11,7 @@ use crate::error::RecordError;
 /// `Abandoned` (lease reclaimed / executor gone) stay distinct causes even
 /// though both project onto the failed board lane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskTerminalDisposition {
     Completed,

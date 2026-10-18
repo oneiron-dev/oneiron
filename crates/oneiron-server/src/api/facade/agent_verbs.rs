@@ -29,6 +29,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/describe", post(facade_route))
         .route("/tasks.create", post(facade_route))
         .route("/tasks.wave", post(facade_route))
+        .route("/vault.fanout.spawn", post(facade_route))
+        .route("/vault.fanout.slots", post(facade_route))
         .route("/vault.fanout.launch", post(facade_route))
         .route("/self.budget", post(facade_route))
         .route("/self.budget.land", post(facade_route))

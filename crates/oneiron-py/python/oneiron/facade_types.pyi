@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 618 facade rows, 2303 declarations.
-Inputs: 566 of 618 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 549 of 618 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 620 facade rows, 2312 declarations.
+Inputs: 568 of 620 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 551 of 620 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 92; unread shapes: 0.
 """
 
@@ -1106,8 +1106,16 @@ class TaskWaveRequest(TypedDict):
 class TaskWaveReceipt(TypedDict):
     attempt_ref: str
     state: str
-class FanoutLaunchRequest(TypedDict):
-    launch_ref: EntityId
+class LiveRunRequest(TypedDict, Generic[T]):
+    live_run: str
+    spec: T
+class FanoutChildInput(TypedDict):
+    agent_ref: EntityId
+    label: str
+    prompt: str
+class FanoutBatchInput(TypedDict):
+    intent_key: str
+    children: list[FanoutChildInput]
 class PeerCount(TypedDict):
     peer: EntityId
     count: int
@@ -1161,9 +1169,12 @@ class FanoutLaunchView(TypedDict):
     check_row_ref: NotRequired[str | None]
     choice_receipt_ref: NotRequired[str | None]
     task_refs: list[EntityId]
-class SelfBudgetRequest(TypedDict):
-    attempt: str
-    run: NotRequired[str | None]
+FanoutSlotState = Literal["held", "pending", "completed", "error"]
+class FanoutSlotTerminal(TypedDict):
+    disposition: TaskTerminalDisposition
+    result_ref: NotRequired[EntityId | None]
+    finished_at: int
+AttemptState = Literal["Queued", "Leased", "Paused", "Completed", "Failed", "Cancelled", "Scheduled", "Landing", "Abandoned"]
 SpendState = Literal["open", "closed"]
 class SpendPayer(TypedDict):
     party: EntityId
@@ -1199,6 +1210,37 @@ class SpendRead(TypedDict):
     cap_scope: SpendScopeId
     cap_units: int
     signal: NotRequired[SpendSignal | None]
+class FanoutLeaseView(TypedDict):
+    lease: SpendScope
+    spend: SpendRead
+    released_units: NotRequired[int | None]
+class FanoutSlotAttempt(TypedDict):
+    attempt_ref: str
+    state: AttemptState
+    last_error: NotRequired[str | None]
+    result_ref: NotRequired[str | None]
+    budget_hold: bool
+    lease: NotRequired[FanoutLeaseView | None]
+class FanoutChildSlot(TypedDict):
+    index: int
+    input: FanoutChildInput
+    task_ref: NotRequired[EntityId | None]
+    state: FanoutSlotState
+    terminal: NotRequired[FanoutSlotTerminal | None]
+    attempts: list[FanoutSlotAttempt]
+class FanoutSharedAccounting(TypedDict):
+    parent: NotRequired[FanoutLeaseView | None]
+    hard_cap: NotRequired[FanoutLeaseView | None]
+class FanoutBatchView(TypedDict):
+    launch: FanoutLaunchView
+    parent_task_ref: EntityId
+    slots: list[FanoutChildSlot]
+    accounting: FanoutSharedAccounting
+class FanoutLaunchRequest(TypedDict):
+    launch_ref: EntityId
+class SelfBudgetRequest(TypedDict):
+    attempt: str
+    run: NotRequired[str | None]
 class SpendLeaseView(TypedDict):
     lease: SpendScope
     spend: SpendRead
@@ -6002,9 +6044,6 @@ class SecretUseAnswer(TypedDict):
     result: NotRequired[Any | None]
     failure: NotRequired[str | None]
     receipt: SecretUseRecord
-class LiveRunRequest(TypedDict, Generic[T]):
-    live_run: str
-    spec: T
 class SecretGrantPurposeOperation(TypedDict):
     kind: Literal["operation"]
     name: str
@@ -7086,7 +7125,6 @@ class PlannedSpawnObservation(TypedDict):
 class CancelForceRequest(TypedDict):
     task_ref: EntityId
     reason: NotRequired[str | None]
-AttemptState = Literal["Queued", "Leased", "Paused", "Completed", "Failed", "Cancelled", "Scheduled", "Landing", "Abandoned"]
 AgentRunStatus = Literal["spawned", "working", "needs_input", "delivered", "archived", "failed", "abandoned"]
 class RunAskQuestion(TypedDict):
     who: str
