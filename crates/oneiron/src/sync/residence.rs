@@ -7,6 +7,7 @@ mod tests;
 mod admission;
 mod authority_tail;
 mod bundle;
+mod bundle_access;
 mod bundle_payload;
 mod bundle_stage;
 mod bundle_turn;
@@ -30,6 +31,11 @@ pub use bundle::{
     replace_sealed_bundle_pads, sealed_bundle_generations, sealed_bundle_part,
     sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex, sealed_generation_hex,
     stage_sealed_bundle_part,
+};
+pub use bundle_access::{
+    PadAccessRequest, PadAccessState, PendingPadAccess, PendingPadAccessList,
+    ensure_sealed_pad_access, offer_sealed_pad_access, pending_sealed_pad_access,
+    sealed_pad_access,
 };
 pub use bundle_payload::SealedBundleTake;
 pub use bundle_payload::SealedKitRestore;

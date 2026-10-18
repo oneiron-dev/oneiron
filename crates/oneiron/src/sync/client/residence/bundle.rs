@@ -11,8 +11,10 @@
 //! Erase rewrites every kept pad: each upkeep tick strips every world whose
 //! keys were destroyed here, and that this machine has not swept yet, from
 //! every pad object the home keeps (`Vault::drop_world_from_key_pads`). A pad
-//! object sealed before this machine was added does not open with its key;
-//! the owner's recovery kit sweeps it from here on request
+//! object sealed before this machine was added does not open with its key: it
+//! opens with a grant of its outer key an old reader sealed to it since, which
+//! each upkeep tick serves before the sweep (`access`, FIX 4271), or with the
+//! owner's recovery kit on request
 //! ([`SyncClient::sweep_sealed_bundle_erases_with_kit`]).
 //!
 //! A commit names the recovery root the upload was sealed to, so a kit-only
@@ -22,9 +24,12 @@
 //! home it knows is a phone (FIX 3349, `holds_sealed_bundle`). A phone still
 //! sweeps its erases from the kept pad objects.
 
+mod access;
+mod sweep;
 mod turn;
 
-use std::collections::BTreeSet;
+pub use self::access::PadAdmissionReport;
+
 use std::sync::Arc;
 
 use base64::Engine;
@@ -33,9 +38,10 @@ use serde_json::json;
 
 use super::kit_fetch::KitHome;
 use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
+use crate::Vault;
 use crate::authority::{Destination, PeerMachine};
 use crate::error::{Error, SecretError};
-use crate::side_table::{self, HexId, Raw, SideTable};
+use crate::side_table::{self, Raw, SideTable};
 use crate::sync::client::{SyncClientConfig, SyncResidenceMode};
 use crate::sync::manager::WindowManager;
 use crate::sync::residence::{
@@ -48,15 +54,10 @@ use crate::world_keys::{
     RecoveryRootId, RecoveryRootSeed, SEALED_BUNDLE_KEEP, SealedBundleGeneration, SealedKeyPads,
     SealedVaultBundle, sealed_bundle_slot,
 };
-use crate::{EntityId, Vault};
 
 /// The slot this machine last finished and the generation it last took in.
 const CURSOR: SideTable<(), Vec<u8>, Raw> =
     SideTable::new(&side_table::SYNC_RESIDENCE_BUNDLE_CURSOR);
-/// Each erased world this machine swept from the home's pad objects, or the
-/// slot a pad object that did not open here held it back in.
-const SWEPT: SideTable<HexId, Vec<u8>, Raw> =
-    SideTable::new(&side_table::SYNC_RESIDENCE_BUNDLE_SWEPT);
 /// How many times, in one slot, a publisher whose parent went stale takes the
 /// new newest generation in and uploads again.
 const STALE_PARENT_RETRIES: usize = 1;
@@ -126,6 +127,15 @@ pub struct SealedBundleRelay {
     pub published: Option<SealedBundleGeneration>,
     /// Erased worlds stripped from every pad object the home keeps.
     pub erased: usize,
+    /// Grants of a kept pad object's key this machine sealed for a machine
+    /// admitted since its generation, and the home took (FIX 4271).
+    pub offered: usize,
+    /// Kept pad objects that open with no key here yet: their access is
+    /// pending with the home. Never a swept erase.
+    pub pending_pad_access: usize,
+    /// Erased worlds held back, unswept, while a kept pad object opens with
+    /// no key here.
+    pub pending_erases: usize,
 }
 
 #[derive(Deserialize)]
@@ -189,88 +199,56 @@ fn store_cursor(vault: &Vault, cursor: Cursor) -> crate::error::Result<()> {
     vault.with_write_txn_grouped(|wtxn| CURSOR.put(&vault.store, wtxn, &(), &raw))
 }
 
-/// The worlds erased here this machine still owes a sweep of in slot
-/// `now_slot`: never swept, or held back in an earlier slot.
-fn erased_due(vault: &Vault, now_slot: u64) -> crate::error::Result<Vec<EntityId>> {
-    let destroyed = vault.world_key_destructions()?;
-    let txn = vault.store.env.read_txn()?;
-    let mut due = Vec::new();
-    for receipt in destroyed {
-        let Ok(world) = EntityId::from_hex(&receipt.world) else {
-            continue;
-        };
-        let owed = match SWEPT.get(&vault.store, &txn, &HexId(world))? {
-            None => true,
-            Some(raw) if raw.is_empty() => false,
-            Some(raw) => {
-                <[u8; 8]>::try_from(raw).map_or(true, |slot| u64::from_be_bytes(slot) < now_slot)
-            }
-        };
-        if owed && !due.contains(&world) {
-            due.push(world);
-        }
-    }
-    Ok(due)
-}
-
-/// Marks `world` swept, or held back in `held_back_in`.
-fn mark_swept(
-    vault: &Vault,
-    world: EntityId,
-    held_back_in: Option<u64>,
-) -> crate::error::Result<()> {
-    let raw = held_back_in
-        .map(|slot| slot.to_be_bytes().to_vec())
-        .unwrap_or_default();
-    vault.with_write_txn_grouped(|wtxn| SWEPT.put(&vault.store, wtxn, &HexId(world), &raw))
-}
-
 impl SyncClient {
     /// Runs this machine's sealed bundle upkeep through the home (FIX 922):
-    /// erase's sweep of every kept pad object, then, once per UTC slot, the
-    /// take of the home's newest generation and, on an eligible publisher, the
-    /// slot's upload. A federation lane and a machine not mine here do
-    /// nothing; a phone only sweeps, and a home known to be a phone gets
-    /// nothing.
+    /// the late joiners' grants it can issue (FIX 4271), erase's sweep of
+    /// every kept pad object, then, once per UTC slot, the take of the home's
+    /// newest generation and, on an eligible publisher, the slot's upload. A
+    /// federation lane and a machine not mine here do nothing; a phone grants
+    /// and sweeps only, and a home known to be a phone gets no sweep or
+    /// upload.
     pub async fn relay_sealed_bundle(&self) -> Result<SealedBundleRelay, TransportError> {
         relay_sealed_bundle(&self.manager, &self.config).await
     }
 
     /// Erase's sweep of every pad object the home keeps, opened with this
-    /// machine's key or else `seed`, the owner's recovery kit (FIX 3355): a
-    /// pad object sealed before this machine was added does not open with its
-    /// key, and holds every erased world back each slot. The kit serves this
+    /// machine's key, a grant sealed to it since (FIX 4271), or else `seed`,
+    /// the owner's recovery kit (FIX 3355): a pad object sealed before this
+    /// machine was added does not open with its key, and holds every erased
+    /// world back each slot until one of those opens it. The kit serves this
     /// call alone; nothing keeps it. Sweeps every world erased here not swept
-    /// yet, held back this slot or not, and returns how many a kept object
-    /// held. A federation lane and a machine not mine here sweep nothing, nor
-    /// does a home known to be a phone, which keeps none.
+    /// yet, held back this slot or not, and reports how many a kept object
+    /// held, and what still waits. A federation lane and a machine not mine
+    /// here sweep nothing, nor does a home known to be a phone, which keeps
+    /// none.
     pub async fn sweep_sealed_bundle_erases_with_kit(
         &self,
         seed: &RecoveryRootSeed,
-    ) -> Result<usize, TransportError> {
+    ) -> Result<SealedBundleRelay, TransportError> {
         let vault = &self.vault;
+        let mut relay = SealedBundleRelay::default();
         if self.config.federation_peer.is_some()
             || !vault
                 .local_machine()
                 .map_err(storage)?
                 .is_some_and(|machine| machine.mine)
         {
-            return Ok(0);
+            return Ok(relay);
         }
         let now_slot = sealed_bundle_slot(vault.store.clock.now_recorded_at());
         // Held back in this slot counts as owed too.
-        let erased = erased_due(vault, now_slot.saturating_add(1)).map_err(storage)?;
+        let erased = sweep::erased_due(vault, now_slot.saturating_add(1)).map_err(storage)?;
         if erased.is_empty() {
-            return Ok(0);
+            return Ok(relay);
         }
         let budgets = residence_budgets(vault)?;
         let Some(mut rpc) = ResidenceRpc::connect(vault, &self.config, budgets).await? else {
             return Err(TransportError::Storage("home node offline".into()));
         };
-        if !home_holds_sealed_bundle(vault, rpc.home).map_err(storage)? {
-            return Ok(0);
+        if home_holds_sealed_bundle(vault, rpc.home).map_err(storage)? {
+            sweep::sweep_erased(vault, &mut rpc, &erased, now_slot, Some(seed), &mut relay).await?;
         }
-        sweep_erased(vault, &mut rpc, &erased, now_slot, Some(seed)).await
+        Ok(relay)
     }
 
     /// One generation's bundle and pad object as the home keeps them, for a
@@ -289,8 +267,10 @@ impl SyncClient {
 }
 
 /// [`SyncClient::relay_sealed_bundle`] on the window manager and a client
-/// config alone, for a task off the live sync loop. A tick with no erase to
-/// sweep and its slot finished opens no socket.
+/// config alone, for a task off the live sync loop. Every tick reaches the
+/// home, an erase or a slot due or not, so an old reader serves the
+/// admissions waiting there (FIX 4271); a home out of reach then is no error
+/// unless an erase or the slot was due.
 pub(crate) async fn relay_sealed_bundle(
     manager: &Arc<WindowManager>,
     config: &SyncClientConfig,
@@ -307,16 +287,23 @@ pub(crate) async fn relay_sealed_bundle(
     }
     let now_slot = sealed_bundle_slot(vault.store.clock.now_recorded_at());
     let cursor = load_cursor(vault).map_err(storage)?;
-    let erased = erased_due(vault, now_slot).map_err(storage)?;
+    let erased = sweep::erased_due(vault, now_slot).map_err(storage)?;
     // A phone takes no generation in and uploads none (FIX 3349).
     let slot_due = cursor.slot < now_slot && holds_sealed_bundle(vault.config.machine_device_class);
-    if erased.is_empty() && !slot_due {
-        return Ok(relay);
-    }
     let budgets = residence_budgets(vault)?;
     let Some(mut rpc) = ResidenceRpc::connect(vault, config, budgets).await? else {
+        if erased.is_empty() && !slot_due {
+            return Ok(relay);
+        }
         return Err(TransportError::Storage("home node offline".into()));
     };
+    // The admissions first: an old reader with no erase or slot work still
+    // grants (FIX 4271). A home that refuses them still takes the rest.
+    match access::serve_admissions(vault, &mut rpc).await {
+        Ok(offered) => relay.offered = offered,
+        Err(TransportError::InvalidPayload(_)) => {}
+        Err(error) => return Err(error),
+    }
     // A home this machine knows is a phone keeps no sealed copy: nothing goes
     // to it, and the slot is finished.
     if !home_holds_sealed_bundle(vault, rpc.home).map_err(storage)? {
@@ -330,7 +317,7 @@ pub(crate) async fn relay_sealed_bundle(
         return Ok(relay);
     }
     if !erased.is_empty() {
-        relay.erased = sweep_erased(vault, &mut rpc, &erased, now_slot, None).await?;
+        sweep::sweep_erased(vault, &mut rpc, &erased, now_slot, None, &mut relay).await?;
     }
     if slot_due {
         let slot = SlotRelay {
@@ -516,70 +503,6 @@ impl SlotRelay<'_> {
         cursor.slot = self.slot;
         store_cursor(vault, cursor).map_err(storage)
     }
-}
-
-/// Strips each of `erased` from every pad object the home keeps, rewriting
-/// every kept object whether it held the world or not; returns how many
-/// worlds a kept object held. Each object opens with this machine's key, or
-/// else `kit`, a recovery kit the owner handed this sweep. A world is swept
-/// once every kept object is rewritten without it, or once none holds it. A
-/// kept object that opens with neither holds every world back until the next
-/// slot.
-async fn sweep_erased(
-    vault: &Vault,
-    rpc: &mut ResidenceRpc,
-    erased: &[EntityId],
-    now_slot: u64,
-    kit: Option<&RecoveryRootSeed>,
-) -> Result<usize, TransportError> {
-    let mut kept = Vec::new();
-    for generation in list_generations(rpc).await? {
-        // A kept object that does not come back is swept on a later tick:
-        // a world is never marked swept past an object it did not see.
-        let (_, bytes) = read_object(
-            &mut PartSource::Machine(rpc),
-            Some(generation),
-            SealedBundleObject::Pads,
-        )
-        .await?
-        .ok_or_else(refused)?;
-        let pads = SealedKeyPads::from_bytes(&bytes).map_err(|_| refused())?;
-        if pads.generation() != generation {
-            return Err(refused());
-        }
-        kept.push(pads);
-    }
-    let mut held = BTreeSet::new();
-    for pads in &kept {
-        match vault.open_key_pads_to_erase(pads, kit) {
-            Ok(opened) => held.extend(opened.keys().map(|key| key.world)),
-            Err(_) => {
-                for world in erased {
-                    mark_swept(vault, *world, Some(now_slot)).map_err(storage)?;
-                }
-                return Ok(0);
-            }
-        }
-    }
-    let mut stripped = 0;
-    for world in erased {
-        if held.contains(world) {
-            let rewritten = vault
-                .drop_world_from_key_pads(*world, &kept, kit)
-                .map_err(storage)?;
-            for (old, new) in kept.iter().zip(&rewritten) {
-                if !replace_pads(rpc, old, new).await? {
-                    return Err(TransportError::Storage(
-                        "home refused a pad object rewrite".into(),
-                    ));
-                }
-            }
-            kept = rewritten;
-            stripped += 1;
-        }
-        mark_swept(vault, *world, None).map_err(storage)?;
-    }
-    Ok(stripped)
 }
 
 /// The generations the home keeps, newest first.

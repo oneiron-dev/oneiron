@@ -35,11 +35,16 @@
 //!   not read the world carries unchanged, as it carries the world's section.
 //! - Erase rewrites every kept pad object without the world's pads: that world's
 //!   section in every kept bundle stops opening, and every other world's still
-//!   does. Delete rewrites nothing; a deleted world restores from the bundles it is
-//!   in until they age out (DEC-0006: delete is backup-only undo).
+//!   does. A machine admitted after a generation was sealed opens its pad object
+//!   with a grant of the object's outer key that an old reader or the kit sealed
+//!   to it (`SealedPadAdmissionGrant`, FIX 4271). Delete rewrites nothing; a
+//!   deleted world restores from the bundles it is in until they age out
+//!   (DEC-0006: delete is backup-only undo).
 //! - A holder keeps [`SEALED_BUNDLE_KEEP`] generations, each bundle with its pad
 //!   object, and never retires the newest by age ([`retired_bundle_generations`]).
 
+#[cfg(feature = "sync")]
+mod admission;
 mod authority;
 
 use std::collections::BTreeSet;
@@ -65,6 +70,8 @@ use crate::error::{Error, Result, SecretError};
 use crate::ports::TombstoneStoreRead;
 use crate::store::Store;
 
+#[cfg(feature = "sync")]
+pub use self::admission::{PadAdmissionTarget, SealedPadAdmissionGrant};
 pub(crate) use self::authority::{BundleCarry, SealedWorldAuthority};
 
 /// The bundle's size step: every bundle is a positive multiple of it.
@@ -111,18 +118,25 @@ const PART_HEADER_LEN: usize = PART_LABEL.len() + 32 + 4 + 4;
 const KEEP_SLOTS: u64 = SEALED_BUNDLE_KEEP as u64;
 
 /// A key erase opens a kept pad object with.
+#[cfg(feature = "sync")]
 enum EraseKey {
-    /// This machine's.
+    /// This machine's capsule.
     Machine,
+    /// A grant of the object's outer key to this machine, sealed by an old
+    /// reader or the kit since (FIX 4271).
+    AdmissionGrant,
     /// The recovery kit the owner hands that one erase; nothing keeps it.
     Kit,
 }
 
 /// The keys erase opens each kept pad object with, in order (CALLS:
-/// SEALED_BUNDLE_ERASE_KEY_SOURCE): this machine's, then a kit the owner hands
-/// it, so a machine added after older generations were sealed can sweep them
-/// too (FIX 3355).
-const SEALED_BUNDLE_ERASE_KEY_SOURCE: &[EraseKey] = &[EraseKey::Machine, EraseKey::Kit];
+/// SEALED_BUNDLE_ERASE_KEY_SOURCE): this machine's capsule, then a grant
+/// sealed to it since, then a kit the owner hands it. So a machine added after
+/// older generations were sealed sweeps them unattended once an old reader
+/// granted it access, and with the kit before that (FIX 3355, FIX 4271).
+#[cfg(feature = "sync")]
+const SEALED_BUNDLE_ERASE_KEY_SOURCE: &[EraseKey] =
+    &[EraseKey::Machine, EraseKey::AdmissionGrant, EraseKey::Kit];
 
 /// What a new pad object holds of a world deleted here (CALLS:
 /// SEALED_BUNDLE_NEW_PAD_DELETED_WORLD).
@@ -357,7 +371,18 @@ impl SealedKeyPads {
     }
 
     fn open_with(&self, vault_id: &[u8; 32], secret: &HybridSecretKey) -> Result<OpenedKeyPads> {
-        let opened = open_outer(PADS, vault_id, &self.0.bytes, secret)?;
+        self.opened(vault_id, open_outer(PADS, vault_id, &self.0.bytes, secret)?)
+    }
+
+    /// Opens the pads with `outer`, the object's outer key from an admission
+    /// grant (FIX 4271). Only the object's own key opens its body.
+    #[cfg(feature = "sync")]
+    fn open_with_outer(&self, vault_id: &[u8; 32], outer: &[u8; 32]) -> Result<OpenedKeyPads> {
+        let opened = open_outer_with_key(PADS, vault_id, &self.0.bytes, Zeroizing::new(*outer))?;
+        self.opened(vault_id, opened)
+    }
+
+    fn opened(&self, vault_id: &[u8; 32], opened: OpenedOuter) -> Result<OpenedKeyPads> {
         let body = decode_pads_body(vault_id, opened.generation, &opened.body)?;
         Ok(OpenedKeyPads {
             vault_id: *vault_id,
@@ -1039,43 +1064,23 @@ impl Vault {
     }
 
     /// Opens `pads`, a kept pad object, as erase's rewrite opens it
-    /// ([`SEALED_BUNDLE_ERASE_KEY_SOURCE`]): with this machine's capsule, or
-    /// else with `kit`, the owner's kit for this erase.
+    /// ([`SEALED_BUNDLE_ERASE_KEY_SOURCE`]): with this machine's capsule, else
+    /// with one of `grants` addressed to it (FIX 4271), else with `kit`, the
+    /// owner's kit for this erase.
     #[cfg(feature = "sync")]
     pub(crate) fn open_key_pads_to_erase(
         &self,
         pads: &SealedKeyPads,
         kit: Option<&RecoveryRootSeed>,
+        grants: &[SealedPadAdmissionGrant],
     ) -> Result<OpenedKeyPads> {
-        open_to_erase(&self.bundle_vault_id()?, &self.erase_secrets(kit)?, pads)
-    }
-
-    /// The secrets erase opens kept pad objects with, in the order of
-    /// [`SEALED_BUNDLE_ERASE_KEY_SOURCE`].
-    fn erase_secrets(&self, kit: Option<&RecoveryRootSeed>) -> Result<Vec<HybridSecretKey>> {
-        let mut secrets = Vec::new();
-        for key in SEALED_BUNDLE_ERASE_KEY_SOURCE {
-            match key {
-                // A kit restore runs before this install has a machine of its
-                // own.
-                EraseKey::Machine => {
-                    if let Ok(machine) = self.machine_secret_outside_txn() {
-                        secrets.push(machine.secret);
-                    }
-                }
-                EraseKey::Kit => {
-                    if let Some(seed) = kit {
-                        secrets.push(seed.recovery_secret()?);
-                    }
-                }
-            }
-        }
-        Ok(secrets)
+        self.erase_keys(kit, grants)?.open(pads)
     }
 
     /// Erase's rewrite, in one call: every kept pad object, the current one and
     /// every older one, without `world`'s pads, each opened with this machine's
-    /// capsule or else the kit's. A pad object holds pads only. The root wraps of
+    /// capsule, a grant of its outer key to this machine among `grants`, or
+    /// else the kit's. A pad object holds pads only. The root wraps of
     /// the world's keys stay in each kept bundle's base section, and with the pads
     /// gone from every kept object they open to nothing, for the kit too, so the
     /// world's section in every kept bundle stops opening. Every other world's
@@ -1084,18 +1089,19 @@ impl Vault {
     ///
     /// The holder keeps no prior object versions: a rewrite replaces the old
     /// object and deletes it (no versioning or object lock is assumed). Refused
-    /// when one object opens with neither key, before anything is rewritten.
+    /// when one object opens with no key, before anything is rewritten.
+    #[cfg(feature = "sync")]
     pub fn drop_world_from_key_pads(
         &self,
         world: EntityId,
         kept: &[SealedKeyPads],
         kit: Option<&RecoveryRootSeed>,
+        grants: &[SealedPadAdmissionGrant],
     ) -> Result<Vec<SealedKeyPads>> {
-        let vault_id = self.bundle_vault_id()?;
-        let secrets = self.erase_secrets(kit)?;
+        let keys = self.erase_keys(kit, grants)?;
         let opened = kept
             .iter()
-            .map(|pads| open_to_erase(&vault_id, &secrets, pads))
+            .map(|pads| keys.open(pads))
             .collect::<Result<Vec<_>>>()?;
         opened
             .iter()
@@ -1146,18 +1152,6 @@ fn new_pads_hold(store: &Store, txn: &heed::RoTxn<'_>, world: EntityId) -> Resul
     Ok(match SEALED_BUNDLE_NEW_PAD_DELETED_WORLD {
         DeletedWorldPads::Omit => !deleted,
     })
-}
-
-/// `pads` opened with the first of `secrets` that opens it.
-fn open_to_erase(
-    vault_id: &[u8; 32],
-    secrets: &[HybridSecretKey],
-    pads: &SealedKeyPads,
-) -> Result<OpenedKeyPads> {
-    secrets
-        .iter()
-        .find_map(|secret| pads.open_with(vault_id, secret).ok())
-        .ok_or_else(|| refused("a kept pad object opens neither here nor with the kit"))
 }
 
 fn open_sections(
@@ -1480,6 +1474,29 @@ fn open_outer(
 ) -> Result<OpenedOuter> {
     let frame = parse_frame(kind, bytes)?;
     let outer = open_slots(kind, vault_id, &frame, secret)?;
+    open_framed(kind, vault_id, frame, outer)
+}
+
+/// [`open_outer`] with `outer`, a key the caller holds already, as from an
+/// admission grant (FIX 4271): the body's AEAD is the proof that it is the
+/// object's own outer key. The frame's capsules are kept, unopened.
+#[cfg(feature = "sync")]
+fn open_outer_with_key(
+    kind: Kind,
+    vault_id: &[u8; 32],
+    bytes: &[u8],
+    outer: Zeroizing<[u8; 32]>,
+) -> Result<OpenedOuter> {
+    open_framed(kind, vault_id, parse_frame(kind, bytes)?, outer)
+}
+
+/// The body of `frame` under `outer`.
+fn open_framed(
+    kind: Kind,
+    vault_id: &[u8; 32],
+    frame: Frame,
+    outer: Zeroizing<[u8; 32]>,
+) -> Result<OpenedOuter> {
     let id = frame.generation.to_bytes();
     let policy = symmetric_policy(kind.purpose, vault_id, &id, BODY_RECIPIENT);
     let body = open_parts(&policy, &Kek::from_bytes(*outer), &frame.parts)?;
