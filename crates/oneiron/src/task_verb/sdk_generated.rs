@@ -3269,6 +3269,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<ConsolidationStatusRequest>(),
             ),
             (
+                "vault.runs.step",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::model_step::SettledStepRequest,
+                >(),
+            ),
+            (
+                "vault.runs.checkpoint",
+                crate::code_run::vault_read::request_schema::<
+                    crate::engine_executor::checkpoint_read::CheckpointReadRequest,
+                >(),
+            ),
+            (
                 "vault.consolidation.promote",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::consolidation::ConsolidationPromoteRequest,
@@ -4077,6 +4089,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.search.temporal",
     "vault.productivity.create",
     "vault.productivity.tree",
+    "vault.consolidation.status",
+    "vault.runs.step",
+    "vault.runs.checkpoint",
     "vault.consolidation.promote",
     "vault.claims.vet",
     "vault.claims.vetting",
@@ -4925,6 +4940,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.productivity.tree" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Option<crate::memory::ProductivityTree>>,
+        >(),
+        "vault.consolidation.status" => crate::code_run::vault_read::request_schema::<
+            Option<crate::memory::DreamerAttemptView>,
+        >(),
+        "vault.runs.step" => crate::code_run::vault_read::request_schema::<
+            Option<crate::llm::model_step::SettledStepView>,
+        >(),
+        "vault.runs.checkpoint" => crate::code_run::vault_read::request_schema::<
+            Option<crate::engine_executor::checkpoint_read::CheckpointView>,
         >(),
         "vault.consolidation.promote" => crate::code_run::vault_read::request_schema::<
             crate::memory::consolidation::ConsolidationPromotion,
@@ -9312,6 +9336,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.runs.step" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.runs.checkpoint" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.consolidation.promote" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -11936,6 +11974,13 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.consolidation.status" => {
             let _input: ConsolidationStatusRequest = decode(value.clone())?;
         }
+        "vault.runs.step" => {
+            let _input: crate::llm::model_step::SettledStepRequest = decode(value.clone())?;
+        }
+        "vault.runs.checkpoint" => {
+            let _input: crate::engine_executor::checkpoint_read::CheckpointReadRequest =
+                decode(value.clone())?;
+        }
         "vault.consolidation.promote" => {
             let _input: crate::memory::consolidation::ConsolidationPromoteRequest =
                 decode(value.clone())?;
@@ -13378,6 +13423,8 @@ pub fn invoke(
             encode(vault_consolidation_enqueue(memory, decode(value)?)?)
         }
         "vault.consolidation.status" => encode(vault_consolidation_status(memory, decode(value)?)?),
+        "vault.runs.step" => encode(vault_runs_step(memory, decode(value)?)?),
+        "vault.runs.checkpoint" => encode(vault_runs_checkpoint(memory, decode(value)?)?),
         "vault.consolidation.promote" => {
             encode(vault_consolidation_promote(memory, decode(value)?)?)
         }
@@ -18798,6 +18845,26 @@ pub fn vault_consolidation_status(
     input: ConsolidationStatusRequest,
 ) -> MemoryResult<Option<crate::memory::DreamerAttemptView>> {
     memory_requests::dreamer_attempt_status(memory, input)
+}
+pub fn vault_runs_step(
+    memory: &Memory<'_>,
+    input: crate::llm::model_step::SettledStepRequest,
+) -> MemoryResult<Option<crate::llm::model_step::SettledStepView>> {
+    crate::llm::model_step::settled_step_as_owner(
+        memory,
+        &memory.embedded_owner("vault.runs.step")?,
+        &input,
+    )
+}
+pub fn vault_runs_checkpoint(
+    memory: &Memory<'_>,
+    input: crate::engine_executor::checkpoint_read::CheckpointReadRequest,
+) -> MemoryResult<Option<crate::engine_executor::checkpoint_read::CheckpointView>> {
+    crate::engine_executor::checkpoint_read::checkpoint_as_owner(
+        memory,
+        &memory.embedded_owner("vault.runs.checkpoint")?,
+        &input,
+    )
 }
 pub fn vault_consolidation_promote(
     memory: &Memory<'_>,
