@@ -76,6 +76,11 @@ for row in ROWS:
     # invocation the call resolved: the one its verb hooks fired for.
     if row.get('host_door_caller') and not row.get('host_door'):
         raise ValueError(f'{row["name"]}: only a host door takes its caller')
+    # `host_door_session` hands the door the sitting the call names (the
+    # facade's session header, or the MCP connector's off-record session),
+    # `None` when it names none; a session that is no id refuses.
+    if row.get('host_door_session') and not row.get('host_door'):
+        raise ValueError(f'{row["name"]}: only a host door takes its session')
     # `host_door_lists` marks a host door that lists the rows its reads
     # picked, as a plain row's answer does: the door returns them beside its
     # result, and every served door releases the answer by them (DEC-0005).
@@ -312,7 +317,7 @@ def native_boundary(row, language):
     else:
         name = names[args[0]['name']]
         if language == 'napi':
-            setup = f'let input: serde_json::Value = serde_json::from_str(&{name}).map_err(|error| facade_error(oneiron::memory::MemoryError {{ code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(), message: format!("invalid keyed request: {{error}}"), suggestions: vec!["Use the documented keyed DTO.".to_owned()], successor_short_id: None, gate_denial: None, read_receipt: None, policy_denial: None, wrong_root: None, hook: None }}))?;'
+            setup = f'let input: serde_json::Value = serde_json::from_str(&{name}).map_err(|error| facade_error(oneiron::memory::MemoryError {{ code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(), message: format!("invalid keyed request: {{error}}"), suggestions: vec!["Use the documented keyed DTO.".to_owned()], successor_short_id: None, gate_denial: None, read_receipt: None, policy_denial: None, wrong_root: None, hook: None, retry_after: None }}))?;'
         else:
             setup = f'let input: serde_json::Value = decode({name}, "{row["name"]}")?;'
         call = f'self.inner.agent_verb("{row["name"]}", input)'
@@ -622,7 +627,9 @@ def mcp_input_dispatch(row):
         # describe(self) renders the authenticated run brief, the same door REST takes.
         body += ('if input.get("self").and_then(Value::as_bool) == Some(true) {\n'
                  '    let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n'
-                 '    let value = crate::api::context_board::describe_self_for_auth(server, auth, &input).await.map_err(|_| invalid())?;\n'
+                 '    let (value, listed) = crate::api::context_board::describe_self_for_auth(server, auth, &input).await.map_err(|_| invalid())?;\n'
+                 '    // Derived from the rows its card lists, the roster it read among them.\n'
+                 '    served.extend(listed);\n'
                  '    let output: oneiron::task_verb::TaskDescription = serde_json::from_value(value).map_err(|_| invalid())?;\n'
                  '    let (value, source) = mcp_describe_result(output)?;\n'
                  '    return Ok((value, source, McpCarrierPolicy::Drain, None));\n'
@@ -634,11 +641,13 @@ def mcp_input_dispatch(row):
                  'if !auth.is_owner_grade() { return Err(McpGatewayError::new(-32020, "forbidden", "full-vault export requires owner authority")); }\n'
                  f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + decode +
                  'let proof = auth.verified_slip().ok_or_else(|| McpGatewayError::new(-32020, "forbidden", "full-vault export requires verified owner authority"))?;\n'
-                 'let output = if proof.claims().holder_ref == "host" { server.vault.export_with_verified_host_owner(&input, proof, actor.locality()) } else { memory.export_with_verified_owner(&input, proof) }.map_err(mcp_facade_error)?;\n')
+                 '// The person path lists through its surface; the host path beside its archive.\n'
+                 'let output = if proof.claims().holder_ref == "host" { server.vault.export_with_verified_host_owner_listing(&input, proof, actor.locality()).map(|(output, listed)| { served.extend(listed); output }) } else { memory.export_with_verified_owner(&input, proof) }.map_err(mcp_facade_error)?;\n')
     elif row.get('host_door'):
         # A host door answers from the server's own state, under the same
         # credential the REST facade passes it.
-        door = f'crate::api::facade::host_doors::{method}(server, auth, {"(actor.actor_ref, actor.actor_class), memory.invocation(), " if row.get("host_door_caller") else ""}input).await'
+        session_arg = 'actor.off_record_session.as_deref().map(oneiron::EntityId::from_hex).transpose().map_err(|_| invalid())?, ' if row.get('host_door_session') else ''
+        door = f'crate::api::facade::host_doors::{method}(server, auth, {session_arg}{"(actor.actor_ref, actor.actor_class), memory.invocation(), " if row.get("host_door_caller") else ""}input).await'
         body += ('let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n'
                  f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + decode +
                  (f'let (output, listed) = {door};\n'
@@ -1098,18 +1107,21 @@ def facade_dispatch(facade_rows):
                 let proof = auth.verified_slip().ok_or_else(|| FacadeApiError::forbidden("full-vault export requires verified owner authority", ["Present a verified owner credential."]))?;
                 let hooks = facade_hooks_pre(server, call, {json.dumps(name)}, value).await?;
                 let input: oneiron::memory::ExportOptions = facade_input(hooks.args.clone())?;
-                let output = if proof.claims().holder_ref == "host" {{
-                    server.vault.export_with_verified_host_owner(&input, proof, auth.locality())?
+                // Beside the archive, the rows its snapshot read past the
+                // caller's locality: both owner paths list them.
+                let (output, rows) = if proof.claims().holder_ref == "host" {{
+                    server.vault.export_with_verified_host_owner_listing(&input, proof, auth.locality())?
                 }} else {{
                     let (actor, class) = facade_actor(auth)?;
-                    server.vault.memory(actor, class).at(auth.locality()).export_with_verified_owner(&input, proof)?
+                    let producers = oneiron::memory::ProducerRows::default();
+                    let output = server.vault.memory(actor, class).at(auth.locality()).listing_producers(&producers).export_with_verified_owner(&input, proof)?;
+                    (output, producers.take())
                 }};
                 let output = serde_json::to_value(output).map_err(|_| FacadeApiError::new(
                     StatusCode::INTERNAL_SERVER_ERROR, MEMORY_CODE_INTERNAL,
                     "export result encoding failed", ["Report this SDK response mismatch."]
                 ))?;
-                // The whole vault: no list names the rows it holds.
-                Ok(FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?))
+                Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows: Some(rows) }})
             }}\n'''
             continue
         if r.get('host_door'):
@@ -1120,7 +1132,8 @@ def facade_dispatch(facade_rows):
             # the turn producer after it, as its MCP arm does.
             lands = r.get('lands_turn')
             landed = " server.ai.turn_landed_by(server.vault(), landed_by.0, landed_by.1);" if lands else ""
-            door = f'super::host_doors::{method}(server, auth, {"caller, Some(hooks.call().invocation), " if r.get("host_door_caller") else ""}facade_input(hooks.args.clone())?).await'
+            session_arg = 'call.session()?, ' if r.get('host_door_session') else ''
+            door = f'super::host_doors::{method}(server, auth, {session_arg}{"caller, Some(hooks.call().invocation), " if r.get("host_door_caller") else ""}facade_input(hooks.args.clone())?).await'
             answer = (f'''let (output, listed) = {door};
                 let output = facade_output(output?)?;{landed}
                 Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows: super::host_doors::ListedRows::rows(listed) }})''' if r.get('host_door_lists') else
@@ -1180,10 +1193,11 @@ def facade_dispatch(facade_rows):
             actor = 'let (actor, class) = facade_actor(auth)?;'
             self_branch = ''
             if name == 'describe':
-                # describe(self) renders the authenticated run brief, under no actor.
+                # describe(self) renders the authenticated run brief, under no
+                # actor, and lists the rows its card is derived from.
                 self_branch = ('if value.get("self").and_then(serde_json::Value::as_bool) == Some(true) { '
-                               'let output = crate::api::context_board::describe_self_for_auth(server, auth, &value).await?; '
-                               'return Ok(FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?)); } ' + actor)
+                               'let (output, rows) = crate::api::context_board::describe_self_for_auth(server, auth, &value).await?; '
+                               'return Ok(FacadeCallOutput { value: facade_hooks_post(server, hooks, output).await?, rows: Some(rows) }); } ' + actor)
                 actor = ''
             producers = '' if r.get('server_door') else 'let producers = oneiron::memory::ProducerRows::default();\n'
             output = result if r.get('server_door') else f'let output = {result}'

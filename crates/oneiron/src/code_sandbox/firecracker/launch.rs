@@ -10,6 +10,7 @@ use crate::{
             MicroVmExit, MicroVmHandle,
         },
     },
+    engine_executor::{CANCEL_POLL_SLICE, StepCancellation},
 };
 use serde_json::json;
 use std::{
@@ -26,6 +27,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Boots one guest under its step's token (FIX 600). The watchdog ends this
+/// guest's own process group at its deadline or once `cancel` fires,
+/// whichever is first, and stops watching once the exchange is done.
 pub(super) fn run(
     config: &FirecrackerHostConfig,
     vm: &MicroVmHandle,
@@ -33,12 +37,16 @@ pub(super) fn run(
     budget: ExecutionBudget,
     proxy: &CredentialEgressProxy,
     transport: Option<&dyn CredentialReadTransport>,
+    cancel: &StepCancellation,
 ) -> Result<(MicroVmExit, Vec<SandboxProposalWrite>)> {
+    cancel.check()?;
     let (_jail_custody, jail_root, staged) = stage_images(config, vm, image, budget)?;
     // Firecracker's guest-initiated vsock connects to <uds_path>_<port>.
     // Bind BEFORE boot so there is no transport-ready race or permissive retry.
     let (_socket_directory, endpoint, listener) =
         bind_guest_listener(&jail_root, config.uid, config.gid)?;
+    // A step cancelled while its images staged boots no guest.
+    cancel.check()?;
     let mut command = jailer_command(config, vm, budget);
     let child = command
         .spawn()
@@ -52,10 +60,7 @@ pub(super) fn run(
     let output = std::thread::scope(|scope| {
         let endpoint = endpoint.clone();
         scope.spawn(move || {
-            if matches!(
-                wait.recv_timeout(Duration::from_secs(budget.wall_clock_secs)),
-                Err(mpsc::RecvTimeoutError::Timeout)
-            ) {
+            if watch(&wait, deadline, cancel) {
                 terminate(&child);
                 // Unblock accept without leaving a detached wait thread.
                 let _ = UnixStream::connect(endpoint);
@@ -66,7 +71,7 @@ pub(super) fn run(
                 .accept()
                 .map_err(|_| refused("guest connection failed"))?;
             let component = config::read_regular_bounded(&staged.component, 64 * 1024 * 1024)?;
-            protocol::exchange(
+            protocol::exchange_cancellable(
                 stream,
                 vm,
                 protocol::GuestProgram {
@@ -77,6 +82,7 @@ pub(super) fn run(
                 deadline,
                 proxy,
                 transport,
+                cancel,
             )
         })();
         let _ = finish.send(());
@@ -85,7 +91,30 @@ pub(super) fn run(
     // Success seals proposals then terminates this guest. Error and timeout
     // terminate it too. Never leave a guest running while collecting deltas.
     drop(custody);
+    // A cancel seen by the end wins over the error the killed guest left.
+    cancel.check()?;
     output
+}
+
+/// Waits for the exchange to finish, in slices of [`CANCEL_POLL_SLICE`]:
+/// `true` when the guest must be ended first, at its deadline or on its
+/// step's cancel.
+fn watch(finished: &mpsc::Receiver<()>, deadline: Instant, cancel: &StepCancellation) -> bool {
+    loop {
+        if cancel.is_cancelled() {
+            return true;
+        }
+        let Some(left) = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|left| !left.is_zero())
+        else {
+            return true;
+        };
+        match finished.recv_timeout(left.min(CANCEL_POLL_SLICE)) {
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => return false,
+        }
+    }
 }
 
 // Keep the directory descriptor alive until both the listener and watchdog are
