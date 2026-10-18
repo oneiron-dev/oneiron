@@ -30284,6 +30284,68 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/llm/catalog_doors/bindings.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/catalog_doors/mod.rs",
+     "purpose": "Catalog refresh is evidence, never permission to route",
+     "surface": {
+      "fn": 3,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/catalog_doors/trials.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ModelBindingAccept",
+      "ModelBindingProposal",
+      "ModelBindingProposalRef",
+      "ModelBindingPropose",
+      "ModelBindingRead",
+      "ModelBindingStatus",
+      "ModelCatalogChange",
+      "ModelCatalogDiff",
+      "ModelCatalogDiffRequest",
+      "ModelCatalogGet",
+      "ModelCatalogRefresh",
+      "ModelCatalogRevision",
+      "ModelTrialComplete",
+      "ModelTrialEvidence",
+      "ModelTrialNominate",
+      "ModelTrialRef",
+      "ModelTrialView"
+     ],
+     "path": "src/llm/catalog_doors/types.rs",
+     "purpose": "Typed catalog evidence, held-out trials and owner-reviewed role bindings",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "struct": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "AnswerActor"
      ],
@@ -30563,7 +30625,7 @@
      "path": "src/llm/decision/questions/graph_ask.rs",
      "purpose": "One-off graph judgment: scoped context, injected answerer, and proposed claims",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 6,
       "struct": 7,
@@ -30600,7 +30662,7 @@
      "path": "src/llm/decision/questions/mod.rs",
      "purpose": "Versioned questions, scoped answer receipts, and bound outcome labels",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 9,
       "re-export": 12
      }
     },
@@ -30611,6 +30673,7 @@
      "path": "src/llm/decision/questions/outcomes.rs",
      "purpose": "Idempotent outcome projection over durable facts and immutable question versions",
      "surface": {
+      "crate-vis": 1,
       "fn": 4
      }
     },
@@ -30673,7 +30736,7 @@
      "path": "src/llm/decision/questions/refresh.rs",
      "purpose": "Host-driven answer work: observe under principal, invoke provider outside a write transaction, then…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "fn": 8,
       "struct": 2
      }
@@ -30715,7 +30778,7 @@
      "path": "src/llm/decision/questions/store.rs",
      "purpose": "Immutable question versions and a CAS-updated scheduling head in the typed `TYPED_QUESTION` side table: one…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 5
      }
     },
@@ -31001,7 +31064,7 @@
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
       "crate-vis": 9,
-      "mod": 9,
+      "mod": 10,
       "re-export": 14
      }
     },
@@ -31012,6 +31075,7 @@
      "path": "src/llm/model_trials.rs",
      "purpose": "Per-question held-out trials nominated by external benchmark scores",
      "surface": {
+      "crate-vis": 7,
       "fn": 9,
       "re-export": 1
      }
@@ -31070,7 +31134,7 @@
      "path": "src/llm/registry.rs",
      "purpose": "Vault-persisted, priced model catalogs",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 16,
       "re-export": 2,
@@ -52724,7 +52788,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 944
+      "fn": 957
      }
     },
     {
@@ -59683,7 +59747,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 104,
+     "files": 108,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -60385,7 +60449,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3683,
+   "source_files": 3687,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68976,7 +69040,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 913
+      "fn": 926
      }
     },
     {
@@ -70039,7 +70103,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 914
+      "fn": 927
      }
     },
     {
@@ -73542,7 +73606,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 150
+      "crate-vis": 151
      }
     },
     {
@@ -73653,6 +73717,16 @@
      "purpose": "Credential-bound host projections of the typed speculative merge queue doors (DOOR-132)",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/model_catalog_doors.rs",
+     "purpose": "The model catalog is evidence",
+     "surface": {
+      "crate-vis": 13
      }
     },
     {
@@ -76094,7 +76168,7 @@
      "path": "src/big_rung.rs",
      "purpose": "The big model on the decision ladder's Big rung (ARCH-0076, OF-495)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -77593,7 +77667,7 @@
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…",
      "surface": {
       "const": 1,
-      "crate-vis": 20,
+      "crate-vis": 21,
       "fn": 25,
       "struct": 1
      }
@@ -81512,7 +81586,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 415,
+     "files": 416,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -81941,7 +82015,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 765,
+   "source_files": 766,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -82518,6 +82592,7 @@
       "Care",
       "CareLevel",
       "CaseDecision",
+      "CatalogSeed",
       "CellTypeRef",
       "ChangeKind",
       "ChannelCeiling",
@@ -83281,6 +83356,7 @@
       "ForkRecord",
       "ForkState",
       "ForkStatus",
+      "FrozenTrialCase",
       "GateCheckerReceipt",
       "GateCheckerSet",
       "GateCheckerView",
@@ -83367,6 +83443,7 @@
       "HeldMedia",
       "HeldOutCall",
       "HeldOutEvidence",
+      "HeldOutSelection",
       "HolderKind",
       "HookActorClass",
       "HookAuthor",
@@ -83704,6 +83781,8 @@
       "LiveVoiceUsage",
       "LiveVoiceUsageRequest",
       "LlmCapability",
+      "LlmCatalogCost",
+      "LlmCatalogEntry",
       "LlmError",
       "LlmInputUsage",
       "LlmMessage",
@@ -83787,7 +83866,25 @@
       "MetricSet",
       "MintConnectGrant",
       "ModeGateInputs",
+      "ModelBackendPin",
+      "ModelBinding",
+      "ModelBindingAccept",
+      "ModelBindingProposal",
+      "ModelBindingProposalRef",
+      "ModelBindingPropose",
+      "ModelBindingRead",
+      "ModelBindingStatus",
+      "ModelCatalogChange",
+      "ModelCatalogDiff",
+      "ModelCatalogDiffRequest",
+      "ModelCatalogGet",
+      "ModelCatalogRefresh",
+      "ModelCatalogRevision",
+      "ModelDisposition",
       "ModelLocality",
+      "ModelRegistryRow",
+      "ModelRole",
+      "ModelScoreDiff",
       "ModelSlot",
       "ModelStepCheckpoint",
       "ModelStepFailure",
@@ -83797,6 +83894,16 @@
       "ModelStepResult",
       "ModelStepRetryPolicy",
       "ModelStepSubmit",
+      "ModelTrialAction",
+      "ModelTrialComplete",
+      "ModelTrialEvidence",
+      "ModelTrialNominate",
+      "ModelTrialPolicy",
+      "ModelTrialReceipt",
+      "ModelTrialRef",
+      "ModelTrialRequest",
+      "ModelTrialView",
+      "ModelWireFormat",
       "MutationIntent",
       "NarrowConnect",
       "NativeOutputRequest",
@@ -84026,6 +84133,7 @@
       "PackSetupView",
       "PackTextFile",
       "PairedInterval",
+      "PairedQualityInterval",
       "PairedReading",
       "Paragraph",
       "PartialResultHold",
@@ -84110,6 +84218,7 @@
       "PrepSection",
       "PrepSectionKind",
       "Preset",
+      "PricedModelBackend",
       "PriorOrigin",
       "PriorRung",
       "PriorSeed",
@@ -84553,6 +84662,8 @@
       "ScopedReadResultRecordRefPreview",
       "ScopedReadResultTemporalSearchResult",
       "ScopedReadResultVectorSearchHitList",
+      "ScoreObservation",
+      "ScoreSnapshot",
       "ScoredEntityResolutionCandidate",
       "ScratchpadAppendRequest",
       "ScratchpadRecallMark",
@@ -85019,6 +85130,7 @@
       "TaskWaveRequest",
       "TasksOverflow",
       "TasksSection",
+      "TeacherProbeApproval",
       "TeamAxis",
       "TeamBindingView",
       "TeamPlan",
@@ -85056,6 +85168,10 @@
       "TranscriptFileDropInput",
       "TranscriptIngestOutcome",
       "TravelChoice",
+      "TrialAdmission",
+      "TrialAssessment",
+      "TrialQuality",
+      "TrialSetPin",
       "TrustedContact",
       "TrustedContactAcceptance",
       "TrustedContactAnswer",
@@ -85249,8 +85365,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 765,
-      "struct": 2345
+      "enum": 772,
+      "struct": 2380
      }
     },
     {

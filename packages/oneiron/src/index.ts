@@ -2586,6 +2586,28 @@ export class Oneiron {
       hit: (input: Facade.HostBudgetHitRequest): Facade.HostBudgetHitResult => this.#call(() => this.#client.hostBudgetHit(input) as Facade.HostBudgetHitResult),
     },
   }
+  /** Open the caller-scoped live graph or a retained repository snapshot, resolving a snapshot id to its exact fork hash. */
+  mount(input: Facade.GraphFsMountRequest): Facade.GraphFsMounted { return this.#call(() => this.#client.mount(input) as Facade.GraphFsMounted) }
+  readonly graph_fs = {
+    /** List one directory at the mounted reference under the caller read gate, with a sealed continuation. */
+    readdir: (input: Facade.GraphFsPathRequest): Facade.GraphFsDirectoryView => this.#call(() => this.#client.graphFsReaddir(input) as Facade.GraphFsDirectoryView),
+    /** Read a bounded page of file bytes at the mounted reference, with its encoding and sealed continuation. */
+    read_file: (input: Facade.GraphFsPathRequest): Facade.GraphFsOutput => this.#call(() => this.#client.graphFsReadFile(input) as Facade.GraphFsOutput),
+    /** Resolve a visible graph link at the mounted reference without following a host filesystem link. */
+    read_link: (input: Facade.GraphFsLinkRequest): Facade.GraphFsLinkView => this.#call(() => this.#client.graphFsReadLink(input) as Facade.GraphFsLinkView),
+    /** List names at the mounted reference, using the live temporal index when requested. */
+    ls: (input: Facade.GraphFsLsRequest): Facade.GraphFsOutput => this.#call(() => this.#client.graphFsLs(input) as Facade.GraphFsOutput),
+    /** Walk visible paths at the mounted reference, or push a live newer-than query into the temporal index. */
+    find: (input: Facade.GraphFsFindRequest): Facade.GraphFsOutput => this.#call(() => this.#client.graphFsFind(input) as Facade.GraphFsOutput),
+    /** Search visible mounted file bytes, using the live claim text index for supported recursive patterns. */
+    grep: (input: Facade.GraphFsGrepRequest): Facade.GraphFsOutput => this.#call(() => this.#client.graphFsGrep(input) as Facade.GraphFsOutput),
+    /** Read a bounded page of mounted file bytes as UTF-8 or base64 without changing its reference. */
+    cat: (input: Facade.GraphFsPathRequest): Facade.GraphFsOutput => this.#call(() => this.#client.graphFsCat(input) as Facade.GraphFsOutput),
+    /** Read the first requested lines at the mounted reference with bounded output and a sealed continuation. */
+    head: (input: Facade.GraphFsHeadRequest): Facade.GraphFsOutput => this.#call(() => this.#client.graphFsHead(input) as Facade.GraphFsOutput),
+    /** Count lines, words and bytes of a visible file at the mounted reference. */
+    wc: (input: Facade.GraphFsLinkRequest): Facade.GraphFsOutput => this.#call(() => this.#client.graphFsWc(input) as Facade.GraphFsOutput),
+  }
   /** Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent. */
   execute_code(input: Facade.ForeignCodeRunRequest): Facade.ForeignCodeRunResult { return this.#call(() => this.#client.executeCode(input) as Facade.ForeignCodeRunResult) }
   /** Read-only ask routing or attributed partial answers. */

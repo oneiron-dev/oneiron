@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 928 facade rows, 3185 declarations.
-Inputs: 872 of 928 fully typed, 56 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 830 of 928 fully typed, 98 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 938 facade rows, 3201 declarations.
+Inputs: 882 of 938 fully typed, 56 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 840 of 938 fully typed, 98 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
 """
 
@@ -8720,6 +8720,77 @@ class AnnotationStateRequest(TypedDict):
     artifact_ref: str
     thread_ref: str
     state: AnnotationThreadState
+class GraphFsReferenceLiveHead(TypedDict):
+    kind: Literal["live_head"]
+class GraphFsReferenceForkHash(TypedDict):
+    kind: Literal["fork_hash"]
+    repo: EntityId
+    hash: str
+class GraphFsReferenceRepoSnapshot(TypedDict):
+    kind: Literal["repo_snapshot"]
+    snapshot: EntityId
+GraphFsReference = GraphFsReferenceLiveHead | GraphFsReferenceForkHash | GraphFsReferenceRepoSnapshot
+class GraphFsMountRequest(TypedDict):
+    ref: GraphFsReference
+    page_byte_cap: NotRequired[int | None]
+    max_entries: NotRequired[int | None]
+class GraphFsMounted(TypedDict):
+    mount: GraphFsMountRequest
+    root: str
+    projection: str
+class GraphFsPathRequest(TypedDict):
+    mount: GraphFsMountRequest
+    path: str
+    cursor: NotRequired[str | None]
+GraphFsKind = Literal["directory", "file", "symlink", "cursor"]
+class GraphFsEntryView(TypedDict):
+    name: str
+    kind: GraphFsKind
+    target: NotRequired[str | None]
+    cursor: NotRequired[str | None]
+    byte_len: NotRequired[int | None]
+class GraphFsDirectoryView(TypedDict):
+    mount: GraphFsMountRequest
+    path: str
+    entries: list[GraphFsEntryView]
+    next_cursor: NotRequired[str | None]
+GraphFsEncoding = Literal["utf8", "base64"]
+GraphFsPlan = Literal["pushdown", "walk"]
+class GraphFsOutput(TypedDict):
+    mount: GraphFsMountRequest
+    path: str
+    output: str
+    encoding: GraphFsEncoding
+    next_cursor: NotRequired[str | None]
+    plan: GraphFsPlan
+class GraphFsLinkRequest(TypedDict):
+    mount: GraphFsMountRequest
+    path: str
+class GraphFsLinkView(TypedDict):
+    mount: GraphFsMountRequest
+    path: str
+    target: NotRequired[str | None]
+class GraphFsLsRequest(TypedDict):
+    mount: GraphFsMountRequest
+    path: str
+    cursor: NotRequired[str | None]
+    by_time: NotRequired[bool]
+class GraphFsFindRequest(TypedDict):
+    mount: GraphFsMountRequest
+    path: str
+    cursor: NotRequired[str | None]
+    newer_than: NotRequired[int | None]
+class GraphFsGrepRequest(TypedDict):
+    mount: GraphFsMountRequest
+    path: str
+    pattern: str
+    recursive: NotRequired[bool]
+    cursor: NotRequired[str | None]
+class GraphFsHeadRequest(TypedDict):
+    mount: GraphFsMountRequest
+    path: str
+    lines: NotRequired[int | None]
+    cursor: NotRequired[str | None]
 class CodeStateRequest(TypedDict):
     repo: str
     path: str

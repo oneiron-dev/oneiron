@@ -2461,6 +2461,56 @@ export_facade! {
     let output = client.vault_artifacts_threads_state(&input)?;
     crate::codec::lift_record("vault.artifacts.threads.state", &output)
 };
+"mount" => fn mount(&self, input: GraphFsMountRequest) -> GraphFsMounted = |client| {
+    let input: oneiron::memory::graph_fs_doors::GraphFsMountRequest = crate::codec::lower_record("mount", input)?;
+    let output = client.mount(&input)?;
+    crate::codec::lift_record("mount", &output)
+};
+"graph_fs.readdir" => fn graph_fs_readdir(&self, input: GraphFsPathRequest) -> GraphFsDirectoryView = |client| {
+    let input: oneiron::memory::graph_fs_doors::GraphFsPathRequest = crate::codec::lower_record("graph_fs.readdir", input)?;
+    let output = client.graph_fs_readdir(&input)?;
+    crate::codec::lift_record("graph_fs.readdir", &output)
+};
+"graph_fs.read_file" => fn graph_fs_read_file(&self, input: GraphFsPathRequest) -> GraphFsOutput = |client| {
+    let input: oneiron::memory::graph_fs_doors::GraphFsPathRequest = crate::codec::lower_record("graph_fs.read_file", input)?;
+    let output = client.graph_fs_read_file(&input)?;
+    crate::codec::lift_record("graph_fs.read_file", &output)
+};
+"graph_fs.read_link" => fn graph_fs_read_link(&self, input: GraphFsLinkRequest) -> GraphFsLinkView = |client| {
+    let input: oneiron::memory::graph_fs_doors::GraphFsLinkRequest = crate::codec::lower_record("graph_fs.read_link", input)?;
+    let output = client.graph_fs_read_link(&input)?;
+    crate::codec::lift_record("graph_fs.read_link", &output)
+};
+"graph_fs.ls" => fn graph_fs_ls(&self, input: GraphFsLsRequest) -> GraphFsOutput = |client| {
+    let input: oneiron::memory::graph_fs_doors::GraphFsLsRequest = crate::codec::lower_record("graph_fs.ls", input)?;
+    let output = client.graph_fs_ls(&input)?;
+    crate::codec::lift_record("graph_fs.ls", &output)
+};
+"graph_fs.find" => fn graph_fs_find(&self, input: GraphFsFindRequest) -> GraphFsOutput = |client| {
+    let input: oneiron::memory::graph_fs_doors::GraphFsFindRequest = crate::codec::lower_record("graph_fs.find", input)?;
+    let output = client.graph_fs_find(&input)?;
+    crate::codec::lift_record("graph_fs.find", &output)
+};
+"graph_fs.grep" => fn graph_fs_grep(&self, input: GraphFsGrepRequest) -> GraphFsOutput = |client| {
+    let input: oneiron::memory::graph_fs_doors::GraphFsGrepRequest = crate::codec::lower_record("graph_fs.grep", input)?;
+    let output = client.graph_fs_grep(&input)?;
+    crate::codec::lift_record("graph_fs.grep", &output)
+};
+"graph_fs.cat" => fn graph_fs_cat(&self, input: GraphFsPathRequest) -> GraphFsOutput = |client| {
+    let input: oneiron::memory::graph_fs_doors::GraphFsPathRequest = crate::codec::lower_record("graph_fs.cat", input)?;
+    let output = client.graph_fs_cat(&input)?;
+    crate::codec::lift_record("graph_fs.cat", &output)
+};
+"graph_fs.head" => fn graph_fs_head(&self, input: GraphFsHeadRequest) -> GraphFsOutput = |client| {
+    let input: oneiron::memory::graph_fs_doors::GraphFsHeadRequest = crate::codec::lower_record("graph_fs.head", input)?;
+    let output = client.graph_fs_head(&input)?;
+    crate::codec::lift_record("graph_fs.head", &output)
+};
+"graph_fs.wc" => fn graph_fs_wc(&self, input: GraphFsLinkRequest) -> GraphFsOutput = |client| {
+    let input: oneiron::memory::graph_fs_doors::GraphFsLinkRequest = crate::codec::lower_record("graph_fs.wc", input)?;
+    let output = client.graph_fs_wc(&input)?;
+    crate::codec::lift_record("graph_fs.wc", &output)
+};
 "vault.code.diff" => fn vault_code_diff(&self, input: CodeDiffRequest) -> Option<CodeDiffView> = |client| {
     let input: oneiron::code_document::CodeDiffRequest = crate::codec::lower_record("vault.code.diff", input)?;
     let output = client.vault_code_diff(&input)?;

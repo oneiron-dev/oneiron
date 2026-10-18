@@ -2663,6 +2663,66 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "mount",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::graph_fs_doors::GraphFsMountRequest,
+                >(),
+            ),
+            (
+                "graph_fs.readdir",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::graph_fs_doors::GraphFsPathRequest,
+                >(),
+            ),
+            (
+                "graph_fs.read_file",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::graph_fs_doors::GraphFsPathRequest,
+                >(),
+            ),
+            (
+                "graph_fs.read_link",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::graph_fs_doors::GraphFsLinkRequest,
+                >(),
+            ),
+            (
+                "graph_fs.ls",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::graph_fs_doors::GraphFsLsRequest,
+                >(),
+            ),
+            (
+                "graph_fs.find",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::graph_fs_doors::GraphFsFindRequest,
+                >(),
+            ),
+            (
+                "graph_fs.grep",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::graph_fs_doors::GraphFsGrepRequest,
+                >(),
+            ),
+            (
+                "graph_fs.cat",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::graph_fs_doors::GraphFsPathRequest,
+                >(),
+            ),
+            (
+                "graph_fs.head",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::graph_fs_doors::GraphFsHeadRequest,
+                >(),
+            ),
+            (
+                "graph_fs.wc",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::graph_fs_doors::GraphFsLinkRequest,
+                >(),
+            ),
+            (
                 "vault.code.diff",
                 crate::code_run::vault_read::request_schema::<crate::code_document::CodeDiffRequest>(
                 ),
@@ -5553,6 +5613,16 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.artifacts.threads.list",
     "vault.artifacts.threads.assign",
     "vault.artifacts.threads.state",
+    "mount",
+    "graph_fs.readdir",
+    "graph_fs.read_file",
+    "graph_fs.read_link",
+    "graph_fs.ls",
+    "graph_fs.find",
+    "graph_fs.grep",
+    "graph_fs.cat",
+    "graph_fs.head",
+    "graph_fs.wc",
     "vault.code.proposal_submit",
     "vault.code.conflict_record",
     "vault.code.conflict_view",
@@ -6794,6 +6864,36 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.artifacts.threads.state" => crate::code_run::vault_read::request_schema::<
             crate::anchored_annotation::AnnotationThreadView,
+        >(),
+        "mount" => crate::code_run::vault_read::request_schema::<
+            crate::memory::graph_fs_doors::GraphFsMounted,
+        >(),
+        "graph_fs.readdir" => crate::code_run::vault_read::request_schema::<
+            crate::memory::graph_fs_doors::GraphFsDirectoryView,
+        >(),
+        "graph_fs.read_file" => crate::code_run::vault_read::request_schema::<
+            crate::memory::graph_fs_doors::GraphFsOutput,
+        >(),
+        "graph_fs.read_link" => crate::code_run::vault_read::request_schema::<
+            crate::memory::graph_fs_doors::GraphFsLinkView,
+        >(),
+        "graph_fs.ls" => crate::code_run::vault_read::request_schema::<
+            crate::memory::graph_fs_doors::GraphFsOutput,
+        >(),
+        "graph_fs.find" => crate::code_run::vault_read::request_schema::<
+            crate::memory::graph_fs_doors::GraphFsOutput,
+        >(),
+        "graph_fs.grep" => crate::code_run::vault_read::request_schema::<
+            crate::memory::graph_fs_doors::GraphFsOutput,
+        >(),
+        "graph_fs.cat" => crate::code_run::vault_read::request_schema::<
+            crate::memory::graph_fs_doors::GraphFsOutput,
+        >(),
+        "graph_fs.head" => crate::code_run::vault_read::request_schema::<
+            crate::memory::graph_fs_doors::GraphFsOutput,
+        >(),
+        "graph_fs.wc" => crate::code_run::vault_read::request_schema::<
+            crate::memory::graph_fs_doors::GraphFsOutput,
         >(),
         "vault.code.proposal_submit" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_doors::CodeProposalSubmitted,
@@ -11058,6 +11158,76 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.artifacts.threads.state" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "mount" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "graph_fs.readdir" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "graph_fs.read_file" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "graph_fs.read_link" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "graph_fs.ls" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "graph_fs.find" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "graph_fs.grep" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "graph_fs.cat" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "graph_fs.head" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "graph_fs.wc" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -15798,6 +15968,36 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.artifacts.threads.state" => {
             let _input: crate::anchored_annotation::AnnotationStateRequest = decode(value.clone())?;
         }
+        "mount" => {
+            let _input: crate::memory::graph_fs_doors::GraphFsMountRequest = decode(value.clone())?;
+        }
+        "graph_fs.readdir" => {
+            let _input: crate::memory::graph_fs_doors::GraphFsPathRequest = decode(value.clone())?;
+        }
+        "graph_fs.read_file" => {
+            let _input: crate::memory::graph_fs_doors::GraphFsPathRequest = decode(value.clone())?;
+        }
+        "graph_fs.read_link" => {
+            let _input: crate::memory::graph_fs_doors::GraphFsLinkRequest = decode(value.clone())?;
+        }
+        "graph_fs.ls" => {
+            let _input: crate::memory::graph_fs_doors::GraphFsLsRequest = decode(value.clone())?;
+        }
+        "graph_fs.find" => {
+            let _input: crate::memory::graph_fs_doors::GraphFsFindRequest = decode(value.clone())?;
+        }
+        "graph_fs.grep" => {
+            let _input: crate::memory::graph_fs_doors::GraphFsGrepRequest = decode(value.clone())?;
+        }
+        "graph_fs.cat" => {
+            let _input: crate::memory::graph_fs_doors::GraphFsPathRequest = decode(value.clone())?;
+        }
+        "graph_fs.head" => {
+            let _input: crate::memory::graph_fs_doors::GraphFsHeadRequest = decode(value.clone())?;
+        }
+        "graph_fs.wc" => {
+            let _input: crate::memory::graph_fs_doors::GraphFsLinkRequest = decode(value.clone())?;
+        }
         "vault.code.diff" => {
             let _input: crate::code_document::CodeDiffRequest = decode(value.clone())?;
         }
@@ -18382,6 +18582,16 @@ pub fn invoke(
         "vault.artifacts.threads.state" => {
             encode(vault_artifacts_threads_state(memory, decode(value)?)?)
         }
+        "mount" => encode(mount(memory, decode(value)?)?),
+        "graph_fs.readdir" => encode(graph_fs_readdir(memory, decode(value)?)?),
+        "graph_fs.read_file" => encode(graph_fs_read_file(memory, decode(value)?)?),
+        "graph_fs.read_link" => encode(graph_fs_read_link(memory, decode(value)?)?),
+        "graph_fs.ls" => encode(graph_fs_ls(memory, decode(value)?)?),
+        "graph_fs.find" => encode(graph_fs_find(memory, decode(value)?)?),
+        "graph_fs.grep" => encode(graph_fs_grep(memory, decode(value)?)?),
+        "graph_fs.cat" => encode(graph_fs_cat(memory, decode(value)?)?),
+        "graph_fs.head" => encode(graph_fs_head(memory, decode(value)?)?),
+        "graph_fs.wc" => encode(graph_fs_wc(memory, decode(value)?)?),
         "vault.code.diff" => encode(vault_code_diff(memory, decode(value)?)?),
         "vault.code.blame" => encode(vault_code_blame(memory, decode(value)?)?),
         "vault.code.proposal_view" => encode(vault_code_proposal_view(memory, decode(value)?)?),
@@ -23446,6 +23656,66 @@ pub fn vault_artifacts_threads_state(
         &["/artifact_ref"],
     )?;
     memory.artifacts_threads_state(&input)
+}
+pub fn mount(
+    memory: &Memory<'_>,
+    input: crate::memory::graph_fs_doors::GraphFsMountRequest,
+) -> MemoryResult<crate::memory::graph_fs_doors::GraphFsMounted> {
+    memory.graph_fs_mount(input)
+}
+pub fn graph_fs_readdir(
+    memory: &Memory<'_>,
+    input: crate::memory::graph_fs_doors::GraphFsPathRequest,
+) -> MemoryResult<crate::memory::graph_fs_doors::GraphFsDirectoryView> {
+    memory.graph_fs_readdir(input)
+}
+pub fn graph_fs_read_file(
+    memory: &Memory<'_>,
+    input: crate::memory::graph_fs_doors::GraphFsPathRequest,
+) -> MemoryResult<crate::memory::graph_fs_doors::GraphFsOutput> {
+    memory.graph_fs_read_file(input)
+}
+pub fn graph_fs_read_link(
+    memory: &Memory<'_>,
+    input: crate::memory::graph_fs_doors::GraphFsLinkRequest,
+) -> MemoryResult<crate::memory::graph_fs_doors::GraphFsLinkView> {
+    memory.graph_fs_read_link(input)
+}
+pub fn graph_fs_ls(
+    memory: &Memory<'_>,
+    input: crate::memory::graph_fs_doors::GraphFsLsRequest,
+) -> MemoryResult<crate::memory::graph_fs_doors::GraphFsOutput> {
+    memory.graph_fs_ls(input)
+}
+pub fn graph_fs_find(
+    memory: &Memory<'_>,
+    input: crate::memory::graph_fs_doors::GraphFsFindRequest,
+) -> MemoryResult<crate::memory::graph_fs_doors::GraphFsOutput> {
+    memory.graph_fs_find(input)
+}
+pub fn graph_fs_grep(
+    memory: &Memory<'_>,
+    input: crate::memory::graph_fs_doors::GraphFsGrepRequest,
+) -> MemoryResult<crate::memory::graph_fs_doors::GraphFsOutput> {
+    memory.graph_fs_grep(input)
+}
+pub fn graph_fs_cat(
+    memory: &Memory<'_>,
+    input: crate::memory::graph_fs_doors::GraphFsPathRequest,
+) -> MemoryResult<crate::memory::graph_fs_doors::GraphFsOutput> {
+    memory.graph_fs_cat(input)
+}
+pub fn graph_fs_head(
+    memory: &Memory<'_>,
+    input: crate::memory::graph_fs_doors::GraphFsHeadRequest,
+) -> MemoryResult<crate::memory::graph_fs_doors::GraphFsOutput> {
+    memory.graph_fs_head(input)
+}
+pub fn graph_fs_wc(
+    memory: &Memory<'_>,
+    input: crate::memory::graph_fs_doors::GraphFsLinkRequest,
+) -> MemoryResult<crate::memory::graph_fs_doors::GraphFsOutput> {
+    memory.graph_fs_wc(input)
 }
 pub fn vault_code_diff(
     memory: &Memory<'_>,

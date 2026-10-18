@@ -1555,6 +1555,36 @@ impl OneironClient {
                 "vault.artifacts.threads.state" => remote_agent_verb_output::<
                     oneiron::anchored_annotation::AnnotationThreadView,
                 >(client, verb, &input),
+                "mount" => remote_agent_verb_output::<
+                    oneiron::memory::graph_fs_doors::GraphFsMounted,
+                >(client, verb, &input),
+                "graph_fs.readdir" => remote_agent_verb_output::<
+                    oneiron::memory::graph_fs_doors::GraphFsDirectoryView,
+                >(client, verb, &input),
+                "graph_fs.read_file" => remote_agent_verb_output::<
+                    oneiron::memory::graph_fs_doors::GraphFsOutput,
+                >(client, verb, &input),
+                "graph_fs.read_link" => remote_agent_verb_output::<
+                    oneiron::memory::graph_fs_doors::GraphFsLinkView,
+                >(client, verb, &input),
+                "graph_fs.ls" => remote_agent_verb_output::<
+                    oneiron::memory::graph_fs_doors::GraphFsOutput,
+                >(client, verb, &input),
+                "graph_fs.find" => remote_agent_verb_output::<
+                    oneiron::memory::graph_fs_doors::GraphFsOutput,
+                >(client, verb, &input),
+                "graph_fs.grep" => remote_agent_verb_output::<
+                    oneiron::memory::graph_fs_doors::GraphFsOutput,
+                >(client, verb, &input),
+                "graph_fs.cat" => remote_agent_verb_output::<
+                    oneiron::memory::graph_fs_doors::GraphFsOutput,
+                >(client, verb, &input),
+                "graph_fs.head" => remote_agent_verb_output::<
+                    oneiron::memory::graph_fs_doors::GraphFsOutput,
+                >(client, verb, &input),
+                "graph_fs.wc" => remote_agent_verb_output::<
+                    oneiron::memory::graph_fs_doors::GraphFsOutput,
+                >(client, verb, &input),
                 "vault.code.diff" => remote_agent_verb_output::<
                     Option<oneiron::code_document::CodeDiffView>,
                 >(client, verb, &input),
@@ -8961,6 +8991,126 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.artifacts.threads.state", value)
+    }
+    pub fn mount(
+        &self,
+        input: &oneiron::memory::graph_fs_doors::GraphFsMountRequest,
+    ) -> Result<oneiron::memory::graph_fs_doors::GraphFsMounted, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("mount", value)
+    }
+    pub fn graph_fs_readdir(
+        &self,
+        input: &oneiron::memory::graph_fs_doors::GraphFsPathRequest,
+    ) -> Result<oneiron::memory::graph_fs_doors::GraphFsDirectoryView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("graph_fs.readdir", value)
+    }
+    pub fn graph_fs_read_file(
+        &self,
+        input: &oneiron::memory::graph_fs_doors::GraphFsPathRequest,
+    ) -> Result<oneiron::memory::graph_fs_doors::GraphFsOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("graph_fs.read_file", value)
+    }
+    pub fn graph_fs_read_link(
+        &self,
+        input: &oneiron::memory::graph_fs_doors::GraphFsLinkRequest,
+    ) -> Result<oneiron::memory::graph_fs_doors::GraphFsLinkView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("graph_fs.read_link", value)
+    }
+    pub fn graph_fs_ls(
+        &self,
+        input: &oneiron::memory::graph_fs_doors::GraphFsLsRequest,
+    ) -> Result<oneiron::memory::graph_fs_doors::GraphFsOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("graph_fs.ls", value)
+    }
+    pub fn graph_fs_find(
+        &self,
+        input: &oneiron::memory::graph_fs_doors::GraphFsFindRequest,
+    ) -> Result<oneiron::memory::graph_fs_doors::GraphFsOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("graph_fs.find", value)
+    }
+    pub fn graph_fs_grep(
+        &self,
+        input: &oneiron::memory::graph_fs_doors::GraphFsGrepRequest,
+    ) -> Result<oneiron::memory::graph_fs_doors::GraphFsOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("graph_fs.grep", value)
+    }
+    pub fn graph_fs_cat(
+        &self,
+        input: &oneiron::memory::graph_fs_doors::GraphFsPathRequest,
+    ) -> Result<oneiron::memory::graph_fs_doors::GraphFsOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("graph_fs.cat", value)
+    }
+    pub fn graph_fs_head(
+        &self,
+        input: &oneiron::memory::graph_fs_doors::GraphFsHeadRequest,
+    ) -> Result<oneiron::memory::graph_fs_doors::GraphFsOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("graph_fs.head", value)
+    }
+    pub fn graph_fs_wc(
+        &self,
+        input: &oneiron::memory::graph_fs_doors::GraphFsLinkRequest,
+    ) -> Result<oneiron::memory::graph_fs_doors::GraphFsOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("graph_fs.wc", value)
     }
     /// The semantic changes between two tested states of one code file, each with the operations that made it.
     pub fn vault_code_diff(
