@@ -267,6 +267,12 @@ impl<'a> HostSelfDispatcher<'a> {
         // carve the ask's budget narrows.
         let planned = self.planner_bound() && self.agent_lease.is_some();
         let (target, context) = match (call.ask, call.target) {
+            // DOOR-111 S4c-4: with the run's own pattern runner bound too,
+            // the ask is reserved under its intent key and launched whole, a
+            // team as one group; a host that binds none plans it below.
+            (Some(ask), _) if planned && self.pattern_runner_bound() => {
+                return self.launch_planned_spawn(call.intent_key, ask, call.context, now);
+            }
             (Some(ask), _) if planned => self.planned_spawn(call.context, ask, now)?,
             (ask, Some(target)) => {
                 let mut context = call.context;

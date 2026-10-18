@@ -13,33 +13,54 @@
 //! rechecks the tree or admits depth. No owner proof stands in for the
 //! agent.
 //!
-//! The exact pack a team's start ran on is frozen here with that start
-//! (S4c-3), for the owner's launch and a leased one alike: the leader reads
-//! its pattern from the snapshot, never from the skill's current head.
+//! The exact pack a team's start ran on is frozen with that start (S4c-3),
+//! for the owner's launch and a leased one alike. The team's leader reads
+//! it here (S4c-5): its dispatch dedupe key names the intent, and a retry
+//! or continuation of it, which carries the same key, leads the same team.
+//! Its run reads the pattern from the snapshot, never from the skill's
+//! current head, and records the pack on its own lease, once.
 
-use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+
+use serde::Serialize;
 
 use crate::agent_dispatch::widen_record::invalid;
 use crate::agent_dispatch::{
-    AgentDispatcher, CommReach, LivePlanRequest, SpawnPlanReceipt, TeamRunStamp,
+    AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatcher, CommReach, LivePlanRequest, SpawnPlanReceipt,
+    TeamRunStamp,
 };
-use crate::attempt_queue::AttemptRecord;
-use crate::code_run::SelfSpawnAsk;
+use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ManifestEntry, ManifestKind};
+use crate::code_run::{SelfSpawnAsk, TaskExposure};
 use crate::context_projection::ContextSpec;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::failure_ladder::HealerCase;
-use crate::skill::LoadedSkillPack;
 use crate::task_type::TaskTypeRef;
-use crate::team::{LeasedSpawnRequest, PlannedIntentView, PlannedSpawnHost};
+use crate::team::{LeasedSpawnRequest, PlannedIntentView, PlannedLeaderLaunch, PlannedSpawnHost};
 use crate::workspace_roster::RoomWork;
 
-use super::{Asker, IntentAsk, IntentName, Reserved};
+use super::{Asker, INTENTS, IntentAsk, IntentName, IntentPhase, Reserved};
 
 /// Domain of a leased intent's request digest.
 const LEASED_ASK_DIGEST_CONTEXT: &str = "oneiron spawn leased intent ask v1";
-/// Domain of a frozen pattern pack's body hash.
-const PACK_BODY_CONTEXT: &str = "oneiron spawn frozen pattern pack body v1";
+/// A planned group's leader's dispatch dedupe key, past the dispatch's own
+/// prefix: `planned:<intent row key hex>:leader`. A member's ends
+/// `:member:<n>`, so it names no leader.
+const LEADER_KEY_PREFIX: &str = ":planned:";
+const LEADER_KEY_SUFFIX: &str = ":leader";
+
+const LEADER_DAMAGED: &str = "this planned leader's launch is damaged: its intent is missing or \
+     not launched, its launch queued another leader, or its team lacks the start or the frozen \
+     pack; spawn the team again under a new intent key";
+const PACK_DAMAGED: &str = "this planned leader's frozen pattern pack is not the revision its \
+     plan froze, or its files no longer match their hash; nothing newer is loaded in its place; \
+     spawn the team again under a new intent key";
+const NOT_A_LEADER: &str = "this attempt leads no planned team, so there is no frozen pattern \
+     pack to record for it; run it as the agent it is";
+const NOT_THE_PACK: &str = "this exposure is not the planned leader's frozen pattern pack; expose \
+     the pack its launch froze, under that skill and revision";
+const LEASE_UNHELD: &str = "a planned leader's pack is recorded under its run's live lease; run \
+     the leader under the lease its claim took";
 
 /// The original leased request as its digest reads it: the key, the planner
 /// ask and the context as the agent asked for it, on its parent's run.
@@ -61,51 +82,6 @@ struct LeasedAsk<'a> {
     team: Option<&'a TeamRunStamp>,
     healer_case: Option<&'a HealerCase>,
     run_id: Option<&'a str>,
-}
-
-/// The exact pattern pack a team's start ran on, frozen with that start
-/// (DOOR-111 S4c-3): the entity that loaded, its `skill_id` and revision,
-/// the admitted files as they loaded and their body hash.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct FrozenPatternPack {
-    entity: EntityId,
-    skill_id: String,
-    version: String,
-    /// The files, path and bytes; `None` for a native record-only skill,
-    /// which has no file tree.
-    files: Option<Vec<FrozenPackFile>>,
-    body_hash: [u8; 32],
-}
-
-/// One admitted file of a frozen pack. Rule 5 caps no file.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct FrozenPackFile {
-    path: String,
-    content: Vec<u8>,
-}
-
-impl FrozenPatternPack {
-    /// The snapshot of `pack` as it loaded.
-    pub(super) fn of(pack: &LoadedSkillPack) -> Self {
-        let files: Option<Vec<FrozenPackFile>> = pack.source_files.as_ref().map(|files| {
-            files
-                .iter()
-                .map(|file| FrozenPackFile {
-                    path: file.path.clone(),
-                    content: file.content.clone(),
-                })
-                .collect()
-        });
-        Self {
-            entity: pack.entity,
-            skill_id: pack.record.skill_id.clone(),
-            version: pack.record.version.clone(),
-            body_hash: pack_body_hash(files.as_deref()),
-            files,
-        }
-    }
 }
 
 impl AgentDispatcher<'_> {
@@ -217,6 +193,158 @@ impl AgentDispatcher<'_> {
                 )
             })
     }
+
+    /// The planned team `leader` leads, as its launch froze it (DOOR-111
+    /// S4c-5): the team, its members in launch order, the start the pattern
+    /// runner wrote and the exact pack that start ran on, with where the
+    /// leader's last fresh run put that pack's SKILL.md in its task. The
+    /// leader's dispatch dedupe key names the intent, and a retry or
+    /// continuation of the leader, which carries the same key, leads it too.
+    /// `None` for an attempt that leads no planned team: a planned solo, a
+    /// member carrying the same plan, or any other run.
+    ///
+    /// # Errors
+    ///
+    /// A damaged launch, never `None`: an intent the key names that is
+    /// missing or not launched, a leader the launch did not queue, a team
+    /// without its start or its pack, or a pack that is not its plan's
+    /// revision or no longer holds the bytes it hashed; storage errors.
+    pub fn planned_launch_for_leader(
+        &self,
+        leader: AttemptId,
+    ) -> Result<Option<PlannedLeaderLaunch>> {
+        let txn = self.vault.store.env.read_txn()?;
+        Ok(self
+            .planned_leader_in_txn(&txn, leader)?
+            .map(|(_, launch)| launch))
+    }
+
+    /// Records a planned leader's run on its own lease (DOOR-111 S4c-5), in
+    /// one writer that proves the lease and reads the launch again: the
+    /// frozen pack's manifest row, once (a row of the same skill and
+    /// revision already on the attempt stands for it, since a manifest
+    /// append keeps every row), the executor that runs it when the attempt
+    /// names none yet, and `exposure`, where the run put the pack's SKILL.md
+    /// in its task, which a continuation of the run reuses.
+    ///
+    /// # Errors
+    ///
+    /// An attempt that leads no planned team, or no longer holds the lease
+    /// `leased` names; an exposure of anything but the frozen pack; as
+    /// [`Self::planned_launch_for_leader`]; storage errors.
+    pub fn record_planned_leader_run(
+        &self,
+        leased: &AttemptRecord,
+        exposure: &TaskExposure,
+        executor: &str,
+        at: u64,
+    ) -> Result<()> {
+        let lease_owner = leased
+            .lease_owner
+            .as_deref()
+            .ok_or_else(|| invalid(LEASE_UNHELD))?;
+        let mut txn = self.vault.store.env.write_txn()?;
+        let (key, launch) = self
+            .planned_leader_in_txn(&txn, leased.id)?
+            .ok_or_else(|| invalid(NOT_A_LEADER))?;
+        let pack = &launch.pack;
+        let entry = ManifestEntry::new(ManifestKind::Skill, pack.skill_id(), pack.version(), at);
+        if exposure.skill != pack.entity()
+            || exposure.revision != entry.wire_form()
+            || exposure.start > exposure.end
+        {
+            return Err(invalid(NOT_THE_PACK));
+        }
+        self.vault
+            .record_manifest_once_in_txn(&mut txn, leased, lease_owner, executor, entry)?;
+        let mut row = INTENTS
+            .get(&self.vault.store, &txn, &key)?
+            .ok_or_else(|| invalid(LEADER_DAMAGED))?;
+        row.leader_exposure = Some(exposure.clone());
+        row.updated_at = at;
+        INTENTS.put(&self.vault.store, &mut txn, &key, &row)?;
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// The planned team `leader` leads and its intent's row key, read on
+    /// `txn` as [`Self::planned_launch_for_leader`] reads it.
+    fn planned_leader_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        leader: AttemptId,
+    ) -> Result<Option<([u8; 32], PlannedLeaderLaunch)>> {
+        let Some(record) = AttemptQueue::new(self.vault).get_in_txn(txn, leader)? else {
+            return Ok(None);
+        };
+        let Some(key) = leader_intent_key(&record)? else {
+            return Ok(None);
+        };
+        let row = INTENTS
+            .get(&self.vault.store, txn, &key)?
+            .filter(|row| row.phase == IntentPhase::Launched)
+            .ok_or_else(|| invalid(LEADER_DAMAGED))?;
+        let root = row.root_attempt.ok_or_else(|| invalid(LEADER_DAMAGED))?;
+        if !self.leads_in_txn(txn, &record, root)? {
+            return Err(invalid(LEADER_DAMAGED));
+        }
+        let pattern = row
+            .plan
+            .as_ref()
+            .and_then(|plan| plan.plan.pattern_skill.as_ref());
+        let (team_ref, start, pack) = match (row.team_ref, row.pattern_launch, row.pattern_pack) {
+            // A planned solo leads no team.
+            (None, None, None) => return Ok(None),
+            (Some(team_ref), Some(start), Some(pack)) => (team_ref, start, pack),
+            _ => return Err(invalid(LEADER_DAMAGED)),
+        };
+        let frozen = pattern.is_some_and(|pattern| {
+            pattern.skill == pack.entity() && pattern.version == pack.version()
+        });
+        if !frozen || !pack.holds_body() {
+            return Err(invalid(PACK_DAMAGED));
+        }
+        let launch = PlannedLeaderLaunch {
+            team_ref,
+            members: row.member_attempts,
+            start,
+            pack,
+            exposure: row.leader_exposure,
+        };
+        Ok(Some((key, launch)))
+    }
+
+    /// Whether `attempt` is `root`, the leader its launch queued, or a retry
+    /// or continuation of it: each try back through its predecessor carries
+    /// the leader's dedupe key, and the walk reaches `root`.
+    fn leads_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        attempt: &AttemptRecord,
+        root: AttemptId,
+    ) -> Result<bool> {
+        let queue = AttemptQueue::new(self.vault);
+        let mut seen = HashSet::new();
+        let mut current = attempt.id;
+        let mut previous = attempt.retry_of;
+        while current != root {
+            let Some(id) = previous else {
+                return Ok(false);
+            };
+            if !seen.insert(id) {
+                return Ok(false);
+            }
+            let Some(record) = queue.get_in_txn(txn, id)? else {
+                return Ok(false);
+            };
+            if record.dedupe_key != attempt.dedupe_key {
+                return Ok(false);
+            }
+            current = id;
+            previous = record.retry_of;
+        }
+        Ok(true)
+    }
 }
 
 impl<'a> IntentName<'a> {
@@ -283,24 +411,18 @@ fn leased_ask_digest(request: &LeasedSpawnRequest, run_id: Option<&str>) -> Resu
     Ok(*hasher.finalize().as_bytes())
 }
 
-/// A frozen pack's body hash: BLAKE3 over its files, each path and its
-/// bytes framed, in load order; a record-only pack frames none.
-fn pack_body_hash(files: Option<&[FrozenPackFile]>) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key(PACK_BODY_CONTEXT);
-    match files {
-        None => {
-            hasher.update(&[0]);
-        }
-        Some(files) => {
-            hasher.update(&[1]);
-            hasher.update(&(files.len() as u64).to_be_bytes());
-            for file in files {
-                hasher.update(&(file.path.len() as u64).to_be_bytes());
-                hasher.update(file.path.as_bytes());
-                hasher.update(&(file.content.len() as u64).to_be_bytes());
-                hasher.update(&file.content);
-            }
-        }
-    }
-    *hasher.finalize().as_bytes()
+/// The intent row key a planned leader's dispatch dedupe key names; `None`
+/// for an attempt queued under any other key, a member's included.
+fn leader_intent_key(record: &AttemptRecord) -> Result<Option<[u8; 32]>> {
+    let Some(hex) = record
+        .dedupe_key
+        .as_deref()
+        .and_then(|key| key.strip_prefix(AGENT_DISPATCH_ATTEMPT_TYPE))
+        .and_then(|key| key.strip_prefix(LEADER_KEY_PREFIX))
+        .and_then(|key| key.strip_suffix(LEADER_KEY_SUFFIX))
+    else {
+        return Ok(None);
+    };
+    let key = blake3::Hash::from_hex(hex).map_err(|_| invalid(LEADER_DAMAGED))?;
+    Ok(Some(*key.as_bytes()))
 }

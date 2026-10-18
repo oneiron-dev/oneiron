@@ -416,6 +416,9 @@ export class Oneiron {
    * `queryAffect` (`{ valence, arousal, dominance }`: valence in -1..1,
    * arousal and dominance in 0..1) ranks by emotion congruence, embedded and
    * remote alike; out of range it returns `BAD_REQUEST`.
+   * Explicit `scope.worldRef` recalls of retained foreign worlds carry
+   * `item.stale`: `staleSince` and `ageSecs` (when known), `reason` and
+   * `pactEpoch`. This selection grants no read authority.
    */
     recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media, opts.queryAffect)),
     retrieval: {
@@ -1015,9 +1018,38 @@ export class Oneiron {
     evals: {
       /** The owner reads the metadata-only eval-authoring inventory: real receipt families, grounded case candidates, date-cut cohorts and exposure counts. Pin its built_at and digest for cohort setup. */
       inventory: (input: Facade.EvalInventoryWire): Facade.EvalAuthoringInventory => this.#call(() => this.#client.vaultEvalsInventory(input) as Facade.EvalAuthoringInventory),
-      cohorts: {
+      /** Read date-cut cohorts, the fixed reference, retirement decisions, exposure counts and near-copy audits; similarity flags review only. */
+      cohorts: Object.assign((input: Facade.EvalSeatRequest): Facade.EvalCohortView[] => this.#call(() => this.#client.vaultEvalsCohorts(input) as Facade.EvalCohortView[]), {
         /** The owner sets up sealed cohorts from a pinned real inventory through the existing family, case and audited cut doors. Reports refused decisions; never serves sealed content or fabricates labels or skill provenance. */
         setup: (input: Facade.EvalCohortSetup): Facade.EvalAuthoringReport => this.#call(() => this.#client.vaultEvalsCohortsSetup(input) as Facade.EvalAuthoringReport),
+        /** Count a candidate, query or promotion serving before releasing its sealed cohort in the same owner-validated transaction; retired cohorts refuse. */
+        open: (input: Facade.EvalCohortOpenRequest): Facade.EvalRelease => this.#call(() => this.#client.vaultEvalsCohortsOpen(input) as Facade.EvalRelease),
+      }),
+      /** Queue the production Coach eval-authoring pass, coalescing with nightly work; the caller supplies no plan, skill provenance or lease. */
+      author_now: (input: Facade.EvalAuthorNowRequest): Facade.EvalAuthoringRef => this.#call(() => this.#client.vaultEvalsAuthorNow(input) as Facade.EvalAuthoringRef),
+      authoring: {
+        /** Read the eval-authoring host attempt's actual state and terminal error; a completed pass may author nothing. */
+        result: (input: Facade.EvalAuthoringRef): Facade.EvalAuthoringResult | null => this.#call(() => this.#client.vaultEvalsAuthoringResult(input) as Facade.EvalAuthoringResult | null),
+      },
+      /** Read a seat's family purposes, source roots, derivative lineage and dates, including retirement and training eligibility, without sealed labels. */
+      families: Object.assign((input: Facade.EvalSeatRequest): Facade.EvalFamilyView[] => this.#call(() => this.#client.vaultEvalsFamilies(input) as Facade.EvalFamilyView[]), {
+        /** Assign source roots their fixed eval family and purpose before deriving cases; conflicting families, purposes or seats refuse. */
+        assign: (input: Facade.EvalFamilyAssignRequest): Facade.SourceFamily => this.#call(() => this.#client.vaultEvalsFamiliesAssign(input) as Facade.SourceFamily),
+      }),
+      /** Read development or judge-audit eval cases; sealed confirmation refuses and retired cohorts read as development, never training. */
+      cases: Object.assign((input: Facade.EvalCasesRequest): Facade.EvalCase[] => this.#call(() => this.#client.vaultEvalsCases(input) as Facade.EvalCase[]), {
+        /** Record a receipt, repair, paraphrase, summary, translation, synthetic or rubric case through the shared family-inheritance guard; no labels are invented. */
+        record: (input: Facade.EvalCaseDraft): Facade.EvalCase => this.#call(() => this.#client.vaultEvalsCasesRecord(input) as Facade.EvalCase),
+      }),
+      /** Read a cohort's individual exposure ledger and independent candidate, query and promotion counts; unknown cohorts refuse. */
+      exposure: (input: Facade.EvalCohortRef): Facade.EvalExposureLedger => this.#call(() => this.#client.vaultEvalsExposure(input) as Facade.EvalExposureLedger),
+      /** Compute the existing sufficiency card from explicit family-grouped measurements; unknown never approves, creates a label ask or deploys. */
+      sufficiency: (input: Facade.SufficiencyInput): Facade.SufficiencyCard => this.#call(() => this.#client.vaultEvalsSufficiency(input) as Facade.SufficiencyCard),
+      labels: {
+        /** Read only unanswered eval-label asks for this owner, optionally by seat or blocked decision, with scoped cases and quoted human minutes; create no standing label session. */
+        blocked: (input: Facade.EvalBlockedLabelsRequest): Facade.EvalLabelAsk[] => this.#call(() => this.#client.vaultEvalsLabelsBlocked(input) as Facade.EvalLabelAsk[]),
+        /** Record either option of the responsible owner's existing eval-label ask once; the same pick repeats safely and a conflicting second pick refuses. */
+        pick: (input: Facade.EvalLabelPickRequest): Facade.EvalCase => this.#call(() => this.#client.vaultEvalsLabelsPick(input) as Facade.EvalCase),
       },
     },
     cleanup: {
@@ -1556,6 +1588,12 @@ export class Oneiron {
       step: (input: Facade.SettledStepRequest): Facade.SettledStepView | null => this.#call(() => this.#client.vaultRunsStep(input) as Facade.SettledStepView | null),
       /** Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run. */
       checkpoint: (input: Facade.CheckpointReadRequest): Facade.CheckpointView | null => this.#call(() => this.#client.vaultRunsCheckpoint(input) as Facade.CheckpointView | null),
+      /** The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer. */
+      review: (input: Facade.RunReviewRequest): Facade.RunReview => this.#call(() => this.#client.vaultRunsReview(input) as Facade.RunReview),
+      /** The owner approves or rejects the exact reviewed set through each kind's existing gate and keeps its ProposalOutcome and run revert handle. */
+      settle: (input: Facade.RunSettleRequest): Facade.RunSettlement => this.#call(() => this.#client.vaultRunsSettle(input) as Facade.RunSettlement),
+      /** The owner reads the durable cross-kind ProposalOutcome of one reviewed job and its revert handle. */
+      settlement: (input: Facade.RunSettlementRequest): Facade.RunSettlement => this.#call(() => this.#client.vaultRunsSettlement(input) as Facade.RunSettlement),
     },
     consults: {
       /** The owner reads one consult TASK: its deadline and terminal register (how it ended, its result, the evidence or abstention reason, the ladder outcome and any counter TASK), as refs, never bodies. */
@@ -1995,6 +2033,8 @@ export class Oneiron {
       /** One NOTE's overrides and the defaults its gates read after them. */
       defaults: (request: Facade.NoteRefRequest): Facade.NoteDefaultsView => this.#call(() => {  const result = JSON.parse(this.#client.vaultNotesDefaults(keyedJson(request))) as Facade.NoteDefaultsView; return result }),
     },
+    /** The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why. */
+    revert_run: (input: Facade.RevertRunRequest): Facade.RevertRunOutcome => this.#call(() => this.#client.vaultRevertRun(input) as Facade.RevertRunOutcome),
   }
   readonly self = {
     focus: {
@@ -2201,6 +2241,8 @@ export class Oneiron {
     /** What a secret handle names, where it was found and what a reveal of it would do now; never the value. */
     describe: (input: Facade.RevealDescribeRequest): Facade.RevealHandleCard => this.#call(() => this.#client.revealDescribe(input) as Facade.RevealHandleCard),
   })
+  /** Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent. */
+  execute_code(input: Facade.ForeignCodeRunRequest): Facade.ForeignCodeRunResult { return this.#call(() => this.#client.executeCode(input) as Facade.ForeignCodeRunResult) }
   /** Read-only ask routing or attributed partial answers. */
   can(request: TaskCanAskRequest): TaskAskPreflight { return this.#call(() => {  const result = JSON.parse(this.#client.can(keyedJson(request))) as TaskAskPreflight; return result }) }
   /** Read-only ask routing or attributed partial answers. */
