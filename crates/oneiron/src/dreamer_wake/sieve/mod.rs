@@ -43,8 +43,8 @@ pub mod evidence;
 mod policy;
 mod read;
 mod recipes;
-pub use recipes::{SieveAudit, SieveConsumeReceipt};
 pub(crate) use recipes::*;
+pub use recipes::{SieveAudit, SieveConsumeReceipt};
 mod rules;
 #[cfg(test)]
 mod tests;

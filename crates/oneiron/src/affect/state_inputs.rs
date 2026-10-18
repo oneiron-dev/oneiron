@@ -27,7 +27,7 @@ const DAY_SECS: u64 = 86_400;
 
 /// The owner's targets for one window. They describe this person's own
 /// pace, not a clinical or population norm.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct StateWindow {
     pub window_secs: u64,
@@ -177,7 +177,7 @@ fn subject_turns_in(
 }
 
 /// Whether a live message of `turn` names the subject as its author.
-fn spoke_in(
+pub(crate) fn spoke_in(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     subject: &EntityId,
