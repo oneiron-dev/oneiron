@@ -60004,6 +60004,7 @@
       "XlsxChange",
       "XlsxLock",
       "XlsxName",
+      "XlsxProjection",
       "XlsxSheet",
       "XlsxSheetPlan",
       "XlsxSheetVisibility",
@@ -60019,7 +60020,7 @@
       "enum": 5,
       "fn": 16,
       "re-export": 2,
-      "struct": 9
+      "struct": 10
      }
     },
     {
