@@ -447,6 +447,31 @@ async fn attach_live_run(
     Ok(Json(serde_json::json!({ "liveRun": handle })))
 }
 
+/// Binds `bound` to the live run that rendered a lens card, for an event on
+/// it whose tool is a live-run verb (FIX 2652): `creator_run`, the card's
+/// creating run, resolved for this credential only (the run's own agent,
+/// attached to it now), as a `liveRun` handle resolves for an action. Its
+/// answer is the event's key, namespaced as that run's action key. A card
+/// no run rendered answers `live_run_unavailable`.
+pub(super) fn bind_card_run(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    bound: &mut ActionBound,
+    creator_run: Option<&str>,
+    key: &str,
+) -> Result<String, FacadeApiError> {
+    let run = creator_run
+        .and_then(|run| EntityId::from_hex(run).ok())
+        .ok_or_else(|| refused(LiveRunRefusal::Unavailable))?;
+    let run = server
+        .live_runs
+        .resolve_run(run, live_run_caller(bound, auth))
+        .map_err(refused)?;
+    let key = run.action_key(key).map_err(engine)?;
+    bound.live_run = Some(run);
+    Ok(key)
+}
+
 /// Who a live-run handle is attached to or resolved for: the credential's
 /// actor, and its idempotency identity at its locality.
 fn live_run_caller(bound: &ActionBound, auth: &CoreAuth) -> LiveRunCaller {

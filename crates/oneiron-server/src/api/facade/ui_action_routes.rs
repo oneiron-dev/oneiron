@@ -11,7 +11,9 @@
 //! event is validated against them under the credential's own read; a
 //! deterministic tool then meets the verb scope and record admission an
 //! action call of its command meets, and runs through the app's one
-//! executor as the credential's action. A local patch moves the held
+//! executor as the credential's action; a live-run verb acts for the run
+//! that rendered the card, through the credential's attachment to it (FIX
+//! 2652). A local patch moves the held
 //! `$state` and dispatches nothing. A model round trip goes back to the
 //! agent that emitted the card, as its next turn
 //! ([`crate::ai_host::queue_lens_callback`]): it answers `202 {"queued",
@@ -31,6 +33,7 @@ use axum::response::Json;
 use axum::routing::{delete, post};
 use oneiron::EntityId;
 use oneiron::claim::ScopedReadResult;
+use oneiron::code_run::live_run::is_live_run_verb;
 use oneiron::lens::{
     GeneratedUiActionEvent, GeneratedUiSurfaceCapabilities, GeneratedUiValidatedAction,
     LensDefaultRequest, LensFrameCard, LensRenderId,
@@ -40,13 +43,15 @@ use oneiron::memory::{
 };
 use serde::Deserialize;
 
-use super::action_routes::{action_bound, execute_validated_ui, require_action_scope};
+use super::action_routes::{
+    action_bound, bind_card_run, execute_validated_ui, require_action_scope,
+};
 use super::host_doors::internal;
 use super::{FacadeApiError, facade_actor, facade_input, facade_json};
 use crate::ai_host::LensCallback;
 use crate::api::credential_memory;
 use crate::auth::{CoreAuth, CoreScope};
-use crate::lens_frames::CardOwner;
+use crate::lens_frames::{CardOwner, HeldCard};
 use crate::server::SyncServer;
 
 pub(crate) fn routes() -> Router<Arc<SyncServer>> {
@@ -172,6 +177,7 @@ async fn event(
             dispatch_tool(
                 &server,
                 &auth,
+                &held,
                 headers,
                 extensions,
                 validated,
@@ -224,24 +230,35 @@ async fn event(
 
 /// A validated deterministic tool: the verb scope and record admission an
 /// action call of its command meets, then the app's one executor under the
-/// credential's binding. Its answer is an action call's.
+/// credential's binding. Its answer is an action call's. A live-run verb
+/// acts for the run that rendered `held` (FIX 2652), through this
+/// credential's attachment to it, under that run's action key.
 async fn dispatch_tool(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    held: &Arc<HeldCard>,
     headers: HeaderMap,
     extensions: Extensions,
     validated: GeneratedUiValidatedAction,
     key: String,
 ) -> Result<serde_json::Value, FacadeApiError> {
+    let mut live = false;
     if let GeneratedUiValidatedAction::DeterministicTool { action, .. } = &validated {
         require_action_scope(auth, action.command().as_str())?;
+        live = is_live_run_verb(action.command().as_str());
     }
-    let bound = action_bound(server, auth)?.ok_or_else(|| {
+    let mut bound = action_bound(server, auth)?.ok_or_else(|| {
         FacadeApiError::forbidden(
             "an action runs under the credential's own read key",
             ["Present a verified slip paired to this principal."],
         )
     })?;
+    let key = if live {
+        let creator_run = server.lens_frames.creator_run(auth, held);
+        bind_card_run(server, auth, &mut bound, creator_run.as_deref(), &key)?
+    } else {
+        key
+    };
     let dispatch = execute_validated_ui(server, headers, extensions, bound, validated, key).await?;
     Ok(serde_json::json!({
         "outcome": dispatch.outcome_value().map_err(engine)?,
