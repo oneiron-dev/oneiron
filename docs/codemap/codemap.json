@@ -14547,9 +14547,10 @@
      "path": "src/consent/widen.rs",
      "purpose": "Propose-only authority widening",
      "surface": {
+      "const": 1,
       "crate-vis": 6,
       "enum": 1,
-      "fn": 9,
+      "fn": 11,
       "struct": 1
      }
     },
@@ -66204,9 +66205,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/core/widen.rs",
-     "purpose": "Host-only landing of a frozen widen proposal",
+     "purpose": "Host-only landing or decline of a frozen widen proposal",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
