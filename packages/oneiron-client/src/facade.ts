@@ -2,7 +2,7 @@
 import type * as Facade from "./facade-types.js";
 
 /** Every facade verb, in table order. */
-export const FACADE_VERBS = ["report", "feedback.preview", "feedback.send", "vault.reports.disclosure", "vault.reports.route", "vault.reports.outbound", "self.focus.scratchpad.recall", "self.focus.scratchpad.append", "self.focus.scratchpad.seal", "self.memory.diary", "self.memory.diary.reads", "self.memory.diary.review", "self.standing.get", "self.standing.list", "self.standing.edit", "self.identity.answer", "self.identity.settle", "self.inbox.list", "self.inbox.mark", "self.inbox.concern", "self.inbox.concern.outcome", "self.inbox.concern.move", "vault.people.list", "vault.people.get", "vault.shape.read", "vault.shape.plan", "vault.shape.apply", "self.message", "self.grants.ask", "self.memory.diary.query", "cancel", "steer", "describe", "tasks.create", "tasks.wave", "vault.fanout.spawn", "vault.fanout.slots", "vault.fanout.launch", "self.budget", "self.budget.land", "vault.budgets.lease.open", "vault.budgets.lease", "vault.budgets.lease.top_up", "vault.budgets.hold", "vault.budgets.hold.resume", "vault.budgets.local", "vault.budgets.settlements", "vault.fanout.resume", "vault.fanout.resume_as", "vault.fanout.ack", "tasks.update", "tasks.accept", "vault.witness", "vault.claims.upsert", "vault.recall", "vault.retrieval.aging.get", "vault.retrieval.aging.configure", "vault.retrieval.weights.get", "vault.retrieval.weights.configure", "vault.affect.annotations.put", "vault.tagging.status", "vault.tagging.tags", "vault.tagging.history", "vault.tagging.mentions", "vault.affect.claims.consolidate", "vault.retrieval.recall", "vault.retrieval.runs", "vault.retrieval.run", "vault.retrieval.turn", "vault.retrieval.outcomes.put", "vault.retrieval.outcomes.end", "vault.retrieval.trace", "vault.retrieval.export", "vault.retrieval.replay", "vault.export", "self.credential.attenuate", "vault.scope.position", "vault.scope.ceiling", "vault.export.scoped", "vault.receipts", "vault.images.view", "vault.receipts.get", "vault.explain.memory", "vault.explain.gate", "vault.kv.get", "vault.kv.put", "vault.kv.delete", "vault.kv.search", "vault.kv.namespaces", "vault.campaign.enroll", "vault.campaign.stage.evidence", "vault.campaign.unsubscribe", "vault.campaign.program.create", "vault.campaign.program.read", "vault.campaign.program.update", "vault.campaign.program.archive", "vault.weave.report", "vault.weave.digest", "vault.weave.lens", "vault.weave.link.wrong", "vault.weave.owner.link.wrong", "vault.weave.item.wrong", "vault.weave.owner.item.wrong", "vault.skill_hubs.put", "vault.skill_hubs.get", "vault.skill_hubs.publishers.admit", "vault.skill_hubs.publishers.revoke", "vault.skill_hubs.refs.get", "vault.skill_hubs.refs.set", "vault.packs.install", "vault.packs.sync", "vault.packs.get", "vault.skills.import", "vault.skills.sync", "vault.skills.receipts", "vault.skills.convert", "vault.skills.get", "vault.skills.list", "vault.skills.archive", "vault.skills.restore", "vault.skills.fork", "vault.skills.rules.set", "vault.skills.code_auto_install.set", "vault.skills.permissions.approve", "vault.skills.optimize.start", "vault.skills.optimize.result", "vault.skills.governance.get", "vault.skills.governance.set", "vault.packs.hooks.bind", "vault.packs.hooks.list", "vault.packs.hooks.qualify", "vault.packs.put", "vault.packs.connector.prepare", "vault.packs.connector.get", "vault.packs.connector.qualify", "vault.packs.connector.accept", "vault.packs.connector.update", "vault.packs.connector.grants.get", "vault.packs.connector.grants.put", "vault.packs.remove", "vault.connectors.subscriptions.put", "vault.connectors.subscriptions.list", "vault.connectors.subscriptions.revoke", "vault.packs.setup.prepare", "vault.packs.setup.get", "vault.packs.setup.answer", "vault.packs.setup.verify", "vault.authority.audit", "vault.authority.history.export", "vault.authority.history.import", "vault.slim.policy", "vault.slim.state", "vault.slim.resume_step", "vault.slim.drop_heavy", "vault.slim.resume", "vault.mesh.path_receipts", "vault.inspection.resolve", "vault.shared.propose_delete", "vault.shared.propose_transfer", "vault.shared.propose_remove_owner", "vault.shared.execute", "vault.shared.receipt", "vault.shared.outcomes", "vault.shared.deletion", "vault.members.add", "vault.members.invitation_slip", "vault.members.change", "vault.members.remove", "vault.members.leave", "vault.members.invitations", "vault.members.accept", "vault.members.decline", "vault.members.withdraw_invitation", "vault.shared.object", "vault.shared.withdraw_objection", "vault.shared.started", "vault.shared.matured", "vault.shared.erase_ask", "vault.shared.erase_asks", "vault.shared.close_erase_ask", "vault.shared.policy.get", "vault.shared.policy.propose", "vault.shared.policy.answer", "vault.shared.policy.change", "vault.federation.coreference.link", "vault.federation.coreference.confirm", "vault.federation.coreference.share_consent", "vault.federation.coreference.unlink", "vault.federation.connect.identity", "vault.federation.connect.grants.mint", "vault.federation.connect.offer", "vault.federation.connect.accept", "vault.federation.connect.narrow", "vault.federation.connect.rescope.offer", "vault.federation.connect.rescope.accept", "vault.federation.connect.disconnect", "vault.federation.connect.export", "vault.federation.connect.rejoin", "vault.trusted_contacts.name", "vault.trusted_contacts.list", "vault.trusted_contacts.consent", "vault.trusted_contacts.revoke", "vault.trusted_contacts.dial.set", "vault.trusted_contacts.tier.set", "vault.trusted_contacts.concern.asks", "vault.trusted_contacts.concern.authorize", "vault.trusted_contacts.concern.propose", "vault.trusted_contacts.concern.deliver", "vault.guests.revoke", "vault.guests.mint_slip", "vault.support_grants.mint", "vault.support_grants.list", "vault.support_grants.revoke", "vault.residence.mode", "vault.residence.open", "vault.residence.index", "vault.residence.prune", "vault.off_record.start", "vault.off_record.status", "vault.off_record.witness", "vault.off_record.discard", "vault.off_record.recall", "vault.off_record.notes.create", "vault.off_record.claims.upsert", "self.off_record.execute", "vault.records.erase_preview", "vault.records.erase_confirm", "vault.research.create_child", "vault.research.archive", "vault.research.archive.install", "vault.research.archive.record", "vault.research.archive.get", "vault.research.archive.best", "vault.research.archive.repropose", "vault.research.archive.coverage", "vault.evals.inventory", "vault.evals.cohorts.setup", "vault.coach.training_offers", "vault.coach.training_offers.get", "vault.coach.training_offers.trigger", "vault.coach.training_offers.result", "vault.coach.training_offers.answer", "vault.coach.training_offers.undo", "vault.coach.training_offers.candidates", "vault.coach.training_offers.candidates.prepare", "vault.coach.training_offers.pilots.prepare", "vault.coach.training_offers.pilots.complete", "vault.coach.training_offers.pilots.get", "vault.research.bind", "vault.research.fork", "vault.research.weave", "vault.research.measure_search", "vault.research.measure_held_out", "vault.research.evaluate_split", "vault.research.mark_invalid", "vault.research.prune", "vault.research.select", "vault.research.promotion_basis", "vault.research.reserve_confirmation", "vault.research.promote", "vault.research.reserve_work", "vault.research.settle_work", "vault.research.refund_work", "vault.research.record_benchmark", "vault.authority.handoff_alarms", "vault.authority.handoff_alarms.acknowledge", "vault.cleanup.run", "vault.entities.mention", "vault.legal_holds.place", "vault.legal_holds.widen", "vault.legal_holds.list", "vault.legal_holds.log", "vault.legal_holds.lift_and_erase", "vault.courtesy_delete.send", "vault.courtesy_delete.sent", "vault.courtesy_delete.incoming", "vault.courtesy_delete.answer", "vault.embedding_spaces.list", "vault.embedding_spaces.declare", "vault.embedding_spaces.bind", "vault.embedding_spaces.one_space", "vault.embedding_spaces.retire", "vault.embedding_spaces.move", "vault.embedding_spaces.move_check", "vault.embedding_spaces.move_approve", "vault.embedding_spaces.move_undo", "vault.embedding_spaces.move_abandon", "vault.embedding_spaces.probes.list", "vault.embedding_spaces.probes.put", "vault.embedding_spaces.probes.delete", "vault.policy.owner.get", "vault.policy.owner.configure", "vault.policy.owner.row.change", "vault.policy.outbound.decide", "vault.policy.relay.decide", "vault.consent.approve_once", "vault.consent.deny", "vault.consent.create_standing_grant", "vault.consent.registry", "vault.consent.revoke", "vault.gate.policy.get", "vault.gate.policy.put", "vault.gate.policy.propose", "vault.gate.checker.get", "vault.gate.checker.set", "vault.learning.read", "vault.learning.projection", "vault.settings.learning", "vault.settings.learning.put", "vault.settings.learning.clear", "vault.secrets.lift_history", "vault.widen_proposals", "vault.widen_proposals.approve", "vault.widen_proposals.decline", "vault.claims.review", "vault.claims.settle", "vault.craft_candidates", "vault.craft_candidates.answer", "vault.settings.wake_policy.set", "vault.settings.inference_defaults", "vault.settings.inference_defaults.replace", "vault.lenses.propose", "vault.lenses.activate", "vault.lenses.deactivate", "vault.lenses.list", "vault.lenses.default", "vault.disclosure.offer", "reveal", "reveal.wait", "reveal.describe", "self.use", "self.secrets.materialize", "self.secrets.renew", "self.secrets.teardown", "self.secrets.use", "vault.shares.create", "vault.shares.revoke", "vault.shares.view", "vault.hooks.replay", "vault.artifacts.publish_approval", "vault.artifacts.publish", "vault.artifacts.repoint", "vault.artifacts.pointer", "vault.artifacts.unpublish", "vault.artifacts.link_token", "vault.artifacts.live_preview.register", "vault.artifacts.live_preview.read", "vault.artifacts.live_preview.close", "vault.artifacts.live_preview.invite", "vault.artifacts.live_preview.revoke_invite", "vault.artifacts.live_preview.share", "vault.artifacts.live_preview.revoke_share", "vault.artifacts.view", "vault.artifacts.units", "vault.artifacts.anchors.pin", "vault.artifacts.threads.open", "vault.artifacts.threads.comment", "vault.artifacts.threads.read", "vault.artifacts.threads.list", "vault.artifacts.threads.assign", "vault.artifacts.threads.state", "vault.code.diff", "vault.code.blame", "vault.code.proposal_view", "vault.code.symbols.declare", "vault.code.symbols.renew", "vault.code.symbols.release", "vault.code.proposal_submit", "vault.code.oplog", "vault.code.model_heal_count", "vault.code.waits.resolve", "vault.code.waits.receipt", "vault.results.status", "vault.results.recover", "vault.results.read", "vault.results.slice", "vault.code.repo_diff", "vault.code.export", "vault.code.origin.authority.get", "vault.code.origin.authority.set", "vault.code.origin.publications", "vault.code.checkout.bind", "vault.code.checkout.claim", "vault.code.checkout.get", "vault.code.checkout.renew", "vault.code.checkout.reclaim", "vault.code.checkout.takeover", "vault.code.checkout.publish", "vault.code.checkout.settle", "vault.code.checkout.teardown", "vault.code.snapshots.ingest", "vault.code.snapshots.get", "vault.code.snapshots.read", "vault.code.symbols.definitions", "vault.code.merge_queue.enqueue", "vault.code.merge_queue.stage", "vault.code.merge_queue.observe", "vault.code.merge_queue.requeue_survivors", "vault.code.merge_queue.land_reviewed", "vault.code.merge_queue.settle_slow", "vault.code.merge_queue.recover", "vault.artifacts.export", "vault.agents.create", "vault.agents.get", "vault.agents.update", "vault.agents.dreaming.get", "vault.agents.dreaming.set", "vault.standing_blocks.configure", "vault.standing_blocks.reconfigure", "vault.standing_blocks.get", "vault.standing_blocks.list", "vault.workflows.save", "vault.workflows.get", "vault.workflows.update", "vault.workflows.dispatch", "vault.workflows.status", "vault.task_types.pin", "vault.task_types.get", "vault.agents.spawn.get", "vault.agents.spawn", "vault.tasks.cancel_force", "vault.runs.branches.get", "vault.consults.get", "vault.workspace.establish", "vault.workspace.members.onboard", "vault.workspace.roster", "vault.agents.export_pack", "vault.artifacts.born_from", "vault.artifacts.proposals", "vault.artifacts.waits", "vault.artifacts.release_wait", "vault.artifacts.review_slides", "vault.artifacts.ask", "vault.critic.review", "vault.artifacts.inspect_deck", "vault.artifacts.propose_deck", "vault.artifacts.propose_output", "vault.artifacts.keep", "vault.artifacts.discard", "vault.artifacts.undo", "can", "peek", "ask", "wait", "tasks.answer", "tasks.outcomes", "vault.rooms.list", "vault.rooms.messages", "vault.rooms.participants", "vault.rooms.render", "vault.rooms.find", "vault.rooms.get", "vault.rooms.trunk", "vault.rooms.reply_strips", "vault.rooms.claim", "vault.rooms.speak", "vault.projects.propose", "vault.projects.proposals", "vault.projects.dismiss_card", "vault.projects.confirm", "vault.projects.roster.write", "vault.projects.goal.intake", "vault.rooms.join", "vault.rooms.invite", "vault.rooms.consent", "vault.rooms.offer", "vault.rooms.offer.answer", "vault.rooms.offer.vote", "vault.rooms.offer.reopen", "vault.rooms.offers", "vault.projects.goal.revisions", "vault.projects.goal.dismiss", "vault.projects.route_tradeoff", "vault.conversations.turn.continue", "vault.conversations.turn.retry", "vault.messages.react", "vault.rooms.host", "vault.rooms.host.pin", "vault.rooms.host.hand", "vault.rooms.sharing", "vault.companions.sharing.get", "vault.companions.sharing.set", "vault.workspace.work_companion.get", "vault.workspace.work_companion.set", "self.skills.save", "self.skills.fork", "self.skills.callables", "vault.skills.pack_receipt", "vault.skills.outcomes.project", "vault.skills.outcomes.get", "ai.steps.submit", "ai.steps.receipt", "ai.reply", "vault.receipts.context", "ai.voice.asr.open", "ai.voice.asr.hypothesis", "ai.voice.asr.finalize", "ai.voice.asr.close", "ai.voice.start", "ai.voice.audio", "ai.voice.events", "ai.voice.ack", "ai.voice.usage", "ai.voice.tool", "ai.voice.end", "ai.voice.close", "ai.anonymous_chat", "ai.options", "ai.image", "ai.speech", "vault.voices.packs.put", "vault.voices.render_consent", "vault.voices.targets.provision", "vault.voices.targets.evict", "vault.voices.inspect", "ai.transcribe", "ai.embed", "ai.video", "ai.video.poll", "ai.video.cancel", "ai.verdict", "vault.graph.ask", "vault.questions.create", "vault.questions.edit", "vault.questions.pause", "vault.questions.backfill", "vault.questions.read", "vault.questions.answers", "vault.questions.refresh", "vault.questions.outcomes", "vault.questions.outcomes.project", "vault.questions.schedule", "vault.decisions.bands.read", "vault.decisions.bands.learn", "vault.decisions.bands.enforce", "vault.decisions.asks.answer", "vault.decisions.asks.climb", "self.decisions.asks", "connector.list", "connector.status", "connector.call", "connector.schema", "connector.call_status", "vault.commit", "vault.remember", "vault.claims.retract", "vault.forget", "vault.booking.constraint_turn", "vault.booking.page_token", "vault.calendar.create", "vault.calendar.ics.import", "vault.calendar.occurrences", "vault.calendar.instances.move", "vault.calendar.read", "vault.calendar.search", "vault.calendar.freebusy", "vault.calendar.transcript.ingest", "vault.claims.list", "vault.claims.demote", "vault.claims.list_filtered", "vault.claims.read_filtered", "vault.claims.history", "vault.delete", "vault.writes.pending", "vault.hydrate", "vault.get", "vault.refs.resolve", "vault.refs.links", "vault.search.hybrid", "vault.search.temporal", "vault.search.bm25", "vault.neighbors", "vault.structural.put", "vault.habits.checkin", "vault.productivity.create", "vault.productivity.tree", "vault.claims.admit", "vault.artifacts.create", "vault.esign.create", "vault.esign.get", "vault.esign.links.issue", "vault.esign.send_for_signature", "vault.esign.remind", "vault.esign.void", "vault.conversations.create", "vault.conversations.turns.create", "vault.conversations.records.append", "vault.batch", "vault.artifacts.put", "vault.artifacts.body.import", "vault.artifacts.body.head", "vault.artifacts.body.read", "vault.artifacts.body.commits", "vault.artifacts.body.edit", "vault.artifacts.body.fork.open", "vault.artifacts.body.fork.edit", "vault.artifacts.body.fork.diff", "vault.artifacts.body.fork.merge", "vault.artifacts.body.fork.discard", "vault.artifacts.body.proposal.read", "vault.artifacts.body.proposal.settle", "vault.artifacts.body.export", "vault.artifacts.body.preview", "vault.artifacts.body.deck.review", "vault.artifacts.body.deck.merge", "vault.artifacts.body.deck.export", "vault.artifacts.body.deck.gate", "vault.artifacts.body.deck.oracle", "vault.artifacts.body.deck.preview", "vault.artifacts.append", "vault.artifacts.read", "vault.consolidation.enqueue", "vault.consolidation.status", "vault.runs.step", "vault.runs.checkpoint", "vault.consolidation.promote", "vault.consolidation.evidence", "vault.claims.vet", "vault.claims.vetting", "vault.memory.signal_extraction", "vault.memory.signal_extraction.result", "vault.claims.seed", "vault.channel_identities.provision", "vault.channel_identities.bind", "vault.channel_identities.fulfill", "vault.channel_identities.rotate", "vault.channel_identities.release", "vault.channel_identities.route_inbound", "vault.channel_identities.get", "vault.channel_identities.selection.rules", "vault.channel_identities.selection.update", "vault.channel_identities.select", "vault.channel_identities.passports.get", "vault.channel_identities.passports.list", "vault.delivery_window.policy.put", "vault.delivery_window.policy.list", "vault.delivery_window.policy.retract", "vault.delivery_window.evaluate", "connector.outbound.schedule", "vault.summaries.create", "vault.summaries.read", "vault.summaries.status", "vault.summaries.keep", "vault.summaries.edit", "vault.summaries.patch", "vault.summaries.regenerate", "vault.summaries.proposals.read", "vault.summaries.proposals.merge", "vault.summaries.proposals.switch", "vault.summaries.proposals.reject", "vault.notes.create", "vault.notes.author_take", "vault.notes.from_entity", "vault.notes.read", "vault.notes.history", "vault.notes.fork", "vault.notes.forks.read", "vault.notes.proposals.open", "vault.notes.proposals.read", "vault.notes.proposals.merge", "vault.notes.proposals.switch", "vault.notes.proposals.reject", "vault.notes.version_tree", "vault.notes.history_purge", "vault.notes.history_purge_execute", "vault.notes.history_purge_receipts", "vault.notes.editor.bind", "vault.notes.editor.close", "vault.notes.edit", "vault.notes.seal", "vault.notes.lifecycle", "vault.notes.set_overrides", "vault.notes.defaults", "vault.tasks.linear.mapping", "vault.tasks.linear.mapping.edit", "vault.tasks.linear.provenance", "self.run.attach", "self.folds.describe", "self.history", "self.browser.open", "self.browser.observe", "self.browser.find", "self.browser.click", "self.browser.click_at", "self.browser.type", "self.browser.select", "self.browser.wait_for", "self.browser.expect", "self.browser.screenshot", "self.browser.view", "self.browser.crop", "self.browser.zoom", "self.browser.batch", "self.browser.handover", "vault.claims.supersede", "self.fold", "self.compact", "self.unfold", "self.folds", "tasks.refuse", "self.agents.spawn", "self.leader.split", "self.skills.call"] as const;
+export const FACADE_VERBS = ["report", "feedback.preview", "feedback.send", "vault.reports.disclosure", "vault.reports.route", "vault.reports.outbound", "self.focus.scratchpad.recall", "self.focus.scratchpad.append", "self.focus.scratchpad.seal", "self.memory.diary", "self.memory.diary.reads", "self.memory.diary.review", "self.standing.get", "self.standing.list", "self.standing.edit", "self.identity.answer", "self.identity.settle", "self.inbox.list", "self.inbox.mark", "self.inbox.concern", "self.inbox.concern.outcome", "self.inbox.concern.move", "vault.people.list", "vault.people.get", "vault.shape.read", "vault.shape.plan", "vault.shape.apply", "self.message", "self.grants.ask", "vault.companions.access_requests.answer", "vault.personas.preview", "vault.personas.export", "vault.personas.edit", "self.memory.diary.query", "cancel", "steer", "describe", "tasks.create", "tasks.wave", "vault.fanout.spawn", "vault.fanout.slots", "vault.fanout.launch", "self.budget", "self.budget.land", "vault.budgets.lease.open", "vault.budgets.lease", "vault.budgets.lease.top_up", "vault.budgets.hold", "vault.budgets.hold.resume", "vault.budgets.local", "vault.budgets.settlements", "vault.fanout.resume", "vault.fanout.resume_as", "vault.fanout.ack", "tasks.update", "tasks.accept", "vault.witness", "vault.claims.upsert", "vault.recall", "vault.retrieval.aging.get", "vault.retrieval.aging.configure", "vault.retrieval.weights.get", "vault.retrieval.weights.configure", "vault.affect.annotations.put", "vault.tagging.status", "vault.tagging.tags", "vault.tagging.history", "vault.tagging.mentions", "vault.affect.claims.consolidate", "vault.retrieval.recall", "vault.retrieval.runs", "vault.retrieval.run", "vault.retrieval.turn", "vault.retrieval.outcomes.put", "vault.retrieval.outcomes.end", "vault.retrieval.trace", "vault.retrieval.export", "vault.retrieval.replay", "vault.export", "self.credential.attenuate", "vault.scope.position", "vault.scope.ceiling", "vault.export.scoped", "vault.receipts", "vault.images.view", "vault.receipts.get", "vault.explain.memory", "vault.explain.gate", "vault.kv.get", "vault.kv.put", "vault.kv.delete", "vault.kv.search", "vault.kv.namespaces", "vault.campaign.enroll", "vault.campaign.stage.evidence", "vault.campaign.unsubscribe", "vault.campaign.program.create", "vault.campaign.program.read", "vault.campaign.program.update", "vault.campaign.program.archive", "vault.weave.report", "vault.weave.digest", "vault.weave.lens", "vault.weave.link.wrong", "vault.weave.owner.link.wrong", "vault.weave.item.wrong", "vault.weave.owner.item.wrong", "vault.weave.enqueue", "vault.weave.schedules.list", "vault.weave.schedules.put", "vault.weave.schedules.clear", "vault.weave.owner.digest.render", "vault.inbox.concerns.review", "vault.inbox.lens", "vault.inbox.groups", "vault.weave.digest.render", "vault.weave.link.corrections", "self.inbox.lens", "vault.skill_hubs.put", "vault.skill_hubs.get", "vault.skill_hubs.publishers.admit", "vault.skill_hubs.publishers.revoke", "vault.skill_hubs.refs.get", "vault.skill_hubs.refs.set", "vault.packs.install", "vault.packs.sync", "vault.packs.get", "vault.skills.import", "vault.skills.sync", "vault.skills.receipts", "vault.skills.convert", "vault.skills.get", "vault.skills.list", "vault.skills.archive", "vault.skills.restore", "vault.skills.fork", "vault.skills.rules.set", "vault.skills.code_auto_install.set", "vault.skills.permissions.approve", "vault.skills.optimize.start", "vault.skills.optimize.result", "vault.skills.governance.get", "vault.skills.governance.set", "vault.packs.hooks.bind", "vault.packs.hooks.list", "vault.packs.hooks.qualify", "vault.packs.put", "vault.packs.connector.prepare", "vault.packs.connector.get", "vault.packs.connector.qualify", "vault.packs.connector.accept", "vault.packs.connector.update", "vault.packs.connector.grants.get", "vault.packs.connector.grants.put", "vault.packs.remove", "vault.connectors.subscriptions.put", "vault.connectors.subscriptions.list", "vault.connectors.subscriptions.revoke", "vault.packs.setup.prepare", "vault.packs.setup.get", "vault.packs.setup.answer", "vault.packs.setup.verify", "vault.authority.audit", "vault.authority.history.export", "vault.authority.history.import", "vault.slim.policy", "vault.slim.state", "vault.slim.resume_step", "vault.slim.drop_heavy", "vault.slim.resume", "vault.mesh.path_receipts", "vault.inspection.resolve", "vault.shared.propose_delete", "vault.shared.propose_transfer", "vault.shared.propose_remove_owner", "vault.shared.execute", "vault.shared.receipt", "vault.shared.outcomes", "vault.shared.deletion", "vault.members.add", "vault.members.invitation_slip", "vault.members.change", "vault.members.remove", "vault.members.leave", "vault.members.invitations", "vault.members.accept", "vault.members.decline", "vault.members.withdraw_invitation", "vault.shared.object", "vault.shared.withdraw_objection", "vault.shared.started", "vault.shared.matured", "vault.shared.erase_ask", "vault.shared.erase_asks", "vault.shared.close_erase_ask", "vault.shared.policy.get", "vault.shared.policy.propose", "vault.shared.policy.answer", "vault.shared.policy.change", "vault.federation.coreference.link", "vault.federation.coreference.confirm", "vault.federation.coreference.share_consent", "vault.federation.coreference.unlink", "vault.federation.connect.identity", "vault.federation.connect.grants.mint", "vault.federation.connect.offer", "vault.federation.connect.accept", "vault.federation.connect.narrow", "vault.federation.connect.rescope.offer", "vault.federation.connect.rescope.accept", "vault.federation.connect.disconnect", "vault.federation.connect.export", "vault.federation.connect.rejoin", "vault.trusted_contacts.name", "vault.trusted_contacts.list", "vault.trusted_contacts.consent", "vault.trusted_contacts.revoke", "vault.trusted_contacts.dial.set", "vault.trusted_contacts.tier.set", "vault.trusted_contacts.concern.asks", "vault.trusted_contacts.concern.authorize", "vault.trusted_contacts.concern.propose", "vault.trusted_contacts.concern.deliver", "vault.guests.revoke", "vault.guests.mint_slip", "vault.support_grants.mint", "vault.support_grants.list", "vault.support_grants.revoke", "vault.residence.mode", "vault.residence.open", "vault.residence.index", "vault.residence.prune", "vault.residence.directives", "vault.off_record.start", "vault.off_record.status", "vault.off_record.witness", "vault.off_record.discard", "vault.off_record.recall", "vault.off_record.notes.create", "vault.off_record.claims.upsert", "self.off_record.execute", "vault.records.erase_preview", "vault.records.erase_confirm", "vault.research.create_child", "vault.research.archive", "vault.research.archive.install", "vault.research.archive.record", "vault.research.archive.get", "vault.research.archive.best", "vault.research.archive.repropose", "vault.research.archive.coverage", "vault.evals.inventory", "vault.evals.cohorts.setup", "vault.coach.training_offers", "vault.coach.training_offers.get", "vault.coach.training_offers.trigger", "vault.coach.training_offers.result", "vault.coach.training_offers.answer", "vault.coach.training_offers.undo", "vault.coach.training_offers.candidates", "vault.coach.training_offers.candidates.prepare", "vault.coach.training_offers.pilots.prepare", "vault.coach.training_offers.pilots.complete", "vault.coach.training_offers.pilots.get", "vault.research.bind", "vault.research.fork", "vault.research.weave", "vault.research.measure_search", "vault.research.measure_held_out", "vault.research.evaluate_split", "vault.research.mark_invalid", "vault.research.prune", "vault.research.select", "vault.research.promotion_basis", "vault.research.reserve_confirmation", "vault.research.promote", "vault.research.reserve_work", "vault.research.settle_work", "vault.research.refund_work", "vault.research.record_benchmark", "vault.authority.handoff_alarms", "vault.authority.handoff_alarms.acknowledge", "vault.cleanup.run", "vault.entities.mention", "vault.legal_holds.place", "vault.legal_holds.widen", "vault.legal_holds.list", "vault.legal_holds.log", "vault.legal_holds.lift_and_erase", "vault.courtesy_delete.send", "vault.courtesy_delete.sent", "vault.courtesy_delete.incoming", "vault.courtesy_delete.answer", "vault.embedding_spaces.list", "vault.embedding_spaces.declare", "vault.embedding_spaces.bind", "vault.embedding_spaces.one_space", "vault.embedding_spaces.retire", "vault.embedding_spaces.move", "vault.embedding_spaces.move_check", "vault.embedding_spaces.move_approve", "vault.embedding_spaces.move_undo", "vault.embedding_spaces.move_abandon", "vault.embedding_spaces.probes.list", "vault.embedding_spaces.probes.put", "vault.embedding_spaces.probes.delete", "vault.policy.owner.get", "vault.policy.owner.configure", "vault.policy.owner.row.change", "vault.policy.outbound.decide", "vault.policy.relay.decide", "vault.consent.approve_once", "vault.consent.deny", "vault.consent.create_standing_grant", "vault.consent.registry", "vault.consent.revoke", "vault.gate.policy.get", "vault.gate.policy.put", "vault.gate.policy.propose", "vault.gate.checker.get", "vault.gate.checker.set", "vault.learning.read", "vault.learning.projection", "vault.settings.learning", "vault.settings.learning.put", "vault.settings.learning.clear", "vault.secrets.lift_history", "vault.widen_proposals", "vault.widen_proposals.approve", "vault.widen_proposals.decline", "vault.claims.review", "vault.claims.settle", "vault.craft_candidates", "vault.craft_candidates.answer", "vault.settings.wake_policy.set", "vault.settings.inference_defaults", "vault.settings.inference_defaults.replace", "vault.lenses.propose", "vault.lenses.activate", "vault.lenses.deactivate", "vault.lenses.list", "vault.lenses.default", "vault.disclosure.offer", "reveal", "reveal.wait", "reveal.describe", "self.use", "self.secrets.materialize", "self.secrets.renew", "self.secrets.teardown", "self.secrets.use", "vault.shares.create", "vault.shares.revoke", "vault.shares.view", "vault.hooks.replay", "vault.hooks.regen.due", "vault.hooks.regen.get", "vault.hooks.regen.adopt", "vault.artifacts.publish_approval", "vault.artifacts.publish", "vault.artifacts.repoint", "vault.artifacts.pointer", "vault.artifacts.unpublish", "vault.artifacts.link_token", "vault.artifacts.live_preview.register", "vault.artifacts.live_preview.read", "vault.artifacts.live_preview.close", "vault.artifacts.live_preview.invite", "vault.artifacts.live_preview.revoke_invite", "vault.artifacts.live_preview.share", "vault.artifacts.live_preview.revoke_share", "vault.artifacts.view", "vault.artifacts.units", "vault.artifacts.anchors.pin", "vault.artifacts.threads.open", "vault.artifacts.threads.comment", "vault.artifacts.threads.read", "vault.artifacts.threads.list", "vault.artifacts.threads.assign", "vault.artifacts.threads.state", "vault.code.diff", "vault.code.blame", "vault.code.proposal_view", "vault.code.symbols.declare", "vault.code.symbols.renew", "vault.code.symbols.release", "vault.code.proposal_submit", "vault.code.conflict_record", "vault.code.conflict_view", "vault.code.proposal_resolve", "vault.code.proposal_review", "vault.code.proposal_settle", "vault.code.proposal_settlement", "vault.code.oplog", "vault.code.model_heal_count", "vault.code.waits.resolve", "vault.code.waits.receipt", "vault.results.status", "vault.results.recover", "vault.results.read", "vault.results.slice", "vault.code.repo_diff", "vault.code.export", "vault.code.origin.authority.get", "vault.code.origin.authority.set", "vault.code.origin.publications", "vault.code.checkout.bind", "vault.code.checkout.claim", "vault.code.checkout.get", "vault.code.checkout.renew", "vault.code.checkout.reclaim", "vault.code.checkout.takeover", "vault.code.checkout.publish", "vault.code.checkout.settle", "vault.code.checkout.teardown", "vault.code.snapshots.ingest", "vault.code.snapshots.get", "vault.code.snapshots.read", "vault.code.symbols.definitions", "vault.code.merge_queue.enqueue", "vault.code.merge_queue.stage", "vault.code.merge_queue.observe", "vault.code.merge_queue.requeue_survivors", "vault.code.merge_queue.land_reviewed", "vault.code.merge_queue.settle_slow", "vault.code.merge_queue.recover", "vault.artifacts.export", "vault.agents.create", "vault.agents.get", "vault.agents.update", "vault.agents.dreaming.get", "vault.agents.dreaming.set", "vault.standing_blocks.configure", "vault.standing_blocks.reconfigure", "vault.standing_blocks.get", "vault.standing_blocks.list", "vault.workflows.save", "vault.workflows.get", "vault.workflows.update", "vault.workflows.dispatch", "vault.workflows.status", "vault.task_types.pin", "vault.task_types.get", "vault.agents.spawn.get", "vault.agents.spawn", "vault.tasks.cancel_force", "vault.runs.branches.get", "vault.consults.get", "vault.workspace.establish", "vault.workspace.members.onboard", "vault.workspace.roster", "vault.agents.export_pack", "vault.artifacts.born_from", "vault.artifacts.proposals", "vault.artifacts.waits", "vault.artifacts.release_wait", "vault.artifacts.review_slides", "vault.artifacts.ask", "vault.critic.review", "vault.artifacts.inspect_deck", "vault.artifacts.propose_deck", "vault.artifacts.propose_output", "vault.artifacts.keep", "vault.artifacts.discard", "vault.artifacts.undo", "can", "peek", "ask", "wait", "tasks.answer", "tasks.outcomes", "vault.rooms.list", "vault.rooms.messages", "vault.rooms.participants", "vault.rooms.render", "vault.rooms.find", "vault.rooms.get", "vault.rooms.trunk", "vault.rooms.reply_strips", "vault.rooms.claim", "vault.rooms.speak", "vault.projects.propose", "vault.projects.proposals", "vault.projects.dismiss_card", "vault.projects.confirm", "vault.projects.roster.write", "vault.projects.goal.intake", "vault.rooms.join", "vault.rooms.invite", "vault.rooms.consent", "vault.rooms.offer", "vault.rooms.offer.answer", "vault.rooms.offer.vote", "vault.rooms.offer.reopen", "vault.rooms.offers", "vault.projects.goal.revisions", "vault.projects.goal.dismiss", "vault.projects.route_tradeoff", "vault.conversations.turn.continue", "vault.conversations.turn.retry", "vault.messages.react", "vault.rooms.host", "vault.rooms.host.pin", "vault.rooms.host.hand", "vault.rooms.sharing", "vault.companions.sharing.get", "vault.companions.sharing.set", "vault.workspace.work_companion.get", "vault.workspace.work_companion.set", "self.skills.save", "self.skills.fork", "self.skills.callables", "vault.skills.pack_receipt", "vault.skills.outcomes.project", "vault.skills.outcomes.get", "ai.steps.submit", "ai.steps.receipt", "ai.reply", "vault.receipts.context", "ai.voice.asr.open", "ai.voice.asr.hypothesis", "ai.voice.asr.finalize", "ai.voice.asr.close", "ai.voice.start", "ai.voice.audio", "ai.voice.events", "ai.voice.ack", "ai.voice.usage", "ai.voice.tool", "ai.voice.end", "ai.voice.close", "ai.anonymous_chat", "ai.options", "ai.image", "ai.speech", "vault.voices.packs.put", "vault.voices.render_consent", "vault.voices.targets.provision", "vault.voices.targets.evict", "vault.voices.inspect", "ai.transcribe", "ai.embed", "ai.video", "ai.video.poll", "ai.video.cancel", "ai.verdict", "vault.graph.ask", "vault.questions.create", "vault.questions.edit", "vault.questions.pause", "vault.questions.backfill", "vault.questions.read", "vault.questions.answers", "vault.questions.refresh", "vault.questions.outcomes", "vault.questions.outcomes.project", "vault.questions.schedule", "vault.decisions.bands.read", "vault.decisions.bands.learn", "vault.decisions.bands.enforce", "vault.decisions.asks.answer", "vault.decisions.asks.climb", "self.decisions.asks", "connector.list", "connector.status", "connector.call", "connector.schema", "connector.call_status", "vault.commit", "vault.remember", "vault.claims.retract", "vault.forget", "vault.booking.constraint_turn", "vault.booking.page_token", "calendar.invite", "calendar.connector.configure", "calendar.connector.get", "calendar.connector.pull", "calendar.connector.write", "calendar.connector.kill", "calendar.imip.configure", "calendar.imip.get", "vault.calendar.create", "vault.calendar.ics.import", "vault.calendar.occurrences", "vault.calendar.instances.move", "vault.calendar.read", "vault.calendar.search", "vault.calendar.freebusy", "vault.calendar.transcript.ingest", "vault.claims.list", "vault.claims.demote", "vault.claims.list_filtered", "vault.claims.read_filtered", "vault.claims.history", "vault.delete", "vault.writes.pending", "vault.hydrate", "vault.get", "vault.refs.resolve", "vault.refs.links", "vault.search.hybrid", "vault.search.temporal", "vault.search.bm25", "vault.neighbors", "vault.structural.put", "vault.habits.checkin", "vault.productivity.create", "vault.productivity.tree", "vault.claims.admit", "vault.artifacts.create", "vault.esign.create", "vault.esign.get", "vault.esign.links.issue", "vault.esign.send_for_signature", "vault.esign.remind", "vault.esign.void", "vault.conversations.create", "vault.conversations.turns.create", "vault.conversations.records.append", "vault.batch", "vault.artifacts.put", "vault.artifacts.body.import", "vault.artifacts.body.head", "vault.artifacts.body.read", "vault.artifacts.body.commits", "vault.artifacts.body.edit", "vault.artifacts.body.fork.open", "vault.artifacts.body.fork.edit", "vault.artifacts.body.fork.diff", "vault.artifacts.body.fork.merge", "vault.artifacts.body.fork.discard", "vault.artifacts.body.proposal.read", "vault.artifacts.body.proposal.settle", "vault.artifacts.body.export", "vault.artifacts.body.preview", "vault.artifacts.body.deck.review", "vault.artifacts.body.deck.merge", "vault.artifacts.body.deck.export", "vault.artifacts.body.deck.gate", "vault.artifacts.body.deck.oracle", "vault.artifacts.body.deck.preview", "vault.artifacts.append", "vault.artifacts.read", "vault.consolidation.enqueue", "vault.consolidation.status", "vault.runs.step", "vault.runs.checkpoint", "vault.consolidation.promote", "vault.consolidation.evidence", "vault.sieve.queue", "vault.sieve.retained", "vault.sieve.receipts", "vault.sieve.policy", "vault.sieve.policy.set", "vault.sieve.recipe_policy", "vault.sieve.recipe_policy.set", "vault.sieve.lease", "vault.sieve.lease.refill", "vault.claims.vet", "vault.claims.vetting", "vault.memory.signal_extraction", "vault.memory.signal_extraction.result", "vault.claims.seed", "vault.channel_identities.provision", "vault.channel_identities.bind", "vault.channel_identities.fulfill", "vault.channel_identities.rotate", "vault.channel_identities.release", "vault.channel_identities.route_inbound", "vault.channel_identities.get", "vault.channel_identities.selection.rules", "vault.channel_identities.selection.update", "vault.channel_identities.select", "vault.channel_identities.passports.get", "vault.channel_identities.passports.list", "vault.delivery_window.policy.put", "vault.delivery_window.policy.list", "vault.delivery_window.policy.retract", "vault.delivery_window.evaluate", "connector.outbound.schedule", "vault.summaries.create", "vault.summaries.read", "vault.summaries.status", "vault.summaries.keep", "vault.summaries.edit", "vault.summaries.patch", "vault.summaries.regenerate", "vault.summaries.proposals.read", "vault.summaries.proposals.merge", "vault.summaries.proposals.switch", "vault.summaries.proposals.reject", "vault.notes.bless_brief_kind", "vault.notes.author_brief", "vault.notes.follow_citation", "vault.notes.create", "vault.notes.author_take", "vault.notes.from_entity", "vault.notes.read", "vault.notes.history", "vault.notes.fork", "vault.notes.forks.read", "vault.notes.proposals.open", "vault.notes.proposals.read", "vault.notes.proposals.merge", "vault.notes.proposals.switch", "vault.notes.proposals.reject", "vault.notes.version_tree", "vault.notes.history_purge", "vault.notes.history_purge_execute", "vault.notes.history_purge_receipts", "vault.notes.editor.bind", "vault.notes.editor.close", "vault.notes.edit", "vault.notes.seal", "vault.notes.lifecycle", "vault.notes.set_overrides", "vault.notes.defaults", "vault.tasks.linear.mapping", "vault.tasks.linear.mapping.edit", "vault.tasks.linear.provenance", "self.run.attach", "self.folds.describe", "self.history", "self.browser.open", "self.browser.observe", "self.browser.find", "self.browser.click", "self.browser.click_at", "self.browser.type", "self.browser.select", "self.browser.wait_for", "self.browser.expect", "self.browser.screenshot", "self.browser.view", "self.browser.crop", "self.browser.zoom", "self.browser.batch", "self.browser.library.find", "self.browser.library.propose", "self.browser.library.retire", "self.browser.library.retired", "self.browser.library.run", "self.browser.handover", "vault.claims.supersede", "self.fold", "self.compact", "self.unfold", "self.folds", "tasks.refuse", "self.agents.spawn", "self.leader.split", "self.skills.call"] as const;
 export type FacadeVerb = typeof FACADE_VERBS[number];
 
 /** Each verb's request body, as its Rust input type reads it. */
@@ -36,6 +36,10 @@ export interface FacadeInputs {
   "vault.shape.apply": Facade.ShapeApplyRequest;
   "self.message": Facade.MessagePersonRequest;
   "self.grants.ask": Facade.GrantAskRequest;
+  "vault.companions.access_requests.answer": Facade.CompanionAccessRequestAnswerRequest;
+  "vault.personas.preview": Facade.PersonaSnapshotPreviewRequest;
+  "vault.personas.export": Facade.PersonaSnapshotCopyRequest;
+  "vault.personas.edit": Facade.PersonaSnapshotCopyEditRequest;
   "self.memory.diary.query": Facade.DiaryQueryRequest;
   "cancel": Facade.TaskRequest;
   "steer": Facade.SteerRequest;
@@ -110,6 +114,17 @@ export interface FacadeInputs {
   "vault.weave.owner.link.wrong": Facade.WeaveWrongLinkRequest;
   "vault.weave.item.wrong": Facade.WeaveWrongItemRequest;
   "vault.weave.owner.item.wrong": Facade.WeaveWrongItemRequest;
+  "vault.weave.enqueue": Facade.WeaveEnqueueRequest;
+  "vault.weave.schedules.list": Facade.EmptyRequest;
+  "vault.weave.schedules.put": Facade.WeaveScheduleView;
+  "vault.weave.schedules.clear": Facade.WeaveReaderRef;
+  "vault.weave.owner.digest.render": Facade.EmptyRequest;
+  "vault.inbox.concerns.review": Facade.EmptyRequest;
+  "vault.inbox.lens": Facade.InboxLensRequest;
+  "vault.inbox.groups": Facade.InboxRunGroupsRequest;
+  "vault.weave.digest.render": Facade.EmptyRequest;
+  "vault.weave.link.corrections": Facade.WeaveWrongLinkRequest;
+  "self.inbox.lens": Facade.InboxLensRequest;
   "vault.skill_hubs.put": Facade.SkillHubPutRequest;
   "vault.skill_hubs.get": Facade.SkillHubRequest;
   "vault.skill_hubs.publishers.admit": Facade.SkillPublisherRequest;
@@ -224,6 +239,7 @@ export interface FacadeInputs {
   "vault.residence.open": Facade.ResidenceOpenRequest;
   "vault.residence.index": Facade.ResidenceMachineRequest;
   "vault.residence.prune": Facade.ResidencePruneRequest;
+  "vault.residence.directives": Facade.ResidenceDirectivesRequest;
   "vault.off_record.start": Facade.OffRecordStartRequest;
   "vault.off_record.status": Facade.OffRecordSessionRequest;
   "vault.off_record.witness": Facade.OffRecordWitnessRequest;
@@ -346,6 +362,9 @@ export interface FacadeInputs {
   "vault.shares.revoke": Facade.ShareRevokeRequest;
   "vault.shares.view": Facade.ShareViewRequest;
   "vault.hooks.replay": Facade.HooksReplayRequest;
+  "vault.hooks.regen.due": Facade.EmptyRequest;
+  "vault.hooks.regen.get": Facade.HookRegenBindingRequest;
+  "vault.hooks.regen.adopt": Facade.HookRegenAdoptRequest;
   "vault.artifacts.publish_approval": Facade.ArtifactPublishRequest;
   "vault.artifacts.publish": Facade.ArtifactPublishRequest;
   "vault.artifacts.repoint": Facade.ArtifactPublishRequest;
@@ -375,6 +394,12 @@ export interface FacadeInputs {
   "vault.code.symbols.renew": Facade.CodeSymbolsTaskRequest;
   "vault.code.symbols.release": Facade.CodeSymbolsTaskRequest;
   "vault.code.proposal_submit": Facade.CodeProposalSubmitRequest;
+  "vault.code.conflict_record": Facade.CodeConflictRecordRequest;
+  "vault.code.conflict_view": Facade.CodeConflictViewRequest;
+  "vault.code.proposal_resolve": Facade.CodeProposalResolveRequest;
+  "vault.code.proposal_review": Facade.CodeProposalReviewRequest;
+  "vault.code.proposal_settle": Facade.CodeProposalSettleRequest;
+  "vault.code.proposal_settlement": Facade.CodeProposalSettlementRequest;
   "vault.code.oplog": Facade.CodeRepoRequest;
   "vault.code.model_heal_count": Facade.CodeRunModelHealCountRequest;
   "vault.code.waits.resolve": Facade.CodeWaitResolveRequest;
@@ -556,6 +581,14 @@ export interface FacadeInputs {
   "vault.forget": Facade.ForgetRequest;
   "vault.booking.constraint_turn": Facade.BookingConstraintTurnRequest;
   "vault.booking.page_token": Facade.BookingPageTokenRequest;
+  "calendar.invite": Facade.CalendarInviteSurfaceInput;
+  "calendar.connector.configure": Facade.CalendarConnectorConfigureRequest;
+  "calendar.connector.get": Facade.CalendarConnectorRequest;
+  "calendar.connector.pull": Facade.CalendarConnectorRequest;
+  "calendar.connector.write": Facade.CalendarConnectorWriteRequest;
+  "calendar.connector.kill": Facade.CalendarConnectorKillRequest;
+  "calendar.imip.configure": Facade.CalendarImipTransportConfig;
+  "calendar.imip.get": Facade.EmptyRequest;
   "vault.calendar.create": Facade.CalendarEventCreateRequest;
   "vault.calendar.ics.import": Facade.CalendarIcsImportRequest;
   "vault.calendar.occurrences": Facade.CalendarOccurrencesRequest;
@@ -624,6 +657,15 @@ export interface FacadeInputs {
   "vault.runs.checkpoint": Facade.CheckpointReadRequest;
   "vault.consolidation.promote": Facade.ConsolidationPromoteRequest;
   "vault.consolidation.evidence": Facade.ConsolidationEvidenceRequest;
+  "vault.sieve.queue": Facade.SievePageRequest;
+  "vault.sieve.retained": Facade.SievePageRequest;
+  "vault.sieve.receipts": Facade.SievePageRequest;
+  "vault.sieve.policy": Facade.SievePolicyRequest;
+  "vault.sieve.policy.set": Facade.SievePolicySetRequest;
+  "vault.sieve.recipe_policy": Facade.SievePolicyRequest;
+  "vault.sieve.recipe_policy.set": Facade.SieveRecipePolicySetRequest;
+  "vault.sieve.lease": Facade.SieveLeaseRequest;
+  "vault.sieve.lease.refill": Facade.SieveLeaseRefillRequest;
   "vault.claims.vet": Facade.ClaimSettleRequest;
   "vault.claims.vetting": Facade.ClaimProposalReviewRequest;
   "vault.memory.signal_extraction": Facade.SignalExtractionRequest;
@@ -657,6 +699,9 @@ export interface FacadeInputs {
   "vault.summaries.proposals.merge": Facade.SummaryProposalRequest;
   "vault.summaries.proposals.switch": Facade.SummaryProposalRequest;
   "vault.summaries.proposals.reject": Facade.SummaryProposalRequest;
+  "vault.notes.bless_brief_kind": Facade.EmptyRequest;
+  "vault.notes.author_brief": Facade.AuthorBriefRequest;
+  "vault.notes.follow_citation": Facade.BriefCitationFollowRequest;
   "vault.notes.create": Facade.CreateNoteRequest;
   "vault.notes.author_take": Facade.AuthorTakeRequest;
   "vault.notes.from_entity": Facade.CreateNoteFromEntityRequest;
@@ -700,6 +745,11 @@ export interface FacadeInputs {
   "self.browser.crop": Facade.LiveRunRequest<Facade.CropInput>;
   "self.browser.zoom": Facade.LiveRunRequest<Facade.ZoomInput>;
   "self.browser.batch": Facade.LiveRunRequest<Facade.BatchInput>;
+  "self.browser.library.find": Facade.LiveRunRequest<Facade.LibraryFindInput>;
+  "self.browser.library.propose": Facade.LiveRunRequest<Facade.ProposeInput>;
+  "self.browser.library.retire": Facade.LiveRunRequest<Facade.LibraryRetireInput>;
+  "self.browser.library.retired": Facade.LiveRunRequest<Facade.LibraryRetiredInput>;
+  "self.browser.library.run": Facade.LiveRunRequest<Facade.LibraryRunInput>;
   "self.browser.handover": Facade.LiveRunRequest<Facade.HandoverInput>;
   "vault.claims.supersede": Facade.LiveRunRequest<Facade.MemorySupersedeInput>;
   "self.fold": Facade.FoldMarkRequest;
@@ -742,6 +792,10 @@ export interface FacadeResults {
   "vault.shape.apply": Facade.ShapeApplyReceipt;
   "self.message": Facade.MessagePersonReceipt;
   "self.grants.ask": Facade.GrantAskReceipt;
+  "vault.companions.access_requests.answer": Facade.CompanionAccessRequestAnswered;
+  "vault.personas.preview": Facade.PersonaSnapshotPreview;
+  "vault.personas.export": Facade.PersonaSnapshotExportedCopy;
+  "vault.personas.edit": Facade.PersonaSnapshotExportedCopy;
   "self.memory.diary.query": Facade.DiaryQueryOutcome;
   "cancel": Facade.TaskCancelReceipt;
   "steer": Facade.SteerReceipt;
@@ -816,6 +870,17 @@ export interface FacadeResults {
   "vault.weave.owner.link.wrong": Facade.WeaveLinkCorrectionView;
   "vault.weave.item.wrong": Facade.WeaveItemCorrectionView;
   "vault.weave.owner.item.wrong": Facade.WeaveItemCorrectionView;
+  "vault.weave.enqueue": Facade.DreamerAttemptRef;
+  "vault.weave.schedules.list": Facade.WeaveScheduleView[];
+  "vault.weave.schedules.put": Facade.WeaveScheduleView;
+  "vault.weave.schedules.clear": Facade.WeaveScheduleCleared;
+  "vault.weave.owner.digest.render": Facade.WeaveDigestRendered | null;
+  "vault.inbox.concerns.review": Facade.DreamerAttemptRef;
+  "vault.inbox.lens": Facade.InboxLensPage;
+  "vault.inbox.groups": Facade.InboxGroup[];
+  "vault.weave.digest.render": Facade.WeaveDigestRendered | null;
+  "vault.weave.link.corrections": Facade.WeaveLinkCorrectionView[];
+  "self.inbox.lens": Facade.InboxLensPage;
   "vault.skill_hubs.put": Facade.SkillHubConfigured;
   "vault.skill_hubs.get": Facade.SkillHubRecord;
   "vault.skill_hubs.publishers.admit": Facade.SkillPublisherAdmission;
@@ -930,6 +995,7 @@ export interface FacadeResults {
   "vault.residence.open": Facade.ResidenceOpenAnswer;
   "vault.residence.index": Facade.ResidenceIndexAnswer;
   "vault.residence.prune": Facade.ResidencePruneAnswer;
+  "vault.residence.directives": Facade.ResidenceDirectiveView[];
   "vault.off_record.start": Facade.OffRecordSessionView;
   "vault.off_record.status": Facade.OffRecordSessionView;
   "vault.off_record.witness": Facade.WitnessReceipt;
@@ -1052,6 +1118,9 @@ export interface FacadeResults {
   "vault.shares.revoke": Facade.ShareRevokeReceipt;
   "vault.shares.view": Facade.ScopedReadResult<Facade.SharedBriefView | null>;
   "vault.hooks.replay": Facade.HookReplayRow[];
+  "vault.hooks.regen.due": Facade.EntityId[];
+  "vault.hooks.regen.get": Facade.HookRegenView | null;
+  "vault.hooks.regen.adopt": Facade.PackPutReceipt;
   "vault.artifacts.publish_approval": Facade.ArtifactPublishApproval;
   "vault.artifacts.publish": Facade.ArtifactPublishView;
   "vault.artifacts.repoint": Facade.ArtifactPublishView;
@@ -1081,6 +1150,12 @@ export interface FacadeResults {
   "vault.code.symbols.renew": Facade.CodeSymbolLeaseView;
   "vault.code.symbols.release": Facade.CodeSymbolsReleased;
   "vault.code.proposal_submit": Facade.CodeProposalSubmitted;
+  "vault.code.conflict_record": Facade.CodeConflictView;
+  "vault.code.conflict_view": Facade.CodeConflictHistory;
+  "vault.code.proposal_resolve": Facade.CodeProposalSubmitted;
+  "vault.code.proposal_review": Facade.CodeProposalSettlementView;
+  "vault.code.proposal_settle": Facade.CodeProposalSettlementView;
+  "vault.code.proposal_settlement": Facade.CodeProposalSettlementView;
   "vault.code.oplog": Facade.CodeMutationLog;
   "vault.code.model_heal_count": Facade.CodeRunModelHealCountView;
   "vault.code.waits.resolve": Facade.CodeWaitReceiptView;
@@ -1262,6 +1337,14 @@ export interface FacadeResults {
   "vault.forget": Facade.CommitReceipt[];
   "vault.booking.constraint_turn": Facade.BookingConstraintTurnResponse;
   "vault.booking.page_token": Facade.BookingPageTokenResponse;
+  "calendar.invite": Facade.OutboundIntentReceipt;
+  "calendar.connector.configure": Facade.CalendarConnectorRegistration;
+  "calendar.connector.get": Facade.CalendarConnectorRegistration | null;
+  "calendar.connector.pull": Facade.CalendarSyncOutcome;
+  "calendar.connector.write": Facade.RemoteWriteReceipt;
+  "calendar.connector.kill": Facade.CalendarConnectorRegistration;
+  "calendar.imip.configure": Facade.CalendarImipTransportConfig;
+  "calendar.imip.get": Facade.CalendarImipTransportConfig | null;
   "vault.calendar.create": Facade.CalendarEventCreated;
   "vault.calendar.ics.import": Facade.CalendarIcsImportReceipt;
   "vault.calendar.occurrences": Facade.ScopedReadResult<Facade.CalendarOccurrenceView[]>;
@@ -1330,6 +1413,15 @@ export interface FacadeResults {
   "vault.runs.checkpoint": Facade.CheckpointView | null;
   "vault.consolidation.promote": Facade.ConsolidationPromotion;
   "vault.consolidation.evidence": Facade.ScopedReadResult<Facade.ConsolidationEvidenceSource[]>;
+  "vault.sieve.queue": Facade.SieveQueuePage;
+  "vault.sieve.retained": Facade.SieveRetainedPage;
+  "vault.sieve.receipts": Facade.SieveReceiptsPage;
+  "vault.sieve.policy": Facade.SievePolicy;
+  "vault.sieve.policy.set": Facade.SievePolicy;
+  "vault.sieve.recipe_policy": Facade.WakeRecipePolicy;
+  "vault.sieve.recipe_policy.set": Facade.WakeRecipePolicy;
+  "vault.sieve.lease": Facade.SieveLeaseView;
+  "vault.sieve.lease.refill": Facade.SieveLeaseView;
   "vault.claims.vet": Facade.ClaimSettlement;
   "vault.claims.vetting": Facade.ClaimProposalReview;
   "vault.memory.signal_extraction": Facade.SignalExtractionTicket;
@@ -1363,6 +1455,9 @@ export interface FacadeResults {
   "vault.summaries.proposals.merge": Facade.SummaryProposalView;
   "vault.summaries.proposals.switch": Facade.SummaryProposalView;
   "vault.summaries.proposals.reject": Facade.SummaryProposalView;
+  "vault.notes.bless_brief_kind": Facade.BriefKindStamp;
+  "vault.notes.author_brief": Facade.EntityRefReceipt;
+  "vault.notes.follow_citation": Facade.ScopedReadResult<Facade.SharedBriefCitation | null>;
   "vault.notes.create": Facade.EntityRefReceipt;
   "vault.notes.author_take": Facade.EntityRefReceipt;
   "vault.notes.from_entity": Facade.EntityRefReceipt;
@@ -1406,6 +1501,11 @@ export interface FacadeResults {
   "self.browser.crop": Facade.ImageOutput;
   "self.browser.zoom": Facade.ImageOutput;
   "self.browser.batch": Facade.BatchOutput;
+  "self.browser.library.find": Facade.LibraryFindOutput;
+  "self.browser.library.propose": Facade.ProposeOutput;
+  "self.browser.library.retire": Facade.LibraryRetireOutput;
+  "self.browser.library.retired": Facade.LibraryRetiredOutput;
+  "self.browser.library.run": Facade.LibraryRunOutput;
   "self.browser.handover": Facade.HandoverOutput;
   "vault.claims.supersede": Facade.MemoryWriteOutput;
   "self.fold": Facade.FoldReply<Facade.FoldMarked>;
@@ -1464,6 +1564,10 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.shape.apply": { description: "Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "self.message": { description: "Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "self.grants.ask": { description: "Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it.", scope: "Write", proposes: false, hostDoor: false, section: false },
+  "vault.companions.access_requests.answer": { description: "The owner approves or denies one pending companion-profile request, atomically recording the answer and its exact grant.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.personas.preview": { description: "Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.personas.export": { description: "Issues the exact previewed mode-A persona copy after explicit row strikes; a changed preview refuses stale consent.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.personas.edit": { description: "Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "self.memory.diary.query": { description: "Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "cancel": { description: "Cancels one TASK under the caller's own-scoped auto default, abandoning only unlanded work.", scope: "Write", proposes: true, hostDoor: false, section: true },
   "steer": { description: "The TASK's spawner nudges its live run; a resend with the same key answers the first receipt.", scope: "Write", proposes: false, hostDoor: false, section: false },
@@ -1538,6 +1642,17 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.weave.owner.link.wrong": { description: "The owner labels a link in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the link stays.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.weave.item.wrong": { description: "A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.weave.owner.item.wrong": { description: "The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.weave.enqueue": { description: "Admits a generated candidate weave recipe under the owner's proof and queues its pinned execution; poll vault.consolidation.status for completion.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.weave.schedules.list": { description: "Lists every reader's daily or weekly weave digest schedule under the owner's proof.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.weave.schedules.put": { description: "Sets one reader's daily or weekly digest schedule and section recipe under the owner's proof.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.weave.schedules.clear": { description: "Stops one reader's digest schedule under the owner's proof, keeping its saved periods.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.weave.owner.digest.render": { description: "Publishes the owner's due digest through the live owner lens and returns the saved period and narrowing receipt, or null when nothing is due.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.inbox.concerns.review": { description: "Queues the Coach's real health review under the owner's proof; findings and recipients come from engine evidence, never supplied concern rows.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.inbox.lens": { description: "Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.inbox.groups": { description: "Reads membership of real gate-held Dreamer consent proposals grouped by run, under the owner's proof.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.weave.digest.render": { description: "Publishes the bound reader's due digest through the same live scoped lens and returns its saved period and narrowing receipt, or null when nothing is due.", scope: "Write", proposes: false, hostDoor: false, section: false },
+  "vault.weave.link.corrections": { description: "Reads persisted wrong-link labels for a link still admitted by the caller's live weave lens, without changing the link.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "self.inbox.lens": { description: "Reads the bound actor's own identity inbox slice in impact order, with optional identity filtering and concern groups; not a delivered-notification page.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.skill_hubs.put": { description: "The owner registers or revises a hub source; hub trust never grants activation authority.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.skill_hubs.get": { description: "Reads one configured hub as the owner.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.skill_hubs.publishers.admit": { description: "The owner admits a foreign publisher to offer candidates from one configured hub, and nothing else.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -1652,6 +1767,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.residence.open": { description: "Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors. A machine this host does not reach answers state queued, naming the directive.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.residence.index": { description: "The thin index one of the owner's machines holds, window by window: what exists, never a body. A machine this host does not reach answers state queued, naming the directive.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.residence.prune": { description: "Drops the opened-item caches one of the owner's machines last touched before a time. A machine this host does not reach answers state queued, naming the directive.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.residence.directives": { description: "The owner reads the residence directives this replica holds and each machine's result as received here; a null result means not received here, not that the machine is idle.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.off_record.start": { description: "The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous; nothing of it reaches the vault unless the owner promotes or saves it.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.off_record.status": { description: "The session's creator or the vault's owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing; a room's member reads what their membership shows.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.off_record.witness": { description: "The session's creator or the vault's owner witnesses one turn into an off-record session, or a member into a room's; it stays in the room until promoted or dropped at close.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -1774,6 +1890,9 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.shares.revoke": { description: "", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.shares.view": { description: "", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.hooks.replay": { description: "The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.hooks.regen.due": { description: "List, as the authenticated owner, the hook bindings of the vault's own packs whose verb table or sandbox contract changed since their last good body passed, with no regen waiting. Runs no regen.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.hooks.regen.get": { description: "Read one hook binding's regen record as the authenticated owner: its last good body hash, contract stamp, intent and pending decision, with the candidate_hash an adoption names. Null for a binding bound under no record. Changes nothing.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.hooks.regen.adopt": { description: "Adopt, as the authenticated owner and as their stamp, the regen candidate pending on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. Answers the pack put receipt; only an installed put advances the record.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.artifacts.publish_approval": { description: "Computes the exact publication approval digest for the existing owner approve-once door; it grants nothing.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.artifacts.publish": { description: "Publishes one immutable code fork or numbered blob export with an explicit audience through the existing Gate, returning its pointer and durable receipt ref.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.artifacts.repoint": { description: "Repoints one artifact channel to an exact immutable export through the publication Gate; use a new publish id, and earlier receipts survive.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -1803,6 +1922,12 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.code.symbols.renew": { description: "Renew the live symbol declaration the caller holds for one task by its declared lifetime. Owner only.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.code.symbols.release": { description: "Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.code.proposal_submit": { description: "Stage one file change of a repository as a Proposed proposal with its retained base, under the review lens catalog the owner sends. Owner only. The engine mints the proposal id; nothing is approved, queued or landed.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.code.conflict_record": { description: "Record a real Git overlap between two stored one-file proposals at the same retained base, with both trees, paths and a linked reconciliation task. Owner only; neither branch moves.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.code.conflict_view": { description: "Read open repository conflicts and their durable resolution claims, including each reconciliation task. Owner only.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.code.proposal_resolve": { description: "Stage a one-file resolution of an active repository conflict as another Proposed proposal, preserving its original proposals and reconciliation task. Owner only; nothing lands.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.code.proposal_review": { description: "Record the authenticated owner's immutable critic opinion on one proposal lens. Independent reviewers only; this is no contract-check execution receipt.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.code.proposal_settle": { description: "Approve or reject one reviewed code proposal as an independent owner, retaining a decision receipt. Approval still needs unanimous critics and never advances head; only the tested merge queue lands it.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.code.proposal_settlement": { description: "Read a code proposal's review decision receipt and execution lineage, including its conflict, original proposals, reconciliation task and resolution claim. Owner only.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.code.oplog": { description: "Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.code.model_heal_count": { description: "Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.code.waits.resolve": { description: "Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -1984,6 +2109,14 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.forget": { description: "Retracts claims by exact claim or by subject and predicate; never a hard delete.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.booking.constraint_turn": { description: "Parses one scheduling constraint on a live published booking page as the caller, returning public slot controls, an email continuation or a deflect; this never holds or confirms a booking.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.booking.page_token": { description: "The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "calendar.invite": { description: "Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe.", scope: "Write", proposes: false, hostDoor: false, section: false },
+  "calendar.connector.configure": { description: "Installs one CalDAV seat under owner proof, with a custody reference, discovery endpoint and nonzero bounded poll cadence.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "calendar.connector.get": { description: "Reads a configured CalDAV seat, its real provider cursor, kill switch and last sync observation under owner proof.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "calendar.connector.pull": { description: "Pulls the configured CalDAV seat through the existing import gate and echo law, returning the real cursor and sync counters under owner proof.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "calendar.connector.write": { description: "Writes a readable EVENT to the owner-installed CalDAV seat through the durable conditional-write outbox, never a blind overwrite.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "calendar.connector.kill": { description: "Kills a CalDAV seat under owner proof, revoking its advertised verbs and stopping further polling and writes without erasing calendar evidence.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "calendar.imip.configure": { description: "Installs the host iMIP mail submission endpoint and custody name under owner proof; this configuration grants no invite consent or sending identity.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "calendar.imip.get": { description: "Reads the installed host iMIP submission endpoint and custody name under owner proof, never its credential value.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.calendar.create": { description: "Creates a native or evidence-linked dreamer EVENT as the caller, with atomic projector-recorded origin and engine-stamped recorded time.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.calendar.ics.import": { description: "The owner imports one exact uploaded ICS version through the existing UID diff and imported-claim gate; the receipt exposes pending claim refs without granting consent.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.calendar.occurrences": { description: "Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions.", scope: "Read", proposes: false, hostDoor: false, section: false },
@@ -2052,6 +2185,15 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.runs.checkpoint": { description: "Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.consolidation.promote": { description: "Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.consolidation.evidence": { description: "Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.sieve.queue": { description: "The owner reads one ordered page of the sieve interest queue: span handles, source and range refs, kind, score and the rungs still owed.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.sieve.retained": { description: "The owner reads the sieve retained original span readings, which spending never removes, for a later weave over evidence.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.sieve.receipts": { description: "The owner reads consumed-span receipts: each span nightly spending consumed once, its source ref and the attempt that spent it.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.sieve.policy": { description: "The owner reads the sieve policy row: how much one pass reads, each kind interest, rule confidences and the uncertain band.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.sieve.policy.set": { description: "The owner replaces the sieve policy row; the new row scores spans read after it and queued spans keep the score they were given.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.sieve.recipe_policy": { description: "The owner reads the wake recipe policy row: per-receipt span and child budgets, rung retry and the sampled audit settings.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.sieve.recipe_policy.set": { description: "The owner replaces the wake recipe policy row; unspent interest stays queued and only later receipts spend under the new budgets.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.sieve.lease": { description: "The owner reads one wake-budget lease counter without creating it: total, remaining and reserved units by its budget id.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.sieve.lease.refill": { description: "The owner refills one wake-budget lease to a replacement total; spent and reserved units keep their claim and replay adds nothing twice.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.claims.vet": { description: "Vets a reviewed generated-origin Auto claim or proposal through the owner Gate and signed settlement; it still contributes zero corroboration.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.claims.vetting": { description: "Reviews an exact generated-origin Auto claim or proposal before owner vetting, returning the content-bound review handle.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.memory.signal_extraction": { description: "Queues typed extraction of witnessed turns on the configured production Dreamer role; returns durable partition job refs, never caller-authored candidates.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -2085,6 +2227,9 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.summaries.proposals.merge": { description: "Merges the complete SUMMARY proposal under existing entity grants, preserving concurrent head edits and durable receipts.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.summaries.proposals.switch": { description: "Explicitly switches the complete SUMMARY proposal under existing entity grants; a stale causal base refuses the entire set.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.summaries.proposals.reject": { description: "Rejects the complete SUMMARY proposal under existing entity grants, dropping pending fork text without moving live heads.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.notes.bless_brief_kind": { description: "A verified person stamps the brief kind policy seed; it grants no sharing or extraction authority.", scope: "Write", proposes: false, hostDoor: false, section: false },
+  "vault.notes.author_brief": { description: "Authors markdown with supporting claim citations, capturing source NOTE pins and rechecking their live read authority in the brief write transaction.", scope: "Write", proposes: false, hostDoor: false, section: false },
+  "vault.notes.follow_citation": { description: "Follows returned share and claim references under the caller live read scope; revocation stops resolution and hidden citations disclose no quote or lifecycle.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.notes.create": { description: "Creates a NOTE of a registered kind, its first authored text as its birth.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.notes.author_take": { description: "Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.notes.from_entity": { description: "Creates a NOTE of a registered kind from an existing entity.", scope: "Write", proposes: false, hostDoor: false, section: false },
@@ -2128,6 +2273,11 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "self.browser.crop": { description: "Crops a held image to a rectangle.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "self.browser.zoom": { description: "Zooms into a rectangle of a held image.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "self.browser.batch": { description: "Runs one batched program of browser steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "self.browser.library.find": { description: "The replay library's programs for a site, or for the attached run's open page's site.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "self.browser.library.propose": { description: "Offers a solved run's program to the replay library of the attached run's browser session; it joins only once a no-model replay meets its postcondition.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "self.browser.library.retire": { description: "Takes a program out of the replay library of the attached run's browser session for every later run, and returns the card it had.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "self.browser.library.retired": { description: "The programs retires took out of the replay library for a site, or for the attached run's open page's site, the newest first, each with when and why.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "self.browser.library.run": { description: "Runs a replay library program live with its arguments in the attached run's browser session; a missed postcondition goes back to the planner.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "self.browser.handover": { description: "Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.claims.supersede": { description: "Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "self.fold": { description: "Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -2233,6 +2383,26 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         plan: (input: Facade.ShapePlanRequest, options?: O): FacadeReturns<"vault.shape.plan">[K] => invoke("vault.shape.plan", input, options, newInvocation()),
         /** Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item. */
         apply: (input: Facade.ShapeApplyRequest, options?: O): FacadeReturns<"vault.shape.apply">[K] => invoke("vault.shape.apply", input, options, newInvocation()),
+      },
+      companions: {
+        access_requests: {
+          /** The owner approves or denies one pending companion-profile request, atomically recording the answer and its exact grant. */
+          answer: (input: Facade.CompanionAccessRequestAnswerRequest, options?: O): FacadeReturns<"vault.companions.access_requests.answer">[K] => invoke("vault.companions.access_requests.answer", input, options, newInvocation()),
+        },
+        sharing: {
+          /** One contact's clearance in a companion's source vault, for the principal who controls that vault. */
+          get: (input: Facade.CompanionSharingRequest, options?: O): FacadeReturns<"vault.companions.sharing.get">[K] => invoke("vault.companions.sharing.get", input, options, newInvocation()),
+          /** The owner's standing yes to one frozen clearance offer for a companion's contact. */
+          set: (input: Facade.CompanionSharingSetRequest, options?: O): FacadeReturns<"vault.companions.sharing.set">[K] => invoke("vault.companions.sharing.set", input, options, newInvocation()),
+        },
+      },
+      personas: {
+        /** Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp. */
+        preview: (input: Facade.PersonaSnapshotPreviewRequest, options?: O): FacadeReturns<"vault.personas.preview">[K] => invoke("vault.personas.preview", input, options, newInvocation()),
+        /** Issues the exact previewed mode-A persona copy after explicit row strikes; a changed preview refuses stale consent. */
+        export: (input: Facade.PersonaSnapshotCopyRequest, options?: O): FacadeReturns<"vault.personas.export">[K] => invoke("vault.personas.export", input, options, newInvocation()),
+        /** Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version. */
+        edit: (input: Facade.PersonaSnapshotCopyEditRequest, options?: O): FacadeReturns<"vault.personas.edit">[K] => invoke("vault.personas.edit", input, options, newInvocation()),
       },
       fanout: {
         /** Admits input-order child slots under this credential's attached live run, through the frozen fan-out approval gate and one shared parent spend tree. */
@@ -2418,12 +2588,17 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         /** The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role. */
         report: (input: Facade.WeaveReportRequest, options?: O): FacadeReturns<"vault.weave.report">[K] => invoke("vault.weave.report", input, options, newInvocation()),
         /** One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none. */
-        digest: (input: Facade.WeaveDigestRequest, options?: O): FacadeReturns<"vault.weave.digest">[K] => invoke("vault.weave.digest", input, options, newInvocation()),
+        digest: Object.assign((input: Facade.WeaveDigestRequest, options?: O): FacadeReturns<"vault.weave.digest">[K] => invoke("vault.weave.digest", input, options, newInvocation()), {
+          /** Publishes the bound reader's due digest through the same live scoped lens and returns its saved period and narrowing receipt, or null when nothing is due. */
+          render: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.weave.digest.render">[K] => invoke("vault.weave.digest.render", input, options, newInvocation()),
+        }),
         /** Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events. */
         lens: (input: Facade.WeaveReportRequest, options?: O): FacadeReturns<"vault.weave.lens">[K] => invoke("vault.weave.lens", input, options, newInvocation()),
         link: {
           /** A person labels a link in their own lens as wrong; the label teaches the loops and the link stays. */
           wrong: (input: Facade.WeaveWrongLinkRequest, options?: O): FacadeReturns<"vault.weave.link.wrong">[K] => invoke("vault.weave.link.wrong", input, options, newInvocation()),
+          /** Reads persisted wrong-link labels for a link still admitted by the caller's live weave lens, without changing the link. */
+          corrections: (input: Facade.WeaveWrongLinkRequest, options?: O): FacadeReturns<"vault.weave.link.corrections">[K] => invoke("vault.weave.link.corrections", input, options, newInvocation()),
         },
         owner: {
           link: {
@@ -2434,11 +2609,35 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
             /** The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays. */
             wrong: (input: Facade.WeaveWrongItemRequest, options?: O): FacadeReturns<"vault.weave.owner.item.wrong">[K] => invoke("vault.weave.owner.item.wrong", input, options, newInvocation()),
           },
+          digest: {
+            /** Publishes the owner's due digest through the live owner lens and returns the saved period and narrowing receipt, or null when nothing is due. */
+            render: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.weave.owner.digest.render">[K] => invoke("vault.weave.owner.digest.render", input, options, newInvocation()),
+          },
         },
         item: {
           /** A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays. */
           wrong: (input: Facade.WeaveWrongItemRequest, options?: O): FacadeReturns<"vault.weave.item.wrong">[K] => invoke("vault.weave.item.wrong", input, options, newInvocation()),
         },
+        /** Admits a generated candidate weave recipe under the owner's proof and queues its pinned execution; poll vault.consolidation.status for completion. */
+        enqueue: (input: Facade.WeaveEnqueueRequest, options?: O): FacadeReturns<"vault.weave.enqueue">[K] => invoke("vault.weave.enqueue", input, options, newInvocation()),
+        schedules: {
+          /** Lists every reader's daily or weekly weave digest schedule under the owner's proof. */
+          list: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.weave.schedules.list">[K] => invoke("vault.weave.schedules.list", input, options, newInvocation()),
+          /** Sets one reader's daily or weekly digest schedule and section recipe under the owner's proof. */
+          put: (input: Facade.WeaveScheduleView, options?: O): FacadeReturns<"vault.weave.schedules.put">[K] => invoke("vault.weave.schedules.put", input, options, newInvocation()),
+          /** Stops one reader's digest schedule under the owner's proof, keeping its saved periods. */
+          clear: (input: Facade.WeaveReaderRef, options?: O): FacadeReturns<"vault.weave.schedules.clear">[K] => invoke("vault.weave.schedules.clear", input, options, newInvocation()),
+        },
+      },
+      inbox: {
+        concerns: {
+          /** Queues the Coach's real health review under the owner's proof; findings and recipients come from engine evidence, never supplied concern rows. */
+          review: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.inbox.concerns.review">[K] => invoke("vault.inbox.concerns.review", input, options, newInvocation()),
+        },
+        /** Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent. */
+        lens: (input: Facade.InboxLensRequest, options?: O): FacadeReturns<"vault.inbox.lens">[K] => invoke("vault.inbox.lens", input, options, newInvocation()),
+        /** Reads membership of real gate-held Dreamer consent proposals grouped by run, under the owner's proof. */
+        groups: (input: Facade.InboxRunGroupsRequest, options?: O): FacadeReturns<"vault.inbox.groups">[K] => invoke("vault.inbox.groups", input, options, newInvocation()),
       },
       skill_hubs: {
         /** The owner registers or revises a hub source; hub trust never grants activation authority. */
@@ -2751,6 +2950,8 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         index: (input: Facade.ResidenceMachineRequest, options?: O): FacadeReturns<"vault.residence.index">[K] => invoke("vault.residence.index", input, options, newInvocation()),
         /** Drops the opened-item caches one of the owner's machines last touched before a time. A machine this host does not reach answers state queued, naming the directive. */
         prune: (input: Facade.ResidencePruneRequest, options?: O): FacadeReturns<"vault.residence.prune">[K] => invoke("vault.residence.prune", input, options, newInvocation()),
+        /** The owner reads the residence directives this replica holds and each machine's result as received here; a null result means not received here, not that the machine is idle. */
+        directives: (input: Facade.ResidenceDirectivesRequest, options?: O): FacadeReturns<"vault.residence.directives">[K] => invoke("vault.residence.directives", input, options, newInvocation()),
       },
       off_record: {
         /** The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous; nothing of it reaches the vault unless the owner promotes or saves it. */
@@ -3038,6 +3239,14 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
       hooks: {
         /** The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands. */
         replay: (input: Facade.HooksReplayRequest, options?: O): FacadeReturns<"vault.hooks.replay">[K] => invoke("vault.hooks.replay", input, options, newInvocation()),
+        regen: {
+          /** List, as the authenticated owner, the hook bindings of the vault's own packs whose verb table or sandbox contract changed since their last good body passed, with no regen waiting. Runs no regen. */
+          due: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.hooks.regen.due">[K] => invoke("vault.hooks.regen.due", input, options, newInvocation()),
+          /** Read one hook binding's regen record as the authenticated owner: its last good body hash, contract stamp, intent and pending decision, with the candidate_hash an adoption names. Null for a binding bound under no record. Changes nothing. */
+          get: (input: Facade.HookRegenBindingRequest, options?: O): FacadeReturns<"vault.hooks.regen.get">[K] => invoke("vault.hooks.regen.get", input, options, newInvocation()),
+          /** Adopt, as the authenticated owner and as their stamp, the regen candidate pending on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. Answers the pack put receipt; only an installed put advances the record. */
+          adopt: (input: Facade.HookRegenAdoptRequest, options?: O): FacadeReturns<"vault.hooks.regen.adopt">[K] => invoke("vault.hooks.regen.adopt", input, options, newInvocation()),
+        },
       },
       artifacts: {
         /** Computes the exact publication approval digest for the existing owner approve-once door; it grants nothing. */
@@ -3192,6 +3401,18 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         },
         /** Stage one file change of a repository as a Proposed proposal with its retained base, under the review lens catalog the owner sends. Owner only. The engine mints the proposal id; nothing is approved, queued or landed. */
         proposal_submit: (input: Facade.CodeProposalSubmitRequest, options?: O): FacadeReturns<"vault.code.proposal_submit">[K] => invoke("vault.code.proposal_submit", input, options, newInvocation()),
+        /** Record a real Git overlap between two stored one-file proposals at the same retained base, with both trees, paths and a linked reconciliation task. Owner only; neither branch moves. */
+        conflict_record: (input: Facade.CodeConflictRecordRequest, options?: O): FacadeReturns<"vault.code.conflict_record">[K] => invoke("vault.code.conflict_record", input, options, newInvocation()),
+        /** Read open repository conflicts and their durable resolution claims, including each reconciliation task. Owner only. */
+        conflict_view: (input: Facade.CodeConflictViewRequest, options?: O): FacadeReturns<"vault.code.conflict_view">[K] => invoke("vault.code.conflict_view", input, options, newInvocation()),
+        /** Stage a one-file resolution of an active repository conflict as another Proposed proposal, preserving its original proposals and reconciliation task. Owner only; nothing lands. */
+        proposal_resolve: (input: Facade.CodeProposalResolveRequest, options?: O): FacadeReturns<"vault.code.proposal_resolve">[K] => invoke("vault.code.proposal_resolve", input, options, newInvocation()),
+        /** Record the authenticated owner's immutable critic opinion on one proposal lens. Independent reviewers only; this is no contract-check execution receipt. */
+        proposal_review: (input: Facade.CodeProposalReviewRequest, options?: O): FacadeReturns<"vault.code.proposal_review">[K] => invoke("vault.code.proposal_review", input, options, newInvocation()),
+        /** Approve or reject one reviewed code proposal as an independent owner, retaining a decision receipt. Approval still needs unanimous critics and never advances head; only the tested merge queue lands it. */
+        proposal_settle: (input: Facade.CodeProposalSettleRequest, options?: O): FacadeReturns<"vault.code.proposal_settle">[K] => invoke("vault.code.proposal_settle", input, options, newInvocation()),
+        /** Read a code proposal's review decision receipt and execution lineage, including its conflict, original proposals, reconciliation task and resolution claim. Owner only. */
+        proposal_settlement: (input: Facade.CodeProposalSettlementRequest, options?: O): FacadeReturns<"vault.code.proposal_settlement">[K] => invoke("vault.code.proposal_settlement", input, options, newInvocation()),
         /** Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal. */
         oplog: (input: Facade.CodeRepoRequest, options?: O): FacadeReturns<"vault.code.oplog">[K] => invoke("vault.code.oplog", input, options, newInvocation()),
         /** Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy. */
@@ -3461,14 +3682,6 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         /** Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress. */
         react: (input: Facade.MessageReactionRequest, options?: O): FacadeReturns<"vault.messages.react">[K] => invoke("vault.messages.react", input, options, newInvocation()),
       },
-      companions: {
-        sharing: {
-          /** One contact's clearance in a companion's source vault, for the principal who controls that vault. */
-          get: (input: Facade.CompanionSharingRequest, options?: O): FacadeReturns<"vault.companions.sharing.get">[K] => invoke("vault.companions.sharing.get", input, options, newInvocation()),
-          /** The owner's standing yes to one frozen clearance offer for a companion's contact. */
-          set: (input: Facade.CompanionSharingSetRequest, options?: O): FacadeReturns<"vault.companions.sharing.set">[K] => invoke("vault.companions.sharing.set", input, options, newInvocation()),
-        },
-      },
       voices: {
         packs: {
           /** The owner banks one immutable reference pack of their own voice: the first captured or designed pack makes its identity, a captured pack cites their current render grant, and a retry of the same pack is a no-op. */
@@ -3623,6 +3836,29 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         /** Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner. */
         evidence: (input: Facade.ConsolidationEvidenceRequest, options?: O): FacadeReturns<"vault.consolidation.evidence">[K] => invoke("vault.consolidation.evidence", input, options, newInvocation()),
       },
+      sieve: {
+        /** The owner reads one ordered page of the sieve interest queue: span handles, source and range refs, kind, score and the rungs still owed. */
+        queue: (input: Facade.SievePageRequest, options?: O): FacadeReturns<"vault.sieve.queue">[K] => invoke("vault.sieve.queue", input, options, newInvocation()),
+        /** The owner reads the sieve retained original span readings, which spending never removes, for a later weave over evidence. */
+        retained: (input: Facade.SievePageRequest, options?: O): FacadeReturns<"vault.sieve.retained">[K] => invoke("vault.sieve.retained", input, options, newInvocation()),
+        /** The owner reads consumed-span receipts: each span nightly spending consumed once, its source ref and the attempt that spent it. */
+        receipts: (input: Facade.SievePageRequest, options?: O): FacadeReturns<"vault.sieve.receipts">[K] => invoke("vault.sieve.receipts", input, options, newInvocation()),
+        /** The owner reads the sieve policy row: how much one pass reads, each kind interest, rule confidences and the uncertain band. */
+        policy: Object.assign((input: Facade.SievePolicyRequest, options?: O): FacadeReturns<"vault.sieve.policy">[K] => invoke("vault.sieve.policy", input, options, newInvocation()), {
+          /** The owner replaces the sieve policy row; the new row scores spans read after it and queued spans keep the score they were given. */
+          set: (input: Facade.SievePolicySetRequest, options?: O): FacadeReturns<"vault.sieve.policy.set">[K] => invoke("vault.sieve.policy.set", input, options, newInvocation()),
+        }),
+        /** The owner reads the wake recipe policy row: per-receipt span and child budgets, rung retry and the sampled audit settings. */
+        recipe_policy: Object.assign((input: Facade.SievePolicyRequest, options?: O): FacadeReturns<"vault.sieve.recipe_policy">[K] => invoke("vault.sieve.recipe_policy", input, options, newInvocation()), {
+          /** The owner replaces the wake recipe policy row; unspent interest stays queued and only later receipts spend under the new budgets. */
+          set: (input: Facade.SieveRecipePolicySetRequest, options?: O): FacadeReturns<"vault.sieve.recipe_policy.set">[K] => invoke("vault.sieve.recipe_policy.set", input, options, newInvocation()),
+        }),
+        /** The owner reads one wake-budget lease counter without creating it: total, remaining and reserved units by its budget id. */
+        lease: Object.assign((input: Facade.SieveLeaseRequest, options?: O): FacadeReturns<"vault.sieve.lease">[K] => invoke("vault.sieve.lease", input, options, newInvocation()), {
+          /** The owner refills one wake-budget lease to a replacement total; spent and reserved units keep their claim and replay adds nothing twice. */
+          refill: (input: Facade.SieveLeaseRefillRequest, options?: O): FacadeReturns<"vault.sieve.lease.refill">[K] => invoke("vault.sieve.lease.refill", input, options, newInvocation()),
+        }),
+      },
       memory: {
         /** Queues typed extraction of witnessed turns on the configured production Dreamer role; returns durable partition job refs, never caller-authored candidates. */
         signal_extraction: Object.assign((input: Facade.SignalExtractionRequest, options?: O): FacadeReturns<"vault.memory.signal_extraction">[K] => invoke("vault.memory.signal_extraction", input, options, newInvocation()), {
@@ -3699,6 +3935,12 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         },
       },
       notes: {
+        /** A verified person stamps the brief kind policy seed; it grants no sharing or extraction authority. */
+        bless_brief_kind: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.notes.bless_brief_kind">[K] => invoke("vault.notes.bless_brief_kind", input, options, newInvocation()),
+        /** Authors markdown with supporting claim citations, capturing source NOTE pins and rechecking their live read authority in the brief write transaction. */
+        author_brief: (input: Facade.AuthorBriefRequest, options?: O): FacadeReturns<"vault.notes.author_brief">[K] => invoke("vault.notes.author_brief", input, options, newInvocation()),
+        /** Follows returned share and claim references under the caller live read scope; revocation stops resolution and hidden citations disclose no quote or lifecycle. */
+        follow_citation: (input: Facade.BriefCitationFollowRequest, options?: O): FacadeReturns<"vault.notes.follow_citation">[K] => invoke("vault.notes.follow_citation", input, options, newInvocation()),
         /** Creates a NOTE of a registered kind, its first authored text as its birth. */
         create: (input: Facade.CreateNoteRequest, options?: O): FacadeReturns<"vault.notes.create">[K] => invoke("vault.notes.create", input, options, newInvocation()),
         /** Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target. */
@@ -3798,6 +4040,8 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
           outcome: (input: Facade.ConcernOutcomeRequest, options?: O): FacadeReturns<"self.inbox.concern.outcome">[K] => invoke("self.inbox.concern.outcome", input, options, newInvocation()),
           move: (input: Facade.ConcernMoveRequest, options?: O): FacadeReturns<"self.inbox.concern.move">[K] => invoke("self.inbox.concern.move", input, options, newInvocation()),
         }),
+        /** Reads the bound actor's own identity inbox slice in impact order, with optional identity filtering and concern groups; not a delivered-notification page. */
+        lens: (input: Facade.InboxLensRequest, options?: O): FacadeReturns<"self.inbox.lens">[K] => invoke("self.inbox.lens", input, options, newInvocation()),
       },
       /** Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use. */
       message: (input: Facade.MessagePersonRequest, options?: O): FacadeReturns<"self.message">[K] => invoke("self.message", input, options, newInvocation()),
@@ -3883,6 +4127,18 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         zoom: (input: Facade.LiveRunRequest<Facade.ZoomInput>, options?: O): FacadeReturns<"self.browser.zoom">[K] => invoke("self.browser.zoom", input, options, newInvocation()),
         /** Runs one batched program of browser steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor. */
         batch: (input: Facade.LiveRunRequest<Facade.BatchInput>, options?: O): FacadeReturns<"self.browser.batch">[K] => invoke("self.browser.batch", input, options, newInvocation()),
+        library: {
+          /** The replay library's programs for a site, or for the attached run's open page's site. */
+          find: (input: Facade.LiveRunRequest<Facade.LibraryFindInput>, options?: O): FacadeReturns<"self.browser.library.find">[K] => invoke("self.browser.library.find", input, options, newInvocation()),
+          /** Offers a solved run's program to the replay library of the attached run's browser session; it joins only once a no-model replay meets its postcondition. */
+          propose: (input: Facade.LiveRunRequest<Facade.ProposeInput>, options?: O): FacadeReturns<"self.browser.library.propose">[K] => invoke("self.browser.library.propose", input, options, newInvocation()),
+          /** Takes a program out of the replay library of the attached run's browser session for every later run, and returns the card it had. */
+          retire: (input: Facade.LiveRunRequest<Facade.LibraryRetireInput>, options?: O): FacadeReturns<"self.browser.library.retire">[K] => invoke("self.browser.library.retire", input, options, newInvocation()),
+          /** The programs retires took out of the replay library for a site, or for the attached run's open page's site, the newest first, each with when and why. */
+          retired: (input: Facade.LiveRunRequest<Facade.LibraryRetiredInput>, options?: O): FacadeReturns<"self.browser.library.retired">[K] => invoke("self.browser.library.retired", input, options, newInvocation()),
+          /** Runs a replay library program live with its arguments in the attached run's browser session; a missed postcondition goes back to the planner. */
+          run: (input: Facade.LiveRunRequest<Facade.LibraryRunInput>, options?: O): FacadeReturns<"self.browser.library.run">[K] => invoke("self.browser.library.run", input, options, newInvocation()),
+        },
         /** Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record. */
         handover: (input: Facade.LiveRunRequest<Facade.HandoverInput>, options?: O): FacadeReturns<"self.browser.handover">[K] => invoke("self.browser.handover", input, options, newInvocation()),
       },
@@ -4011,6 +4267,28 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
       outbound: {
         /** Schedules one send through a granted outbound connector, gated and held for delivery. */
         schedule: (input: Facade.OutboundScheduleRequest, options?: O): FacadeReturns<"connector.outbound.schedule">[K] => invoke("connector.outbound.schedule", input, options, newInvocation()),
+      },
+    },
+    calendar: {
+      /** Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe. */
+      invite: (input: Facade.CalendarInviteSurfaceInput, options?: O): FacadeReturns<"calendar.invite">[K] => invoke("calendar.invite", input, options, newInvocation()),
+      connector: {
+        /** Installs one CalDAV seat under owner proof, with a custody reference, discovery endpoint and nonzero bounded poll cadence. */
+        configure: (input: Facade.CalendarConnectorConfigureRequest, options?: O): FacadeReturns<"calendar.connector.configure">[K] => invoke("calendar.connector.configure", input, options, newInvocation()),
+        /** Reads a configured CalDAV seat, its real provider cursor, kill switch and last sync observation under owner proof. */
+        get: (input: Facade.CalendarConnectorRequest, options?: O): FacadeReturns<"calendar.connector.get">[K] => invoke("calendar.connector.get", input, options, newInvocation()),
+        /** Pulls the configured CalDAV seat through the existing import gate and echo law, returning the real cursor and sync counters under owner proof. */
+        pull: (input: Facade.CalendarConnectorRequest, options?: O): FacadeReturns<"calendar.connector.pull">[K] => invoke("calendar.connector.pull", input, options, newInvocation()),
+        /** Writes a readable EVENT to the owner-installed CalDAV seat through the durable conditional-write outbox, never a blind overwrite. */
+        write: (input: Facade.CalendarConnectorWriteRequest, options?: O): FacadeReturns<"calendar.connector.write">[K] => invoke("calendar.connector.write", input, options, newInvocation()),
+        /** Kills a CalDAV seat under owner proof, revoking its advertised verbs and stopping further polling and writes without erasing calendar evidence. */
+        kill: (input: Facade.CalendarConnectorKillRequest, options?: O): FacadeReturns<"calendar.connector.kill">[K] => invoke("calendar.connector.kill", input, options, newInvocation()),
+      },
+      imip: {
+        /** Installs the host iMIP mail submission endpoint and custody name under owner proof; this configuration grants no invite consent or sending identity. */
+        configure: (input: Facade.CalendarImipTransportConfig, options?: O): FacadeReturns<"calendar.imip.configure">[K] => invoke("calendar.imip.configure", input, options, newInvocation()),
+        /** Reads the installed host iMIP submission endpoint and custody name under owner proof, never its credential value. */
+        get: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"calendar.imip.get">[K] => invoke("calendar.imip.get", input, options, newInvocation()),
       },
     },
   };

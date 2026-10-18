@@ -82,7 +82,7 @@ fn public_relationship_role(raw: &[u8]) -> Option<Option<String>> {
     )
 }
 
-fn row_id(
+pub(super) fn row_id(
     kind: PersonaSnapshotRowKind,
     subject_ref: &EntityId,
     text: &str,
@@ -131,7 +131,7 @@ fn make_row(
     }
 }
 
-fn compile_fingerprint(
+pub(super) fn compile_fingerprint(
     subject_ref: &EntityId,
     identity_line: &str,
     audience_ref: Option<&str>,

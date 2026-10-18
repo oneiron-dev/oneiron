@@ -38,9 +38,10 @@ pub use self::scheduling::*;
 pub(crate) use self::sieve::grant_written_in_txn as sieve_grant_written_in_txn;
 pub(crate) use self::sieve::owe_read_in_txn as owe_sieve_read_in_txn;
 pub use self::sieve::{
-    RuleClass, SieveAudit, SievePass, SievePolicy, SieveQueue, SieveRung, SieveSkipped, SieveSpan,
-    SpanBand, SpanKind, SpanOrigin,
+    RuleClass, SieveAudit, SieveConsumeReceipt, SievePass, SievePolicy, SieveQueue, SieveRung,
+    SieveSkipped, SieveSpan, SpanBand, SpanKind, SpanOrigin,
 };
+pub mod sieve_doors;
 pub use self::types::*;
 
 /// The erase hook, in the erasing transaction before the graph is torn down.

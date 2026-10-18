@@ -540,6 +540,7 @@ pub use super::sdk_asr::*;
 pub use super::sdk_authority_history::*;
 pub use super::sdk_browser::*;
 pub use super::sdk_calendar::*;
+pub use super::sdk_campaign_archive::*;
 pub use super::sdk_campaign_split::*;
 pub use super::sdk_catalog_fragment::{
     CATALOG_FRAGMENT_REVISION, CatalogFragment, code_mode_catalog_fragment,
@@ -567,10 +568,10 @@ pub use super::sdk_live_voice::*;
 pub use super::sdk_mesh::*;
 pub use super::sdk_note_history::*;
 pub use super::sdk_off_record::*;
+pub use super::sdk_persona::*;
 pub use super::sdk_record_erase::*;
 pub use super::sdk_reply::*;
 pub use super::sdk_research::*;
-pub use super::sdk_campaign_archive::*;
 pub use super::sdk_residence::*;
 pub use super::sdk_retrieval::*;
 pub use super::sdk_scratchpad::*;
@@ -588,6 +589,7 @@ pub use super::sdk_standing::*;
 pub use super::sdk_support_grant::*;
 pub use super::sdk_trusted_contact::*;
 pub use super::sdk_voice_bank::*;
+pub use super::sdk_weave::*;
 pub use super::sdk_workflows::*;
 pub use super::sdk_workspace::*;
 

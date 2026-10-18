@@ -41,13 +41,29 @@ impl Vault {
         &self,
         branch_subject: &EntityId,
     ) -> Result<Vec<RepoConflictClaim>> {
+        self.repo_conflict_claims_read(branch_subject, false)
+    }
+
+    pub(crate) fn repo_conflict_claim_history(
+        &self,
+        branch_subject: &EntityId,
+    ) -> Result<Vec<RepoConflictClaim>> {
+        self.repo_conflict_claims_read(branch_subject, true)
+    }
+
+    fn repo_conflict_claims_read(
+        &self,
+        branch_subject: &EntityId,
+        include_resolved: bool,
+    ) -> Result<Vec<RepoConflictClaim>> {
         let mut claims = Vec::new();
         for claim_id in self.claims_for_subject(branch_subject)? {
             let Some(body) = self.get_claim(&claim_id)? else {
                 continue;
             };
             if body.predicate != PREDICATE_CONFLICT_OPEN
-                || body.lifecycle != ClaimLifecycleStatus::Active
+                || !(body.lifecycle == ClaimLifecycleStatus::Active
+                    || (include_resolved && body.lifecycle == ClaimLifecycleStatus::Superseded))
                 || body.subject != ClaimSubject::Entity(*branch_subject)
             {
                 continue;
@@ -64,6 +80,7 @@ impl Vault {
                 ours_tree: value.ours_tree,
                 theirs_tree: value.theirs_tree,
                 conflicted_paths: value.conflicted_paths,
+                proposals: value.proposals,
             });
         }
         claims.sort_by(|left, right| {
@@ -120,6 +137,22 @@ pub(super) fn record_repo_conflict(
     ours_ref: &str,
     theirs_ref: &str,
 ) -> Result<EntityId> {
+    record_repo_conflict_checked(
+        vault, repo_ref, repo_root, branch_subject, branch_name, ours_ref, theirs_ref, None, &[],
+    )
+}
+
+pub(super) fn record_repo_conflict_checked(
+    vault: &Vault,
+    repo_ref: &RepoRef,
+    repo_root: &Path,
+    branch_subject: EntityId,
+    branch_name: &str,
+    ours_ref: &str,
+    theirs_ref: &str,
+    owner: Option<(&crate::consent::AuthenticatedOwner, EntityId)>,
+    proposals: &[super::proposal::RepoProposal],
+) -> Result<EntityId> {
     validate_git_ref_label(branch_name)?;
     validate_base_ref(ours_ref)?;
     validate_base_ref(theirs_ref)?;
@@ -142,36 +175,20 @@ pub(super) fn record_repo_conflict(
         )));
     }
 
-    // A replay records the same still-open conflict, never a duplicate TASK.
-    if let Some(existing) = vault
-        .repo_conflict_claims(&branch_subject)?
-        .into_iter()
-        .find(|claim| {
-            claim.repo_ref == *repo_ref
-                && claim.branch == branch_name
-                && claim.base_tree == base_tree
-                && claim.ours_tree == ours_tree
-                && claim.theirs_tree == theirs_tree
-                && claim.conflicted_paths == conflicted_paths
-        })
-    {
-        return Ok(existing.claim_id);
-    }
     let claim_id = vault.store.clock.entity_id()?;
-    put_repo_conflict_open_claim(
-        vault,
-        claim_id,
-        branch_subject,
-        RepoConflictOpenValue {
+    let value = RepoConflictOpenValue {
             repo_ref: repo_ref.clone(),
             branch: branch_name.to_owned(),
             base_tree,
             ours_tree,
             theirs_tree,
             conflicted_paths,
-        },
-    )?;
-    Ok(claim_id)
+            proposals: proposals.iter().map(|row| row.id).collect(),
+    };
+    let body = open_conflict_body(branch_subject, &value)?;
+    put_engine_repo_conflict_claim_checked(
+        vault, claim_id, branch_subject, &body, now_secs(), owner, proposals,
+    )
 }
 
 #[expect(
@@ -347,16 +364,11 @@ fn require_active_repo_conflict_claim(
         ours_tree: value.ours_tree,
         theirs_tree: value.theirs_tree,
         conflicted_paths: value.conflicted_paths,
+            proposals: value.proposals,
     })
 }
 
-fn put_repo_conflict_open_claim(
-    vault: &Vault,
-    claim_id: EntityId,
-    branch_subject: EntityId,
-    value: RepoConflictOpenValue,
-) -> Result<()> {
-    let learned_at = now_secs();
+fn open_conflict_body(branch_subject: EntityId, value: &RepoConflictOpenValue) -> Result<ClaimBody> {
     let body = ClaimBody::new(
         PREDICATE_CONFLICT_OPEN,
         ClaimSubject::Entity(branch_subject),
@@ -366,7 +378,7 @@ fn put_repo_conflict_open_claim(
         ClaimLifecycleStatus::Active,
     )?;
     validate_repo_conflict_claim_value(&body.predicate, &body.value)?;
-    put_engine_repo_conflict_claim(vault, claim_id, branch_subject, &body, learned_at)
+    Ok(body)
 }
 
 fn put_repo_conflict_resolution_claim(
@@ -395,8 +407,22 @@ fn put_engine_repo_conflict_claim(
     body: &ClaimBody,
     learned_at: u64,
 ) -> Result<()> {
+    put_engine_repo_conflict_claim_checked(
+        vault, claim_id, branch_subject, body, learned_at, None, &[],
+    ).map(|_| ())
+}
+
+fn put_engine_repo_conflict_claim_checked(
+    vault: &Vault,
+    claim_id: EntityId,
+    branch_subject: EntityId,
+    body: &ClaimBody,
+    learned_at: u64,
+    owner: Option<(&crate::consent::AuthenticatedOwner, EntityId)>,
+    proposals: &[super::proposal::RepoProposal],
+) -> Result<EntityId> {
     let data = encode_claim_body(body)?;
-    let reconciliation_owner = if body.predicate == PREDICATE_CONFLICT_OPEN {
+    let reconciliation_owner = if body.predicate == PREDICATE_CONFLICT_OPEN && owner.is_none() {
         Some(
             vault
                 .ensure_embedded_owner_actor()
@@ -406,6 +432,38 @@ fn put_engine_repo_conflict_claim(
         None
     };
     let mut wtxn = vault.store.env.write_txn()?;
+    let reconciliation_owner = match owner {
+        Some((owner, repository)) => {
+            let value = decode_repo_conflict_open_value(&body.value)?;
+            super::proposal::require_repo_artifact_in_txn(vault, &wtxn, repository, &value.repo_ref)?;
+            Some(owner.revalidate_in_txn(vault, &wtxn)?)
+        },
+        None => reconciliation_owner,
+    };
+    for expected in proposals {
+        if !crate::ports::EntityStoreRead::port_entity_present(&vault.store, &wtxn, &expected.id)? {
+            return Err(Error::EntityNotFound);
+        }
+        let stored = super::proposal::PROPOSAL.get(&vault.store, &wtxn, &expected.id)?
+            .ok_or(Error::EntityNotFound)?;
+        if stored.repo != expected.repo || stored.path != expected.path
+            || stored.content != expected.content || stored.pre_action_fork_hash != expected.pre_action_fork_hash
+            || stored.actor != expected.actor || stored.status != expected.status
+        {
+            return Err(super::proposal::invalid("conflict source proposal changed"));
+        }
+    }
+    if body.predicate == PREDICATE_CONFLICT_OPEN {
+        for id in vault.claims_for_subject_in_txn(&wtxn, &branch_subject)? {
+            if let Some(existing) = vault.get_claim_in_txn(&wtxn, &id)?
+                && existing.predicate == body.predicate
+                && existing.lifecycle == ClaimLifecycleStatus::Active
+                && existing.value == body.value
+            {
+                return Ok(id);
+            }
+        }
+    }
     if vault
         .store
         .port_entity_record(&wtxn, &branch_subject)?
@@ -460,11 +518,12 @@ fn put_engine_repo_conflict_claim(
             ours_tree: value.ours_tree,
             theirs_tree: value.theirs_tree,
             conflicted_paths: value.conflicted_paths,
+            proposals: value.proposals,
         };
         vault.create_repo_reconciliation_task_in_txn(&mut wtxn, &conflict, owner, learned_at)?;
     }
     wtxn.commit()?;
-    Ok(())
+    Ok(claim_id)
 }
 
 fn supersede_repo_conflict_claim(
@@ -563,7 +622,7 @@ fn supersede_repo_conflict_claim(
     Ok(())
 }
 
-fn merge_base_commit(repo_root: &Path, ours_ref: &str, theirs_ref: &str) -> Result<String> {
+pub(super) fn merge_base_commit(repo_root: &Path, ours_ref: &str, theirs_ref: &str) -> Result<String> {
     let base = utf8_trimmed(
         run_git(
             repo_root,
