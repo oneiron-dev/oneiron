@@ -1741,6 +1741,70 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.consent.graduation.policy",
+                crate::code_run::vault_read::request_schema::<
+                    crate::consent_graduation::api::GraduationPolicyRequest,
+                >(),
+            ),
+            (
+                "vault.consent.graduation.policy.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::consent_graduation::api::GraduationPolicySetRequest,
+                >(),
+            ),
+            (
+                "vault.consent.graduation.policy.clear",
+                crate::code_run::vault_read::request_schema::<
+                    crate::consent_graduation::api::GraduationPolicyClearRequest,
+                >(),
+            ),
+            (
+                "vault.consent.graduation.stats",
+                crate::code_run::vault_read::request_schema::<
+                    crate::consent_graduation::api::GraduationScopeRequest,
+                >(),
+            ),
+            (
+                "vault.consent.graduation.outcome",
+                crate::code_run::vault_read::request_schema::<
+                    crate::consent_graduation::api::GraduationOutcomeRequest,
+                >(),
+            ),
+            (
+                "vault.consent.graduation.offers",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
+                "vault.consent.graduation.answer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::consent_graduation::api::GraduationAnswerRequest,
+                >(),
+            ),
+            (
+                "vault.consent.graduation.trust_table",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
+                "vault.consent.graduation.settings.unpin",
+                crate::code_run::vault_read::request_schema::<
+                    crate::consent_graduation::api::GraduationScopeRequest,
+                >(),
+            ),
+            (
+                "vault.consent.graduation.demote",
+                crate::code_run::vault_read::request_schema::<
+                    crate::consent_graduation::api::GraduationDemoteRequest,
+                >(),
+            ),
+            (
+                "self.consent.graduation.demote",
+                crate::code_run::vault_read::request_schema::<
+                    crate::consent_graduation::api::GraduationScopeRequest,
+                >(),
+            ),
+            (
                 "vault.gate.policy.get",
                 crate::code_run::vault_read::request_schema::<
                     crate::policy_manifest_doors::PolicyManifestRead,
@@ -4524,6 +4588,17 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.consent.create_standing_grant",
     "vault.consent.registry",
     "vault.consent.revoke",
+    "vault.consent.graduation.policy",
+    "vault.consent.graduation.policy.set",
+    "vault.consent.graduation.policy.clear",
+    "vault.consent.graduation.stats",
+    "vault.consent.graduation.outcome",
+    "vault.consent.graduation.offers",
+    "vault.consent.graduation.answer",
+    "vault.consent.graduation.trust_table",
+    "vault.consent.graduation.settings.unpin",
+    "vault.consent.graduation.demote",
+    "self.consent.graduation.demote",
     "vault.gate.policy.get",
     "vault.gate.policy.put",
     "vault.gate.policy.propose",
@@ -5320,6 +5395,39 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.consent.revoke" => crate::code_run::vault_read::request_schema::<
             crate::consent::lifecycle::ConsentActReceipt,
+        >(),
+        "vault.consent.graduation.policy" => crate::code_run::vault_read::request_schema::<
+            crate::consent_graduation::api::GraduationPolicies,
+        >(),
+        "vault.consent.graduation.policy.set" => crate::code_run::vault_read::request_schema::<
+            crate::consent_graduation::api::GraduationChanged,
+        >(),
+        "vault.consent.graduation.policy.clear" => crate::code_run::vault_read::request_schema::<
+            crate::consent_graduation::api::GraduationChanged,
+        >(),
+        "vault.consent.graduation.stats" => crate::code_run::vault_read::request_schema::<
+            Option<crate::consent_graduation::api::GraduationStats>,
+        >(),
+        "vault.consent.graduation.outcome" => crate::code_run::vault_read::request_schema::<
+            crate::consent_graduation::api::GraduationStats,
+        >(),
+        "vault.consent.graduation.offers" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::consent_graduation::api::GraduationOffer>,
+        >(),
+        "vault.consent.graduation.answer" => crate::code_run::vault_read::request_schema::<
+            crate::consent_graduation::api::GraduationAnswerReceipt,
+        >(),
+        "vault.consent.graduation.trust_table" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::consent_graduation::api::GraduationTrustRow>,
+        >(),
+        "vault.consent.graduation.settings.unpin" => crate::code_run::vault_read::request_schema::<
+            crate::consent_graduation::api::GraduationChanged,
+        >(),
+        "vault.consent.graduation.demote" => crate::code_run::vault_read::request_schema::<
+            crate::consent_graduation::api::GraduationChanged,
+        >(),
+        "self.consent.graduation.demote" => crate::code_run::vault_read::request_schema::<
+            crate::consent_graduation::api::GraduationChanged,
         >(),
         "vault.gate.policy.get" => crate::code_run::vault_read::request_schema::<
             crate::policy_manifest_doors::PolicyManifestsView,
@@ -8358,6 +8466,83 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.consent.revoke" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.graduation.policy" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.graduation.policy.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.graduation.policy.clear" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.graduation.stats" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.graduation.outcome" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.graduation.offers" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.graduation.answer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.graduation.trust_table" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.graduation.settings.unpin" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.graduation.demote" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.consent.graduation.demote" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -12578,6 +12763,48 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.consent.revoke" => {
             let _input: crate::consent::lifecycle::RevokeGrantRequest = decode(value.clone())?;
         }
+        "vault.consent.graduation.policy" => {
+            let _input: crate::consent_graduation::api::GraduationPolicyRequest =
+                decode(value.clone())?;
+        }
+        "vault.consent.graduation.policy.set" => {
+            let _input: crate::consent_graduation::api::GraduationPolicySetRequest =
+                decode(value.clone())?;
+        }
+        "vault.consent.graduation.policy.clear" => {
+            let _input: crate::consent_graduation::api::GraduationPolicyClearRequest =
+                decode(value.clone())?;
+        }
+        "vault.consent.graduation.stats" => {
+            let _input: crate::consent_graduation::api::GraduationScopeRequest =
+                decode(value.clone())?;
+        }
+        "vault.consent.graduation.outcome" => {
+            let _input: crate::consent_graduation::api::GraduationOutcomeRequest =
+                decode(value.clone())?;
+        }
+        "vault.consent.graduation.offers" => {
+            let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+        }
+        "vault.consent.graduation.answer" => {
+            let _input: crate::consent_graduation::api::GraduationAnswerRequest =
+                decode(value.clone())?;
+        }
+        "vault.consent.graduation.trust_table" => {
+            let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+        }
+        "vault.consent.graduation.settings.unpin" => {
+            let _input: crate::consent_graduation::api::GraduationScopeRequest =
+                decode(value.clone())?;
+        }
+        "vault.consent.graduation.demote" => {
+            let _input: crate::consent_graduation::api::GraduationDemoteRequest =
+                decode(value.clone())?;
+        }
+        "self.consent.graduation.demote" => {
+            let _input: crate::consent_graduation::api::GraduationScopeRequest =
+                decode(value.clone())?;
+        }
         "vault.gate.policy.get" => {
             let _input: crate::policy_manifest_doors::PolicyManifestRead = decode(value.clone())?;
         }
@@ -14890,6 +15117,41 @@ pub fn invoke(
         }
         "vault.consent.registry" => encode(vault_consent_registry(memory, decode(value)?)?),
         "vault.consent.revoke" => encode(vault_consent_revoke(memory, decode(value)?)?),
+        "vault.consent.graduation.policy" => {
+            encode(vault_consent_graduation_policy(memory, decode(value)?)?)
+        }
+        "vault.consent.graduation.policy.set" => {
+            encode(vault_consent_graduation_policy_set(memory, decode(value)?)?)
+        }
+        "vault.consent.graduation.policy.clear" => encode(vault_consent_graduation_policy_clear(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.consent.graduation.stats" => {
+            encode(vault_consent_graduation_stats(memory, decode(value)?)?)
+        }
+        "vault.consent.graduation.outcome" => {
+            encode(vault_consent_graduation_outcome(memory, decode(value)?)?)
+        }
+        "vault.consent.graduation.offers" => {
+            encode(vault_consent_graduation_offers(memory, decode(value)?)?)
+        }
+        "vault.consent.graduation.answer" => {
+            encode(vault_consent_graduation_answer(memory, decode(value)?)?)
+        }
+        "vault.consent.graduation.trust_table" => encode(vault_consent_graduation_trust_table(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.consent.graduation.settings.unpin" => encode(
+            vault_consent_graduation_settings_unpin(memory, decode(value)?)?,
+        ),
+        "vault.consent.graduation.demote" => {
+            encode(vault_consent_graduation_demote(memory, decode(value)?)?)
+        }
+        "self.consent.graduation.demote" => {
+            encode(self_consent_graduation_demote(memory, decode(value)?)?)
+        }
         "vault.gate.policy.get" => encode(vault_gate_policy_get(memory, decode(value)?)?),
         "vault.gate.policy.put" => encode(vault_gate_policy_put(memory, decode(value)?)?),
         "vault.gate.policy.propose" => encode(vault_gate_policy_propose(memory, decode(value)?)?),
@@ -18573,6 +18835,110 @@ pub fn vault_consent_revoke(
         &memory.embedded_owner("vault.consent.revoke")?,
         input,
     )
+}
+pub fn vault_consent_graduation_policy(
+    memory: &Memory<'_>,
+    input: crate::consent_graduation::api::GraduationPolicyRequest,
+) -> MemoryResult<crate::consent_graduation::api::GraduationPolicies> {
+    crate::consent_graduation::api::policies(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.graduation.policy")?,
+        input,
+    )
+}
+pub fn vault_consent_graduation_policy_set(
+    memory: &Memory<'_>,
+    input: crate::consent_graduation::api::GraduationPolicySetRequest,
+) -> MemoryResult<crate::consent_graduation::api::GraduationChanged> {
+    crate::consent_graduation::api::set_policy(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.graduation.policy.set")?,
+        input,
+    )
+}
+pub fn vault_consent_graduation_policy_clear(
+    memory: &Memory<'_>,
+    input: crate::consent_graduation::api::GraduationPolicyClearRequest,
+) -> MemoryResult<crate::consent_graduation::api::GraduationChanged> {
+    crate::consent_graduation::api::clear_policy(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.graduation.policy.clear")?,
+        input,
+    )
+}
+pub fn vault_consent_graduation_stats(
+    memory: &Memory<'_>,
+    input: crate::consent_graduation::api::GraduationScopeRequest,
+) -> MemoryResult<Option<crate::consent_graduation::api::GraduationStats>> {
+    crate::consent_graduation::api::stats(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.graduation.stats")?,
+        input,
+    )
+}
+pub fn vault_consent_graduation_outcome(
+    memory: &Memory<'_>,
+    input: crate::consent_graduation::api::GraduationOutcomeRequest,
+) -> MemoryResult<crate::consent_graduation::api::GraduationStats> {
+    crate::consent_graduation::api::record_outcome(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.graduation.outcome")?,
+        input,
+    )
+}
+pub fn vault_consent_graduation_offers(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<Vec<crate::consent_graduation::api::GraduationOffer>> {
+    crate::consent_graduation::api::offers(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.graduation.offers")?,
+    )
+}
+pub fn vault_consent_graduation_answer(
+    memory: &Memory<'_>,
+    input: crate::consent_graduation::api::GraduationAnswerRequest,
+) -> MemoryResult<crate::consent_graduation::api::GraduationAnswerReceipt> {
+    crate::consent_graduation::api::answer(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.graduation.answer")?,
+        input,
+    )
+}
+pub fn vault_consent_graduation_trust_table(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<Vec<crate::consent_graduation::api::GraduationTrustRow>> {
+    crate::consent_graduation::api::trust_table(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.graduation.trust_table")?,
+    )
+}
+pub fn vault_consent_graduation_settings_unpin(
+    memory: &Memory<'_>,
+    input: crate::consent_graduation::api::GraduationScopeRequest,
+) -> MemoryResult<crate::consent_graduation::api::GraduationChanged> {
+    crate::consent_graduation::api::unpin(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.graduation.settings.unpin")?,
+        input,
+    )
+}
+pub fn vault_consent_graduation_demote(
+    memory: &Memory<'_>,
+    input: crate::consent_graduation::api::GraduationDemoteRequest,
+) -> MemoryResult<crate::consent_graduation::api::GraduationChanged> {
+    crate::consent_graduation::api::demote(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.graduation.demote")?,
+        input,
+    )
+}
+pub fn self_consent_graduation_demote(
+    memory: &Memory<'_>,
+    input: crate::consent_graduation::api::GraduationScopeRequest,
+) -> MemoryResult<crate::consent_graduation::api::GraduationChanged> {
+    crate::consent_graduation::api::demote_own(memory, input)
 }
 pub fn vault_gate_policy_get(
     memory: &Memory<'_>,

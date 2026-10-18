@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 769 facade rows, 2702 declarations.
-Inputs: 717 of 769 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 689 of 769 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 780 facade rows, 2722 declarations.
+Inputs: 728 of 780 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 700 of 780 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 99; unread shapes: 0.
 """
 
@@ -6498,6 +6498,76 @@ class ConsentRegistry(TypedDict):
     rows: list[ConsentRegistryRow]
 class RevokeGrantRequest(TypedDict):
     grant: str
+class GraduationScope(TypedDict):
+    op_kind: str
+    target_class: str
+    actor: str
+class GraduationPolicyRequest(TypedDict):
+    scope: NotRequired[GraduationScope | None]
+class GraduationPolicy(TypedDict):
+    scope_pattern: str
+    required_streak: int
+    posterior_guard: float
+    snooze_backoff_seconds: list[int]
+class GraduationPolicies(TypedDict):
+    rows: list[GraduationPolicy]
+    effective: NotRequired[GraduationPolicy | None]
+class GraduationPolicySetRequest(TypedDict):
+    policy: GraduationPolicy
+class GraduationChanged(TypedDict):
+    changed: bool
+class GraduationPolicyClearRequest(TypedDict):
+    scope_pattern: str
+class GraduationScopeRequest(TypedDict):
+    scope: GraduationScope
+GraduationOutcome = Literal["approved_untouched", "approved_amended", "rejected"]
+GraduationMode = Literal["propose", "offered", "auto"]
+class GraduationStats(TypedDict):
+    scope: GraduationScope
+    untouched_streak: int
+    amended: int
+    rejected: int
+    last_outcome: NotRequired[GraduationOutcome | None]
+    updated_at: int
+    state: GraduationMode
+class GraduationOutcomeRequest(TypedDict):
+    scope: GraduationScope
+    outcome: GraduationOutcome
+class GraduationOffer(TypedDict):
+    scope: GraduationScope
+    stats: GraduationStats
+    threshold: GraduationPolicy
+    reach: ShapePlanReach
+GraduationAnswer = Literal["auto", "not-now", "manual_pinned"]
+class GraduationAnswerRequest(TypedDict):
+    scope: GraduationScope
+    answer: GraduationAnswer
+class GraduationSnoozeNone(TypedDict):
+    state: Literal["none"]
+class GraduationSnoozeSnoozed(TypedDict):
+    state: Literal["snoozed"]
+    count: int
+    next_eligible_at: int
+class GraduationSnoozeManualPinned(TypedDict):
+    state: Literal["manual_pinned"]
+GraduationSnooze = GraduationSnoozeNone | GraduationSnoozeSnoozed | GraduationSnoozeManualPinned
+class GraduationAnswerReceipt(TypedDict):
+    scope: GraduationScope
+    answer: GraduationAnswer
+    grant: NotRequired[ConsentActReceipt | None]
+    snooze: GraduationSnooze
+class GraduationTrustRow(TypedDict):
+    scope: GraduationScope
+    stats: GraduationStats
+    threshold: GraduationPolicy
+    snooze: GraduationSnooze
+    grant_ref: NotRequired[str | None]
+    offer_is_earned: bool
+    offer_reach: NotRequired[str | None]
+GraduationDemotionReason = Literal["rejected", "amended", "agent_judgment"]
+class GraduationDemoteRequest(TypedDict):
+    scope: GraduationScope
+    reason: GraduationDemotionReason
 class PolicyManifestRead(TypedDict):
     manifest_ref: NotRequired[str | None]
 PolicyCriticality = Literal["normal", "critical"]

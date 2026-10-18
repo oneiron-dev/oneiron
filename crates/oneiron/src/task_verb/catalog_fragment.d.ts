@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 805 code-mode rows (782 host rows, 23 run rows), 2746 declarations.
-// Replies: 718 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 816 code-mode rows (793 host rows, 23 run rows), 2766 declarations.
+// Replies: 729 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 101; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1325,6 +1325,26 @@ declare namespace Sdk {
   type ConsentRegistryRow = { grant_ref: string; domain: ConsentDomain; subject: string; class: string; selectors: string[]; scope?: Scope | null; status: ConsentGrantStatus; created_at: number; revoke_action: ConsentRevokeAction; bypass?: BypassExtent | null; delegation?: ConsentRegistryDelegation | null };
   type ConsentRegistry = { rows: ConsentRegistryRow[] };
   type RevokeGrantRequest = { grant: string };
+  type GraduationScope = { op_kind: string; target_class: string; actor: string };
+  type GraduationPolicyRequest = { scope?: GraduationScope | null };
+  type GraduationPolicy = { scope_pattern: string; required_streak: number; posterior_guard: number; snooze_backoff_seconds: number[] };
+  type GraduationPolicies = { rows: GraduationPolicy[]; effective?: GraduationPolicy | null };
+  type GraduationPolicySetRequest = { policy: GraduationPolicy };
+  type GraduationChanged = { changed: boolean };
+  type GraduationPolicyClearRequest = { scope_pattern: string };
+  type GraduationScopeRequest = { scope: GraduationScope };
+  type GraduationOutcome = "approved_untouched" | "approved_amended" | "rejected";
+  type GraduationMode = "propose" | "offered" | "auto";
+  type GraduationStats = { scope: GraduationScope; untouched_streak: number; amended: number; rejected: number; last_outcome?: GraduationOutcome | null; updated_at: number; state: GraduationMode };
+  type GraduationOutcomeRequest = { scope: GraduationScope; outcome: GraduationOutcome };
+  type GraduationOffer = { scope: GraduationScope; stats: GraduationStats; threshold: GraduationPolicy; reach: ShapePlanReach };
+  type GraduationAnswer = "auto" | "not-now" | "manual_pinned";
+  type GraduationAnswerRequest = { scope: GraduationScope; answer: GraduationAnswer };
+  type GraduationSnooze = { state: "none" } | { state: "snoozed"; count: number; next_eligible_at: number } | { state: "manual_pinned" };
+  type GraduationAnswerReceipt = { scope: GraduationScope; answer: GraduationAnswer; grant?: ConsentActReceipt | null; snooze: GraduationSnooze };
+  type GraduationTrustRow = { scope: GraduationScope; stats: GraduationStats; threshold: GraduationPolicy; snooze: GraduationSnooze; grant_ref?: string | null; offer_is_earned: boolean; offer_reach?: string | null };
+  type GraduationDemotionReason = "rejected" | "amended" | "agent_judgment";
+  type GraduationDemoteRequest = { scope: GraduationScope; reason: GraduationDemotionReason };
   type PolicyManifestRead = { manifest_ref?: string | null };
   type PolicyCriticality = "normal" | "critical";
   type PolicySensitivity = "normal" | "sensitive";
@@ -2941,6 +2961,12 @@ declare namespace self {
     land(input: Sdk.BudgetLandRequest): Promise<Sdk.PartialResultHold | StoredResult>;
   };
   const compact: (input: Sdk.FoldCompactInput) => Promise<Sdk.FoldReply<Sdk.FoldCompactAsked> | StoredResult>;
+  const consent: {
+    graduation: {
+      /** The bound actor transparently gives up only its own ramp scope authority, with the existing durable demotion receipt. */
+      demote(input: Sdk.GraduationScopeRequest): Promise<Sdk.GraduationChanged | StoredResult>;
+    };
+  };
   const credential: {
     /** Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted. */
     attenuate(input: Sdk.CredentialAttenuationRequest): Promise<Sdk.CredentialAttenuated | StoredResult>;
@@ -3609,6 +3635,31 @@ declare const vault: Sdk.VaultHost & {
     create_standing_grant(input: Sdk.CreateStandingGrantRequest): Promise<Sdk.ConsentActReceipt | StoredResult>;
     /** The owner denies exactly one engine-emitted effect digest and records the refusal without granting authority. */
     deny(input: Sdk.DenyConsentRequest): Promise<Sdk.ConsentActReceipt | StoredResult>;
+    graduation: {
+      /** The owner answers auto, not-now or manual_pinned; only auto mints the existing standing grant, and not-now resets the streak. */
+      answer(input: Sdk.GraduationAnswerRequest): Promise<Sdk.GraduationAnswerReceipt | StoredResult>;
+      /** The owner demotes an exact scope to propose, revoking its live grant and recording the existing durable demotion receipt. */
+      demote(input: Sdk.GraduationDemoteRequest): Promise<Sdk.GraduationChanged | StoredResult>;
+      /** Reads earned, unsuppressed graduation offers with thresholds, streaks and before/after reach; reading grants nothing. */
+      offers(input: Sdk.EmptyRequest): Promise<Sdk.GraduationOffer[] | StoredResult>;
+      /** The owner records an untouched, amended or rejected proposal ruling, receipted and folded through the existing ramp. */
+      outcome(input: Sdk.GraduationOutcomeRequest): Promise<Sdk.GraduationStats | StoredResult>;
+      /** Reads runtime consent-graduation policy rows and the effective row for an optional exact scope. */
+      policy: ((input: Sdk.GraduationPolicyRequest) => Promise<Sdk.GraduationPolicies | StoredResult>) & {
+        /** The owner clears one runtime graduation policy row; scopes fall back to the next matching policy. */
+        clear(input: Sdk.GraduationPolicyClearRequest): Promise<Sdk.GraduationChanged | StoredResult>;
+        /** The owner sets a scope-pattern streak, posterior guard and two snooze backoffs; zero-second backoff is supported. */
+        set(input: Sdk.GraduationPolicySetRequest): Promise<Sdk.GraduationChanged | StoredResult>;
+      };
+      settings: {
+        /** The owner reopens a pinned or snoozed graduation scope in settings; no grant is created. */
+        unpin(input: Sdk.GraduationScopeRequest): Promise<Sdk.GraduationChanged | StoredResult>;
+      };
+      /** Reads one exact graduation scope outcome history and current consent posture. */
+      stats(input: Sdk.GraduationScopeRequest): Promise<Sdk.GraduationStats | null | StoredResult>;
+      /** Reads the owner trust table: scope, counts, effective threshold, snooze or manual pin, live grant and offer reach. */
+      trust_table(input: Sdk.EmptyRequest): Promise<Sdk.GraduationTrustRow[] | StoredResult>;
+    };
     /** The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants. */
     registry(input: Sdk.ConsentRegistryQuery): Promise<Sdk.ConsentRegistry | StoredResult>;
     /** The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted. */
