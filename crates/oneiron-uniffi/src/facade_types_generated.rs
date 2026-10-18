@@ -480,6 +480,8 @@ pub struct NotificationSource {
     pub run: Option<String>,
     #[serde(rename = "result", default, skip_serializing_if = "Option::is_none")]
     pub result: Option<String>,
+    #[serde(rename = "detail", default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 /// `oneiron::inbox::list::NotificationRow`.
@@ -12624,8 +12626,8 @@ pub struct RoomTurn {
         skip_serializing_if = "Option::is_none"
     )]
     pub converted_project: Option<String>,
-    #[serde(rename = "quote", default, skip_serializing_if = "Option::is_none")]
-    pub quote: Option<RoomQuote>,
+    #[serde(rename = "quotes", default, skip_serializing_if = "Option::is_none")]
+    pub quotes: Option<std::collections::HashMap<String, RoomQuote>>,
 }
 
 /// `oneiron::workspace_roster::rooms::RoomPage`.
@@ -18091,6 +18093,8 @@ pub struct OfficeBodyExportRecord {
     pub changes: u64,
     #[serde(rename = "recalc", default, skip_serializing_if = "Option::is_none")]
     pub recalc: Option<String>,
+    #[serde(rename = "effects")]
+    pub effects: Vec<String>,
 }
 
 /// `oneiron::office_body::verbs::OfficeBodyExportView`.

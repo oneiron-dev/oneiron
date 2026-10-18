@@ -66,6 +66,9 @@ pub enum ArchiveRecordKind {
     /// One session's epoch floor (OF-013), `{session, epoch, turn_end}`,
     /// only in a whole-vault archive.
     EpochFloor,
+    /// One row of an allowlisted side table (FIX 2768) beside the record it
+    /// indexes, only in a whole-vault archive.
+    SideTable,
 }
 
 impl ArchiveRecordKind {
@@ -85,6 +88,7 @@ impl ArchiveRecordKind {
             Self::EmbeddingSpace => "records/embedding_space.jsonl",
             Self::SlotBinding => "records/slot_binding.jsonl",
             Self::EpochFloor => "records/epoch_floor.jsonl",
+            Self::SideTable => "records/side_table.jsonl",
         })
     }
 
