@@ -1687,6 +1687,30 @@ impl OneironClient {
                 "vault.booking.page_token" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::BookingPageTokenResponse,
                 >(client, verb, &input),
+                "calendar.invite" => remote_agent_verb_output::<
+                    oneiron::memory::OutboundIntentReceipt,
+                >(client, verb, &input),
+                "calendar.connector.configure" => remote_agent_verb_output::<
+                    oneiron::calendar::connectors::door::CalendarConnectorRegistration,
+                >(client, verb, &input),
+                "calendar.connector.get" => remote_agent_verb_output::<
+                    Option<oneiron::calendar::connectors::door::CalendarConnectorRegistration>,
+                >(client, verb, &input),
+                "calendar.connector.pull" => remote_agent_verb_output::<
+                    oneiron::calendar::CalendarSyncOutcome,
+                >(client, verb, &input),
+                "calendar.connector.write" => remote_agent_verb_output::<
+                    oneiron::calendar::RemoteWriteReceipt,
+                >(client, verb, &input),
+                "calendar.connector.kill" => remote_agent_verb_output::<
+                    oneiron::calendar::connectors::door::CalendarConnectorRegistration,
+                >(client, verb, &input),
+                "calendar.imip.configure" => remote_agent_verb_output::<
+                    oneiron::calendar::connectors::door::CalendarImipTransportConfig,
+                >(client, verb, &input),
+                "calendar.imip.get" => remote_agent_verb_output::<
+                    Option<oneiron::calendar::connectors::door::CalendarImipTransportConfig>,
+                >(client, verb, &input),
                 "vault.calendar.create" => remote_agent_verb_output::<
                     oneiron::calendar::door::CalendarEventCreated,
                 >(client, verb, &input),
@@ -8779,6 +8803,108 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.booking.page_token", value)
+    }
+    pub fn calendar_invite(
+        &self,
+        input: &oneiron::memory::CalendarInviteSurfaceInput,
+    ) -> Result<oneiron::memory::OutboundIntentReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("calendar.invite", value)
+    }
+    pub fn calendar_connector_configure(
+        &self,
+        input: &oneiron::calendar::connectors::door::CalendarConnectorConfigureRequest,
+    ) -> Result<oneiron::calendar::connectors::door::CalendarConnectorRegistration, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("calendar.connector.configure", value)
+    }
+    pub fn calendar_connector_get(
+        &self,
+        input: &oneiron::calendar::connectors::door::CalendarConnectorRequest,
+    ) -> Result<
+        Option<oneiron::calendar::connectors::door::CalendarConnectorRegistration>,
+        MemoryError,
+    > {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("calendar.connector.get", value)
+    }
+    pub fn calendar_connector_pull(
+        &self,
+        input: &oneiron::calendar::connectors::door::CalendarConnectorRequest,
+    ) -> Result<oneiron::calendar::CalendarSyncOutcome, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("calendar.connector.pull", value)
+    }
+    pub fn calendar_connector_write(
+        &self,
+        input: &oneiron::calendar::connectors::door::CalendarConnectorWriteRequest,
+    ) -> Result<oneiron::calendar::RemoteWriteReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("calendar.connector.write", value)
+    }
+    pub fn calendar_connector_kill(
+        &self,
+        input: &oneiron::calendar::connectors::door::CalendarConnectorKillRequest,
+    ) -> Result<oneiron::calendar::connectors::door::CalendarConnectorRegistration, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("calendar.connector.kill", value)
+    }
+    pub fn calendar_imip_configure(
+        &self,
+        input: &oneiron::calendar::connectors::door::CalendarImipTransportConfig,
+    ) -> Result<oneiron::calendar::connectors::door::CalendarImipTransportConfig, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("calendar.imip.configure", value)
+    }
+    pub fn calendar_imip_get(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Option<oneiron::calendar::connectors::door::CalendarImipTransportConfig>, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("calendar.imip.get", value)
     }
     pub fn vault_calendar_create(
         &self,

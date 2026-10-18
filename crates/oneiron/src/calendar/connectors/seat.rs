@@ -86,7 +86,7 @@ impl From<crate::Error> for CalendarConnectorError {
 /// Carries the SECRET custody record NAME. No app password, OAuth token, or
 /// credential-bearing URL has a field to live in here, and the hand-rolled
 /// [`core::fmt::Debug`] below keeps it that way for every future field.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CalendarConnectorSeatConfig {
     /// Stable seat identifier (host vocabulary).
     pub seat_ref: String,
@@ -127,7 +127,7 @@ impl core::fmt::Debug for CalendarConnectorSeatConfig {
 }
 
 /// The engaged half of a seat's kill switch.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CalendarConnectorKillSwitchState {
     /// When the switch was thrown.
     pub killed_at: u64,
@@ -140,7 +140,7 @@ pub struct CalendarConnectorKillSwitchState {
 }
 
 /// One connector seat: config, provider cursor, and kill-switch state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CalendarConnectorSeatState {
     /// The seat's configuration.
     pub config: CalendarConnectorSeatConfig,

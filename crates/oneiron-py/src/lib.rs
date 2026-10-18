@@ -4785,6 +4785,62 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn calendar_invite(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "calendar.invite")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("calendar.invite", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn calendar_connector_configure(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "calendar.connector.configure")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("calendar.connector.configure", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn calendar_connector_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "calendar.connector.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("calendar.connector.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn calendar_connector_pull(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "calendar.connector.pull")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("calendar.connector.pull", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn calendar_connector_write(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "calendar.connector.write")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("calendar.connector.write", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn calendar_connector_kill(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "calendar.connector.kill")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("calendar.connector.kill", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn calendar_imip_configure(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "calendar.imip.configure")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("calendar.imip.configure", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn calendar_imip_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "calendar.imip.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("calendar.imip.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_calendar_create(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.calendar.create")?;
         let output = py

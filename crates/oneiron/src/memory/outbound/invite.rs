@@ -20,7 +20,7 @@ pub const CALENDAR_INVITE_OUTBOUND_CHANNEL: &str = "calendar";
 pub const CALENDAR_INVITE_OUTBOUND_VERB: &str = "calendar.invite";
 
 /// iMIP method the invite surface accepts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum CalendarInviteSurfaceMethod {
     /// `METHOD:REQUEST` — create or update an invitation.
@@ -61,7 +61,7 @@ impl CalendarInviteSurfaceMethod {
 /// fields, uppercase iMIP method, closed to unknown keys. It stays typed all
 /// the way to [`Self::outbound_draft`]; nothing here re-parses a key back into
 /// a method, uid, or sequence.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CalendarInviteSurfaceInput {
     /// iMIP method.

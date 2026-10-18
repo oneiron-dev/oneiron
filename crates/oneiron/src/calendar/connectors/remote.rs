@@ -105,7 +105,7 @@ pub struct RemoteWriteRequest {
 }
 
 /// What the provider stored.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RemoteWriteReceipt {
     /// The stored resource path.
     pub href: String,
@@ -215,7 +215,7 @@ pub fn classify_remote_change(
 }
 
 /// The terminal state of one connector sync run.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum CalendarSyncOutcome {
     /// The run completed and the next attempt is on the queue.
     Reenqueued {

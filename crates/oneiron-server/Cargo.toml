@@ -96,6 +96,8 @@ serde_json = { workspace = true, features = ["raw_value"] }
 toml = "0.9"
 rmp-serde = { workspace = true }
 rmpv = { workspace = true }
+# CalDAV DAV multistatus documents, at the engine adapter's existing pin.
+quick-xml = "=0.42.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive", "env"] }

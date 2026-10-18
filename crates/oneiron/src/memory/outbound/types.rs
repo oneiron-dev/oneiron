@@ -92,7 +92,7 @@ pub struct OutboundDraftInput {
 }
 
 /// Receipt for one scheduled outbound intent.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OutboundIntentReceipt {
     /// Stable intent ref (`intent:<attempt-hex>`).
     pub intent_ref: String,
