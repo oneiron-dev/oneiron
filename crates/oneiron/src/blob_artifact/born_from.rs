@@ -167,3 +167,9 @@ fn live_version_names(
         .get(store, rtxn, &(*artifact_id, version))?
         .is_some_and(|record| BornFromSource::of_version(&record).contains(source)))
 }
+
+/// OF-222 (FIX 2768) archive seam: the born-from projection a whole-vault archive carries
+/// beside each version it reads back from, lent with its own key type and codec.
+pub(crate) fn archive_born_from_table() -> crate::batch::export::LentSideTable {
+    &BORN_FROM
+}
