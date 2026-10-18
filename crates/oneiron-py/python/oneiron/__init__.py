@@ -2197,6 +2197,9 @@ class Oneiron:
         @property
         def claims(self) -> "Oneiron._VaultOffRecordClaimsVerbs":
             return Oneiron._VaultOffRecordClaimsVerbs(self._client)
+        @property
+        def rooms(self) -> "Oneiron._VaultOffRecordRoomsVerbs":
+            return Oneiron._VaultOffRecordRoomsVerbs(self._client)
     class _VaultOffRecordNotesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2209,6 +2212,36 @@ class Oneiron:
         def upsert(self, spec):
             """The session's creator or the vault's owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it."""
             return json.loads(_translate(lambda: self._client.vault_off_record_claims_upsert(json.dumps(spec))))
+    class _VaultOffRecordRoomsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def status(self, spec):
+            """Reads a room's off-record notices and waiting save suggestions as the caller's membership shows them, without the talk."""
+            return json.loads(_translate(lambda: self._client.vault_off_record_rooms_status(json.dumps(spec))))
+        def start(self, spec):
+            """A person starts an off-record stretch in a room they belong to, on their own credential."""
+            return json.loads(_translate(lambda: self._client.vault_off_record_rooms_start(json.dumps(spec))))
+        def witness(self, spec):
+            """Witnesses a turn into a room's off-record stretch as the caller, under their live membership and the current saving grant."""
+            return json.loads(_translate(lambda: self._client.vault_off_record_rooms_witness(json.dumps(spec))))
+        def save(self, spec):
+            """A holder of this vault's write grant saves the visible whole talk so far into this vault, on their own credential."""
+            return json.loads(_translate(lambda: self._client.vault_off_record_rooms_save(json.dumps(spec))))
+        def save_from_here(self, spec):
+            """A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live."""
+            return json.loads(_translate(lambda: self._client.vault_off_record_rooms_save_from_here(json.dumps(spec))))
+        def export(self, spec):
+            """A person exports only their visible room talk as a JSON attachment, posts a content-free notice and writes no vault."""
+            return json.loads(_translate(lambda: self._client.vault_off_record_rooms_export(json.dumps(spec))))
+        def suggest_save(self, spec):
+            """An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms."""
+            return json.loads(_translate(lambda: self._client.vault_off_record_rooms_suggest_save(json.dumps(spec))))
+        def confirm_save(self, spec):
+            """A holder confirms the room's waiting save suggestions with their own save of the visible whole talk; refuses when none waits."""
+            return json.loads(_translate(lambda: self._client.vault_off_record_rooms_confirm_save(json.dumps(spec))))
+        def decline_save(self, spec):
+            """A holder declines the room's waiting save suggestions, posts a content-free notice and saves nothing; refuses when none waits."""
+            return json.loads(_translate(lambda: self._client.vault_off_record_rooms_decline_save(json.dumps(spec))))
     class _VaultRecordsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

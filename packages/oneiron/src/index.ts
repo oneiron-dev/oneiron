@@ -1121,6 +1121,26 @@ export class Oneiron {
         /** The session's creator or the vault's owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it. */
         upsert: (input: Facade.OffRecordClaimRequest): Facade.CommitReceipt => this.#call(() => this.#client.vaultOffRecordClaimsUpsert(input) as Facade.CommitReceipt),
       },
+      rooms: {
+        /** Reads a room's off-record notices and waiting save suggestions as the caller's membership shows them, without the talk. */
+        status: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomView => this.#call(() => this.#client.vaultOffRecordRoomsStatus(input) as Facade.OffRecordRoomView),
+        /** A person starts an off-record stretch in a room they belong to, on their own credential. */
+        start: (input: Facade.OffRecordRoomStartRequest): Facade.OffRecordRoomView => this.#call(() => this.#client.vaultOffRecordRoomsStart(input) as Facade.OffRecordRoomView),
+        /** Witnesses a turn into a room's off-record stretch as the caller, under their live membership and the current saving grant. */
+        witness: (input: Facade.OffRecordRoomWitnessRequest): Facade.WitnessReceipt => this.#call(() => this.#client.vaultOffRecordRoomsWitness(input) as Facade.WitnessReceipt),
+        /** A holder of this vault's write grant saves the visible whole talk so far into this vault, on their own credential. */
+        save: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomSaved => this.#call(() => this.#client.vaultOffRecordRoomsSave(input) as Facade.OffRecordRoomSaved),
+        /** A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live. */
+        save_from_here: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomView => this.#call(() => this.#client.vaultOffRecordRoomsSaveFromHere(input) as Facade.OffRecordRoomView),
+        /** A person exports only their visible room talk as a JSON attachment, posts a content-free notice and writes no vault. */
+        export: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomExport => this.#call(() => this.#client.vaultOffRecordRoomsExport(input) as Facade.OffRecordRoomExport),
+        /** An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms. */
+        suggest_save: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomView => this.#call(() => this.#client.vaultOffRecordRoomsSuggestSave(input) as Facade.OffRecordRoomView),
+        /** A holder confirms the room's waiting save suggestions with their own save of the visible whole talk; refuses when none waits. */
+        confirm_save: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomSaved => this.#call(() => this.#client.vaultOffRecordRoomsConfirmSave(input) as Facade.OffRecordRoomSaved),
+        /** A holder declines the room's waiting save suggestions, posts a content-free notice and saves nothing; refuses when none waits. */
+        decline_save: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomView => this.#call(() => this.#client.vaultOffRecordRoomsDeclineSave(input) as Facade.OffRecordRoomView),
+      },
     },
     records: {
       /** What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back. */
