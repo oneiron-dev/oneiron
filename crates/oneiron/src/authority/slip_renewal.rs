@@ -83,6 +83,8 @@ fn renewal_eligible(facts: &RenewalFacts<'_>) -> bool {
         && !slip.single_use
         && slip.org_ref.is_none()
         && slip.invitation_ref.is_none()
+        // A support slip (OF-606) never renews: more time is a fresh owner mint.
+        && slip.delegation.is_none()
         && slip.actor_class.as_deref() == Some(ACTOR_CLASS_HUMAN)
         && facts.holder_is_live_owner
         && facts.own_device_grant_stands

@@ -726,12 +726,24 @@ export class Oneiron {
         asks: (input: Facade.TrustedContactAsksRequest): Facade.TrustedContactAsk[] => this.#call(() => this.#client.vaultTrustedContactsConcernAsks(input) as Facade.TrustedContactAsk[]),
         /** The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing. */
         authorize: (input: Facade.TrustedContactAuthorizeRequest): Facade.TrustedContactAuthorization => this.#call(() => this.#client.vaultTrustedContactsConcernAuthorize(input) as Facade.TrustedContactAuthorization),
+        /** The owner's policy gate reads one message the caller reads, fresh; a RouteToHelp asks the owner or stages a just-call notice, and the answer carries only the fact of concern, the gate receipt, open asks and notices. */
+        propose: (input: Facade.TrustedContactConcernRequest): Facade.TrustedContactConcernProposal => this.#call(() => this.#client.vaultTrustedContactsConcernPropose(input) as Facade.TrustedContactConcernProposal),
+        /** The caller sends the next staged fact-of-concern notice it is the stored sender of, as itself, through the consent-checked outbound dispatch; null when none is eligible, never another sender's notice. */
+        deliver: (input: Facade.TrustedContactDeliverRequest): Facade.TrustedContactDeliveryReceipt | null => this.#call(() => this.#client.vaultTrustedContactsConcernDeliver(input) as Facade.TrustedContactDeliveryReceipt | null),
       },
     },
     guests: {
       revoke: (input: Facade.GuestRevokeRequest): Facade.GuestRevokeResponse => this.#call(() => this.#client.vaultGuestsRevoke(input) as Facade.GuestRevokeResponse),
       /** The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device. */
       mint_slip: (input: Facade.GuestSlipMintRequest): Facade.GuestSlipMinted => this.#call(() => this.#client.vaultGuestsMintSlip(input) as Facade.GuestSlipMinted),
+    },
+    support_grants: {
+      /** The owner mints our support person or agent a time-limited, revocable grant, bound to that party's own key, inside explicit bounds. */
+      mint: (input: Facade.SupportGrantMintRequest): Facade.SupportGrantMintAnswer => this.#call(() => this.#client.vaultSupportGrantsMint(input) as Facade.SupportGrantMintAnswer),
+      /** The owner lists the vault's support grants, newest first, with each one's bounds, deadline, status and revoke command. */
+      list: (input: Facade.SupportGrantListRequest): Facade.SupportGrantList => this.#call(() => this.#client.vaultSupportGrantsList(input) as Facade.SupportGrantList),
+      /** The owner revokes one support grant; what support already read is not recalled. */
+      revoke: (input: Facade.SupportGrantRevokeRequest): Facade.SupportGrantRevokeAnswer => this.#call(() => this.#client.vaultSupportGrantsRevoke(input) as Facade.SupportGrantRevokeAnswer),
     },
     residence: {
       /** Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive. */
@@ -865,6 +877,26 @@ export class Oneiron {
         put: (input: Facade.EmbeddingSpaceProbePutRequest): Facade.EmbeddingSpaceProbe => this.#call(() => this.#client.vaultEmbeddingSpacesProbesPut(input) as Facade.EmbeddingSpaceProbe),
         /** Removes one stored embedding space probe by its id. */
         delete: (input: Facade.EmbeddingSpaceProbeDeleteRequest): Facade.EmbeddingSpaceProbeDeleted => this.#call(() => this.#client.vaultEmbeddingSpacesProbesDelete(input) as Facade.EmbeddingSpaceProbeDeleted),
+      },
+    },
+    policy: {
+      owner: {
+        /** The owner reads the content-policy configuration, default manifest hash and effective off/on state. */
+        get: (input: Facade.EmptyRequest = {}): Facade.OwnerPolicyConfigurationView => this.#call(() => this.#client.vaultPolicyOwnerGet(input) as Facade.OwnerPolicyConfigurationView),
+        /** The owner configures or toggles content policy against the current manifest hash without changing other policy tables. */
+        configure: (input: Facade.OwnerPolicyConfigureRequest): Facade.OwnerPolicyConfigurationReceipt => this.#call(() => this.#client.vaultPolicyOwnerConfigure(input) as Facade.OwnerPolicyConfigurationReceipt),
+        row: {
+          /** The owner adds, edits or removes a scoped content-policy row through its existing holder-governed writer and receives its change receipt. */
+          change: (input: Facade.PolicyRowChangeRequest): Facade.PolicyRowReceipt => this.#call(() => this.#client.vaultPolicyOwnerRowChange(input) as Facade.PolicyRowReceipt),
+        },
+      },
+      outbound: {
+        /** Decide an outbound candidate under owner policy with system notices and hash-only receipts; Warn and Skipped preserve its exact bytes. */
+        decide: (input: Facade.PolicyOutboundRequest): Facade.PolicyModelEnforcement => this.#call(() => this.#client.vaultPolicyOutboundDecide(input) as Facade.PolicyModelEnforcement),
+      },
+      relay: {
+        /** Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer. */
+        decide: (input: Facade.PolicyOutboundRequest): Facade.HostedRelayDecision => this.#call(() => this.#client.vaultPolicyRelayDecide(input) as Facade.HostedRelayDecision),
       },
     },
     gate: {
@@ -1113,6 +1145,16 @@ export class Oneiron {
         recover: (input: Facade.MergeQueueRepoRequest): Facade.MergeQueuePointersView => this.#call(() => this.#client.vaultCodeMergeQueueRecover(input) as Facade.MergeQueuePointersView),
       },
     },
+    results: {
+      /** The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run. */
+      status: (input: Facade.ResultRunRequest): Facade.ResultRunStatus => this.#call(() => this.#client.vaultResultsStatus(input) as Facade.ResultRunStatus),
+      /** The owner reopens retained result status after restart; it never resumes the producer or replays an effect to regenerate output. */
+      recover: (input: Facade.ResultRunRequest): Facade.ResultRunStatus => this.#call(() => this.#client.vaultResultsRecover(input) as Facade.ResultRunStatus),
+      /** The owner reads one exact retained result occurrence card under its current taint and source-row fence, never by content authority alone. */
+      read: (input: Facade.ResultOccurrenceRequest): Facade.ResultReadView => this.#call(() => this.#client.vaultResultsRead(input) as Facade.ResultReadView),
+      /** The owner reads a typed byte or line range of one exact result occurrence, with bounded continuations and current taint withholding. */
+      slice: (input: Facade.ResultSliceRequest): Facade.ResultSliceView => this.#call(() => this.#client.vaultResultsSlice(input) as Facade.ResultSliceView),
+    },
     agents: {
       /** The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched. */
       create: (input: Facade.AgentDefinitionCreateRequest): Facade.AgentDefinitionView => this.#call(() => this.#client.vaultAgentsCreate(input) as Facade.AgentDefinitionView),
@@ -1134,6 +1176,12 @@ export class Oneiron {
       dispatch: (input: Facade.WorkflowDispatchRequest): Facade.WorkflowRunView => this.#call(() => this.#client.vaultWorkflowsDispatch(input) as Facade.WorkflowRunView),
       /** The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result. */
       status: (input: Facade.WorkflowRunRequest): Facade.WorkflowRunView => this.#call(() => this.#client.vaultWorkflowsStatus(input) as Facade.WorkflowRunView),
+    },
+    task_types: {
+      /** The owner stores an authored task-type tree on an open team-shape fork, as a candidate; the receipt says whether it is in force. */
+      pin: (input: Facade.TaskTypeTreePin): Facade.TaskTypeTreePinReceipt => this.#call(() => this.#client.vaultTaskTypesPin(input) as Facade.TaskTypeTreePinReceipt),
+      /** The owner reads the task-type tree in force, or one kept tree version, for the vault or a project. */
+      get: (input: Facade.TaskTypeTreeRead): Facade.TaskTypeTreeReadReply => this.#call(() => this.#client.vaultTaskTypesGet(input) as Facade.TaskTypeTreeReadReply),
     },
     workspace: {
       /** The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted. */

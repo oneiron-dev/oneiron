@@ -2514,6 +2514,38 @@
       "openapi": true
     },
     {
+      "name": "vault.trusted_contacts.concern.propose",
+      "description": "The owner's policy gate reads one message the caller reads, fresh; a RouteToHelp asks the owner or stages a just-call notice, and the answer carries only the fact of concern, the gate receipt, open asks and notices.",
+      "input": "crate::task_verb::sdk::TrustedContactConcernRequest",
+      "output": "crate::task_verb::sdk::TrustedContactConcernProposal",
+      "call": "crate::task_verb::sdk::propose_trusted_contact_concern(memory, &memory.embedded_owner(\"vault.trusted_contacts.concern.propose\")?, input, &crate::policy_model::PolicyModelConfig::default())?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.trusted_contacts.concern.deliver",
+      "description": "The caller sends the next staged fact-of-concern notice it is the stored sender of, as itself, through the consent-checked outbound dispatch; null when none is eligible, never another sender's notice.",
+      "input": "crate::task_verb::sdk::TrustedContactDeliverRequest",
+      "output": "Option<crate::task_verb::sdk::TrustedContactDeliveryReceipt>",
+      "call": "crate::task_verb::sdk::deliver_trusted_contact_notice(memory, input, &mut crate::outbound::ServedChannelSink::new(memory.vault())?)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.guests.revoke",
       "input": "crate::task_verb::sdk::GuestRevokeRequest",
       "output": "crate::receipt::GuestRevokeResponse",
@@ -2539,6 +2571,51 @@
         "unrestricted_record_scope": true
       },
       "section": false
+    },
+    {
+      "name": "vault.support_grants.mint",
+      "description": "The owner mints our support person or agent a time-limited, revocable grant, bound to that party's own key, inside explicit bounds.",
+      "input": "crate::task_verb::sdk::SupportGrantMintRequest",
+      "output": "crate::task_verb::sdk::SupportGrantMintAnswer",
+      "call": "crate::task_verb::sdk::mint_support_grant_embedded(memory, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.support_grants.list",
+      "description": "The owner lists the vault's support grants, newest first, with each one's bounds, deadline, status and revoke command.",
+      "input": "crate::task_verb::sdk::SupportGrantListRequest",
+      "output": "crate::task_verb::sdk::SupportGrantList",
+      "call": "crate::task_verb::sdk::list_support_grants_embedded(memory, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.support_grants.revoke",
+      "description": "The owner revokes one support grant; what support already read is not recalled.",
+      "input": "crate::task_verb::sdk::SupportGrantRevokeRequest",
+      "output": "crate::task_verb::sdk::SupportGrantRevokeAnswer",
+      "call": "crate::task_verb::sdk::revoke_support_grant_embedded(memory, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.residence.mode",
@@ -3341,6 +3418,83 @@
         "unrestricted_record_scope": true
       },
       "section": false
+    },
+    {
+      "name": "vault.policy.owner.get",
+      "description": "The owner reads the content-policy configuration, default manifest hash and effective off/on state.",
+      "input": "EmptyRequest",
+      "output": "crate::policy_manifest_doors::OwnerPolicyConfigurationView",
+      "call": "crate::policy_manifest_doors::owner_policy_configuration(memory.vault(), &memory.embedded_owner(\"vault.policy.owner.get\")?).map_err(crate::memory::MemoryError::from)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.policy.owner.configure",
+      "description": "The owner configures or toggles content policy against the current manifest hash without changing other policy tables.",
+      "input": "crate::policy_manifest_doors::OwnerPolicyConfigureRequest",
+      "output": "crate::policy_manifest_doors::OwnerPolicyConfigurationReceipt",
+      "call": "crate::policy_manifest_doors::configure_owner_policy(memory.vault(), &memory.embedded_owner(\"vault.policy.owner.configure\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.policy.owner.row.change",
+      "description": "The owner adds, edits or removes a scoped content-policy row through its existing holder-governed writer and receives its change receipt.",
+      "input": "crate::policy_model::doors::PolicyRowChangeRequest",
+      "output": "crate::policy_model::PolicyRowReceipt",
+      "call": "crate::policy_model::doors::change_owner_policy_row(memory.vault(), &memory.embedded_owner(\"vault.policy.owner.row.change\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.policy.outbound.decide",
+      "description": "Decide an outbound candidate under owner policy with system notices and hash-only receipts; Warn and Skipped preserve its exact bytes.",
+      "input": "crate::policy_model::doors::PolicyOutboundRequest",
+      "output": "crate::policy_model::PolicyModelEnforcement",
+      "call": "crate::policy_model::doors::enforce_owner_policy_embedded(memory, input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door_caller": true,
+      "host_door_session": true
+    },
+    {
+      "name": "vault.policy.relay.decide",
+      "description": "Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer.",
+      "input": "crate::policy_model::doors::PolicyOutboundRequest",
+      "output": "crate::policy_model::doors::HostedRelayDecision",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.policy.relay.decide\", &input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door_caller": true,
+      "host_door_session": true
     },
     {
       "name": "vault.gate.policy.get",
@@ -4148,6 +4302,66 @@
       "openapi": true
     },
     {
+      "name": "vault.results.status",
+      "description": "The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run.",
+      "input": "crate::memory::result_doors::ResultRunRequest",
+      "output": "crate::memory::result_doors::ResultRunStatus",
+      "call": "memory.result_status_as_owner(&memory.embedded_owner(\"vault.results.status\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.results.recover",
+      "description": "The owner reopens retained result status after restart; it never resumes the producer or replays an effect to regenerate output.",
+      "input": "crate::memory::result_doors::ResultRunRequest",
+      "output": "crate::memory::result_doors::ResultRunStatus",
+      "call": "memory.result_status_as_owner(&memory.embedded_owner(\"vault.results.recover\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.results.read",
+      "description": "The owner reads one exact retained result occurrence card under its current taint and source-row fence, never by content authority alone.",
+      "input": "crate::memory::result_doors::ResultOccurrenceRequest",
+      "output": "crate::memory::result_doors::ResultReadView",
+      "call": "memory.result_read_as_owner(&memory.embedded_owner(\"vault.results.read\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.results.slice",
+      "description": "The owner reads a typed byte or line range of one exact result occurrence, with bounded continuations and current taint withholding.",
+      "input": "crate::memory::result_doors::ResultSliceRequest",
+      "output": "crate::memory::result_doors::ResultSliceView",
+      "call": "memory.result_slice_as_owner(&memory.embedded_owner(\"vault.results.slice\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.code.repo_diff",
       "description": "Every file changed between two repository trees, each a code revision or a git snapshot: added, removed, modified or renamed, each unit with the operations that wrote it.",
       "input": "crate::code_document::CodeRepoDiffRequest",
@@ -4543,6 +4757,36 @@
       "input": "crate::task_verb::sdk::WorkflowRunRequest",
       "output": "crate::task_verb::sdk::WorkflowRunView",
       "call": "crate::task_verb::sdk::read_workflow_run_as(memory.vault(), &memory.embedded_owner(\"vault.workflows.status\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.task_types.pin",
+      "description": "The owner stores an authored task-type tree on an open team-shape fork, as a candidate; the receipt says whether it is in force.",
+      "input": "crate::team::doors::TaskTypeTreePin",
+      "output": "crate::team::doors::TaskTypeTreePinReceipt",
+      "call": "crate::team::doors::pin_tree_as(memory.vault(), &memory.embedded_owner(\"vault.task_types.pin\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.task_types.get",
+      "description": "The owner reads the task-type tree in force, or one kept tree version, for the vault or a project.",
+      "input": "crate::team::doors::TaskTypeTreeRead",
+      "output": "crate::team::doors::TaskTypeTreeReadReply",
+      "call": "crate::team::doors::read_tree_as(memory.vault(), &memory.embedded_owner(\"vault.task_types.get\")?, input)?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",

@@ -12,18 +12,31 @@
 //! Each row lists its rows (`host_door_lists`): the relations, asks and
 //! tiers live in the engine's trusted-contact side tables, which hold no
 //! listed row, so each lists none.
+//!
+//! DOOR-140 B: `.concern.propose` and `.concern.deliver` act on the
+//! caller's own credential handle (`host_door_caller`), as `connector.call`
+//! does. Propose reads the message under the caller's own read scope, for
+//! the owner's proof, and lists the message it read. Deliver is the
+//! caller's alone: no proof arm admits it, the caller is the sender, and it
+//! sends only a notice whose stored sender is the caller, through this
+//! server's served channel sink.
 use std::sync::Arc;
 
 use oneiron::counterparty_contact::{TrustedContact, TrustedContactAsk};
+use oneiron::memory::MemoryError;
+use oneiron::outbound::ServedChannelSink;
 use oneiron::policy_model::PolicyModelConfig;
+use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::{
     self, TrustedContactAsksRequest, TrustedContactAuthorization, TrustedContactAuthorizeRequest,
-    TrustedContactConsentRequest, TrustedContactDialRequest, TrustedContactNameRequest,
-    TrustedContactRevokeRequest, TrustedContactTierRequest, TrustedContactTierSet,
-    TrustedContactsRequest,
+    TrustedContactConcernProposal, TrustedContactConcernRequest, TrustedContactConsentRequest,
+    TrustedContactDeliverRequest, TrustedContactDeliveryReceipt, TrustedContactDialRequest,
+    TrustedContactNameRequest, TrustedContactRevokeRequest, TrustedContactTierRequest,
+    TrustedContactTierSet, TrustedContactsRequest,
 };
+use oneiron::{EdgeActorClass, EntityId};
 
-use super::host_doors::{MaybeListed, owner_proof};
+use super::host_doors::{Listed, MaybeListed, credential_listing, owner_proof, refused};
 use super::shared_act_doors::{as_person_naming, person};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -170,5 +183,46 @@ pub(crate) async fn vault_trusted_contacts_concern_authorize(
         },
         |_| Some(Vec::new()),
     )
+    .await
+}
+
+/// `vault.trusted_contacts.concern.propose`: the owner's policy gate reads
+/// one message the caller reads and, on a `RouteToHelp`, proposes the fact
+/// of concern. Beside it, the message it read.
+pub(crate) async fn vault_trusted_contacts_concern_propose(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
+    input: TrustedContactConcernRequest,
+) -> Listed<TrustedContactConcernProposal> {
+    const VERB: &str = "vault.trusted_contacts.concern.propose";
+    let proof = match owner_proof(auth, server, VERB) {
+        Ok(proof) => proof,
+        Err(refusal) => return refused(refusal),
+    };
+    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+        sdk::propose_trusted_contact_concern(&memory, &proof, input, &PolicyModelConfig::default())
+    })
+    .await
+}
+
+/// `vault.trusted_contacts.concern.deliver`: the caller delivers the next
+/// notice it is the stored sender of, through this server's served channel
+/// sink. `None` when none is eligible.
+pub(crate) async fn vault_trusted_contacts_concern_deliver(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
+    input: TrustedContactDeliverRequest,
+) -> Listed<Option<TrustedContactDeliveryReceipt>> {
+    const VERB: &str = "vault.trusted_contacts.concern.deliver";
+    credential_listing(server, auth, caller, VERB, move |server, _, memory| {
+        let mut sink = ServedChannelSink::new(server.vault())
+            .map_err(MemoryError::from)?
+            .with_line_push_allowance(server.config.line.monthly_push_allowance());
+        sdk::deliver_trusted_contact_notice(&memory, input, &mut sink)
+    })
     .await
 }
