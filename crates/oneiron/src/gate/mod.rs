@@ -13,6 +13,7 @@ pub(crate) mod manifest_authenticity;
 pub(crate) use manifest_authenticity::stamp_manifest_origin;
 pub(crate) use manifest_authenticity::{seeded_manifest_key, trusted_manifest_key};
 mod carry_forward_policy;
+mod coach_offer_reach;
 mod confirm;
 mod connector_admission;
 mod consolidation_readers;
@@ -88,6 +89,9 @@ pub use self::bundle::{
 };
 pub(crate) use self::ceiling::{
     OwnerRowAction, PolicyApprovalCeiling, PolicyCriticality, dispatched_agent_effective_ceiling,
+};
+pub(crate) use self::coach_offer_reach::{
+    coach_offer_ask_ceiling_in_txn, coach_offer_question_permit_in_txn,
 };
 pub use self::confirm::{
     CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS, CriticalWriteConfirmBinding,
@@ -212,7 +216,8 @@ pub(crate) use self::witness_message::canonical_witness_message_body_for_test;
 pub(crate) use self::witness_message::{
     MAX_WITNESS_MESSAGE_ORDER, WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM,
     WITNESS_AUTHOR_USER, WitnessMessageAuthorization, WitnessMessageBodyAuthor,
-    WitnessMessageEnvelope, check_witness_message_ceiling, validate_canonical_witness_message_body,
+    WitnessMessageEnvelope, check_witness_message_ceiling,
+    check_witness_message_ceiling_with_permit, validate_canonical_witness_message_body,
     validate_replicated_witness_message_body,
 };
 

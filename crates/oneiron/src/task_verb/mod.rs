@@ -80,10 +80,15 @@ mod scheduling;
 mod subproject;
 mod symbol_lease;
 mod terminal_state;
+mod training_offer_ask;
 mod verb_kind;
 mod wave_port;
 mod wire_decode;
 pub(crate) use project_tradeoff::{project_tradeoff_routed_in, task_created_at_in};
+pub(crate) use training_offer_ask::{
+    OFFER_QUESTION_TYPE, issue_training_offer_asks, offer_question_key, offer_question_text,
+    reserved_offer_question_in, training_offer_ask_key, void_training_offer_asks_in,
+};
 pub(crate) use wire_decode::{
     TaskBinding, done_task_evidence_in, leader_task_body_in, leader_task_brief_in, task_binding,
     task_is_blocked_in, task_text_in,

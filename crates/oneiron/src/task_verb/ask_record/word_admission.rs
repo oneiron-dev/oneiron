@@ -112,6 +112,9 @@ fn admit_word_with_source(
     // An attendee ask's word is the authenticated owner's own, or nothing:
     // refused here, before anything is recorded.
     super::super::attendee_answer::guard_word(vault, txn, id, group, source, actor, word, owner)?;
+    super::super::training_offer_ask::guard_word(
+        vault, txn, id, group, source, actor, word, owner,
+    )?;
     if word.confirmation.is_some() {
         if source != TaskAskSource::Human {
             return Err(invalid());

@@ -1012,7 +1012,11 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
     entries.push(crate::consent::CatastropheFloor::pinned().manifest_entry());
     // ARCH-0026: the Dreamer is warm by default, so its three actor-keyed
     // rows ship here (see `dreamer_grant`); the owner may narrow or remove them.
-    super::dreamer_grant::with_shipped_dreamer_rows(encode_with_native_mail_policy(entries)?)
+    // The Coach is born with one scoped row: asking the vault owner about its
+    // own training offers (see `coach_offer_reach`), revocable the same way.
+    super::coach_offer_reach::with_shipped_coach_offer_reach(
+        super::dreamer_grant::with_shipped_dreamer_rows(encode_with_native_mail_policy(entries)?)?,
+    )
 }
 
 /// The shipped manifest with `rows` joined to its one scoped-grant table,

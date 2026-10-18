@@ -218,6 +218,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::TASK_PROJECT_TRADEOFF_TURN, CONTENT),
     (&t::TASK_REPORT_JOURNAL, CONTENT),
     (&t::TASK_SYMBOL_LEASE, CONTENT),
+    (&t::TASK_TRAINING_OFFER_ASK, CONTENT),
+    (&t::TASK_TRAINING_OFFER_ASK_GROUP, CONTENT),
     (&t::TASK_ASK_WAIT, CONTENT),
     // An approved, denied or launched hold never rewinds to waiting.
     (&t::TASK_FANOUT_LAUNCH, LIVE),

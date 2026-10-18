@@ -204,6 +204,7 @@ pub use self::offer::{
     record_offer_check, record_training_offer, settle_training_offer, training_offer,
     training_offer_checks, training_offer_skill_id, training_offers,
 };
+pub(crate) use self::offer::{pending_training_offer_in_txn, settle_training_offer_in_txn};
 pub use self::offer_switch::{
     OfferSwitchReceipt, OfferSwitchUndo, model_role_seat, seat_model_role, training_offer_switch,
     undo_training_offer_switch,
