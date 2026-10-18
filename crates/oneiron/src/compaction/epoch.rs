@@ -617,8 +617,9 @@ pub(super) fn mint_epoch_summary_guarded(
 
     // `DerivedFrom` targets are the sealed request's sources: every record
     // the window was read from (a conversation window's TURNs and MESSAGEs,
-    // or what a host-numbered log names).
-    let derived = &request.sources;
+    // or what a host-numbered log names), and for a self-written summary
+    // each home part its call wore (FIX 4465 B, Engine 10-19).
+    let derived = &summary_dependencies(request, writer);
 
     // The keyframe's temporal position IS the compaction moment: the recorded
     // watermark. Wall-clock would make an otherwise byte-stable row depend on
@@ -825,7 +826,8 @@ fn next_epoch(prior: Option<PriorEpoch>) -> Result<u64> {
 /// summary reads as withdrawn there. Such a summary takes no vector.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the base mint's arguments plus the room's route and inline vector"
+    reason = "the base mint's arguments plus the room's route, inline vector and a self-written \
+              receipt"
 )]
 pub(super) fn mint_epoch_summary_in_overlay(
     session: &crate::off_record::OffRecordSession<'_>,
@@ -835,6 +837,7 @@ pub(super) fn mint_epoch_summary_in_overlay(
     request: &CompactionRequest,
     product: &CompactionProduct,
     vector: Option<&super::epoch_vector::EpochVector>,
+    writer: Option<&super::CompactionExecution>,
     extra: impl FnOnce(
         &crate::store::SessionStoreView<'_>,
         &mut heed::RwTxn<'_>,
@@ -868,6 +871,8 @@ pub(super) fn mint_epoch_summary_in_overlay(
         actor: byline.entity_ref().to_hex(),
     })?;
     let scope = JournalScope::new(*session_ref, summary_id);
+    // A self-written summary's home parts are its sources too (FIX 4465 B).
+    let derived = summary_dependencies(request, writer);
     let entry = |role, op| JournalEntry {
         scope,
         role,
@@ -892,7 +897,7 @@ pub(super) fn mint_epoch_summary_in_overlay(
                 },
             ),
         )?;
-        for target in &request.sources {
+        for target in &derived {
             apply(
                 wtxn,
                 entry(
@@ -918,7 +923,7 @@ pub(super) fn mint_epoch_summary_in_overlay(
             ),
         )?;
         let view = session.read_view()?;
-        let withdrawn = super::epoch_intent::any_withdrawn_in(&view, wtxn, &request.sources)?;
+        let withdrawn = super::epoch_intent::any_withdrawn_in(&view, wtxn, &derived)?;
         if let Some(op) = super::epoch_vector::room_vector_op(vector, summary_id, withdrawn) {
             apply(wtxn, entry(JournalRole::TurnOwnedArtifact, op))?;
         }
@@ -944,6 +949,7 @@ pub(super) fn mint_epoch_summary_in_overlay(
         if let Some(birth) =
             super::epoch_intent::epoch_birth(request, byline, at, intent_id, trigger)
         {
+            let birth = super::self_writer::link_writer(birth, writer)?;
             crate::provenance::birth::stamp_row_birth_in_txn(&view, wtxn, &summary_id, &birth)?;
         }
         extra(
@@ -959,6 +965,24 @@ pub(super) fn mint_epoch_summary_in_overlay(
         )
     })?;
     Ok((epoch, summary_id))
+}
+
+/// What an epoch summary depends on for withdrawal: its request's sources,
+/// then each home part a self-written one's call wore that they do not name.
+fn summary_dependencies(
+    request: &CompactionRequest,
+    writer: Option<&super::CompactionExecution>,
+) -> Vec<EntityId> {
+    let mut derived = request.sources.clone();
+    for row in writer
+        .into_iter()
+        .flat_map(super::CompactionExecution::home_dependencies)
+    {
+        if !derived.contains(&row) {
+            derived.push(row);
+        }
+    }
+    derived
 }
 
 // ─── H-S3: creation-time refusal under the ARCH-0052 overlay model ──────

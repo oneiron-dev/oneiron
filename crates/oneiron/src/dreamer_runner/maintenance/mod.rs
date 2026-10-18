@@ -15,6 +15,9 @@ pub mod coach_heal;
 pub mod coach_learning;
 mod coach_repair;
 pub mod code_fix;
+pub mod compaction_check;
+pub use compaction_check::COMPACTION_CHECK_FACET;
+pub(crate) use compaction_check::declare_compaction_check_in_txn;
 mod contribution;
 pub use contribution::{ContributionForks, ContributionReplayHost};
 mod curator;
@@ -84,6 +87,31 @@ impl DreamerRunnerStore<'_> {
                 now,
             )
         })
+    }
+    /// The Dreamer's check of one self-written compaction landing (FIX 4465
+    /// B), queued in the landing's own write under the key the landing
+    /// fixes: a replayed landing finds the check it queued, a rolled-back one
+    /// queued none. A pass admits it as any maintenance, and its host's
+    /// executor runs it with the judge it lends.
+    pub(crate) fn enqueue_compaction_check_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        input: Value,
+        dedupe: String,
+        now: u64,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        self.enqueue_kind_in_txn(
+            txn,
+            MAINTENANCE_QUEUE_KIND,
+            DreamerAttemptPayload {
+                attempt_type: compaction_check::COMPACTION_CHECK_FACET.into(),
+                input,
+                parent_attempt: None,
+            },
+            Some(dedupe),
+            None,
+            now,
+        )
     }
     /// The Dreamer's nightly maintenance, co-committed with a Timer wake or
     /// a Nightly recipe: the curator pass (one per rubric cadence, however
@@ -211,6 +239,9 @@ pub(crate) fn execute(
         coach::COACH_ROOM_UPKEEP_FACET => {
             room_upkeep::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
+        // Judged on the host's lent model: the wake driver hands it to the
+        // host's executor, so here it can only wait for one.
+        compaction_check::COMPACTION_CHECK_FACET => return Ok(compaction_check::unlent()),
         _ => return Err(invalid()),
     }
     Ok(DreamerAttemptExecution::Completed { completed_units: 0 })

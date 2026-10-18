@@ -101,6 +101,10 @@ pub(super) struct Served<D> {
     pub(super) model: ModelId,
     /// The admitted request's durable-step identity.
     pub(super) step_hash: Option<[u8; 32]>,
+    /// The request as it was sent, as its JSON, when it was admitted as
+    /// exactly one model: a self-written call files it as its step (FIX
+    /// 4465 B). `None` for the house's calls.
+    pub(super) sent: Option<Vec<u8>>,
     pub(super) worn: D,
     pub(super) latency: Duration,
 }
@@ -186,6 +190,10 @@ impl ServedCompactionBackend {
             }
         };
         let step_hash = call.request.canonical_hash().ok();
+        let sent = match admit {
+            Admit::Role => None,
+            Admit::Exact { .. } => serde_json::to_vec(&call.request).ok(),
+        };
         let model = call.request.model.clone();
         let run = self.models.funded_run(COMPACTION_RUN, guard.clone(), payer);
         let reply = match admit {
@@ -208,6 +216,7 @@ impl ServedCompactionBackend {
                 response,
                 model,
                 step_hash,
+                sent,
                 worn,
                 latency: started.elapsed(),
             }),

@@ -701,6 +701,8 @@ impl<'a> DreamerWakeDriver<'a> {
                         )
                     } else if admitted.status.attempt.kind
                         == crate::dreamer_runner::maintenance::MAINTENANCE_QUEUE_KIND
+                        && admitted.status.payload.attempt_type
+                            != crate::dreamer_runner::maintenance::COMPACTION_CHECK_FACET
                     {
                         crate::dreamer_runner::maintenance::execute(
                             &admitted,
@@ -712,6 +714,9 @@ impl<'a> DreamerWakeDriver<'a> {
                     {
                         super::recipe_wake::execute(&admitted, &ctx)
                     } else {
+                        // The host's executor runs the rest, a self-written
+                        // compaction's check among them (FIX 4465 B): it is
+                        // judged on the model the host lends.
                         exec.execute(&admitted, &mut ctx).await
                     }
                 });

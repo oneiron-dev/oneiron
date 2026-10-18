@@ -39,6 +39,8 @@ use oneiron_driver::{
 };
 
 use super::policy::extraction_egress;
+
+mod compaction_check;
 use super::skill_author::CoachSkillAuthor;
 use super::status::{StatusCell, WorkState, WorkStatus};
 use crate::config::models::{DreamerSettings, ModelsConfig, role_key};
@@ -548,6 +550,14 @@ impl PassExecutorFactory for ObservedFactory {
                 actor: self.actor,
                 instruction: &self.task_instruction,
             });
+        let check = self
+            .weaver
+            .as_ref()
+            .map(|weaver| compaction_check::CheckLend {
+                weaver,
+                guard,
+                egress: self.egress,
+            });
         Ok(ObservedExecutor {
             inner: self
                 .inner
@@ -557,6 +567,7 @@ impl PassExecutorFactory for ObservedFactory {
             status: &self.status,
             resident,
             task,
+            check,
             decisions: &self.decisions,
         })
     }
@@ -593,6 +604,14 @@ impl PassExecutorFactory for ObservedFactory {
                 actor: self.actor,
                 instruction: &self.task_instruction,
             });
+        let check = self
+            .weaver
+            .as_ref()
+            .map(|weaver| compaction_check::CheckLend {
+                weaver,
+                guard,
+                egress: self.egress,
+            });
         self.inner
             .as_mut()
             .expect("prepared factory")
@@ -605,6 +624,7 @@ impl PassExecutorFactory for ObservedFactory {
                         status,
                         resident,
                         task,
+                        check,
                         decisions,
                     })
                     .collect()
@@ -775,6 +795,8 @@ struct ObservedExecutor<'p, E> {
     /// What a Dreamer-lane TASK's realization borrows; none without a route.
     /// A weave lens render borrows the same route.
     task: Option<TaskLend<'p>>,
+    /// What a self-written compaction's check borrows; none without a weaver.
+    check: Option<compaction_check::CheckLend<'p>>,
     /// The server's decision host, which judges a completed TASK try's Done.
     decisions: &'p Arc<std::sync::OnceLock<DecisionHost>>,
 }
@@ -1119,6 +1141,14 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
                     reason: TASK_REALIZE_UNLENT_PARK_REASON.to_owned(),
                     cause: oneiron::dreamer_runner::DreamerParkCause::Other,
                 }),
+            }
+        } else if attempt.status.payload.attempt_type
+            == oneiron::dreamer_runner::maintenance::COMPACTION_CHECK_FACET
+        {
+            // FIX 4465 B: judged on the weaver's route; never rewrites.
+            match self.check {
+                Some(lend) => lend.check(attempt, ctx).await,
+                None => Ok(oneiron::dreamer_runner::maintenance::compaction_check::unlent()),
             }
         } else if attempt.status.payload.attempt_type
             == oneiron::dreamer_runner::DREAMER_WEAVE_LENS_ATTEMPT_KIND

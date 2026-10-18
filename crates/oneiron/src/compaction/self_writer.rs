@@ -8,11 +8,20 @@
 //!
 //! A self-written summary lands only through its packet, admitted on the
 //! packet door's host-log binding against the run's retained steps.
+//!
+//! FIX 4465 B: each paid call of a pass, the refused tries too, is filed in
+//! the model-step family on the route its run captured, and the receipt
+//! names the filed steps and the retained evidence its window was cut from.
+//! The summary takes a withdrawal dependency on each home part it wore, as
+//! on any source (Engine 10-19), and its landing declares the Dreamer's
+//! check, which never rewrites it.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::packet_source::{CompactionHostLog, CompactionSource, admit_compaction_source};
+use super::packet_source::{
+    CompactionHostLog, CompactionSource, admit_compaction_source, admit_host_log_record,
+};
 use super::{
     COMPACTION_PACKET_SCHEMA_VERSION, CompactionPacket, CompactionPayloadKind, CompactionRefusal,
     CompactionSnapshotRef, CompactionSuppression, GatedCompaction, ValidatedCompactionPacket,
@@ -31,9 +40,6 @@ pub enum SelfCompactionUnavailable {
     /// The policy row reads the live context, which needs the live fork
     /// this host does not cut yet.
     LiveForkNotBuilt,
-    /// The run lands through a room's route, whose self-written receipts
-    /// have no store yet.
-    SessionReceiptsNotBuilt,
     /// The run's actor names no home: it is not an agent, or its agent is
     /// anchored to no PERSON.
     NoIdentity,
@@ -56,7 +62,6 @@ impl SelfCompactionUnavailable {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::LiveForkNotBuilt => "live_fork_not_built",
-            Self::SessionReceiptsNotBuilt => "session_receipts_not_built",
             Self::NoIdentity => "no_identity",
             Self::IdentityUnreadable => "identity_unreadable",
             Self::PolicyUnreadable => "policy_unreadable",
@@ -134,6 +139,11 @@ fn names_key(value: &Value, key: &str) -> bool {
     }
 }
 
+/// The state of a home part the call wore whole: the only state that shaped
+/// what it wrote. A cut part never reached the call; an absent one is named
+/// by why.
+pub const HOME_PART_WORN: &str = "present";
+
 /// One part of the home a self-written call wore, by ref.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompactionHomeRef {
@@ -175,6 +185,89 @@ pub struct CompactionExecution {
     /// the hex BLAKE3 of its bytes and their length.
     pub snapshot_hash: Option<String>,
     pub snapshot_len: Option<u64>,
+    /// The answering try's filed step (FIX 4465 B): its `dreamer.step`
+    /// claim, resolvable by id on the route the run's rows are on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<CompactionStepRef>,
+    /// Each try the gate refused before it, filed as a step of its own, in
+    /// the order the tries ran.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rejected_steps: Vec<CompactionStepRef>,
+    /// Why the pass's calls were not filed, when they could not be: the
+    /// receipt keeps their usage either way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_unfiled: Option<String>,
+    /// The retained evidence its window was cut from, by revision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<CompactionEvidence>,
+    /// Every paid call of the pass, the refused tries first, held only until
+    /// the host files them. Never part of the receipt.
+    #[serde(skip)]
+    pub calls: Vec<CompactionCall>,
+}
+
+/// One paid call of a self-written pass, held until its host files it in
+/// the model-step family (FIX 4465 B): the admitted request and the
+/// provider's whole answer, each as its JSON. The step's model, purpose and
+/// params identity and its canonical hash are read from the request; the
+/// answer is the step's response. It never reaches a receipt or a store of
+/// its own: the filed step is the record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompactionCall {
+    pub request: Vec<u8>,
+    pub response: Vec<u8>,
+}
+
+/// One filed call of a self-written pass: its terminal `dreamer.step`
+/// claim, whose job is the run the pass compacted (FIX 4465 B).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompactionStepRef {
+    /// The step's claim.
+    pub claim: EntityId,
+    /// The hex BLAKE3 of the admitted request's canonical bytes.
+    pub step_hash: String,
+}
+
+/// The retained evidence a self-written summary was cut from, by revision
+/// (FIX 4465 B): its run's committed steps `first..=last`, pinned by the
+/// chained state hash the span's last checkpoint committed. A later read
+/// that finds another hash there reads other evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompactionEvidence {
+    pub run: EntityId,
+    pub first: u64,
+    pub last: u64,
+    /// Hex of the last step's committed state hash.
+    pub revision: String,
+}
+
+/// Where a self-written summary landed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CompactionLanding {
+    /// One epoch of its run: its SUMMARY row and its number.
+    Epoch { summary: EntityId, epoch: u64 },
+    /// One fold of its run's ledger.
+    Fold { fold: u64 },
+}
+
+/// A landed self-written summary's durable receipt, read back where its
+/// run's rows are (FIX 4465 B): the epoch's coverage-row tail or the fold's
+/// record, verified against the row it binds. The one projection the
+/// Dreamer's check and the exec board read; never a store of its own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompactionLandingReceipt {
+    pub run: EntityId,
+    pub landing: CompactionLanding,
+    pub first: u64,
+    pub last: u64,
+    /// Whether the summary's words still stand: `false` once a record they
+    /// came from, a home part it wore included, is withdrawn.
+    pub words_live: bool,
+    /// The summary's words while they stand. Only the check reads them.
+    #[serde(skip)]
+    pub summary: Option<String>,
+    pub execution: CompactionExecution,
 }
 
 impl CompactionExecution {
@@ -194,6 +287,31 @@ impl CompactionExecution {
     pub(crate) fn with_rejected(mut self, rejected: Vec<CompactionUsage>) -> Self {
         self.rejected_tries = rejected;
         self
+    }
+
+    /// The pass with every paid call it made, in the order they ran.
+    #[must_use]
+    pub(crate) fn with_calls(mut self, calls: Vec<CompactionCall>) -> Self {
+        self.calls = calls;
+        self
+    }
+
+    /// The receipt without the calls it still holds: what a report keeps.
+    #[must_use]
+    pub(crate) fn without_calls(mut self) -> Self {
+        self.calls = Vec::new();
+        self
+    }
+
+    /// The home rows the call wore whole (FIX 4465 B, Engine 10-19): its
+    /// summary depends on each for withdrawal, as on any source, so erasing
+    /// a diary entry, a lesson or the voice it wore withdraws what it shaped.
+    /// A part cut for room never reached the call.
+    pub fn home_dependencies(&self) -> impl Iterator<Item = EntityId> + '_ {
+        self.home
+            .iter()
+            .filter(|part| part.state == HOME_PART_WORN)
+            .filter_map(|part| part.row)
     }
 
     /// The accepted snapshot, when the gate accepted this pass.
@@ -254,6 +372,37 @@ pub(crate) fn admit_self_landing(
     gated: &GatedCompaction,
     execution: CompactionExecution,
 ) -> Result<SelfLanding> {
+    land_packet(gated, execution, |packet, expected| {
+        admit_compaction_source(
+            vault,
+            packet,
+            CompactionSource::HostLog(log),
+            Some(expected),
+        )
+    })
+}
+
+/// [`admit_self_landing`] for a run whose storage hands out no base vault (a
+/// room's, FIX 4465 B): the packet binds to `record`, the run's replay as
+/// its captured route read it, its room's overlay over base.
+pub(crate) fn admit_self_landing_on(
+    record: &crate::code_run::CodeRunReplayRecord,
+    log: CompactionHostLog<'_>,
+    gated: &GatedCompaction,
+    execution: CompactionExecution,
+) -> Result<SelfLanding> {
+    land_packet(gated, execution, |packet, expected| {
+        admit_host_log_record(packet, log, record, Some(expected))
+    })
+}
+
+/// Cuts the gated summary's packet and has `admit` admit it against the
+/// snapshot its pass stamped.
+fn land_packet(
+    gated: &GatedCompaction,
+    execution: CompactionExecution,
+    admit: impl FnOnce(CompactionPacket, &CompactionSnapshotRef) -> Result<ValidatedCompactionPacket>,
+) -> Result<SelfLanding> {
     let expected = execution.snapshot().ok_or(Error::InvariantViolation(
         "a self-written pass carries no accepted snapshot",
     ))?;
@@ -273,13 +422,21 @@ pub(crate) fn admit_self_landing(
         digest_text: Some(summary.to_owned()),
         working_set_refs: Vec::new(),
     };
-    let packet = admit_compaction_source(
-        vault,
-        packet,
-        CompactionSource::HostLog(log),
-        Some(&expected),
-    )?;
+    let packet = admit(packet, &expected)?;
     Ok(SelfLanding { execution, packet })
+}
+
+/// Whether `id` is an epoch keyframe: a summary a run's compaction minted,
+/// its agent's own words when it wrote as itself (FIX 4465 B). The Dreamer's
+/// third-person summaries never take one as text to revise.
+pub(crate) fn is_epoch_summary(vault: &Vault, id: &EntityId) -> Result<bool> {
+    use crate::ports::EntityStoreRead;
+    let txn = vault.store.env.read_txn()?;
+    let Some(record) = vault.store.port_entity_record(&txn, id)? else {
+        return Ok(false);
+    };
+    Ok(record.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
+        && super::decode_epoch_summary_body(&record.body).is_ok())
 }
 
 /// The epoch's birth for a self-written summary: its process parameters are

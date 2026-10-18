@@ -718,6 +718,11 @@ fn mcp_compaction_value(report: &oneiron::engine_executor::CompactionReport) -> 
     if let Some(why) = report.self_unavailable {
         value["self_unavailable"] = json!(why.as_str());
     }
+    // FIX 4465 B: the durable receipt of each self-written summary the run
+    // landed, as its rows keep it; the last pass above may not have landed.
+    if !report.landed_self.is_empty() {
+        value["self_landed"] = serde_json::to_value(&report.landed_self).unwrap_or(Value::Null);
+    }
     value
 }
 

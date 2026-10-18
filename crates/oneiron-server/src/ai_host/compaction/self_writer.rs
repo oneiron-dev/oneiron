@@ -15,8 +15,9 @@ use oneiron::code_run::{
     CompactionHome, CompactionHostBinding, compaction_home_budget, load_compaction_home,
 };
 use oneiron::compaction::{
-    CompactionBackend, CompactionCheck, CompactionExecution, CompactionProduct, CompactionRefusal,
-    CompactionRequest, CompactionTierClass, SelfCompactionUnavailable, compaction_usage_projection,
+    CompactionBackend, CompactionCall, CompactionCheck, CompactionExecution, CompactionProduct,
+    CompactionRefusal, CompactionRequest, CompactionTierClass, SelfCompactionUnavailable,
+    compaction_usage_projection,
 };
 use oneiron::llm::{ContentPart, ModelId, SelfCompactionDefault, SelfCompactionSource};
 
@@ -75,11 +76,10 @@ impl SelfCompactionBackend {
         Some(oneiron::agent_def::resolve_compaction_model(&self.definition, &house).clone())
     }
 
-    /// What this flight wears, or why it cannot be written as its agent.
-    fn freeze(&self, session_bound: bool) -> Result<Frozen, SelfCompactionUnavailable> {
-        if session_bound {
-            return Err(SelfCompactionUnavailable::SessionReceiptsNotBuilt);
-        }
+    /// What this flight wears, or why it cannot be written as its agent. A
+    /// room's run is written as its agent too (FIX 4465 B): its calls file
+    /// and its summary lands on the route the run captured at entry.
+    fn freeze(&self) -> Result<Frozen, SelfCompactionUnavailable> {
         let row = self
             .route
             .vault
@@ -138,8 +138,8 @@ impl CompactionBackend for SelfCompactionBackend {
         Some(self.route.input_room(&model, summary_token_budget))
     }
 
-    fn prepare_flight(&self, session_bound: bool) -> Result<(), SelfCompactionUnavailable> {
-        let frozen = self.freeze(session_bound);
+    fn prepare_flight(&self, _session_bound: bool) -> Result<(), SelfCompactionUnavailable> {
+        let frozen = self.freeze();
         let mut slot = self.flight.lock().unwrap_or_else(PoisonError::into_inner);
         match frozen {
             Ok(frozen) => {
@@ -190,6 +190,14 @@ impl CompactionBackend for SelfCompactionBackend {
             Ok(home.refs)
         })?;
         let usage = &served.response.usage;
+        // The paid call, for its host to file in the model-step family on
+        // the run's captured route (FIX 4465 B).
+        let calls = served
+            .sent
+            .zip(serde_json::to_vec(&served.response).ok())
+            .map(|(request, response)| CompactionCall { request, response })
+            .into_iter()
+            .collect();
         let execution = CompactionExecution {
             writer: self.host.actor().entity_ref(),
             source: frozen.row.source,
@@ -208,6 +216,11 @@ impl CompactionBackend for SelfCompactionBackend {
             home: served.worn,
             snapshot_hash: None,
             snapshot_len: None,
+            step: None,
+            rejected_steps: Vec::new(),
+            step_unfiled: None,
+            evidence: None,
+            calls,
         };
         Ok((
             product_of(&served.response, served.latency),

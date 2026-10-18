@@ -68,9 +68,38 @@ fn admit_host_log(
     log: CompactionHostLog<'_>,
     expected_snapshot: Option<&CompactionSnapshotRef>,
 ) -> Result<ValidatedCompactionPacket> {
+    let (payload_kind, session) = host_log_shape(&p, log, expected_snapshot)?;
+    // The retained evidence: the run's own replay record on this vault, its
+    // steps committed through the span's end.
+    let record = vault
+        .get_code_run_replay_record(&log.run_id)?
+        .ok_or(CompactionPacketError::UnknownSession { session })?;
+    bind_host_log(p, payload_kind, log, &record)
+}
+
+/// The host-log arm against `record`, the run's replay as its captured route
+/// read it (FIX 4465 B): a room's run reads its overlay over base and hands
+/// out no base vault, so its host reads the record and the door checks it.
+pub(crate) fn admit_host_log_record(
+    p: CompactionPacket,
+    log: CompactionHostLog<'_>,
+    record: &crate::code_run::CodeRunReplayRecord,
+    expected_snapshot: Option<&CompactionSnapshotRef>,
+) -> Result<ValidatedCompactionPacket> {
+    let (payload_kind, _) = host_log_shape(&p, log, expected_snapshot)?;
+    bind_host_log(p, payload_kind, log, record)
+}
+
+/// The shape and snapshot axes, then the run's derived session and speech
+/// TURN. Returns the payload kind and the session.
+fn host_log_shape(
+    p: &CompactionPacket,
+    log: CompactionHostLog<'_>,
+    expected_snapshot: Option<&CompactionSnapshotRef>,
+) -> Result<(super::CompactionPayloadKind, EntityId)> {
     validate_schema_version(p.schema_version)?;
     let payload_kind = validate_payload_kind(p.payload_kind)?;
-    validate_payload_shape(&p, payload_kind)?;
+    validate_payload_shape(p, payload_kind)?;
     validate_snapshot_ref(&p.snapshot)?;
     validate_snapshot_match(&p.snapshot, expected_snapshot)?;
     validate_turn_ids_non_empty(&p.turn_ids)?;
@@ -90,11 +119,16 @@ fn admit_host_log(
         }
         .into());
     }
-    // The retained evidence: the run's own replay record on this vault, its
-    // steps committed through the span's end.
-    let record = vault
-        .get_code_run_replay_record(&log.run_id)?
-        .ok_or(CompactionPacketError::UnknownSession { session })?;
+    Ok((payload_kind, session))
+}
+
+/// The span must be steps `record`'s run committed.
+fn bind_host_log(
+    p: CompactionPacket,
+    payload_kind: super::CompactionPayloadKind,
+    log: CompactionHostLog<'_>,
+    record: &crate::code_run::CodeRunReplayRecord,
+) -> Result<ValidatedCompactionPacket> {
     let committed = u64::try_from(record.step_checkpoints.len())
         .map_err(|_| Error::ArithmeticOverflow("executor step count"))?;
     if record.run_id != log.run_id || log.first > log.last || log.last >= committed {

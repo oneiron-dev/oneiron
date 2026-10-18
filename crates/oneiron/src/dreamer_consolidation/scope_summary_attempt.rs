@@ -103,6 +103,17 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         let (plan, evidence) = ctx
             .vault
             .plan_scope_summary(&attempt.status.payload.input)?;
+        // FIX 4465 B: an epoch keyframe is its writer's own words, an agent's
+        // first person when it wrote as itself. A third-person summary is
+        // composed beside it under the Dreamer's byline and never takes it
+        // as the editor text it revises.
+        if let Some(previous) = plan.previous
+            && crate::compaction::is_epoch_summary(ctx.vault, &previous)?
+        {
+            return Err(invalid_consolidation(
+                "an epoch summary is never a scope summary's editor text",
+            ));
+        }
         let Some(first) = evidence.covers.first().copied() else {
             return Err(invalid_consolidation("summary scope has no text"));
         };

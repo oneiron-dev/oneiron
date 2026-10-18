@@ -235,29 +235,22 @@ impl<'a> EngineNativeExecutor<'a> {
             .turn;
         // FIX 4465: a self-written summary lands only on its packet, admitted
         // through the packet door's host-log binding against this run's
-        // retained steps. A room's run keeps its window: its receipts have no
-        // room store yet.
+        // retained steps. A room's run admits it against the replay its
+        // captured route read, and lands it on that route (FIX 4465 B).
+        let log = crate::compaction::CompactionHostLog {
+            run_ref: self.gated_write.run_ref(),
+            run_id,
+            first: request.turn_start,
+            last,
+        };
         let landing = match (writer, &self.storage) {
             (None, _) => None,
-            (Some(execution), ExecutorStorage::Canonical(vault)) => {
-                Some(crate::compaction::admit_self_landing(
-                    vault,
-                    crate::compaction::CompactionHostLog {
-                        run_ref: self.gated_write.run_ref(),
-                        run_id,
-                        first: request.turn_start,
-                        last,
-                    },
-                    &gated,
-                    execution,
-                )?)
-            }
-            (Some(_), ExecutorStorage::Session(_)) => {
-                return Err(crate::Error::InvalidConfig(
-                    "a self-written compaction lands no room receipt yet".into(),
-                )
-                .into());
-            }
+            (Some(execution), ExecutorStorage::Canonical(vault)) => Some(
+                crate::compaction::admit_self_landing(vault, log, &gated, execution)?,
+            ),
+            (Some(execution), ExecutorStorage::Session(_)) => Some(
+                crate::compaction::admit_self_landing_on(&record, log, &gated, execution)?,
+            ),
         };
         // The last committed step was not part of the preceding request's
         // history. Synchronize it BEFORE the mint, even across a soft yield.
@@ -285,6 +278,7 @@ impl<'a> EngineNativeExecutor<'a> {
                 gated,
                 accumulated,
                 &span,
+                landing,
             )?,
         };
         // This is only an in-memory cache; the next assembly re-derives it

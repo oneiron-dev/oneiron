@@ -10,6 +10,9 @@
 //! memoized — never bit-replayed.
 
 mod codec;
+// FIX 4465 B: a self-written compaction's calls, filed in this family on
+// their run's captured route (an `ExecutorStorage` method, no export).
+mod compaction_step;
 mod execute;
 pub mod public;
 mod schema;
