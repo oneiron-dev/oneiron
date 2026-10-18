@@ -254,6 +254,9 @@ impl FrozenPackFile {
 /// from the skill's current head.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlannedLeaderLaunch {
+    /// The leader try the launch queued, which the team is bound under; a
+    /// retry or continuation of it leads the same team.
+    pub root: AttemptId,
     pub team_ref: String,
     pub members: Vec<AttemptId>,
     pub start: PatternLaunchSpec,
