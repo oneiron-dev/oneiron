@@ -18008,6 +18008,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/note_parts.rs",
+     "purpose": "A Dreamer-written text past the NOTE body bound, as the ordered parts it lands in: the split an imported…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -18639,7 +18649,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_prefilter/receipts.rs",
@@ -18917,7 +18927,7 @@
      "purpose": "Pinned wire vocabulary for the private Dreamer runner rows",
      "surface": {
       "const": 24,
-      "crate-vis": 35
+      "crate-vis": 31
      }
     },
     {
@@ -19738,7 +19748,6 @@
      "purpose": "The wake loop: admit, warn, dispatch under panic containment, stop conditions",
      "surface": {
       "const": 4,
-      "crate-vis": 2,
       "fn": 10,
       "struct": 1
      }
@@ -31473,7 +31482,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 32,
+      "crate-vis": 33,
       "enum": 3,
       "fn": 4,
       "re-export": 11,
@@ -44959,7 +44968,7 @@
      "purpose": "The home search this device's query doors reach through its own sync connection (OF-534): a search an opened…",
      "surface": {
       "crate-vis": 1,
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -45712,7 +45721,7 @@
      "surface": {
       "const": 2,
       "crate-vis": 6,
-      "fn": 13,
+      "fn": 14,
       "re-export": 8,
       "struct": 2
      }
@@ -53441,7 +53450,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 64,
+     "files": 65,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54486,7 +54495,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3311,
+   "source_files": 3312,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68558,7 +68567,7 @@
      "path": "src/auth/slips.rs",
      "purpose": "HTTP/session holder proof and projection of the single log-backed slip",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
