@@ -190,7 +190,7 @@ pub enum SpanOrigin {
     Rule { rules: u32, class: RuleClass },
     /// The turn's saved tag set: the mention at `index`, under the tag set's
     /// envelope as BLAKE3 `envelope`. The label and links stay in the tag set.
-    SavedTag { envelope: [u8; 32], index: u32 },
+    SavedTag { envelope: [u8; 32], index: u64 },
 }
 
 /// Where a span's confidence falls on the policy row's band.
@@ -222,8 +222,9 @@ pub struct SieveSpan {
     pub turn: EntityId,
     /// The MESSAGE whose text the offsets index, or the TURN for body text.
     pub source: EntityId,
-    pub start: u32,
-    pub end: u32,
+    /// Byte offsets into that text, whole at any length (Rule 5).
+    pub start: u64,
+    pub end: u64,
     pub kind: SpanKind,
     /// A model-confirmed existing entity; unresolved spans remain topics.
     pub entity: Option<EntityId>,
