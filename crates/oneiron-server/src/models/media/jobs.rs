@@ -8,6 +8,7 @@
 use std::sync::Arc;
 
 use oneiron::llm::media::{AiOperation, MediaJobState, MediaPart, MediaRequest};
+use oneiron::llm::run_admission::PayerPerson;
 use oneiron::{ModelId, Vault};
 use serde::{Deserialize, Serialize};
 
@@ -34,6 +35,10 @@ pub(super) struct JobRow {
     /// a job taken up again still says which rung served it.
     #[serde(default)]
     pub(super) receipt: Option<PendingReceipt>,
+    /// Who its submit billed when a room paid for it (FIX 805): a job taken
+    /// up again bills the same payer, never its poller's. `None` is the
+    /// vault owner's.
+    pub(super) payer: Option<PayerPerson>,
 }
 
 /// The vault's job rows.
