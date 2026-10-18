@@ -485,6 +485,15 @@ async fn idempotent(
     match state.store.lookup(&store_key, &target, &request_body) {
         Ok(IdempotencyLookup::Replay(response)) => {
             let auth = core_auth.as_ref().and_then(|auth| auth.as_ref().ok());
+            // Every keyed core route is an owner act: a cached one replays
+            // only to a caller that may act now, so a hosted operator's root
+            // is refused before any cached success (FIX 2222).
+            if let Some(auth) = auth
+                && let Err(error) =
+                    crate::api::host_action::require_host_owner_act(&state.server, auth)
+            {
+                return api_error_response(error, is_core_auth_route);
+            }
             if let Some(refused) = release(&state.server, auth, &response.replay()) {
                 return refused;
             }

@@ -154,7 +154,7 @@ pub(super) async fn invoke_action_dispatch(
         )
     })?;
     // A credential that names no principal meets the facade's own refusal.
-    facade_actor(auth)?;
+    facade_actor(server, auth)?;
     let mut bound = action_bound(server, auth)?.ok_or_else(|| {
         FacadeApiError::forbidden(
             "an action runs under the credential's own read key",
@@ -227,12 +227,25 @@ pub(crate) struct ActionBound {
 
 /// What `auth` binds an action to. `None`: the credential names no
 /// principal, or presents no verified slip with read authority, so no
-/// action runs under it.
+/// action runs under it. A self-hosted root, or the dev mode, binds the
+/// owner its host action names, with that owner's guarded key at the
+/// caller's locality and the owner's proof; a hosted operator's root is
+/// refused, never left to a fallback (FIX 2222).
 pub(crate) fn action_bound(
     server: &SyncServer,
     auth: &CoreAuth,
 ) -> Result<Option<ActionBound>, FacadeApiError> {
-    let Ok((actor, class)) = facade_actor(auth) else {
+    if let Some(action) = crate::api::host_action::facade_host_action(server, auth)? {
+        let actor = action.actor();
+        return Ok(Some(ActionBound {
+            actor: actor.entity_ref(),
+            class: actor.actor_class(),
+            key: action.read_key().at(auth.locality()),
+            owner: owner_authorship(auth, server)?,
+            live_run: None,
+        }));
+    }
+    let Ok((actor, class)) = facade_actor(server, auth) else {
         return Ok(None);
     };
     let Some(proof) = auth.verified_slip() else {
@@ -429,7 +442,7 @@ async fn attach_live_run(
     payload: Result<Option<Json<AttachRequest>>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Write)?;
-    facade_actor(&auth)?;
+    facade_actor(&server, &auth)?;
     let rebind = payload
         .transpose()
         .map(facade_json)
@@ -447,7 +460,7 @@ pub(super) async fn attach_run_as(
     rebind: bool,
 ) -> Result<String, FacadeApiError> {
     auth.require(CoreScope::Write)?;
-    facade_actor(auth)?;
+    facade_actor(server, auth)?;
     let bound = action_bound(server, auth)?.ok_or_else(|| {
         FacadeApiError::forbidden(
             "a live run attaches the credential's own read key",

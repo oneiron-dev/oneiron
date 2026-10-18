@@ -57,7 +57,7 @@ pub(crate) async fn rederive_core_scope_summary(
     {
         return Err(ApiError::not_found("summary", Some(&summary_id)).into());
     }
-    let actor = json_payload(payload)?.actor.parse(&auth)?;
+    let actor = json_payload(payload)?.actor.parse(&server, &auth)?;
     let queued = server
         .vault
         .rederive_scope_summary(summary, actor)

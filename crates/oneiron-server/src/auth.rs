@@ -33,6 +33,13 @@ pub(crate) use slips::{BindingProof, INVITEE_DOORS, parse_signature, parse_slip_
 
 const IMPLICIT_ALL_IDEMPOTENCY_SCOPES: &str = "__implicit_all_scopes__";
 
+/// The principal the explicit local dev mode alone authenticates as
+/// ([`CoreAuth::is_local_dev_hatch`]).
+const DEV_HATCH_PRINCIPAL: &str = "legacy-shared-secret";
+
+/// The holder the host's own slips name: no entity, so no person.
+const HOST_HOLDER: &str = "host";
+
 /// Framing prefix of a v2 core token (`v2.<claims>.<mac-hex>`).
 const CORE_TOKEN_V2_PREFIX: &str = "v2.";
 
@@ -414,7 +421,7 @@ impl CoreAuth {
             return Err(ApiError::unauthorized());
         }
         Ok(Self {
-            principal: "legacy-shared-secret".to_owned(),
+            principal: DEV_HATCH_PRINCIPAL.to_owned(),
             principal_ref: None,
             scopes: CoreScope::all(),
             implicit_all_scopes: true,
@@ -590,6 +597,45 @@ impl CoreAuth {
             && (self.verified_slip.is_some()
                 || self.principal_ref.is_none()
                 || self.managed_owner.is_some())
+    }
+
+    /// The explicit local dev mode (FIX 2222), exactly: no credential
+    /// presented, no auth secret configured, unauthenticated dev turned on.
+    /// Only `Self::from_headers` builds that caller, under that principal
+    /// and nothing else; a missing slip alone never makes one.
+    pub(crate) fn is_local_dev_hatch(&self) -> bool {
+        self.principal == DEV_HATCH_PRINCIPAL
+            && self.implicit_all_scopes
+            && self.principal_ref.is_none()
+            && self.actor_class.is_none()
+            && self.verified_slip.is_none()
+            && self.jti.is_none()
+            && self.instrument.is_none()
+            && self.managed_owner.is_none()
+    }
+
+    /// The host's own root slip, when this caller presented one (FIX 2222):
+    /// the full, unattenuated slip the host minted to itself, no child of it
+    /// and no slip cut from it for someone else. Whether it is live, and
+    /// whom it acts as, the vault judges (`Vault::host_action_authority`).
+    pub(crate) fn host_root(&self) -> Option<&oneiron::authority::VerifiedSlip> {
+        if !self.implicit_all_scopes || self.managed_owner.is_some() {
+            return None;
+        }
+        self.verified_slip.as_ref().filter(|slip| {
+            let claims = slip.claims();
+            claims.holder_ref == HOST_HOLDER
+                && claims.parent_id.is_none()
+                && slip.is_full_vault_owner_grade()
+        })
+    }
+
+    /// Whether this caller presented a slip the host holds (its root, or
+    /// one cut from it), which names no person.
+    pub(crate) fn is_host_holder(&self) -> bool {
+        self.verified_slip
+            .as_ref()
+            .is_some_and(|slip| slip.claims().holder_ref == HOST_HOLDER)
     }
 
     /// Reconnect matches the exact verified instrument and projected principal,

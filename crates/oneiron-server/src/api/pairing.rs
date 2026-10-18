@@ -31,7 +31,7 @@ pub(super) async fn create_link(
     State(server): State<Arc<SyncServer>>,
     Json(request): Json<CreateLink>,
 ) -> Result<Json<oneiron::authority::PairingLink>, EnvelopedApiError> {
-    let auth = super::check_api_auth(&headers, &server)?;
+    let auth = super::check_api_owner_act(&headers, &server)?;
     let link = match request.machine {
         // A link the owner makes records them: a holder that can propose has
         // the OpenAI proxy admitted under that owner when it redeems.
@@ -453,7 +453,7 @@ pub(super) async fn revoke(
     State(server): State<Arc<SyncServer>>,
     Json(request): Json<RevokeSlip>,
 ) -> Result<Json<serde_json::Value>, EnvelopedApiError> {
-    super::check_api_auth(&headers, &server)?;
+    super::check_api_owner_act(&headers, &server)?;
     with_issuer(&server, |issuer| {
         server
             .vault()

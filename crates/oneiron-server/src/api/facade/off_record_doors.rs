@@ -244,7 +244,7 @@ pub(crate) async fn vault_off_record_recall(
     input: OffRecordRecallRequest,
 ) -> Listed<MemoryPack> {
     const VERB: &str = "vault.off_record.recall";
-    let (actor, class) = match super::facade_actor(auth) {
+    let (actor, class) = match super::facade_actor(server, auth) {
         Ok(caller) => caller,
         Err(error) => return (Err(error.into_memory_error()), Vec::new()),
     };
@@ -275,7 +275,7 @@ pub(crate) async fn vault_off_record_notes_create(
     input: OffRecordNoteRequest,
 ) -> Listed<EntityRefReceipt> {
     const VERB: &str = "vault.off_record.notes.create";
-    let (actor, class) = match super::facade_actor(auth) {
+    let (actor, class) = match super::facade_actor(server, auth) {
         Ok(caller) => caller,
         Err(error) => return (Err(error.into_memory_error()), Vec::new()),
     };
@@ -303,7 +303,7 @@ pub(crate) async fn vault_off_record_claims_upsert(
     input: OffRecordClaimRequest,
 ) -> Listed<CommitReceipt> {
     const VERB: &str = "vault.off_record.claims.upsert";
-    let (actor, class) = match super::facade_actor(auth) {
+    let (actor, class) = match super::facade_actor(server, auth) {
         Ok(caller) => caller,
         Err(error) => return (Err(error.into_memory_error()), Vec::new()),
     };
@@ -355,7 +355,8 @@ async fn off_record_execute(
     input: OffRecordExecuteRequest,
 ) -> MemoryResult<OffRecordExecuted> {
     const VERB: &str = "self.off_record.execute";
-    let (actor, class) = super::facade_actor(auth).map_err(|error| error.into_memory_error())?;
+    let (actor, class) =
+        super::facade_actor(server, auth).map_err(|error| error.into_memory_error())?;
     let session_ref = input.session_ref.clone();
     // The owner's proof, and their own live 1:1 stretch by that name, before
     // a run is entered: the run binds it again on its own thread.

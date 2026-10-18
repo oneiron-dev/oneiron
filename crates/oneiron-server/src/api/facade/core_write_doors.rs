@@ -57,7 +57,7 @@ pub(crate) async fn vault_conversations_records_append(
     auth: &CoreAuth,
     input: DagRecordAppendInput,
 ) -> Listed<DagRecordAppendReceipt> {
-    let (actor, class) = match super::facade_actor(auth) {
+    let (actor, class) = match super::facade_actor(server, auth) {
         Ok(caller) => caller,
         Err(refusal) => return refused(refusal.into_memory_error()),
     };

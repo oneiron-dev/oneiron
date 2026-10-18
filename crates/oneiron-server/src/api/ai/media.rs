@@ -314,6 +314,10 @@ fn admit(
             "ai.* media calls are the owner's",
         ));
     }
+    // FIX 2222: an owner act; a hosted operator's root is refused, typed.
+    if let Err(error) = crate::api::host_action::require_host_owner_act(server, auth) {
+        return Err(error.into_response());
+    }
     let media = server.ai.model_runtime().media();
     let Some((seat, _)) = media.seat(operation) else {
         return Err(refusal(
@@ -557,6 +561,10 @@ pub(super) async fn video_job(
             "video jobs are the owner's",
         );
     }
+    // FIX 2222: an owner act; a hosted operator's root is refused, typed.
+    if let Err(error) = crate::api::host_action::require_host_owner_act(&server, &auth) {
+        return error.into_response();
+    }
     match server.ai.model_runtime().media().poll(&job).await {
         Ok(MediaJobState::Done { response }) => Json(serde_json::json!({
             "state": "done",
@@ -585,6 +593,10 @@ pub(super) async fn cancel_video_job(
             "owner_required",
             "video jobs are the owner's",
         );
+    }
+    // FIX 2222: an owner act; a hosted operator's root is refused, typed.
+    if let Err(error) = crate::api::host_action::require_host_owner_act(&server, &auth) {
+        return error.into_response();
     }
     match server.ai.model_runtime().media().cancel(&job).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),

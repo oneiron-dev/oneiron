@@ -330,14 +330,22 @@ impl CoreAuth {
     /// May this credential read `id`? A verified slip reads through the
     /// actor-scoped lane its own proof builds (the engine's one credential
     /// key), so its policy floor and relationship grants apply on every
-    /// route. A credential with no verified slip is the owner's server secret
-    /// and reads every entity, but for one a device-local world keeps from a
-    /// caller off this device (DEC-0005).
+    /// route. The explicit local dev mode reads with the guarded key of the
+    /// owner it acts as (FIX 2222). Any other credential with no verified
+    /// slip (a managed vault's attested owner) reads every entity, but for
+    /// one a device-local world keeps from a caller off this device
+    /// (DEC-0005).
     pub(crate) fn can_read_entity(
         &self,
         vault: &oneiron::Vault,
         id: &oneiron::EntityId,
     ) -> oneiron::Result<bool> {
+        if self.is_local_dev_hatch() {
+            let action = vault.dev_action_authority()?;
+            return vault
+                .scoped_read(action.read_key().at(self.locality))
+                .is_entity_readable(id);
+        }
         let Some(proof) = self.verified_slip() else {
             return Ok(self.locality == CallerLocality::OnDevice || !vault.device_local_keeps(id)?);
         };

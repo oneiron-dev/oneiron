@@ -157,7 +157,8 @@ async fn residence_open(
         .open_item(&window, input.item)
         .await
         .map_err(|error| refused(VERB, &error))?;
-    let (actor, class) = super::facade_actor(auth).map_err(|error| error.into_memory_error())?;
+    let (actor, class) =
+        super::facade_actor(server, auth).map_err(|error| error.into_memory_error())?;
     let source = if local {
         oneiron::note::NoteReadSource::Local
     } else {

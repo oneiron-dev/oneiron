@@ -1,5 +1,5 @@
 use super::ViewQuery;
-use super::check_api_auth;
+use super::check_api_owner_act;
 use super::query_params;
 use super::scoped_read_for_legacy_api;
 use crate::auth::Locality;
@@ -107,7 +107,7 @@ pub(crate) async fn get_entity(
     Path(id_hex): Path<String>,
     query: Result<Query<ViewQuery>, QueryRejection>,
 ) -> Result<Response, ApiError> {
-    let auth = check_api_auth(&headers, &server)?.at(locality);
+    let auth = check_api_owner_act(&headers, &server)?.at(locality);
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Standard);
 
@@ -245,7 +245,7 @@ pub(crate) async fn get_edges(
     Path(id_hex): Path<String>,
     query: Result<Query<ViewQuery>, QueryRejection>,
 ) -> Result<Response, ApiError> {
-    let auth = check_api_auth(&headers, &server)?.at(locality);
+    let auth = check_api_owner_act(&headers, &server)?.at(locality);
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Summary);
 

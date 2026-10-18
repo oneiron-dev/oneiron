@@ -1,4 +1,4 @@
-use super::check_api_auth;
+use super::check_api_owner_act;
 use super::context_pack::embed_semantic_text;
 use super::core_engine_error;
 use super::default_limit;
@@ -303,7 +303,7 @@ pub(crate) async fn search_vector(
     query: Result<Query<VectorSearchQuery>, QueryRejection>,
 ) -> Result<Json<ScopedSearchResponse>, ApiError> {
     let arrived = Instant::now();
-    let auth = check_api_auth(&headers, &server)?.at(locality);
+    let auth = check_api_owner_act(&headers, &server)?.at(locality);
     let params = query_params(query)?;
     if let Some(text) = params.query_text.as_deref() {
         server.check_retrieval_query(
@@ -865,7 +865,7 @@ pub(crate) async fn search_semantic(
     body: Result<Json<SemanticSearchRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let arrived = Instant::now();
-    let auth = check_api_auth(&headers, &server)?.at(locality);
+    let auth = check_api_owner_act(&headers, &server)?.at(locality);
     let Json(params) = body.map_err(|rejection| {
         ApiError::bad_request(format!("invalid semantic search body: {rejection}"), None)
     })?;

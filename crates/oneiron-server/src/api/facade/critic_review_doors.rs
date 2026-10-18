@@ -29,7 +29,7 @@ pub(crate) async fn vault_critic_review(
     auth: &CoreAuth,
     input: CriticReviewSubmit,
 ) -> Listed<CriticReviewOutcome> {
-    let (actor, class) = match super::facade_actor(auth) {
+    let (actor, class) = match super::facade_actor(server, auth) {
         Ok(caller) => caller,
         Err(_) => {
             return refused(MemoryError::new(

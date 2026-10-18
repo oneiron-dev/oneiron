@@ -4,6 +4,7 @@ use super::super::{CoreEntityWriteResponse, CoreTextField, parse_entity_id_param
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
 use crate::projection::View;
+use crate::server::SyncServer;
 use oneiron::conversation_dag::{ScopePath, ScopeSelector};
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 use serde::{Deserialize, Serialize};
@@ -27,16 +28,32 @@ pub(crate) struct DagActor {
 }
 
 impl DagActor {
-    pub(super) fn parse(&self, auth: &CoreAuth) -> Result<WriteActor, ApiError> {
+    /// The actor a write runs as: the one its body names, which must be the
+    /// credential's own. A self-hosted root or the dev mode writes as the
+    /// owner its host action names and as no one else, and a hosted
+    /// operator's root writes as nobody (FIX 2222). A credential that binds
+    /// no principal names no one to write as.
+    pub(super) fn parse(
+        &self,
+        server: &SyncServer,
+        auth: &CoreAuth,
+    ) -> Result<WriteActor, ApiError> {
         let id = parse_entity_id_param(&self.entity_ref, "actor.entity_ref")?;
         let (class, name) = match self.actor_class {
             DagActorClass::Human => (EdgeActorClass::Human, "human"),
             DagActorClass::Agent => (EdgeActorClass::Agent, "agent"),
             DagActorClass::System => (EdgeActorClass::System, "system"),
         };
+        if let Some(action) = crate::api::host_action::require_host_owner_act(server, auth)? {
+            let owner = action.actor();
+            if owner.entity_ref() != id || owner.actor_class() != class {
+                return Err(ApiError::forbidden_scope("actor_binding"));
+            }
+            return Ok(owner);
+        }
         // A delegated credential cannot overwrite the identity bound in its slip.
-        if (!auth.is_owner_grade()
-            && (auth.principal_ref().is_none() || auth.actor_class().is_none()))
+        if auth.principal_ref().is_none()
+            || (!auth.is_owner_grade() && auth.actor_class().is_none())
             || auth
                 .principal_ref()
                 .is_some_and(|bound| bound != id.to_hex())

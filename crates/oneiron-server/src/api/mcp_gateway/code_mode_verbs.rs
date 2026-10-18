@@ -962,12 +962,20 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             .as_ref()
             .and_then(crate::auth::CoreAuth::verified_slip)
             .ok_or_else(unauthenticated)?;
-        // The one builder every door's credential key comes from.
+        // The one builder every door's credential key comes from. A host
+        // credential's refusal keeps its typed kind (FIX 2222).
         self.server
             .vault
             .credential_read_key(proof)
-            .map_err(|_| AgentVerbRefusal {
-                code: "engine_error".to_owned(),
+            .map_err(|error| AgentVerbRefusal {
+                code: match error.kind() {
+                    oneiron::ErrorKind::HostActionRequiresSupportGrant => {
+                        super::tasks_response::MCP_HOST_ACTION_REFUSED
+                    }
+                    oneiron::ErrorKind::ScopedReadOwnerNotLive => "forbidden",
+                    _ => "engine_error",
+                }
+                .to_owned(),
             })?
             .map(|reader| Some(reader.at(self.actor.locality())))
             .ok_or_else(unauthenticated)

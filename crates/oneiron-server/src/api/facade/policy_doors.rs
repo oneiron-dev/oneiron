@@ -51,7 +51,8 @@ async fn run_action_answer(
     needs_owner: bool,
 ) -> MemoryResult<PolicyActionOutcome> {
     let call = call?;
-    let (actor, class) = super::facade_actor(auth).map_err(FacadeApiError::into_memory_error)?;
+    let (actor, class) =
+        super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
     let unbound = || {
         MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
@@ -59,12 +60,21 @@ async fn run_action_answer(
             &["Present a verified slip paired to this principal."],
         )
     };
-    let proof = auth.verified_slip().ok_or_else(unbound)?;
-    let key = server
-        .vault
-        .credential_read_key(proof)?
-        .ok_or_else(unbound)?
-        .at(auth.locality());
+    // A self-hosted root or the dev mode reads with the owner's guarded key
+    // its host action names (FIX 2222); any other caller with its own.
+    let key = match crate::api::host_action::facade_host_action(server, auth)
+        .map_err(FacadeApiError::into_memory_error)?
+    {
+        Some(action) => action.read_key(),
+        None => {
+            let proof = auth.verified_slip().ok_or_else(unbound)?;
+            server
+                .vault
+                .credential_read_key(proof)?
+                .ok_or_else(unbound)?
+        }
+    }
+    .at(auth.locality());
     let owner = if needs_owner {
         Some(crate::api::owner_routes::owner(auth, server).map_err(|_| {
             MemoryError::new(

@@ -119,6 +119,10 @@ async fn answer_quota(
             "quota questions are the owner's",
         );
     }
+    // FIX 2222: an owner act; a hosted operator's root is refused, typed.
+    if let Err(error) = crate::api::host_action::require_host_owner_act(&server, &auth) {
+        return error.into_response();
+    }
     match server.ai.model_runtime().answer_quota(
         &question,
         answer.choice,

@@ -92,6 +92,10 @@ async fn read_defaults(auth: CoreAuth, State(server): State<Arc<SyncServer>>) ->
     if !auth.is_owner_grade() {
         return refusal(StatusCode::FORBIDDEN, "owner_required");
     }
+    // FIX 2222: an owner act; a hosted operator's root is refused, typed.
+    if let Err(error) = crate::api::host_action::require_host_owner_act(&server, &auth) {
+        return error.into_response();
+    }
     match server.vault.purpose_default_table() {
         Ok(table) => Json(table).into_response(),
         Err(_) => refusal(StatusCode::INTERNAL_SERVER_ERROR, "defaults_unavailable"),
@@ -105,6 +109,10 @@ async fn replace_defaults(
 ) -> Response {
     if !auth.is_owner_grade() {
         return refusal(StatusCode::FORBIDDEN, "owner_required");
+    }
+    // FIX 2222: an owner act; a hosted operator's root is refused, typed.
+    if let Err(error) = crate::api::host_action::require_host_owner_act(&server, &auth) {
+        return error.into_response();
     }
     // A JSON body is only a DTO. Validate all rows before inspecting any key.
     let table = match oneiron::llm::ValidatedPurposeDefaults::try_from(table) {
@@ -138,6 +146,10 @@ pub(super) fn admit(
 ) -> Result<(Arc<OfferLadder>, RunAdmission), Box<Response>> {
     if !auth.is_owner_grade() {
         return Err(Box::new(refusal(StatusCode::FORBIDDEN, "owner_required")));
+    }
+    // FIX 2222: an owner act; a hosted operator's root is refused, typed.
+    if let Err(error) = crate::api::host_action::require_host_owner_act(server, auth) {
+        return Err(Box::new(error.into_response()));
     }
     admit_owner(server, request)
 }

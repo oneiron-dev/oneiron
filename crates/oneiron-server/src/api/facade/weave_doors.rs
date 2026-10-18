@@ -125,7 +125,7 @@ fn person_lens(
     act: &str,
 ) -> MemoryResult<(AuthenticatedOwner, (EntityId, EdgeActorClass))> {
     let proof = super::shared_act_doors::person(server, auth, verb)?;
-    let caller = super::facade_actor(auth).map_err(|_| {
+    let caller = super::facade_actor(server, auth).map_err(|_| {
         MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             format!("{verb} {act} in the credential's own lens"),
@@ -166,7 +166,7 @@ pub(crate) async fn vault_weave_lens(
     input: WeaveReportRequest,
 ) -> Listed<LensFrameCard> {
     const VERB: &str = "vault.weave.lens";
-    let (actor, class) = match super::facade_actor(auth) {
+    let (actor, class) = match super::facade_actor(server, auth) {
         Ok(caller) => caller,
         Err(_) => {
             return refused(MemoryError::new(
@@ -200,7 +200,7 @@ pub(crate) async fn vault_weave_digest(
     input: WeaveDigestRequest,
 ) -> Listed<Option<WeaveDigestView>> {
     const VERB: &str = "vault.weave.digest";
-    let caller = match super::facade_actor(auth) {
+    let caller = match super::facade_actor(server, auth) {
         Ok(caller) => caller,
         Err(_) => {
             return refused(MemoryError::new(

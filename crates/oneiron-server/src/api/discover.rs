@@ -381,17 +381,19 @@ pub(crate) async fn discover(
     discover_response(&server, &auth).map(Json)
 }
 
-/// Whether `auth` discovers the whole vault: the server's own secret, the
-/// unattenuated host root, or the owner's own full credential. Any other
-/// credential the legacy plane admits, an agent's full-scope slip included,
+/// Whether `auth` discovers the whole vault: the owner, as the owner's own
+/// full credential, or as a self-hosted root or the dev mode acting as the
+/// owner (FIX 2222). Discovery is an owner act, so a hosted operator's root
+/// is refused here, before any count. Any other credential the legacy plane
+/// admits, an agent's full-scope slip or a slip cut from the root included,
 /// counts and names only the rows its own lane reads.
 fn discovers_whole_vault(server: &SyncServer, auth: &CoreAuth) -> Result<bool, ApiError> {
+    if let Some(action) = super::host_action::require_host_owner_act(server, auth)? {
+        return Ok(action.read_key().reads_as_vault_owner());
+    }
     let Some(proof) = auth.verified_slip() else {
         return Ok(true);
     };
-    if proof.claims().holder_ref == "host" {
-        return Ok(proof.is_full_vault_owner_grade());
-    }
     Ok(super::credential_read_key(server.vault(), proof)?.reads_as_vault_owner())
 }
 
