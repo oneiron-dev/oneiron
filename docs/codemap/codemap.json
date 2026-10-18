@@ -23555,7 +23555,8 @@
      "path": "src/gate/coach_offer_reach.rs",
      "purpose": "The Coach's born-with reach to ask the vault owner about its own training offers (OF-577, FIX 856; Engine…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 5,
+      "fn": 2
      }
     },
     {
@@ -23852,7 +23853,7 @@
      "path": "src/gate/dreamer_grant.rs",
      "purpose": "The Dreamer's weave rows, the owner's grant that adds them to a vault seeded without them, and the read-only…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3,
       "struct": 1
      }
@@ -60191,8 +60192,7 @@
      "path": "src/supervisor/config.rs",
      "purpose": "Static config, restart backoff, and budget-id length ceilings",
      "surface": {
-      "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 7,
       "fn": 2,
       "struct": 2,
       "type": 1
