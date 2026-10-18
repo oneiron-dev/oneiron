@@ -867,6 +867,8 @@ fn mcp_agent_verb_input(
             Ok(Value::Object(map))
         }
         "tasks.wave" => a.spec.clone().ok_or_else(invalid),
+        "vault.fanout.spawn" => a.spec.clone().ok_or_else(invalid),
+        "vault.fanout.slots" => a.spec.clone().ok_or_else(invalid),
         "vault.fanout.launch" => a.spec.clone().ok_or_else(invalid),
         "self.budget" => a.spec.clone().ok_or_else(invalid),
         "self.budget.land" => a.spec.clone().ok_or_else(invalid),
@@ -1466,6 +1468,7 @@ fn mcp_agent_verb_input(
         "vault.refs.resolve" => a.spec.clone().ok_or_else(invalid),
         "vault.refs.links" => a.spec.clone().ok_or_else(invalid),
         "vault.search.hybrid" => a.spec.clone().ok_or_else(invalid),
+        "vault.search.temporal" => a.spec.clone().ok_or_else(invalid),
         "vault.search.bm25" => a.spec.clone().ok_or_else(invalid),
         "vault.neighbors" => a.spec.clone().ok_or_else(invalid),
         "vault.structural.put" => a.spec.clone().ok_or_else(invalid),
@@ -1738,6 +1741,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             }
         }
         "tasks.wave" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.fanout.spawn" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.fanout.slots" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.fanout.launch" => {
@@ -3195,6 +3204,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.search.hybrid" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.search.temporal" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.search.bm25" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -4072,6 +4084,43 @@ async fn execute_agent_verb_row(
                     .flatten(),
             );
             let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.fanout.spawn" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.fanout.spawn", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveRunRequest<
+                oneiron::task_verb::sdk::FanoutBatchInput,
+            > = serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_fanout_spawn(
+                server,
+                auth,
+                actor
+                    .off_record_session
+                    .as_deref()
+                    .map(oneiron::EntityId::from_hex)
+                    .transpose()
+                    .map_err(|_| invalid())?,
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.fanout.slots" => {
+            let input: oneiron::task_verb::sdk::FanoutLaunchRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_fanout_slots(&memory, input)
+                .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -11644,6 +11693,14 @@ async fn execute_agent_verb_row(
             let input: oneiron::memory::HybridSearchRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_search_hybrid(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.search.temporal" => {
+            let input: oneiron::memory::TemporalSearchRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_search_temporal(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

@@ -122,6 +122,36 @@ impl<'a> HostSelfDispatcher<'a> {
         }
     }
 
+    /// A typed batch uses this same acquired parent lease, then the existing
+    /// wave launch gate and child routing. No child receives a copied cap.
+    pub fn spawn_fanout_from_host(
+        &self,
+        input: crate::task_verb::sdk::FanoutBatchInput,
+        proof: &crate::authority::VerifiedSlip,
+        locality: crate::claim::CallerLocality,
+        decisions: Option<&crate::fanout_auto::FanoutDecisions<'_>>,
+    ) -> MemoryResult<crate::task_verb::sdk::FanoutBatchView> {
+        self.live_parent()?;
+        let binding = self.task_host_binding()?.ok_or_else(|| {
+            MemoryError::bad_request("a batch requires its caller's acquired parent lease")
+        })?;
+        let _run_writes = self
+            .agent_lease
+            .as_ref()
+            .map(crate::skill_attribution::enter_run_writes);
+        let crate::code_run::storage::ExecutorStorage::Canonical(vault) = &self.storage else {
+            return Err(MemoryError::bad_request(
+                "a batch requires canonical live-run storage",
+            ));
+        };
+        vault
+            .memory(self.actor.entity_ref(), self.actor.actor_class())
+            .with_read_proof(proof)
+            .at(locality)
+            .with_task_host(binding)
+            .spawn_fanout_batch(input, decisions)
+    }
+
     fn live_parent(&self) -> MemoryResult<()> {
         self.task_host_binding()?.ok_or_else(|| {
             MemoryError::bad_request("a host coordination call requires its acquired parent lease")

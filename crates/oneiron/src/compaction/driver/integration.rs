@@ -111,7 +111,9 @@ impl CompactionDriver {
         }
         let packet = &landing.packet;
         let same_run = match request.log {
-            WindowLog::Host { run: Some(named), .. } => named == run,
+            WindowLog::Host {
+                run: Some(named), ..
+            } => named == run,
             WindowLog::Host { run: None, .. } => true,
             WindowLog::Conversation => false,
         };

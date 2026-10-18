@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 673 code-mode rows (652 host rows, 21 run rows), 2389 declarations.
-// Replies: 594 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 676 code-mode rows (655 host rows, 21 run rows), 2404 declarations.
+// Replies: 597 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 95; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -228,7 +228,9 @@ declare namespace Sdk {
   type TaskCreateReceipt = { task_ref?: EntityId | null; proposal_ref?: EntityId | null; approval: ClaimApprovalStatus; effected: boolean; route?: TaskRouteOutcome | null; task_record?: RecordRef | null; proposal_record?: RecordRef | null };
   type TaskWaveRequest = { epic_task_ref: string; planner_ref: string; objective: string; constraints?: unknown };
   type TaskWaveReceipt = { attempt_ref: string; state: string };
-  type FanoutLaunchRequest = { launch_ref: EntityId };
+  type LiveRunRequest<T> = { live_run: string; spec: T };
+  type FanoutChildInput = { agent_ref: EntityId; label: string; prompt: string };
+  type FanoutBatchInput = { intent_key: string; children: FanoutChildInput[] };
   type PeerCount = { peer: EntityId; count: number };
   type SpendBasis = "calibrated" | "prior";
   type DollarBasis = "unknown_price" | "upper_bound_rate" | "sum" | "incomplete_or_overflow";
@@ -241,12 +243,21 @@ declare namespace Sdk {
   type FanoutStatement = { agent_count: number; consult_count: number; task_count: number; per_peer: PeerCount[]; expected: ExpectedSpend; unit: LeaseUnit; cap?: SpendCapView | null; over_available: boolean; more_would_buy?: string | null; width_check?: ExceptionalWidthCheck | null; stated_at: number };
   type FanoutLaunchHold = { surface_ref: string; denied: boolean };
   type FanoutLaunchView = { launch_ref: EntityId; plan_digest: string; statement: FanoutStatement; held?: FanoutLaunchHold | null; check_row_ref?: string | null; choice_receipt_ref?: string | null; task_refs: EntityId[] };
-  type SelfBudgetRequest = { attempt: string; run?: string | null };
+  type FanoutSlotState = "held" | "pending" | "completed" | "error";
+  type FanoutSlotTerminal = { disposition: TaskTerminalDisposition; result_ref?: EntityId | null; finished_at: number };
+  type AttemptState = "Queued" | "Leased" | "Paused" | "Completed" | "Failed" | "Cancelled" | "Scheduled" | "Landing" | "Abandoned";
   type SpendState = "open" | "closed";
   type SpendPayer = { party: EntityId; granted_by: EntityId; at_ms: number };
   type SpendScope = { scope: SpendScopeId; parent?: SpendScopeId | null; unit: LeaseUnit; cap_units: number; hard: boolean; spent_units: number; held_units: number; state: SpendState; shown_at_ms?: number | null; opened_at: number; closed_at?: number | null; agent?: EntityId | null; payer?: SpendPayer | null };
   type SpendSignal = { signal: "wrap_up"; available_units: number; cap_units: number } | { signal: "at_cap"; cap_units: number };
   type SpendRead = { scope: SpendScopeId; unit: LeaseUnit; spent_units: number; available_units: number; cap_scope: SpendScopeId; cap_units: number; signal?: SpendSignal | null };
+  type FanoutLeaseView = { lease: SpendScope; spend: SpendRead; released_units?: number | null };
+  type FanoutSlotAttempt = { attempt_ref: string; state: AttemptState; last_error?: string | null; result_ref?: string | null; budget_hold: boolean; lease?: FanoutLeaseView | null };
+  type FanoutChildSlot = { index: number; input: FanoutChildInput; task_ref?: EntityId | null; state: FanoutSlotState; terminal?: FanoutSlotTerminal | null; attempts: FanoutSlotAttempt[] };
+  type FanoutSharedAccounting = { parent?: FanoutLeaseView | null; hard_cap?: FanoutLeaseView | null };
+  type FanoutBatchView = { launch: FanoutLaunchView; parent_task_ref: EntityId; slots: FanoutChildSlot[]; accounting: FanoutSharedAccounting };
+  type FanoutLaunchRequest = { launch_ref: EntityId };
+  type SelfBudgetRequest = { attempt: string; run?: string | null };
   type SpendLeaseView = { lease: SpendScope; spend: SpendRead };
   type AttemptLandingReserve = { limit_units?: number; reserve_units?: number; spent_units?: number; dial_generation?: number | null };
   type LandingTrigger = "cancel_request" | "budget_warning" | "lease_warning";
@@ -1252,7 +1263,6 @@ declare namespace Sdk {
   type SecretUseStatus = "answered" | "failed" | "withheld";
   type SecretUseRecord = { handle: string; generation: number; effector: string; operation: string; decision: string; used_at: number };
   type SecretUseAnswer = { status: SecretUseStatus; result?: unknown | null; failure?: string | null; receipt: SecretUseRecord };
-  type LiveRunRequest<T> = { live_run: string; spec: T };
   type SecretGrantPurpose = { kind: "operation"; name: string } | { kind: "connector"; name: string } | { kind: "host_destination"; name: string } | { kind: "local_file"; effector: string; path: string; project_id: string };
   type SecretGrantMintRequest = { handle: string; purpose: SecretGrantPurpose; ttl_secs?: number | null };
   type SecretGrantViewStatus = "active" | "expired" | "revoked" | "replaced";
@@ -1472,7 +1482,6 @@ declare namespace Sdk {
   type ObservationIssue = { kind: "stamp_mismatch"; consumer: string; reference: string; expected: TypeStamp; actual: TypeStamp } | { kind: "missing_binding"; reference: string } | { kind: "several_teams"; team_refs: string[] } | { kind: "team_mismatch"; member_ref: EntityId; expected: string; actual?: string | null } | { kind: "unavailable"; consumer: string; reason: string };
   type PlannedSpawnObservation = { spawn_ref: EntityId; phase: SpawnPhase; type_ref: TypeStamp; plan?: PlanObservation | null; launched: LaunchedMember[]; resolved?: ResolvedTeam | null; binding?: TeamBindingView | null; receipt?: TeamReceiptView | null; routes: RouteObservation[]; critics: CriticObservation[]; learning: LearningObservation[]; issues: ObservationIssue[] };
   type CancelForceRequest = { task_ref: EntityId; reason?: string | null };
-  type AttemptState = "Queued" | "Leased" | "Paused" | "Completed" | "Failed" | "Cancelled" | "Scheduled" | "Landing" | "Abandoned";
   type AgentRunStatus = "spawned" | "working" | "needs_input" | "delivered" | "archived" | "failed" | "abandoned";
   type RunAskQuestion = { who: string; prompt: string; options: string[]; deadline?: number | null };
   type RunAskAnswerKind = "Word" | "Companion" | "Default" | "Unknown";
@@ -1996,6 +2005,12 @@ declare namespace Sdk {
   type HybridRankReplay = { now: number; blend_weights: RetrievalBlendWeights };
   type HybridSearchRequest = { query?: string | null; query_vector?: number[] | null; phonetic_codes?: string[]; ppr?: HybridPprQuery | null; temporal?: HybridTemporalQuery | null; replay?: HybridRankReplay | null; limit: number };
   type HybridSearchHit = { entity_ref: string; source_revision_ref?: string | null; score: number; access_factor?: number | null; components: RetrievalScoreComponent[] };
+  type TemporalAnchorMode = "occurred" | "learned" | "both" | "auto";
+  type TemporalSearchRange = { start: number; end: number };
+  type TemporalSearchRequest = { start: number; end: number; sigma_secs: number; anchor_mode?: TemporalAnchorMode; learned_start?: number | null; learned_end?: number | null; adaptive?: boolean; occurred_range?: TemporalSearchRange | null; learned_range?: TemporalSearchRange | null; limit: number };
+  type TemporalSearchHit = { entity_ref: string; source_revision_ref?: string | null; score: number; occurred_start: number; occurred_end: number; learned_at: number };
+  type TemporalSearchReport = { sigma_secs: number; rounds: number };
+  type TemporalSearchResult = { hits: TemporalSearchHit[]; widening?: TemporalSearchReport | null };
   type QueryBm25Request = { query: string; limit: number };
   type LexicalHit = { short_id: string; kind: string; score: number; snippet?: string | null; record?: RecordRef | null };
   type NeighborOpts = { edge_kind?: string | null; min_weight?: number | null; limit: number };
@@ -3275,6 +3290,10 @@ declare const vault: Sdk.VaultHost & {
     resume(input: Sdk.FanoutResumeRequest): Promise<Sdk.FanoutLaunchView | StoredResult>;
     /** A live lead or board holder of a held fan-out launch's project rules on it by the digest they saw: approve once, or deny, which keeps the hold visible; only the owner may remember. */
     resume_as(input: Sdk.FanoutResumeRequest): Promise<Sdk.FanoutLaunchView | StoredResult>;
+    /** Reads a batch launch in input slot order, with child errors, results, reservations, settled spend and released holds from its shared parent lease tree. */
+    slots(input: Sdk.FanoutLaunchRequest): Promise<Sdk.FanoutBatchView | null | StoredResult>;
+    /** Admits input-order child slots under this credential's attached live run, through the frozen fan-out approval gate and one shared parent spend tree. */
+    spawn(input: Sdk.LiveRunRequest<Sdk.FanoutBatchInput>): Promise<Sdk.FanoutBatchView | StoredResult>;
   };
   federation: {
     connect: {
@@ -3797,6 +3816,8 @@ declare const vault: Sdk.VaultHost & {
     bm25(input: Sdk.QueryBm25Request): Promise<Sdk.ScopedReadResult<Sdk.LexicalHit[]> | StoredResult>;
     /** Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence. */
     hybrid(input: Sdk.HybridSearchRequest): Promise<Sdk.ScopedReadResult<Sdk.HybridSearchHit[]> | StoredResult>;
+    /** Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds. */
+    temporal(input: Sdk.TemporalSearchRequest): Promise<Sdk.ScopedReadResult<Sdk.TemporalSearchResult> | StoredResult>;
   };
   secrets: {
     /** The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued. */

@@ -628,6 +628,53 @@ async fn tasks_wave(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_fanout_spawn(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.fanout.spawn")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.fanout.spawn", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.fanout.spawn", value).await?;
+    let (output, listed) = super::host_doors::vault_fanout_spawn(
+        server,
+        auth,
+        call.session()?,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_fanout_slots(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.fanout.slots",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_fanout_launch(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -11556,6 +11603,28 @@ async fn vault_search_hybrid(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_search_temporal(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.search.temporal",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_search_bm25(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -14477,6 +14546,8 @@ pub(crate) async fn call_verb(
         "describe" => describe(server, call, input).await,
         "tasks.create" => tasks_create(server, call, input).await,
         "tasks.wave" => tasks_wave(server, call, input).await,
+        "vault.fanout.spawn" => vault_fanout_spawn(server, call, input).await,
+        "vault.fanout.slots" => vault_fanout_slots(server, call, input).await,
         "vault.fanout.launch" => vault_fanout_launch(server, call, input).await,
         "self.budget" => self_budget(server, call, input).await,
         "self.budget.land" => self_budget_land(server, call, input).await,
@@ -15129,6 +15200,7 @@ pub(crate) async fn call_verb(
         "vault.refs.resolve" => vault_refs_resolve(server, call, input).await,
         "vault.refs.links" => vault_refs_links(server, call, input).await,
         "vault.search.hybrid" => vault_search_hybrid(server, call, input).await,
+        "vault.search.temporal" => vault_search_temporal(server, call, input).await,
         "vault.search.bm25" => vault_search_bm25(server, call, input).await,
         "vault.neighbors" => vault_neighbors(server, call, input).await,
         "vault.structural.put" => vault_structural_put(server, call, input).await,

@@ -10,7 +10,9 @@ use crate::error::RecordError;
 /// Terminal outcomes for ANY executor. `Expired` (deadline passed) and
 /// `Abandoned` (lease reclaimed / executor gone) stay distinct causes even
 /// though both project onto the failed board lane.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskTerminalDisposition {
     Completed,

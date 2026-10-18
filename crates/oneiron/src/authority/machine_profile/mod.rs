@@ -8,16 +8,19 @@
 //! binding to its row) apply in every arrival order.
 //!
 //! Revisions form one chain per admitter and supersede only their own chain:
-//! the roster's, and one per owner anchor. Inside the roster's chain the
-//! revisions a key the owner holds signed form a chain of their own, so a
-//! custodian's later demote, removal or conflicting revision never reaches
-//! it. Which chains this install trusts is local: the accepted roster
-//! revisions, plus the pinned anchor's chain (world privacy P6b, contract §4).
+//! the roster's, and one per owner anchor. The owner's answers carried by a
+//! linked machine's install key under his act join the roster's chain
+//! ([`owner_answers`], mesh PR1b). Inside the roster's chain the approved
+//! revisions, those a key the owner holds signed and the admitted answers,
+//! form a chain of their own, so a custodian's later demote, removal or
+//! conflicting revision never reaches it. An admitted answer that saw a
+//! chain's head supersedes it causally, an anchor's included. Which chains
+//! this install trusts is local: the accepted roster revisions, plus the
+//! pinned anchor's chain (world privacy P6b, contract §4).
 //! Poison applies within one admitter's chains for admission, and across the
 //! trusted chains for trust; an untrusted admitter's poison never touches a
 //! trusted chain, and its keys never speak for the machine.
 
-use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -47,6 +50,11 @@ pub enum SignerClass {
     /// A cloud root, or a key in the host's custody on a hosted vault: it
     /// registers, demotes or removes, and never answers for the owner.
     Custodial,
+    /// A linked machine's install key carrying the owner's act (mesh PR1b):
+    /// the act answers for the owner, never the key, and the label says
+    /// nothing of who holds the key. A revision it signed stands only while
+    /// its act does.
+    Carrier,
 }
 
 /// The root this install pins: only its anchor's chain is trusted here, and
@@ -90,6 +98,10 @@ pub struct MachineRevision {
     pub signer_class: SignerClass,
     /// The authority-log entry that carried the revision.
     pub entry: AuthorityEntryHash,
+    /// The admitted owner act an owner answer stands on, while it stands
+    /// here ([`owner_answers::act_stands`]); `None` for a roster or anchor
+    /// revision, and for an answer whose carrier lost the removal race.
+    pub(in crate::authority) act: Option<Arc<ActProof>>,
 }
 
 /// One machine's folded standing: a chain per admitter.
@@ -122,12 +134,14 @@ pub struct TrustedMachine<'a> {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct MachineChain {
     pub(super) head: MachineRevision,
-    /// The roster's chain only: the highest revision an owner-held key
-    /// signed. Its removal is judged again from `owner_held_removals`.
+    /// The roster's chain only: the highest approved revision, one an
+    /// owner-held key signed or an admitted owner answer. Its removal is
+    /// judged again from `owner_held_removals`.
     pub(super) owner_held: Option<MachineRevision>,
-    /// The roster's chain only: each owner-held signer's removal, so one
-    /// stands while its own signer stays accepted, whatever custody later
-    /// finds of the key that signed the head.
+    /// The roster's chain only: each approving signer's removal (an
+    /// owner-held roster key's, or a carrier's install key's), so one stands
+    /// while its own signer stays accepted, whatever custody later finds of
+    /// the key that signed the head.
     pub(super) owner_held_removals: BTreeMap<AuthorityKey, MachineRevision>,
     /// Every revision of the machine in this chain that this history holds.
     /// The race rule reads the whole set, so no merge order or grouping
@@ -143,6 +157,10 @@ pub(super) struct KeyClaim {
     /// The roster key that signed it, when that key was owner-held as the
     /// revision folded. Custody is judged again on the merged history.
     pub(super) owner_held: Option<AuthorityKey>,
+    /// The carrier whose admitted owner act claimed it, beside custody and
+    /// never in its place: an answer's claim counts in the approved chain's
+    /// scope whatever custody finds.
+    pub(super) act_carrier: Option<EntityId>,
 }
 
 impl MachineRevision {
@@ -155,16 +173,24 @@ impl MachineRevision {
         }
     }
 
-    /// An owned revision stands only when a key the owner holds signed it.
+    /// An owned revision stands only when a key the owner holds signed it,
+    /// or as an admitted owner answer; a carrier's revision stands only
+    /// while its act does. A custodial key registers its node or demotes,
+    /// and never answers "yours", "work/school" or "rented" (truthful
+    /// custody, FIX 2222).
     #[must_use]
     pub fn is_live(&self) -> bool {
+        let approved = match self.signer_class {
+            SignerClass::OwnerHeld => true,
+            SignerClass::Custodial => !matches!(self.profile.role, MachineRole::Owned(_)),
+            SignerClass::Carrier => self.act.is_some(),
+        };
         !self.conflicted
             && !self.removed
             && !self.stale
             && !self.admitter_unsettled
             && !self.floor_held
-            && (self.signer_class == SignerClass::OwnerHeld
-                || !matches!(self.profile.role, MachineRole::Owned(_)))
+            && approved
     }
 
     /// Live, and the owner's explicit `Yours`.
@@ -229,6 +255,12 @@ impl FoldedMachine {
     /// code-R3 S3-F3); a held chain admits nothing, but its removal, conflict
     /// and keys still block. Pin-free; the install view's holds are in the
     /// chains.
+    ///
+    /// An admitted owner answer that saw another chain's head supersedes it,
+    /// an older anchor-era "yours" included, under any pin and in any
+    /// arrival order; an answer and a head it never saw that say otherwise
+    /// conflict (mesh PR1b C5). Shared-key poison and a terminal removal
+    /// still veto every chain.
     #[must_use]
     pub fn trusted_under(&self, admitter: &MachineAdmitter) -> Option<TrustedMachine<'_>> {
         let chains = self.trust_chains(admitter);
@@ -239,7 +271,7 @@ impl FoldedMachine {
         {
             return None;
         }
-        chains
+        owner_answers::effective_chains(chains)?
             .into_iter()
             .rev()
             .find(|(_, chain)| chain.says_yours())
@@ -429,306 +461,15 @@ impl AuthorityFold {
     }
 }
 
-/// One fold transition, signed by an owner roster key, for a machine that is
-/// not an actor and whose key is not authority. Only an owner-held key answers
-/// "yours", "work/school" or "rented": a cloud or custodial root, which the
-/// hosted posture lets consent, can register its own node or demote and remove
-/// a machine, but never vouch for a machine as the owner's. Neither can the
-/// host's own root on a hosted vault, whatever its role labels say.
-pub(super) fn apply_machine_profile(
-    state: &mut FoldState,
-    signer: &AuthorityKey,
-    profile: &MachineProfile,
-    hash: AuthorityEntryHash,
-    context: FoldContext<'_>,
-    restriction_only: bool,
-) -> std::result::Result<(), AuthorityFoldIssue> {
-    let Some(device) = state
-        .roster
-        .get(signer)
-        .filter(|device| device.roles & ROLE_OWNER != 0)
-    else {
-        return Err(AuthorityFoldIssue::MissingAuthorityConsent(hash));
-    };
-    let signer_class = if folded_device_can_authority_consent(device)
-        && !custodial_host_root(state, signer, context)
-    {
-        SignerClass::OwnerHeld
-    } else {
-        SignerClass::Custodial
-    };
-    let admitted = match profile.role {
-        MachineRole::Owned(_) => signer_class == SignerClass::OwnerHeld,
-        MachineRole::HostedNode | MachineRole::ExecutionNode | MachineRole::Removed => {
-            context.device_can_consent(device)
-        }
-    };
-    if !admitted {
-        return Err(AuthorityFoldIssue::MissingAuthorityConsent(hash));
-    }
-    let head = roster_chain(state, profile.machine).map(|chain| &chain.head);
-    if refused_revision(state, profile, head) {
-        return Err(AuthorityFoldIssue::InvalidEntry(hash));
-    }
-    let folded = MachineRevision {
-        profile: profile.clone(),
-        conflicted: false,
-        removed: profile.role == MachineRole::Removed || head.is_some_and(|folded| folded.removed),
-        stale: false,
-        admitter_unsettled: false,
-        floor_held: false,
-        signer: signer.clone(),
-        signer_class,
-        entry: hash,
-    };
-    let revisions = super::machine_standing::with_revision(
-        roster_chain(state, profile.machine),
-        &folded,
-        signer_class == SignerClass::OwnerHeld,
-        restriction_only,
-    );
-    let chains = state.machines.entry(profile.machine).or_default();
-    let prior = chains.remove(&MachineAdmitter::Roster);
-    // The owner-held chain keeps only its own removals: a custodian's
-    // removal stays in the roster's chain and never reaches it.
-    let mut owner_held_removals = prior
-        .as_ref()
-        .map(|chain| chain.owner_held_removals.clone())
-        .unwrap_or_default();
-    if signer_class == SignerClass::OwnerHeld && profile.role == MachineRole::Removed {
-        add_removal(&mut owner_held_removals, signer, &folded);
-    }
-    let owner_held = match prior {
-        _ if signer_class == SignerClass::OwnerHeld => Some(MachineRevision {
-            removed: profile.role == MachineRole::Removed
-                || prior
-                    .as_ref()
-                    .and_then(|chain| chain.owner_held.as_ref())
-                    .is_some_and(|held| held.removed),
-            ..folded.clone()
-        }),
-        Some(chain) => chain.owner_held,
-        None => None,
-    };
-    chains.insert(
-        MachineAdmitter::Roster,
-        MachineChain {
-            head: folded,
-            owner_held,
-            owner_held_removals,
-            revisions,
-        },
-    );
-    state
-        .machine_keys
-        .entry(profile.machine_key)
-        .or_default()
-        .insert(KeyClaim {
-            machine: profile.machine,
-            admitter: MachineAdmitter::Roster,
-            owner_held: (signer_class == SignerClass::OwnerHeld).then(|| signer.clone()),
-        });
-    Ok(())
-}
+mod apply;
+mod merge;
+mod owner_answers;
 
-/// One revision in a valid root's anchor chain of a machine (E2(b)): an owned
-/// mark or a removal, never a hosted or execution node. It supersedes only
-/// that anchor's chain; the roster's chain and every other anchor's stay as
-/// they are. No install key and no host cosign vouches here. One past its
-/// signer's sequence floor lands restriction only, as a roster revision does.
-pub(super) fn apply_anchor_profile(
-    state: &mut FoldState,
-    anchor: [u8; 32],
-    profile: &MachineProfile,
-    hash: AuthorityEntryHash,
-    restriction_only: bool,
-) -> std::result::Result<(), AuthorityFoldIssue> {
-    if !matches!(profile.role, MachineRole::Owned(_) | MachineRole::Removed) {
-        return Err(AuthorityFoldIssue::MissingAuthorityConsent(hash));
-    }
-    let admitter = MachineAdmitter::Anchor(anchor);
-    let chain = state
-        .machines
-        .get(&profile.machine)
-        .and_then(|chains| chains.get(&admitter));
-    let head = chain.map(|chain| &chain.head);
-    if refused_revision(state, profile, head) {
-        return Err(AuthorityFoldIssue::InvalidEntry(hash));
-    }
-    let folded = MachineRevision {
-        profile: profile.clone(),
-        conflicted: false,
-        removed: profile.role == MachineRole::Removed || head.is_some_and(|folded| folded.removed),
-        stale: false,
-        admitter_unsettled: false,
-        floor_held: false,
-        signer: AuthorityKey::Ed25519(anchor),
-        signer_class: SignerClass::OwnerHeld,
-        entry: hash,
-    };
-    let revisions = super::machine_standing::with_revision(chain, &folded, true, restriction_only);
-    state.machines.entry(profile.machine).or_default().insert(
-        admitter,
-        MachineChain {
-            head: folded,
-            owner_held: None,
-            owner_held_removals: BTreeMap::new(),
-            revisions,
-        },
-    );
-    state
-        .machine_keys
-        .entry(profile.machine_key)
-        .or_default()
-        .insert(KeyClaim {
-            machine: profile.machine,
-            admitter,
-            owner_held: None,
-        });
-    Ok(())
-}
-
-/// A revision no chain takes: a key that is authority, a row that is an
-/// actor's, a proof the machine did not sign, or no higher than its chain.
-fn refused_revision(
-    state: &FoldState,
-    profile: &MachineProfile,
-    head: Option<&MachineRevision>,
-) -> bool {
-    key_is_authority(state, &profile.machine_key)
-        || machine_is_actor(state, profile.machine)
-        || !profile.proof_verifies(&state.vault_id)
-        || head.is_some_and(|folded| profile.revision <= folded.profile.revision)
-}
-
-/// A key in the host's custody on a hosted vault, where the host's root is
-/// the provider's key and not the owner's: that root, or any key it admitted
-/// directly or through another custodial key. Judged from provenance and the
-/// vault's posture, so a key labelled owner-held still counts.
-fn custodial_host_root(state: &FoldState, signer: &AuthorityKey, context: FoldContext<'_>) -> bool {
-    context.hosted && in_host_custody(state, signer)
-}
-
-/// Whether `key`, or any key up its admitters, is marked as the host's.
-pub(super) fn in_host_custody(state: &FoldState, key: &AuthorityKey) -> bool {
-    let mut seen = BTreeSet::new();
-    let mut pending = vec![key];
-    while let Some(next) = pending.pop() {
-        if state.host_custody_keys.contains(next) {
-            return true;
-        }
-        if seen.insert(next) {
-            pending.extend(state.key_admitters.get(next).into_iter().flatten());
-        }
-    }
-    false
-}
-
-pub(super) fn roster_chain(state: &FoldState, machine: EntityId) -> Option<&MachineChain> {
-    state.machines.get(&machine)?.get(&MachineAdmitter::Roster)
-}
-
-/// An install key that is also a roster key or an actor's key is no machine's.
-pub(super) fn key_is_authority(state: &FoldState, machine_key: &[u8; 32]) -> bool {
-    let key = AuthorityKey::Ed25519(*machine_key);
-    state.roster.contains_key(&key) || state.actor_bindings.contains_key(&key)
-}
-
-/// A row any accepted binding ever named, on any branch, is an actor's.
-pub(super) fn machine_is_actor(state: &FoldState, machine: EntityId) -> bool {
-    state.actor_rows.contains(&machine)
-}
-
-/// Higher revision wins; divergent content at one revision is poison carried
-/// by the byte-wise smaller profile, so the merge is the same in every order.
-/// A strictly higher revision clears that poison, as it does for actor
-/// bindings; a removal never clears.
-pub(super) fn merge_machine(left: &MachineRevision, right: &MachineRevision) -> MachineRevision {
-    let mut merged = match left.profile.revision.cmp(&right.profile.revision) {
-        Ordering::Greater => left.clone(),
-        Ordering::Less => right.clone(),
-        Ordering::Equal if left.profile == right.profile => MachineRevision {
-            conflicted: left.conflicted || right.conflicted,
-            ..left.clone().min_by_entry(right)
-        },
-        Ordering::Equal if left.profile < right.profile => MachineRevision {
-            conflicted: true,
-            ..left.clone()
-        },
-        Ordering::Equal => MachineRevision {
-            conflicted: true,
-            ..right.clone()
-        },
-    };
-    merged.removed = left.removed || right.removed;
-    merged
-}
-
-fn merge_chain(left: &MachineChain, right: &MachineChain) -> MachineChain {
-    let mut owner_held_removals = left.owner_held_removals.clone();
-    for (signer, removal) in &right.owner_held_removals {
-        add_removal(&mut owner_held_removals, signer, removal);
-    }
-    MachineChain {
-        head: merge_machine(&left.head, &right.head),
-        owner_held: match (&left.owner_held, &right.owner_held) {
-            (Some(left), Some(right)) => Some(merge_machine(left, right)),
-            (one, other) => one.clone().or_else(|| other.clone()),
-        },
-        owner_held_removals,
-        revisions: super::machine_standing::merge_revisions(&left.revisions, &right.revisions),
-    }
-}
-
-/// Records `signer`'s removal, merged with any it signed before.
-fn add_removal(
-    removals: &mut BTreeMap<AuthorityKey, MachineRevision>,
-    signer: &AuthorityKey,
-    removal: &MachineRevision,
-) {
-    let merged = match removals.get(signer) {
-        Some(earlier) => merge_machine(earlier, removal),
-        None => removal.clone(),
-    };
-    removals.insert(signer.clone(), merged);
-}
-
-fn join_chains(
-    into: &mut BTreeMap<MachineAdmitter, MachineChain>,
-    chains: &BTreeMap<MachineAdmitter, MachineChain>,
-) {
-    for (admitter, chain) in chains {
-        match into.get_mut(admitter) {
-            Some(existing) => *existing = merge_chain(existing, chain),
-            None => {
-                into.insert(*admitter, chain.clone());
-            }
-        }
-    }
-}
-
-/// Joins one machine's chain from another state into `state`.
-pub(super) fn merge_machine_chain(
-    state: &mut FoldState,
-    machine: EntityId,
-    admitter: MachineAdmitter,
-    chain: &MachineChain,
-) {
-    join_chains(
-        state.machines.entry(machine).or_default(),
-        &BTreeMap::from([(admitter, chain.clone())]),
-    );
-}
-
-pub(super) fn merge_machine_maps(
-    merged: &mut BTreeMap<EntityId, BTreeMap<MachineAdmitter, MachineChain>>,
-    keys: &mut BTreeMap<[u8; 32], BTreeSet<KeyClaim>>,
-    right: &FoldState,
-) {
-    for (machine, chains) in &right.machines {
-        join_chains(merged.entry(*machine).or_default(), chains);
-    }
-    for (key, claims) in &right.machine_keys {
-        keys.entry(*key).or_default().extend(claims.iter().cloned());
-    }
-}
+pub(super) use apply::{
+    apply_anchor_profile, apply_machine_profile, in_host_custody, key_is_authority,
+    machine_is_actor,
+};
+pub(super) use merge::{merge_machine, merge_machine_chain, merge_machine_maps};
+pub(super) use owner_answers::{
+    ActProof, MarkProof, act_stands, answer_contested, apply_owner_answer, live_answers_by,
+};

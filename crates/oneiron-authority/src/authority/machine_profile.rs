@@ -3,10 +3,16 @@
 //!
 //! A MACHINE row is public-writable address data. This op is the one place a
 //! machine's standing lives, so a mesh address bind or a generic Put that
-//! rewrites the row leaves it untouched. The entry's signer is the owner's
-//! roster key; `machine_proof` is the machine's own signature over its
-//! identity material, so the owner can re-issue the profile at a new revision
-//! (change its role, remove it) without the machine taking part.
+//! rewrites the row leaves it untouched. The owner answers from any surface
+//! where he is authenticated, and the install that served him, any live
+//! machine of the vault (the carrier, `carrier`), signs the revision with its
+//! install key; the revision carries his act ([`OwnerAct`], mesh PR1b C1),
+//! and that one signature covers it. `machine` stays the TARGET. Only the
+//! explicit bootstrap and anchor arms carry no act: the host root's own node,
+//! the fresh self-host first install, and an owner anchor's mark (C4).
+//! `machine_proof` is the machine's own signature over its identity material,
+//! so the owner can re-issue the profile at a new revision (change its role,
+//! remove it) without the machine taking part.
 
 use std::collections::BTreeSet;
 
@@ -28,6 +34,13 @@ pub const MACHINE_ENCRYPTION_KEY_LEN: usize = 1568 + 32;
 /// At most this many world edits one profile revision lists as seen.
 pub const MACHINE_SEEN_WORLD_EDITS_MAX: usize = 4096;
 const SEEN_WORLD_EDITS_KEY: &str = "seen_world_edits";
+/// The key an owner answer names its carrier under (C1). The `machine` key
+/// keeps meaning the target.
+const CARRIER_KEY: &str = "carrier";
+/// The domain of a machine answer's `seen` (mesh PR1b C5): BLAKE3 over it and
+/// the target's sorted distinct live head hashes, in the `PolicyRevision`
+/// shape ([`machine_answer_revision`]).
+pub const MACHINE_ANSWER_REVISION_CONTEXT: &[u8] = b"oneiron/machine-answer-revision/v1";
 const MACHINE_PROFILE_KEYS: [&str; 10] = [
     OP_KEY_KIND,
     "machine",
@@ -147,10 +160,12 @@ impl MachineEncryptionKey {
     }
 }
 
-/// One revision of a machine's standing, signed by an owner roster key.
+/// One revision of a machine's standing: the owner's answer, signed by the
+/// install key of its carrier, or a bootstrap or anchor revision a roster key
+/// or an owner anchor signed.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct MachineProfile {
-    /// The MACHINE row.
+    /// The MACHINE row: the target the revision answers for.
     pub machine: EntityId,
     /// The owner PERSON who answered at the ceremony.
     pub owner: EntityId,
@@ -167,11 +182,21 @@ pub struct MachineProfile {
     /// `machine_key`'s signature over [`machine_profile_proof_transcript`].
     #[serde(with = "machine_proof_bytes")]
     pub machine_proof: [u8; 64],
-    /// The world edits and grant travel choices this machine signed that the
-    /// revision's author had seen. When the revision takes the machine's
-    /// "yours" away, those keep their effect; one it never saw raced it and
-    /// counts only stricter.
+    /// The world edits, grant travel choices and machine answers this
+    /// machine carried that the revision's author had seen. When the
+    /// revision removes the machine, those keep their effect; one it never
+    /// saw raced it and counts only stricter.
     pub seen_world_edits: BTreeSet<AuthorityEntryHash>,
+    /// The machine whose install key signed the revision as the carrier of
+    /// the owner's act (C1). `None` only on the explicit bootstrap and anchor
+    /// arms.
+    pub carrier: Option<EntityId>,
+    /// The owner's act the revision carries: its target is `machine`, its
+    /// owner `owner`, by the owner himself in this PR, and its kind
+    /// `pairing` (a paired machine's first revision), `machine_answer` (an
+    /// enrolment or a role change) or `machine_removal` (exactly when the
+    /// role is `Removed`). `Some` exactly when `carrier` is.
+    pub act: Option<OwnerAct>,
 }
 
 impl MachineProfile {
@@ -180,7 +205,30 @@ impl MachineProfile {
             return Err(invalid_authority());
         }
         VerifyingKey::from_bytes(&self.machine_key).map_err(|_| invalid_authority())?;
-        self.encryption_key.validate()
+        self.encryption_key.validate()?;
+        self.validate_act()
+    }
+
+    /// The carrier and its act come together, and the act answers for this
+    /// revision: its target, its owner and the kind its role takes. Only the
+    /// owner's own say-so answers for a machine until an agent's Grant line
+    /// names the act (mesh contract §4).
+    fn validate_act(&self) -> Result<()> {
+        let act = match (&self.carrier, &self.act) {
+            (None, None) => return Ok(()),
+            (Some(_), Some(act)) => act,
+            _ => return Err(invalid_authority()),
+        };
+        let kind_fits = match (self.role, act.act) {
+            (MachineRole::Removed, OwnerActKind::MachineRemoval) => true,
+            (MachineRole::Owned(_), OwnerActKind::Pairing) => self.revision == 1,
+            (role, OwnerActKind::MachineAnswer) => role != MachineRole::Removed,
+            _ => false,
+        };
+        if !kind_fits || act.owner != self.owner || act.by != ActBy::Owner {
+            return Err(invalid_authority());
+        }
+        act.validate_carried(act.act, self.machine)
     }
 
     /// Whether the machine itself signed this identity material for `vault_id`.
@@ -203,6 +251,14 @@ impl MachineProfile {
     pub fn says_mine(&self) -> bool {
         self.role == MachineRole::Owned(MachineOwnership::Yours)
     }
+}
+
+/// A machine answer's `seen` over the target's live heads (C5): BLAKE3 over
+/// [`MACHINE_ANSWER_REVISION_CONTEXT`] and the sorted distinct head hashes,
+/// zero for a machine no revision names.
+#[must_use]
+pub fn machine_answer_revision(heads: impl IntoIterator<Item = AuthorityEntryHash>) -> [u8; 32] {
+    super::owner_act::act_revision(MACHINE_ANSWER_REVISION_CONTEXT, heads)
 }
 
 /// The bytes a machine signs to join a vault. They bind the vault, the
@@ -273,22 +329,38 @@ pub(super) fn machine_profile_value(profile: &MachineProfile) -> Value {
             ),
         ));
     }
+    // An owner answer names its carrier and carries the act (C1); a
+    // bootstrap or anchor revision names neither.
+    if let (Some(carrier), Some(act)) = (&profile.carrier, &profile.act) {
+        entries.push((Value::from(CARRIER_KEY), Value::from(carrier.to_hex())));
+        entries.push((
+            Value::from(OP_KEY_ACT),
+            super::owner_act::owner_act_value(act),
+        ));
+    }
     Value::Map(entries)
 }
 
 pub(super) fn decode_machine_profile(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
-    let seen_world_edits = match entries
-        .iter()
-        .find_map(|(key, value)| (key.as_str() == Some(SEEN_WORLD_EDITS_KEY)).then_some(value))
-    {
-        None => {
-            validate_keys(entries, &MACHINE_PROFILE_KEYS)?;
-            BTreeSet::new()
-        }
+    let named = |name: &str| {
+        entries
+            .iter()
+            .find_map(|(key, value)| (key.as_str() == Some(name)).then_some(value))
+    };
+    // The exact key set: the base keys, `seen_world_edits` when it is
+    // non-empty, and `carrier` with `act` on an owner answer.
+    let acted = named(OP_KEY_ACT).is_some();
+    let mut keys = MACHINE_PROFILE_KEYS.to_vec();
+    if named(SEEN_WORLD_EDITS_KEY).is_some() {
+        keys.push(SEEN_WORLD_EDITS_KEY);
+    }
+    if acted {
+        keys.extend([CARRIER_KEY, OP_KEY_ACT]);
+    }
+    validate_keys(entries, &keys)?;
+    let seen_world_edits = match named(SEEN_WORLD_EDITS_KEY) {
+        None => BTreeSet::new(),
         Some(value) => {
-            let mut keys = MACHINE_PROFILE_KEYS.to_vec();
-            keys.push(SEEN_WORLD_EDITS_KEY);
-            validate_keys(entries, &keys)?;
             let hashes = decode_hash_array(value)?;
             let seen: BTreeSet<_> = hashes.iter().copied().collect();
             // Canonical only: non-empty, sorted and distinct.
@@ -331,6 +403,12 @@ pub(super) fn decode_machine_profile(entries: &[(Value, Value)]) -> Result<Autho
             .ok_or_else(invalid_authority)?,
         machine_proof,
         seen_world_edits,
+        carrier: acted
+            .then(|| decode_canonical_id(required(entries, CARRIER_KEY)?))
+            .transpose()?,
+        act: acted
+            .then(|| super::owner_act::decode_owner_act(required(entries, OP_KEY_ACT)?))
+            .transpose()?,
     }))
 }
 

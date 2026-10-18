@@ -488,6 +488,35 @@
       "section": false
     },
     {
+      "name": "vault.fanout.spawn",
+      "openapi": true,
+      "description": "Admits input-order child slots under this credential's attached live run, through the frozen fan-out approval gate and one shared parent spend tree.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::FanoutBatchInput>",
+      "output": "crate::task_verb::sdk::FanoutBatchView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.fanout.spawn\", &input)?",
+      "host_door": true,
+      "host_door_session": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.fanout.slots",
+      "openapi": true,
+      "description": "Reads a batch launch in input slot order, with child errors, results, reservations, settled spend and released holds from its shared parent lease tree.",
+      "input": "crate::task_verb::sdk::FanoutLaunchRequest",
+      "output": "Option<crate::task_verb::sdk::FanoutBatchView>",
+      "call": "memory.fanout_batch_slots(input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.fanout.launch",
       "description": "One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by the vault owner, its creator, or a live lead/board holder of its project, anything else reads as none.",
       "input": "crate::task_verb::sdk::FanoutLaunchRequest",
@@ -8539,6 +8568,25 @@
       "input": "crate::memory::HybridSearchRequest",
       "output": "crate::claim::ScopedReadResult<Vec<crate::memory::HybridSearchHit>>",
       "call": "memory.query_hybrid(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true,
+        "validate": "input.validate()?;"
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "vault.search.temporal",
+      "description": "Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds.",
+      "input": "crate::memory::TemporalSearchRequest",
+      "output": "crate::claim::ScopedReadResult<crate::memory::TemporalSearchResult>",
+      "call": "memory.query_temporal(&input)?",
       "scope": "Read",
       "admission": {
         "lane_record_scope": true,

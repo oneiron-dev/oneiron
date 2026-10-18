@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 618 facade rows, 2241 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 12; generated in and out: 578.
+// UniFFI census: 621 facade rows, 2258 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 12; generated in and out: 581.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -2995,12 +2995,36 @@ pub struct TaskWaveReceipt {
     pub state: String,
 }
 
-/// `oneiron::task_verb::sdk_fanout_launch::FanoutLaunchRequest`.
+/// `oneiron::task_verb::fanout_batch::FanoutChildInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
-pub struct FanoutLaunchRequest {
-    #[serde(rename = "launch_ref")]
-    pub launch_ref: String,
+pub struct FanoutChildInput {
+    #[serde(rename = "agent_ref")]
+    pub agent_ref: String,
+    #[serde(rename = "label")]
+    pub label: String,
+    #[serde(rename = "prompt")]
+    pub prompt: String,
+}
+
+/// `oneiron::task_verb::fanout_batch::FanoutBatchInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FanoutBatchInput {
+    #[serde(rename = "intent_key")]
+    pub intent_key: String,
+    #[serde(rename = "children")]
+    pub children: Vec<FanoutChildInput>,
+}
+
+/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `FanoutBatchInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LiveRunRequestFanoutBatchInput {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+    #[serde(rename = "spec")]
+    pub spec: FanoutBatchInput,
 }
 
 /// `oneiron::agent_dispatch::fanout_statement::PeerCount`.
@@ -3170,14 +3194,55 @@ pub struct FanoutLaunchView {
     pub task_refs: Vec<String>,
 }
 
-/// `oneiron::agent_dispatch::budget_doors::SelfBudgetRequest`.
+/// `oneiron::task_verb::fanout_batch::FanoutSlotState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum FanoutSlotState {
+    #[serde(rename = "held")]
+    Held,
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "completed")]
+    Completed,
+    #[serde(rename = "error")]
+    Error,
+}
+
+/// `oneiron::task_verb::fanout_batch::FanoutSlotTerminal`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct SelfBudgetRequest {
-    #[serde(rename = "attempt")]
-    pub attempt: String,
-    #[serde(rename = "run", default, skip_serializing_if = "Option::is_none")]
-    pub run: Option<String>,
+pub struct FanoutSlotTerminal {
+    #[serde(rename = "disposition")]
+    pub disposition: TaskTerminalDisposition,
+    #[serde(
+        rename = "result_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub result_ref: Option<String>,
+    #[serde(rename = "finished_at")]
+    pub finished_at: u64,
+}
+
+/// `oneiron::attempt_queue::types::AttemptState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AttemptState {
+    #[serde(rename = "Queued")]
+    Queued,
+    #[serde(rename = "Leased")]
+    Leased,
+    #[serde(rename = "Paused")]
+    Paused,
+    #[serde(rename = "Completed")]
+    Completed,
+    #[serde(rename = "Failed")]
+    Failed,
+    #[serde(rename = "Cancelled")]
+    Cancelled,
+    #[serde(rename = "Scheduled")]
+    Scheduled,
+    #[serde(rename = "Landing")]
+    Landing,
+    #[serde(rename = "Abandoned")]
+    Abandoned,
 }
 
 /// `oneiron::agent_dispatch::spend_record::SpendState`.
@@ -3272,6 +3337,103 @@ pub struct SpendRead {
     pub cap_units: u64,
     #[serde(rename = "signal", default, skip_serializing_if = "Option::is_none")]
     pub signal: Option<SpendSignal>,
+}
+
+/// `oneiron::task_verb::fanout_batch::FanoutLeaseView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FanoutLeaseView {
+    #[serde(rename = "lease")]
+    pub lease: SpendScope,
+    #[serde(rename = "spend")]
+    pub spend: SpendRead,
+    #[serde(
+        rename = "released_units",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub released_units: Option<u64>,
+}
+
+/// `oneiron::task_verb::fanout_batch::FanoutSlotAttempt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FanoutSlotAttempt {
+    #[serde(rename = "attempt_ref")]
+    pub attempt_ref: String,
+    #[serde(rename = "state")]
+    pub state: AttemptState,
+    #[serde(
+        rename = "last_error",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub last_error: Option<String>,
+    #[serde(
+        rename = "result_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub result_ref: Option<String>,
+    #[serde(rename = "budget_hold")]
+    pub budget_hold: bool,
+    #[serde(rename = "lease", default, skip_serializing_if = "Option::is_none")]
+    pub lease: Option<FanoutLeaseView>,
+}
+
+/// `oneiron::task_verb::fanout_batch::FanoutChildSlot`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FanoutChildSlot {
+    #[serde(rename = "index")]
+    pub index: u64,
+    #[serde(rename = "input")]
+    pub input: FanoutChildInput,
+    #[serde(rename = "task_ref", default, skip_serializing_if = "Option::is_none")]
+    pub task_ref: Option<String>,
+    #[serde(rename = "state")]
+    pub state: FanoutSlotState,
+    #[serde(rename = "terminal", default, skip_serializing_if = "Option::is_none")]
+    pub terminal: Option<FanoutSlotTerminal>,
+    #[serde(rename = "attempts")]
+    pub attempts: Vec<FanoutSlotAttempt>,
+}
+
+/// `oneiron::task_verb::fanout_batch::FanoutSharedAccounting`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FanoutSharedAccounting {
+    #[serde(rename = "parent", default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<FanoutLeaseView>,
+    #[serde(rename = "hard_cap", default, skip_serializing_if = "Option::is_none")]
+    pub hard_cap: Option<FanoutLeaseView>,
+}
+
+/// `oneiron::task_verb::fanout_batch::FanoutBatchView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FanoutBatchView {
+    #[serde(rename = "launch")]
+    pub launch: FanoutLaunchView,
+    #[serde(rename = "parent_task_ref")]
+    pub parent_task_ref: String,
+    #[serde(rename = "slots")]
+    pub slots: Vec<FanoutChildSlot>,
+    #[serde(rename = "accounting")]
+    pub accounting: FanoutSharedAccounting,
+}
+
+/// `oneiron::task_verb::sdk_fanout_launch::FanoutLaunchRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FanoutLaunchRequest {
+    #[serde(rename = "launch_ref")]
+    pub launch_ref: String,
+}
+
+/// `oneiron::agent_dispatch::budget_doors::SelfBudgetRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SelfBudgetRequest {
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+    #[serde(rename = "run", default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
 }
 
 /// `oneiron::agent_dispatch::budget_doors::SpendLeaseView`.
@@ -21879,29 +22041,6 @@ pub struct CancelForceRequest {
     pub reason: Option<String>,
 }
 
-/// `oneiron::attempt_queue::types::AttemptState`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum AttemptState {
-    #[serde(rename = "Queued")]
-    Queued,
-    #[serde(rename = "Leased")]
-    Leased,
-    #[serde(rename = "Paused")]
-    Paused,
-    #[serde(rename = "Completed")]
-    Completed,
-    #[serde(rename = "Failed")]
-    Failed,
-    #[serde(rename = "Cancelled")]
-    Cancelled,
-    #[serde(rename = "Scheduled")]
-    Scheduled,
-    #[serde(rename = "Landing")]
-    Landing,
-    #[serde(rename = "Abandoned")]
-    Abandoned,
-}
-
 /// `oneiron::agent_run_status::AgentRunStatus`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum AgentRunStatus {
@@ -29866,6 +30005,123 @@ pub struct HybridSearchHit {
 pub struct ScopedReadResultHybridSearchHitList {
     #[serde(rename = "value")]
     pub value: Vec<HybridSearchHit>,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
+}
+
+/// `oneiron::temporal::TemporalAnchorMode`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TemporalAnchorMode {
+    #[serde(rename = "occurred")]
+    Occurred,
+    #[serde(rename = "learned")]
+    Learned,
+    #[serde(rename = "both")]
+    Both,
+    #[serde(rename = "auto")]
+    Auto,
+}
+
+/// `oneiron::memory::search_temporal::TemporalSearchRange`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TemporalSearchRange {
+    #[serde(rename = "start")]
+    pub start: u64,
+    #[serde(rename = "end")]
+    pub end: u64,
+}
+
+/// `oneiron::memory::search_temporal::TemporalSearchRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TemporalSearchRequest {
+    #[serde(rename = "start")]
+    pub start: u64,
+    #[serde(rename = "end")]
+    pub end: u64,
+    #[serde(rename = "sigma_secs")]
+    pub sigma_secs: u64,
+    #[serde(
+        rename = "anchor_mode",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub anchor_mode: Option<TemporalAnchorMode>,
+    #[serde(
+        rename = "learned_start",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub learned_start: Option<u64>,
+    #[serde(
+        rename = "learned_end",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub learned_end: Option<u64>,
+    #[serde(rename = "adaptive", default, skip_serializing_if = "Option::is_none")]
+    pub adaptive: Option<bool>,
+    #[serde(
+        rename = "occurred_range",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub occurred_range: Option<TemporalSearchRange>,
+    #[serde(
+        rename = "learned_range",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub learned_range: Option<TemporalSearchRange>,
+    #[serde(rename = "limit")]
+    pub limit: u64,
+}
+
+/// `oneiron::memory::search_temporal::TemporalSearchHit`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TemporalSearchHit {
+    #[serde(rename = "entity_ref")]
+    pub entity_ref: String,
+    #[serde(
+        rename = "source_revision_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_revision_ref: Option<String>,
+    #[serde(rename = "score")]
+    pub score: f64,
+    #[serde(rename = "occurred_start")]
+    pub occurred_start: u64,
+    #[serde(rename = "occurred_end")]
+    pub occurred_end: u64,
+    #[serde(rename = "learned_at")]
+    pub learned_at: u64,
+}
+
+/// `oneiron::pipeline::temporal_report::TemporalSearchReport`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TemporalSearchReport {
+    #[serde(rename = "sigma_secs")]
+    pub sigma_secs: u64,
+    #[serde(rename = "rounds")]
+    pub rounds: u64,
+}
+
+/// `oneiron::memory::search_temporal::TemporalSearchResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TemporalSearchResult {
+    #[serde(rename = "hits")]
+    pub hits: Vec<TemporalSearchHit>,
+    #[serde(rename = "widening", default, skip_serializing_if = "Option::is_none")]
+    pub widening: Option<TemporalSearchReport>,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `TemporalSearchResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultTemporalSearchResult {
+    #[serde(rename = "value")]
+    pub value: TemporalSearchResult,
     #[serde(rename = "narrowing")]
     pub narrowing: ScopedReadReceipt,
 }
