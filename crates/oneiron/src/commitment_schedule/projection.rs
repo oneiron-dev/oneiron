@@ -116,15 +116,35 @@ impl Vault {
         valid_time: TimeRange,
         learned_at: u64,
     ) -> ScheduleResult<CommitmentSeriesWriteOutcome> {
-        let payload = series_payload(record)?;
-        let candidate = commitment_claim_candidate(record)?
-            .with_validity(Some(valid_time.start), Some(valid_time.end));
         self.try_with_write_txn_grouped(|wtxn| {
-            self.batch_in()
-                .claim_candidate(id, candidate, envelope, valid_time, learned_at)
-                .apply(wtxn)?;
-            self.index_commitment_series_in_txn(wtxn, id, &payload, learned_at)
+            self.put_commitment_series_in_txn(wtxn, id, record, envelope, valid_time, learned_at, None)
         })
+    }
+
+    /// Indexed birth inside a credential door's guarded write transaction.
+    pub(crate) fn put_commitment_series_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        id: &EntityId,
+        record: &CommitmentRecord,
+        envelope: &WriteEnvelope,
+        occurred: TimeRange,
+        learned_at: u64,
+        evidence: Option<rmpv::Value>,
+    ) -> ScheduleResult<CommitmentSeriesWriteOutcome> {
+        let payload = series_payload(record)?;
+        if self.get_raw_in(wtxn, id)?.is_some() {
+            return Err(ScheduleError::Invalid("commitment claim id already exists"));
+        }
+        let mut candidate = commitment_claim_candidate(record)?
+            .with_validity(Some(occurred.start), Some(occurred.end));
+        if let Some(evidence) = evidence {
+            candidate = candidate.with_evidence(evidence);
+        }
+        self.batch_in()
+            .claim_candidate(id, candidate, envelope, occurred, learned_at)
+            .apply_recording_gate_decisions(wtxn)?;
+        self.index_commitment_series_in_txn(wtxn, id, &payload, learned_at)
     }
 
     /// Replaces an indexed series with an edited one.
@@ -233,20 +253,27 @@ impl Vault {
         closed_at: u64,
     ) -> ScheduleResult<Vec<EntityId>> {
         self.try_with_write_txn_grouped(|wtxn| {
-            let Some(closed) = self.closed_instance_in_txn(&*wtxn, instance_ref, outcome)? else {
-                // Either the claim is gone (rows outliving it is exactly the
-                // crash this repairs) or it is not a CMT-2 instance at all.
-                self.store
-                    .commitment_due_clear_instance_phases_in_txn(wtxn, instance_ref)?;
-                return Ok(Vec::new());
-            };
-            // The occurrence is over: its timed rows go, its series membership
-            // stays. A closed occurrence is still an occurrence, and the
-            // evaluator reads membership as history.
+            self.on_instance_closed_in_txn(wtxn, instance_ref, outcome, envelope, closed_at)
+        })
+    }
+
+    /// The same close hook in the transaction that closes the obligation.
+    pub(crate) fn on_instance_closed_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        instance_ref: &EntityId,
+        outcome: CommitmentInstanceOutcome,
+        envelope: &WriteEnvelope,
+        closed_at: u64,
+    ) -> ScheduleResult<Vec<EntityId>> {
+        let Some(closed) = self.closed_instance_in_txn(wtxn, instance_ref, outcome)? else {
             self.store
                 .commitment_due_clear_instance_phases_in_txn(wtxn, instance_ref)?;
-            self.commitment_successors_in_txn(wtxn, &closed, envelope, closed_at)
-        })
+            return Ok(Vec::new());
+        };
+        self.store
+            .commitment_due_clear_instance_phases_in_txn(wtxn, instance_ref)?;
+        self.commitment_successors_in_txn(wtxn, &closed, envelope, closed_at)
     }
 
     /// Indexes a commitment SERIES that a generic claim write has just landed,
@@ -547,7 +574,7 @@ impl Vault {
     /// rows: a completed series whose rows have all been consumed must still
     /// look started, or `Once` would re-fire forever and a quota would re-mint
     /// a window it already served.
-    fn commitment_series_history_in_txn(
+    pub(crate) fn commitment_series_history_in_txn(
         &self,
         txn: &RoTxn<'_>,
         series_ref: &EntityId,

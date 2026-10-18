@@ -104,9 +104,23 @@ impl Vault {
         envelope: &WriteEnvelope,
         learned_at: u64,
     ) -> Result<()> {
-        let mut wtxn = self.store.env.write_txn()?;
-        // Ground the named target and rewrite it in one transaction.
-        let body = self.require_named_claim_target_active_in(&wtxn, id)?;
+        self.with_write_txn_grouped(|wtxn| {
+            self.update_commitment_status_in_txn(wtxn, id, next, envelope, learned_at, None)
+        })
+    }
+
+    /// The status writer shared by the native lifecycle and credential-bound
+    /// doors. Target, transition, evidence and Gate are judged in this writer.
+    pub(crate) fn update_commitment_status_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        next: CommitmentStatus,
+        envelope: &WriteEnvelope,
+        learned_at: u64,
+        evidence: Option<rmpv::Value>,
+    ) -> Result<()> {
+        let body = self.require_named_claim_target_active_in(wtxn, id)?;
         if body.predicate != PREDICATE_COMMITMENT_RECORD {
             return Err(Error::InvalidClaimBody(
                 "claim predicate is not commitment.record",
@@ -114,7 +128,7 @@ impl Vault {
         }
         let raw = self
             .store
-            .port_entity_record(&wtxn, id)?
+            .port_entity_record(wtxn, id)?
             .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header = EntityMetadataHeader::parse(raw.as_ref())
@@ -126,11 +140,13 @@ impl Vault {
             ));
         }
         record.status = next;
-
-        let candidate = commitment_claim_candidate_from_body(&body, &record)?;
+        let mut candidate = commitment_claim_candidate_from_body(&body, &record)?;
+        if let Some(evidence) = evidence {
+            candidate = candidate.with_evidence(evidence);
+        }
         apply_commitment_ops(
             self,
-            &mut wtxn,
+            wtxn,
             *id,
             candidate,
             envelope,
@@ -139,9 +155,7 @@ impl Vault {
                 end: header.occurred_end,
             },
             learned_at,
-        )?;
-        wtxn.commit()?;
-        Ok(())
+        )
     }
 
     fn apply_commitment_candidate(

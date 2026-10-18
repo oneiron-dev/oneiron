@@ -2,6 +2,13 @@
 use super::*;
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
+        .route("/vault.commitments.create", post(facade_route))
+        .route("/vault.commitments.get", post(facade_route))
+        .route("/vault.commitments.instances", post(facade_route))
+        .route("/vault.commitments.proposals", post(facade_route))
+        .route("/vault.commitments.fulfill", post(facade_route))
+        .route("/vault.commitments.release", post(facade_route))
+        .route("/vault.commitments.supersede", post(facade_route))
         .route("/fetch", post(facade_route))
         .route("/crawl", post(facade_route))
         .route("/report", post(facade_route))

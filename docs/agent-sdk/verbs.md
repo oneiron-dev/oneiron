@@ -6,6 +6,13 @@ not a claim that every engine-internal method is a public SDK verb.
 Names are stable: a new export or rename must update the engine catalog,
 both bindings and their export-census tests in one change.
 
+- `vault.commitments.create`
+- `vault.commitments.get`
+- `vault.commitments.instances`
+- `vault.commitments.proposals`
+- `vault.commitments.fulfill`
+- `vault.commitments.release`
+- `vault.commitments.supersede`
 - `fetch`
 - `crawl`
 - `report`
