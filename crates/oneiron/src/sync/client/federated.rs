@@ -414,7 +414,8 @@ impl SyncClient {
     /// releases each stamp whose row that import's entity door birthed from
     /// the peer's bytes. Under a pact-bound grant (`delivery`), each row the
     /// import writes is attributed to the pact and its epoch as it is written
-    /// (FIX 321). Each part imports into its own window, the update's own
+    /// (FIX 321), or, after a crash, as forward rematerialization writes it
+    /// (FIX 3498). Each part imports into its own window, the update's own
     /// first, so a guest's CLAIM moved into its foreign WORLD window finds the
     /// rows its edges name (FIX 3497).
     pub(super) fn import_peer_update(
@@ -449,6 +450,11 @@ impl SyncClient {
                 part.delivered(),
             )
         });
+        if let Some(delivery) = &delivery {
+            delivery
+                .record_intents(&self.vault)
+                .map_err(map_federated_admission_err)?;
+        }
         let window = self.ensure_window(window_key)?;
         let vault = std::sync::Arc::clone(&self.vault);
         let born = watch_births(&vault, part.births(), || {
