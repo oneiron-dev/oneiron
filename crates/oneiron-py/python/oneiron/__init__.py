@@ -2221,6 +2221,24 @@ class Oneiron:
         def proposal_submit(self, spec):
             """Stage one file change of a repository as a Proposed proposal with its retained base, under the review lens catalog the owner sends. Owner only. The engine mints the proposal id; nothing is approved, queued or landed."""
             return json.loads(_translate(lambda: self._client.vault_code_proposal_submit(json.dumps(spec))))
+        def conflict_record(self, spec):
+            """Record a real Git overlap between two stored one-file proposals at the same retained base, with both trees, paths and a linked reconciliation task. Owner only; neither branch moves."""
+            return json.loads(_translate(lambda: self._client.vault_code_conflict_record(json.dumps(spec))))
+        def conflict_view(self, spec):
+            """Read open repository conflicts and their durable resolution claims, including each reconciliation task. Owner only."""
+            return json.loads(_translate(lambda: self._client.vault_code_conflict_view(json.dumps(spec))))
+        def proposal_resolve(self, spec):
+            """Stage a one-file resolution of an active repository conflict as another Proposed proposal, preserving its original proposals and reconciliation task. Owner only; nothing lands."""
+            return json.loads(_translate(lambda: self._client.vault_code_proposal_resolve(json.dumps(spec))))
+        def proposal_review(self, spec):
+            """Record the authenticated owner's immutable critic opinion on one proposal lens. Independent reviewers only; this is no contract-check execution receipt."""
+            return json.loads(_translate(lambda: self._client.vault_code_proposal_review(json.dumps(spec))))
+        def proposal_settle(self, spec):
+            """Approve or reject one reviewed code proposal as an independent owner, retaining a decision receipt. Approval still needs unanimous critics and never advances head; only the tested merge queue lands it."""
+            return json.loads(_translate(lambda: self._client.vault_code_proposal_settle(json.dumps(spec))))
+        def proposal_settlement(self, spec):
+            """Read a code proposal's review decision receipt and execution lineage, including its conflict, original proposals, reconciliation task and resolution claim. Owner only."""
+            return json.loads(_translate(lambda: self._client.vault_code_proposal_settlement(json.dumps(spec))))
         def oplog(self, spec):
             """Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal."""
             return json.loads(_translate(lambda: self._client.vault_code_oplog(json.dumps(spec))))

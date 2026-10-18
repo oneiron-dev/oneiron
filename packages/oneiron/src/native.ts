@@ -380,6 +380,12 @@ vaultCodeSymbolsDeclare(input: unknown): unknown
 vaultCodeSymbolsRenew(input: unknown): unknown
 vaultCodeSymbolsRelease(input: unknown): unknown
 vaultCodeProposalSubmit(input: unknown): unknown
+vaultCodeConflictRecord(input: unknown): unknown
+vaultCodeConflictView(input: unknown): unknown
+vaultCodeProposalResolve(input: unknown): unknown
+vaultCodeProposalReview(input: unknown): unknown
+vaultCodeProposalSettle(input: unknown): unknown
+vaultCodeProposalSettlement(input: unknown): unknown
 vaultCodeOplog(input: unknown): unknown
 vaultCodeModelHealCount(input: unknown): unknown
 vaultCodeWaitsResolve(input: unknown): unknown

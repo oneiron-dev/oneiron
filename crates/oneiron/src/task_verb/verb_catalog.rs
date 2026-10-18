@@ -354,6 +354,12 @@ pub enum AgentVerb {
     VaultCodeSymbolsRenew,
     VaultCodeSymbolsRelease,
     VaultCodeProposalSubmit,
+    VaultCodeConflictRecord,
+    VaultCodeConflictView,
+    VaultCodeProposalResolve,
+    VaultCodeProposalReview,
+    VaultCodeProposalSettle,
+    VaultCodeProposalSettlement,
     VaultCodeOplog,
     VaultCodeModelHealCount,
     VaultCodeWaitsResolve,
@@ -1060,6 +1066,12 @@ impl AgentVerb {
         Self::VaultCodeSymbolsRenew,
         Self::VaultCodeSymbolsRelease,
         Self::VaultCodeProposalSubmit,
+        Self::VaultCodeConflictRecord,
+        Self::VaultCodeConflictView,
+        Self::VaultCodeProposalResolve,
+        Self::VaultCodeProposalReview,
+        Self::VaultCodeProposalSettle,
+        Self::VaultCodeProposalSettlement,
         Self::VaultCodeOplog,
         Self::VaultCodeModelHealCount,
         Self::VaultCodeWaitsResolve,
@@ -1781,6 +1793,12 @@ impl AgentVerb {
             Self::VaultCodeSymbolsRenew => "vault.code.symbols.renew",
             Self::VaultCodeSymbolsRelease => "vault.code.symbols.release",
             Self::VaultCodeProposalSubmit => "vault.code.proposal_submit",
+            Self::VaultCodeConflictRecord => "vault.code.conflict_record",
+            Self::VaultCodeConflictView => "vault.code.conflict_view",
+            Self::VaultCodeProposalResolve => "vault.code.proposal_resolve",
+            Self::VaultCodeProposalReview => "vault.code.proposal_review",
+            Self::VaultCodeProposalSettle => "vault.code.proposal_settle",
+            Self::VaultCodeProposalSettlement => "vault.code.proposal_settlement",
             Self::VaultCodeOplog => "vault.code.oplog",
             Self::VaultCodeModelHealCount => "vault.code.model_heal_count",
             Self::VaultCodeWaitsResolve => "vault.code.waits.resolve",
@@ -2490,6 +2508,12 @@ impl AgentVerb {
                 | Self::VaultCodeSymbolsRenew
                 | Self::VaultCodeSymbolsRelease
                 | Self::VaultCodeProposalSubmit
+                | Self::VaultCodeConflictRecord
+                | Self::VaultCodeConflictView
+                | Self::VaultCodeProposalResolve
+                | Self::VaultCodeProposalReview
+                | Self::VaultCodeProposalSettle
+                | Self::VaultCodeProposalSettlement
                 | Self::VaultCodeOplog
                 | Self::VaultCodeModelHealCount
                 | Self::VaultCodeWaitsResolve
@@ -3218,6 +3242,12 @@ impl AgentVerb {
                 | Self::VaultCodeSymbolsRenew
                 | Self::VaultCodeSymbolsRelease
                 | Self::VaultCodeProposalSubmit
+                | Self::VaultCodeConflictRecord
+                | Self::VaultCodeConflictView
+                | Self::VaultCodeProposalResolve
+                | Self::VaultCodeProposalReview
+                | Self::VaultCodeProposalSettle
+                | Self::VaultCodeProposalSettlement
                 | Self::VaultCodeOplog
                 | Self::VaultCodeModelHealCount
                 | Self::VaultCodeWaitsResolve
@@ -4006,6 +4036,12 @@ impl AgentVerb {
                 | Self::VaultCodeSymbolsRenew
                 | Self::VaultCodeSymbolsRelease
                 | Self::VaultCodeProposalSubmit
+                | Self::VaultCodeConflictRecord
+                | Self::VaultCodeConflictView
+                | Self::VaultCodeProposalResolve
+                | Self::VaultCodeProposalReview
+                | Self::VaultCodeProposalSettle
+                | Self::VaultCodeProposalSettlement
                 | Self::VaultCodeOplog
                 | Self::VaultCodeModelHealCount
                 | Self::VaultCodeWaitsResolve
@@ -4560,6 +4596,10 @@ impl AgentVerb {
                 | Self::VaultCodeSymbolsRenew
                 | Self::VaultCodeSymbolsRelease
                 | Self::VaultCodeProposalSubmit
+                | Self::VaultCodeConflictRecord
+                | Self::VaultCodeProposalResolve
+                | Self::VaultCodeProposalReview
+                | Self::VaultCodeProposalSettle
                 | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginAuthoritySet
@@ -5149,6 +5189,12 @@ impl AgentVerb {
             Self::VaultCodeSymbolsRenew => &["spec"],
             Self::VaultCodeSymbolsRelease => &["spec"],
             Self::VaultCodeProposalSubmit => &["spec"],
+            Self::VaultCodeConflictRecord => &["spec"],
+            Self::VaultCodeConflictView => &["spec"],
+            Self::VaultCodeProposalResolve => &["spec"],
+            Self::VaultCodeProposalReview => &["spec"],
+            Self::VaultCodeProposalSettle => &["spec"],
+            Self::VaultCodeProposalSettlement => &["spec"],
             Self::VaultCodeOplog => &["spec"],
             Self::VaultCodeModelHealCount => &["spec"],
             Self::VaultCodeWaitsResolve => &["spec"],
@@ -5856,6 +5902,12 @@ impl AgentVerb {
             Self::VaultCodeSymbolsRenew => &["spec"],
             Self::VaultCodeSymbolsRelease => &["spec"],
             Self::VaultCodeProposalSubmit => &["spec"],
+            Self::VaultCodeConflictRecord => &["spec"],
+            Self::VaultCodeConflictView => &["spec"],
+            Self::VaultCodeProposalResolve => &["spec"],
+            Self::VaultCodeProposalReview => &["spec"],
+            Self::VaultCodeProposalSettle => &["spec"],
+            Self::VaultCodeProposalSettlement => &["spec"],
             Self::VaultCodeOplog => &["spec"],
             Self::VaultCodeModelHealCount => &["spec"],
             Self::VaultCodeWaitsResolve => &["spec"],
@@ -7231,6 +7283,24 @@ impl AgentVerb {
             }
             Self::VaultCodeProposalSubmit => {
                 "Stage one file change of a repository as a Proposed proposal with its retained base, under the review lens catalog the owner sends. Owner only. The engine mints the proposal id; nothing is approved, queued or landed."
+            }
+            Self::VaultCodeConflictRecord => {
+                "Record a real Git overlap between two stored one-file proposals at the same retained base, with both trees, paths and a linked reconciliation task. Owner only; neither branch moves."
+            }
+            Self::VaultCodeConflictView => {
+                "Read open repository conflicts and their durable resolution claims, including each reconciliation task. Owner only."
+            }
+            Self::VaultCodeProposalResolve => {
+                "Stage a one-file resolution of an active repository conflict as another Proposed proposal, preserving its original proposals and reconciliation task. Owner only; nothing lands."
+            }
+            Self::VaultCodeProposalReview => {
+                "Record the authenticated owner's immutable critic opinion on one proposal lens. Independent reviewers only; this is no contract-check execution receipt."
+            }
+            Self::VaultCodeProposalSettle => {
+                "Approve or reject one reviewed code proposal as an independent owner, retaining a decision receipt. Approval still needs unanimous critics and never advances head; only the tested merge queue lands it."
+            }
+            Self::VaultCodeProposalSettlement => {
+                "Read a code proposal's review decision receipt and execution lineage, including its conflict, original proposals, reconciliation task and resolution claim. Owner only."
             }
             Self::VaultCodeOplog => {
                 "Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal."
