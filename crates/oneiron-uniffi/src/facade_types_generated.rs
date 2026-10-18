@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 525 facade rows, 1884 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 10; generated in and out: 488.
+// UniFFI census: 529 facade rows, 1909 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 10; generated in and out: 492.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -17265,6 +17265,350 @@ pub struct CodeRunModelHealCountView {
     pub model_id: String,
     #[serde(rename = "healed_turns")]
     pub healed_turns: u64,
+}
+
+/// `oneiron::memory::result_doors::types::ResultRunRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ResultRunRequest {
+    #[serde(rename = "run_id")]
+    pub run_id: String,
+}
+
+/// `oneiron::memory::result_doors::types::ResultEffectRecord`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResultEffectRecord {
+    #[serde(rename = "seq")]
+    pub seq: u64,
+    #[serde(rename = "effect")]
+    pub effect: String,
+    #[serde(
+        rename = "action_digest",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub action_digest: Option<String>,
+    #[serde(rename = "started_at_ms")]
+    pub started_at_ms: u64,
+    #[serde(rename = "finished_at_ms")]
+    pub finished_at_ms: u64,
+}
+
+/// `oneiron::memory::result_doors::types::ResultRetainedBody`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResultRetainedBody {
+    #[serde(rename = "blake3")]
+    pub blake3: String,
+    #[serde(rename = "bytes")]
+    pub bytes: u64,
+}
+
+/// `oneiron::memory::result_doors::types::ResultBodyStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResultBodyStatus {
+    #[serde(rename = "occurrence")]
+    pub occurrence: String,
+    #[serde(rename = "complete")]
+    pub complete: bool,
+    #[serde(rename = "retained", default, skip_serializing_if = "Option::is_none")]
+    pub retained: Option<ResultRetainedBody>,
+}
+
+/// `oneiron::memory::result_doors::types::ResultBodyKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ResultBodyKind {
+    #[serde(rename = "text")]
+    Text,
+    #[serde(rename = "binary")]
+    Binary,
+}
+
+/// `oneiron::memory::result_doors::types::ResultTaintState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ResultTaintState {
+    #[serde(rename = "clean")]
+    Clean,
+    #[serde(rename = "tainted_live")]
+    TaintedLive,
+    #[serde(rename = "tainted_stale")]
+    TaintedStale,
+}
+
+/// `oneiron::memory::result_doors::types::ResultTaint`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResultTaint {
+    #[serde(rename = "state")]
+    pub state: ResultTaintState,
+    #[serde(rename = "secret", default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
+}
+
+/// `oneiron::memory::result_doors::types::ResultTaintReference`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResultTaintReference {
+    #[serde(rename = "secret_ref")]
+    pub secret_ref: String,
+    #[serde(rename = "generation")]
+    pub generation: u32,
+}
+
+/// `oneiron::memory::result_doors::types::ResultOccurrenceManifest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResultOccurrenceManifest {
+    #[serde(rename = "run_id")]
+    pub run_id: String,
+    #[serde(rename = "occurrence")]
+    pub occurrence: String,
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "handle")]
+    pub handle: String,
+    #[serde(rename = "blake3")]
+    pub blake3: String,
+    #[serde(rename = "bytes")]
+    pub bytes: u64,
+    #[serde(rename = "kind")]
+    pub kind: ResultBodyKind,
+    #[serde(rename = "lines")]
+    pub lines: u64,
+    #[serde(rename = "complete")]
+    pub complete: bool,
+    #[serde(rename = "taint")]
+    pub taint: ResultTaint,
+    #[serde(rename = "taint_refs")]
+    pub taint_refs: Vec<ResultTaintReference>,
+    #[serde(
+        rename = "source_rows",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_rows: Option<Vec<String>>,
+}
+
+/// `oneiron::memory::result_doors::types::ResultRunStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResultRunStatus {
+    #[serde(rename = "run_id")]
+    pub run_id: String,
+    #[serde(rename = "replay_present")]
+    pub replay_present: bool,
+    #[serde(rename = "checkpoint_count")]
+    pub checkpoint_count: u64,
+    #[serde(rename = "effects")]
+    pub effects: Vec<ResultEffectRecord>,
+    #[serde(rename = "bodies")]
+    pub bodies: Vec<ResultBodyStatus>,
+    #[serde(rename = "occurrences")]
+    pub occurrences: Vec<ResultOccurrenceManifest>,
+}
+
+/// `oneiron::memory::result_doors::types::ResultOccurrenceRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ResultOccurrenceRequest {
+    #[serde(rename = "run_id")]
+    pub run_id: String,
+    #[serde(rename = "occurrence")]
+    pub occurrence: String,
+}
+
+/// `oneiron::code_run::result_read::ResultFacet`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ResultFacet {
+    #[serde(rename = "slice")]
+    Slice,
+    #[serde(rename = "search")]
+    Search,
+    #[serde(rename = "query")]
+    Query,
+    #[serde(rename = "chunks")]
+    Chunks,
+}
+
+/// `oneiron::memory::result_doors::types::ResultCard`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResultCard {
+    #[serde(rename = "handle")]
+    pub handle: String,
+    #[serde(rename = "bytes")]
+    pub bytes: u64,
+    #[serde(rename = "kind")]
+    pub kind: ResultBodyKind,
+    #[serde(rename = "lines")]
+    pub lines: u64,
+    #[serde(rename = "complete")]
+    pub complete: bool,
+    #[serde(rename = "preview")]
+    pub preview: String,
+    #[serde(rename = "name", default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(rename = "taint")]
+    pub taint: ResultTaint,
+    #[serde(rename = "more")]
+    pub more: Vec<ResultFacet>,
+}
+
+/// `oneiron::memory::result_doors::types::ResultReadRefusal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResultReadRefusal {
+    #[serde(rename = "denied")]
+    pub denied: String,
+    #[serde(rename = "reasonCodes")]
+    pub reason_codes: Vec<String>,
+    #[serde(rename = "error", default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(rename = "bytes", default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
+}
+
+/// `oneiron::memory::result_doors::types::ResultReadView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "status")]
+pub enum ResultReadView {
+    #[serde(rename = "available")]
+    Available {
+        #[serde(rename = "manifest")]
+        manifest: ResultOccurrenceManifest,
+        #[serde(rename = "card")]
+        card: ResultCard,
+    },
+    #[serde(rename = "denied")]
+    Denied {
+        #[serde(rename = "refusal")]
+        refusal: ResultReadRefusal,
+    },
+}
+
+/// `oneiron::memory::result_doors::types::ResultByteSelection`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ResultByteSelection {
+    #[serde(rename = "bytes")]
+    pub bytes: Vec<u64>,
+}
+
+/// `oneiron::memory::result_doors::types::ResultLineCursor`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ResultLineCursor {
+    #[serde(rename = "offset")]
+    pub offset: u64,
+    #[serde(rename = "line")]
+    pub line: u64,
+}
+
+/// `oneiron::memory::result_doors::types::ResultLineSelection`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ResultLineSelection {
+    #[serde(rename = "lines")]
+    pub lines: Vec<u64>,
+    #[serde(rename = "cursor", default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<ResultLineCursor>,
+}
+
+/// `oneiron::memory::result_doors::types::ResultSliceSelection`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum ResultSliceSelection {
+    Bytes(ResultByteSelection),
+    Lines(ResultLineSelection),
+}
+
+/// `oneiron::memory::result_doors::types::ResultSliceRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ResultSliceRequest {
+    #[serde(rename = "run_id")]
+    pub run_id: String,
+    #[serde(rename = "occurrence")]
+    pub occurrence: String,
+    #[serde(rename = "selection")]
+    pub selection: ResultSliceSelection,
+}
+
+/// `oneiron::memory::result_doors::types::ResultWithheld`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResultWithheld {
+    #[serde(rename = "withheld")]
+    pub withheld: ResultTaintState,
+    #[serde(rename = "ref")]
+    pub r#ref: String,
+    #[serde(rename = "bytes")]
+    pub bytes: u64,
+    #[serde(rename = "lines", default, skip_serializing_if = "Option::is_none")]
+    pub lines: Option<u64>,
+    #[serde(rename = "kind")]
+    pub kind: ResultBodyKind,
+    #[serde(rename = "taint")]
+    pub taint: ResultTaint,
+    #[serde(rename = "reason")]
+    pub reason: String,
+}
+
+/// `oneiron::memory::result_doors::types::ResultSliceContent`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResultSliceContent {
+    #[serde(rename = "ref")]
+    pub r#ref: String,
+    #[serde(rename = "start")]
+    pub start: u64,
+    #[serde(rename = "end")]
+    pub end: u64,
+    #[serde(rename = "done")]
+    pub done: bool,
+    #[serde(rename = "text", default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(rename = "base64", default, skip_serializing_if = "Option::is_none")]
+    pub base64: Option<String>,
+    #[serde(rename = "lossy", default, skip_serializing_if = "Option::is_none")]
+    pub lossy: Option<bool>,
+    #[serde(rename = "lines", default, skip_serializing_if = "Option::is_none")]
+    pub lines: Option<Vec<u64>>,
+    #[serde(rename = "next", default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<ResultSliceSelection>,
+}
+
+/// `oneiron::memory::result_doors::types::ResultSliceScanning`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResultSliceScanning {
+    #[serde(rename = "ref")]
+    pub r#ref: String,
+    #[serde(rename = "done")]
+    pub done: bool,
+    #[serde(rename = "scanned")]
+    pub scanned: Vec<u64>,
+    #[serde(rename = "limit")]
+    pub limit: String,
+    #[serde(rename = "next")]
+    pub next: ResultSliceSelection,
+}
+
+/// `oneiron::memory::result_doors::types::ResultSlicePage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum ResultSlicePage {
+    Withheld(ResultWithheld),
+    Content(ResultSliceContent),
+    Scanning(ResultSliceScanning),
+}
+
+/// `oneiron::memory::result_doors::types::ResultSliceView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "status")]
+pub enum ResultSliceView {
+    #[serde(rename = "available")]
+    Available {
+        #[serde(rename = "manifest")]
+        manifest: ResultOccurrenceManifest,
+        #[serde(rename = "page")]
+        page: ResultSlicePage,
+    },
+    #[serde(rename = "denied")]
+    Denied {
+        #[serde(rename = "refusal")]
+        refusal: ResultReadRefusal,
+    },
 }
 
 /// `oneiron::code_document::review_views::CodeTreeRequest`.
