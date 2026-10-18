@@ -5300,6 +5300,45 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn calendar_ics_configure(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("calendar.ics.configure", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn calendar_ics_poll(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("calendar.ics.poll", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn calendar_ics_status(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("calendar.ics.status", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_passports_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.passports.read", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_passports_history(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.passports.history", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn calendar_connector_configure(
         &self,
         input: serde_json::Value,

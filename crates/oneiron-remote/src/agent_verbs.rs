@@ -1884,6 +1884,25 @@ impl OneironClient {
                 "calendar.invite" => remote_agent_verb_output::<
                     oneiron::memory::OutboundIntentReceipt,
                 >(client, verb, &input),
+                "calendar.ics.configure" => remote_agent_verb_output::<
+                    oneiron::calendar::ingest::feed_door::CalendarIcsFeedRegistration,
+                >(client, verb, &input),
+                "calendar.ics.poll" => remote_agent_verb_output::<
+                    oneiron::calendar::ingest::feed_door::CalendarIcsPollCompletion,
+                >(client, verb, &input),
+                "calendar.ics.status" => remote_agent_verb_output::<
+                    Option<oneiron::calendar::ingest::feed_door::CalendarIcsFeedStatus>,
+                >(client, verb, &input),
+                "vault.calendar.passports.read" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<
+                        Option<oneiron::calendar::query::passport::CalendarPassportRevision>,
+                    >,
+                >(client, verb, &input),
+                "vault.calendar.passports.history" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<
+                        Vec<oneiron::calendar::query::passport::CalendarPassportRevision>,
+                    >,
+                >(client, verb, &input),
                 "calendar.connector.configure" => remote_agent_verb_output::<
                     oneiron::calendar::connectors::door::CalendarConnectorRegistration,
                 >(client, verb, &input),
@@ -9816,6 +9835,78 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("calendar.invite", value)
+    }
+    pub fn calendar_ics_configure(
+        &self,
+        input: &oneiron::calendar::ingest::feed_door::CalendarIcsFeedConfigureRequest,
+    ) -> Result<oneiron::calendar::ingest::feed_door::CalendarIcsFeedRegistration, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("calendar.ics.configure", value)
+    }
+    pub fn calendar_ics_poll(
+        &self,
+        input: &oneiron::calendar::ingest::feed_door::CalendarIcsFeedRequest,
+    ) -> Result<oneiron::calendar::ingest::feed_door::CalendarIcsPollCompletion, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("calendar.ics.poll", value)
+    }
+    pub fn calendar_ics_status(
+        &self,
+        input: &oneiron::calendar::ingest::feed_door::CalendarIcsFeedRequest,
+    ) -> Result<Option<oneiron::calendar::ingest::feed_door::CalendarIcsFeedStatus>, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("calendar.ics.status", value)
+    }
+    pub fn vault_calendar_passports_read(
+        &self,
+        input: &oneiron::calendar::query::passport::CalendarPassportReadRequest,
+    ) -> Result<
+        oneiron::claim::ScopedReadResult<
+            Option<oneiron::calendar::query::passport::CalendarPassportRevision>,
+        >,
+        MemoryError,
+    > {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.calendar.passports.read", value)
+    }
+    pub fn vault_calendar_passports_history(
+        &self,
+        input: &oneiron::calendar::query::passport::CalendarPassportReadRequest,
+    ) -> Result<
+        oneiron::claim::ScopedReadResult<
+            Vec<oneiron::calendar::query::passport::CalendarPassportRevision>,
+        >,
+        MemoryError,
+    > {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.calendar.passports.history", value)
     }
     pub fn calendar_connector_configure(
         &self,

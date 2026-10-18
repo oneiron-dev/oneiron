@@ -3346,6 +3346,36 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "calendar.ics.configure",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::ingest::feed_door::CalendarIcsFeedConfigureRequest,
+                >(),
+            ),
+            (
+                "calendar.ics.poll",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::ingest::feed_door::CalendarIcsFeedRequest,
+                >(),
+            ),
+            (
+                "calendar.ics.status",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::ingest::feed_door::CalendarIcsFeedRequest,
+                >(),
+            ),
+            (
+                "vault.calendar.passports.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::query::passport::CalendarPassportReadRequest,
+                >(),
+            ),
+            (
+                "vault.calendar.passports.history",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::query::passport::CalendarPassportReadRequest,
+                >(),
+            ),
+            (
                 "calendar.connector.configure",
                 crate::code_run::vault_read::request_schema::<
                     crate::calendar::connectors::door::CalendarConnectorConfigureRequest,
@@ -4728,6 +4758,11 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.booking.constraint_turn",
     "vault.booking.page_token",
     "calendar.invite",
+    "calendar.ics.configure",
+    "calendar.ics.poll",
+    "calendar.ics.status",
+    "vault.calendar.passports.read",
+    "vault.calendar.passports.history",
     "calendar.connector.configure",
     "calendar.connector.get",
     "calendar.connector.pull",
@@ -5820,6 +5855,25 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "calendar.invite" => {
             crate::code_run::vault_read::request_schema::<crate::memory::OutboundIntentReceipt>()
         }
+        "calendar.ics.configure" => crate::code_run::vault_read::request_schema::<
+            crate::calendar::ingest::feed_door::CalendarIcsFeedRegistration,
+        >(),
+        "calendar.ics.poll" => crate::code_run::vault_read::request_schema::<
+            crate::calendar::ingest::feed_door::CalendarIcsPollCompletion,
+        >(),
+        "calendar.ics.status" => crate::code_run::vault_read::request_schema::<
+            Option<crate::calendar::ingest::feed_door::CalendarIcsFeedStatus>,
+        >(),
+        "vault.calendar.passports.read" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<
+                Option<crate::calendar::query::passport::CalendarPassportRevision>,
+            >,
+        >(),
+        "vault.calendar.passports.history" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<
+                Vec<crate::calendar::query::passport::CalendarPassportRevision>,
+            >,
+        >(),
         "calendar.connector.configure" => crate::code_run::vault_read::request_schema::<
             crate::calendar::connectors::door::CalendarConnectorRegistration,
         >(),
@@ -10430,6 +10484,41 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "calendar.ics.configure" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "calendar.ics.poll" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "calendar.ics.status" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.calendar.passports.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.calendar.passports.history" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "calendar.connector.configure" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -13736,6 +13825,26 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "calendar.invite" => {
             let _input: crate::memory::CalendarInviteSurfaceInput = decode(value.clone())?;
         }
+        "calendar.ics.configure" => {
+            let _input: crate::calendar::ingest::feed_door::CalendarIcsFeedConfigureRequest =
+                decode(value.clone())?;
+        }
+        "calendar.ics.poll" => {
+            let _input: crate::calendar::ingest::feed_door::CalendarIcsFeedRequest =
+                decode(value.clone())?;
+        }
+        "calendar.ics.status" => {
+            let _input: crate::calendar::ingest::feed_door::CalendarIcsFeedRequest =
+                decode(value.clone())?;
+        }
+        "vault.calendar.passports.read" => {
+            let _input: crate::calendar::query::passport::CalendarPassportReadRequest =
+                decode(value.clone())?;
+        }
+        "vault.calendar.passports.history" => {
+            let _input: crate::calendar::query::passport::CalendarPassportReadRequest =
+                decode(value.clone())?;
+        }
         "calendar.connector.configure" => {
             let _input: crate::calendar::connectors::door::CalendarConnectorConfigureRequest =
                 decode(value.clone())?;
@@ -15557,6 +15666,15 @@ pub fn invoke(
         }
         "vault.booking.page_token" => encode(vault_booking_page_token(memory, decode(value)?)?),
         "calendar.invite" => encode(calendar_invite(memory, decode(value)?)?),
+        "calendar.ics.configure" => encode(calendar_ics_configure(memory, decode(value)?)?),
+        "calendar.ics.poll" => encode(calendar_ics_poll(memory, decode(value)?)?),
+        "calendar.ics.status" => encode(calendar_ics_status(memory, decode(value)?)?),
+        "vault.calendar.passports.read" => {
+            encode(vault_calendar_passports_read(memory, decode(value)?)?)
+        }
+        "vault.calendar.passports.history" => {
+            encode(vault_calendar_passports_history(memory, decode(value)?)?)
+        }
         "calendar.connector.configure" => {
             encode(calendar_connector_configure(memory, decode(value)?)?)
         }
@@ -21143,6 +21261,42 @@ pub fn calendar_invite(
     input: crate::memory::CalendarInviteSurfaceInput,
 ) -> MemoryResult<crate::memory::OutboundIntentReceipt> {
     memory.calendar_invite(&input)
+}
+pub fn calendar_ics_configure(
+    memory: &Memory<'_>,
+    input: crate::calendar::ingest::feed_door::CalendarIcsFeedConfigureRequest,
+) -> MemoryResult<crate::calendar::ingest::feed_door::CalendarIcsFeedRegistration> {
+    crate::task_verb::sdk::host_only(memory, "calendar.ics.configure", &input)
+}
+pub fn calendar_ics_poll(
+    memory: &Memory<'_>,
+    input: crate::calendar::ingest::feed_door::CalendarIcsFeedRequest,
+) -> MemoryResult<crate::calendar::ingest::feed_door::CalendarIcsPollCompletion> {
+    crate::task_verb::sdk::host_only(memory, "calendar.ics.poll", &input)
+}
+pub fn calendar_ics_status(
+    memory: &Memory<'_>,
+    input: crate::calendar::ingest::feed_door::CalendarIcsFeedRequest,
+) -> MemoryResult<Option<crate::calendar::ingest::feed_door::CalendarIcsFeedStatus>> {
+    crate::task_verb::sdk::host_only(memory, "calendar.ics.status", &input)
+}
+pub fn vault_calendar_passports_read(
+    memory: &Memory<'_>,
+    input: crate::calendar::query::passport::CalendarPassportReadRequest,
+) -> MemoryResult<
+    crate::claim::ScopedReadResult<
+        Option<crate::calendar::query::passport::CalendarPassportRevision>,
+    >,
+> {
+    memory.calendar_passport_read(&input)
+}
+pub fn vault_calendar_passports_history(
+    memory: &Memory<'_>,
+    input: crate::calendar::query::passport::CalendarPassportReadRequest,
+) -> MemoryResult<
+    crate::claim::ScopedReadResult<Vec<crate::calendar::query::passport::CalendarPassportRevision>>,
+> {
+    memory.calendar_passport_history(&input)
 }
 pub fn calendar_connector_configure(
     memory: &Memory<'_>,
