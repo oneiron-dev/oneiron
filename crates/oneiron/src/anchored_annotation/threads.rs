@@ -59,7 +59,7 @@ impl Vault {
         let head_claim_id = self.store.clock.entity_id()?;
         let parts = comment_parts(first_comment)
             .into_iter()
-            .map(|body| Ok((self.store.clock.entity_id()?, body)))
+            .map(|body| -> Result<(EntityId, String)> { Ok((self.store.clock.entity_id()?, body)) })
             .collect::<Result<Vec<_>>>()?;
         let head = ThreadHead {
             thread_id,
@@ -133,7 +133,7 @@ impl Vault {
 
         let parts = comment_parts(text)
             .into_iter()
-            .map(|body| Ok((self.store.clock.entity_id()?, body)))
+            .map(|body| -> Result<(EntityId, String)> { Ok((self.store.clock.entity_id()?, body)) })
             .collect::<Result<Vec<_>>>()?;
         let envelope = annotation_envelope(author, "comment")?;
         let author_id = author.entity_ref();
