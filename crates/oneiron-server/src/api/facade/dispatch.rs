@@ -6728,6 +6728,277 @@ async fn vault_consent_revoke(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_consent_graduation_policy(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.consent.graduation.policy")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.consent.graduation.policy", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.consent.graduation.policy", value).await?;
+    let (output, listed) = super::host_doors::vault_consent_graduation_policy(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_consent_graduation_policy_set(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.consent.graduation.policy.set")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.consent.graduation.policy.set", &value)?;
+    let hooks =
+        facade_hooks_pre(server, call, "vault.consent.graduation.policy.set", value).await?;
+    let (output, listed) = super::host_doors::vault_consent_graduation_policy_set(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_consent_graduation_policy_clear(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.consent.graduation.policy.clear")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.consent.graduation.policy.clear", &value)?;
+    let hooks =
+        facade_hooks_pre(server, call, "vault.consent.graduation.policy.clear", value).await?;
+    let (output, listed) = super::host_doors::vault_consent_graduation_policy_clear(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_consent_graduation_stats(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.consent.graduation.stats")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.consent.graduation.stats", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.consent.graduation.stats", value).await?;
+    let (output, listed) = super::host_doors::vault_consent_graduation_stats(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_consent_graduation_outcome(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.consent.graduation.outcome")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.consent.graduation.outcome", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.consent.graduation.outcome", value).await?;
+    let (output, listed) = super::host_doors::vault_consent_graduation_outcome(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_consent_graduation_offers(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.consent.graduation.offers")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.consent.graduation.offers", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.consent.graduation.offers", value).await?;
+    let (output, listed) = super::host_doors::vault_consent_graduation_offers(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_consent_graduation_answer(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.consent.graduation.answer")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.consent.graduation.answer", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.consent.graduation.answer", value).await?;
+    let (output, listed) = super::host_doors::vault_consent_graduation_answer(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_consent_graduation_trust_table(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.consent.graduation.trust_table")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.consent.graduation.trust_table", &value)?;
+    let hooks =
+        facade_hooks_pre(server, call, "vault.consent.graduation.trust_table", value).await?;
+    let (output, listed) = super::host_doors::vault_consent_graduation_trust_table(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_consent_graduation_settings_unpin(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.consent.graduation.settings.unpin")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.consent.graduation.settings.unpin", &value)?;
+    let hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.consent.graduation.settings.unpin",
+        value,
+    )
+    .await?;
+    let (output, listed) = super::host_doors::vault_consent_graduation_settings_unpin(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_consent_graduation_demote(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.consent.graduation.demote")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.consent.graduation.demote", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.consent.graduation.demote", value).await?;
+    let (output, listed) = super::host_doors::vault_consent_graduation_demote(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn self_consent_graduation_demote(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "self.consent.graduation.demote",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_gate_policy_get(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -16906,6 +17177,39 @@ pub(crate) async fn call_verb(
         }
         "vault.consent.registry" => vault_consent_registry(server, call, input).await,
         "vault.consent.revoke" => vault_consent_revoke(server, call, input).await,
+        "vault.consent.graduation.policy" => {
+            vault_consent_graduation_policy(server, call, input).await
+        }
+        "vault.consent.graduation.policy.set" => {
+            vault_consent_graduation_policy_set(server, call, input).await
+        }
+        "vault.consent.graduation.policy.clear" => {
+            vault_consent_graduation_policy_clear(server, call, input).await
+        }
+        "vault.consent.graduation.stats" => {
+            vault_consent_graduation_stats(server, call, input).await
+        }
+        "vault.consent.graduation.outcome" => {
+            vault_consent_graduation_outcome(server, call, input).await
+        }
+        "vault.consent.graduation.offers" => {
+            vault_consent_graduation_offers(server, call, input).await
+        }
+        "vault.consent.graduation.answer" => {
+            vault_consent_graduation_answer(server, call, input).await
+        }
+        "vault.consent.graduation.trust_table" => {
+            vault_consent_graduation_trust_table(server, call, input).await
+        }
+        "vault.consent.graduation.settings.unpin" => {
+            vault_consent_graduation_settings_unpin(server, call, input).await
+        }
+        "vault.consent.graduation.demote" => {
+            vault_consent_graduation_demote(server, call, input).await
+        }
+        "self.consent.graduation.demote" => {
+            self_consent_graduation_demote(server, call, input).await
+        }
         "vault.gate.policy.get" => vault_gate_policy_get(server, call, input).await,
         "vault.gate.policy.put" => vault_gate_policy_put(server, call, input).await,
         "vault.gate.policy.propose" => vault_gate_policy_propose(server, call, input).await,

@@ -2530,6 +2530,105 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_consent_graduation_policy(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.graduation.policy", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_graduation_policy_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.graduation.policy.set", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_graduation_policy_clear(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.graduation.policy.clear", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_graduation_stats(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.graduation.stats", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_graduation_outcome(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.graduation.outcome", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_graduation_offers(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.graduation.offers", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_graduation_answer(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.graduation.answer", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_graduation_trust_table(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.graduation.trust_table", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_graduation_settings_unpin(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.graduation.settings.unpin", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_graduation_demote(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.graduation.demote", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_consent_graduation_demote(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.consent.graduation.demote", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_gate_policy_get(
         &self,
         input: serde_json::Value,

@@ -928,6 +928,39 @@ impl OneironClient {
                 "vault.consent.revoke" => remote_agent_verb_output::<
                     oneiron::consent::lifecycle::ConsentActReceipt,
                 >(client, verb, &input),
+                "vault.consent.graduation.policy" => remote_agent_verb_output::<
+                    oneiron::consent_graduation::api::GraduationPolicies,
+                >(client, verb, &input),
+                "vault.consent.graduation.policy.set" => remote_agent_verb_output::<
+                    oneiron::consent_graduation::api::GraduationChanged,
+                >(client, verb, &input),
+                "vault.consent.graduation.policy.clear" => remote_agent_verb_output::<
+                    oneiron::consent_graduation::api::GraduationChanged,
+                >(client, verb, &input),
+                "vault.consent.graduation.stats" => remote_agent_verb_output::<
+                    Option<oneiron::consent_graduation::api::GraduationStats>,
+                >(client, verb, &input),
+                "vault.consent.graduation.outcome" => remote_agent_verb_output::<
+                    oneiron::consent_graduation::api::GraduationStats,
+                >(client, verb, &input),
+                "vault.consent.graduation.offers" => remote_agent_verb_output::<
+                    Vec<oneiron::consent_graduation::api::GraduationOffer>,
+                >(client, verb, &input),
+                "vault.consent.graduation.answer" => remote_agent_verb_output::<
+                    oneiron::consent_graduation::api::GraduationAnswerReceipt,
+                >(client, verb, &input),
+                "vault.consent.graduation.trust_table" => remote_agent_verb_output::<
+                    Vec<oneiron::consent_graduation::api::GraduationTrustRow>,
+                >(client, verb, &input),
+                "vault.consent.graduation.settings.unpin" => remote_agent_verb_output::<
+                    oneiron::consent_graduation::api::GraduationChanged,
+                >(client, verb, &input),
+                "vault.consent.graduation.demote" => remote_agent_verb_output::<
+                    oneiron::consent_graduation::api::GraduationChanged,
+                >(client, verb, &input),
+                "self.consent.graduation.demote" => remote_agent_verb_output::<
+                    oneiron::consent_graduation::api::GraduationChanged,
+                >(client, verb, &input),
                 "vault.gate.policy.get" => remote_agent_verb_output::<
                     oneiron::policy_manifest_doors::PolicyManifestsView,
                 >(client, verb, &input),
@@ -5785,6 +5818,138 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.consent.revoke", value)
+    }
+    pub fn vault_consent_graduation_policy(
+        &self,
+        input: &oneiron::consent_graduation::api::GraduationPolicyRequest,
+    ) -> Result<oneiron::consent_graduation::api::GraduationPolicies, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consent.graduation.policy", value)
+    }
+    pub fn vault_consent_graduation_policy_set(
+        &self,
+        input: &oneiron::consent_graduation::api::GraduationPolicySetRequest,
+    ) -> Result<oneiron::consent_graduation::api::GraduationChanged, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consent.graduation.policy.set", value)
+    }
+    pub fn vault_consent_graduation_policy_clear(
+        &self,
+        input: &oneiron::consent_graduation::api::GraduationPolicyClearRequest,
+    ) -> Result<oneiron::consent_graduation::api::GraduationChanged, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consent.graduation.policy.clear", value)
+    }
+    pub fn vault_consent_graduation_stats(
+        &self,
+        input: &oneiron::consent_graduation::api::GraduationScopeRequest,
+    ) -> Result<Option<oneiron::consent_graduation::api::GraduationStats>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consent.graduation.stats", value)
+    }
+    pub fn vault_consent_graduation_outcome(
+        &self,
+        input: &oneiron::consent_graduation::api::GraduationOutcomeRequest,
+    ) -> Result<oneiron::consent_graduation::api::GraduationStats, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consent.graduation.outcome", value)
+    }
+    pub fn vault_consent_graduation_offers(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Vec<oneiron::consent_graduation::api::GraduationOffer>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consent.graduation.offers", value)
+    }
+    pub fn vault_consent_graduation_answer(
+        &self,
+        input: &oneiron::consent_graduation::api::GraduationAnswerRequest,
+    ) -> Result<oneiron::consent_graduation::api::GraduationAnswerReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consent.graduation.answer", value)
+    }
+    pub fn vault_consent_graduation_trust_table(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Vec<oneiron::consent_graduation::api::GraduationTrustRow>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consent.graduation.trust_table", value)
+    }
+    pub fn vault_consent_graduation_settings_unpin(
+        &self,
+        input: &oneiron::consent_graduation::api::GraduationScopeRequest,
+    ) -> Result<oneiron::consent_graduation::api::GraduationChanged, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consent.graduation.settings.unpin", value)
+    }
+    pub fn vault_consent_graduation_demote(
+        &self,
+        input: &oneiron::consent_graduation::api::GraduationDemoteRequest,
+    ) -> Result<oneiron::consent_graduation::api::GraduationChanged, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consent.graduation.demote", value)
+    }
+    pub fn self_consent_graduation_demote(
+        &self,
+        input: &oneiron::consent_graduation::api::GraduationScopeRequest,
+    ) -> Result<oneiron::consent_graduation::api::GraduationChanged, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.consent.graduation.demote", value)
     }
     pub fn vault_gate_policy_get(
         &self,

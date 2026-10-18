@@ -1446,6 +1446,61 @@ export_facade! {
     let output = client.vault_consent_revoke(&input)?;
     crate::codec::lift_record("vault.consent.revoke", &output)
 };
+"vault.consent.graduation.policy" => fn vault_consent_graduation_policy(&self, input: GraduationPolicyRequest) -> GraduationPolicies = |client| {
+    let input: oneiron::consent_graduation::api::GraduationPolicyRequest = crate::codec::lower_record("vault.consent.graduation.policy", input)?;
+    let output = client.vault_consent_graduation_policy(&input)?;
+    crate::codec::lift_record("vault.consent.graduation.policy", &output)
+};
+"vault.consent.graduation.policy.set" => fn vault_consent_graduation_policy_set(&self, input: GraduationPolicySetRequest) -> GraduationChanged = |client| {
+    let input: oneiron::consent_graduation::api::GraduationPolicySetRequest = crate::codec::lower_record("vault.consent.graduation.policy.set", input)?;
+    let output = client.vault_consent_graduation_policy_set(&input)?;
+    crate::codec::lift_record("vault.consent.graduation.policy.set", &output)
+};
+"vault.consent.graduation.policy.clear" => fn vault_consent_graduation_policy_clear(&self, input: GraduationPolicyClearRequest) -> GraduationChanged = |client| {
+    let input: oneiron::consent_graduation::api::GraduationPolicyClearRequest = crate::codec::lower_record("vault.consent.graduation.policy.clear", input)?;
+    let output = client.vault_consent_graduation_policy_clear(&input)?;
+    crate::codec::lift_record("vault.consent.graduation.policy.clear", &output)
+};
+"vault.consent.graduation.stats" => fn vault_consent_graduation_stats(&self, input: GraduationScopeRequest) -> Option<GraduationStats> = |client| {
+    let input: oneiron::consent_graduation::api::GraduationScopeRequest = crate::codec::lower_record("vault.consent.graduation.stats", input)?;
+    let output = client.vault_consent_graduation_stats(&input)?;
+    crate::codec::lift_record("vault.consent.graduation.stats", &output)
+};
+"vault.consent.graduation.outcome" => fn vault_consent_graduation_outcome(&self, input: GraduationOutcomeRequest) -> GraduationStats = |client| {
+    let input: oneiron::consent_graduation::api::GraduationOutcomeRequest = crate::codec::lower_record("vault.consent.graduation.outcome", input)?;
+    let output = client.vault_consent_graduation_outcome(&input)?;
+    crate::codec::lift_record("vault.consent.graduation.outcome", &output)
+};
+"vault.consent.graduation.offers" => fn vault_consent_graduation_offers(&self) -> Vec<GraduationOffer> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.consent.graduation.offers")?;
+    let output = client.vault_consent_graduation_offers(&input)?;
+    crate::codec::lift_record("vault.consent.graduation.offers", &output)
+};
+"vault.consent.graduation.answer" => fn vault_consent_graduation_answer(&self, input: GraduationAnswerRequest) -> GraduationAnswerReceipt = |client| {
+    let input: oneiron::consent_graduation::api::GraduationAnswerRequest = crate::codec::lower_record("vault.consent.graduation.answer", input)?;
+    let output = client.vault_consent_graduation_answer(&input)?;
+    crate::codec::lift_record("vault.consent.graduation.answer", &output)
+};
+"vault.consent.graduation.trust_table" => fn vault_consent_graduation_trust_table(&self) -> Vec<GraduationTrustRow> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.consent.graduation.trust_table")?;
+    let output = client.vault_consent_graduation_trust_table(&input)?;
+    crate::codec::lift_record("vault.consent.graduation.trust_table", &output)
+};
+"vault.consent.graduation.settings.unpin" => fn vault_consent_graduation_settings_unpin(&self, input: GraduationScopeRequest) -> GraduationChanged = |client| {
+    let input: oneiron::consent_graduation::api::GraduationScopeRequest = crate::codec::lower_record("vault.consent.graduation.settings.unpin", input)?;
+    let output = client.vault_consent_graduation_settings_unpin(&input)?;
+    crate::codec::lift_record("vault.consent.graduation.settings.unpin", &output)
+};
+"vault.consent.graduation.demote" => fn vault_consent_graduation_demote(&self, input: GraduationDemoteRequest) -> GraduationChanged = |client| {
+    let input: oneiron::consent_graduation::api::GraduationDemoteRequest = crate::codec::lower_record("vault.consent.graduation.demote", input)?;
+    let output = client.vault_consent_graduation_demote(&input)?;
+    crate::codec::lift_record("vault.consent.graduation.demote", &output)
+};
+"self.consent.graduation.demote" => fn self_consent_graduation_demote(&self, input: GraduationScopeRequest) -> GraduationChanged = |client| {
+    let input: oneiron::consent_graduation::api::GraduationScopeRequest = crate::codec::lower_record("self.consent.graduation.demote", input)?;
+    let output = client.self_consent_graduation_demote(&input)?;
+    crate::codec::lift_record("self.consent.graduation.demote", &output)
+};
 "vault.gate.policy.get" => fn vault_gate_policy_get(&self, input: PolicyManifestRead) -> PolicyManifestsView = |client| {
     let input: oneiron::policy_manifest_doors::PolicyManifestRead = crate::codec::lower_record("vault.gate.policy.get", input)?;
     let output = client.vault_gate_policy_get(&input)?;

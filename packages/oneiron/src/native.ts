@@ -319,6 +319,17 @@ vaultConsentDeny(input: unknown): unknown
 vaultConsentCreateStandingGrant(input: unknown): unknown
 vaultConsentRegistry(input: unknown): unknown
 vaultConsentRevoke(input: unknown): unknown
+vaultConsentGraduationPolicy(input: unknown): unknown
+vaultConsentGraduationPolicySet(input: unknown): unknown
+vaultConsentGraduationPolicyClear(input: unknown): unknown
+vaultConsentGraduationStats(input: unknown): unknown
+vaultConsentGraduationOutcome(input: unknown): unknown
+vaultConsentGraduationOffers(input: unknown): unknown
+vaultConsentGraduationAnswer(input: unknown): unknown
+vaultConsentGraduationTrustTable(input: unknown): unknown
+vaultConsentGraduationSettingsUnpin(input: unknown): unknown
+vaultConsentGraduationDemote(input: unknown): unknown
+selfConsentGraduationDemote(input: unknown): unknown
 vaultGatePolicyGet(input: unknown): unknown
 vaultGatePolicyPut(input: unknown): unknown
 vaultGatePolicyPropose(input: unknown): unknown
