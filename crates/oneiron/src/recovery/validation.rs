@@ -217,6 +217,18 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
             {
                 return Err(invalid("pad outside window residence"));
             }
+        } else if header.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG
+            && let Ok(entry) = crate::authority::decode_authority_log_entry_body(body)
+            && let crate::authority::AuthorityOp::WorldKeyWraps(record) = &entry.op
+        {
+            // A world's key wraps ride its window of the month they were
+            // learned (`sync::types::entity_world`); its settings stay base.
+            if Some(record.key.world) != world
+                || crate::deletion::window_label_from_timestamp(header.learned_at)
+                    != snapshot.window[..7]
+            {
+                return Err(invalid("key wrap outside window residence"));
+            }
         } else if world.is_some()
             && (header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
                 || !body.is_empty()
