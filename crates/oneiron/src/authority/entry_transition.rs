@@ -469,9 +469,10 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
 fn entry_requires_peer_cosign(entry: &AuthorityLogEntry) -> bool {
     // A machine profile is the owner's answer landed through the host, as a
     // slip is, and so is a residence directive; its own transition requires
-    // an owner consent key. A Disconnect only ends a pact, and the owner
-    // lands it through the host alone, as a slip revoke (FIX 1634): the
-    // multi-device quorum and a quorum revoke died with OF-452 D10.
+    // an owner consent key. A Disconnect or a Dissolve only ends a pact, and
+    // the owner lands it through the host alone, as a slip revoke (FIX 1634;
+    // ARCH-0043: exit is unilateral): the multi-device quorum and a quorum
+    // revoke died with OF-452 D10.
     !matches!(
         entry.op,
         AuthorityOp::Genesis { .. }
@@ -482,7 +483,7 @@ fn entry_requires_peer_cosign(entry: &AuthorityLogEntry) -> bool {
             | AuthorityOp::OwnerRoot(_)
             | AuthorityOp::ResidenceDirective(_)
             | AuthorityOp::FederationLifecycle(FederationLifecycleAction {
-                kind: FederationLifecycleKind::Disconnect,
+                kind: FederationLifecycleKind::Disconnect | FederationLifecycleKind::Dissolve,
                 ..
             })
     )

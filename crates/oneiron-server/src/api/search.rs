@@ -497,7 +497,7 @@ pub(crate) async fn search_text(
     query: Result<Query<TextSearchQuery>, QueryRejection>,
 ) -> Result<Json<ScopedSearchResponse>, ApiError> {
     let arrived = Instant::now();
-    let auth = check_api_auth(&headers, &server)?.at(locality);
+    let auth = super::scoped_auth::check_search_text_auth(&headers, &server)?.at(locality);
     let params = query_params(query)?;
     server.check_retrieval_query(
         query_caller(&auth),

@@ -22,6 +22,27 @@ pub(super) fn check_api_auth(
     require_owner_auth(headers, &server.config, server.vault().as_ref())
 }
 
+/// `/api/search_text`'s gate (FIX 3604): whatever [`check_api_auth`] admits,
+/// and also a verified slip that holds core read. Such a slip reads its local
+/// page under its own key ([`scoped_read_for_legacy_api`]) and asks the home
+/// with its forwarded proof. A scoped credential that verifies no slip stays
+/// out, because the legacy read lane reads it as the host root.
+pub(super) fn check_search_text_auth(
+    headers: &HeaderMap,
+    server: &SyncServer,
+) -> Result<CoreAuth, ApiError> {
+    let refused = match check_api_auth(headers, server) {
+        Ok(auth) => return Ok(auth),
+        Err(refused) => refused,
+    };
+    let auth = CoreAuth::for_server(headers, server)?;
+    if auth.verified_slip().is_none() {
+        return Err(refused);
+    }
+    auth.require(crate::auth::CoreScope::Read)?;
+    Ok(auth)
+}
+
 const LEGACY_SCOPED_READ_ACTOR_REF: &str = "legacy-shared-secret";
 
 /// The read key a verified credential reads under on every `/v1` door. It is

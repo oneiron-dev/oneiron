@@ -206,7 +206,8 @@ pub const AGENT_PACK_TRAVEL: &[u8] = b"oneiron/agent-pack-travel/v1/";
 
 /// The vault-resident guest actor a Connect peer's grants name
 /// (`federation::connect_grant`, FIX 3016). Parts: this vault's id, the peer
-/// vault's id (32 bytes each).
+/// vault's id (32 bytes each), and the actor generation (u64 big-endian; a
+/// deleted actor moves the next mint to the next generation, FIX 3685).
 pub const CONNECT_GUEST_ACTOR: &[u8] = b"oneiron/connect-guest-actor/v1";
 /// The foreign WORLD a federation peer's world lands in on the recipient
 /// (`federation::foreign_world_for`, FIX 3497). Parts: the source vault id (32
