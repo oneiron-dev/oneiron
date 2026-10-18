@@ -51,8 +51,8 @@ it, then runs on its own media permit and carries the identity's fenced
 source clip. The bank is checked before the clip is sent and again before the
 audio comes back.
 
-The worker decodes a `/render` upload sent gzip- or zstd-encoded (OF-604), up
-to the same body bound. Set `request_compression = "zstd"` on the `voxcpm2`
+The worker decodes a `/render` upload sent gzip- or zstd-encoded (OF-604),
+whole. Set `request_compression = "zstd"` on the `voxcpm2`
 provider entry (`"gzip"` on a Python before 3.14, which has no
 `compression.zstd`), and the engine sends an upload of 16 KiB or more encoded
 when that makes it smaller. A codec the worker cannot read is answered 415;
@@ -81,9 +81,13 @@ worker restart/reconnection to make `/ready` advertise matching limits; a
 worker with narrower limits rejects a host whose manifest was widened. This
 file is deployment data, not an invitation to publish raw references.
 Upload admission is shared across all sessions and occurs before reading body
-bytes. A monotonic elapsed deadline begins at socket accept, covering slow
-headers and continuous as well as idle partial bodies; `/ready` remains
-available when all render slots are occupied. The only compiled limit checks
-are PCM16 alignment, 4-byte metadata framing, integer/host-width
-representability, and the relation between read and HTTP deadlines. All
-operational ceiling values are manifest data, not hidden second defaults.
+bytes; a render that finds every upload slot taken waits for one instead of
+being refused. A monotonic elapsed deadline begins at socket accept, covering
+slow headers, and starts again when the render takes its slot, covering
+continuous as well as idle partial bodies; `/ready` remains available when all
+render slots are occupied. The only compiled limit checks are PCM16 alignment,
+4-byte metadata framing, integer/host-width representability, and the relation
+between read and HTTP deadlines. All operational ceiling values are manifest
+data, not hidden second defaults. The worker refuses no text, reference
+transcript, reference WAV or metadata by its size (Rule 5): the policy's byte
+fields identify the warm target, which a request may narrow but never widen.
