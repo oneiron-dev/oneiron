@@ -469,6 +469,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.authority.history.export",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.authority.history.import",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SignedAuthorityHistory,
+                >(),
+            ),
+            (
                 "vault.mesh.path_receipts",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::MeshPathReceiptsRequest,
@@ -3069,6 +3079,14 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.authority.history.export" => &[],
+        "vault.authority.history.import" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.mesh.path_receipts" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -5497,6 +5515,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.authority.audit" => {
             let _input: crate::receipt::AuthorityAuditQuery = decode(value.clone())?;
         }
+        "vault.authority.history.export" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.authority.history.import" => {
+            let _input: crate::task_verb::sdk::SignedAuthorityHistory = decode(value.clone())?;
+        }
         "vault.mesh.path_receipts" => {
             let _input: crate::task_verb::sdk::MeshPathReceiptsRequest = decode(value.clone())?;
         }
@@ -6727,6 +6751,12 @@ pub fn invoke(
         "vault.packs.setup.answer" => encode(vault_packs_setup_answer(memory, decode(value)?)?),
         "vault.packs.setup.verify" => encode(vault_packs_setup_verify(memory, decode(value)?)?),
         "vault.authority.audit" => encode(vault_authority_audit(memory, decode(value)?)?),
+        "vault.authority.history.export" => {
+            encode(vault_authority_history_export(memory, decode(value)?)?)
+        }
+        "vault.authority.history.import" => {
+            encode(vault_authority_history_import(memory, decode(value)?)?)
+        }
         "vault.mesh.path_receipts" => encode(vault_mesh_path_receipts(memory, decode(value)?)?),
         "vault.inspection.resolve" => encode(vault_inspection_resolve(memory, decode(value)?)?),
         "vault.shared.propose_delete" => {
@@ -8206,6 +8236,25 @@ pub fn vault_authority_audit(
     input: crate::receipt::AuthorityAuditQuery,
 ) -> MemoryResult<crate::receipt::AuthorityAuditPage> {
     crate::receipt::authority_audit_embedded(memory, input)
+}
+pub fn vault_authority_history_export(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::task_verb::sdk::SignedAuthorityHistory> {
+    crate::task_verb::sdk::export_authority_history_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.authority.history.export")?,
+    )
+}
+pub fn vault_authority_history_import(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SignedAuthorityHistory,
+) -> MemoryResult<crate::task_verb::sdk::AuthorityHistoryImported> {
+    crate::task_verb::sdk::import_authority_history_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.authority.history.import")?,
+        input,
+    )
 }
 pub fn vault_mesh_path_receipts(
     memory: &Memory<'_>,

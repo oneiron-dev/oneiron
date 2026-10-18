@@ -1116,8 +1116,20 @@ class Oneiron:
             """One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind."""
             return json.loads(_translate(lambda: self._client.vault_authority_audit(json.dumps(spec))))
         @property
+        def history(self) -> "Oneiron._VaultAuthorityHistoryVerbs":
+            return Oneiron._VaultAuthorityHistoryVerbs(self._client)
+        @property
         def handoff_alarms(self) -> "Oneiron._VaultAuthorityHandoffAlarmsVerbs":
             return Oneiron._VaultAuthorityHandoffAlarmsVerbs(self._client)
+    class _VaultAuthorityHistoryVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def export(self, spec=None):
+            """Exports the full original signed authority history, including quarantined forks, as base64 envelopes for the owner. No signing secret leaves."""
+            return json.loads(_translate(lambda: self._client.vault_authority_history_export(json.dumps({} if spec is None else spec))))
+        def import_(self, spec):
+            """Imports original base64 signed authority envelopes atomically for the owner, preserving bytes and refolding locally. Invalid signatures, foreign genesis and missing parents write nothing."""
+            return json.loads(_translate(lambda: self._client.vault_authority_history_import(json.dumps(spec))))
     class _VaultAuthorityHandoffAlarmsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

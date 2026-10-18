@@ -338,6 +338,12 @@ impl OneironClient {
                 "vault.authority.audit" => remote_agent_verb_output::<
                     oneiron::receipt::AuthorityAuditPage,
                 >(client, verb, &input),
+                "vault.authority.history.export" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SignedAuthorityHistory,
+                >(client, verb, &input),
+                "vault.authority.history.import" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::AuthorityHistoryImported,
+                >(client, verb, &input),
                 "vault.mesh.path_receipts" => remote_agent_verb_output::<
                     Vec<oneiron::sync::mesh_path::MeshPathReceipt>,
                 >(client, verb, &input),
@@ -2513,6 +2519,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.authority.audit", value)
+    }
+    pub fn vault_authority_history_export(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::task_verb::sdk::SignedAuthorityHistory, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.authority.history.export", value)
+    }
+    pub fn vault_authority_history_import(
+        &self,
+        input: &oneiron::task_verb::sdk::SignedAuthorityHistory,
+    ) -> Result<oneiron::task_verb::sdk::AuthorityHistoryImported, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.authority.history.import", value)
     }
     pub fn vault_mesh_path_receipts(
         &self,

@@ -1272,7 +1272,14 @@ class Oneiron:
         def audit(self, spec: Facade.AuthorityAuditQuery) -> Facade.AuthorityAuditPage:
             """One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind."""
         @property
+        def history(self) -> "Oneiron._VaultAuthorityHistoryVerbs": ...
+        @property
         def handoff_alarms(self) -> "Oneiron._VaultAuthorityHandoffAlarmsVerbs": ...
+    class _VaultAuthorityHistoryVerbs:
+        def export(self, spec: Facade.EmptyRequest | None = None) -> Facade.SignedAuthorityHistory:
+            """Exports the full original signed authority history, including quarantined forks, as base64 envelopes for the owner. No signing secret leaves."""
+        def import_(self, spec: Facade.SignedAuthorityHistory) -> Facade.AuthorityHistoryImported:
+            """Imports original base64 signed authority envelopes atomically for the owner, preserving bytes and refolding locally. Invalid signatures, foreign genesis and missing parents write nothing."""
     class _VaultAuthorityHandoffAlarmsVerbs:
         def __call__(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.AuthorityHandoffAlarm]:
             """Every saved authority handoff fork alarm, for the owner."""
