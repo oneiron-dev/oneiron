@@ -7,8 +7,9 @@
 //! owners; it is an e-signature act, so at every rung it resolves only to a
 //! natural person holding the role, who answers on the decision-ask door.
 //! An ask its person leaves unanswered for `esign.ask.climb_hours` climbs to
-//! the next role. A hold that fails a tick stays as it was for the next,
-//! never dropped.
+//! the next role. An allow whose answerer was erased lands nothing, and the
+//! hold is asked again. A hold that fails a tick stays as it was for the
+//! next, never dropped.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -116,9 +117,9 @@ fn tick(server: &SyncServer) -> Result<()> {
     Ok(())
 }
 
-/// Puts one hold's question in its first role's ask queue. The ladder call
-/// stays the owner's, so [`settle`] finds the answer whoever on the chain
-/// gave it.
+/// Puts one hold's question in its first role's ask queue, for a new hold
+/// or one whose allow came from an erased answerer. The ladder call stays
+/// the owner's, so [`settle`] finds the answer whoever on the chain gave it.
 fn ask(server: &SyncServer, owner: EntityId, held: &HeldSigning) -> Result<()> {
     let host = server.decision_host();
     let question = held.question()?;
@@ -160,15 +161,15 @@ fn ask(server: &SyncServer, owner: EntityId, held: &HeldSigning) -> Result<()> {
 /// Settles one asked hold once a holder of its role answered it, and climbs
 /// an ask left unanswered past its wait.
 fn settle(server: &SyncServer, owner: EntityId, held: &HeldSigning) -> Result<()> {
-    let Some(ask) = server
+    let Some(latest) = server
         .decision_host()
         .asks()
         .latest(&held.question()?, owner)?
     else {
         return Ok(());
     };
-    if ask.answer.is_none() {
-        if server.vault().climb_stale_esign_ask(held, &ask)? {
+    if latest.answer.is_none() {
+        if server.vault().climb_stale_esign_ask(held, &latest)? {
             tracing::info!(
                 document = %held.document,
                 recipient = %held.recipient,
@@ -177,13 +178,23 @@ fn settle(server: &SyncServer, owner: EntityId, held: &HeldSigning) -> Result<()
         }
         return Ok(());
     }
-    let Some(answer) = ask.answer else {
+    let Some(answer) = latest.answer else {
         return Ok(());
     };
-    // An allow whose answerer was erased carries the erased form, and the
-    // settle refuses it: the hold stays asked and the answer stays kept
-    // (FIX 3520).
     let answer = match answer.answer {
+        // An allow whose answerer was erased lands nothing: that authority
+        // ended with the erase. The answered ask stays kept, and the hold's
+        // question is put again to its role chain's live holders, as a new
+        // hold's is; the new ask is the one the next tick reads (FIX 3520).
+        DecisionAnswer::Choice(label) if label == HOLD_ALLOW && answer.by.id().is_none() => {
+            ask(server, owner, held)?;
+            tracing::info!(
+                document = %held.document,
+                recipient = %held.recipient,
+                "esign hold's allowing answerer was erased; its role chain is asked again"
+            );
+            return Ok(());
+        }
         DecisionAnswer::Choice(label) if label == HOLD_ALLOW => HeldSigningAnswer::Allow {
             by: answer.by,
             role: answer.role.rank(),

@@ -73,6 +73,7 @@ pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
 pub(crate) use super::live_voice_doors::*;
+pub(crate) use super::asr_doors::*;
 pub(crate) use super::model_step_doors::*;
 pub(crate) use super::cleanup_doors::*;
 pub(crate) use super::skill_execution_doors::*;
@@ -1188,6 +1189,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.agents.spawn.get"
         | "vault.tasks.cancel_force"
         | "vault.runs.branches.get"
+        | "vault.consults.get"
         | "vault.workspace.roster"
         | "vault.booking.page_token"
         | "vault.channel_identities.provision"
@@ -1311,6 +1313,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.voices.targets.provision"
         | "vault.voices.targets.evict"
         | "vault.voices.inspect"
+        | "ai.voice.asr.open"
+        | "ai.voice.asr.hypothesis"
+        | "ai.voice.asr.finalize"
+        | "ai.voice.asr.close"
         | "ai.voice.start"
         | "ai.voice.audio"
         | "ai.voice.events"

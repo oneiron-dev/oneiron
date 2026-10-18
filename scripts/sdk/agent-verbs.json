@@ -488,6 +488,35 @@
       "section": false
     },
     {
+      "name": "vault.fanout.spawn",
+      "openapi": true,
+      "description": "Admits input-order child slots under this credential's attached live run, through the frozen fan-out approval gate and one shared parent spend tree.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::FanoutBatchInput>",
+      "output": "crate::task_verb::sdk::FanoutBatchView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.fanout.spawn\", &input)?",
+      "host_door": true,
+      "host_door_session": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.fanout.slots",
+      "openapi": true,
+      "description": "Reads a batch launch in input slot order, with child errors, results, reservations, settled spend and released holds from its shared parent lease tree.",
+      "input": "crate::task_verb::sdk::FanoutLaunchRequest",
+      "output": "Option<crate::task_verb::sdk::FanoutBatchView>",
+      "call": "memory.fanout_batch_slots(input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.fanout.launch",
       "description": "One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by the vault owner, its creator, or a live lead/board holder of its project, anything else reads as none.",
       "input": "crate::task_verb::sdk::FanoutLaunchRequest",
@@ -5681,6 +5710,21 @@
       "openapi": true
     },
     {
+      "name": "vault.consults.get",
+      "description": "The owner reads one consult TASK: its deadline and terminal register (how it ended, its result, the evidence or abstention reason, the ladder outcome and any counter TASK), as refs, never bodies.",
+      "input": "crate::task_verb::run_doors::ConsultReadRequest",
+      "output": "crate::task_verb::run_doors::ConsultInspection",
+      "call": "crate::task_verb::run_doors::read_consult_as(memory.vault(), &memory.embedded_owner(\"vault.consults.get\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.workspace.establish",
       "description": "The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted.",
       "input": "crate::task_verb::sdk::WorkspacePresetRequest",
@@ -7030,6 +7074,68 @@
       "input": "crate::receipt::CallReceiptRequest",
       "output": "Option<crate::receipt::ContextEmitReceipt>",
       "call": "memory.context_emit_receipt(&input.receipt_ref)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "ai.voice.asr.open",
+      "description": "Opens one credential-bound utterance for host-enriched ASR speculative recall, with fixed scope, at most four fires and a call-mode deadline.",
+      "input": "crate::task_verb::sdk::AsrOpenRequest",
+      "output": "crate::task_verb::sdk::AsrSession",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.asr.open\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "ai.voice.asr.hypothesis",
+      "description": "Observes an ASR hypothesis and host enrichment; returns the engine signature-change decision, actual fire budget, scoped candidates and a per-fire receipt.",
+      "input": "crate::task_verb::sdk::AsrHypothesisRequest",
+      "output": "crate::task_verb::sdk::AsrHypothesisReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.asr.hypothesis\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "validate": "input.validate()?;"
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "ai.voice.asr.finalize",
+      "description": "Consumes an ASR utterance, promoting its compatible last fire with receipt linkage or running one full finalize pass with warm-fill and honest partial reporting.",
+      "input": "crate::task_verb::sdk::AsrHypothesisRequest",
+      "output": "crate::task_verb::sdk::AsrFinalReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.asr.finalize\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "validate": "input.validate()?;"
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "ai.voice.asr.close",
+      "description": "Closes an unfinished ASR utterance under its opening credential and releases its warm candidates without a final retrieval.",
+      "input": "crate::task_verb::sdk::AsrCloseRequest",
+      "output": "crate::task_verb::sdk::AsrClosed",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.asr.close\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
