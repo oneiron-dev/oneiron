@@ -273,6 +273,8 @@ side_tables! {
     /// UID-to-EVENT lookup cache. Key: bytes32.
     /// Host-installed iMIP submission endpoint and custody name. Key: ().
     CALENDAR_IMIP_TRANSPORT: VaultMeta b"calendar.imip-transport.v1" Named;
+    /// Owner-configured post-meeting outcome grace. Key: ().
+    CALENDAR_OUTCOME_POLICY: VaultMeta b"calendar.outcome-policy.v1" Named;
     CALENDAR_PASSPORT_UID_INDEX: VaultMeta b"calendar.passport.v1:" Raw;
     /// Marker that a derived EVENT's source was erased. Key: id16.
     CALENDAR_INVALIDATED_EVENT: VaultMeta b"calendar_invalid:v1:" Raw;

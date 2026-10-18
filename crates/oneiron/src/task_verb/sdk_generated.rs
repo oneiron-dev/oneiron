@@ -554,6 +554,42 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.cluster",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::clustering::ClusterRequest,
+                >(),
+            ),
+            (
+                "vault.cluster.proposal",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::clustering::ClusterProposalRequest,
+                >(),
+            ),
+            (
+                "vault.cluster.propose",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::clustering::ClusterProposeRequest,
+                >(),
+            ),
+            (
+                "vault.cluster.merge",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::clustering::ClusterMergeRequest,
+                >(),
+            ),
+            (
+                "vault.cluster.split",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::clustering::ClusterSplitRequest,
+                >(),
+            ),
+            (
+                "vault.cluster.resolve_proposal",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::clustering::ClusterResolveRequest,
+                >(),
+            ),
+            (
                 "vault.retrieval.recall",
                 crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::RecallRequest>(
                 ),
@@ -2794,6 +2830,48 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.views.materialize",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_view_doors::CodeViewMaterializeRequest,
+                >(),
+            ),
+            (
+                "vault.code.views.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_view_doors::CodeViewRequest,
+                >(),
+            ),
+            (
+                "vault.code.views.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_view_doors::CodeViewReadRequest,
+                >(),
+            ),
+            (
+                "vault.code.views.action",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_view_doors::CodeViewActionRequest,
+                >(),
+            ),
+            (
+                "vault.code.views.build",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_view_doors::CodeViewBuildRequest,
+                >(),
+            ),
+            (
+                "vault.code.cache.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_view_doors::CodeCacheReadRequest,
+                >(),
+            ),
+            (
+                "vault.code.cache.reuse",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_view_doors::CodeViewBuildRequest,
+                >(),
+            ),
+            (
                 "vault.code.snapshots.ingest",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::codebase_doors::CodeSnapshotIngestRequest,
@@ -3851,6 +3929,40 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.calendar.freebusy",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::CalendarFreebusyRequest,
+                >(),
+            ),
+            (
+                "vault.calendar.prep",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::meeting::CalendarMeetingRequest,
+                >(),
+            ),
+            (
+                "vault.calendar.event_outcome",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::meeting::CalendarMeetingRequest,
+                >(),
+            ),
+            (
+                "vault.calendar.check_in.due",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::meeting::CalendarMeetingRequest,
+                >(),
+            ),
+            (
+                "vault.calendar.check_in.answer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::meeting::CalendarCheckInRequest,
+                >(),
+            ),
+            (
+                "vault.calendar.outcome_policy.get",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.calendar.outcome_policy.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::meeting::CalendarOutcomePolicy,
                 >(),
             ),
             (
@@ -5021,6 +5133,12 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.affect.wellness.policy.configure",
     "vault.affect.wellness.derive",
     "vault.affect.wellness.get",
+    "vault.cluster",
+    "vault.cluster.proposal",
+    "vault.cluster.propose",
+    "vault.cluster.merge",
+    "vault.cluster.split",
+    "vault.cluster.resolve_proposal",
     "vault.retrieval.runs",
     "vault.retrieval.run",
     "vault.retrieval.turn",
@@ -5290,6 +5408,13 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.checkout.publish",
     "vault.code.checkout.settle",
     "vault.code.checkout.teardown",
+    "vault.code.views.materialize",
+    "vault.code.views.get",
+    "vault.code.views.read",
+    "vault.code.views.action",
+    "vault.code.views.build",
+    "vault.code.cache.get",
+    "vault.code.cache.reuse",
     "vault.code.snapshots.ingest",
     "vault.code.snapshots.get",
     "vault.code.snapshots.read",
@@ -5373,6 +5498,13 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.calendar.read",
     "vault.calendar.search",
     "vault.calendar.freebusy",
+    "vault.calendar.prep",
+    "vault.calendar.event_outcome",
+    "vault.calendar.check_in.due",
+    "vault.calendar.check_in.answer",
+    "vault.calendar.outcome_policy.get",
+    "vault.calendar.outcome_policy.set",
+    "vault.calendar.transcript.ingest",
     "vault.claims.demote",
     "vault.claims.list_filtered",
     "vault.claims.read_filtered",
@@ -5682,6 +5814,24 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.affect.wellness.get" => crate::code_run::vault_read::request_schema::<
             crate::memory::wellness_doors::WellnessProjection,
+        >(),
+        "vault.cluster" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<crate::memory::clustering::ClusterProposal>,
+        >(),
+        "vault.cluster.proposal" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<crate::memory::clustering::ClusterProposalView>,
+        >(),
+        "vault.cluster.propose" => crate::code_run::vault_read::request_schema::<
+            crate::memory::clustering::ClusterTopologyReceipt,
+        >(),
+        "vault.cluster.merge" => crate::code_run::vault_read::request_schema::<
+            crate::memory::clustering::ClusterTopologyReceipt,
+        >(),
+        "vault.cluster.split" => crate::code_run::vault_read::request_schema::<
+            crate::memory::clustering::ClusterTopologyReceipt,
+        >(),
+        "vault.cluster.resolve_proposal" => crate::code_run::vault_read::request_schema::<
+            crate::memory::clustering::ClusterTopologyReceipt,
         >(),
         "vault.retrieval.runs" => crate::code_run::vault_read::request_schema::<
             Vec<crate::task_verb::sdk::RetrievalRunEvidence>,
@@ -6506,6 +6656,27 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.code.checkout.teardown" => crate::code_run::vault_read::request_schema::<
             crate::memory::checkout_doors::CheckoutTornDown,
         >(),
+        "vault.code.views.materialize" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_view_doors::CodeWorkingView,
+        >(),
+        "vault.code.views.get" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_view_doors::CodeWorkingView,
+        >(),
+        "vault.code.views.read" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_view_doors::CodeViewFileBytes,
+        >(),
+        "vault.code.views.action" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_view_doors::CodeViewAction,
+        >(),
+        "vault.code.views.build" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_view_doors::CodeCacheOutcome,
+        >(),
+        "vault.code.cache.get" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_view_doors::CodeCacheOutcome,
+        >(),
+        "vault.code.cache.reuse" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_view_doors::CodeCacheOutcome,
+        >(),
         "vault.code.snapshots.ingest" => crate::code_run::vault_read::request_schema::<
             crate::memory::codebase_doors::CodeSnapshotView,
         >(),
@@ -6758,6 +6929,27 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.calendar.freebusy" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<crate::memory::CalendarFreebusyDto>,
+        >(),
+        "vault.calendar.prep" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Option<crate::calendar::PrepPack>>,
+        >(),
+        "vault.calendar.event_outcome" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Option<crate::calendar::meeting::CalendarEventOutcome>>,
+        >(),
+        "vault.calendar.check_in.due" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Option<crate::calendar::meeting::CalendarCheckInDue>>,
+        >(),
+        "vault.calendar.check_in.answer" => crate::code_run::vault_read::request_schema::<
+            crate::calendar::meeting::CalendarCheckInReceipt,
+        >(),
+        "vault.calendar.outcome_policy.get" => crate::code_run::vault_read::request_schema::<
+            crate::calendar::meeting::CalendarOutcomePolicy,
+        >(),
+        "vault.calendar.outcome_policy.set" => crate::code_run::vault_read::request_schema::<
+            crate::calendar::meeting::CalendarOutcomePolicy,
+        >(),
+        "vault.calendar.transcript.ingest" => crate::code_run::vault_read::request_schema::<
+            crate::calendar::transcript::TranscriptIngestOutcome,
         >(),
         "vault.claims.demote" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ClaimDemoteView>()
@@ -7912,6 +8104,48 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.affect.wellness.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.cluster" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.cluster.proposal" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.cluster.propose" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.cluster.merge" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.cluster.split" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.cluster.resolve_proposal" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -10729,6 +10963,55 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.views.materialize" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.views.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.views.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.views.action" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.views.build" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.cache.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.cache.reuse" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.code.snapshots.ingest" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -12036,6 +12319,48 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.calendar.freebusy" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.calendar.prep" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.calendar.event_outcome" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.calendar.check_in.due" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.calendar.check_in.answer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.calendar.outcome_policy.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.calendar.outcome_policy.set" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -13705,6 +14030,24 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::wellness_doors::WellnessPersonRequest =
                 decode(value.clone())?;
         }
+        "vault.cluster" => {
+            let _input: crate::memory::clustering::ClusterRequest = decode(value.clone())?;
+        }
+        "vault.cluster.proposal" => {
+            let _input: crate::memory::clustering::ClusterProposalRequest = decode(value.clone())?;
+        }
+        "vault.cluster.propose" => {
+            let _input: crate::memory::clustering::ClusterProposeRequest = decode(value.clone())?;
+        }
+        "vault.cluster.merge" => {
+            let _input: crate::memory::clustering::ClusterMergeRequest = decode(value.clone())?;
+        }
+        "vault.cluster.split" => {
+            let _input: crate::memory::clustering::ClusterSplitRequest = decode(value.clone())?;
+        }
+        "vault.cluster.resolve_proposal" => {
+            let _input: crate::memory::clustering::ClusterResolveRequest = decode(value.clone())?;
+        }
         "vault.retrieval.recall" => {
             let _input: crate::task_verb::sdk::RecallRequest = decode(value.clone())?;
         }
@@ -15064,6 +15407,33 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::checkout_doors::CheckoutTeardownInput =
                 decode(value.clone())?;
         }
+        "vault.code.views.materialize" => {
+            let _input: crate::memory::code_view_doors::CodeViewMaterializeRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.views.get" => {
+            let _input: crate::memory::code_view_doors::CodeViewRequest = decode(value.clone())?;
+        }
+        "vault.code.views.read" => {
+            let _input: crate::memory::code_view_doors::CodeViewReadRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.views.action" => {
+            let _input: crate::memory::code_view_doors::CodeViewActionRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.views.build" => {
+            let _input: crate::memory::code_view_doors::CodeViewBuildRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.cache.get" => {
+            let _input: crate::memory::code_view_doors::CodeCacheReadRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.cache.reuse" => {
+            let _input: crate::memory::code_view_doors::CodeViewBuildRequest =
+                decode(value.clone())?;
+        }
         "vault.code.snapshots.ingest" => {
             let _input: crate::memory::codebase_doors::CodeSnapshotIngestRequest =
                 decode(value.clone())?;
@@ -15708,6 +16078,24 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.calendar.freebusy" => {
             let _input: crate::task_verb::sdk::CalendarFreebusyRequest = decode(value.clone())?;
+        }
+        "vault.calendar.prep" => {
+            let _input: crate::calendar::meeting::CalendarMeetingRequest = decode(value.clone())?;
+        }
+        "vault.calendar.event_outcome" => {
+            let _input: crate::calendar::meeting::CalendarMeetingRequest = decode(value.clone())?;
+        }
+        "vault.calendar.check_in.due" => {
+            let _input: crate::calendar::meeting::CalendarMeetingRequest = decode(value.clone())?;
+        }
+        "vault.calendar.check_in.answer" => {
+            let _input: crate::calendar::meeting::CalendarCheckInRequest = decode(value.clone())?;
+        }
+        "vault.calendar.outcome_policy.get" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.calendar.outcome_policy.set" => {
+            let _input: crate::calendar::meeting::CalendarOutcomePolicy = decode(value.clone())?;
         }
         "vault.calendar.transcript.ingest" => {
             let _input: crate::calendar::transcript::TranscriptFileDropInput =
@@ -16651,6 +17039,14 @@ pub fn invoke(
             encode(vault_affect_wellness_derive(memory, decode(value)?)?)
         }
         "vault.affect.wellness.get" => encode(vault_affect_wellness_get(memory, decode(value)?)?),
+        "vault.cluster" => encode(vault_cluster(memory, decode(value)?)?),
+        "vault.cluster.proposal" => encode(vault_cluster_proposal(memory, decode(value)?)?),
+        "vault.cluster.propose" => encode(vault_cluster_propose(memory, decode(value)?)?),
+        "vault.cluster.merge" => encode(vault_cluster_merge(memory, decode(value)?)?),
+        "vault.cluster.split" => encode(vault_cluster_split(memory, decode(value)?)?),
+        "vault.cluster.resolve_proposal" => {
+            encode(vault_cluster_resolve_proposal(memory, decode(value)?)?)
+        }
         "vault.retrieval.recall" => encode(vault_retrieval_recall(memory, decode(value)?)?),
         "vault.retrieval.runs" => encode(vault_retrieval_runs(memory, decode(value)?)?),
         "vault.retrieval.run" => encode(vault_retrieval_run(memory, decode(value)?)?),
@@ -17442,6 +17838,15 @@ pub fn invoke(
         "vault.code.checkout.teardown" => {
             encode(vault_code_checkout_teardown(memory, decode(value)?)?)
         }
+        "vault.code.views.materialize" => {
+            encode(vault_code_views_materialize(memory, decode(value)?)?)
+        }
+        "vault.code.views.get" => encode(vault_code_views_get(memory, decode(value)?)?),
+        "vault.code.views.read" => encode(vault_code_views_read(memory, decode(value)?)?),
+        "vault.code.views.action" => encode(vault_code_views_action(memory, decode(value)?)?),
+        "vault.code.views.build" => encode(vault_code_views_build(memory, decode(value)?)?),
+        "vault.code.cache.get" => encode(vault_code_cache_get(memory, decode(value)?)?),
+        "vault.code.cache.reuse" => encode(vault_code_cache_reuse(memory, decode(value)?)?),
         "vault.code.snapshots.ingest" => {
             encode(vault_code_snapshots_ingest(memory, decode(value)?)?)
         }
@@ -17706,6 +18111,22 @@ pub fn invoke(
         "vault.calendar.read" => encode(vault_calendar_read(memory, decode(value)?)?),
         "vault.calendar.search" => encode(vault_calendar_search(memory, decode(value)?)?),
         "vault.calendar.freebusy" => encode(vault_calendar_freebusy(memory, decode(value)?)?),
+        "vault.calendar.prep" => encode(vault_calendar_prep(memory, decode(value)?)?),
+        "vault.calendar.event_outcome" => {
+            encode(vault_calendar_event_outcome(memory, decode(value)?)?)
+        }
+        "vault.calendar.check_in.due" => {
+            encode(vault_calendar_check_in_due(memory, decode(value)?)?)
+        }
+        "vault.calendar.check_in.answer" => {
+            encode(vault_calendar_check_in_answer(memory, decode(value)?)?)
+        }
+        "vault.calendar.outcome_policy.get" => {
+            encode(vault_calendar_outcome_policy_get(memory, decode(value)?)?)
+        }
+        "vault.calendar.outcome_policy.set" => {
+            encode(vault_calendar_outcome_policy_set(memory, decode(value)?)?)
+        }
         "vault.calendar.transcript.ingest" => {
             encode(vault_calendar_transcript_ingest(memory, decode(value)?)?)
         }
@@ -19118,6 +19539,70 @@ pub fn vault_affect_wellness_get(
     input: crate::memory::wellness_doors::WellnessPersonRequest,
 ) -> MemoryResult<crate::memory::wellness_doors::WellnessProjection> {
     memory.wellness_get_as_owner(&memory.embedded_owner("vault.affect.wellness.get")?, &input)
+}
+pub fn vault_cluster(
+    memory: &Memory<'_>,
+    input: crate::memory::clustering::ClusterRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::memory::clustering::ClusterProposal>> {
+    memory.cluster(&input)
+}
+pub fn vault_cluster_proposal(
+    memory: &Memory<'_>,
+    input: crate::memory::clustering::ClusterProposalRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::memory::clustering::ClusterProposalView>> {
+    memory.cluster_proposal(&input)
+}
+pub fn vault_cluster_propose(
+    memory: &Memory<'_>,
+    input: crate::memory::clustering::ClusterProposeRequest,
+) -> MemoryResult<crate::memory::clustering::ClusterTopologyReceipt> {
+    Ok({
+        let owner = if input.grant_ref.is_none() {
+            Some(memory.embedded_owner("vault.cluster.propose")?)
+        } else {
+            None
+        };
+        memory.cluster_propose(owner.as_ref(), &input)?
+    })
+}
+pub fn vault_cluster_merge(
+    memory: &Memory<'_>,
+    input: crate::memory::clustering::ClusterMergeRequest,
+) -> MemoryResult<crate::memory::clustering::ClusterTopologyReceipt> {
+    Ok({
+        let owner = if input.grant_ref.is_none() {
+            Some(memory.embedded_owner("vault.cluster.merge")?)
+        } else {
+            None
+        };
+        memory.cluster_merge(owner.as_ref(), &input)?
+    })
+}
+pub fn vault_cluster_split(
+    memory: &Memory<'_>,
+    input: crate::memory::clustering::ClusterSplitRequest,
+) -> MemoryResult<crate::memory::clustering::ClusterTopologyReceipt> {
+    Ok({
+        let owner = if input.grant_ref.is_none() {
+            Some(memory.embedded_owner("vault.cluster.split")?)
+        } else {
+            None
+        };
+        memory.cluster_split(owner.as_ref(), &input)?
+    })
+}
+pub fn vault_cluster_resolve_proposal(
+    memory: &Memory<'_>,
+    input: crate::memory::clustering::ClusterResolveRequest,
+) -> MemoryResult<crate::memory::clustering::ClusterTopologyReceipt> {
+    Ok({
+        let owner = if input.grant_ref.is_none() {
+            Some(memory.embedded_owner("vault.cluster.resolve_proposal")?)
+        } else {
+            None
+        };
+        memory.cluster_resolve_proposal(owner.as_ref(), &input)?
+    })
 }
 pub fn vault_retrieval_recall(
     memory: &Memory<'_>,
@@ -22477,6 +22962,51 @@ pub fn vault_code_checkout_teardown(
 ) -> MemoryResult<crate::memory::checkout_doors::CheckoutTornDown> {
     crate::task_verb::sdk::host_only(memory, "vault.code.checkout.teardown", &input)
 }
+pub fn vault_code_views_materialize(
+    memory: &Memory<'_>,
+    input: crate::memory::code_view_doors::CodeViewMaterializeRequest,
+) -> MemoryResult<crate::memory::code_view_doors::CodeWorkingView> {
+    memory.code_view_materialize_as(
+        &memory.embedded_owner("vault.code.views.materialize")?,
+        input,
+    )
+}
+pub fn vault_code_views_get(
+    memory: &Memory<'_>,
+    input: crate::memory::code_view_doors::CodeViewRequest,
+) -> MemoryResult<crate::memory::code_view_doors::CodeWorkingView> {
+    memory.code_view_get_as(&memory.embedded_owner("vault.code.views.get")?, input)
+}
+pub fn vault_code_views_read(
+    memory: &Memory<'_>,
+    input: crate::memory::code_view_doors::CodeViewReadRequest,
+) -> MemoryResult<crate::memory::code_view_doors::CodeViewFileBytes> {
+    memory.code_view_read_as(&memory.embedded_owner("vault.code.views.read")?, input)
+}
+pub fn vault_code_views_action(
+    memory: &Memory<'_>,
+    input: crate::memory::code_view_doors::CodeViewActionRequest,
+) -> MemoryResult<crate::memory::code_view_doors::CodeViewAction> {
+    memory.code_view_action_as(&memory.embedded_owner("vault.code.views.action")?, input)
+}
+pub fn vault_code_views_build(
+    memory: &Memory<'_>,
+    input: crate::memory::code_view_doors::CodeViewBuildRequest,
+) -> MemoryResult<crate::memory::code_view_doors::CodeCacheOutcome> {
+    memory.code_view_build_as(&memory.embedded_owner("vault.code.views.build")?, input)
+}
+pub fn vault_code_cache_get(
+    memory: &Memory<'_>,
+    input: crate::memory::code_view_doors::CodeCacheReadRequest,
+) -> MemoryResult<crate::memory::code_view_doors::CodeCacheOutcome> {
+    memory.code_cache_get_as(&memory.embedded_owner("vault.code.cache.get")?, input)
+}
+pub fn vault_code_cache_reuse(
+    memory: &Memory<'_>,
+    input: crate::memory::code_view_doors::CodeViewBuildRequest,
+) -> MemoryResult<crate::memory::code_view_doors::CodeCacheOutcome> {
+    memory.code_cache_reuse_as(&memory.embedded_owner("vault.code.cache.reuse")?, input)
+}
 pub fn vault_code_snapshots_ingest(
     memory: &Memory<'_>,
     input: crate::memory::codebase_doors::CodeSnapshotIngestRequest,
@@ -24008,6 +24538,46 @@ pub fn vault_calendar_freebusy(
     input: crate::task_verb::sdk::CalendarFreebusyRequest,
 ) -> MemoryResult<crate::claim::ScopedReadResult<crate::memory::CalendarFreebusyDto>> {
     memory.calendar_freebusy(&input.calendars, input.range.to_time_range())
+}
+pub fn vault_calendar_prep(
+    memory: &Memory<'_>,
+    input: crate::calendar::meeting::CalendarMeetingRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::calendar::PrepPack>>> {
+    memory.calendar_prep(&input)
+}
+pub fn vault_calendar_event_outcome(
+    memory: &Memory<'_>,
+    input: crate::calendar::meeting::CalendarMeetingRequest,
+) -> MemoryResult<
+    crate::claim::ScopedReadResult<Option<crate::calendar::meeting::CalendarEventOutcome>>,
+> {
+    memory.calendar_event_outcome(&input)
+}
+pub fn vault_calendar_check_in_due(
+    memory: &Memory<'_>,
+    input: crate::calendar::meeting::CalendarMeetingRequest,
+) -> MemoryResult<
+    crate::claim::ScopedReadResult<Option<crate::calendar::meeting::CalendarCheckInDue>>,
+> {
+    crate::task_verb::sdk::host_only(memory, "vault.calendar.check_in.due", &input)
+}
+pub fn vault_calendar_check_in_answer(
+    memory: &Memory<'_>,
+    input: crate::calendar::meeting::CalendarCheckInRequest,
+) -> MemoryResult<crate::calendar::meeting::CalendarCheckInReceipt> {
+    crate::task_verb::sdk::host_only(memory, "vault.calendar.check_in.answer", &input)
+}
+pub fn vault_calendar_outcome_policy_get(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::calendar::meeting::CalendarOutcomePolicy> {
+    crate::task_verb::sdk::host_only(memory, "vault.calendar.outcome_policy.get", &_input)
+}
+pub fn vault_calendar_outcome_policy_set(
+    memory: &Memory<'_>,
+    input: crate::calendar::meeting::CalendarOutcomePolicy,
+) -> MemoryResult<crate::calendar::meeting::CalendarOutcomePolicy> {
+    crate::task_verb::sdk::host_only(memory, "vault.calendar.outcome_policy.set", &input)
 }
 pub fn vault_calendar_transcript_ingest(
     memory: &Memory<'_>,

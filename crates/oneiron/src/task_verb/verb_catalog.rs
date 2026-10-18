@@ -105,6 +105,12 @@ pub enum AgentVerb {
     VaultAffectWellnessPolicyConfigure,
     VaultAffectWellnessDerive,
     VaultAffectWellnessGet,
+    VaultCluster,
+    VaultClusterProposal,
+    VaultClusterPropose,
+    VaultClusterMerge,
+    VaultClusterSplit,
+    VaultClusterResolveProposal,
     VaultRetrievalRecall,
     VaultRetrievalRuns,
     VaultRetrievalRun,
@@ -516,6 +522,13 @@ pub enum AgentVerb {
     VaultCodeCheckoutPublish,
     VaultCodeCheckoutSettle,
     VaultCodeCheckoutTeardown,
+    VaultCodeViewsMaterialize,
+    VaultCodeViewsGet,
+    VaultCodeViewsRead,
+    VaultCodeViewsAction,
+    VaultCodeViewsBuild,
+    VaultCodeCacheGet,
+    VaultCodeCacheReuse,
     VaultCodeSnapshotsIngest,
     VaultCodeSnapshotsGet,
     VaultCodeSnapshotsRead,
@@ -719,6 +732,12 @@ pub enum AgentVerb {
     VaultCalendarRead,
     VaultCalendarSearch,
     VaultCalendarFreebusy,
+    VaultCalendarPrep,
+    VaultCalendarEventOutcome,
+    VaultCalendarCheckInDue,
+    VaultCalendarCheckInAnswer,
+    VaultCalendarOutcomePolicyGet,
+    VaultCalendarOutcomePolicySet,
     VaultCalendarTranscriptIngest,
     VaultClaimsList,
     VaultClaimsDemote,
@@ -1010,6 +1029,12 @@ impl AgentVerb {
         Self::VaultAffectWellnessPolicyConfigure,
         Self::VaultAffectWellnessDerive,
         Self::VaultAffectWellnessGet,
+        Self::VaultCluster,
+        Self::VaultClusterProposal,
+        Self::VaultClusterPropose,
+        Self::VaultClusterMerge,
+        Self::VaultClusterSplit,
+        Self::VaultClusterResolveProposal,
         Self::VaultRetrievalRecall,
         Self::VaultRetrievalRuns,
         Self::VaultRetrievalRun,
@@ -1421,6 +1446,13 @@ impl AgentVerb {
         Self::VaultCodeCheckoutPublish,
         Self::VaultCodeCheckoutSettle,
         Self::VaultCodeCheckoutTeardown,
+        Self::VaultCodeViewsMaterialize,
+        Self::VaultCodeViewsGet,
+        Self::VaultCodeViewsRead,
+        Self::VaultCodeViewsAction,
+        Self::VaultCodeViewsBuild,
+        Self::VaultCodeCacheGet,
+        Self::VaultCodeCacheReuse,
         Self::VaultCodeSnapshotsIngest,
         Self::VaultCodeSnapshotsGet,
         Self::VaultCodeSnapshotsRead,
@@ -1624,6 +1656,12 @@ impl AgentVerb {
         Self::VaultCalendarRead,
         Self::VaultCalendarSearch,
         Self::VaultCalendarFreebusy,
+        Self::VaultCalendarPrep,
+        Self::VaultCalendarEventOutcome,
+        Self::VaultCalendarCheckInDue,
+        Self::VaultCalendarCheckInAnswer,
+        Self::VaultCalendarOutcomePolicyGet,
+        Self::VaultCalendarOutcomePolicySet,
         Self::VaultCalendarTranscriptIngest,
         Self::VaultClaimsList,
         Self::VaultClaimsDemote,
@@ -1918,6 +1956,12 @@ impl AgentVerb {
             Self::VaultAffectWellnessPolicyConfigure => "vault.affect.wellness.policy.configure",
             Self::VaultAffectWellnessDerive => "vault.affect.wellness.derive",
             Self::VaultAffectWellnessGet => "vault.affect.wellness.get",
+            Self::VaultCluster => "vault.cluster",
+            Self::VaultClusterProposal => "vault.cluster.proposal",
+            Self::VaultClusterPropose => "vault.cluster.propose",
+            Self::VaultClusterMerge => "vault.cluster.merge",
+            Self::VaultClusterSplit => "vault.cluster.split",
+            Self::VaultClusterResolveProposal => "vault.cluster.resolve_proposal",
             Self::VaultRetrievalRecall => "vault.retrieval.recall",
             Self::VaultRetrievalRuns => "vault.retrieval.runs",
             Self::VaultRetrievalRun => "vault.retrieval.run",
@@ -2347,6 +2391,13 @@ impl AgentVerb {
             Self::VaultCodeCheckoutPublish => "vault.code.checkout.publish",
             Self::VaultCodeCheckoutSettle => "vault.code.checkout.settle",
             Self::VaultCodeCheckoutTeardown => "vault.code.checkout.teardown",
+            Self::VaultCodeViewsMaterialize => "vault.code.views.materialize",
+            Self::VaultCodeViewsGet => "vault.code.views.get",
+            Self::VaultCodeViewsRead => "vault.code.views.read",
+            Self::VaultCodeViewsAction => "vault.code.views.action",
+            Self::VaultCodeViewsBuild => "vault.code.views.build",
+            Self::VaultCodeCacheGet => "vault.code.cache.get",
+            Self::VaultCodeCacheReuse => "vault.code.cache.reuse",
             Self::VaultCodeSnapshotsIngest => "vault.code.snapshots.ingest",
             Self::VaultCodeSnapshotsGet => "vault.code.snapshots.get",
             Self::VaultCodeSnapshotsRead => "vault.code.snapshots.read",
@@ -2550,6 +2601,12 @@ impl AgentVerb {
             Self::VaultCalendarRead => "vault.calendar.read",
             Self::VaultCalendarSearch => "vault.calendar.search",
             Self::VaultCalendarFreebusy => "vault.calendar.freebusy",
+            Self::VaultCalendarPrep => "vault.calendar.prep",
+            Self::VaultCalendarEventOutcome => "vault.calendar.event_outcome",
+            Self::VaultCalendarCheckInDue => "vault.calendar.check_in.due",
+            Self::VaultCalendarCheckInAnswer => "vault.calendar.check_in.answer",
+            Self::VaultCalendarOutcomePolicyGet => "vault.calendar.outcome_policy.get",
+            Self::VaultCalendarOutcomePolicySet => "vault.calendar.outcome_policy.set",
             Self::VaultCalendarTranscriptIngest => "vault.calendar.transcript.ingest",
             Self::VaultClaimsList => "vault.claims.list",
             Self::VaultClaimsDemote => "vault.claims.demote",
@@ -2844,6 +2901,12 @@ impl AgentVerb {
                 | Self::VaultAffectWellnessPolicyConfigure
                 | Self::VaultAffectWellnessDerive
                 | Self::VaultAffectWellnessGet
+                | Self::VaultCluster
+                | Self::VaultClusterProposal
+                | Self::VaultClusterPropose
+                | Self::VaultClusterMerge
+                | Self::VaultClusterSplit
+                | Self::VaultClusterResolveProposal
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
                 | Self::VaultRetrievalRun
@@ -3255,6 +3318,13 @@ impl AgentVerb {
                 | Self::VaultCodeCheckoutPublish
                 | Self::VaultCodeCheckoutSettle
                 | Self::VaultCodeCheckoutTeardown
+                | Self::VaultCodeViewsMaterialize
+                | Self::VaultCodeViewsGet
+                | Self::VaultCodeViewsRead
+                | Self::VaultCodeViewsAction
+                | Self::VaultCodeViewsBuild
+                | Self::VaultCodeCacheGet
+                | Self::VaultCodeCacheReuse
                 | Self::VaultCodeSnapshotsIngest
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
@@ -3438,6 +3508,12 @@ impl AgentVerb {
                 | Self::VaultCalendarRead
                 | Self::VaultCalendarSearch
                 | Self::VaultCalendarFreebusy
+                | Self::VaultCalendarPrep
+                | Self::VaultCalendarEventOutcome
+                | Self::VaultCalendarCheckInDue
+                | Self::VaultCalendarCheckInAnswer
+                | Self::VaultCalendarOutcomePolicyGet
+                | Self::VaultCalendarOutcomePolicySet
                 | Self::VaultCalendarTranscriptIngest
                 | Self::VaultClaimsList
                 | Self::VaultClaimsDemote
@@ -3776,6 +3852,12 @@ impl AgentVerb {
                 | Self::VaultAffectWellnessPolicyConfigure
                 | Self::VaultAffectWellnessDerive
                 | Self::VaultAffectWellnessGet
+                | Self::VaultCluster
+                | Self::VaultClusterProposal
+                | Self::VaultClusterPropose
+                | Self::VaultClusterMerge
+                | Self::VaultClusterSplit
+                | Self::VaultClusterResolveProposal
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
                 | Self::VaultRetrievalRun
@@ -4187,6 +4269,13 @@ impl AgentVerb {
                 | Self::VaultCodeCheckoutPublish
                 | Self::VaultCodeCheckoutSettle
                 | Self::VaultCodeCheckoutTeardown
+                | Self::VaultCodeViewsMaterialize
+                | Self::VaultCodeViewsGet
+                | Self::VaultCodeViewsRead
+                | Self::VaultCodeViewsAction
+                | Self::VaultCodeViewsBuild
+                | Self::VaultCodeCacheGet
+                | Self::VaultCodeCacheReuse
                 | Self::VaultCodeSnapshotsIngest
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
@@ -4370,6 +4459,12 @@ impl AgentVerb {
                 | Self::VaultCalendarRead
                 | Self::VaultCalendarSearch
                 | Self::VaultCalendarFreebusy
+                | Self::VaultCalendarPrep
+                | Self::VaultCalendarEventOutcome
+                | Self::VaultCalendarCheckInDue
+                | Self::VaultCalendarCheckInAnswer
+                | Self::VaultCalendarOutcomePolicyGet
+                | Self::VaultCalendarOutcomePolicySet
                 | Self::VaultCalendarTranscriptIngest
                 | Self::VaultClaimsList
                 | Self::VaultClaimsDemote
@@ -4667,6 +4762,8 @@ impl AgentVerb {
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
                 | Self::VaultAffectAnnotationsPut
+                | Self::VaultCluster
+                | Self::VaultClusterProposal
                 | Self::SelfCredentialAttenuate
                 | Self::VaultScopePosition
                 | Self::VaultScopeCeiling
@@ -4681,6 +4778,8 @@ impl AgentVerb {
                 | Self::VaultCalendarRead
                 | Self::VaultCalendarSearch
                 | Self::VaultCalendarFreebusy
+                | Self::VaultCalendarPrep
+                | Self::VaultCalendarEventOutcome
                 | Self::VaultClaimsList
                 | Self::VaultClaimsListFiltered
                 | Self::VaultClaimsReadFiltered
@@ -4796,6 +4895,10 @@ impl AgentVerb {
                 | Self::VaultAffectWellnessPolicyConfigure
                 | Self::VaultAffectWellnessDerive
                 | Self::VaultAffectWellnessGet
+                | Self::VaultClusterPropose
+                | Self::VaultClusterMerge
+                | Self::VaultClusterSplit
+                | Self::VaultClusterResolveProposal
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
                 | Self::VaultRetrievalRun
@@ -5200,6 +5303,13 @@ impl AgentVerb {
                 | Self::VaultCodeCheckoutPublish
                 | Self::VaultCodeCheckoutSettle
                 | Self::VaultCodeCheckoutTeardown
+                | Self::VaultCodeViewsMaterialize
+                | Self::VaultCodeViewsGet
+                | Self::VaultCodeViewsRead
+                | Self::VaultCodeViewsAction
+                | Self::VaultCodeViewsBuild
+                | Self::VaultCodeCacheGet
+                | Self::VaultCodeCacheReuse
                 | Self::VaultCodeSnapshotsIngest
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
@@ -5396,6 +5506,10 @@ impl AgentVerb {
                 | Self::VaultCalendarCreate
                 | Self::VaultCalendarIcsImport
                 | Self::VaultCalendarInstancesMove
+                | Self::VaultCalendarCheckInDue
+                | Self::VaultCalendarCheckInAnswer
+                | Self::VaultCalendarOutcomePolicyGet
+                | Self::VaultCalendarOutcomePolicySet
                 | Self::VaultCalendarTranscriptIngest
                 | Self::VaultClaimsDemote
                 | Self::VaultDelete
@@ -5622,6 +5736,10 @@ impl AgentVerb {
                 | Self::VaultAffectCopingUpdate
                 | Self::VaultAffectWellnessPolicyConfigure
                 | Self::VaultAffectWellnessDerive
+                | Self::VaultClusterPropose
+                | Self::VaultClusterMerge
+                | Self::VaultClusterSplit
+                | Self::VaultClusterResolveProposal
                 | Self::VaultRetrievalOutcomesPut
                 | Self::VaultRetrievalOutcomesEnd
                 | Self::VaultAssetsIngest
@@ -5876,6 +5994,9 @@ impl AgentVerb {
                 | Self::VaultCodeCheckoutPublish
                 | Self::VaultCodeCheckoutSettle
                 | Self::VaultCodeCheckoutTeardown
+                | Self::VaultCodeViewsMaterialize
+                | Self::VaultCodeViewsBuild
+                | Self::VaultCodeCacheReuse
                 | Self::VaultCodeSnapshotsIngest
                 | Self::VaultCodeMergeQueueEnqueue
                 | Self::VaultCodeMergeQueueStage
@@ -5990,6 +6111,8 @@ impl AgentVerb {
                 | Self::VaultCalendarCreate
                 | Self::VaultCalendarIcsImport
                 | Self::VaultCalendarInstancesMove
+                | Self::VaultCalendarCheckInAnswer
+                | Self::VaultCalendarOutcomePolicySet
                 | Self::VaultCalendarTranscriptIngest
                 | Self::VaultClaimsDemote
                 | Self::VaultDelete
@@ -6102,6 +6225,7 @@ impl AgentVerb {
                 | Self::TasksCreate
                 | Self::VaultClaimsUpsert
                 | Self::VaultAffectAnnotationsPut
+                | Self::VaultClusterPropose
                 | Self::VaultGatePolicyPropose
                 | Self::VaultLensesPropose
                 | Self::VaultDisclosureOffer
@@ -6239,6 +6363,12 @@ impl AgentVerb {
             Self::VaultAffectWellnessPolicyConfigure => &["spec"],
             Self::VaultAffectWellnessDerive => &["spec"],
             Self::VaultAffectWellnessGet => &["spec"],
+            Self::VaultCluster => &["spec"],
+            Self::VaultClusterProposal => &["spec"],
+            Self::VaultClusterPropose => &["spec"],
+            Self::VaultClusterMerge => &["spec"],
+            Self::VaultClusterSplit => &["spec"],
+            Self::VaultClusterResolveProposal => &["spec"],
             Self::VaultRetrievalRecall => &["spec"],
             Self::VaultRetrievalRuns => &["spec"],
             Self::VaultRetrievalRun => &["spec"],
@@ -6650,6 +6780,13 @@ impl AgentVerb {
             Self::VaultCodeCheckoutPublish => &["spec"],
             Self::VaultCodeCheckoutSettle => &["spec"],
             Self::VaultCodeCheckoutTeardown => &["spec"],
+            Self::VaultCodeViewsMaterialize => &["spec"],
+            Self::VaultCodeViewsGet => &["spec"],
+            Self::VaultCodeViewsRead => &["spec"],
+            Self::VaultCodeViewsAction => &["spec"],
+            Self::VaultCodeViewsBuild => &["spec"],
+            Self::VaultCodeCacheGet => &["spec"],
+            Self::VaultCodeCacheReuse => &["spec"],
             Self::VaultCodeSnapshotsIngest => &["spec"],
             Self::VaultCodeSnapshotsGet => &["spec"],
             Self::VaultCodeSnapshotsRead => &["spec"],
@@ -6853,6 +6990,12 @@ impl AgentVerb {
             Self::VaultCalendarRead => &["spec"],
             Self::VaultCalendarSearch => &["spec"],
             Self::VaultCalendarFreebusy => &["spec"],
+            Self::VaultCalendarPrep => &["spec"],
+            Self::VaultCalendarEventOutcome => &["spec"],
+            Self::VaultCalendarCheckInDue => &["spec"],
+            Self::VaultCalendarCheckInAnswer => &["spec"],
+            Self::VaultCalendarOutcomePolicyGet => &["spec"],
+            Self::VaultCalendarOutcomePolicySet => &["spec"],
             Self::VaultCalendarTranscriptIngest => &["spec"],
             Self::VaultClaimsList => &["spec"],
             Self::VaultClaimsDemote => &["spec"],
@@ -7145,6 +7288,12 @@ impl AgentVerb {
             Self::VaultAffectWellnessPolicyConfigure => &["spec"],
             Self::VaultAffectWellnessDerive => &["spec"],
             Self::VaultAffectWellnessGet => &["spec"],
+            Self::VaultCluster => &["spec"],
+            Self::VaultClusterProposal => &["spec"],
+            Self::VaultClusterPropose => &["spec"],
+            Self::VaultClusterMerge => &["spec"],
+            Self::VaultClusterSplit => &["spec"],
+            Self::VaultClusterResolveProposal => &["spec"],
             Self::VaultRetrievalRecall => &["spec"],
             Self::VaultRetrievalRuns => &["spec"],
             Self::VaultRetrievalRun => &["spec"],
@@ -7556,6 +7705,13 @@ impl AgentVerb {
             Self::VaultCodeCheckoutPublish => &["spec"],
             Self::VaultCodeCheckoutSettle => &["spec"],
             Self::VaultCodeCheckoutTeardown => &["spec"],
+            Self::VaultCodeViewsMaterialize => &["spec"],
+            Self::VaultCodeViewsGet => &["spec"],
+            Self::VaultCodeViewsRead => &["spec"],
+            Self::VaultCodeViewsAction => &["spec"],
+            Self::VaultCodeViewsBuild => &["spec"],
+            Self::VaultCodeCacheGet => &["spec"],
+            Self::VaultCodeCacheReuse => &["spec"],
             Self::VaultCodeSnapshotsIngest => &["spec"],
             Self::VaultCodeSnapshotsGet => &["spec"],
             Self::VaultCodeSnapshotsRead => &["spec"],
@@ -7759,6 +7915,12 @@ impl AgentVerb {
             Self::VaultCalendarRead => &["spec"],
             Self::VaultCalendarSearch => &["spec"],
             Self::VaultCalendarFreebusy => &["spec"],
+            Self::VaultCalendarPrep => &["spec"],
+            Self::VaultCalendarEventOutcome => &["spec"],
+            Self::VaultCalendarCheckInDue => &["spec"],
+            Self::VaultCalendarCheckInAnswer => &["spec"],
+            Self::VaultCalendarOutcomePolicyGet => &["spec"],
+            Self::VaultCalendarOutcomePolicySet => &["spec"],
             Self::VaultCalendarTranscriptIngest => &["spec"],
             Self::VaultClaimsList => &["spec"],
             Self::VaultClaimsDemote => &["spec"],
@@ -8247,6 +8409,24 @@ impl AgentVerb {
             }
             Self::VaultAffectWellnessGet => {
                 "Reads one person's measured wellness state, configured advisory mode and coping aggregates with source refs, without refreshing or revising factual claims."
+            }
+            Self::VaultCluster => {
+                "Proposes deterministic complete-link cohorts from readable stored claims and supplied embeddings; exact subject, predicate-root, world and facet partitions never decide truth."
+            }
+            Self::VaultClusterProposal => {
+                "Inspects a parked merge or split, its original evidence, current resolution and revision for a gated ruling; every reference must remain readable."
+            }
+            Self::VaultClusterPropose => {
+                "Parks an explicit merge or split judgment with zero topology effects, under the caller's own owner proof or topology_seal Grant."
+            }
+            Self::VaultClusterMerge => {
+                "Applies a merge judgment through the existing topology gate, preserving claim subjects and recording its redirect shells, evidence and receipt."
+            }
+            Self::VaultClusterSplit => {
+                "Applies a split judgment through the existing topology gate, including zero-head retirement, evidence-guided reassignment and explicit residue."
+            }
+            Self::VaultClusterResolveProposal => {
+                "Approves, amends then approves, or rejects a parked merge or split under the caller's own authority, comparing its revision and recording the ruling atomically."
             }
             Self::VaultRetrievalRecall => {
                 "Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle."
@@ -9455,6 +9635,27 @@ impl AgentVerb {
             Self::VaultCodeCheckoutTeardown => {
                 "Collect the caller's checkout only with a matching durable pushed-head receipt and clear custody; retain dirty or uncertain trees."
             }
+            Self::VaultCodeViewsMaterialize => {
+                "Materialize a private linked working view from verified tested file frontiers in the authenticated owner account."
+            }
+            Self::VaultCodeViewsGet => {
+                "Read one working view and its immutable tested base under the authenticated owner account."
+            }
+            Self::VaultCodeViewsRead => {
+                "Read the current bytes of one selected input in the authenticated owner working view."
+            }
+            Self::VaultCodeViewsAction => {
+                "Freeze current view input identities and return the REAPI action digest with its exact command bytes and input root digest."
+            }
+            Self::VaultCodeViewsBuild => {
+                "Run a pinned native owner build or verify leg, reusing clean account-local results and retaining secret-consuming exhaust as tainted."
+            }
+            Self::VaultCodeCacheGet => {
+                "Read one clean immutable account-local build result by action key without executing a command."
+            }
+            Self::VaultCodeCacheReuse => {
+                "Reuse an authorized clean action result into another matching working view without dispatching a cold build."
+            }
             Self::VaultCodeSnapshotsIngest => {
                 "Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt."
             }
@@ -10012,8 +10213,26 @@ impl AgentVerb {
             Self::VaultCalendarFreebusy => {
                 "Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt."
             }
+            Self::VaultCalendarPrep => {
+                "Builds a fresh caller-scoped meeting PrepPack with commitments first and a 250-word ceiling, or deliberately returns no pack."
+            }
+            Self::VaultCalendarEventOutcome => {
+                "Reads the caller-visible meeting outcome and its recorded basis; silence projects to unknown and never to held or no_show."
+            }
+            Self::VaultCalendarCheckInDue => {
+                "Observes whether a meeting check-in is due under owner proof, live evidence and the engine clock, without advancing time or recording an outcome."
+            }
+            Self::VaultCalendarCheckInAnswer => {
+                "The owner answers a due check-in as held, no_show or rescheduled; the caller cannot assert machine evidence or replace it."
+            }
+            Self::VaultCalendarOutcomePolicyGet => {
+                "Reads the owner-configured post-meeting grace policy, including the default 1800 seconds when no override exists."
+            }
+            Self::VaultCalendarOutcomePolicySet => {
+                "Sets the post-meeting grace in real seconds under owner proof, without changing event times or minting attendance evidence."
+            }
             Self::VaultCalendarTranscriptIngest => {
-                "Ingests an uploaded UTF-8 transcript as the caller, retaining source labels and atomically closing its SESSION with ordered TURNs and extraction wake receipts."
+                "Ingests verified uploaded UTF-8 transcript bytes as a closed SESSION with ordered TURNs; an optional meeting link earns a machine outcome through the caller gate."
             }
             Self::VaultClaimsList => {
                 "Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt."

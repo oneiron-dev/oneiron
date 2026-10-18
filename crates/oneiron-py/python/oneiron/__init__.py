@@ -444,6 +444,9 @@ class Oneiron:
         def tagging(self) -> "Oneiron._VaultTaggingVerbs":
             return Oneiron._VaultTaggingVerbs(self._client)
         @property
+        def cluster(self) -> "Oneiron._VaultClusterVerbs":
+            return Oneiron._VaultClusterVerbs(self._client)
+        @property
         def export(self) -> "Oneiron._VaultExportVerbs":
             return Oneiron._VaultExportVerbs(self._client)
         @property
@@ -1145,6 +1148,27 @@ class Oneiron:
         def mentions(self, spec):
             """Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller."""
             return json.loads(_translate(lambda: self._client.vault_tagging_mentions(json.dumps(spec))))
+    class _VaultClusterVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Proposes deterministic complete-link cohorts from readable stored claims and supplied embeddings; exact subject, predicate-root, world and facet partitions never decide truth."""
+            return json.loads(_translate(lambda: self._client.vault_cluster(json.dumps(spec))))
+        def proposal(self, spec):
+            """Inspects a parked merge or split, its original evidence, current resolution and revision for a gated ruling; every reference must remain readable."""
+            return json.loads(_translate(lambda: self._client.vault_cluster_proposal(json.dumps(spec))))
+        def propose(self, spec):
+            """Parks an explicit merge or split judgment with zero topology effects, under the caller's own owner proof or topology_seal Grant."""
+            return json.loads(_translate(lambda: self._client.vault_cluster_propose(json.dumps(spec))))
+        def merge(self, spec):
+            """Applies a merge judgment through the existing topology gate, preserving claim subjects and recording its redirect shells, evidence and receipt."""
+            return json.loads(_translate(lambda: self._client.vault_cluster_merge(json.dumps(spec))))
+        def split(self, spec):
+            """Applies a split judgment through the existing topology gate, including zero-head retirement, evidence-guided reassignment and explicit residue."""
+            return json.loads(_translate(lambda: self._client.vault_cluster_split(json.dumps(spec))))
+        def resolve_proposal(self, spec):
+            """Approves, amends then approves, or rejects a parked merge or split under the caller's own authority, comparing its revision and recording the ruling atomically."""
+            return json.loads(_translate(lambda: self._client.vault_cluster_resolve_proposal(json.dumps(spec))))
     class _VaultExportVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2949,6 +2973,12 @@ class Oneiron:
         def checkout(self) -> "Oneiron._VaultCodeCheckoutVerbs":
             return Oneiron._VaultCodeCheckoutVerbs(self._client)
         @property
+        def views(self) -> "Oneiron._VaultCodeViewsVerbs":
+            return Oneiron._VaultCodeViewsVerbs(self._client)
+        @property
+        def cache(self) -> "Oneiron._VaultCodeCacheVerbs":
+            return Oneiron._VaultCodeCacheVerbs(self._client)
+        @property
         def snapshots(self) -> "Oneiron._VaultCodeSnapshotsVerbs":
             return Oneiron._VaultCodeSnapshotsVerbs(self._client)
         @property
@@ -3026,6 +3056,33 @@ class Oneiron:
         def teardown(self, spec):
             """Collect the caller's checkout only with a matching durable pushed-head receipt and clear custody; retain dirty or uncertain trees."""
             return json.loads(_translate(lambda: self._client.vault_code_checkout_teardown(json.dumps(spec))))
+    class _VaultCodeViewsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def materialize(self, spec):
+            """Materialize a private linked working view from verified tested file frontiers in the authenticated owner account."""
+            return json.loads(_translate(lambda: self._client.vault_code_views_materialize(json.dumps(spec))))
+        def get(self, spec):
+            """Read one working view and its immutable tested base under the authenticated owner account."""
+            return json.loads(_translate(lambda: self._client.vault_code_views_get(json.dumps(spec))))
+        def read(self, spec):
+            """Read the current bytes of one selected input in the authenticated owner working view."""
+            return json.loads(_translate(lambda: self._client.vault_code_views_read(json.dumps(spec))))
+        def action(self, spec):
+            """Freeze current view input identities and return the REAPI action digest with its exact command bytes and input root digest."""
+            return json.loads(_translate(lambda: self._client.vault_code_views_action(json.dumps(spec))))
+        def build(self, spec):
+            """Run a pinned native owner build or verify leg, reusing clean account-local results and retaining secret-consuming exhaust as tainted."""
+            return json.loads(_translate(lambda: self._client.vault_code_views_build(json.dumps(spec))))
+    class _VaultCodeCacheVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """Read one clean immutable account-local build result by action key without executing a command."""
+            return json.loads(_translate(lambda: self._client.vault_code_cache_get(json.dumps(spec))))
+        def reuse(self, spec):
+            """Reuse an authorized clean action result into another matching working view without dispatching a cold build."""
+            return json.loads(_translate(lambda: self._client.vault_code_cache_reuse(json.dumps(spec))))
     class _VaultCodeSnapshotsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3515,6 +3572,18 @@ class Oneiron:
         def freebusy(self, spec):
             """Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt."""
             return json.loads(_translate(lambda: self._client.vault_calendar_freebusy(json.dumps(spec))))
+        def prep(self, spec):
+            """Builds a fresh caller-scoped meeting PrepPack with commitments first and a 250-word ceiling, or deliberately returns no pack."""
+            return json.loads(_translate(lambda: self._client.vault_calendar_prep(json.dumps(spec))))
+        def event_outcome(self, spec):
+            """Reads the caller-visible meeting outcome and its recorded basis; silence projects to unknown and never to held or no_show."""
+            return json.loads(_translate(lambda: self._client.vault_calendar_event_outcome(json.dumps(spec))))
+        @property
+        def check_in(self) -> "Oneiron._VaultCalendarCheckInVerbs":
+            return Oneiron._VaultCalendarCheckInVerbs(self._client)
+        @property
+        def outcome_policy(self) -> "Oneiron._VaultCalendarOutcomePolicyVerbs":
+            return Oneiron._VaultCalendarOutcomePolicyVerbs(self._client)
         @property
         def transcript(self) -> "Oneiron._VaultCalendarTranscriptVerbs":
             return Oneiron._VaultCalendarTranscriptVerbs(self._client)
@@ -3539,11 +3608,29 @@ class Oneiron:
         def move(self, spec):
             """The owner applies one uploaded detached-instance amendment matching its UID, original start and new interval, through the import gate without changing other instances."""
             return json.loads(_translate(lambda: self._client.vault_calendar_instances_move(json.dumps(spec))))
+    class _VaultCalendarCheckInVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def due(self, spec):
+            """Observes whether a meeting check-in is due under owner proof, live evidence and the engine clock, without advancing time or recording an outcome."""
+            return json.loads(_translate(lambda: self._client.vault_calendar_check_in_due(json.dumps(spec))))
+        def answer(self, spec):
+            """The owner answers a due check-in as held, no_show or rescheduled; the caller cannot assert machine evidence or replace it."""
+            return json.loads(_translate(lambda: self._client.vault_calendar_check_in_answer(json.dumps(spec))))
+    class _VaultCalendarOutcomePolicyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec=None):
+            """Reads the owner-configured post-meeting grace policy, including the default 1800 seconds when no override exists."""
+            return json.loads(_translate(lambda: self._client.vault_calendar_outcome_policy_get(json.dumps({} if spec is None else spec))))
+        def set(self, spec):
+            """Sets the post-meeting grace in real seconds under owner proof, without changing event times or minting attendance evidence."""
+            return json.loads(_translate(lambda: self._client.vault_calendar_outcome_policy_set(json.dumps(spec))))
     class _VaultCalendarTranscriptVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def ingest(self, spec):
-            """Ingests an uploaded UTF-8 transcript as the caller, retaining source labels and atomically closing its SESSION with ordered TURNs and extraction wake receipts."""
+            """Ingests verified uploaded UTF-8 transcript bytes as a closed SESSION with ordered TURNs; an optional meeting link earns a machine outcome through the caller gate."""
             return json.loads(_translate(lambda: self._client.vault_calendar_transcript_ingest(json.dumps(spec))))
     class _VaultWritesVerbs:
         def __init__(self, client: _NativeClient) -> None:

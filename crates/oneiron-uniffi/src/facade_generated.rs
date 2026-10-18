@@ -507,6 +507,36 @@ export_facade! {
     let output = client.vault_affect_wellness_get(&input)?;
     crate::codec::lift_record("vault.affect.wellness.get", &output)
 };
+"vault.cluster" => fn vault_cluster(&self, input: ClusterRequest) -> ScopedReadResultClusterProposal = |client| {
+    let input: oneiron::memory::clustering::ClusterRequest = crate::codec::lower_record("vault.cluster", input)?;
+    let output = client.vault_cluster(&input)?;
+    crate::codec::lift_record("vault.cluster", &output)
+};
+"vault.cluster.proposal" => fn vault_cluster_proposal(&self, input: ClusterProposalRequest) -> ScopedReadResultClusterProposalView = |client| {
+    let input: oneiron::memory::clustering::ClusterProposalRequest = crate::codec::lower_record("vault.cluster.proposal", input)?;
+    let output = client.vault_cluster_proposal(&input)?;
+    crate::codec::lift_record("vault.cluster.proposal", &output)
+};
+"vault.cluster.propose" => fn vault_cluster_propose(&self, input: ClusterProposeRequest) -> ClusterTopologyReceipt = |client| {
+    let input: oneiron::memory::clustering::ClusterProposeRequest = crate::codec::lower_record("vault.cluster.propose", input)?;
+    let output = client.vault_cluster_propose(&input)?;
+    crate::codec::lift_record("vault.cluster.propose", &output)
+};
+"vault.cluster.merge" => fn vault_cluster_merge(&self, input: ClusterMergeRequest) -> ClusterTopologyReceipt = |client| {
+    let input: oneiron::memory::clustering::ClusterMergeRequest = crate::codec::lower_record("vault.cluster.merge", input)?;
+    let output = client.vault_cluster_merge(&input)?;
+    crate::codec::lift_record("vault.cluster.merge", &output)
+};
+"vault.cluster.split" => fn vault_cluster_split(&self, input: ClusterSplitRequest) -> ClusterTopologyReceipt = |client| {
+    let input: oneiron::memory::clustering::ClusterSplitRequest = crate::codec::lower_record("vault.cluster.split", input)?;
+    let output = client.vault_cluster_split(&input)?;
+    crate::codec::lift_record("vault.cluster.split", &output)
+};
+"vault.cluster.resolve_proposal" => fn vault_cluster_resolve_proposal(&self, input: ClusterResolveRequest) -> ClusterTopologyReceipt = |client| {
+    let input: oneiron::memory::clustering::ClusterResolveRequest = crate::codec::lower_record("vault.cluster.resolve_proposal", input)?;
+    let output = client.vault_cluster_resolve_proposal(&input)?;
+    crate::codec::lift_record("vault.cluster.resolve_proposal", &output)
+};
 "vault.retrieval.recall" => fn vault_retrieval_recall(&self, input: RecallRequest) -> MemoryPack = |client| {
     let input: oneiron::task_verb::sdk::RecallRequest = crate::codec::lower_record("vault.retrieval.recall", input)?;
     let output = client.vault_retrieval_recall(&input)?;
@@ -2561,6 +2591,41 @@ export_facade! {
     let output = client.vault_code_checkout_teardown(&input)?;
     crate::codec::lift_record("vault.code.checkout.teardown", &output)
 };
+"vault.code.views.materialize" => fn vault_code_views_materialize(&self, input: CodeViewMaterializeRequest) -> CodeWorkingView = |client| {
+    let input: oneiron::memory::code_view_doors::CodeViewMaterializeRequest = crate::codec::lower_record("vault.code.views.materialize", input)?;
+    let output = client.vault_code_views_materialize(&input)?;
+    crate::codec::lift_record("vault.code.views.materialize", &output)
+};
+"vault.code.views.get" => fn vault_code_views_get(&self, input: CodeViewRequest) -> CodeWorkingView = |client| {
+    let input: oneiron::memory::code_view_doors::CodeViewRequest = crate::codec::lower_record("vault.code.views.get", input)?;
+    let output = client.vault_code_views_get(&input)?;
+    crate::codec::lift_record("vault.code.views.get", &output)
+};
+"vault.code.views.read" => fn vault_code_views_read(&self, input: CodeViewReadRequest) -> CodeViewFileBytes = |client| {
+    let input: oneiron::memory::code_view_doors::CodeViewReadRequest = crate::codec::lower_record("vault.code.views.read", input)?;
+    let output = client.vault_code_views_read(&input)?;
+    crate::codec::lift_record("vault.code.views.read", &output)
+};
+"vault.code.views.action" => fn vault_code_views_action(&self, input: CodeViewActionRequest) -> CodeViewAction = |client| {
+    let input: oneiron::memory::code_view_doors::CodeViewActionRequest = crate::codec::lower_record("vault.code.views.action", input)?;
+    let output = client.vault_code_views_action(&input)?;
+    crate::codec::lift_record("vault.code.views.action", &output)
+};
+"vault.code.views.build" => fn vault_code_views_build(&self, input: CodeViewBuildRequest) -> CodeCacheOutcome = |client| {
+    let input: oneiron::memory::code_view_doors::CodeViewBuildRequest = crate::codec::lower_record("vault.code.views.build", input)?;
+    let output = client.vault_code_views_build(&input)?;
+    crate::codec::lift_record("vault.code.views.build", &output)
+};
+"vault.code.cache.get" => fn vault_code_cache_get(&self, input: CodeCacheReadRequest) -> CodeCacheOutcome = |client| {
+    let input: oneiron::memory::code_view_doors::CodeCacheReadRequest = crate::codec::lower_record("vault.code.cache.get", input)?;
+    let output = client.vault_code_cache_get(&input)?;
+    crate::codec::lift_record("vault.code.cache.get", &output)
+};
+"vault.code.cache.reuse" => fn vault_code_cache_reuse(&self, input: CodeViewBuildRequest) -> CodeCacheOutcome = |client| {
+    let input: oneiron::memory::code_view_doors::CodeViewBuildRequest = crate::codec::lower_record("vault.code.cache.reuse", input)?;
+    let output = client.vault_code_cache_reuse(&input)?;
+    crate::codec::lift_record("vault.code.cache.reuse", &output)
+};
 "vault.code.snapshots.ingest" => fn vault_code_snapshots_ingest(&self, input: CodeSnapshotIngestRequest) -> CodeSnapshotView = |client| {
     let input: oneiron::memory::codebase_doors::CodeSnapshotIngestRequest = crate::codec::lower_record("vault.code.snapshots.ingest", input)?;
     let output = client.vault_code_snapshots_ingest(&input)?;
@@ -3475,6 +3540,36 @@ export_facade! {
     let input: oneiron::task_verb::sdk::CalendarFreebusyRequest = crate::codec::lower_record("vault.calendar.freebusy", input)?;
     let output = client.vault_calendar_freebusy(&input)?;
     crate::codec::lift_record("vault.calendar.freebusy", &output)
+};
+"vault.calendar.prep" => fn vault_calendar_prep(&self, input: CalendarMeetingRequest) -> ScopedReadResultOptionalPrepPack = |client| {
+    let input: oneiron::calendar::meeting::CalendarMeetingRequest = crate::codec::lower_record("vault.calendar.prep", input)?;
+    let output = client.vault_calendar_prep(&input)?;
+    crate::codec::lift_record("vault.calendar.prep", &output)
+};
+"vault.calendar.event_outcome" => fn vault_calendar_event_outcome(&self, input: CalendarMeetingRequest) -> ScopedReadResultOptionalCalendarEventOutcome = |client| {
+    let input: oneiron::calendar::meeting::CalendarMeetingRequest = crate::codec::lower_record("vault.calendar.event_outcome", input)?;
+    let output = client.vault_calendar_event_outcome(&input)?;
+    crate::codec::lift_record("vault.calendar.event_outcome", &output)
+};
+"vault.calendar.check_in.due" => fn vault_calendar_check_in_due(&self, input: CalendarMeetingRequest) -> ScopedReadResultOptionalCalendarCheckInDue = |client| {
+    let input: oneiron::calendar::meeting::CalendarMeetingRequest = crate::codec::lower_record("vault.calendar.check_in.due", input)?;
+    let output = client.vault_calendar_check_in_due(&input)?;
+    crate::codec::lift_record("vault.calendar.check_in.due", &output)
+};
+"vault.calendar.check_in.answer" => fn vault_calendar_check_in_answer(&self, input: CalendarCheckInRequest) -> CalendarCheckInReceipt = |client| {
+    let input: oneiron::calendar::meeting::CalendarCheckInRequest = crate::codec::lower_record("vault.calendar.check_in.answer", input)?;
+    let output = client.vault_calendar_check_in_answer(&input)?;
+    crate::codec::lift_record("vault.calendar.check_in.answer", &output)
+};
+"vault.calendar.outcome_policy.get" => fn vault_calendar_outcome_policy_get(&self) -> CalendarOutcomePolicy = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.calendar.outcome_policy.get")?;
+    let output = client.vault_calendar_outcome_policy_get(&input)?;
+    crate::codec::lift_record("vault.calendar.outcome_policy.get", &output)
+};
+"vault.calendar.outcome_policy.set" => fn vault_calendar_outcome_policy_set(&self, input: CalendarOutcomePolicy) -> CalendarOutcomePolicy = |client| {
+    let input: oneiron::calendar::meeting::CalendarOutcomePolicy = crate::codec::lower_record("vault.calendar.outcome_policy.set", input)?;
+    let output = client.vault_calendar_outcome_policy_set(&input)?;
+    crate::codec::lift_record("vault.calendar.outcome_policy.set", &output)
 };
 "vault.calendar.transcript.ingest" => fn vault_calendar_transcript_ingest(&self, input: TranscriptFileDropInput) -> TranscriptIngestOutcome = |client| {
     let input: oneiron::calendar::transcript::TranscriptFileDropInput = crate::codec::lower_record("vault.calendar.transcript.ingest", input)?;

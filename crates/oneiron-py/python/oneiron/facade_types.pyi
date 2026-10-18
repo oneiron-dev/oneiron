@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 879 facade rows, 3028 declarations.
-Inputs: 825 of 879 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 795 of 879 fully typed, 84 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 898 facade rows, 3083 declarations.
+Inputs: 844 of 898 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 814 of 898 fully typed, 84 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 102; unread shapes: 0.
 """
 
@@ -2526,6 +2526,87 @@ class WellnessProjection(TypedDict):
     coping: CopingAggregate
     source_refs: list[str]
     receipt_ref: NotRequired[str | None]
+class ClusterClaimInput(TypedDict):
+    claim_ref: str
+    embedding: list[float]
+class ClusterRequest(TypedDict):
+    claims: list[ClusterClaimInput]
+    cohesion_threshold: NotRequired[float | None]
+class ClusterPartition(TypedDict):
+    subject_ref: str
+    predicate_root: str
+    world_ref: NotRequired[str | None]
+    facet_ref: NotRequired[str | None]
+class ClusterCohort(TypedDict):
+    cohort_id: list[int]
+    partition: ClusterPartition
+    member_refs: list[str]
+    cohesion: float
+class ClusterProposal(TypedDict):
+    cohorts: list[ClusterCohort]
+class ClusterProposalRequest(TypedDict):
+    proposal_ref: str
+class ClusterEvidence(TypedDict):
+    refs: list[str]
+    rationale: str
+ClusterSurvivorship = Literal["read_through"]
+class ClusterMerge(TypedDict):
+    sources: list[str]
+    survivor: str
+    evidence: ClusterEvidence
+    survivorship_plan: NotRequired[ClusterSurvivorship]
+class ClusterReassignmentTargetHead(TypedDict):
+    kind: Literal["head"]
+    entity_ref: str
+class ClusterReassignmentTargetResidue(TypedDict):
+    kind: Literal["residue"]
+ClusterReassignmentTarget = ClusterReassignmentTargetHead | ClusterReassignmentTargetResidue
+class ClusterReassignment(TypedDict):
+    item: str
+    target: ClusterReassignmentTarget
+class ClusterSplit(TypedDict):
+    entity: str
+    heads: list[str]
+    reassignment_map: list[ClusterReassignment]
+    evidence: ClusterEvidence
+class ClusterOperationMerge(ClusterMerge):
+    kind: Literal["merge"]
+class ClusterOperationSplit(ClusterSplit):
+    kind: Literal["split"]
+ClusterOperation = ClusterOperationMerge | ClusterOperationSplit
+ClusterTopologyOutcome = Literal["applied", "proposed", "approved_untouched", "approved_amended", "rejected"]
+class ClusterProposalView(TypedDict):
+    proposal_ref: str
+    operation: ClusterOperation
+    seen: list[int]
+    resolution: NotRequired[ClusterTopologyOutcome | None]
+    moot: bool
+class ClusterProposeRequest(TypedDict):
+    operation: ClusterOperation
+    grant_ref: NotRequired[str | None]
+class ClusterTopologyReceipt(TypedDict):
+    receipt_ref: str
+    proposal_ref: NotRequired[str | None]
+    outcome: ClusterTopologyOutcome
+class ClusterMergeRequest(TypedDict):
+    merge: ClusterMerge
+    grant_ref: NotRequired[str | None]
+class ClusterSplitRequest(TypedDict):
+    split: ClusterSplit
+    grant_ref: NotRequired[str | None]
+class ClusterRulingApprove(TypedDict):
+    verdict: Literal["approve"]
+class ClusterRulingAmendThenApprove(TypedDict):
+    verdict: Literal["amend_then_approve"]
+    operation: ClusterOperation
+class ClusterRulingReject(TypedDict):
+    verdict: Literal["reject"]
+ClusterRuling = ClusterRulingApprove | ClusterRulingAmendThenApprove | ClusterRulingReject
+class ClusterResolveRequest(TypedDict):
+    proposal_ref: str
+    seen: list[int]
+    ruling: ClusterRuling
+    grant_ref: NotRequired[str | None]
 class RetrievalRunsRequest(TypedDict):
     limit: NotRequired[int | None]
 RetrievalAction = Literal["pipeline", "context_pack", "vault_search", "graph_fs_coreutils", "speculative"]
@@ -9104,6 +9185,88 @@ class CheckoutTornDownRetained(TypedDict):
     epoch: int
     reason: CheckoutRetention
 CheckoutTornDown = CheckoutTornDownCollected | CheckoutTornDownRetained
+class VisibleFilePolicy(TypedDict):
+    version: int
+    include_prefixes: list[str]
+    exclude_prefixes: list[str]
+class CodeViewMaterializeRequest(TypedDict):
+    repo: EntityId
+    tested: EntityId
+    account: EntityId
+    policy: VisibleFilePolicy
+class CodeDocumentFrontier(TypedDict):
+    document_id: list[int]
+    repo: str
+    path: str
+    version: list[tuple[int, int]]
+    op_fold: list[int]
+    text_hash: list[int]
+class CodeViewFile(TypedDict):
+    path: str
+    content_hash_blake3: str
+    frontier: CodeDocumentFrontier
+    text_sha256: str
+class CodeWorkingView(TypedDict):
+    view: EntityId
+    repo: EntityId
+    base: EntityId
+    account: EntityId
+    fork_hash: str
+    files: list[CodeViewFile]
+    receipt: EntityId
+    host_path: str
+class CodeViewRequest(TypedDict):
+    view: EntityId
+    repo: EntityId
+    tested: EntityId
+    account: EntityId
+class CodeViewReadRequest(TypedDict):
+    view: CodeViewRequest
+    path: str
+class CodeViewFileBytes(TypedDict):
+    path: str
+    bytes: list[int]
+    sha256: str
+class CodeSecretTaintRef(TypedDict):
+    secret_ref: str
+    rotation_generation: int
+CodeBuildClass = Literal["build", "verify"]
+CodeBuildSpec = TypedDict("CodeBuildSpec", {"argv": list[str], "env_allowlist": dict[str, str], "platform": dict[str, str], "declared_outputs": list[str], "secret_taint_refs": list[CodeSecretTaintRef], "class": CodeBuildClass})
+class CodeViewActionRequest(TypedDict):
+    view: CodeViewRequest
+    spec: CodeBuildSpec
+class CodeActionDigest(TypedDict):
+    hash: str
+    size_bytes: int
+class CodeViewAction(TypedDict):
+    action_digest: CodeActionDigest
+    command_bytes: list[int]
+    input_root_digest: CodeActionDigest
+class CodeViewBuildRequest(TypedDict):
+    view: CodeViewRequest
+    spec: CodeBuildSpec
+    action_digest: CodeActionDigest
+CodeCacheState = Literal["hit", "miss", "denied"]
+class CodeBuildOutput(TypedDict):
+    artifact_ref: str
+    output_sha256: str
+class CodeBuildEntry(TypedDict):
+    action_digest: CodeActionDigest
+    account: EntityId
+    exit_code: int
+    outputs: dict[str, CodeBuildOutput]
+    stdout_ref: NotRequired[str | None]
+    stderr_ref: NotRequired[str | None]
+    secret_taint_refs: list[CodeSecretTaintRef]
+    reusable: bool
+    receipt: str
+class CodeCacheOutcome(TypedDict):
+    state: CodeCacheState
+    entry: NotRequired[CodeBuildEntry | None]
+    receipt: NotRequired[str | None]
+class CodeCacheReadRequest(TypedDict):
+    account: EntityId
+    action_digest: CodeActionDigest
 class CodeRepoPointer(TypedDict):
     local_folder: str
     commit: str
@@ -12398,10 +12561,61 @@ class CalendarFreebusyIntervalDto(TypedDict):
     start_utc: int
     end_utc: int
 CalendarFreebusyDto = list[CalendarFreebusyIntervalDto]
+class CalendarMeetingRequest(TypedDict):
+    event_ref: str
+PrepSectionKind = Literal["prior_commitment", "attendee_thread", "dossier_delta"]
+class PrepItem(TypedDict):
+    kind: PrepSectionKind
+    text: str
+    source_refs: list[str]
+    observed_at: int
+class PrepSection(TypedDict):
+    kind: PrepSectionKind
+    items: list[PrepItem]
+class PrepPack(TypedDict):
+    event_ref: str
+    built_at: int
+    sections: list[PrepSection]
+    word_count: int
+EventOutcome = Literal["held", "no_show", "cancelled_pre_start", "unknown"]
+EventOutcomeBasis = Literal["machine", "owner_attested"]
+class EventOutcomeClaimValue(TypedDict):
+    outcome: EventOutcome
+    basis: EventOutcomeBasis
+    recorded_at: int
+class CalendarEventOutcome(TypedDict):
+    event_ref: str
+    outcome: EventOutcome
+    claim: NotRequired[EventOutcomeClaimValue | None]
+class CalendarCheckInDue(TypedDict):
+    event_ref: str
+    observed_at: int
+    grace_secs: int
+    due_at: NotRequired[int | None]
+    due: bool
+    outcome: NotRequired[EventOutcomeClaimValue | None]
+CalendarCheckInAnswer = Literal["held", "no_show", "rescheduled"]
+class CalendarCheckInRequest(TypedDict):
+    event_ref: str
+    answer: CalendarCheckInAnswer
+class CalendarCheckInReceiptOutcome(TypedDict):
+    disposition: Literal["outcome"]
+    event_ref: str
+    claim_ref: str
+    value: EventOutcomeClaimValue
+class CalendarCheckInReceiptRescheduleRequested(TypedDict):
+    disposition: Literal["reschedule_requested"]
+    event_ref: str
+    claim_ref: str
+    value: EventOutcomeClaimValue
+CalendarCheckInReceipt = CalendarCheckInReceiptOutcome | CalendarCheckInReceiptRescheduleRequested
+class CalendarOutcomePolicy(TypedDict):
+    grace_secs: int
 class TranscriptFileDropInput(TypedDict):
     source_blob_ref: str
     decoded_text: str
     arrived_at_ms: int
+    event_ref: NotRequired[str | None]
 class TranscriptIngestOutcomeSession(TypedDict):
     outcome: Literal["session"]
     session_ref: EntityId

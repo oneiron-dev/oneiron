@@ -443,6 +443,8 @@ class Oneiron:
         @property
         def tagging(self) -> "Oneiron._VaultTaggingVerbs": ...
         @property
+        def cluster(self) -> "Oneiron._VaultClusterVerbs": ...
+        @property
         def export(self) -> "Oneiron._VaultExportVerbs": ...
         @property
         def scope(self) -> "Oneiron._VaultScopeVerbs": ...
@@ -879,6 +881,19 @@ class Oneiron:
             """Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome."""
         def mentions(self, spec: Facade.TaggingMentionsRequest) -> Facade.TaggingMentionsView:
             """Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller."""
+    class _VaultClusterVerbs:
+        def __call__(self, spec: Facade.ClusterRequest) -> Facade.ScopedReadResult[Facade.ClusterProposal]:
+            """Proposes deterministic complete-link cohorts from readable stored claims and supplied embeddings; exact subject, predicate-root, world and facet partitions never decide truth."""
+        def proposal(self, spec: Facade.ClusterProposalRequest) -> Facade.ScopedReadResult[Facade.ClusterProposalView]:
+            """Inspects a parked merge or split, its original evidence, current resolution and revision for a gated ruling; every reference must remain readable."""
+        def propose(self, spec: Facade.ClusterProposeRequest) -> Facade.ClusterTopologyReceipt:
+            """Parks an explicit merge or split judgment with zero topology effects, under the caller's own owner proof or topology_seal Grant."""
+        def merge(self, spec: Facade.ClusterMergeRequest) -> Facade.ClusterTopologyReceipt:
+            """Applies a merge judgment through the existing topology gate, preserving claim subjects and recording its redirect shells, evidence and receipt."""
+        def split(self, spec: Facade.ClusterSplitRequest) -> Facade.ClusterTopologyReceipt:
+            """Applies a split judgment through the existing topology gate, including zero-head retirement, evidence-guided reassignment and explicit residue."""
+        def resolve_proposal(self, spec: Facade.ClusterResolveRequest) -> Facade.ClusterTopologyReceipt:
+            """Approves, amends then approves, or rejects a parked merge or split under the caller's own authority, comparing its revision and recording the ruling atomically."""
     class _VaultExportVerbs:
         def __call__(self, format: PackFormat | None = None) -> dict[str, Any]: ...
         def scoped(self, spec: Facade.ScopedExportRequest) -> Facade.ScopedExport:
@@ -1914,6 +1929,10 @@ class Oneiron:
         @property
         def checkout(self) -> "Oneiron._VaultCodeCheckoutVerbs": ...
         @property
+        def views(self) -> "Oneiron._VaultCodeViewsVerbs": ...
+        @property
+        def cache(self) -> "Oneiron._VaultCodeCacheVerbs": ...
+        @property
         def snapshots(self) -> "Oneiron._VaultCodeSnapshotsVerbs": ...
         @property
         def merge_queue(self) -> "Oneiron._VaultCodeMergeQueueVerbs": ...
@@ -1960,6 +1979,22 @@ class Oneiron:
             """Consume one published checkout result at its epoch as select, apply, release or discard; an identical retry returns its receipt."""
         def teardown(self, spec: Facade.CheckoutTeardownInput) -> Facade.CheckoutTornDown:
             """Collect the caller's checkout only with a matching durable pushed-head receipt and clear custody; retain dirty or uncertain trees."""
+    class _VaultCodeViewsVerbs:
+        def materialize(self, spec: Facade.CodeViewMaterializeRequest) -> Facade.CodeWorkingView:
+            """Materialize a private linked working view from verified tested file frontiers in the authenticated owner account."""
+        def get(self, spec: Facade.CodeViewRequest) -> Facade.CodeWorkingView:
+            """Read one working view and its immutable tested base under the authenticated owner account."""
+        def read(self, spec: Facade.CodeViewReadRequest) -> Facade.CodeViewFileBytes:
+            """Read the current bytes of one selected input in the authenticated owner working view."""
+        def action(self, spec: Facade.CodeViewActionRequest) -> Facade.CodeViewAction:
+            """Freeze current view input identities and return the REAPI action digest with its exact command bytes and input root digest."""
+        def build(self, spec: Facade.CodeViewBuildRequest) -> Facade.CodeCacheOutcome:
+            """Run a pinned native owner build or verify leg, reusing clean account-local results and retaining secret-consuming exhaust as tainted."""
+    class _VaultCodeCacheVerbs:
+        def get(self, spec: Facade.CodeCacheReadRequest) -> Facade.CodeCacheOutcome:
+            """Read one clean immutable account-local build result by action key without executing a command."""
+        def reuse(self, spec: Facade.CodeViewBuildRequest) -> Facade.CodeCacheOutcome:
+            """Reuse an authorized clean action result into another matching working view without dispatching a cold build."""
     class _VaultCodeSnapshotsVerbs:
         def ingest(self, spec: Facade.CodeSnapshotIngestRequest) -> Facade.CodeSnapshotView:
             """Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt."""
@@ -2245,6 +2280,14 @@ class Oneiron:
             """Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt."""
         def freebusy(self, spec: Facade.CalendarFreebusyRequest) -> Facade.ScopedReadResult[Facade.CalendarFreebusyDto]:
             """Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt."""
+        def prep(self, spec: Facade.CalendarMeetingRequest) -> Facade.ScopedReadResult[Facade.PrepPack | None]:
+            """Builds a fresh caller-scoped meeting PrepPack with commitments first and a 250-word ceiling, or deliberately returns no pack."""
+        def event_outcome(self, spec: Facade.CalendarMeetingRequest) -> Facade.ScopedReadResult[Facade.CalendarEventOutcome | None]:
+            """Reads the caller-visible meeting outcome and its recorded basis; silence projects to unknown and never to held or no_show."""
+        @property
+        def check_in(self) -> "Oneiron._VaultCalendarCheckInVerbs": ...
+        @property
+        def outcome_policy(self) -> "Oneiron._VaultCalendarOutcomePolicyVerbs": ...
         @property
         def transcript(self) -> "Oneiron._VaultCalendarTranscriptVerbs": ...
     class _VaultCalendarPassportsVerbs:
@@ -2258,9 +2301,19 @@ class Oneiron:
     class _VaultCalendarInstancesVerbs:
         def move(self, spec: Facade.CalendarInstanceMoveRequest) -> Facade.CalendarIcsImportReceipt:
             """The owner applies one uploaded detached-instance amendment matching its UID, original start and new interval, through the import gate without changing other instances."""
+    class _VaultCalendarCheckInVerbs:
+        def due(self, spec: Facade.CalendarMeetingRequest) -> Facade.ScopedReadResult[Facade.CalendarCheckInDue | None]:
+            """Observes whether a meeting check-in is due under owner proof, live evidence and the engine clock, without advancing time or recording an outcome."""
+        def answer(self, spec: Facade.CalendarCheckInRequest) -> Facade.CalendarCheckInReceipt:
+            """The owner answers a due check-in as held, no_show or rescheduled; the caller cannot assert machine evidence or replace it."""
+    class _VaultCalendarOutcomePolicyVerbs:
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.CalendarOutcomePolicy:
+            """Reads the owner-configured post-meeting grace policy, including the default 1800 seconds when no override exists."""
+        def set(self, spec: Facade.CalendarOutcomePolicy) -> Facade.CalendarOutcomePolicy:
+            """Sets the post-meeting grace in real seconds under owner proof, without changing event times or minting attendance evidence."""
     class _VaultCalendarTranscriptVerbs:
         def ingest(self, spec: Facade.TranscriptFileDropInput) -> Facade.TranscriptIngestOutcome:
-            """Ingests an uploaded UTF-8 transcript as the caller, retaining source labels and atomically closing its SESSION with ordered TURNs and extraction wake receipts."""
+            """Ingests verified uploaded UTF-8 transcript bytes as a closed SESSION with ordered TURNs; an optional meeting link earns a machine outcome through the caller gate."""
     class _VaultWritesVerbs:
         def pending(self, input: Facade.ReceiptsRequest) -> list[Facade.PendingWrite]:
             """Gated writes parked for consent, newest first."""

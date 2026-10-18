@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 916 code-mode rows (892 host rows, 24 run rows), 3075 declarations.
-// Replies: 825 fully typed, 87 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 935 code-mode rows (911 host rows, 24 run rows), 3130 declarations.
+// Replies: 844 fully typed, 87 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 103; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -511,6 +511,27 @@ declare namespace Sdk {
   type ModeGateInputs = { affect: number; goal_velocity: number; engagement: number };
   type StateIndex = { value: number; inputs?: ModeGateInputs | null; claim?: string | null; observed_at?: number | null };
   type WellnessProjection = { affected_person_ref: string; policy?: ActionModePolicy | null; state_index: StateIndex; mode?: ActionModeRule | null; coping: CopingAggregate; source_refs: string[]; receipt_ref?: string | null };
+  type ClusterClaimInput = { claim_ref: string; embedding: number[] };
+  type ClusterRequest = { claims: ClusterClaimInput[]; cohesion_threshold?: number | null };
+  type ClusterPartition = { subject_ref: string; predicate_root: string; world_ref?: string | null; facet_ref?: string | null };
+  type ClusterCohort = { cohort_id: number[]; partition: ClusterPartition; member_refs: string[]; cohesion: number };
+  type ClusterProposal = { cohorts: ClusterCohort[] };
+  type ClusterProposalRequest = { proposal_ref: string };
+  type ClusterEvidence = { refs: string[]; rationale: string };
+  type ClusterSurvivorship = "read_through";
+  type ClusterMerge = { sources: string[]; survivor: string; evidence: ClusterEvidence; survivorship_plan?: ClusterSurvivorship };
+  type ClusterReassignmentTarget = { kind: "head"; entity_ref: string } | { kind: "residue" };
+  type ClusterReassignment = { item: string; target: ClusterReassignmentTarget };
+  type ClusterSplit = { entity: string; heads: string[]; reassignment_map: ClusterReassignment[]; evidence: ClusterEvidence };
+  type ClusterOperation = (ClusterMerge & { kind: "merge" }) | (ClusterSplit & { kind: "split" });
+  type ClusterTopologyOutcome = "applied" | "proposed" | "approved_untouched" | "approved_amended" | "rejected";
+  type ClusterProposalView = { proposal_ref: string; operation: ClusterOperation; seen: number[]; resolution?: ClusterTopologyOutcome | null; moot: boolean };
+  type ClusterProposeRequest = { operation: ClusterOperation; grant_ref?: string | null };
+  type ClusterTopologyReceipt = { receipt_ref: string; proposal_ref?: string | null; outcome: ClusterTopologyOutcome };
+  type ClusterMergeRequest = { merge: ClusterMerge; grant_ref?: string | null };
+  type ClusterSplitRequest = { split: ClusterSplit; grant_ref?: string | null };
+  type ClusterRuling = { verdict: "approve" } | { verdict: "amend_then_approve"; operation: ClusterOperation } | { verdict: "reject" };
+  type ClusterResolveRequest = { proposal_ref: string; seen: number[]; ruling: ClusterRuling; grant_ref?: string | null };
   type RetrievalRunsRequest = { limit?: number | null };
   type RetrievalAction = "pipeline" | "context_pack" | "vault_search" | "graph_fs_coreutils" | "speculative";
   type RetrievalState = { top_score_norm?: number; score_gap_ratio?: number; mean_score_norm?: number; entity_coverage?: number; novelty_vs_prior?: number; signal_agreement?: number; result_count?: number; iteration?: number; budget_remaining?: number; frontier_size?: number; avg_edge_weight?: number; graph_degree?: number; temporal_spread?: number; hops?: number; last_action?: number; intent_class?: number };
@@ -1896,6 +1917,26 @@ declare namespace Sdk {
   type CheckoutTeardownInput = { checkout: string; epoch: number; pushed_head_receipt?: EntityId | null };
   type CheckoutRetention = "missing_pushed_head_receipt" | "receipt_mismatch" | "live_occupant" | "dirty_or_uncertain";
   type CheckoutTornDown = { status: "collected"; checkout: string; epoch: number } | { status: "retained"; checkout: string; epoch: number; reason: CheckoutRetention };
+  type VisibleFilePolicy = { version: number; include_prefixes: string[]; exclude_prefixes: string[] };
+  type CodeViewMaterializeRequest = { repo: EntityId; tested: EntityId; account: EntityId; policy: VisibleFilePolicy };
+  type CodeDocumentFrontier = { document_id: number[]; repo: string; path: string; version: [number, number][]; op_fold: number[]; text_hash: number[] };
+  type CodeViewFile = { path: string; content_hash_blake3: string; frontier: CodeDocumentFrontier; text_sha256: string };
+  type CodeWorkingView = { view: EntityId; repo: EntityId; base: EntityId; account: EntityId; fork_hash: string; files: CodeViewFile[]; receipt: EntityId; host_path: string };
+  type CodeViewRequest = { view: EntityId; repo: EntityId; tested: EntityId; account: EntityId };
+  type CodeViewReadRequest = { view: CodeViewRequest; path: string };
+  type CodeViewFileBytes = { path: string; bytes: number[]; sha256: string };
+  type CodeSecretTaintRef = { secret_ref: string; rotation_generation: number };
+  type CodeBuildClass = "build" | "verify";
+  type CodeBuildSpec = { argv: string[]; env_allowlist: Record<string, string>; platform: Record<string, string>; declared_outputs: string[]; secret_taint_refs: CodeSecretTaintRef[]; class: CodeBuildClass };
+  type CodeViewActionRequest = { view: CodeViewRequest; spec: CodeBuildSpec };
+  type CodeActionDigest = { hash: string; size_bytes: number };
+  type CodeViewAction = { action_digest: CodeActionDigest; command_bytes: number[]; input_root_digest: CodeActionDigest };
+  type CodeViewBuildRequest = { view: CodeViewRequest; spec: CodeBuildSpec; action_digest: CodeActionDigest };
+  type CodeCacheState = "hit" | "miss" | "denied";
+  type CodeBuildOutput = { artifact_ref: string; output_sha256: string };
+  type CodeBuildEntry = { action_digest: CodeActionDigest; account: EntityId; exit_code: number; outputs: Record<string, CodeBuildOutput>; stdout_ref?: string | null; stderr_ref?: string | null; secret_taint_refs: CodeSecretTaintRef[]; reusable: boolean; receipt: string };
+  type CodeCacheOutcome = { state: CodeCacheState; entry?: CodeBuildEntry | null; receipt?: string | null };
+  type CodeCacheReadRequest = { account: EntityId; action_digest: CodeActionDigest };
   type CodeRepoPointer = { local_folder: string; commit: string };
   type CodeSnapshotIngestRequest = { project_id: string; pointer: CodeRepoPointer };
   type CodeSnapshotFile = { path: string; content_hash_blake3: string; size_bytes: number };
@@ -2529,7 +2570,21 @@ declare namespace Sdk {
   type CalendarFreebusyRequest = { calendars: CalendarSel[]; range: CalendarRangeDto };
   type CalendarFreebusyIntervalDto = { start_utc: number; end_utc: number };
   type CalendarFreebusyDto = CalendarFreebusyIntervalDto[];
-  type TranscriptFileDropInput = { source_blob_ref: string; decoded_text: string; arrived_at_ms: number };
+  type CalendarMeetingRequest = { event_ref: string };
+  type PrepSectionKind = "prior_commitment" | "attendee_thread" | "dossier_delta";
+  type PrepItem = { kind: PrepSectionKind; text: string; source_refs: string[]; observed_at: number };
+  type PrepSection = { kind: PrepSectionKind; items: PrepItem[] };
+  type PrepPack = { event_ref: string; built_at: number; sections: PrepSection[]; word_count: number };
+  type EventOutcome = "held" | "no_show" | "cancelled_pre_start" | "unknown";
+  type EventOutcomeBasis = "machine" | "owner_attested";
+  type EventOutcomeClaimValue = { outcome: EventOutcome; basis: EventOutcomeBasis; recorded_at: number };
+  type CalendarEventOutcome = { event_ref: string; outcome: EventOutcome; claim?: EventOutcomeClaimValue | null };
+  type CalendarCheckInDue = { event_ref: string; observed_at: number; grace_secs: number; due_at?: number | null; due: boolean; outcome?: EventOutcomeClaimValue | null };
+  type CalendarCheckInAnswer = "held" | "no_show" | "rescheduled";
+  type CalendarCheckInRequest = { event_ref: string; answer: CalendarCheckInAnswer };
+  type CalendarCheckInReceipt = { disposition: "outcome"; event_ref: string; claim_ref: string; value: EventOutcomeClaimValue } | { disposition: "reschedule_requested"; event_ref: string; claim_ref: string; value: EventOutcomeClaimValue };
+  type CalendarOutcomePolicy = { grace_secs: number };
+  type TranscriptFileDropInput = { source_blob_ref: string; decoded_text: string; arrived_at_ms: number; event_ref?: string | null };
   type TranscriptIngestOutcome = { outcome: "session"; session_ref: EntityId; turn_refs: EntityId[]; wake_turn_refs: EntityId[]; extraction_enqueued: boolean } | { outcome: "retry_open_session"; open_session_ref: EntityId } | { outcome: "note_fallback"; note_ref: EntityId };
   type ClaimListFilter = { subject_ref?: string | null; predicate?: string | null; lifecycle?: string | null; limit: number };
   type ClaimDemoteActionInput = { kind: "decay"; new_claim_of_weight: number } | { kind: "weaken"; new_confidence: number } | { kind: "stale" };
@@ -3733,8 +3788,16 @@ declare const vault: Sdk.VaultHost & {
     settlements(input: Sdk.RunSettlementsRequest): Promise<Sdk.RunSettlementsView | StoredResult>;
   };
   calendar: {
+    check_in: {
+      /** The owner answers a due check-in as held, no_show or rescheduled; the caller cannot assert machine evidence or replace it. */
+      answer(input: Sdk.CalendarCheckInRequest): Promise<Sdk.CalendarCheckInReceipt | StoredResult>;
+      /** Observes whether a meeting check-in is due under owner proof, live evidence and the engine clock, without advancing time or recording an outcome. */
+      due(input: Sdk.CalendarMeetingRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarCheckInDue | null> | StoredResult>;
+    };
     /** Creates a native or evidence-linked dreamer EVENT as the caller, with atomic projector-recorded origin and engine-stamped recorded time. */
     create(input: Sdk.CalendarEventCreateRequest): Promise<Sdk.CalendarEventCreated | StoredResult>;
+    /** Reads the caller-visible meeting outcome and its recorded basis; silence projects to unknown and never to held or no_show. */
+    event_outcome(input: Sdk.CalendarMeetingRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarEventOutcome | null> | StoredResult>;
     /** Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt. */
     freebusy(input: Sdk.CalendarFreebusyRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarFreebusyDto> | StoredResult>;
     ics: {
@@ -3747,18 +3810,26 @@ declare const vault: Sdk.VaultHost & {
     };
     /** Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions. */
     occurrences(input: Sdk.CalendarOccurrencesRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarOccurrenceView[]> | StoredResult>;
+    outcome_policy: {
+      /** Reads the owner-configured post-meeting grace policy, including the default 1800 seconds when no override exists. */
+      get(input: Sdk.EmptyRequest): Promise<Sdk.CalendarOutcomePolicy | StoredResult>;
+      /** Sets the post-meeting grace in real seconds under owner proof, without changing event times or minting attendance evidence. */
+      set(input: Sdk.CalendarOutcomePolicy): Promise<Sdk.CalendarOutcomePolicy | StoredResult>;
+    };
     passports: {
       /** Reads recorded passport revisions oldest first for one EVENT, system and UID, retaining explicit approval and lifecycle under the caller recorded-read gate. */
       history(input: Sdk.CalendarPassportReadRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarPassportRevision[]> | StoredResult>;
       /** Reads the admitted passport head for one EVENT, system and UID through the caller scoped-read gate, including sequence, semantic hash, direction and presence. */
       read(input: Sdk.CalendarPassportReadRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarPassportRevision | null> | StoredResult>;
     };
+    /** Builds a fresh caller-scoped meeting PrepPack with commitments first and a 250-word ceiling, or deliberately returns no pack. */
+    prep(input: Sdk.CalendarMeetingRequest): Promise<Sdk.ScopedReadResult<Sdk.PrepPack | null> | StoredResult>;
     /** Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt. */
     read(input: Sdk.CalendarReadRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarEventView | null> | StoredResult>;
     /** Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt. */
     search(input: Sdk.CalendarSearchRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarEventView[]> | StoredResult>;
     transcript: {
-      /** Ingests an uploaded UTF-8 transcript as the caller, retaining source labels and atomically closing its SESSION with ordered TURNs and extraction wake receipts. */
+      /** Ingests verified uploaded UTF-8 transcript bytes as a closed SESSION with ordered TURNs; an optional meeting link earns a machine outcome through the caller gate. */
       ingest(input: Sdk.TranscriptFileDropInput): Promise<Sdk.TranscriptIngestOutcome | StoredResult>;
     };
   };
@@ -3862,6 +3933,19 @@ declare const vault: Sdk.VaultHost & {
     /** The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing. */
     run(input: Sdk.CleanupRunRequest): Promise<Sdk.CleanupRunView | StoredResult>;
   };
+  /** Proposes deterministic complete-link cohorts from readable stored claims and supplied embeddings; exact subject, predicate-root, world and facet partitions never decide truth. */
+  cluster: ((input: Sdk.ClusterRequest) => Promise<Sdk.ScopedReadResult<Sdk.ClusterProposal> | StoredResult>) & {
+    /** Applies a merge judgment through the existing topology gate, preserving claim subjects and recording its redirect shells, evidence and receipt. */
+    merge(input: Sdk.ClusterMergeRequest): Promise<Sdk.ClusterTopologyReceipt | StoredResult>;
+    /** Inspects a parked merge or split, its original evidence, current resolution and revision for a gated ruling; every reference must remain readable. */
+    proposal(input: Sdk.ClusterProposalRequest): Promise<Sdk.ScopedReadResult<Sdk.ClusterProposalView> | StoredResult>;
+    /** Parks an explicit merge or split judgment with zero topology effects, under the caller's own owner proof or topology_seal Grant. */
+    propose(input: Sdk.ClusterProposeRequest): Promise<Sdk.ClusterTopologyReceipt | StoredResult>;
+    /** Approves, amends then approves, or rejects a parked merge or split under the caller's own authority, comparing its revision and recording the ruling atomically. */
+    resolve_proposal(input: Sdk.ClusterResolveRequest): Promise<Sdk.ClusterTopologyReceipt | StoredResult>;
+    /** Applies a split judgment through the existing topology gate, including zero-head retirement, evidence-guided reassignment and explicit residue. */
+    split(input: Sdk.ClusterSplitRequest): Promise<Sdk.ClusterTopologyReceipt | StoredResult>;
+  };
   coach: {
     /** Inspects one blocked report as the Coach reads it: its fenced receipt, linked diagnostic band, working set, and the repair proposal the Coach filed, through the caller's own lane. */
     inspect(input: Sdk.CoachInspectRequest): Promise<Sdk.ScopedReadResult<Sdk.CoachInspectionView> | StoredResult>;
@@ -3895,6 +3979,12 @@ declare const vault: Sdk.VaultHost & {
   code: {
     /** Every unit of one tested state of a code file, with the runs of text each operation wrote, and who made each operation and why. */
     blame(input: Sdk.CodeStateRequest): Promise<Sdk.CodeBlameView | null | StoredResult>;
+    cache: {
+      /** Read one clean immutable account-local build result by action key without executing a command. */
+      get(input: Sdk.CodeCacheReadRequest): Promise<Sdk.CodeCacheOutcome | StoredResult>;
+      /** Reuse an authorized clean action result into another matching working view without dispatching a cold build. */
+      reuse(input: Sdk.CodeViewBuildRequest): Promise<Sdk.CodeCacheOutcome | StoredResult>;
+    };
     checkout: {
       /** Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential. */
       bind(input: Sdk.CheckoutDoorBindRequest): Promise<Sdk.CheckoutDoorBinding | StoredResult>;
@@ -3984,6 +4074,18 @@ declare const vault: Sdk.VaultHost & {
       release(input: Sdk.CodeSymbolsTaskRequest): Promise<Sdk.CodeSymbolsReleased | StoredResult>;
       /** Renew the live symbol declaration the caller holds for one task by its declared lifetime. Owner only. */
       renew(input: Sdk.CodeSymbolsTaskRequest): Promise<Sdk.CodeSymbolLeaseView | StoredResult>;
+    };
+    views: {
+      /** Freeze current view input identities and return the REAPI action digest with its exact command bytes and input root digest. */
+      action(input: Sdk.CodeViewActionRequest): Promise<Sdk.CodeViewAction | StoredResult>;
+      /** Run a pinned native owner build or verify leg, reusing clean account-local results and retaining secret-consuming exhaust as tainted. */
+      build(input: Sdk.CodeViewBuildRequest): Promise<Sdk.CodeCacheOutcome | StoredResult>;
+      /** Read one working view and its immutable tested base under the authenticated owner account. */
+      get(input: Sdk.CodeViewRequest): Promise<Sdk.CodeWorkingView | StoredResult>;
+      /** Materialize a private linked working view from verified tested file frontiers in the authenticated owner account. */
+      materialize(input: Sdk.CodeViewMaterializeRequest): Promise<Sdk.CodeWorkingView | StoredResult>;
+      /** Read the current bytes of one selected input in the authenticated owner working view. */
+      read(input: Sdk.CodeViewReadRequest): Promise<Sdk.CodeViewFileBytes | StoredResult>;
     };
     waits: {
       /** Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait. */

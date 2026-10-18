@@ -2386,6 +2386,137 @@ async fn vault_affect_wellness_get(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_cluster(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.cluster",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_cluster_proposal(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.cluster.proposal",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_cluster_propose(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.cluster.propose")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.cluster.propose", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.cluster.propose", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_cluster_propose(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_cluster_merge(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.cluster.merge")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.cluster.merge", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.cluster.merge", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_cluster_merge(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_cluster_split(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.cluster.split")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.cluster.split", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.cluster.split", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_cluster_split(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_cluster_resolve_proposal(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.cluster.resolve_proposal")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.cluster.resolve_proposal", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.cluster.resolve_proposal", value).await?;
+    let (output, listed) = super::host_doors::vault_cluster_resolve_proposal(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_retrieval_recall(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -12111,6 +12242,156 @@ async fn vault_code_checkout_teardown(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_code_views_materialize(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.views.materialize")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.views.materialize", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.views.materialize", value).await?;
+    let (output, listed) = super::host_doors::vault_code_views_materialize(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_views_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.views.get")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.views.get", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.views.get", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_code_views_get(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_views_read(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.views.read")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.views.read", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.views.read", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_code_views_read(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_views_action(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.views.action")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.views.action", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.views.action", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_code_views_action(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_views_build(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.views.build")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.views.build", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.views.build", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_code_views_build(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_cache_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.cache.get")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.cache.get", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.cache.get", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_code_cache_get(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_cache_reuse(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.cache.reuse")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.cache.reuse", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.cache.reuse", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_code_cache_reuse(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_code_snapshots_ingest(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -16172,6 +16453,146 @@ async fn vault_calendar_freebusy(
         &producers,
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_calendar_prep(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.calendar.prep",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_calendar_event_outcome(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.calendar.event_outcome",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_calendar_check_in_due(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.calendar.check_in.due")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.calendar.check_in.due", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.calendar.check_in.due", value).await?;
+    let (output, listed) = super::host_doors::vault_calendar_check_in_due(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_calendar_check_in_answer(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.calendar.check_in.answer")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.calendar.check_in.answer", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.calendar.check_in.answer", value).await?;
+    let (output, listed) = super::host_doors::vault_calendar_check_in_answer(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_calendar_outcome_policy_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.calendar.outcome_policy.get")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.calendar.outcome_policy.get", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.calendar.outcome_policy.get", value).await?;
+    let (output, listed) = super::host_doors::vault_calendar_outcome_policy_get(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_calendar_outcome_policy_set(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.calendar.outcome_policy.set")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.calendar.outcome_policy.set", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.calendar.outcome_policy.set", value).await?;
+    let (output, listed) = super::host_doors::vault_calendar_outcome_policy_set(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
 }
 async fn vault_calendar_transcript_ingest(
     server: &Arc<SyncServer>,
@@ -20854,6 +21275,14 @@ pub(crate) async fn call_verb(
         }
         "vault.affect.wellness.derive" => vault_affect_wellness_derive(server, call, input).await,
         "vault.affect.wellness.get" => vault_affect_wellness_get(server, call, input).await,
+        "vault.cluster" => vault_cluster(server, call, input).await,
+        "vault.cluster.proposal" => vault_cluster_proposal(server, call, input).await,
+        "vault.cluster.propose" => vault_cluster_propose(server, call, input).await,
+        "vault.cluster.merge" => vault_cluster_merge(server, call, input).await,
+        "vault.cluster.split" => vault_cluster_split(server, call, input).await,
+        "vault.cluster.resolve_proposal" => {
+            vault_cluster_resolve_proposal(server, call, input).await
+        }
         "vault.retrieval.recall" => vault_retrieval_recall(server, call, input).await,
         "vault.retrieval.runs" => vault_retrieval_runs(server, call, input).await,
         "vault.retrieval.run" => vault_retrieval_run(server, call, input).await,
@@ -21487,6 +21916,13 @@ pub(crate) async fn call_verb(
         "vault.code.checkout.publish" => vault_code_checkout_publish(server, call, input).await,
         "vault.code.checkout.settle" => vault_code_checkout_settle(server, call, input).await,
         "vault.code.checkout.teardown" => vault_code_checkout_teardown(server, call, input).await,
+        "vault.code.views.materialize" => vault_code_views_materialize(server, call, input).await,
+        "vault.code.views.get" => vault_code_views_get(server, call, input).await,
+        "vault.code.views.read" => vault_code_views_read(server, call, input).await,
+        "vault.code.views.action" => vault_code_views_action(server, call, input).await,
+        "vault.code.views.build" => vault_code_views_build(server, call, input).await,
+        "vault.code.cache.get" => vault_code_cache_get(server, call, input).await,
+        "vault.code.cache.reuse" => vault_code_cache_reuse(server, call, input).await,
         "vault.code.snapshots.ingest" => vault_code_snapshots_ingest(server, call, input).await,
         "vault.code.snapshots.get" => vault_code_snapshots_get(server, call, input).await,
         "vault.code.snapshots.read" => vault_code_snapshots_read(server, call, input).await,
@@ -21706,6 +22142,18 @@ pub(crate) async fn call_verb(
         "vault.calendar.read" => vault_calendar_read(server, call, input).await,
         "vault.calendar.search" => vault_calendar_search(server, call, input).await,
         "vault.calendar.freebusy" => vault_calendar_freebusy(server, call, input).await,
+        "vault.calendar.prep" => vault_calendar_prep(server, call, input).await,
+        "vault.calendar.event_outcome" => vault_calendar_event_outcome(server, call, input).await,
+        "vault.calendar.check_in.due" => vault_calendar_check_in_due(server, call, input).await,
+        "vault.calendar.check_in.answer" => {
+            vault_calendar_check_in_answer(server, call, input).await
+        }
+        "vault.calendar.outcome_policy.get" => {
+            vault_calendar_outcome_policy_get(server, call, input).await
+        }
+        "vault.calendar.outcome_policy.set" => {
+            vault_calendar_outcome_policy_set(server, call, input).await
+        }
         "vault.calendar.transcript.ingest" => {
             vault_calendar_transcript_ingest(server, call, input).await
         }
