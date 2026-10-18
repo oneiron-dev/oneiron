@@ -266,6 +266,14 @@ export class Oneiron {
         query: (input: Facade.DiaryQueryRequest): Facade.DiaryQueryOutcome => this.#call(() => this.#client.selfMemoryDiaryQuery(input) as Facade.DiaryQueryOutcome),
       }),
     },
+    standing: {
+      /** This agent's configured standing block in one world: its handle, name and token floor. */
+      get: (input: Facade.OwnStandingBlockRequest): Facade.StandingBlockView => this.#call(() => this.#client.selfStandingGet(input) as Facade.StandingBlockView),
+      /** Every standing block configured for this agent, one per world, in world order. */
+      list: (input: Facade.EmptyRequest = {}): Facade.StandingBlockView[] => this.#call(() => this.#client.selfStandingList(input) as Facade.StandingBlockView[]),
+      /** This agent proposes one persona field's new text for its standing block, as a Generated claim its gate settles; compiled text is never edited. */
+      edit: (input: Facade.StandingBlockEditRequest): Facade.StandingBlockEditReceipt => this.#call(() => this.#client.selfStandingEdit(input) as Facade.StandingBlockEditReceipt),
+    },
     identity: {
       /** A vault owner's tap on an identity choice card: who a person named in their conversations is. */
       answer: (input: Facade.IdentityAnswerRequest): Facade.IdentitySettled => this.#call(() => this.#client.selfIdentityAnswer(input) as Facade.IdentitySettled),
@@ -515,6 +523,16 @@ export class Oneiron {
         /** The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction. */
         consolidate: (input: Facade.AffectClaimConsolidateRequest): Facade.AffectClaimConsolidation => this.#call(() => this.#client.vaultAffectClaimsConsolidate(input) as Facade.AffectClaimConsolidation),
       },
+    },
+    tagging: {
+      /** Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker and failure reason. */
+      status: (input: Facade.TaggingTurnRequest): Facade.TaggingStatusView => this.#call(() => this.#client.vaultTaggingStatus(input) as Facade.TaggingStatusView),
+      /** Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them. */
+      tags: (input: Facade.TaggingTurnRequest): Facade.TaggingTagsView => this.#call(() => this.#client.vaultTaggingTags(input) as Facade.TaggingTagsView),
+      /** Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome. */
+      history: (input: Facade.TaggingTurnRequest): Facade.TaggingHistoryView => this.#call(() => this.#client.vaultTaggingHistory(input) as Facade.TaggingHistoryView),
+      /** Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller. */
+      mentions: (input: Facade.TaggingMentionsRequest): Facade.TaggingMentionsView => this.#call(() => this.#client.vaultTaggingMentions(input) as Facade.TaggingMentionsView),
     },
     /** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */
     export: Object.assign((format?: string): MemoryExport => this.#call(() => this.#client.vaultExport({format: format}) as MemoryExport), {
@@ -1355,12 +1373,28 @@ export class Oneiron {
       get: (input: Facade.AgentDefinitionRequest): Facade.AgentDefinitionView => this.#call(() => this.#client.vaultAgentsGet(input) as Facade.AgentDefinitionView),
       /** The owner edits the expected definition version and optional refusal dial through the existing immutable-field and ceiling gates; refusal decisions read the live dial. */
       update: (input: Facade.AgentDefinitionUpdateRequest): Facade.AgentDefinitionView => this.#call(() => this.#client.vaultAgentsUpdate(input) as Facade.AgentDefinitionView),
+      dreaming: {
+        /** The owner reads one agent's dreaming choice: its stored mode, the mode in force and its own dreaming model slot. */
+        get: (input: Facade.AgentDreamingRequest): Facade.AgentDreamingView => this.#call(() => this.#client.vaultAgentsDreamingGet(input) as Facade.AgentDreamingView),
+        /** The owner sets one agent's dreaming choice on the revision read: its own model, the vault weaver's, or off; sharing a model never shares its diary. */
+        set: (input: Facade.AgentDreamingSetRequest): Facade.AgentDreamingView => this.#call(() => this.#client.vaultAgentsDreamingSet(input) as Facade.AgentDreamingView),
+      },
       spawn: {
         /** The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning. */
         get: (input: Facade.PlannedSpawnRead): Facade.PlannedSpawnObservation => this.#call(() => this.#client.vaultAgentsSpawnGet(input) as Facade.PlannedSpawnObservation),
       },
       /** The agent's travelling AgentPack folder (files base64) and what stayed home. */
       export_pack: (request: Facade.AgentPackExportRequest): Facade.AgentPackExport => this.#call(() => {  const result = JSON.parse(this.#client.vaultAgentsExportPack(keyedJson(request))) as Facade.AgentPackExport; return result }),
+    },
+    standing_blocks: {
+      /** The owner configures one agent's standing block in one world with its name and token floor; reopening the same pair answers the stored handle. */
+      configure: (input: Facade.StandingBlockConfigureRequest): Facade.StandingBlockView => this.#call(() => this.#client.vaultStandingBlocksConfigure(input) as Facade.StandingBlockView),
+      /** The owner gives a configured standing block a new name and token floor; an unconfigured pair is refused, never implicitly opened. */
+      reconfigure: (input: Facade.StandingBlockConfigureRequest): Facade.StandingBlockView => this.#call(() => this.#client.vaultStandingBlocksReconfigure(input) as Facade.StandingBlockView),
+      /** The owner reads one agent's configured standing block in one world: its handle, name and token floor. */
+      get: (input: Facade.StandingBlockRequest): Facade.StandingBlockView => this.#call(() => this.#client.vaultStandingBlocksGet(input) as Facade.StandingBlockView),
+      /** The owner lists every standing block configured for one agent, one per world, in world order. */
+      list: (input: Facade.StandingBlocksRequest): Facade.StandingBlockView[] => this.#call(() => this.#client.vaultStandingBlocksList(input) as Facade.StandingBlockView[]),
     },
     workflows: {
       /** The owner saves an ordered composition of live AGENT_DEF steps at a new WORKFLOW id at revision 1; an occupied id is refused and no attempt is dispatched. */
@@ -1748,6 +1782,8 @@ export class Oneiron {
     notes: {
       /** Creates a NOTE of a registered kind, its first authored text as its birth. */
       create: (input: Facade.CreateNoteRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesCreate(input) as Facade.EntityRefReceipt),
+      /** Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target. */
+      author_take: (input: Facade.AuthorTakeRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesAuthorTake(input) as Facade.EntityRefReceipt),
       /** Creates a NOTE of a registered kind from an existing entity. */
       from_entity: (input: Facade.CreateNoteFromEntityRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesFromEntity(input) as Facade.EntityRefReceipt),
       /** Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot. */

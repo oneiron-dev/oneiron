@@ -79,6 +79,7 @@ mod model_step_doors;
 mod note_doors;
 mod off_record_doors;
 mod origin_doors;
+mod owner_binding;
 mod policy_doors;
 mod project_card_doors;
 mod reaction_doors;
@@ -99,6 +100,7 @@ mod shared_policy_doors;
 mod skill_doors;
 mod skill_execution_doors;
 mod slim_doors;
+mod standing_doors;
 mod summary_doors;
 mod support_grant_doors;
 #[cfg(test)]
