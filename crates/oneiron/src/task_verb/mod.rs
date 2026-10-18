@@ -164,6 +164,21 @@ pub(crate) use create_validation::{
 };
 pub(crate) use rate_limit::task_create_owner;
 
+/// The objectives a run realizing `task` confesses against (OF-544): its
+/// brief's done-means question, each criterion that must hold, then each
+/// that must not as `none of: <text>`. `None` for a TASK with no brief, or
+/// a brief that names none.
+pub fn task_confession_objectives(
+    vault: &crate::Vault,
+    task: crate::EntityId,
+) -> crate::Result<Option<Vec<String>>> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(wire_decode::task_verb_body_in(vault, &txn, task)?
+        .and_then(|body| body.brief)
+        .map(|stored| stored.brief.confession_objectives())
+        .filter(|objectives| !objectives.is_empty()))
+}
+
 /// A terminal typed TASK cannot be newly bound to a room thread.
 pub(crate) fn thread_task_is_open_in(
     vault: &crate::Vault,
