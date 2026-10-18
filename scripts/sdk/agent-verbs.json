@@ -1001,6 +1001,21 @@
       "openapi": true
     },
     {
+      "name": "vault.budgets.reservations",
+      "description": "The owner reads a device-local runner budget counter and one page of the child reservations held against it, without creating or refilling it.",
+      "input": "crate::agent_dispatch::budget_doors::RunnerBudgetReservationsRequest",
+      "output": "crate::agent_dispatch::budget_doors::RunnerBudgetReservationsView",
+      "call": "crate::agent_dispatch::budget_doors::runner_budget_reservations_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.reservations\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.budgets.settlements",
       "description": "The owner reads a served run's persisted physical-rung settlement receipts, with reservation, settled units and stamped cost when priced.",
       "input": "crate::agent_dispatch::budget_doors::RunSettlementsRequest",
@@ -13212,6 +13227,36 @@
       "host_door": true,
       "host_door_lists": true,
       "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.consolidation.home.get",
+      "description": "The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything.",
+      "input": "EmptyRequest",
+      "output": "crate::dreamer_runner::ConsolidationHomeView",
+      "call": "crate::dreamer_runner::consolidation_home_as(memory.vault(), &memory.embedded_owner(\"vault.consolidation.home.get\")?)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.consolidation.lineage",
+      "description": "The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model.",
+      "input": "crate::dreamer_runner::ConsolidationLineageRequest",
+      "output": "Option<crate::dreamer_runner::ConsolidationLineageView>",
+      "call": "crate::dreamer_runner::consolidation_lineage_as(memory.vault(), &memory.embedded_owner(\"vault.consolidation.lineage\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true

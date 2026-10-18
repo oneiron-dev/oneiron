@@ -914,6 +914,9 @@ class Oneiron:
         def local(self, spec):
             """The owner observes a device-local runner budget counter without creating it, including absence after an owner restore."""
             return json.loads(_translate(lambda: self._client.vault_budgets_local(json.dumps(spec))))
+        def reservations(self, spec):
+            """The owner reads a device-local runner budget counter and one page of the child reservations held against it, without creating or refilling it."""
+            return json.loads(_translate(lambda: self._client.vault_budgets_reservations(json.dumps(spec))))
         def settlements(self, spec):
             """The owner reads a served run's persisted physical-rung settlement receipts, with reservation, settled units and stamped cost when priced."""
             return json.loads(_translate(lambda: self._client.vault_budgets_settlements(json.dumps(spec))))
@@ -3704,12 +3707,24 @@ class Oneiron:
         def status(self, spec):
             """Reads the status of one consolidation attempt by its durable job reference."""
             return json.loads(_translate(lambda: self._client.vault_consolidation_status(json.dumps(spec))))
+        @property
+        def home(self) -> "Oneiron._VaultConsolidationHomeVerbs":
+            return Oneiron._VaultConsolidationHomeVerbs(self._client)
+        def lineage(self, spec):
+            """The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model."""
+            return json.loads(_translate(lambda: self._client.vault_consolidation_lineage(json.dumps(spec))))
         def promote(self, spec):
             """Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals."""
             return json.loads(_translate(lambda: self._client.vault_consolidation_promote(json.dumps(spec))))
         def evidence(self, spec):
             """Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner."""
             return json.loads(_translate(lambda: self._client.vault_consolidation_evidence(json.dumps(spec))))
+    class _VaultConsolidationHomeVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec=None):
+            """The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything."""
+            return json.loads(_translate(lambda: self._client.vault_consolidation_home_get(json.dumps({} if spec is None else spec))))
     class _VaultSieveVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

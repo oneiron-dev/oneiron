@@ -366,6 +366,8 @@ export class Oneiron {
       }),
       /** The owner observes a device-local runner budget counter without creating it, including absence after an owner restore. */
       local: (input: Facade.LocalRunnerBudgetRequest): Facade.LocalRunnerBudgetView => this.#call(() => this.#client.vaultBudgetsLocal(input) as Facade.LocalRunnerBudgetView),
+      /** The owner reads a device-local runner budget counter and one page of the child reservations held against it, without creating or refilling it. */
+      reservations: (input: Facade.RunnerBudgetReservationsRequest): Facade.RunnerBudgetReservationsView => this.#call(() => this.#client.vaultBudgetsReservations(input) as Facade.RunnerBudgetReservationsView),
       /** The owner reads a served run's persisted physical-rung settlement receipts, with reservation, settled units and stamped cost when priced. */
       settlements: (input: Facade.RunSettlementsRequest): Facade.RunSettlementsView => this.#call(() => this.#client.vaultBudgetsSettlements(input) as Facade.RunSettlementsView),
     },
@@ -2015,6 +2017,12 @@ export class Oneiron {
       enqueue: (input: Facade.ConsolidationEnqueueRequest): Facade.DreamerAttemptRef => this.#call(() => this.#client.vaultConsolidationEnqueue(input) as Facade.DreamerAttemptRef),
       /** Reads the status of one consolidation attempt by its durable job reference. */
       status: (input: Facade.ConsolidationStatusRequest): Facade.DreamerAttemptView | null => this.#call(() => this.#client.vaultConsolidationStatus(input) as Facade.DreamerAttemptView | null),
+      home: {
+        /** The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything. */
+        get: (input: Facade.EmptyRequest = {}): Facade.ConsolidationHomeView => this.#call(() => this.#client.vaultConsolidationHomeGet(input) as Facade.ConsolidationHomeView),
+      },
+      /** The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model. */
+      lineage: (input: Facade.ConsolidationLineageRequest): Facade.ConsolidationLineageView | null => this.#call(() => this.#client.vaultConsolidationLineage(input) as Facade.ConsolidationLineageView | null),
       /** Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals. */
       promote: (input: Facade.ConsolidationPromoteRequest): Facade.ConsolidationPromotion => this.#call(() => this.#client.vaultConsolidationPromote(input) as Facade.ConsolidationPromotion),
       /** Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner. */

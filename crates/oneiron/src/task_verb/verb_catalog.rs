@@ -66,6 +66,7 @@ pub enum AgentVerb {
     VaultBudgetsHold,
     VaultBudgetsHoldResume,
     VaultBudgetsLocal,
+    VaultBudgetsReservations,
     VaultBudgetsSettlements,
     VaultFanoutResume,
     VaultFanoutResumeAs,
@@ -797,6 +798,8 @@ pub enum AgentVerb {
     VaultConsolidationStatus,
     VaultRunsStep,
     VaultRunsCheckpoint,
+    VaultConsolidationHomeGet,
+    VaultConsolidationLineage,
     VaultConsolidationPromote,
     VaultConsolidationEvidence,
     VaultSieveEvidence,
@@ -990,6 +993,7 @@ impl AgentVerb {
         Self::VaultBudgetsHold,
         Self::VaultBudgetsHoldResume,
         Self::VaultBudgetsLocal,
+        Self::VaultBudgetsReservations,
         Self::VaultBudgetsSettlements,
         Self::VaultFanoutResume,
         Self::VaultFanoutResumeAs,
@@ -1721,6 +1725,8 @@ impl AgentVerb {
         Self::VaultConsolidationStatus,
         Self::VaultRunsStep,
         Self::VaultRunsCheckpoint,
+        Self::VaultConsolidationHomeGet,
+        Self::VaultConsolidationLineage,
         Self::VaultConsolidationPromote,
         Self::VaultConsolidationEvidence,
         Self::VaultSieveEvidence,
@@ -1917,6 +1923,7 @@ impl AgentVerb {
             Self::VaultBudgetsHold => "vault.budgets.hold",
             Self::VaultBudgetsHoldResume => "vault.budgets.hold.resume",
             Self::VaultBudgetsLocal => "vault.budgets.local",
+            Self::VaultBudgetsReservations => "vault.budgets.reservations",
             Self::VaultBudgetsSettlements => "vault.budgets.settlements",
             Self::VaultFanoutResume => "vault.fanout.resume",
             Self::VaultFanoutResumeAs => "vault.fanout.resume_as",
@@ -2666,6 +2673,8 @@ impl AgentVerb {
             Self::VaultConsolidationStatus => "vault.consolidation.status",
             Self::VaultRunsStep => "vault.runs.step",
             Self::VaultRunsCheckpoint => "vault.runs.checkpoint",
+            Self::VaultConsolidationHomeGet => "vault.consolidation.home.get",
+            Self::VaultConsolidationLineage => "vault.consolidation.lineage",
             Self::VaultConsolidationPromote => "vault.consolidation.promote",
             Self::VaultConsolidationEvidence => "vault.consolidation.evidence",
             Self::VaultSieveEvidence => "vault.sieve.evidence",
@@ -2862,6 +2871,7 @@ impl AgentVerb {
                 | Self::VaultBudgetsHold
                 | Self::VaultBudgetsHoldResume
                 | Self::VaultBudgetsLocal
+                | Self::VaultBudgetsReservations
                 | Self::VaultBudgetsSettlements
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
@@ -3573,6 +3583,8 @@ impl AgentVerb {
                 | Self::VaultConsolidationStatus
                 | Self::VaultRunsStep
                 | Self::VaultRunsCheckpoint
+                | Self::VaultConsolidationHomeGet
+                | Self::VaultConsolidationLineage
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationEvidence
                 | Self::VaultSieveEvidence
@@ -3813,6 +3825,7 @@ impl AgentVerb {
                 | Self::VaultBudgetsHold
                 | Self::VaultBudgetsHoldResume
                 | Self::VaultBudgetsLocal
+                | Self::VaultBudgetsReservations
                 | Self::VaultBudgetsSettlements
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
@@ -4524,6 +4537,8 @@ impl AgentVerb {
                 | Self::VaultConsolidationStatus
                 | Self::VaultRunsStep
                 | Self::VaultRunsCheckpoint
+                | Self::VaultConsolidationHomeGet
+                | Self::VaultConsolidationLineage
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationEvidence
                 | Self::VaultSieveEvidence
@@ -4861,6 +4876,7 @@ impl AgentVerb {
                 | Self::VaultBudgetsHold
                 | Self::VaultBudgetsHoldResume
                 | Self::VaultBudgetsLocal
+                | Self::VaultBudgetsReservations
                 | Self::VaultBudgetsSettlements
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
@@ -5556,6 +5572,8 @@ impl AgentVerb {
                 | Self::VaultConsolidationStatus
                 | Self::VaultRunsStep
                 | Self::VaultRunsCheckpoint
+                | Self::VaultConsolidationHomeGet
+                | Self::VaultConsolidationLineage
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationEvidence
                 | Self::VaultSieveEvidence
@@ -6324,6 +6342,7 @@ impl AgentVerb {
             Self::VaultBudgetsHold => &["spec"],
             Self::VaultBudgetsHoldResume => &["spec"],
             Self::VaultBudgetsLocal => &["spec"],
+            Self::VaultBudgetsReservations => &["spec"],
             Self::VaultBudgetsSettlements => &["spec"],
             Self::VaultFanoutResume => &["spec"],
             Self::VaultFanoutResumeAs => &["spec"],
@@ -7055,6 +7074,8 @@ impl AgentVerb {
             Self::VaultConsolidationStatus => &["spec"],
             Self::VaultRunsStep => &["spec"],
             Self::VaultRunsCheckpoint => &["spec"],
+            Self::VaultConsolidationHomeGet => &["spec"],
+            Self::VaultConsolidationLineage => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
             Self::VaultConsolidationEvidence => &["spec"],
             Self::VaultSieveEvidence => &["spec"],
@@ -7249,6 +7270,7 @@ impl AgentVerb {
             Self::VaultBudgetsHold => &["spec"],
             Self::VaultBudgetsHoldResume => &["spec"],
             Self::VaultBudgetsLocal => &["spec"],
+            Self::VaultBudgetsReservations => &["spec"],
             Self::VaultBudgetsSettlements => &["spec"],
             Self::VaultFanoutResume => &["spec"],
             Self::VaultFanoutResumeAs => &["spec"],
@@ -7980,6 +8002,8 @@ impl AgentVerb {
             Self::VaultConsolidationStatus => &["spec"],
             Self::VaultRunsStep => &["spec"],
             Self::VaultRunsCheckpoint => &["spec"],
+            Self::VaultConsolidationHomeGet => &["spec"],
+            Self::VaultConsolidationLineage => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
             Self::VaultConsolidationEvidence => &["spec"],
             Self::VaultSieveEvidence => &["spec"],
@@ -8292,6 +8316,9 @@ impl AgentVerb {
             }
             Self::VaultBudgetsLocal => {
                 "The owner observes a device-local runner budget counter without creating it, including absence after an owner restore."
+            }
+            Self::VaultBudgetsReservations => {
+                "The owner reads a device-local runner budget counter and one page of the child reservations held against it, without creating or refilling it."
             }
             Self::VaultBudgetsSettlements => {
                 "The owner reads a served run's persisted physical-rung settlement receipts, with reservation, settled units and stamped cost when priced."
@@ -10401,6 +10428,12 @@ impl AgentVerb {
             }
             Self::VaultRunsCheckpoint => {
                 "Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run."
+            }
+            Self::VaultConsolidationHomeGet => {
+                "The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything."
+            }
+            Self::VaultConsolidationLineage => {
+                "The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model."
             }
             Self::VaultConsolidationPromote => {
                 "Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals."

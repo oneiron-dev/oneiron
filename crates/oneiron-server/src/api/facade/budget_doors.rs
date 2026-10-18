@@ -120,6 +120,24 @@ pub(crate) async fn vault_budgets_local(
     .await
 }
 
+pub(crate) async fn vault_budgets_reservations(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: RunnerBudgetReservationsRequest,
+) -> Listed<RunnerBudgetReservationsView> {
+    as_owner_naming(
+        server,
+        auth,
+        "vault.budgets.reservations",
+        move |server, owner| {
+            budget_doors::runner_budget_reservations_as_owner(server.vault(), owner, &input)
+                .map_err(MemoryError::from)
+        },
+        |_| Vec::new(),
+    )
+    .await
+}
+
 pub(crate) async fn vault_budgets_settlements(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

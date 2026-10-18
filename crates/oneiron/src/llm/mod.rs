@@ -87,7 +87,7 @@ pub use self::autocheck::{
     AutoCheckSignals, BoundedAutoChecker,
 };
 pub use self::role_defaults::RoleModelDefaults;
-pub(crate) use self::step::{ExecutedModelWitness, terminal_step_identity};
+pub(crate) use self::step::{ExecutedModelWitness, committed_steps_in_txn, terminal_step_identity};
 pub(crate) use oneiron_model::llm::canonical_json_bytes;
 pub use oneiron_model::llm::limit;
 pub use oneiron_model::llm::{

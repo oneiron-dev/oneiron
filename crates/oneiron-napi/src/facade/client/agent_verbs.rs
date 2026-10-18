@@ -460,6 +460,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_budgets_reservations(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.budgets.reservations", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_budgets_settlements(
         &self,
         input: serde_json::Value,
@@ -7003,6 +7012,24 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.runs.checkpoint", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consolidation_home_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consolidation.home.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consolidation_lineage(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consolidation.lineage", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
