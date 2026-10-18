@@ -259,6 +259,17 @@ both bindings and their export-census tests in one change.
 - `vault.research.archive.coverage`
 - `vault.evals.inventory`
 - `vault.evals.cohorts.setup`
+- `vault.coach.training_offers`
+- `vault.coach.training_offers.get`
+- `vault.coach.training_offers.trigger`
+- `vault.coach.training_offers.result`
+- `vault.coach.training_offers.answer`
+- `vault.coach.training_offers.undo`
+- `vault.coach.training_offers.candidates`
+- `vault.coach.training_offers.candidates.prepare`
+- `vault.coach.training_offers.pilots.prepare`
+- `vault.coach.training_offers.pilots.complete`
+- `vault.coach.training_offers.pilots.get`
 - `vault.research.bind`
 - `vault.research.fork`
 - `vault.research.weave`

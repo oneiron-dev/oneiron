@@ -4030,6 +4030,160 @@
       "openapi": true
     },
     {
+      "name": "vault.coach.training_offers",
+      "description": "Read Coach offer snapshots, their exact owner answers and later promise checks; optionally select a seat or only pending offers.",
+      "input": "crate::skill_optimize::offer_doors::OfferListRequest",
+      "output": "Vec<crate::skill_optimize::offer_doors::OfferView>",
+      "call": "crate::skill_optimize::offer_doors::list(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.coach.training_offers.get",
+      "description": "Read one Coach offer snapshot with its owner answer and receipt-backed promise checks.",
+      "input": "crate::skill_optimize::offer_doors::OfferRef",
+      "output": "Option<crate::skill_optimize::offer_doors::OfferView>",
+      "call": "crate::skill_optimize::offer_doors::get(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.get\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.coach.training_offers.trigger",
+      "description": "Queue one production Coach training-offer pass under the owner proof; the offer skill decides what to raise and no caller supplies an offer body.",
+      "input": "crate::skill_optimize::offer_doors::OfferPassRequest",
+      "output": "crate::skill_optimize::offer_doors::OfferPassRef",
+      "call": "crate::skill_optimize::offer_doors::trigger(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.trigger\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.coach.training_offers.result",
+      "description": "Read the production Coach offer attempt state and the exact snapshots it raised; a completed pass may raise no offer.",
+      "input": "crate::skill_optimize::offer_doors::OfferPassRef",
+      "output": "Option<crate::skill_optimize::offer_doors::OfferPassResult>",
+      "call": "crate::skill_optimize::offer_doors::result(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.result\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.coach.training_offers.answer",
+      "description": "Answer the exact shown Coach snapshot: keep baseline, decline, postpone, approve switch or approve train; training still needs its separate result-swap choice.",
+      "input": "crate::skill_optimize::offer_doors::OfferAnswerRequest",
+      "output": "crate::skill_optimize::OfferAnswerRecord",
+      "call": "crate::skill_optimize::offer_doors::answer(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.answer\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.coach.training_offers.undo",
+      "description": "Undo an approved stock switch only while its own seat still holds the switched binding; restore the previous whole binding.",
+      "input": "crate::skill_optimize::offer_doors::OfferRef",
+      "output": "crate::skill_optimize::offer_doors::OfferUndoReceipt",
+      "call": "crate::skill_optimize::offer_doors::undo(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.undo\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.coach.training_offers.candidates",
+      "description": "Read pinned own-seat stock or training-recipe candidates, including their incumbent and explicit compute destination.",
+      "input": "crate::skill_optimize::offer_pilot::OfferCandidateQuery",
+      "output": "Vec<crate::skill_optimize::offer_pilot::OfferCandidateRecord>",
+      "call": "crate::skill_optimize::offer_pilot::candidates(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.candidates\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.coach.training_offers.candidates.prepare",
+      "description": "Pin an own-seat catalog stock candidate or existing training recipe and its destination; this nominates only and never switches, downloads or trains.",
+      "input": "crate::skill_optimize::offer_pilot::OfferCandidateSetup",
+      "output": "crate::skill_optimize::offer_pilot::OfferCandidateRecord",
+      "call": "crate::skill_optimize::offer_pilot::prepare_candidate(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.candidates.prepare\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.coach.training_offers.pilots.prepare",
+      "description": "Prepare an eval-only pilot of a pinned seat candidate, counting its sealed cohort exposure before releasing receipt-backed cases; launch no compute or egress.",
+      "input": "crate::skill_optimize::offer_pilot::OfferPilotPrepare",
+      "output": "crate::skill_optimize::offer_pilot::OfferPilotPrepared",
+      "call": "crate::skill_optimize::offer_pilot::prepare_pilot(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.pilots.prepare\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.coach.training_offers.pilots.complete",
+      "description": "Record immutable owner-evaluator pilot measurements bound to counted own-seat families; fixed code derives sufficiency and preserves unknown cost and score.",
+      "input": "crate::skill_optimize::offer_pilot::OfferPilotComplete",
+      "output": "crate::skill_optimize::offer_pilot::OfferPilot",
+      "call": "crate::skill_optimize::offer_pilot::complete_pilot(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.pilots.complete\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.coach.training_offers.pilots.get",
+      "description": "Read one counted Coach pilot, its pins, measurement receipts, one-off cost and computed sufficiency card.",
+      "input": "crate::skill_optimize::offer_pilot::OfferPilotRef",
+      "output": "Option<crate::skill_optimize::offer_pilot::OfferPilot>",
+      "call": "crate::skill_optimize::offer_pilot::pilot(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.pilots.get\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.research.bind",
       "description": "Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it.",
       "input": "crate::task_verb::sdk::ResearchBindWire",

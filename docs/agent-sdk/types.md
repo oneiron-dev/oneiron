@@ -911,6 +911,8 @@ class Oneiron:
         @property
         def evals(self) -> "Oneiron._VaultEvalsVerbs": ...
         @property
+        def coach(self) -> "Oneiron._VaultCoachVerbs": ...
+        @property
         def cleanup(self) -> "Oneiron._VaultCleanupVerbs": ...
         @property
         def entities(self) -> "Oneiron._VaultEntitiesVerbs": ...
@@ -1711,6 +1713,38 @@ class Oneiron:
     class _VaultEvalsCohortsVerbs:
         def setup(self, spec: Facade.EvalCohortSetup) -> Facade.EvalAuthoringReport:
             """The owner sets up sealed cohorts from a pinned real inventory through the existing family, case and audited cut doors. Reports refused decisions; never serves sealed content or fabricates labels or skill provenance."""
+    class _VaultCoachVerbs:
+        @property
+        def training_offers(self) -> "Oneiron._VaultCoachTrainingOffersVerbs": ...
+    class _VaultCoachTrainingOffersVerbs:
+        def __call__(self, spec: Facade.OfferListRequest) -> list[Facade.OfferView]:
+            """Read Coach offer snapshots, their exact owner answers and later promise checks; optionally select a seat or only pending offers."""
+        def get(self, spec: Facade.OfferRef) -> Facade.OfferView | None:
+            """Read one Coach offer snapshot with its owner answer and receipt-backed promise checks."""
+        def trigger(self, spec: Facade.OfferPassRequest) -> Facade.OfferPassRef:
+            """Queue one production Coach training-offer pass under the owner proof; the offer skill decides what to raise and no caller supplies an offer body."""
+        def result(self, spec: Facade.OfferPassRef) -> Facade.OfferPassResult | None:
+            """Read the production Coach offer attempt state and the exact snapshots it raised; a completed pass may raise no offer."""
+        def answer(self, spec: Facade.OfferAnswerRequest) -> Facade.OfferAnswerRecord:
+            """Answer the exact shown Coach snapshot: keep baseline, decline, postpone, approve switch or approve train; training still needs its separate result-swap choice."""
+        def undo(self, spec: Facade.OfferRef) -> Facade.OfferUndoReceipt:
+            """Undo an approved stock switch only while its own seat still holds the switched binding; restore the previous whole binding."""
+        @property
+        def candidates(self) -> "Oneiron._VaultCoachTrainingOffersCandidatesVerbs": ...
+        @property
+        def pilots(self) -> "Oneiron._VaultCoachTrainingOffersPilotsVerbs": ...
+    class _VaultCoachTrainingOffersCandidatesVerbs:
+        def __call__(self, spec: Facade.OfferCandidateQuery) -> list[Facade.OfferCandidateRecord]:
+            """Read pinned own-seat stock or training-recipe candidates, including their incumbent and explicit compute destination."""
+        def prepare(self, spec: Facade.OfferCandidateSetup) -> Facade.OfferCandidateRecord:
+            """Pin an own-seat catalog stock candidate or existing training recipe and its destination; this nominates only and never switches, downloads or trains."""
+    class _VaultCoachTrainingOffersPilotsVerbs:
+        def prepare(self, spec: Facade.OfferPilotPrepare) -> Facade.OfferPilotPrepared:
+            """Prepare an eval-only pilot of a pinned seat candidate, counting its sealed cohort exposure before releasing receipt-backed cases; launch no compute or egress."""
+        def complete(self, spec: Facade.OfferPilotComplete) -> Facade.OfferPilot:
+            """Record immutable owner-evaluator pilot measurements bound to counted own-seat families; fixed code derives sufficiency and preserves unknown cost and score."""
+        def get(self, spec: Facade.OfferPilotRef) -> Facade.OfferPilot | None:
+            """Read one counted Coach pilot, its pins, measurement receipts, one-off cost and computed sufficiency card."""
     class _VaultCleanupVerbs:
         def run(self, spec: Facade.CleanupRunRequest) -> Facade.CleanupRunView:
             """The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."""
@@ -2243,7 +2277,7 @@ class Oneiron:
     class _VaultRoomsOfferVerbs:
         def __call__(self, spec: Facade.OfferDraft) -> Facade.OfferCard:
             """Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card."""
-        def answer(self, spec: Facade.OfferAnswerRequest) -> Facade.OfferSettlement:
+        def answer(self, spec: Facade.OfferSettleOfferAnswerRequest) -> Facade.OfferSettlement:
             """The room's host answers an offer card: join, or not now."""
         def vote(self, spec: Facade.OfferVoteRequest) -> Facade.OfferCard:
             """Someone in the room casts an advisory join or not-now vote on an open room-wide offer card, which keeps it open; only the host's answer admits."""

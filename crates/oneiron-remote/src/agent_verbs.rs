@@ -820,6 +820,45 @@ impl OneironClient {
                 "vault.evals.cohorts.setup" => remote_agent_verb_output::<
                     oneiron::skill_optimize::EvalAuthoringReport,
                 >(client, verb, &input),
+                "vault.coach.training_offers" => remote_agent_verb_output::<
+                    Vec<oneiron::skill_optimize::offer_doors::OfferView>,
+                >(client, verb, &input),
+                "vault.coach.training_offers.get" => remote_agent_verb_output::<
+                    Option<oneiron::skill_optimize::offer_doors::OfferView>,
+                >(client, verb, &input),
+                "vault.coach.training_offers.trigger" => remote_agent_verb_output::<
+                    oneiron::skill_optimize::offer_doors::OfferPassRef,
+                >(client, verb, &input),
+                "vault.coach.training_offers.result" => remote_agent_verb_output::<
+                    Option<oneiron::skill_optimize::offer_doors::OfferPassResult>,
+                >(client, verb, &input),
+                "vault.coach.training_offers.answer" => remote_agent_verb_output::<
+                    oneiron::skill_optimize::OfferAnswerRecord,
+                >(client, verb, &input),
+                "vault.coach.training_offers.undo" => remote_agent_verb_output::<
+                    oneiron::skill_optimize::offer_doors::OfferUndoReceipt,
+                >(client, verb, &input),
+                "vault.coach.training_offers.candidates" => remote_agent_verb_output::<
+                    Vec<oneiron::skill_optimize::offer_pilot::OfferCandidateRecord>,
+                >(client, verb, &input),
+                "vault.coach.training_offers.candidates.prepare" => {
+                    remote_agent_verb_output::<
+                        oneiron::skill_optimize::offer_pilot::OfferCandidateRecord,
+                    >(client, verb, &input)
+                }
+                "vault.coach.training_offers.pilots.prepare" => {
+                    remote_agent_verb_output::<
+                        oneiron::skill_optimize::offer_pilot::OfferPilotPrepared,
+                    >(client, verb, &input)
+                }
+                "vault.coach.training_offers.pilots.complete" => {
+                    remote_agent_verb_output::<oneiron::skill_optimize::offer_pilot::OfferPilot>(
+                        client, verb, &input,
+                    )
+                }
+                "vault.coach.training_offers.pilots.get" => remote_agent_verb_output::<
+                    Option<oneiron::skill_optimize::offer_pilot::OfferPilot>,
+                >(client, verb, &input),
                 "vault.research.bind" => remote_agent_verb_output::<
                     oneiron::autoreason_campaign::research::ResearchBinding,
                 >(client, verb, &input),
@@ -5473,6 +5512,138 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.evals.cohorts.setup", value)
+    }
+    pub fn vault_coach_training_offers(
+        &self,
+        input: &oneiron::skill_optimize::offer_doors::OfferListRequest,
+    ) -> Result<Vec<oneiron::skill_optimize::offer_doors::OfferView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.coach.training_offers", value)
+    }
+    pub fn vault_coach_training_offers_get(
+        &self,
+        input: &oneiron::skill_optimize::offer_doors::OfferRef,
+    ) -> Result<Option<oneiron::skill_optimize::offer_doors::OfferView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.coach.training_offers.get", value)
+    }
+    pub fn vault_coach_training_offers_trigger(
+        &self,
+        input: &oneiron::skill_optimize::offer_doors::OfferPassRequest,
+    ) -> Result<oneiron::skill_optimize::offer_doors::OfferPassRef, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.coach.training_offers.trigger", value)
+    }
+    pub fn vault_coach_training_offers_result(
+        &self,
+        input: &oneiron::skill_optimize::offer_doors::OfferPassRef,
+    ) -> Result<Option<oneiron::skill_optimize::offer_doors::OfferPassResult>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.coach.training_offers.result", value)
+    }
+    pub fn vault_coach_training_offers_answer(
+        &self,
+        input: &oneiron::skill_optimize::offer_doors::OfferAnswerRequest,
+    ) -> Result<oneiron::skill_optimize::OfferAnswerRecord, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.coach.training_offers.answer", value)
+    }
+    pub fn vault_coach_training_offers_undo(
+        &self,
+        input: &oneiron::skill_optimize::offer_doors::OfferRef,
+    ) -> Result<oneiron::skill_optimize::offer_doors::OfferUndoReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.coach.training_offers.undo", value)
+    }
+    pub fn vault_coach_training_offers_candidates(
+        &self,
+        input: &oneiron::skill_optimize::offer_pilot::OfferCandidateQuery,
+    ) -> Result<Vec<oneiron::skill_optimize::offer_pilot::OfferCandidateRecord>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.coach.training_offers.candidates", value)
+    }
+    pub fn vault_coach_training_offers_candidates_prepare(
+        &self,
+        input: &oneiron::skill_optimize::offer_pilot::OfferCandidateSetup,
+    ) -> Result<oneiron::skill_optimize::offer_pilot::OfferCandidateRecord, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.coach.training_offers.candidates.prepare", value)
+    }
+    pub fn vault_coach_training_offers_pilots_prepare(
+        &self,
+        input: &oneiron::skill_optimize::offer_pilot::OfferPilotPrepare,
+    ) -> Result<oneiron::skill_optimize::offer_pilot::OfferPilotPrepared, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.coach.training_offers.pilots.prepare", value)
+    }
+    pub fn vault_coach_training_offers_pilots_complete(
+        &self,
+        input: &oneiron::skill_optimize::offer_pilot::OfferPilotComplete,
+    ) -> Result<oneiron::skill_optimize::offer_pilot::OfferPilot, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.coach.training_offers.pilots.complete", value)
+    }
+    pub fn vault_coach_training_offers_pilots_get(
+        &self,
+        input: &oneiron::skill_optimize::offer_pilot::OfferPilotRef,
+    ) -> Result<Option<oneiron::skill_optimize::offer_pilot::OfferPilot>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.coach.training_offers.pilots.get", value)
     }
     pub fn vault_research_bind(
         &self,
