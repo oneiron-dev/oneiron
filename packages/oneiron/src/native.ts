@@ -221,6 +221,14 @@ vaultSharesRevoke(input: unknown): unknown
 vaultSharesView(input: unknown): unknown
 vaultHooksReplay(input: unknown): unknown
 vaultArtifactsView(requestJson: string): string
+vaultArtifactsUnits(input: unknown): unknown
+vaultArtifactsAnchorsPin(input: unknown): unknown
+vaultArtifactsThreadsOpen(input: unknown): unknown
+vaultArtifactsThreadsComment(input: unknown): unknown
+vaultArtifactsThreadsRead(input: unknown): unknown
+vaultArtifactsThreadsList(input: unknown): unknown
+vaultArtifactsThreadsAssign(input: unknown): unknown
+vaultArtifactsThreadsState(input: unknown): unknown
 vaultCodeDiff(requestJson: string): string
 vaultCodeBlame(requestJson: string): string
 vaultCodeProposalView(requestJson: string): string

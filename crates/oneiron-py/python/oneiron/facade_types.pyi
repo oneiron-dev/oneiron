@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 383 facade rows, 1498 declarations.
-Inputs: 340 of 383 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 340 of 383 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 391 facade rows, 1515 declarations.
+Inputs: 348 of 391 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 348 of 391 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 75; unread shapes: 0.
 """
 
@@ -4243,6 +4243,97 @@ class ArtifactView(TypedDict):
     media_type: str
     head: NotRequired[int | None]
     versions: list[ArtifactVersionView]
+class ArtifactUnitsRequest(TypedDict):
+    artifact_ref: str
+    version: NotRequired[int | None]
+class AnnotationLocatorXlsx(TypedDict):
+    format: Literal["xlsx"]
+    sheet: str
+    range: str
+class AnnotationLocatorDocx(TypedDict):
+    format: Literal["docx"]
+    para_path: str
+    char_start: int
+    char_end: int
+class AnnotationLocatorPptx(TypedDict):
+    format: Literal["pptx"]
+    slide: int
+    shape_id: str
+AnnotationLocator = AnnotationLocatorXlsx | AnnotationLocatorDocx | AnnotationLocatorPptx
+class ArtifactUnitView(TypedDict):
+    locator: AnnotationLocator
+    quote: NotRequired[str | None]
+class ArtifactUnitsViewSupported(TypedDict):
+    status: Literal["supported"]
+    artifact_id: EntityId
+    version: int
+    content_hash: str
+    kind: ArtifactKind
+    units: list[ArtifactUnitView]
+class ArtifactUnitsViewUnsupported(TypedDict):
+    status: Literal["unsupported"]
+    artifact_id: EntityId
+    kind: ArtifactKind
+    reason: str
+ArtifactUnitsView = ArtifactUnitsViewSupported | ArtifactUnitsViewUnsupported
+class AnnotationPinRequest(TypedDict):
+    artifact_ref: str
+    version: NotRequired[int | None]
+    locator: AnnotationLocator
+class AnnotationAnchorView(TypedDict):
+    artifact_id: EntityId
+    version: int
+    locator: AnnotationLocator
+    quote: NotRequired[str | None]
+class AnnotationThreadOpenRequest(TypedDict):
+    artifact_ref: str
+    version: int
+    locator: AnnotationLocator
+    text: str
+AnnotationResolution = Literal["pinned", "mapped", "drifted"]
+class AnnotationDriftView(TypedDict):
+    drifted_at_version: int
+    pinned_version: int
+AnnotationThreadState = Literal["open", "resolved"]
+class AnnotationCommentView(TypedDict):
+    thread_id: EntityId
+    author: EntityId
+    text: str
+    at: int
+    claim_id: EntityId
+class AnnotationBriefView(TypedDict):
+    brief_ref: str
+    task_id: EntityId
+    thread_id: EntityId
+    anchor: AnnotationAnchorView
+    artifact_version: int
+    thread_text: str
+    assignee: NotRequired[EntityId | None]
+class AnnotationThreadView(TypedDict):
+    thread_id: EntityId
+    origin: AnnotationAnchorView
+    anchor: AnnotationAnchorView
+    resolution: AnnotationResolution
+    drift: NotRequired[AnnotationDriftView | None]
+    state: AnnotationThreadState
+    head_claim_id: EntityId
+    comments: list[AnnotationCommentView]
+    brief: NotRequired[AnnotationBriefView | None]
+class AnnotationCommentRequest(TypedDict):
+    artifact_ref: str
+    thread_ref: str
+    text: str
+class AnnotationThreadRequest(TypedDict):
+    artifact_ref: str
+    thread_ref: str
+class AnnotationAssignRequest(TypedDict):
+    artifact_ref: str
+    thread_ref: str
+    assignee_ref: NotRequired[str | None]
+class AnnotationStateRequest(TypedDict):
+    artifact_ref: str
+    thread_ref: str
+    state: AnnotationThreadState
 class CodeStateRequest(TypedDict):
     repo: str
     path: str
