@@ -3142,7 +3142,7 @@
      "path": "src/authority/owner_work.rs",
      "purpose": "Folds the owner's work requests and their results: which install is to do the key, custody or root work an…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -48541,6 +48541,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/client/residence/bundle/publication.rs",
+     "purpose": "The owner's ask to publish the vault's sealed bundle (WILL L04 row 03), run by the install his counted…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/client/residence/bundle/sweep.rs",
      "purpose": "Erase's sweep of every pad object the home keeps (FIX 922): each world whose keys were destroyed here leaves…",
      "surface": {
@@ -49503,10 +49513,20 @@
      "purpose": "The home's custody of the vault's sealed cloud bundle (DEC-0005 \"Sealed copies\", FIX 922)",
      "surface": {
       "const": 2,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 12,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/residence/bundle/publication.rs",
+     "purpose": "The home's admission of the install the owner asked to publish the vault's sealed bundle here (WILL L04 row…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -56838,6 +56858,17 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/bundle/publication.rs",
+     "purpose": "Sealed bundle publication on the owner's ask (WILL L04 row 03): he asks on any surface he is authenticated…",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -59414,7 +59445,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 183,
+     "files": 185,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -59596,7 +59627,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 31,
+     "files": 32,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -59612,7 +59643,7 @@
    },
    "over_bar": 198,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3637,
+   "source_files": 3640,
    "test_files": 902
   },
   "oneiron-android": {
@@ -59867,7 +59898,7 @@
      "path": "src/authority/owner_work.rs",
      "purpose": "The owner's work requests and their results, and their wire codec: the key, custody or root work an owner…",
      "surface": {
-      "const": 3,
+      "const": 4,
       "crate-vis": 6,
       "enum": 6,
       "fn": 14,
