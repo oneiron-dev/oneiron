@@ -423,6 +423,8 @@ pub(super) fn fold_authority_log_once(
             accepted_roster_marks: BTreeSet::new(),
             worlds: BTreeMap::new(),
             refused_world_edits: BTreeSet::new(),
+            grant_travel: BTreeMap::new(),
+            refused_grant_travel: BTreeSet::new(),
             install: InstallBound::default(),
             counted_ancestor_pairs,
             world_keys: BTreeMap::new(),

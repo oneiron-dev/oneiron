@@ -50,14 +50,14 @@ impl Vault {
                     "snapshot belongs to another repo",
                 )));
             }
+            // A manifest path reads as `None` only when the custody report
+            // withholds it, and a withheld file reads as absent, as a fork's
+            // lifted one does (OF-067, FIX 4447).
             let mut files = BTreeMap::new();
             for path in mount.list_files() {
-                files.insert(
-                    path.to_owned(),
-                    mount
-                        .read_file(path)?
-                        .ok_or(Error::CorruptedIndex("snapshot file missing"))?,
-                );
+                if let Some(bytes) = mount.read_file(path)? {
+                    files.insert(path.to_owned(), bytes);
+                }
             }
             return Ok(RepoMount { files });
         }

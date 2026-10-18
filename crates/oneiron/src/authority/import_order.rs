@@ -80,6 +80,9 @@ fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
                 entry.signer_key().clone(),
             )]
         }
+        AuthorityOp::GrantTravelSet(set) => {
+            vec![Grant::InstallKey(set.machine, entry.signer_key().clone())]
+        }
         op => std::iter::once(&entry.signer)
             .chain(&entry.cosigns)
             .map(|signature| Grant::Admitter(signature.public_key.clone()))

@@ -4,6 +4,7 @@
 //! who cannot read a world plans as though it were not there. The plan card
 //! presents a plan on the gen-UI envelope.
 use super::{Memory, MemoryResult};
+use crate::EntityId;
 use crate::claim::ClaimReadStatus;
 use crate::genui::ShapePlanCard;
 use crate::vault_shape::{
@@ -88,16 +89,38 @@ impl Memory<'_> {
         &self,
         input: &ShapeApplyRequest,
     ) -> MemoryResult<ShapeApplyReceipt> {
+        self.shape_apply_as_principal_by(input, false)
+            .map(|(receipt, _)| receipt)
+    }
+
+    /// [`Self::shape_apply_as_principal`], beside the rows its receipt
+    /// stands on ([`crate::Vault::apply_shape_listing`]): `None` for a
+    /// resumed apply. The same credential, locality, actor and read.
+    pub fn shape_apply_as_principal_listing(
+        &self,
+        input: &ShapeApplyRequest,
+    ) -> MemoryResult<(ShapeApplyReceipt, Option<Vec<EntityId>>)> {
+        self.shape_apply_as_principal_by(input, true)
+    }
+
+    /// The principal's apply, listing its rows when `listing` asks.
+    fn shape_apply_as_principal_by(
+        &self,
+        input: &ShapeApplyRequest,
+        listing: bool,
+    ) -> MemoryResult<(ShapeApplyReceipt, Option<Vec<EntityId>>)> {
         let now = crate::unix_seconds_now();
         let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
-        Ok(self.vault.apply_shape(
-            ShapeApplier::Actor {
-                actor: self.actor,
-                credential: self.read_proof.as_ref(),
-            },
-            input,
-            now,
-            &mut |id| read.is_entity_readable(id),
-        )?)
+        let applier = ShapeApplier::Actor {
+            actor: self.actor,
+            credential: self.read_proof.as_ref(),
+        };
+        let visible = &mut |id: &EntityId| read.is_entity_readable(id);
+        Ok(if listing {
+            self.vault
+                .apply_shape_listing(applier, input, now, visible)?
+        } else {
+            (self.vault.apply_shape(applier, input, now, visible)?, None)
+        })
     }
 }

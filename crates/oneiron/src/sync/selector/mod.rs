@@ -47,7 +47,6 @@ pub(in crate::sync) use self::admission::{
     revalidate_admitted_federated_claims, staged_births,
 };
 pub use self::authorize::authorize_sync_selector;
-pub use self::born_with::GrantTravel;
 pub(crate) use self::born_with::{
     carried_born_with, carried_born_with_in_txn, erase_carried_born_with_in_txn,
 };
@@ -61,6 +60,7 @@ pub use self::codec::{
 pub(crate) use self::edge::ReleasedStamps;
 pub(crate) use self::held_retire::retire_held_facet_stamps;
 pub use self::peer_confidence::{DEFAULT_FEDERATED_CONFIDENCE_SCALE, PeerConfidence};
+pub use crate::share_travel::GrantTravel;
 
 #[cfg(test)]
 use self::{authorize::*, codec::*};
