@@ -9,7 +9,7 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 633 code-mode rows (612 host rows, 21 run rows), 2287 declarations.
+// Census: 633 code-mode rows (612 host rows, 21 run rows), 2286 declarations.
 // Replies: 555 fully typed, 74 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 94; unread shapes: BoardVerbOutput.
@@ -1384,8 +1384,7 @@ declare namespace Sdk {
   type ResolvedTeam = { type_ref: TypeStamp; pattern: CoordinationPatternView; width: number; model: string; axis?: TeamAxis | null; project_ref?: EntityId | null; root_attempt_ref: EntityId; member_attempt_refs: EntityId[]; team_ref?: string | null };
   type TeamBindingView = { team_ref: string; pattern: CoordinationPatternView; leader: EntityId; member_attempt_refs: EntityId[]; proposal_refs: string[]; root_task?: string | null; started_at: number };
   type TeamReceiptView = { team_ref: string; type_ref: TypeStamp; pattern: CoordinationPatternView; pattern_skill?: SkillRevisionView | null; axis: TeamAxis; width: number; models: string[]; outcome_receipt?: string | null };
-  type RouteStampState = "unstamped_before_s5" | "stamped";
-  type RouteObservation = { run_ref: EntityId; type_ref?: TypeStamp | null; stamp_state: RouteStampState; model: string; effort: ReasoningEffort; why: string; reused: boolean };
+  type RouteObservation = { run_ref: EntityId; type_ref: TypeStamp; model: string; effort: ReasoningEffort; why: string; reused: boolean };
   type CriticAssociation = "branch_attempt" | "canonical_run_ref";
   type CriticObservation = { run_ref: string; branch_attempt_ref: EntityId; association: CriticAssociation; artifact_id: string; target_ref: string; type_ref: TypeStamp; lens_ref: EntityId; lens_id: string; executor: string; axis: string; verdict: string };
   type DoorsLearningCellView = { predicate: string; subject: EntityId; executor: string; type_ref: TypeStamp; axis: string };

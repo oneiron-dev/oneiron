@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 576 facade rows, 2133 generated types.
+// UniFFI census: 576 facade rows, 2132 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 11; generated in and out: 538.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -20693,24 +20693,13 @@ pub struct TeamReceiptView {
     pub outcome_receipt: Option<String>,
 }
 
-/// `oneiron::team::doors::RouteStampState`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum RouteStampState {
-    #[serde(rename = "unstamped_before_s5")]
-    UnstampedBeforeS5,
-    #[serde(rename = "stamped")]
-    Stamped,
-}
-
 /// `oneiron::team::doors::RouteObservation`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct RouteObservation {
     #[serde(rename = "run_ref")]
     pub run_ref: String,
-    #[serde(rename = "type_ref", default, skip_serializing_if = "Option::is_none")]
-    pub type_ref: Option<TypeStamp>,
-    #[serde(rename = "stamp_state")]
-    pub stamp_state: RouteStampState,
+    #[serde(rename = "type_ref")]
+    pub type_ref: TypeStamp,
     #[serde(rename = "model")]
     pub model: String,
     #[serde(rename = "effort")]
