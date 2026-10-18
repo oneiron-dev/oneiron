@@ -138,7 +138,15 @@ pub(super) fn record_repo_conflict(
     theirs_ref: &str,
 ) -> Result<EntityId> {
     record_repo_conflict_checked(
-        vault, repo_ref, repo_root, branch_subject, branch_name, ours_ref, theirs_ref, None, &[],
+        vault,
+        repo_ref,
+        repo_root,
+        branch_subject,
+        branch_name,
+        ours_ref,
+        theirs_ref,
+        None,
+        &[],
     )
 }
 
@@ -177,17 +185,23 @@ pub(super) fn record_repo_conflict_checked(
 
     let claim_id = vault.store.clock.entity_id()?;
     let value = RepoConflictOpenValue {
-            repo_ref: repo_ref.clone(),
-            branch: branch_name.to_owned(),
-            base_tree,
-            ours_tree,
-            theirs_tree,
-            conflicted_paths,
-            proposals: proposals.iter().map(|row| row.id).collect(),
+        repo_ref: repo_ref.clone(),
+        branch: branch_name.to_owned(),
+        base_tree,
+        ours_tree,
+        theirs_tree,
+        conflicted_paths,
+        proposals: proposals.iter().map(|row| row.id).collect(),
     };
     let body = open_conflict_body(branch_subject, &value)?;
     put_engine_repo_conflict_claim_checked(
-        vault, claim_id, branch_subject, &body, now_secs(), owner, proposals,
+        vault,
+        claim_id,
+        branch_subject,
+        &body,
+        now_secs(),
+        owner,
+        proposals,
     )
 }
 
@@ -364,11 +378,14 @@ fn require_active_repo_conflict_claim(
         ours_tree: value.ours_tree,
         theirs_tree: value.theirs_tree,
         conflicted_paths: value.conflicted_paths,
-            proposals: value.proposals,
+        proposals: value.proposals,
     })
 }
 
-fn open_conflict_body(branch_subject: EntityId, value: &RepoConflictOpenValue) -> Result<ClaimBody> {
+fn open_conflict_body(
+    branch_subject: EntityId,
+    value: &RepoConflictOpenValue,
+) -> Result<ClaimBody> {
     let body = ClaimBody::new(
         PREDICATE_CONFLICT_OPEN,
         ClaimSubject::Entity(branch_subject),
@@ -408,8 +425,15 @@ fn put_engine_repo_conflict_claim(
     learned_at: u64,
 ) -> Result<()> {
     put_engine_repo_conflict_claim_checked(
-        vault, claim_id, branch_subject, body, learned_at, None, &[],
-    ).map(|_| ())
+        vault,
+        claim_id,
+        branch_subject,
+        body,
+        learned_at,
+        None,
+        &[],
+    )
+    .map(|_| ())
 }
 
 fn put_engine_repo_conflict_claim_checked(
@@ -435,20 +459,29 @@ fn put_engine_repo_conflict_claim_checked(
     let reconciliation_owner = match owner {
         Some((owner, repository)) => {
             let value = decode_repo_conflict_open_value(&body.value)?;
-            super::proposal::require_repo_artifact_in_txn(vault, &wtxn, repository, &value.repo_ref)?;
+            super::proposal::require_repo_artifact_in_txn(
+                vault,
+                &wtxn,
+                repository,
+                &value.repo_ref,
+            )?;
             Some(owner.revalidate_in_txn(vault, &wtxn)?)
-        },
+        }
         None => reconciliation_owner,
     };
     for expected in proposals {
         if !crate::ports::EntityStoreRead::port_entity_present(&vault.store, &wtxn, &expected.id)? {
             return Err(Error::EntityNotFound);
         }
-        let stored = super::proposal::PROPOSAL.get(&vault.store, &wtxn, &expected.id)?
+        let stored = super::proposal::PROPOSAL
+            .get(&vault.store, &wtxn, &expected.id)?
             .ok_or(Error::EntityNotFound)?;
-        if stored.repo != expected.repo || stored.path != expected.path
-            || stored.content != expected.content || stored.pre_action_fork_hash != expected.pre_action_fork_hash
-            || stored.actor != expected.actor || stored.status != expected.status
+        if stored.repo != expected.repo
+            || stored.path != expected.path
+            || stored.content != expected.content
+            || stored.pre_action_fork_hash != expected.pre_action_fork_hash
+            || stored.actor != expected.actor
+            || stored.status != expected.status
         {
             return Err(super::proposal::invalid("conflict source proposal changed"));
         }
@@ -622,7 +655,11 @@ fn supersede_repo_conflict_claim(
     Ok(())
 }
 
-pub(super) fn merge_base_commit(repo_root: &Path, ours_ref: &str, theirs_ref: &str) -> Result<String> {
+pub(super) fn merge_base_commit(
+    repo_root: &Path,
+    ours_ref: &str,
+    theirs_ref: &str,
+) -> Result<String> {
     let base = utf8_trimmed(
         run_git(
             repo_root,

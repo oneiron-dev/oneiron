@@ -363,7 +363,15 @@ pub(crate) async fn self_browser_library_find(
     invocation: Option<InvocationId>,
     input: LiveRunRequest<sdk::BrowserLibraryFindInput>,
 ) -> Listed<sdk::BrowserLibraryFindOutput> {
-    on_browser(server, auth, session, invocation, AgentVerb::SelfBrowserLibraryFind, input).await
+    on_browser(
+        server,
+        auth,
+        session,
+        invocation,
+        AgentVerb::SelfBrowserLibraryFind,
+        input,
+    )
+    .await
 }
 
 pub(crate) async fn self_browser_library_propose(
@@ -374,7 +382,15 @@ pub(crate) async fn self_browser_library_propose(
     invocation: Option<InvocationId>,
     input: LiveRunRequest<sdk::BrowserLibraryProposeInput>,
 ) -> Listed<sdk::BrowserLibraryProposeOutput> {
-    on_browser(server, auth, session, invocation, AgentVerb::SelfBrowserLibraryPropose, input).await
+    on_browser(
+        server,
+        auth,
+        session,
+        invocation,
+        AgentVerb::SelfBrowserLibraryPropose,
+        input,
+    )
+    .await
 }
 
 pub(crate) async fn self_browser_library_retire(
@@ -385,7 +401,15 @@ pub(crate) async fn self_browser_library_retire(
     invocation: Option<InvocationId>,
     input: LiveRunRequest<sdk::BrowserLibraryRetireInput>,
 ) -> Listed<sdk::BrowserLibraryRetireOutput> {
-    on_browser(server, auth, session, invocation, AgentVerb::SelfBrowserLibraryRetire, input).await
+    on_browser(
+        server,
+        auth,
+        session,
+        invocation,
+        AgentVerb::SelfBrowserLibraryRetire,
+        input,
+    )
+    .await
 }
 
 pub(crate) async fn self_browser_library_retired(
@@ -396,7 +420,15 @@ pub(crate) async fn self_browser_library_retired(
     invocation: Option<InvocationId>,
     input: LiveRunRequest<sdk::BrowserLibraryRetiredInput>,
 ) -> Listed<sdk::BrowserLibraryRetiredOutput> {
-    on_browser(server, auth, session, invocation, AgentVerb::SelfBrowserLibraryRetired, input).await
+    on_browser(
+        server,
+        auth,
+        session,
+        invocation,
+        AgentVerb::SelfBrowserLibraryRetired,
+        input,
+    )
+    .await
 }
 
 pub(crate) async fn self_browser_library_run(
@@ -407,7 +439,15 @@ pub(crate) async fn self_browser_library_run(
     invocation: Option<InvocationId>,
     input: LiveRunRequest<sdk::BrowserLibraryRunInput>,
 ) -> Listed<sdk::BrowserLibraryRunOutput> {
-    on_browser(server, auth, session, invocation, AgentVerb::SelfBrowserLibraryRun, input).await
+    on_browser(
+        server,
+        auth,
+        session,
+        invocation,
+        AgentVerb::SelfBrowserLibraryRun,
+        input,
+    )
+    .await
 }
 
 pub(crate) async fn self_browser_handover(

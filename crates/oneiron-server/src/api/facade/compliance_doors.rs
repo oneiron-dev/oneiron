@@ -1,15 +1,15 @@
 //! Compliance owner decisions use the request's owner proof and its own Memory.
 //! Pack data and receipts are side-table state, so these doors list no record.
 
-use std::sync::Arc;
+use super::host_doors::{Listed, credential_listing, owner_proof};
+use crate::auth::CoreAuth;
+use crate::server::SyncServer;
 use oneiron::campaign::compliance::{
     ComplianceAmendRequest, ComplianceApprovalRequest, ComplianceReceipt, ComplianceVerifyRequest,
 };
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::{EdgeActorClass, EntityId};
-use super::host_doors::{Listed, credential_listing, owner_proof};
-use crate::auth::CoreAuth;
-use crate::server::SyncServer;
+use std::sync::Arc;
 
 pub(crate) async fn vault_campaign_compliance_install(
     server: &Arc<SyncServer>,
@@ -21,7 +21,8 @@ pub(crate) async fn vault_campaign_compliance_install(
     const VERB: &str = "vault.campaign.compliance.install";
     credential_listing(server, auth, caller, VERB, move |server, auth, memory| {
         memory.compliance_install_as(&owner_proof(auth, server, VERB)?, &input)
-    }).await
+    })
+    .await
 }
 
 pub(crate) async fn vault_campaign_compliance_approve(
@@ -34,7 +35,8 @@ pub(crate) async fn vault_campaign_compliance_approve(
     const VERB: &str = "vault.campaign.compliance.approve";
     credential_listing(server, auth, caller, VERB, move |server, auth, memory| {
         memory.compliance_approve_as(&owner_proof(auth, server, VERB)?, &input)
-    }).await
+    })
+    .await
 }
 
 pub(crate) async fn vault_campaign_compliance_reject(
@@ -47,7 +49,8 @@ pub(crate) async fn vault_campaign_compliance_reject(
     const VERB: &str = "vault.campaign.compliance.reject";
     credential_listing(server, auth, caller, VERB, move |server, auth, memory| {
         memory.compliance_reject_as(&owner_proof(auth, server, VERB)?, &input)
-    }).await
+    })
+    .await
 }
 
 pub(crate) async fn vault_campaign_compliance_verify(
@@ -60,5 +63,6 @@ pub(crate) async fn vault_campaign_compliance_verify(
     const VERB: &str = "vault.campaign.compliance.verify";
     credential_listing(server, auth, caller, VERB, move |server, auth, memory| {
         memory.compliance_verify_as(&owner_proof(auth, server, VERB)?, &input)
-    }).await
+    })
+    .await
 }

@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{ClaimScope, Memory, MemoryError, MemoryResult, ScopedClaimInput};
 use crate::affect::coping::{
-    COPING_OUTCOME_PREDICATE, CopingOutcomeValue, CopingStrategy,
-    coping_outcome_value, decode_coping_outcome_claim,
+    COPING_OUTCOME_PREDICATE, CopingOutcomeValue, CopingStrategy, coping_outcome_value,
+    decode_coping_outcome_claim,
 };
 use crate::claim::{ClaimBody, ClaimReadStatus, ClaimSubject, claim_consolidatable};
 use crate::consent::AuthenticatedOwner;
@@ -97,36 +97,54 @@ impl Memory<'_> {
         let snapshot = {
             let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
             self.coping_observation_guard(&txn, owner, &lane, person, baseline, later)?;
-            self.vault.coping_turn_observation_in_txn(&txn, &baseline, &later, now)?
+            self.vault
+                .coping_turn_observation_in_txn(&txn, &baseline, &later, now)?
         };
         let value = CopingOutcomeValue::new(
-            person, baseline, input.strategy, snapshot.0, input.confidence, 1,
+            person,
+            baseline,
+            input.strategy,
+            snapshot.0,
+            input.confidence,
+            1,
         )?;
-        let receipt = self.claim_record_scoped_guarded(&ScopedClaimInput {
-            id: None,
-            predicate: COPING_OUTCOME_PREDICATE.to_owned(),
-            subject_ref: person.to_hex(),
-            value: crate::serialize::msgpack_value_to_json(&coping_outcome_value(&value)),
-            confidence: input.confidence,
-            source: "observed".to_owned(),
-            scope: input.scope.clone(),
-            sensitivity: input.sensitivity,
-            evidence_turn_refs: vec![baseline.to_hex(), later.to_hex()],
-            valid_from: Some(now),
-            valid_to: None,
-            occurred_at: Some(now),
-            learned_at: Some(now),
-            salience: None,
-        }, &|txn| {
-            self.coping_observation_guard(txn, owner, &lane, person, baseline, later)?;
-            if self.vault.coping_turn_observation_in_txn(txn, &baseline, &later, now)? != snapshot {
-                return Err(Error::InvalidClaimBody("VAD evidence changed; record the observation again"));
-            }
-            Ok(())
-        })?;
+        let receipt = self.claim_record_scoped_guarded(
+            &ScopedClaimInput {
+                id: None,
+                predicate: COPING_OUTCOME_PREDICATE.to_owned(),
+                subject_ref: person.to_hex(),
+                value: crate::serialize::msgpack_value_to_json(&coping_outcome_value(&value)),
+                confidence: input.confidence,
+                source: "observed".to_owned(),
+                scope: input.scope.clone(),
+                sensitivity: input.sensitivity,
+                evidence_turn_refs: vec![baseline.to_hex(), later.to_hex()],
+                valid_from: Some(now),
+                valid_to: None,
+                occurred_at: Some(now),
+                learned_at: Some(now),
+                salience: None,
+            },
+            &|txn| {
+                self.coping_observation_guard(txn, owner, &lane, person, baseline, later)?;
+                if self
+                    .vault
+                    .coping_turn_observation_in_txn(txn, &baseline, &later, now)?
+                    != snapshot
+                {
+                    return Err(Error::InvalidClaimBody(
+                        "VAD evidence changed; record the observation again",
+                    ));
+                }
+                Ok(())
+            },
+        )?;
         let claim = self.resolve_ref(&receipt.claim_short_id)?;
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
-        let body = self.vault.get_claim_in_txn(&txn, &claim)?.ok_or(Error::EntityNotFound)?;
+        let body = self
+            .vault
+            .get_claim_in_txn(&txn, &claim)?
+            .ok_or(Error::EntityNotFound)?;
         Ok(CopingOutcomeReceipt {
             outcome: self.coping_outcome_view_in_txn(&txn, claim, &body)?,
             superseded_claim_refs: Vec::new(),
@@ -146,41 +164,80 @@ impl Memory<'_> {
         let now = self.vault.store.clock.now_recorded_at();
         self.with_verified_actor_write_txn(|txn| {
             require_readable(&lane, txn, &[prior])?;
-            let body = self.vault.get_claim_in_txn(txn, &prior)?.ok_or(Error::EntityNotFound)?;
+            let body = self
+                .vault
+                .get_claim_in_txn(txn, &prior)?
+                .ok_or(Error::EntityNotFound)?;
             let prior_value = decode_coping_outcome_claim(&body)?
                 .ok_or_else(|| MemoryError::bad_request("prior claim must be coping.outcome"))?;
             self.coping_observation_guard(
-                txn, owner, &lane, prior_value.affected_person(), baseline, later,
+                txn,
+                owner,
+                &lane,
+                prior_value.affected_person(),
+                baseline,
+                later,
             )?;
             let inputs = [prior, baseline, later];
-            let bytes = inputs.iter().map(|id| {
-                self.vault.get_raw_in(txn, id)?.ok_or(Error::EntityNotFound)
-            }).collect::<crate::Result<Vec<_>>>()?;
+            let bytes = inputs
+                .iter()
+                .map(|id| self.vault.get_raw_in(txn, id)?.ok_or(Error::EntityNotFound))
+                .collect::<crate::Result<Vec<_>>>()?;
             let read = bytes.iter().map(Vec::as_slice).collect::<Vec<_>>();
             let birth = RowBirth::written(
-                WriteActor::new(self.actor, self.actor_class), MadeByClass::Concluded,
-                "vault.affect.coping.update", &inputs, &read, now,
-            ).ok_or_else(|| MemoryError::bad_request("coping updates require evidence"))?;
+                WriteActor::new(self.actor, self.actor_class),
+                MadeByClass::Concluded,
+                "vault.affect.coping.update",
+                &inputs,
+                &read,
+                now,
+            )
+            .ok_or_else(|| MemoryError::bad_request("coping updates require evidence"))?;
             let envelope = self.claim_envelope(
-                crate::claim::ClaimSource::Inferred, "vault.affect.coping.update", body.approval,
+                crate::claim::ClaimSource::Inferred,
+                "vault.affect.coping.update",
+                body.approval,
             )?;
             let result = self.vault.update_coping_outcome_from_turn_vad_in_txn(
-                txn, &prior, &baseline, &later, input.confidence, now, Some(&envelope),
+                txn,
+                &prior,
+                &baseline,
+                &later,
+                input.confidence,
+                now,
+                Some(&envelope),
             )?;
             crate::provenance::birth::stamp_birth_if_absent_in_txn(
-                &self.vault.store, txn, &result.active_claim_id, &birth,
+                &self.vault.store,
+                txn,
+                &result.active_claim_id,
+                &birth,
             )?;
-            let active = self.vault.get_claim_in_txn(txn, &result.active_claim_id)?
+            let active = self
+                .vault
+                .get_claim_in_txn(txn, &result.active_claim_id)?
                 .ok_or(Error::EntityNotFound)?;
             let decision = super::authorship::decision(
-                WriteActor::new(self.actor, self.actor_class), "coping_outcome", "approved",
-                "gate.affect.coping.turn_vad", Some(result.active_claim_id),
-                blake3::hash(&crate::claim::encode_claim_body(&active)?).as_bytes().to_vec(), now,
+                WriteActor::new(self.actor, self.actor_class),
+                "coping_outcome",
+                "approved",
+                "gate.affect.coping.turn_vad",
+                Some(result.active_claim_id),
+                blake3::hash(&crate::claim::encode_claim_body(&active)?)
+                    .as_bytes()
+                    .to_vec(),
+                now,
             );
-            self.vault.store.append_gate_decision_in_txn(txn, &decision)?;
+            self.vault
+                .store
+                .append_gate_decision_in_txn(txn, &decision)?;
             Ok(CopingOutcomeReceipt {
                 outcome: self.coping_outcome_view_in_txn(txn, result.active_claim_id, &active)?,
-                superseded_claim_refs: result.superseded_claim_ids.iter().map(EntityId::to_hex).collect(),
+                superseded_claim_refs: result
+                    .superseded_claim_ids
+                    .iter()
+                    .map(EntityId::to_hex)
+                    .collect(),
                 receipt_ref: format!("gate:{}", decision.decision_id.to_hex()),
             })
         })
@@ -203,7 +260,9 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
     ) -> crate::Result<()> {
         if owner.revalidate_in_txn(self.vault, txn)? != self.actor {
-            return Err(Error::InvalidClaimBody("affect owner proof must name the caller"));
+            return Err(Error::InvalidClaimBody(
+                "affect owner proof must name the caller",
+            ));
         }
         Ok(())
     }
@@ -223,11 +282,17 @@ impl Memory<'_> {
             || !crate::affect::state_inputs::spoke_in(self.vault, txn, &person, &baseline)?
             || !crate::affect::state_inputs::spoke_in(self.vault, txn, &person, &later)?
         {
-            return Err(Error::InvalidClaimBody("coping evidence must belong to the affected PERSON"));
+            return Err(Error::InvalidClaimBody(
+                "coping evidence must belong to the affected PERSON",
+            ));
         }
         for turn in [baseline, later] {
             let annotation = crate::affect::vad_annotation_claim_id(ENTITY_TYPE_TURN, &turn)?;
-            if self.vault.get_entity_type_in_txn(txn, &annotation)?.is_some() {
+            if self
+                .vault
+                .get_entity_type_in_txn(txn, &annotation)?
+                .is_some()
+            {
                 require_readable(lane, txn, &[annotation])?;
                 self.produced_from([annotation]);
             }
@@ -245,32 +310,44 @@ impl Memory<'_> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         require_readable(&lane, txn, &[person])?;
         if self.vault.get_entity_type_in_txn(txn, &person)? != Some(ENTITY_TYPE_PERSON) {
-            return Err(MemoryError::bad_request("coping aggregate requires a PERSON"));
+            return Err(MemoryError::bad_request(
+                "coping aggregate requires a PERSON",
+            ));
         }
         let mut outcomes = Vec::new();
         let mut observed_n = 0_u64;
         for id in self.vault.claims_for_subject_in_txn(txn, &person)? {
-            let Some((_, _, bytes)) = lane.get_entities_parts_in_txn(txn, &[id])?.pop().flatten() else {
+            let Some((_, _, bytes)) = lane.get_entities_parts_in_txn(txn, &[id])?.pop().flatten()
+            else {
                 continue;
             };
             let body = crate::claim::decode_claim_body(&bytes, true)?;
-            if body.predicate != COPING_OUTCOME_PREDICATE || !claim_consolidatable(&body)
+            if body.predicate != COPING_OUTCOME_PREDICATE
+                || !claim_consolidatable(&body)
                 || body.subject != ClaimSubject::Entity(person)
                 || scope.is_some_and(|scope| *scope != ClaimScope::of_body(&body))
                 || !crate::gate::claim_consolidation_eligible_in_txn(
-                    &self.vault.store, txn, &id, crate::gate::ConsolidationReader::CopingOutcome,
+                    &self.vault.store,
+                    txn,
+                    &id,
+                    crate::gate::ConsolidationReader::CopingOutcome,
                 )?
             {
                 continue;
             }
             let outcome = self.coping_outcome_view_in_txn(txn, id, &body)?;
-            observed_n = observed_n.checked_add(outcome.observed_n)
+            observed_n = observed_n
+                .checked_add(outcome.observed_n)
                 .ok_or_else(|| MemoryError::bad_request("coping observation count overflow"))?;
             outcomes.push(outcome);
         }
         outcomes.sort_by(|a, b| a.claim_ref.cmp(&b.claim_ref));
         self.produced_from([person]);
-        Ok(CopingAggregate { affected_person_ref: person.to_hex(), outcomes, observed_n })
+        Ok(CopingAggregate {
+            affected_person_ref: person.to_hex(),
+            outcomes,
+            observed_n,
+        })
     }
 
     fn coping_outcome_view_in_txn(
@@ -282,14 +359,26 @@ impl Memory<'_> {
         let value = decode_coping_outcome_claim(body)?
             .ok_or_else(|| MemoryError::bad_request("claim must be coping.outcome"))?;
         let birth = crate::provenance::birth::row_birth_in_txn(&self.vault.store, txn, &id)?;
-        let mut evidence = birth.as_ref().map(|birth| {
-            birth.made_by.inputs.iter().map(|input| input.row).collect::<Vec<_>>()
-        }).unwrap_or_default();
-        if let Some(value) = &body.evidence { collect_refs(value, &mut evidence); }
+        let mut evidence = birth
+            .as_ref()
+            .map(|birth| {
+                birth
+                    .made_by
+                    .inputs
+                    .iter()
+                    .map(|input| input.row)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if let Some(value) = &body.evidence {
+            collect_refs(value, &mut evidence);
+        }
         evidence.push(value.strategy_ref());
         evidence.sort();
         evidence.dedup();
-        let producers = std::iter::once(id).chain(evidence.iter().copied()).collect::<Vec<_>>();
+        let producers = std::iter::once(id)
+            .chain(evidence.iter().copied())
+            .collect::<Vec<_>>();
         require_readable(&self.read_lane(ClaimReadStatus::Recorded)?, txn, &producers)?;
         self.produced_from(producers);
         let delta = value.vad_delta();
@@ -299,7 +388,9 @@ impl Memory<'_> {
             strategy_ref: value.strategy_ref().to_hex(),
             strategy: value.strategy(),
             vad_delta: CopingVadDelta {
-                valence: delta.valence(), arousal: delta.arousal(), dominance: delta.dominance(),
+                valence: delta.valence(),
+                arousal: delta.arousal(),
+                dominance: delta.dominance(),
             },
             confidence: value.confidence(),
             successful: value.successful(),
@@ -320,7 +411,11 @@ pub(super) fn require_readable(
     txn: &heed::RoTxn<'_>,
     ids: &[EntityId],
 ) -> crate::Result<()> {
-    if lane.entities_readable_in_txn(txn, ids)?.iter().any(|readable| !readable) {
+    if lane
+        .entities_readable_in_txn(txn, ids)?
+        .iter()
+        .any(|readable| !readable)
+    {
         return Err(Error::EntityNotFound);
     }
     Ok(())
@@ -330,19 +425,27 @@ pub(super) fn collect_refs(value: &rmpv::Value, refs: &mut Vec<EntityId>) {
     match value {
         rmpv::Value::String(text) => {
             if let Some(text) = text.as_str() {
-                if let Ok(id) = EntityId::from_hex(text) { refs.push(id); }
+                if let Ok(id) = EntityId::from_hex(text) {
+                    refs.push(id);
+                }
             }
         }
         rmpv::Value::Binary(bytes) if bytes.len() == 16 => {
             if let Ok(bytes) = bytes.as_slice().try_into() {
-                if let Ok(id) = EntityId::from_bytes(bytes) { refs.push(id); }
+                if let Ok(id) = EntityId::from_bytes(bytes) {
+                    refs.push(id);
+                }
             }
         }
         rmpv::Value::Array(items) => {
-            for item in items { collect_refs(item, refs); }
+            for item in items {
+                collect_refs(item, refs);
+            }
         }
         rmpv::Value::Map(entries) => {
-            for (_, value) in entries { collect_refs(value, refs); }
+            for (_, value) in entries {
+                collect_refs(value, refs);
+            }
         }
         _ => {}
     }

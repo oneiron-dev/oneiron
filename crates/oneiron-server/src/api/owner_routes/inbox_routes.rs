@@ -30,7 +30,8 @@ async fn read(
     let page = blocking(move || -> OwnerResult<InboxLensPage> {
         let vault = server.vault();
         let actor = owner.revalidate(vault)?;
-        vault.memory(actor, EdgeActorClass::Human)
+        vault
+            .memory(actor, EdgeActorClass::Human)
             .at(auth.locality())
             .inbox_lens_as_owner(&owner, &query)
             .map_err(|error| {
@@ -40,6 +41,7 @@ async fn read(
                     OwnerError::Refused(error.to_string())
                 }
             })
-    }).await?;
+    })
+    .await?;
     Ok(Json(page))
 }

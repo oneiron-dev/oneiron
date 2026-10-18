@@ -1,5 +1,5 @@
 //! Fixed-code projection on the same dated workload, with each tokenizer.
-use super::{ModelRegistryRow, SeatWorkload, MONTH_SECS};
+use super::{MONTH_SECS, ModelRegistryRow, SeatWorkload};
 
 /// A month of the workload at a row's list price; `None` when the window was
 /// not metered throughout or the row's price does not read. A partial window
@@ -42,7 +42,11 @@ pub(super) fn candidate_monthly(
 
 /// Months until the one-off cost is paid back; `None` when any side is
 /// unknown or nothing is saved.
-pub(super) fn payback(before: Option<f64>, after: Option<f64>, one_off: Option<f64>) -> Option<f64> {
+pub(super) fn payback(
+    before: Option<f64>,
+    after: Option<f64>,
+    one_off: Option<f64>,
+) -> Option<f64> {
     let saving = before? - after?;
     let one_off = one_off?;
     (saving > 0.0).then(|| one_off / saving)

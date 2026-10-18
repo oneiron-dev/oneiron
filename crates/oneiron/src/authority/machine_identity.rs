@@ -397,7 +397,11 @@ impl Vault {
         start: &'static str,
     ) {
         let Some(issuer) = issuer else {
-            tracing::debug!(start, reason = SERVING_NO_ISSUER, "no machine profile ensured");
+            tracing::debug!(
+                start,
+                reason = SERVING_NO_ISSUER,
+                "no machine profile ensured"
+            );
             return;
         };
         match self.ensure_serving_install_profile(issuer, SERVING_INSTALL_ROLE) {
@@ -405,7 +409,11 @@ impl Vault {
             Err(crate::error::Error::Record(crate::error::RecordError::AuthorityRefused(
                 SERVING_ROOT_ABSENT,
             ))) => {
-                tracing::debug!(start, reason = SERVING_ROOT_ABSENT, "no machine profile ensured");
+                tracing::debug!(
+                    start,
+                    reason = SERVING_ROOT_ABSENT,
+                    "no machine profile ensured"
+                );
             }
             Err(error) => tracing::warn!(
                 start,

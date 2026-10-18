@@ -83,7 +83,10 @@ impl Vault {
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let compile = self.compile_persona_snapshot(
             &request.subject,
-            &PersonaSnapshotCompileOptions { locality, ..Default::default() },
+            &PersonaSnapshotCompileOptions {
+                locality,
+                ..Default::default()
+            },
         )?;
         require_stamp(&request.stamp, &compile.stamp.identity())?;
         let strikes = PersonaSnapshotStrikeList {
@@ -96,10 +99,18 @@ impl Vault {
             granted_at_secs: self.store.clock.now_recorded_at(),
         };
         let artifact = self.export_persona_snapshot_in_txn(
-            &mut txn, &compile, &strikes, &consent, Some(owner),
+            &mut txn,
+            &compile,
+            &strikes,
+            &consent,
+            Some(owner),
         )?;
         self.save_persona_snapshot_copy_in_txn(
-            &mut txn, artifact.export_id, &compile, &strikes, &request.stamp,
+            &mut txn,
+            artifact.export_id,
+            &compile,
+            &strikes,
+            &request.stamp,
         )?;
         txn.commit()?;
         Ok(artifact)
@@ -117,30 +128,47 @@ impl Vault {
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         match crate::vault::live_entity_row_in_txn(&self.store, &txn, &request.export_id)? {
             crate::vault::LiveEntityRow::Live {
-                entity_type: crate::registry::ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ..
+                entity_type: crate::registry::ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
+                ..
             } => {}
             _ => return Err(Error::EntityNotFound),
         }
-        let accepted = COPIES.get(&self.store, &txn, &request.export_id)?
+        let accepted = COPIES
+            .get(&self.store, &txn, &request.export_id)?
             .ok_or(Error::EntityNotFound)?;
         let mut compile = accepted.compile;
         require_stamp(&request.stamp, &compile.stamp.identity())?;
         let current = self.compile_persona_snapshot(
             &compile.subject_ref,
-            &PersonaSnapshotCompileOptions { locality, ..Default::default() },
+            &PersonaSnapshotCompileOptions {
+                locality,
+                ..Default::default()
+            },
         )?;
         require_stamp(&accepted.source_stamp, &current.stamp.identity())?;
         let known: BTreeSet<_> = compile.rows.iter().map(|row| row.row_id.clone()).collect();
         let mut edits = BTreeMap::new();
         for edit in &request.edits {
-            if edit.text.trim().is_empty() || edits.insert(edit.row_id.as_str(), edit.text.as_str()).is_some() {
-                return Err(invalid_snapshot("copy edits need non-empty text and distinct row ids"));
+            if edit.text.trim().is_empty()
+                || edits
+                    .insert(edit.row_id.as_str(), edit.text.as_str())
+                    .is_some()
+            {
+                return Err(invalid_snapshot(
+                    "copy edits need non-empty text and distinct row ids",
+                ));
             }
         }
         if edits.keys().any(|id| !known.contains(*id))
-            || request.strike.iter().chain(&request.unstrike).any(|id| !known.contains(id))
+            || request
+                .strike
+                .iter()
+                .chain(&request.unstrike)
+                .any(|id| !known.contains(id))
         {
-            return Err(invalid_snapshot("copy edit or strike references unknown row id"));
+            return Err(invalid_snapshot(
+                "copy edit or strike references unknown row id",
+            ));
         }
         if !request.strike.is_disjoint(&request.unstrike) {
             return Err(invalid_snapshot("strike and unstrike must not overlap"));
@@ -160,8 +188,11 @@ impl Vault {
                     compile.identity_line = row.text.clone();
                 }
                 row.row_id = row_id(
-                    row.kind, &row.subject_ref, &row.text,
-                    row.attribution.as_deref(), &row.provenance_refs,
+                    row.kind,
+                    &row.subject_ref,
+                    &row.text,
+                    row.attribution.as_deref(),
+                    &row.provenance_refs,
                 );
             }
             renamed.insert(old_id, row.row_id.clone());
@@ -169,12 +200,24 @@ impl Vault {
         compile.compiled_at_secs = self.store.clock.now_recorded_at();
         compile.stamp.compiled_at_secs = compile.compiled_at_secs;
         compile.stamp.compiled_fingerprint = compile_fingerprint(
-            &compile.subject_ref, &compile.identity_line, compile.audience_ref.as_deref(),
-            compile.takes_included, compile.stale_after_secs, &compile.rows,
+            &compile.subject_ref,
+            &compile.identity_line,
+            compile.audience_ref.as_deref(),
+            compile.takes_included,
+            compile.stale_after_secs,
+            &compile.rows,
         );
         let strikes = PersonaSnapshotStrikeList {
-            strike: request.strike.iter().map(|id| renamed[id].clone()).collect(),
-            unstrike: request.unstrike.iter().map(|id| renamed[id].clone()).collect(),
+            strike: request
+                .strike
+                .iter()
+                .map(|id| renamed[id].clone())
+                .collect(),
+            unstrike: request
+                .unstrike
+                .iter()
+                .map(|id| renamed[id].clone())
+                .collect(),
         };
         let consent = PersonaSnapshotExportConsent {
             granted_by: actor.to_hex(),
@@ -182,10 +225,18 @@ impl Vault {
             granted_at_secs: self.store.clock.now_recorded_at(),
         };
         let artifact = self.export_persona_snapshot_in_txn(
-            &mut txn, &compile, &strikes, &consent, Some(owner),
+            &mut txn,
+            &compile,
+            &strikes,
+            &consent,
+            Some(owner),
         )?;
         self.save_persona_snapshot_copy_in_txn(
-            &mut txn, artifact.export_id, &compile, &strikes, &accepted.source_stamp,
+            &mut txn,
+            artifact.export_id,
+            &compile,
+            &strikes,
+            &accepted.source_stamp,
         )?;
         txn.commit()?;
         Ok(artifact)
@@ -199,10 +250,15 @@ impl Vault {
         strikes: &PersonaSnapshotStrikeList,
         source_stamp: &str,
     ) -> Result<()> {
-        COPIES.put(&self.store, txn, &id, &AcceptedCopy {
-            compile: compile.clone(),
-            strikes: strikes.clone(),
-            source_stamp: source_stamp.to_owned(),
-        })
+        COPIES.put(
+            &self.store,
+            txn,
+            &id,
+            &AcceptedCopy {
+                compile: compile.clone(),
+                strikes: strikes.clone(),
+                source_stamp: source_stamp.to_owned(),
+            },
+        )
     }
 }

@@ -149,10 +149,7 @@ impl Vault {
     /// the read side. `write` gets the secret, or why it is unavailable.
     pub(super) fn with_world_settings_writer<T>(
         &self,
-        write: impl FnOnce(
-            &mut heed::RwTxn<'_>,
-            Result<&crate::world_keys::MachineSecret>,
-        ) -> Result<T>,
+        write: impl FnOnce(&mut heed::RwTxn<'_>, Result<&crate::world_keys::MachineSecret>) -> Result<T>,
     ) -> Result<T> {
         let (secret, unavailable) = match self.machine_secret_outside_txn() {
             Ok(secret) => (Some(secret), None),

@@ -16,7 +16,9 @@ const REQUESTS: SideTable<EntityId, RequestRow, LegacyJson> =
     SideTable::new(&side_table::ACCESS_REQUEST);
 
 /// Terminal responses cannot be changed by a second responder.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum AccessRequestStatus {
     Pending,

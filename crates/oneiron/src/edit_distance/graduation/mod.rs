@@ -147,16 +147,16 @@ mod threshold_policy;
 mod trust_table;
 
 pub use self::answers::{
-    OfferAnswer, OfferAnswerOutcome, SnoozeState, answer_graduation_offer, snooze_state,
-    unpin_scope, answer_graduation_offer_as_owner, unpin_scope_as_owner,
+    OfferAnswer, OfferAnswerOutcome, SnoozeState, answer_graduation_offer,
+    answer_graduation_offer_as_owner, snooze_state, unpin_scope, unpin_scope_as_owner,
 };
 pub use self::pattern::{WILDCARD_PATTERN, exact_pattern};
 pub use self::posterior::{guard_evidence, posterior_lower_bound};
 pub use self::receipts::is_graduation_answer_receipt;
 pub use self::threshold_policy::{
-    DEFAULT_POSTERIOR_GUARD, ThresholdRow, clear_graduation_policy, graduation_policy_for,
-    graduation_policy_rows, set_graduation_policy, set_graduation_policy_as_owner,
-    clear_graduation_policy_as_owner, DEFAULT_SNOOZE_BACKOFF_SECONDS,
+    DEFAULT_POSTERIOR_GUARD, DEFAULT_SNOOZE_BACKOFF_SECONDS, ThresholdRow, clear_graduation_policy,
+    clear_graduation_policy_as_owner, graduation_policy_for, graduation_policy_rows,
+    set_graduation_policy, set_graduation_policy_as_owner,
 };
 pub use self::trust_table::{TrustTableRow, trust_table};
 

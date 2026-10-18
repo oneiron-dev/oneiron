@@ -171,8 +171,9 @@ fn threshold_row_parts(row: StoredThresholdRow) -> Result<ThresholdRow> {
     if row.v != ROW_VERSION {
         return Err(Error::CorruptedIndex(THRESHOLD_ROW_LABEL));
     }
-    let mut threshold = ThresholdRow::new(row.scope_pattern, row.required_streak, row.posterior_guard)
-        .map_err(|_| Error::CorruptedIndex(THRESHOLD_ROW_LABEL))?;
+    let mut threshold =
+        ThresholdRow::new(row.scope_pattern, row.required_streak, row.posterior_guard)
+            .map_err(|_| Error::CorruptedIndex(THRESHOLD_ROW_LABEL))?;
     threshold.snooze_backoff_seconds = row.snooze_backoff_seconds;
     Ok(threshold)
 }
@@ -333,7 +334,12 @@ fn set_graduation_policy_in_txn(
         posterior_guard: row.posterior_guard,
         snooze_backoff_seconds: input.snooze_backoff_seconds,
     };
-    THRESHOLD.put(&vault.store, wtxn, &pattern_key(&row.scope_pattern), &stored)?;
+    THRESHOLD.put(
+        &vault.store,
+        wtxn,
+        &pattern_key(&row.scope_pattern),
+        &stored,
+    )?;
     Ok(())
 }
 
@@ -369,7 +375,9 @@ pub fn clear_graduation_policy_as_owner(
     vault.with_write_txn_grouped(|wtxn| {
         owner.revalidate_as_vault_owner_in_txn(vault, &*wtxn)?;
         if pattern_axes(pattern).is_none() {
-            return Err(Error::Gate(GateError::InvalidConsentBound("graduation scope pattern")));
+            return Err(Error::Gate(GateError::InvalidConsentBound(
+                "graduation scope pattern",
+            )));
         }
         THRESHOLD.delete(&vault.store, wtxn, &pattern_key(pattern))
     })

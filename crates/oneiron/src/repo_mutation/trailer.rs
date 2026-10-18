@@ -59,10 +59,14 @@ pub(super) fn validate_repo_provenance_request_in_txn(
     txn: &heed::RoTxn<'_>,
     request: &RepoMutationRequest,
 ) -> Result<()> {
-    let Some(id) = request.provenance_claim_id else { return Ok(()); };
-    if !matches!(request.operation,
-        RepoMutationOperation::CommitFile { .. } | RepoMutationOperation::ResolveConflictFile { .. })
-    {
+    let Some(id) = request.provenance_claim_id else {
+        return Ok(());
+    };
+    if !matches!(
+        request.operation,
+        RepoMutationOperation::CommitFile { .. }
+            | RepoMutationOperation::ResolveConflictFile { .. }
+    ) {
         return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "provenance claim id only applies to commit-producing repo mutations",
         )));

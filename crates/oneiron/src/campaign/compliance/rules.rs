@@ -43,7 +43,9 @@ pub(super) const CONFIDENCE_MILLIS_SCALE: f32 = 1000.0;
 // ---------------------------------------------------------------------------
 
 /// The ARCH-0059 §8 `rule_kind` axis.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ComplianceRuleKind {
     /// What lawful basis the send needs, and whether a B2B exemption exists.

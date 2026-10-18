@@ -71,8 +71,16 @@ pub(super) fn normalize_repo_conflict_paths(paths: Vec<String>) -> Result<Vec<St
 
 pub(super) fn encode_repo_conflict_open_value(value: &RepoConflictOpenValue) -> Value {
     Value::Map(vec![
-        (Value::from("proposals"), Value::Array(value.proposals.iter()
-            .map(|id| Value::Binary(id.as_bytes().to_vec())).collect())),
+        (
+            Value::from("proposals"),
+            Value::Array(
+                value
+                    .proposals
+                    .iter()
+                    .map(|id| Value::Binary(id.as_bytes().to_vec()))
+                    .collect(),
+            ),
+        ),
         (
             Value::from(REPO_CONFLICT_OPEN_VALUE_KEYS[0]),
             Value::from(u64::from(REPO_CONFLICT_CLAIM_VALUE_SCHEMA_VERSION)),
@@ -188,15 +196,25 @@ pub(super) fn decode_repo_conflict_open_value(value: &Value) -> Result<RepoConfl
         ));
     }
     let proposals = match map.get("proposals") {
-        Some(Value::Array(ids)) if ids.is_empty() || ids.len() == 2 => ids.iter().map(|value| {
-            let Value::Binary(bytes) = value else {
-                return Err(Error::InvalidClaimBody("conflict proposal id must be binary"));
-            };
-            let raw: [u8; 16] = bytes.as_slice().try_into()
-                .map_err(|_| Error::InvalidClaimBody("conflict proposal id must be 16 bytes"))?;
-            EntityId::from_bytes(raw)
-        }).collect::<Result<Vec<_>>>()?,
-        _ => return Err(Error::InvalidClaimBody("conflict requires zero or two proposal refs")),
+        Some(Value::Array(ids)) if ids.is_empty() || ids.len() == 2 => ids
+            .iter()
+            .map(|value| {
+                let Value::Binary(bytes) = value else {
+                    return Err(Error::InvalidClaimBody(
+                        "conflict proposal id must be binary",
+                    ));
+                };
+                let raw: [u8; 16] = bytes.as_slice().try_into().map_err(|_| {
+                    Error::InvalidClaimBody("conflict proposal id must be 16 bytes")
+                })?;
+                EntityId::from_bytes(raw)
+            })
+            .collect::<Result<Vec<_>>>()?,
+        _ => {
+            return Err(Error::InvalidClaimBody(
+                "conflict requires zero or two proposal refs",
+            ));
+        }
     };
     if proposals.len() == 2 && proposals[0] == proposals[1] {
         return Err(Error::InvalidClaimBody("conflict proposals must differ"));

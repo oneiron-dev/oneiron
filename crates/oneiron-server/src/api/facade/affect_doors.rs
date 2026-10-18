@@ -101,6 +101,7 @@ pub(crate) async fn vault_affect_claims_consolidate(
     (answer, rows)
 }
 
+use oneiron::dreamer_runner::maintenance::action_mode::ActionModePolicy;
 use oneiron::memory::coping_doors::{
     CopingAggregate, CopingAggregateRequest, CopingOutcomeReceipt, CopingOutcomeRecordRequest,
     CopingOutcomeUpdateRequest,
@@ -108,7 +109,6 @@ use oneiron::memory::coping_doors::{
 use oneiron::memory::wellness_doors::{
     WellnessPersonRequest, WellnessPolicyConfigureRequest, WellnessProjection,
 };
-use oneiron::dreamer_runner::maintenance::action_mode::ActionModePolicy;
 
 pub(crate) async fn vault_affect_coping_record(
     server: &Arc<SyncServer>,
@@ -118,8 +118,8 @@ pub(crate) async fn vault_affect_coping_record(
     const VERB: &str = "vault.affect.coping.record";
     let admitted = || -> MemoryResult<_> {
         let owner = owner_proof(auth, server, VERB)?;
-        let caller = super::facade_actor(server, auth)
-            .map_err(FacadeApiError::into_memory_error)?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
         Ok((owner, caller))
     };
     let (owner, caller) = match admitted() {
@@ -128,7 +128,8 @@ pub(crate) async fn vault_affect_coping_record(
     };
     credential_listing(server, auth, caller, VERB, move |_, _, memory| {
         memory.coping_outcome_record_as_owner(&owner, &input)
-    }).await
+    })
+    .await
 }
 
 pub(crate) async fn vault_affect_coping_update(
@@ -139,8 +140,8 @@ pub(crate) async fn vault_affect_coping_update(
     const VERB: &str = "vault.affect.coping.update";
     let admitted = || -> MemoryResult<_> {
         let owner = owner_proof(auth, server, VERB)?;
-        let caller = super::facade_actor(server, auth)
-            .map_err(FacadeApiError::into_memory_error)?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
         Ok((owner, caller))
     };
     let (owner, caller) = match admitted() {
@@ -149,7 +150,8 @@ pub(crate) async fn vault_affect_coping_update(
     };
     credential_listing(server, auth, caller, VERB, move |_, _, memory| {
         memory.coping_outcome_update_as_owner(&owner, &input)
-    }).await
+    })
+    .await
 }
 
 pub(crate) async fn vault_affect_coping_aggregate(
@@ -160,8 +162,8 @@ pub(crate) async fn vault_affect_coping_aggregate(
     const VERB: &str = "vault.affect.coping.aggregate";
     let admitted = || -> MemoryResult<_> {
         let owner = owner_proof(auth, server, VERB)?;
-        let caller = super::facade_actor(server, auth)
-            .map_err(FacadeApiError::into_memory_error)?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
         Ok((owner, caller))
     };
     let (owner, caller) = match admitted() {
@@ -170,7 +172,8 @@ pub(crate) async fn vault_affect_coping_aggregate(
     };
     credential_listing(server, auth, caller, VERB, move |_, _, memory| {
         memory.coping_aggregate_as_owner(&owner, &input)
-    }).await
+    })
+    .await
 }
 
 pub(crate) async fn vault_affect_wellness_policy_get(
@@ -181,8 +184,8 @@ pub(crate) async fn vault_affect_wellness_policy_get(
     const VERB: &str = "vault.affect.wellness.policy.get";
     let admitted = || -> MemoryResult<_> {
         let owner = owner_proof(auth, server, VERB)?;
-        let caller = super::facade_actor(server, auth)
-            .map_err(FacadeApiError::into_memory_error)?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
         Ok((owner, caller))
     };
     let (owner, caller) = match admitted() {
@@ -191,7 +194,8 @@ pub(crate) async fn vault_affect_wellness_policy_get(
     };
     credential_listing(server, auth, caller, VERB, move |_, _, memory| {
         memory.wellness_policy_as_owner(&owner)
-    }).await
+    })
+    .await
 }
 
 pub(crate) async fn vault_affect_wellness_policy_configure(
@@ -202,8 +206,8 @@ pub(crate) async fn vault_affect_wellness_policy_configure(
     const VERB: &str = "vault.affect.wellness.policy.configure";
     let admitted = || -> MemoryResult<_> {
         let owner = owner_proof(auth, server, VERB)?;
-        let caller = super::facade_actor(server, auth)
-            .map_err(FacadeApiError::into_memory_error)?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
         Ok((owner, caller))
     };
     let (owner, caller) = match admitted() {
@@ -212,7 +216,8 @@ pub(crate) async fn vault_affect_wellness_policy_configure(
     };
     credential_listing(server, auth, caller, VERB, move |_, _, memory| {
         memory.wellness_policy_configure_as_owner(&owner, &input)
-    }).await
+    })
+    .await
 }
 
 pub(crate) async fn vault_affect_wellness_derive(
@@ -223,8 +228,8 @@ pub(crate) async fn vault_affect_wellness_derive(
     const VERB: &str = "vault.affect.wellness.derive";
     let admitted = || -> MemoryResult<_> {
         let owner = owner_proof(auth, server, VERB)?;
-        let caller = super::facade_actor(server, auth)
-            .map_err(FacadeApiError::into_memory_error)?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
         Ok((owner, caller))
     };
     let (owner, caller) = match admitted() {
@@ -233,7 +238,8 @@ pub(crate) async fn vault_affect_wellness_derive(
     };
     credential_listing(server, auth, caller, VERB, move |_, _, memory| {
         memory.wellness_derive_as_owner(&owner, &input)
-    }).await
+    })
+    .await
 }
 
 pub(crate) async fn vault_affect_wellness_get(
@@ -244,8 +250,8 @@ pub(crate) async fn vault_affect_wellness_get(
     const VERB: &str = "vault.affect.wellness.get";
     let admitted = || -> MemoryResult<_> {
         let owner = owner_proof(auth, server, VERB)?;
-        let caller = super::facade_actor(server, auth)
-            .map_err(FacadeApiError::into_memory_error)?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
         Ok((owner, caller))
     };
     let (owner, caller) = match admitted() {
@@ -254,5 +260,6 @@ pub(crate) async fn vault_affect_wellness_get(
     };
     credential_listing(server, auth, caller, VERB, move |_, _, memory| {
         memory.wellness_get_as_owner(&owner, &input)
-    }).await
+    })
+    .await
 }

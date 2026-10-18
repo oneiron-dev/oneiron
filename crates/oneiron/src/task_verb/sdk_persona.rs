@@ -59,13 +59,19 @@ pub fn answer_companion_access_request_as(
         matches!(input.answer, CompanionAccessRequestAnswer::Approve),
         crate::unix_seconds_now(),
     )?;
-    let (person_ref, facet_ref) = answered.grant.scope.companion_profile_refs()
+    let (person_ref, facet_ref) = answered
+        .grant
+        .scope
+        .companion_profile_refs()
         .ok_or_else(|| MemoryError::bad_request("request is not for a companion profile"))?;
     Ok(CompanionAccessRequestAnswered {
         request: answered.id,
         principal_ref: answered.grant.principal_ref,
         capability: answered.grant.capability.as_str().to_owned(),
-        scope: CompanionProfileRequestedScope::CompanionProfile { person_ref, facet_ref },
+        scope: CompanionProfileRequestedScope::CompanionProfile {
+            person_ref,
+            facet_ref,
+        },
         status: answered.status,
         grant_ref: (answered.status == AccessRequestStatus::Approved).then_some(answered.id),
         decided_by: answered.decided_by,
@@ -147,7 +153,8 @@ pub struct PersonaSnapshotExportedCopy {
 }
 
 fn compiled_at(seconds: u64) -> MemoryResult<String> {
-    i64::try_from(seconds).ok()
+    i64::try_from(seconds)
+        .ok()
         .and_then(|seconds| chrono::DateTime::from_timestamp(seconds, 0))
         .map(|time| time.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
         .ok_or_else(|| MemoryError::bad_request("compile time is outside RFC 3339 range"))
@@ -162,20 +169,27 @@ pub fn preview_persona_snapshot_as(
     owner.revalidate(vault)?;
     let compile = vault.compile_persona_snapshot(
         &input.subject,
-        &PersonaSnapshotCompileOptions { locality, ..Default::default() },
+        &PersonaSnapshotCompileOptions {
+            locality,
+            ..Default::default()
+        },
     )?;
     Ok(PersonaSnapshotPreview {
         subject: compile.subject_ref,
         stamp: compile.stamp.identity(),
         identity_line: compile.identity_line,
-        rows: compile.rows.into_iter().map(|row| PersonaSnapshotPreviewRow {
-            row_id: row.row_id,
-            kind: row.kind.as_str().to_owned(),
-            text: row.text,
-            provenance_refs: row.provenance_refs,
-            attribution: row.attribution,
-            struck: row.struck,
-        }).collect(),
+        rows: compile
+            .rows
+            .into_iter()
+            .map(|row| PersonaSnapshotPreviewRow {
+                row_id: row.row_id,
+                kind: row.kind.as_str().to_owned(),
+                text: row.text,
+                provenance_refs: row.provenance_refs,
+                attribution: row.attribution,
+                struck: row.struck,
+            })
+            .collect(),
         compiled_at: compiled_at(compile.compiled_at_secs)?,
         stale_after_secs: compile.stale_after_secs,
     })
@@ -206,7 +220,10 @@ pub fn export_persona_snapshot_copy_as(
     input: PersonaSnapshotCopyRequest,
     locality: CallerLocality,
 ) -> MemoryResult<PersonaSnapshotExportedCopy> {
-    exported_copy(vault.export_persona_snapshot_copy_as(owner, &input, locality)?, None)
+    exported_copy(
+        vault.export_persona_snapshot_copy_as(owner, &input, locality)?,
+        None,
+    )
 }
 
 pub fn edit_persona_snapshot_copy_as(
@@ -216,5 +233,8 @@ pub fn edit_persona_snapshot_copy_as(
     locality: CallerLocality,
 ) -> MemoryResult<PersonaSnapshotExportedCopy> {
     let previous = input.export_id;
-    exported_copy(vault.edit_persona_snapshot_copy_as(owner, &input, locality)?, Some(previous))
+    exported_copy(
+        vault.edit_persona_snapshot_copy_as(owner, &input, locality)?,
+        Some(previous),
+    )
 }

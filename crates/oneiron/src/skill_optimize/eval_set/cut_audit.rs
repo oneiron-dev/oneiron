@@ -455,10 +455,7 @@ fn case_texts_listing(
                         .collect::<Result<Vec<_>>>()
                 })
                 .transpose()?;
-            match messages
-                .as_deref()
-                .and_then(crate::embed::joined_turn_text)
-            {
+            match messages.as_deref().and_then(crate::embed::joined_turn_text) {
                 Some(text) => {
                     rows.push(turn);
                     rows.extend(messages.iter().flatten().map(|(message, _)| *message));

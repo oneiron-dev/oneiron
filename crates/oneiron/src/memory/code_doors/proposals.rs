@@ -21,7 +21,9 @@ impl Memory<'_> {
         self.code_submission_sources(&input)?;
         let repo = input.repo;
         let (request, catalog) = owner_submission(repo_ref, actor, input);
-        let proposal = self.vault.propose_repo_mutation_as_owner(owner, repo, request, catalog)?;
+        let proposal = self
+            .vault
+            .propose_repo_mutation_as_owner(owner, repo, request, catalog)?;
         self.produced_from([proposal.id]);
         Ok(CodeProposalSubmitted {
             proposal: proposal.id,
@@ -61,7 +63,10 @@ impl Memory<'_> {
     /// existing `repo.provenance` CLAIM, each read through the caller's
     /// credential, and every provenance ref present read likewise. They are
     /// attribution only; the actor is the caller.
-    pub(super) fn code_submission_sources(&self, input: &CodeProposalSubmitRequest) -> MemoryResult<()> {
+    pub(super) fn code_submission_sources(
+        &self,
+        input: &CodeProposalSubmitRequest,
+    ) -> MemoryResult<()> {
         self.code_readable(input.session, Some(ENTITY_TYPE_SESSION))?;
         self.code_readable(input.provenance_claim, Some(ENTITY_TYPE_CLAIM))?;
         let provenance = &input.op_provenance;

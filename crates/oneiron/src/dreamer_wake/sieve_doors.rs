@@ -146,9 +146,7 @@ fn span_view(span: &SieveSpan) -> SieveSpanView {
             SpanKind::Date => "date".into(),
             SpanKind::Name => "name".into(),
         },
-        entity: span
-            .entity
-            .map(|id| bytes_to_hex_lower(id.as_bytes())),
+        entity: span.entity.map(|id| bytes_to_hex_lower(id.as_bytes())),
         novel: span.novel,
         confidence: span.confidence,
         score: span.score,

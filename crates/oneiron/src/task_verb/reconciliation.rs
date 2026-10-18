@@ -69,8 +69,16 @@ impl Vault {
             TaskCreateRateLimit::default(),
         )?;
         let spec = Value::Map(vec![
-            (Value::from("proposals"), Value::Array(conflict.proposals.iter()
-                .map(|id| Value::from(id.to_hex())).collect())),
+            (
+                Value::from("proposals"),
+                Value::Array(
+                    conflict
+                        .proposals
+                        .iter()
+                        .map(|id| Value::from(id.to_hex()))
+                        .collect(),
+                ),
+            ),
             (
                 Value::from("open_conflict_claim_id"),
                 Value::from(conflict.claim_id.to_hex()),

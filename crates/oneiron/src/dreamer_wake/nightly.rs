@@ -138,13 +138,7 @@ pub(crate) fn children_in_txn(
         .iter()
         .filter(|span| span.owed.is_empty() && spent.contains(&span.turn))
     {
-        sieve::spend_consumed_in_txn(
-            &vault.store,
-            txn,
-            span,
-            attempt.status.attempt.id,
-            now,
-        )?;
+        sieve::spend_consumed_in_txn(&vault.store, txn, span, attempt.status.attempt.id, now)?;
     }
     Ok(())
 }

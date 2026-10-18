@@ -19,6 +19,10 @@ use oneiron::learning::learning_estimate;
 use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::manifest::{MODEL_ROLES, ModelRole};
 use oneiron::llm::registry::ModelRegistryRow;
+use oneiron::skill_optimize::offer_pilot::{
+    model_offer_licence as licence, model_offer_pin as pin, training_base_pin as base_pin,
+    training_destination as destination,
+};
 use oneiron::skill_optimize::{
     ComputeDestination, EvalSeat, OfferCandidate, OfferCheckInput, OfferCost, OfferEvidence,
     OfferIntent, OfferModelPin, OfferOption, SeatWorkload, TrainingOffer, TrainingOfferDraft,
@@ -26,10 +30,6 @@ use oneiron::skill_optimize::{
     training_offer_checks, training_offer_skill_id, training_offers,
 };
 use oneiron::training_pack::{TrainingRun, TrainingState};
-use oneiron::skill_optimize::offer_pilot::{
-    model_offer_pin as pin, model_offer_licence as licence,
-    training_base_pin as base_pin, training_destination as destination,
-};
 use oneiron::{EntityId, Error, LlmMessageRole, ModelLocality, Vault};
 use serde::Deserialize;
 
@@ -640,13 +640,6 @@ fn bounded(value: &str, max: usize) -> bool {
 fn bounded_label(value: &str) -> String {
     clip(value, REF_BYTES).to_owned()
 }
-
-
-
-
-
-
-
 
 /// The model an offer proposes.
 fn offered_model(offer: &TrainingOffer) -> &str {

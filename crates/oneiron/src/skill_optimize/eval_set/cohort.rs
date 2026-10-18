@@ -164,7 +164,11 @@ pub(super) fn retired_families_in_txn(
         .collect())
 }
 
-pub(in crate::skill_optimize) fn cohort_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<EvalCohort> {
+pub(in crate::skill_optimize) fn cohort_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<EvalCohort> {
     let raw = vault
         .store
         .vault_meta

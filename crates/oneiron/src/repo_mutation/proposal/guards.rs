@@ -6,21 +6,34 @@ pub(super) fn validate_conflict_in_txn(
     proposal: &RepoProposal,
 ) -> Result<()> {
     let RepoProposalOperation::ResolveConflictFile {
-        branch_subject, open_conflict_claim_id, branch_name,
-    } = &proposal.operation else { return Ok(()); };
-    let claim = vault.get_claim_in_txn(txn, open_conflict_claim_id)?
+        branch_subject,
+        open_conflict_claim_id,
+        branch_name,
+    } = &proposal.operation
+    else {
+        return Ok(());
+    };
+    let claim = vault
+        .get_claim_in_txn(txn, open_conflict_claim_id)?
         .ok_or(Error::EntityNotFound)?;
-    let value = crate::repo_mutation::conflict_value::decode_repo_conflict_open_value(&claim.value)?;
+    let value =
+        crate::repo_mutation::conflict_value::decode_repo_conflict_open_value(&claim.value)?;
     if claim.predicate != crate::claim::PREDICATE_CONFLICT_OPEN
         || claim.lifecycle != ClaimLifecycleStatus::Active
         || claim.subject != ClaimSubject::Entity(*branch_subject)
-        || !crate::repo_mutation::oplog::same_repository(&value.repo_ref, &RepoRef::parse(&proposal.repo)?)
+        || !crate::repo_mutation::oplog::same_repository(
+            &value.repo_ref,
+            &RepoRef::parse(&proposal.repo)?,
+        )
         || value.branch != *branch_name
         || !value.conflicted_paths.contains(&proposal.path)
     {
-        return Err(invalid("resolution does not name its active repository conflict"));
+        return Err(invalid(
+            "resolution does not name its active repository conflict",
+        ));
     }
-    let task = vault.repo_reconciliation_task_in_txn(txn, *open_conflict_claim_id)?
+    let task = vault
+        .repo_reconciliation_task_in_txn(txn, *open_conflict_claim_id)?
         .ok_or(Error::EntityNotFound)?;
     require_entity_kind(vault, txn, task, crate::registry::ENTITY_TYPE_TASK)?;
     Ok(())

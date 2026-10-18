@@ -25,7 +25,8 @@ pub(crate) async fn vault_companions_access_requests_answer(
         owner_proof(auth, server, VERB),
         move |server, owner| sdk::answer_companion_access_request_as(server.vault(), &owner, input),
         |answer| Some(answer.grant_ref.into_iter().collect()),
-    ).await
+    )
+    .await
 }
 
 pub(crate) async fn vault_personas_preview(
@@ -39,11 +40,14 @@ pub(crate) async fn vault_personas_preview(
         server,
         VERB,
         owner_proof(auth, server, VERB),
-        move |server, owner| sdk::preview_persona_snapshot_as(server.vault(), &owner, input, locality),
+        move |server, owner| {
+            sdk::preview_persona_snapshot_as(server.vault(), &owner, input, locality)
+        },
         // The compile reads claims as well as its subject. The owner's existing
         // persona surface owns that projection; it is not a one-row listing.
         |_| None,
-    ).await
+    )
+    .await
 }
 
 pub(crate) async fn vault_personas_export(
@@ -57,9 +61,12 @@ pub(crate) async fn vault_personas_export(
         server,
         VERB,
         owner_proof(auth, server, VERB),
-        move |server, owner| sdk::export_persona_snapshot_copy_as(server.vault(), &owner, input, locality),
+        move |server, owner| {
+            sdk::export_persona_snapshot_copy_as(server.vault(), &owner, input, locality)
+        },
         |_| None,
-    ).await
+    )
+    .await
 }
 
 pub(crate) async fn vault_personas_edit(
@@ -73,7 +80,10 @@ pub(crate) async fn vault_personas_edit(
         server,
         VERB,
         owner_proof(auth, server, VERB),
-        move |server, owner| sdk::edit_persona_snapshot_copy_as(server.vault(), &owner, input, locality),
+        move |server, owner| {
+            sdk::edit_persona_snapshot_copy_as(server.vault(), &owner, input, locality)
+        },
         |_| None,
-    ).await
+    )
+    .await
 }

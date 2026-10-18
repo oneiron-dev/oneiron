@@ -186,10 +186,9 @@ fn invariant_json(value: &rmpv::Value) -> serde_json::Value {
         rmpv::Value::Boolean(flag) => serde_json::Value::Bool(*flag),
         rmpv::Value::Integer(int) => int.as_u64().map_or_else(
             || {
-                int.as_i64()
-                    .map_or(serde_json::Value::Null, |signed| {
-                        serde_json::Value::Number(serde_json::Number::from(signed))
-                    })
+                int.as_i64().map_or(serde_json::Value::Null, |signed| {
+                    serde_json::Value::Number(serde_json::Number::from(signed))
+                })
             },
             |unsigned| serde_json::Value::Number(serde_json::Number::from(unsigned)),
         ),
@@ -382,11 +381,7 @@ impl Memory<'_> {
         fold_receipt(&mut receipt, read);
         let diagnostic = issue
             .as_ref()
-            .and_then(|issue| {
-                events
-                    .iter()
-                    .find(|(named, _)| *named == issue.diagnostic)
-            })
+            .and_then(|issue| events.iter().find(|(named, _)| *named == issue.diagnostic))
             .or_else(|| {
                 events
                     .iter()
