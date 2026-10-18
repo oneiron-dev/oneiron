@@ -179,6 +179,7 @@ judge_replay_text_bytes = 40000   # bytes of replay text (runs' tasks and respon
 contribution_judge_task_bytes = 24576 # task text a contribution check's judge reads for one fork; past it the judge reads it whole and the row asks
 contribution_judge_answer_bytes = 16384 # one fork's answer that judge reads; past it the judge reads it whole and the row asks
 callable_nest_depth = 8           # callable skills one self.skills.call nests, itself included; past it the call runs and the row asks
+executor_run_steps = 50           # model steps one engine executor run takes; the step past it asks once and the run keeps going
 voice_reference_bytes = 16777216 # bytes of the banked source clip one cloned-voice render sends as its reference; past it the whole clip is sent and the row asks
 esign_pdf_bytes = 268435456       # bytes of one signing item's PDF the e-sign seal holds (the original or its prepared copy); past it the row asks and the item is sealed whole
 state_vad_turns = 256             # VAD turns one affect state read takes in; past it every turn is read and the row asks

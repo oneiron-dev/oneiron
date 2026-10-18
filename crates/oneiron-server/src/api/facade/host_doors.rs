@@ -51,8 +51,8 @@ use crate::server::SyncServer;
 pub(crate) use super::booking_doors::*;
 
 // The shared-vault doors live beside these; the generated callers name them here.
-pub(crate) use super::shared_act_doors::*;
 pub(crate) use super::agent_definition_doors::*;
+pub(crate) use super::shared_act_doors::*;
 // The shared-vault invitation doors (OF-531) too.
 pub(crate) use super::shared_member_doors::*;
 // The owner's legal-hold doors (OF-470) too.
@@ -64,6 +64,7 @@ pub(crate) use super::courtesy_delete_doors::*;
 pub(crate) use super::guest_doors::*;
 pub(crate) use super::hub_doors::*;
 // The owner's residence doors (OF-534), likewise.
+pub(crate) use super::fold_doors::*;
 pub(crate) use super::note_doors::*;
 pub(crate) use super::residence_doors::*;
 // The weave lens's human doors, likewise.
@@ -91,9 +92,9 @@ pub(crate) use super::widen_proposal_doors::*;
 // The owner's craft-candidate review doors (OF-490), likewise.
 pub(crate) use super::craft_candidate_doors::*;
 // The app's policy-action doors (OF-181), likewise.
+pub(crate) use super::channel_doors::*;
 pub(crate) use super::gate_policy_doors::*;
 pub(crate) use super::policy_doors::*;
-pub(crate) use super::channel_doors::*;
 // The generic connector call's door (ONE-2510), likewise.
 pub(crate) use super::connector_call_doors::*;
 // The secret use door, whose connector.call sends (OF-560), likewise.

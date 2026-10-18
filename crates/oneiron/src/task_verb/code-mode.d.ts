@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 437 code-mode rows (416 host rows, 21 run rows), 1578 declarations.
-// Replies: 383 fully typed, 50 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 441 code-mode rows (420 host rows, 21 run rows), 1589 declarations.
+// Replies: 387 fully typed, 50 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 80; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -81,7 +81,8 @@ declare namespace Sdk {
   type RunTreeRepair = { kind: "missing_parent"; job_id: string; missing_parent_id: string } | { kind: "parent_cycle"; job_id: string; parent_id: string };
   type RunTree = { roots: RunTreeNode[]; repairs: RunTreeRepair[] };
   type AgentHealthRunTree = { run_id: string; tree: RunTree; marked: string };
-  type AgentHealthCardView = { card: string; body: AgentHealthCard; run_tree?: AgentHealthRunTree | null };
+  type AgentHealthPromptInject = { approval: string; successor: string; ask: string; by: EntityId; at: number; edited: boolean };
+  type AgentHealthCardView = { card: string; body: AgentHealthCard; run_tree?: AgentHealthRunTree | null; prompt_inject?: AgentHealthPromptInject | null };
   type ConcernOutcome = "confirmed" | "dismissed" | "unresolved";
   type ConcernOutcomeRequest = { card: string; outcome: ConcernOutcome };
   type ConcernCardSummary = { card: string; agent: string; signal: string; tone: string; outcome: string; evidence: number };
@@ -1260,6 +1261,8 @@ declare namespace Sdk {
   type CalendarFreebusyRequest = { calendars: CalendarSel[]; range: CalendarRangeDto };
   type CalendarFreebusyIntervalDto = { start_utc: number; end_utc: number };
   type CalendarFreebusyDto = CalendarFreebusyIntervalDto[];
+  type TranscriptFileDropInput = { source_blob_ref: string; decoded_text: string; arrived_at_ms: number };
+  type TranscriptIngestOutcome = { outcome: "session"; session_ref: EntityId; turn_refs: EntityId[]; wake_turn_refs: EntityId[]; extraction_enqueued: boolean } | { outcome: "retry_open_session"; open_session_ref: EntityId } | { outcome: "note_fallback"; note_ref: EntityId };
   type ClaimListFilter = { subject_ref?: string | null; predicate?: string | null; lifecycle?: string | null; limit: number };
   type SafeDeleteReason = "user_delete" | "user_hard_delete" | "gdpr_delete" | "policy_delete";
   type SafeDeleteRequest = { entity_ref: string; reason: SafeDeleteReason };
@@ -1530,6 +1533,17 @@ declare namespace Sdk {
   type SetNoteOverridesRequest = { note_ref: string; overrides?: NoteOverrides };
   type NoteKindDescriptor = { pack: string; kind: string; extraction: ExtractionDefault; context: ContextDefault; retention: RetentionDefault; archive_after_days?: number | null };
   type NoteDefaultsView = { overrides: NoteOverrides; defaults: NoteKindDescriptor };
+  type RunAttachRequest = { run: string; rebind?: boolean };
+  type RunAttached = { live_run: string };
+  type FoldUnfoldRequest = { live_run: string; fold: string };
+  type FoldHistoryRequest = { live_run: string; from: number; limit: number };
+  type FoldSpan = { fold: string; from: number; through: number };
+  type FoldPending = { fold: string; from: number; through: number; note?: string | null; failed?: string | null };
+  type FoldList = { folds: FoldSpan[]; pending: FoldPending[]; compact_asked: boolean };
+  type FoldUnfold = { fold: number; at: number };
+  type FoldHistoryEpoch = { summary_ref: string; epoch: number; from: number; through: number; text?: string | null };
+  type FoldHistoryStep = { step: number; code: string; console: string };
+  type FoldHistory = { run: string; completed_steps: number; compacted_through?: number | null; state: FoldList; folds: FoldDescription[]; unfolds: FoldUnfold[]; epochs: FoldHistoryEpoch[]; steps: FoldHistoryStep[]; next?: number | null };
   type ConnectorAnswerAction = "accept" | "decline" | "cancel";
   type ConnectorQuestionAnswer = { key: string; action: ConnectorAnswerAction; content?: unknown | null };
   type ConnectorAnswerRequest = { handle: string; answers: ConnectorQuestionAnswer[] };
@@ -1551,9 +1565,6 @@ declare namespace Sdk {
   type FoldUnfoldInput = { fold: string };
   type FoldUnfolded = { fold: string; from: number; through: number; unfolded_after_step: number };
   type FoldsInput = Record<string, never>;
-  type FoldSpan = { fold: string; from: number; through: number };
-  type FoldPending = { fold: string; from: number; through: number; note?: string | null; failed?: string | null };
-  type FoldList = { folds: FoldSpan[]; pending: FoldPending[]; compact_asked: boolean };
   type TaskRefuseDomain = "bond" | "logistics";
   type TaskRefuseInput = { taskRef?: string | null; domain: TaskRefuseDomain; reasonRef: string; at?: number | null };
   type TaskRefuseOutput = { task: EntityId; level: string; outcome: string; replay: boolean };
@@ -1764,11 +1775,16 @@ declare namespace self {
     unsubscribe(input: Sdk.BoardSubscriptionRequest): Promise<Sdk.BoardVerbOutput | StoredResult>;
   };
   const fold: (span: readonly [number, number], options?: { note?: string | null }) => Promise<Sdk.FoldReply<Sdk.FoldMarked> | StoredResult>;
-  const folds: (input: Sdk.FoldsInput) => Promise<Sdk.FoldReply<Sdk.FoldList> | StoredResult>;
+  const folds: ((input: Sdk.FoldsInput) => Promise<Sdk.FoldReply<Sdk.FoldList> | StoredResult>) & {
+    /** Reads one pending mark or landed fold of the attached run, with its Generated stub, source ids and retained result handles. */
+    describe(input: Sdk.FoldUnfoldRequest): Promise<Sdk.FoldReply<Sdk.FoldDescription> | StoredResult>;
+  };
   const grants: {
     /** Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it. */
     ask(input: Sdk.GrantAskRequest): Promise<Sdk.GrantAskReceipt | StoredResult>;
   };
+  /** Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled. */
+  const history: (input: Sdk.FoldHistoryRequest) => Promise<Sdk.FoldHistory | StoredResult>;
   const identity: {
     /** A vault owner's tap on an identity choice card: who a person named in their conversations is. */
     answer(input: Sdk.IdentityAnswerRequest): Promise<Sdk.IdentitySettled | StoredResult>;
@@ -1803,6 +1819,10 @@ declare namespace self {
   };
   /** Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use. */
   const message: (input: Sdk.MessagePersonRequest) => Promise<Sdk.MessagePersonReceipt | StoredResult>;
+  const run: {
+    /** Attaches the caller's own credential to its leased live run and returns the handle required by the public fold and history calls. */
+    attach(input: Sdk.RunAttachRequest): Promise<Sdk.RunAttached | StoredResult>;
+  };
   const skills: {
     call(input: Sdk.SkillCallInput): Promise<unknown>;
     /** Every loadable callable helper skill and its call contract: what it takes and returns. */
@@ -1959,6 +1979,10 @@ declare const vault: Sdk.VaultHost & {
     read(input: Sdk.CalendarReadRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarEventView | null> | StoredResult>;
     /** Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt. */
     search(input: Sdk.CalendarSearchRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarEventView[]> | StoredResult>;
+    transcript: {
+      /** Ingests an uploaded UTF-8 transcript as the caller, retaining source labels and atomically closing its SESSION with ordered TURNs and extraction wake receipts. */
+      ingest(input: Sdk.TranscriptFileDropInput): Promise<Sdk.TranscriptIngestOutcome | StoredResult>;
+    };
   };
   campaign: {
     program: {

@@ -410,6 +410,18 @@ class Oneiron:
         @property
         def decisions(self) -> "Oneiron._SelfDecisionsVerbs": ...
         @property
+        def run(self) -> "Oneiron._SelfRunVerbs": ...
+        @property
+        def folds(self) -> "Oneiron._SelfFoldsVerbs": ...
+        def history(self, spec: Facade.FoldHistoryRequest) -> Facade.FoldHistory:
+            """Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled."""
+        def fold(self, spec: Facade.FoldMarkRequest) -> Facade.FoldReply[Facade.FoldMarked]:
+            """Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands."""
+        def compact(self, spec: Facade.FoldCompactRequest) -> Facade.FoldReply[Facade.FoldCompactAsked]:
+            """Asks the attached run to fold its pending marks in one batch at its next step boundary; read self.history for landed folds and epochs."""
+        def unfold(self, spec: Facade.FoldUnfoldRequest) -> Facade.FoldReply[Facade.FoldUnfolded]:
+            """Appends a fold of the attached run after its current tail, without replacing the earlier stub."""
+        @property
         def agents(self) -> "Oneiron._SelfAgentsVerbs": ...
         @property
         def leader(self) -> "Oneiron._SelfLeaderVerbs": ...
@@ -463,6 +475,14 @@ class Oneiron:
             """Every loadable callable helper skill and its call contract: what it takes and returns."""
     class _SelfDecisionsVerbs:
         def asks(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.DecisionAsk]: ...
+    class _SelfRunVerbs:
+        def attach(self, spec: Facade.RunAttachRequest) -> Facade.RunAttached:
+            """Attaches the caller's own credential to its leased live run and returns the handle required by the public fold and history calls."""
+    class _SelfFoldsVerbs:
+        def __call__(self, spec: Facade.FoldRunRequest) -> Facade.FoldReply[Facade.FoldList]:
+            """Lists the attached run's landed folds, pending marks and outstanding compact ask."""
+        def describe(self, spec: Facade.FoldUnfoldRequest) -> Facade.FoldReply[Facade.FoldDescription]:
+            """Reads one pending mark or landed fold of the attached run, with its Generated stub, source ids and retained result handles."""
     class _SelfAgentsVerbs:
         def spawn(self, spec: Facade.LiveRunRequest[Facade.AgentSpawnInput]) -> Facade.AgentSpawnOutput:
             """Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity."""
@@ -1247,6 +1267,11 @@ class Oneiron:
             """Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt."""
         def freebusy(self, spec: Facade.CalendarFreebusyRequest) -> Facade.ScopedReadResult[Facade.CalendarFreebusyDto]:
             """Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt."""
+        @property
+        def transcript(self) -> "Oneiron._VaultCalendarTranscriptVerbs": ...
+    class _VaultCalendarTranscriptVerbs:
+        def ingest(self, spec: Facade.TranscriptFileDropInput) -> Facade.TranscriptIngestOutcome:
+            """Ingests an uploaded UTF-8 transcript as the caller, retaining source labels and atomically closing its SESSION with ordered TURNs and extraction wake receipts."""
     class _VaultWritesVerbs:
         def pending(self, input: Facade.ReceiptsRequest) -> list[Facade.PendingWrite]:
             """Gated writes parked for consent, newest first."""

@@ -339,6 +339,7 @@ pub enum AgentVerb {
     VaultCalendarRead,
     VaultCalendarSearch,
     VaultCalendarFreebusy,
+    VaultCalendarTranscriptIngest,
     VaultClaimsList,
     VaultClaimsHistory,
     VaultDelete,
@@ -417,6 +418,13 @@ pub enum AgentVerb {
     VaultNotesLifecycle,
     VaultNotesSetOverrides,
     VaultNotesDefaults,
+    SelfRunAttach,
+    SelfFoldsDescribe,
+    SelfHistory,
+    SelfFold,
+    SelfCompact,
+    SelfUnfold,
+    SelfFolds,
     SelfAgentsSpawn,
     SelfLeaderSplit,
 }
@@ -760,6 +768,7 @@ impl AgentVerb {
         Self::VaultCalendarRead,
         Self::VaultCalendarSearch,
         Self::VaultCalendarFreebusy,
+        Self::VaultCalendarTranscriptIngest,
         Self::VaultClaimsList,
         Self::VaultClaimsHistory,
         Self::VaultDelete,
@@ -838,6 +847,13 @@ impl AgentVerb {
         Self::VaultNotesLifecycle,
         Self::VaultNotesSetOverrides,
         Self::VaultNotesDefaults,
+        Self::SelfRunAttach,
+        Self::SelfFoldsDescribe,
+        Self::SelfHistory,
+        Self::SelfFold,
+        Self::SelfCompact,
+        Self::SelfUnfold,
+        Self::SelfFolds,
         Self::SelfAgentsSpawn,
         Self::SelfLeaderSplit,
     ];
@@ -1188,6 +1204,7 @@ impl AgentVerb {
             Self::VaultCalendarRead => "vault.calendar.read",
             Self::VaultCalendarSearch => "vault.calendar.search",
             Self::VaultCalendarFreebusy => "vault.calendar.freebusy",
+            Self::VaultCalendarTranscriptIngest => "vault.calendar.transcript.ingest",
             Self::VaultClaimsList => "vault.claims.list",
             Self::VaultClaimsHistory => "vault.claims.history",
             Self::VaultDelete => "vault.delete",
@@ -1270,6 +1287,13 @@ impl AgentVerb {
             Self::VaultNotesLifecycle => "vault.notes.lifecycle",
             Self::VaultNotesSetOverrides => "vault.notes.set_overrides",
             Self::VaultNotesDefaults => "vault.notes.defaults",
+            Self::SelfRunAttach => "self.run.attach",
+            Self::SelfFoldsDescribe => "self.folds.describe",
+            Self::SelfHistory => "self.history",
+            Self::SelfFold => "self.fold",
+            Self::SelfCompact => "self.compact",
+            Self::SelfUnfold => "self.unfold",
+            Self::SelfFolds => "self.folds",
             Self::SelfAgentsSpawn => "self.agents.spawn",
             Self::SelfLeaderSplit => "self.leader.split",
         }
@@ -1572,6 +1596,7 @@ impl AgentVerb {
                 | Self::VaultCalendarRead
                 | Self::VaultCalendarSearch
                 | Self::VaultCalendarFreebusy
+                | Self::VaultCalendarTranscriptIngest
                 | Self::VaultClaimsList
                 | Self::VaultClaimsHistory
                 | Self::VaultDelete
@@ -1650,6 +1675,13 @@ impl AgentVerb {
                 | Self::VaultNotesLifecycle
                 | Self::VaultNotesSetOverrides
                 | Self::VaultNotesDefaults
+                | Self::SelfRunAttach
+                | Self::SelfFoldsDescribe
+                | Self::SelfHistory
+                | Self::SelfFold
+                | Self::SelfCompact
+                | Self::SelfUnfold
+                | Self::SelfFolds
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
         )
@@ -2000,6 +2032,7 @@ impl AgentVerb {
                 | Self::VaultCalendarRead
                 | Self::VaultCalendarSearch
                 | Self::VaultCalendarFreebusy
+                | Self::VaultCalendarTranscriptIngest
                 | Self::VaultClaimsList
                 | Self::VaultClaimsHistory
                 | Self::VaultDelete
@@ -2078,6 +2111,13 @@ impl AgentVerb {
                 | Self::VaultNotesLifecycle
                 | Self::VaultNotesSetOverrides
                 | Self::VaultNotesDefaults
+                | Self::SelfRunAttach
+                | Self::SelfFoldsDescribe
+                | Self::SelfHistory
+                | Self::SelfFold
+                | Self::SelfCompact
+                | Self::SelfUnfold
+                | Self::SelfFolds
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
         )
@@ -2502,6 +2542,7 @@ impl AgentVerb {
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
                 | Self::VaultBookingPageToken
+                | Self::VaultCalendarTranscriptIngest
                 | Self::VaultDelete
                 | Self::VaultWritesPending
                 | Self::VaultStructuralPut
@@ -2567,6 +2608,13 @@ impl AgentVerb {
                 | Self::VaultNotesLifecycle
                 | Self::VaultNotesSetOverrides
                 | Self::VaultNotesDefaults
+                | Self::SelfRunAttach
+                | Self::SelfFoldsDescribe
+                | Self::SelfHistory
+                | Self::SelfFold
+                | Self::SelfCompact
+                | Self::SelfUnfold
+                | Self::SelfFolds
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
         )
@@ -2779,6 +2827,7 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultCalendarTranscriptIngest
                 | Self::VaultDelete
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
@@ -2823,6 +2872,10 @@ impl AgentVerb {
                 | Self::VaultNotesEdit
                 | Self::VaultNotesSeal
                 | Self::VaultNotesSetOverrides
+                | Self::SelfRunAttach
+                | Self::SelfFold
+                | Self::SelfCompact
+                | Self::SelfUnfold
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
         )
@@ -3196,6 +3249,7 @@ impl AgentVerb {
             Self::VaultCalendarRead => &["spec"],
             Self::VaultCalendarSearch => &["spec"],
             Self::VaultCalendarFreebusy => &["spec"],
+            Self::VaultCalendarTranscriptIngest => &["spec"],
             Self::VaultClaimsList => &["spec"],
             Self::VaultClaimsHistory => &["spec"],
             Self::VaultDelete => &["spec"],
@@ -3274,6 +3328,13 @@ impl AgentVerb {
             Self::VaultNotesLifecycle => &["spec"],
             Self::VaultNotesSetOverrides => &["spec"],
             Self::VaultNotesDefaults => &["spec"],
+            Self::SelfRunAttach => &["spec"],
+            Self::SelfFoldsDescribe => &["spec"],
+            Self::SelfHistory => &["spec"],
+            Self::SelfFold => &["spec"],
+            Self::SelfCompact => &["spec"],
+            Self::SelfUnfold => &["spec"],
+            Self::SelfFolds => &["spec"],
             Self::SelfAgentsSpawn => &["spec"],
             Self::SelfLeaderSplit => &["spec"],
         }
@@ -3618,6 +3679,7 @@ impl AgentVerb {
             Self::VaultCalendarRead => &["spec"],
             Self::VaultCalendarSearch => &["spec"],
             Self::VaultCalendarFreebusy => &["spec"],
+            Self::VaultCalendarTranscriptIngest => &["spec"],
             Self::VaultClaimsList => &["spec"],
             Self::VaultClaimsHistory => &["spec"],
             Self::VaultDelete => &["spec"],
@@ -3696,6 +3758,13 @@ impl AgentVerb {
             Self::VaultNotesLifecycle => &["spec"],
             Self::VaultNotesSetOverrides => &["spec"],
             Self::VaultNotesDefaults => &["spec"],
+            Self::SelfRunAttach => &["spec"],
+            Self::SelfFoldsDescribe => &["spec"],
+            Self::SelfHistory => &["spec"],
+            Self::SelfFold => &["spec"],
+            Self::SelfCompact => &["spec"],
+            Self::SelfUnfold => &["spec"],
+            Self::SelfFolds => &["spec"],
             Self::SelfAgentsSpawn => &["spec"],
             Self::SelfLeaderSplit => &["spec"],
         }
@@ -4621,6 +4690,9 @@ impl AgentVerb {
             Self::VaultCalendarFreebusy => {
                 "Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt."
             }
+            Self::VaultCalendarTranscriptIngest => {
+                "Ingests an uploaded UTF-8 transcript as the caller, retaining source labels and atomically closing its SESSION with ordered TURNs and extraction wake receipts."
+            }
             Self::VaultClaimsList => {
                 "Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt."
             }
@@ -4848,6 +4920,27 @@ impl AgentVerb {
             }
             Self::VaultNotesDefaults => {
                 "One NOTE's overrides and the extraction, context and retention defaults its gates read after them."
+            }
+            Self::SelfRunAttach => {
+                "Attaches the caller's own credential to its leased live run and returns the handle required by the public fold and history calls."
+            }
+            Self::SelfFoldsDescribe => {
+                "Reads one pending mark or landed fold of the attached run, with its Generated stub, source ids and retained result handles."
+            }
+            Self::SelfHistory => {
+                "Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled."
+            }
+            Self::SelfFold => {
+                "Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands."
+            }
+            Self::SelfCompact => {
+                "Asks the attached run to fold its pending marks in one batch at its next step boundary; read self.history for landed folds and epochs."
+            }
+            Self::SelfUnfold => {
+                "Appends a fold of the attached run after its current tail, without replacing the earlier stub."
+            }
+            Self::SelfFolds => {
+                "Lists the attached run's landed folds, pending marks and outstanding compact ask."
             }
             Self::SelfAgentsSpawn => {
                 "Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity."

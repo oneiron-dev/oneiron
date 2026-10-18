@@ -153,9 +153,20 @@ struct Claimed {
 
 impl Claimed {
     /// The run asked for its confession: its objectives are chosen once, at
-    /// its claim, so its ask and the parse of its answer name the same rows.
+    /// its first claim, and kept with its attempt, so its ask and the parse
+    /// of its answer name the same rows at every claim, and a continued run
+    /// confesses against its source's (OF-544).
     fn asked(mut self, vault: &Vault, briefing: Option<&str>) -> Self {
-        self.objectives = run_objectives(vault, &self.status, briefing);
+        let attempt = self.status.attempt.id;
+        let choose = || run_objectives(vault, &self.status, briefing);
+        self.objectives = match AgentDispatcher::new(vault).claimed_run_objectives(attempt, choose)
+        {
+            Ok(objectives) => objectives,
+            Err(error) => {
+                tracing::warn!(%error, attempt = ?attempt, "an agent run's kept objectives do not read; it is asked them afresh");
+                run_objectives(vault, &self.status, briefing)
+            }
+        };
         if !self.objectives.is_empty() {
             self.task = format!("{}\n\n{}", self.task, confession_ask(&self.objectives));
         }
@@ -875,7 +886,6 @@ fn settle(
             }
             // The run waits on a durable signal; its lease waits with it.
             EngineExecutorStatus::Waiting(_) => return park_on_wait(vault, status, &outcome, now),
-            EngineExecutorStatus::HardStepLimitReached => "agent_run_step_limit",
             EngineExecutorStatus::Yielded { .. } | EngineExecutorStatus::WindowFull { .. } => {
                 "agent_run_unfinished"
             }
