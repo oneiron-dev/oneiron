@@ -30,6 +30,7 @@ use std::num::NonZeroU16;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
+use oneiron::agent_def::{AgentModel, ensure_listed, note_stale_listed_models};
 use oneiron::agent_dispatch::{
     AgentDispatchStatus, AgentDispatcher, AgentRun, HealerSlot, LeaderStarterSkills, PlannerSeat,
     PlannerSkills, ProjectConversationSkills, ResidentAgentSpec, SpendScopeId,
@@ -456,6 +457,13 @@ fn run_bound(
     let continued = continued_config(vault, &status.attempt, &template)?;
     let continues = continued.is_some();
     let mut config = continued.unwrap_or_else(|| template.clone());
+    // FIX 4472: the run is born on a model its frozen definition lists. A
+    // listed model its provider retired tells the owner, once, and the run
+    // goes on with the rest of the list; a note that fails does not stop it.
+    let definition = &status.input.definition;
+    if let Err(error) = note_stale_listed_models(vault, actor.entity_ref(), definition) {
+        tracing::warn!(%error, agent = %actor.entity_ref().to_hex(), "a retired listed model's owner note was not recorded");
+    }
     // OF-541: the run is born on its seat once, from its own task, before
     // its skill adds to it, and each entry runs on that seat. A run its
     // parent planned is born on the model its plan picked. The attempt is
@@ -464,7 +472,7 @@ fn run_bound(
     // A vault with no manifest bears no seat, so the template stays the
     // stamp its pack loads write.
     let model_seat = if continues {
-        continued_seat(vault, provider, &config)?
+        continued_seat(vault, provider, &config, definition.models.clone())?
     } else {
         engine_run_seat(
             vault,
@@ -472,9 +480,11 @@ fn run_bound(
             &config,
             format!("agent-run:{}", run_id.to_hex()),
             status.input.plan.as_ref(),
+            definition.models.clone(),
         )?
     };
     if let Some(seat) = &model_seat {
+        ensure_listed(definition, seat.model()).map_err(text)?;
         let lease_owner = status
             .attempt
             .lease_owner
@@ -493,6 +503,13 @@ fn run_bound(
             )
             .map_err(text)?;
         config.model = seat.model().clone();
+        // The diary says, as the agent, which model this wake ran on when
+        // that is not the one its last wake ran on.
+        if let Err(error) =
+            vault.note_wake_model(actor.entity_ref(), seat.model(), &seat.receipt().why)
+        {
+            tracing::warn!(%error, agent = %actor.entity_ref().to_hex(), "a wake's model change was not noted in the agent's diary");
+        }
     }
     // A project conversation run runs with its skill's SKILL.md (OF-501); a
     // run whose skill does not load is refused, never run unskilled. The
@@ -658,11 +675,13 @@ fn continued_config(
 
 /// The seat a continued run is born on (FIX 3694): one of its own, under its
 /// own run's receipt, bound to the model, locality and effort its source ran
-/// on, so the fork's config marker holds on every entry.
+/// on, so the fork's config marker holds on every entry. That model must
+/// still be on the agent's list (`listed`, FIX 4472).
 fn continued_seat(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
     config: &EngineExecutorConfig,
+    listed: Vec<AgentModel>,
 ) -> Result<Option<ModelSeat>, String> {
     run_seat(vault, provider, config.run_id, |facet| SeatTask {
         kind: SeatKind::Attempt,
@@ -677,6 +696,7 @@ fn continued_seat(
         locality: config.model_locality,
         override_model: Some(config.model.clone()),
         override_effort: config.seat_effort,
+        listed,
     })
 }
 

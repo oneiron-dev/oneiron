@@ -456,6 +456,11 @@ impl ResolvedLiveRun {
         self.entry.leased.id
     }
 
+    /// The executor whose lease and credential this handle resolved.
+    pub(crate) fn run_id(&self) -> EntityId {
+        self.entry.run
+    }
+
     /// The `[models.planner]` the run's runner plans under, and the model it
     /// executes on, for the planner its action's leader rows run on.
     pub(crate) fn planner(&self) -> (Option<&PlannerSettings>, &str) {

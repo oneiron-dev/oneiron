@@ -4,9 +4,9 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
-use crate::agent_def::{AgentCeiling, AgentDefinition, AgentScope, McpRef};
+use crate::agent_def::{AgentCeiling, AgentDefinition, AgentModel, AgentScope, McpRef};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
-use crate::llm::ModelTierRef;
+use crate::llm::{ModelId, ModelTierRef};
 use crate::skill::SkillDependency;
 use crate::{EntityId, Error, Result, TimeRange};
 
@@ -39,6 +39,19 @@ struct Draft {
     enabled: Option<bool>,
     #[serde(default)]
     display_name: Option<String>,
+    #[serde(default)]
+    models: Vec<DraftModel>,
+    #[serde(default)]
+    compaction_model: Option<ModelId>,
+}
+
+/// One requested model-list entry (FIX 4472). A put that names a list other
+/// than its author's own is held as a proposal for the owner.
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct DraftModel {
+    model_ref: ModelId,
+    when: String,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -105,6 +118,15 @@ pub(crate) fn agent_put_draft(definition: &AgentDefinition) -> Option<JsonValue>
         ceiling: Some(definition.ceiling.as_str().to_owned()),
         enabled: Some(definition.enabled),
         display_name: definition.display_name.clone(),
+        models: definition
+            .models
+            .iter()
+            .map(|model| DraftModel {
+                model_ref: model.model_ref.clone(),
+                when: model.when.clone(),
+            })
+            .collect(),
+        compaction_model: definition.compaction_model.clone(),
     };
     let value = serde_json::to_value(&draft).ok()?;
     (draft_definition(draft).ok()? == *definition).then_some(value)
@@ -123,6 +145,14 @@ fn draft_definition(draft: Draft) -> Result<AgentDefinition> {
         .as_deref()
         .map_or(Some(AgentCeiling::Proposed), AgentCeiling::parse)
         .ok_or_else(|| Error::InvalidConfig("invalid agent ceiling".into()))?;
+    let models: Vec<AgentModel> = draft
+        .models
+        .into_iter()
+        .map(|model| AgentModel {
+            model_ref: model.model_ref,
+            when: model.when,
+        })
+        .collect();
     Ok(AgentDefinition::new(
         draft.agent_id,
         draft.desc,
@@ -148,5 +178,7 @@ fn draft_definition(draft: Draft) -> Result<AgentDefinition> {
         None,
         draft.enabled.unwrap_or(true),
         draft.display_name,
-    ))
+    )
+    .with_models(models)
+    .with_compaction_model(draft.compaction_model))
 }

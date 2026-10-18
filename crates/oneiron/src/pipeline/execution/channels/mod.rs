@@ -394,7 +394,7 @@ impl PipelineBuilder<'_> {
                         seeds,
                         *depth,
                         PPR_DAMPING,
-                        self.vault.config.ppr_vad_alpha,
+                        self.ppr_vad_alpha,
                         crate::ppr::SeedWeighting::Specificity,
                     )
                 })?
@@ -777,7 +777,7 @@ impl PipelineBuilder<'_> {
                 diversity.apply(
                     &mut scores,
                     self.result_limit,
-                    &self.vault.config.ppr_community,
+                    &self.ppr_community,
                 )?;
             }
             match world_share {

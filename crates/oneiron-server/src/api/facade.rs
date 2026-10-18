@@ -25,6 +25,7 @@
 //! edited to admit these codes; that is the whole point of the local type.
 
 pub(super) mod action_routes;
+mod affect_doors;
 mod agent_definition_doors;
 mod agent_verbs;
 mod authority_history_doors;
@@ -88,6 +89,7 @@ mod secret_use_doors;
 mod setting_doors;
 mod slim_doors;
 mod share_doors;
+mod skill_execution_doors;
 mod shared_act_doors;
 mod shared_member_doors;
 mod shared_policy_doors;
@@ -170,6 +172,12 @@ pub(crate) fn facade_routes() -> Router<Arc<SyncServer>> {
         .merge(agent_verbs::routes())
         .fallback(facade_unknown_verb)
         .layer(DefaultBodyLimit::max(FACADE_MAX_BODY_BYTES))
+}
+
+/// The anonymous-chat SDK route, mounted with the existing standalone
+/// handler outside invocation claims, wire telemetry and call receipts.
+pub(crate) fn anonymous_chat_routes() -> Router<Arc<SyncServer>> {
+    agent_verbs::anonymous_chat_routes().layer(DefaultBodyLimit::max(FACADE_MAX_BODY_BYTES))
 }
 
 /// [`facade_routes`] with every reply's call receipt (OF-538): one layer
@@ -790,11 +798,17 @@ pub(crate) fn row_door_admits(
 }
 
 /// Whole-vault export's owner admission, as the export runs it in its own
-/// snapshot: the host's root, or the owner's own live slip. The route has
-/// already refused a credential short of owner-grade or with no verified
-/// slip.
+/// snapshot: the host's root, the owner's own live slip, or a managed
+/// vault's attested owner's request proof. The route has already refused a
+/// credential short of owner-grade or with none of those.
 fn export_admits(server: &SyncServer, auth: &CoreAuth) -> Result<(), FacadeApiError> {
     let Some(proof) = auth.verified_slip() else {
+        // The attested owner carries no slip: its request's own owner
+        // proof, as the export revalidates it in its snapshot.
+        if auth.managed_owner().is_some() {
+            let owner = host_doors::owner_proof(auth, server, "vault.export")?;
+            server.vault.admit_authenticated_owner_export(&owner)?;
+        }
         return Ok(());
     };
     if proof.claims().holder_ref == "host" {

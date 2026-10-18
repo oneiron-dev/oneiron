@@ -5,6 +5,7 @@ use super::run_seats::RunSeats;
 use crate::admission::Admission;
 use crate::ai_host::payer_funding::{PayerFault, scope_funding};
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
+use oneiron::agent_def::AgentModel;
 use oneiron::agent_dispatch::{AgentDispatcher, SpawnPlanReceipt, SpendScopeId};
 use oneiron::code_run::{GatedActorWrite, SpawnHostSeat};
 use oneiron::engine_executor::{
@@ -539,6 +540,7 @@ fn run_engine_native_code_mode(
         config,
         format!("mcp-execute-code:{}", config.run_id.to_hex()),
         None,
+        Vec::new(),
     )
     .map_err(McpCodeExecutionError::RunBinding)?;
     enter_engine_native_run(
@@ -746,12 +748,15 @@ pub(crate) fn run_seat(
 /// the task later lends this one seat to each entry, so the seat's task
 /// stays the run's own. A planned child (`plan`: the receipt its spawn
 /// froze, OF-541) is born on the seat its plan picked (`planned_seat`).
+/// An agent's run is born on a model its definition lists (`listed`, FIX
+/// 4472); a run with no agent, or an agent that lists none, passes none.
 pub(crate) fn engine_run_seat(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
     config: &EngineExecutorConfig,
     warm_scope: String,
     plan: Option<&SpawnPlanReceipt>,
+    listed: Vec<AgentModel>,
 ) -> Result<Option<ModelSeat>, String> {
     run_seat(vault, provider, config.run_id, |facet| SeatTask {
         kind: SeatKind::Attempt,
@@ -766,6 +771,7 @@ pub(crate) fn engine_run_seat(
         locality: config.model_locality,
         override_model: planned_seat(plan),
         override_effort: None,
+        listed,
     })
 }
 

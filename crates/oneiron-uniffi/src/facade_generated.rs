@@ -227,6 +227,26 @@ export_facade! {
     let output = client.vault_recall(&query, effort, &scope, limit, format.as_deref(), as_of, deadline_ms, media, query_affect)?;
     Lift::lift(output)
 };
+"vault.retrieval.weights.get" => fn vault_retrieval_weights_get(&self) -> RetrievalWeightsView = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.retrieval.weights.get")?;
+    let output = client.vault_retrieval_weights_get(&input)?;
+    crate::codec::lift_record("vault.retrieval.weights.get", &output)
+};
+"vault.retrieval.weights.configure" => fn vault_retrieval_weights_configure(&self, input: RetrievalWeightsConfigureRequest) -> RetrievalWeightsReceipt = |client| {
+    let input: oneiron::policy_manifest_doors::RetrievalWeightsConfigureRequest = crate::codec::lower_record("vault.retrieval.weights.configure", input)?;
+    let output = client.vault_retrieval_weights_configure(&input)?;
+    crate::codec::lift_record("vault.retrieval.weights.configure", &output)
+};
+"vault.affect.annotations.put" => fn vault_affect_annotations_put(&self, input: AffectAnnotationPut) -> CommitReceipt = |client| {
+    let input: oneiron::memory::affect::AffectAnnotationPut = crate::codec::lower_record("vault.affect.annotations.put", input)?;
+    let output = client.vault_affect_annotations_put(&input)?;
+    Lift::lift(output)
+};
+"vault.affect.claims.consolidate" => fn vault_affect_claims_consolidate(&self, input: AffectClaimConsolidateRequest) -> AffectClaimConsolidation = |client| {
+    let input: oneiron::memory::affect::AffectClaimConsolidateRequest = crate::codec::lower_record("vault.affect.claims.consolidate", input)?;
+    let output = client.vault_affect_claims_consolidate(&input)?;
+    crate::codec::lift_record("vault.affect.claims.consolidate", &output)
+};
 "vault.retrieval.recall" => fn vault_retrieval_recall(&self, input: RecallRequest) -> MemoryPack = |client| {
     let input: oneiron::task_verb::sdk::RecallRequest = crate::codec::lower_record("vault.retrieval.recall", input)?;
     let output = client.vault_retrieval_recall(&input)?;
@@ -2001,6 +2021,21 @@ export_facade! {
     let output = client.self_skills_callables(&input)?;
     crate::codec::lift_record("self.skills.callables", &output)
 };
+"vault.skills.pack_receipt" => fn vault_skills_pack_receipt(&self, input: SkillPackReceiptRequest) -> SkillPackReceipt = |client| {
+    let input: oneiron::task_verb::sdk::SkillPackReceiptRequest = crate::codec::lower_record("vault.skills.pack_receipt", input)?;
+    let output = client.vault_skills_pack_receipt(&input)?;
+    crate::codec::lift_record("vault.skills.pack_receipt", &output)
+};
+"vault.skills.outcomes.project" => fn vault_skills_outcomes_project(&self, input: SkillPackOutcomeRequest) -> SkillPackOutcomeProjection = |client| {
+    let input: oneiron::task_verb::sdk::SkillPackOutcomeRequest = crate::codec::lower_record("vault.skills.outcomes.project", input)?;
+    let output = client.vault_skills_outcomes_project(&input)?;
+    crate::codec::lift_record("vault.skills.outcomes.project", &output)
+};
+"vault.skills.outcomes.get" => fn vault_skills_outcomes_get(&self, input: SkillPackCreditRequest) -> Option<LateCreditReceipt> = |client| {
+    let input: oneiron::task_verb::sdk::SkillPackCreditRequest = crate::codec::lower_record("vault.skills.outcomes.get", input)?;
+    let output = client.vault_skills_outcomes_get(&input)?;
+    crate::codec::lift_record("vault.skills.outcomes.get", &output)
+};
 "ai.steps.submit" => fn ai_steps_submit(&self, input: ModelStepSubmit) -> ModelStepReceipt = |client| {
     let input: oneiron::llm::model_step::ModelStepSubmit = crate::codec::lower_record("ai.steps.submit", input)?;
     let output = client.ai_steps_submit(&input)?;
@@ -2060,6 +2095,11 @@ export_facade! {
     let input: oneiron::task_verb::sdk::LiveVoiceSessionRequest = crate::codec::lower_record("ai.voice.close", input)?;
     let output = client.ai_voice_close(&input)?;
     crate::codec::lift_record("ai.voice.close", &output)
+};
+"ai.anonymous_chat" => fn ai_anonymous_chat(&self, input: AnonymousChatRequest) -> AnonymousChatResponse = |client| {
+    let input: oneiron::task_verb::sdk::AnonymousChatRequest = crate::codec::lower_record("ai.anonymous_chat", input)?;
+    let output = client.ai_anonymous_chat(&input)?;
+    crate::codec::lift_record("ai.anonymous_chat", &output)
 };
 "ai.options" => fn ai_options(&self, input: AiOptionsRequest) -> AiOptions = |client| {
     let input: oneiron::task_verb::sdk::AiOptionsRequest = crate::codec::lower_record("ai.options", input)?;
@@ -2900,5 +2940,10 @@ export_facade! {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::LeaderSplitInput> = crate::codec::lower_record("self.leader.split", input)?;
     let output = client.self_leader_split(&input)?;
     crate::codec::lift_record("self.leader.split", &output)
+};
+"self.skills.call" => fn self_skills_call(&self, input: LiveRunRequestSkillCallInput) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::SkillCallInput> = crate::codec::lower_record("self.skills.call", input)?;
+    let output = client.self_skills_call(&input)?;
+    crate::codec::encode("self.skills.call", &output)
 };
 }

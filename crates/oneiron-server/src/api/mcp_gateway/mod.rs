@@ -8,6 +8,7 @@ mod device_release;
 mod envelope;
 mod exec_board_verbs;
 mod memory_response;
+pub(crate) mod skill_execution;
 mod stream_reads;
 mod tasks_response;
 mod verb_hooks;

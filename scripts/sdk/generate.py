@@ -217,8 +217,8 @@ def long_signature(params):
 RUST_PRIMITIVES = frozenset({'bool', 'char', 'String', 'f32', 'f64', 'u8', 'u16', 'u32', 'u64', 'u128', 'usize',
                              'i8', 'i16', 'i32', 'i64', 'i128', 'isize', '()'})
 def rust_type(value):
-    'A row type as a crate outside the engine names it: a primitive as is, an engine path under `oneiron::`, any other from the SDK module.'
-    if value in RUST_PRIMITIVES: return value
+    'A row type outside the engine: primitives and JSON values as is, engine paths under `oneiron::`, other names from the SDK module.'
+    if value in RUST_PRIMITIVES or value == 'serde_json::Value': return value
     return value.replace('crate::', 'oneiron::') if value.startswith('crate::') else 'oneiron::task_verb::sdk::' + value
 
 SERVER_RECALL_DOC = "/// `vault.recall` → `SyncServer::recall_off_runtime_listing`, the recall door\n/// every server transport shares (`POST /v1/core/facade/vault.recall`, and\n/// the held socket's `rpc.req`): it embeds the query whenever the vault's\n/// embedder is serving.\n///\n/// The lease is not a client input, and a bearer slip is not one. At high,\n/// xhigh and max the door admits the recall on a line of its own and\n/// reranks on the `[models]` reranker; its refusals (`BUDGET_SPENT`,\n/// `MODEL_UNAVAILABLE`) are forwarded as those exact codes. With no\n/// reranker route the recall runs unreranked and reports\n/// `skipped / no_reranker` in `retrieval_meta.rerank`.\n"
@@ -844,7 +844,7 @@ pub(crate) async fn execute_agent_verb_input(
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
         let producers = oneiron::memory::ProducerRows::default();
-        let produced = execute_agent_verb_listing(server, tool, input, actor, run, &producers, served, board_hooks).await;
+        let produced = super::skill_execution::CALLER.scope(actor.clone(), execute_agent_verb_listing(server, tool, input, actor, run, &producers, served, board_hooks)).await;
         served.extend(producers.take());
         produced
     }
@@ -869,6 +869,12 @@ async fn execute_agent_verb_listing(
     }
     if !oneiron::task_verb::sdk::AgentVerb::from_name(tool).is_some_and(oneiron::task_verb::sdk::AgentVerb::is_mcp) {
         return Err(invalid());
+    }
+    // G10: MCP and code mode retain envelopes and results. Do not run a
+    // memory-free turn on either, or fire a hook that could retain its text.
+    if tool == "ai.anonymous_chat" {
+        return Err(McpGatewayError::new(-32020, "model_unavailable",
+            "anonymous chat requires its standalone HTTP SDK route"));
     }
     // A narrowed connector's TASKs are born in its own world and in the
     // facet its writes land in (its session's, or its own write facet).
@@ -913,7 +919,7 @@ async fn execute_agent_verb_row(
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
 '''
     result += invalid + 'match tool {\n'
-    result += ''.join(mcp_input_dispatch(row) for row in mcp_rows())
+    result += ''.join(mcp_input_dispatch(row) for row in mcp_rows() if row['name'] != 'ai.anonymous_chat')
     result += '_ => Err(invalid()), } }\n'
     result += '''/// One typed verb result, drained in a single frame.
 fn mcp_agent_verb_output(
@@ -1183,12 +1189,26 @@ def facade_dispatch(facade_rows):
         # narrowing as MCP refuses a narrowed connector there.
         return 'auth.require_unnarrowed_facets()?;'
     routes = HEADER + 'use super::*;\npub(super) fn routes() -> Router<Arc<SyncServer>> { Router::new()\n'
-    routes += ''.join(f'.route("/{r["name"]}", post(facade_route))\n' for r in facade_rows) + '}\n'
+    # G10: anonymous chat uses the existing standalone handler, never the
+    # facade's invocation claim, hook chains or retained call-receipt layer.
+    routes += ''.join(f'.route("/{r["name"]}", post(facade_route))\n' for r in facade_rows if r['name'] != 'ai.anonymous_chat') + '}\n'
+    routes += 'pub(super) fn anonymous_chat_routes() -> Router<Arc<SyncServer>> { Router::new().route("/v1/core/facade/ai.anonymous_chat", post(crate::api::anonymous_chat::chat)) }\n'
     dispatch = HEADER + DISPATCH_DOC + 'use super::*;\n'
     for r in facade_rows:
         method, name = r['name'].replace('.', '_'), r['name']
         head = f"async fn {method}({DISPATCH_SIGNATURE}) -> Result<FacadeCallOutput, FacadeApiError> {{\nlet auth = call.auth();\n"
         if name == 'vault.recall': dispatch += SERVER_RECALL_DOC
+        if name == 'ai.anonymous_chat':
+            # Socket/RPC calls retain their envelope. Only the standalone
+            # HTTP registration above can execute a traceless turn.
+            dispatch += head + '''let _ = (server, auth, input);
+                Err(oneiron::memory::MemoryError::new(
+                    oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE,
+                    "anonymous chat requires its standalone HTTP SDK route",
+                    &["Call POST /v1/ai/anonymous-chat or the HTTP SDK ai.anonymous_chat method."],
+                ).into())
+            }\n'''
+            continue
         if r.get('admission', {}).get('owner_grade'):
             # A full-vault result must carry verifier-produced owner proof into
             # same-snapshot engine admission, never generic actor-only invoke.
@@ -1205,7 +1225,14 @@ def facade_dispatch(facade_rows):
                 // or the explicit dev mode exports as the owner it acts as.
                 let action = crate::api::host_action::facade_host_action(server, auth)?;
                 let proof = auth.verified_slip();
-                if proof.is_none() && action.is_none() {{
+                // A managed vault's attested owner (`ManagedOwnerAction`)
+                // presents neither: the request's own owner proof, which the
+                // export revalidates in its snapshot. Never the hosted root.
+                let owner = match (proof, &action) {{
+                    (None, None) if auth.managed_owner().is_some() => Some(super::host_doors::owner_proof(auth, server, {json.dumps(name)})?),
+                    _ => None,
+                }};
+                if proof.is_none() && action.is_none() && owner.is_none() {{
                     return Err(FacadeApiError::forbidden("full-vault export requires verified owner authority", ["Present a verified owner credential."]));
                 }}
                 let hooks = facade_hooks_pre(server, call, {json.dumps(name)}, value).await?;
@@ -1213,19 +1240,22 @@ def facade_dispatch(facade_rows):
                 // Beside the archive, the rows its snapshot read past the
                 // caller's locality: every owner path lists them. A slip keeps
                 // its own path; a host action with no slip (the dev mode)
-                // takes the engine's host-action export.
-                let (output, rows) = match (proof, action) {{
-                    (Some(proof), _) if proof.claims().holder_ref == "host" => {{
+                // takes the engine's host-action export; the attested owner
+                // takes the engine's request-proof export, at its own
+                // locality.
+                let (output, rows) = match (proof, action, owner) {{
+                    (Some(proof), _, _) if proof.claims().holder_ref == "host" => {{
                         server.vault.export_with_verified_host_owner_listing(&input, proof, auth.locality())?
                     }}
-                    (Some(proof), _) => {{
+                    (Some(proof), _, _) => {{
                         let (actor, class) = facade_actor(server, auth)?;
                         let producers = oneiron::memory::ProducerRows::default();
                         let output = server.vault.memory(actor, class).at(auth.locality()).listing_producers(&producers).export_with_verified_owner(&input, proof)?;
                         (output, producers.take())
                     }}
-                    (None, Some(action)) => server.vault.export_with_host_action_listing(&input, &action, auth.locality())?,
-                    (None, None) => {{
+                    (None, Some(action), _) => server.vault.export_with_host_action_listing(&input, &action, auth.locality())?,
+                    (None, None, Some(owner)) => server.vault.export_with_authenticated_owner_listing(&input, &owner, auth.locality())?,
+                    (None, None, None) => {{
                         return Err(FacadeApiError::forbidden("full-vault export requires verified owner authority", ["Present a verified owner credential."]));
                     }}
                 }};
@@ -1428,6 +1458,9 @@ def outputs():
     # here, once; no caller of `invoke` wraps it again.
     core += "pub fn invoke(memory: &Memory<'_>, verb: &str, value: serde_json::Value) -> MemoryResult<serde_json::Value> {\n"
     core += 'if !AgentVerb::from_name(verb).is_some_and(AgentVerb::is_facade) { return Err(wrong_root(verb).unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb"))); }\n'
+    # G10: an embedded handle has no anonymous model host. Refuse it before
+    # hooks can retain even a hash or an ask containing the anonymous input.
+    core += 'if verb == "ai.anonymous_chat" { return encode(ai_anonymous_chat(memory, decode(value)?)?); }\n'
     core += "// The row's one verb-hook boundary (ARCH-0080 §3).\n"
     core += "crate::task_verb::verb_hook_boundary::row(memory, verb, value, |value| match verb {\n"
     for r in facade_rows:

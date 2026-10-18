@@ -1,5 +1,6 @@
 //! OpenAPI document assembly for the HTTP API.
 
+mod anonymous_chat_paths;
 mod booking_schemas;
 mod descriptions;
 mod endpoints_merge;

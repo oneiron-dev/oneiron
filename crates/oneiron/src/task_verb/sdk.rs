@@ -534,6 +534,7 @@ pub use super::recall_door::{
     recall_with_vector,
 };
 pub use super::sdk_agents::*;
+pub use super::sdk_anonymous_chat::*;
 pub use super::sdk_authority_history::*;
 pub use super::sdk_calendar::*;
 pub use super::sdk_campaign_split::*;
@@ -573,6 +574,7 @@ pub use super::sdk_secret_grant::*;
 pub use super::sdk_secret_use::*;
 pub use super::sdk_self::*;
 pub use super::sdk_share::*;
+pub use super::sdk_skill_execution::*;
 pub use super::sdk_shared::*;
 pub use super::sdk_shared_members::*;
 pub use super::sdk_shared_policy::*;
