@@ -32,7 +32,19 @@ const SCAN_PER_ENTRY: usize = 16;
 const BINDING_CHANGES: usize = 4_096;
 
 /// Where a fact comes from. Each source has its own cursor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum FactSource {
     /// Claim writes, in commit order.
@@ -107,7 +119,7 @@ impl FactPosition {
 }
 
 /// A position as text: `claim_changelog:<hex32>` or `settlement:<hex16>`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(transparent)]
 pub struct FactPositionHex(pub String);
 
@@ -131,7 +143,7 @@ impl FactPositionHex {
 }
 
 /// The kinds of fact slice 1 follows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum FactKind {
     #[serde(rename = "claim.landed")]
     ClaimLanded,

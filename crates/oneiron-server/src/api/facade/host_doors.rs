@@ -108,6 +108,8 @@ pub(crate) use super::gate_policy_doors::*;
 pub(crate) use super::policy_doors::*;
 // The owner's origin and checkout doors (DOOR-139), likewise.
 pub(crate) use super::origin_doors::*;
+// The owner's code snapshot doors (DOOR-118), likewise.
+pub(crate) use super::codebase_doors::*;
 // The generic connector call's door (ONE-2510), likewise.
 pub(crate) use super::connector_call_doors::*;
 pub(crate) use super::connector_pack_doors::*;
@@ -122,6 +124,7 @@ pub(crate) use super::core_write_doors::*;
 pub(crate) use super::critic_review_doors::*;
 // The owner's campaign split evaluation door (FIX 655), likewise.
 pub(crate) use super::campaign_split_doors::*;
+pub(crate) use super::research_doors::*;
 // The owner's project-card tap door (OF-501), likewise.
 pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
@@ -1140,11 +1143,18 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.budgets.local"
         | "vault.budgets.settlements"
         | "vault.research.evaluate_split"
+        | "vault.research.create_child"
+        | "vault.evals.inventory"
+        | "vault.evals.cohorts.setup"
         | "vault.code.export"
         | "vault.code.origin.authority.get"
         | "vault.code.origin.authority.set"
         | "vault.code.origin.publications"
         | "vault.code.checkout.bind"
+        | "vault.code.snapshots.ingest"
+        | "vault.code.snapshots.get"
+        | "vault.code.snapshots.read"
+        | "vault.code.symbols.definitions"
         | "vault.off_record.start"
         | "vault.off_record.status"
         | "vault.off_record.witness"

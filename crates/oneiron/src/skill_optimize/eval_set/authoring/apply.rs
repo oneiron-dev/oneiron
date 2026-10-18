@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use super::super::cohort::{CohortRetirement, MAX_REASON_BYTES};
-use super::super::cut_audit::{AuditProvenance, prepare_cut_audit};
+use super::super::cut_audit::{AuditProvenance, EvalCutAuthor, prepare_cut_audit};
 use super::super::{
     DerivationKind, EvalCaseDraft, EvalLabel, EvalSeat, FamilyPurpose, MAX_NAME_BYTES,
     MAX_REF_BYTES, invalid,
@@ -19,7 +19,7 @@ use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 
 /// A purpose for one new source group, given before any case.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FamilyDecision {
     pub group: String,
@@ -27,7 +27,7 @@ pub struct FamilyDecision {
 }
 
 /// One candidate kept as a case, with the slice it was drawn for.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CaseDecision {
     pub candidate: String,
@@ -36,7 +36,7 @@ pub struct CaseDecision {
 }
 
 /// One cohort to cut for a seat.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CutDecision {
     pub seat: EvalSeat,
@@ -72,8 +72,59 @@ pub struct EvalAuthoringPlan {
     pub cohorts: Vec<EvalCohortDecision>,
 }
 
+/// Explicit owner setup over a pinned, metadata-only authoring inventory.
+/// Families and cases must be in that inventory. This does not retire cohorts,
+/// serve their contents, supply labels or attribute the owner's plan to a skill.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EvalCohortSetup {
+    pub inventory_at: u64,
+    pub inventory_digest: String,
+    #[serde(default)]
+    pub families: Vec<FamilyDecision>,
+    #[serde(default)]
+    pub cases: Vec<CaseDecision>,
+    pub cuts: Vec<CutDecision>,
+}
+
+/// Set up sealed cohorts as the verified owner. The same inventory validation,
+/// family/case doors, near-copy audit and atomic cut used by the authoring skill
+/// apply; the audit names the owner, never a fabricated authoring attempt.
+/// # Errors
+/// An invalid owner proof, a future or changed inventory, invalid decisions,
+/// or storage errors. Individual refused cuts are reported as skipped.
+pub fn setup_eval_cohorts(
+    vault: &Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    setup: EvalCohortSetup,
+    now: u64,
+) -> Result<EvalAuthoringReport> {
+    let person = owner.revalidate_person(vault)?;
+    if setup.inventory_at > now {
+        return Err(invalid("a cohort setup cannot read a future inventory"));
+    }
+    let inventory = super::eval_authoring_inventory(vault, setup.inventory_at)?;
+    let plan = EvalAuthoringPlan {
+        inventory_digest: setup.inventory_digest,
+        families: setup.families,
+        cases: setup.cases,
+        cuts: setup.cuts,
+        cohorts: Vec::new(),
+    };
+    validate(&plan, &inventory)?;
+    let mut report = EvalAuthoringReport::default();
+    assign_families(vault, &plan, &inventory, now, &mut report)?;
+    record_cases(vault, &plan, &inventory, now, &mut report)?;
+    let provenance = AuditProvenance {
+        author: EvalCutAuthor::Owner { person },
+        inventory_digest: inventory.inventory_digest,
+    };
+    cut_cohorts(vault, &plan, &provenance, now, &mut report)?;
+    Ok(report)
+}
+
 /// One decision a door or the inventory did not let through.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EvalAuthoringSkip {
     /// The group, candidate, cut or cohort it named.
     pub item: String,
@@ -81,7 +132,7 @@ pub struct EvalAuthoringSkip {
 }
 
 /// What one applied plan did.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EvalAuthoringReport {
     pub families_assigned: usize,
     pub families_extended: usize,
@@ -402,9 +453,11 @@ pub fn apply_eval_authoring_plan(
     assign_families(vault, &plan, inventory, now, &mut report)?;
     record_cases(vault, &plan, inventory, now, &mut report)?;
     let provenance = AuditProvenance {
-        attempt,
-        skill: skill.0,
-        revision: skill.1.clone(),
+        author: EvalCutAuthor::Skill {
+            attempt,
+            skill: skill.0,
+            revision: skill.1.clone(),
+        },
         inventory_digest: inventory.inventory_digest.clone(),
     };
     cut_cohorts(vault, &plan, &provenance, now, &mut report)?;

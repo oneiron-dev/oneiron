@@ -155,6 +155,10 @@ both bindings and their export-census tests in one change.
 - `self.off_record.execute`
 - `vault.records.erase_preview`
 - `vault.records.erase_confirm`
+- `vault.research.create_child`
+- `vault.research.archive`
+- `vault.evals.inventory`
+- `vault.evals.cohorts.setup`
 - `vault.research.bind`
 - `vault.research.fork`
 - `vault.research.weave`
@@ -246,6 +250,10 @@ both bindings and their export-census tests in one change.
 - `vault.code.origin.authority.set`
 - `vault.code.origin.publications`
 - `vault.code.checkout.bind`
+- `vault.code.snapshots.ingest`
+- `vault.code.snapshots.get`
+- `vault.code.snapshots.read`
+- `vault.code.symbols.definitions`
 - `vault.artifacts.export`
 - `vault.agents.create`
 - `vault.agents.get`
@@ -407,6 +415,8 @@ both bindings and their export-census tests in one change.
 - `vault.artifacts.read`
 - `vault.consolidation.enqueue`
 - `vault.consolidation.status`
+- `vault.memory.signal_extraction`
+- `vault.memory.signal_extraction.result`
 - `vault.claims.seed`
 - `vault.channel_identities.provision`
 - `vault.channel_identities.bind`

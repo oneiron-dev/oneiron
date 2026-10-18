@@ -58,7 +58,7 @@ pub struct ChannelIdentityReleaseRequest {
 }
 
 /// The live fact projection plus local custody and capability information.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ChannelIdentityView {
     pub identity_ref: EntityId,
     pub channel: String,
@@ -76,14 +76,14 @@ pub struct ChannelIdentityView {
     pub occupies_assignment_key: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ChannelIdentityCustody {
     SelfHeld,
     Delegated,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ChannelIdentityLifecycleReceipt {
     pub identity_ref: EntityId,
     pub receipt_ref: String,

@@ -188,7 +188,9 @@ impl PackSource {
 
 /// A pack-carried board recipe. Its verbs and authority are permission requests,
 /// not a second owner-consented install or executable handlers.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct PackSection {
     pub section_id: String,

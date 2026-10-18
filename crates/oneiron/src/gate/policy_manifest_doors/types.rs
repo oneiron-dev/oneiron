@@ -165,7 +165,7 @@ pub struct PolicyManifestPropose {
     pub manifest: PolicyManifest,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PolicyManifestView {
     pub manifest_ref: String,
     pub body_hash: String,
@@ -174,14 +174,14 @@ pub struct PolicyManifestView {
     pub manifest: PolicyManifest,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PolicyManifestsView {
     pub default_manifest_ref: String,
     pub read_frontier_hash: String,
     pub manifests: Vec<PolicyManifestView>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PolicyManifestReceipt {
     pub manifest: PolicyManifestView,
     pub approval: PolicyCeiling,
@@ -195,12 +195,12 @@ pub struct GateCheckerSet {
     pub binding: crate::llm::manifest::VerdictBinding,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GateCheckerView {
     pub binding: Option<crate::llm::manifest::VerdictBinding>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GateCheckerReceipt {
     pub binding: crate::llm::manifest::VerdictBinding,
     pub receipt_ref: String,

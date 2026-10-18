@@ -2,7 +2,17 @@
 //! approval (consent), lifecycle (currentness), and source (provenance).
 
 /// Claim approval status (`appr`): the ARCH-0003 consent axis.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ClaimApprovalStatus {
     Auto,
