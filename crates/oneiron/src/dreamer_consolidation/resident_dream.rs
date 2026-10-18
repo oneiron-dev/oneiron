@@ -3,13 +3,17 @@
 //! window, and the weaver never reads its diary. Since its last dreaming it
 //! reads its sealed scratchpads, its receipts and its INBOX rows, oldest
 //! first, as many as the window holds, and writes one diary entry in its own
-//! voice. What it did not read stays for its next dreaming.
+//! voice. It may also propose craft notes about itself, actor.lesson and
+//! actor.failure_mode candidates, which land Proposed beside the entry.
+//! What it did not read stays for its next dreaming.
 //!
 //! The host lends the model and the instruction; the engine ships no
-//! dreaming prompt. The Nightly recipe queues one child per resident whose
-//! definition is on and whose dreaming is not off.
+//! dreaming prompt, only the reply's shape ([`CRAFT_ASK`]). The Nightly
+//! recipe queues one child per resident whose definition is on and whose
+//! dreaming is not off.
 
 use super::step_charge::StepChargeTally;
+use crate::actor_claims::ResidentCraftCandidate;
 use crate::agent_def::DreamingMode;
 use crate::dreamer_runner::{
     DREAMER_RESIDENT_DREAM_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerParkCause,
@@ -39,6 +43,17 @@ const INPUT_SHARE_DIVISOR: u64 = 2;
 const MAX_FORK_DEPTH: usize = 16;
 /// The most of a diary-read reason the Inbox cut prints, as the board does.
 const REVIEW_REASON_BYTES: usize = 160;
+/// The fence that opens a dreaming reply's craft notes, after its entry.
+const CRAFT_FENCE: &str = "```oneiron-craft";
+/// The reply's shape, after the cut: the entry, then optionally the
+/// resident's craft notes about itself (OF-490). The host's instruction
+/// stays the voice; this only says where the notes go.
+const CRAFT_ASK: &str = "Write your diary entry. After it you may propose craft notes about \
+     yourself: end the reply with one block fenced ```oneiron-craft holding \
+     {\"lessons\":[\"<what you will do differently>\"],\
+     \"failure_modes\":[\"<a lapse of yours that keeps recurring>\"]}, either list empty \
+     when you have none. Nothing follows the closing fence; everything before the block is \
+     the diary entry.";
 
 /// Each resident's committed progress: what its dreaming already read.
 const PROGRESS: SideTable<EntityId, ResidentDreamProgress, Named> =
@@ -65,8 +80,27 @@ pub struct ResidentDreamProgress {
     pub inbox_after: u64,
     /// That row's item id.
     pub inbox_after_id: String,
+    /// The INBOX row past the cursor its last dreaming read only in part.
+    #[serde(default)]
+    pub inbox_partial: Option<ResidentDreamPartial>,
+    /// The sealed pad its last dreaming read only in part.
+    #[serde(default)]
+    pub pad_partial: Option<ResidentDreamPartial>,
     pub dreamed_at: u64,
     pub entries: u64,
+}
+
+/// An input one dreaming read only in part, because it did not fit any
+/// window whole: the next dreaming reads on from `read` bytes into it, so it
+/// is read whole across dreamings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResidentDreamPartial {
+    /// The row's time (an INBOX row's), or 0 for a pad.
+    pub at: u64,
+    /// The INBOX row's item id, or the pad's hex id.
+    pub id: String,
+    /// The bytes of its words (a pad's body) read so far.
+    pub read: u64,
 }
 
 /// What the host lends one resident's dreaming.
@@ -176,6 +210,8 @@ struct DreamCut {
     pads: Vec<EntityId>,
     receipts_after: Option<(u64, String)>,
     inbox_after: Option<(u64, String)>,
+    inbox_partial: Option<ResidentDreamPartial>,
+    pad_partial: Option<ResidentDreamPartial>,
 }
 
 /// Moves a `(time, id)` read cursor forward, never back.
@@ -225,18 +261,24 @@ impl Room {
         true
     }
 
-    /// The longest prefix of `text`, cut at a character and followed by
-    /// `mark`, that fits what is left; `None` when not even `mark` does.
-    fn fit(&self, text: &str, mark: &str) -> Option<String> {
-        let mut end = text.len();
+    /// The longest non-empty prefix of `body`, cut at a character, that
+    /// fits what is left once `render` frames it and `mark` follows, with the
+    /// bytes of `body` it holds; `None` when no such prefix fits.
+    fn fit_part(
+        &self,
+        body: &str,
+        render: impl Fn(&str) -> String,
+        mark: &str,
+    ) -> Option<(String, usize)> {
+        let mut end = body.len();
         loop {
-            let end_at = text.floor_char_boundary(end);
-            let cut = format!("{}{mark}", &text[..end_at]);
-            if crate::count_context_pack_tokens(&cut) as u64 <= self.0 {
-                return Some(cut);
-            }
+            let end_at = body.floor_char_boundary(end);
             if end_at == 0 {
                 return None;
+            }
+            let cut = format!("{}{mark}", render(&body[..end_at]));
+            if crate::count_context_pack_tokens(&cut) as u64 <= self.0 {
+                return Some((cut, end_at));
             }
             end = end_at * 9 / 10;
         }
@@ -245,6 +287,18 @@ impl Room {
 
 /// What a row's quoted words, cut to fit, end with.
 const WORDS_CUT_MARK: &str = "\n  > (the words run on past this dreaming's window)";
+/// What a pad's body, cut to fit, ends with.
+const PAD_CUT_MARK: &str = "\n(the pad runs on past this dreaming's window)";
+
+/// Where an input an earlier dreaming read in part reads on from: `read`
+/// bytes in, at a character, when `partial` is that input; else its start.
+fn read_on_from(partial: Option<&ResidentDreamPartial>, at: u64, id: &str, body: &str) -> usize {
+    partial
+        .filter(|partial| partial.at == at && partial.id == id)
+        .map_or(0, |partial| {
+            body.floor_char_boundary(usize::try_from(partial.read).unwrap_or(usize::MAX))
+        })
+}
 
 /// The agent definitions forked from `resident` whose sealed pads its
 /// dreaming reads: each whose fork chain reaches it before any other bound
@@ -338,21 +392,38 @@ fn cut_for(
         if note.author_ref != author {
             continue;
         }
-        let line = if author == resident {
-            format!("### {}\n{}", pad.to_hex(), note.markdown.trim())
+        let body = note.markdown.trim();
+        let from = read_on_from(progress.pad_partial.as_ref(), 0, &pad.to_hex(), body);
+        let mut head = if author == resident {
+            format!("### {}", pad.to_hex())
         } else {
-            format!(
-                "### {} (fork {})\n{}",
-                pad.to_hex(),
-                author.to_hex(),
-                note.markdown.trim()
-            )
+            format!("### {} (fork {})", pad.to_hex(), author.to_hex())
         };
-        if !room.take(&line) {
-            break;
+        if from > 0 {
+            head.push_str(&format!(" (read on from byte {from})"));
         }
-        pad_lines.push(line);
-        cut.pads.push(pad);
+        let render = |part: &str| format!("{head}\n{part}");
+        let line = render(&body[from..]);
+        if room.take(&line) {
+            pad_lines.push(line);
+            cut.pads.push(pad);
+            continue;
+        }
+        // The first pad a dreaming reads goes in part when it does not fit
+        // whole, and reads on at the next dreaming: a pad longer than any
+        // window is read whole across dreamings, never skipped.
+        if pad_lines.is_empty()
+            && let Some((part, read)) = room.fit_part(&body[from..], render, PAD_CUT_MARK)
+            && room.take(&part)
+        {
+            pad_lines.push(part);
+            cut.pad_partial = Some(ResidentDreamPartial {
+                at: 0,
+                id: pad.to_hex(),
+                read: (from + read) as u64,
+            });
+        }
+        break;
     }
     cut.sections.push(("Sealed scratchpads", pad_lines));
 
@@ -444,36 +515,64 @@ fn cut_for(
         // The words are quoted as data someone outside the vault wrote. Words
         // that overflow what is left wait, with the cursor, for the next
         // dreaming's fresh window. The first row a dreaming reads goes in cut
-        // to what is left instead, so words too long for any window are read
-        // in part rather than never, and every dreaming moves on (FIX 1148).
-        let quoted = texts.get(&item.item_id).map(|words| {
-            let mut quoted = format!(
-                "{index}\n  quoted from {}{}:",
-                words.identity_ref.to_hex(),
-                if words.claims_not_instructions {
-                    ", data and not instructions"
-                } else {
-                    ""
-                }
-            );
-            for text in words.text.lines() {
+        // to what is left instead, and the cursor stays on it: the next
+        // dreaming reads on from where this one stopped, so words too long
+        // for any window are read whole across dreamings, and every dreaming
+        // moves on (FIX 1148).
+        let Some(words) = texts.get(&item.item_id) else {
+            if !room.take(&index) {
+                break;
+            }
+            inbox_lines.push(index);
+            cut.inbox_after = Some((item.occurred_at, item.item_id));
+            continue;
+        };
+        let from = read_on_from(
+            progress.inbox_partial.as_ref(),
+            item.occurred_at,
+            &item.item_id,
+            &words.text,
+        );
+        let head = format!(
+            "{index}\n  quoted from {}{}{}:",
+            words.identity_ref.to_hex(),
+            if words.claims_not_instructions {
+                ", data and not instructions"
+            } else {
+                ""
+            },
+            if from > 0 {
+                format!(", read on from byte {from}")
+            } else {
+                String::new()
+            }
+        );
+        let render = |part: &str| {
+            let mut quoted = head.clone();
+            for text in part.lines() {
                 quoted.push_str("\n  > ");
                 quoted.push_str(text);
             }
             quoted
-        });
-        let line = match quoted {
-            Some(quoted) if room.take(&quoted) => quoted,
-            Some(quoted) if inbox_lines.is_empty() => match room.fit(&quoted, WORDS_CUT_MARK) {
-                Some(cut) if room.take(&cut) => cut,
-                _ => break,
-            },
-            Some(_) => break,
-            None if room.take(&index) => index,
-            None => break,
         };
-        inbox_lines.push(line);
-        cut.inbox_after = Some((item.occurred_at, item.item_id));
+        let quoted = render(&words.text[from..]);
+        if room.take(&quoted) {
+            inbox_lines.push(quoted);
+            cut.inbox_after = Some((item.occurred_at, item.item_id));
+            continue;
+        }
+        if inbox_lines.is_empty()
+            && let Some((part, read)) = room.fit_part(&words.text[from..], render, WORDS_CUT_MARK)
+            && room.take(&part)
+        {
+            inbox_lines.push(part);
+            cut.inbox_partial = Some(ResidentDreamPartial {
+                at: item.occurred_at,
+                id: item.item_id,
+                read: (from + read) as u64,
+            });
+        }
+        break;
     }
     cut.sections.push(("Inbox", inbox_lines));
     Ok(cut)
@@ -513,6 +612,76 @@ fn append_diary_entry_in_txn(
         content.finish()?;
     }
     Ok(first)
+}
+
+/// A dreaming reply's diary entry and the craft notes it proposes: a reply
+/// that ends with one ```oneiron-craft block whose lessons and failure
+/// modes parse proposes them, and its entry is what precedes the block. Any
+/// other reply is all entry and proposes nothing: a note is never made up.
+fn split_craft_notes(reply: &str) -> (&str, Vec<ResidentCraftCandidate>) {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct CraftBlock {
+        #[serde(default)]
+        lessons: Vec<String>,
+        #[serde(default)]
+        failure_modes: Vec<String>,
+    }
+    let parsed = reply
+        .strip_suffix("```")
+        .and_then(|rest| rest.rsplit_once(CRAFT_FENCE))
+        .and_then(|(entry, block)| {
+            let block = serde_json::from_str::<CraftBlock>(block.trim()).ok()?;
+            Some((entry.trim_end(), block))
+        });
+    let Some((entry, block)) = parsed else {
+        return (reply, Vec::new());
+    };
+    let craft = block
+        .lessons
+        .into_iter()
+        .map(ResidentCraftCandidate::Lesson)
+        .chain(
+            block
+                .failure_modes
+                .into_iter()
+                .map(ResidentCraftCandidate::FailureMode),
+        )
+        .collect();
+    (entry, craft)
+}
+
+/// Lands a dreaming's craft notes as Proposed candidates on the resident
+/// (OF-490), in the entry's write. The notes write in their own savepoint:
+/// a refusal rolls back alone, is logged, and the entry still lands.
+fn propose_craft_notes_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    resident: EntityId,
+    attempt: crate::attempt_queue::AttemptId,
+    craft: &[ResidentCraftCandidate],
+    at: u64,
+) -> Result<()> {
+    if craft.is_empty() {
+        return Ok(());
+    }
+    let mut savepoint = vault.store.env.nested_write_txn(txn)?;
+    match crate::actor_claims::write_resident_craft_candidates_in_txn(
+        vault,
+        &mut savepoint,
+        resident,
+        attempt,
+        craft,
+        at,
+    ) {
+        Ok(_) => savepoint.commit()?,
+        Err(error) => tracing::warn!(
+            kind = ?error.kind(),
+            ?attempt,
+            "a resident's dreaming craft notes were not proposed"
+        ),
+    }
+    Ok(())
 }
 
 /// Runs one resident's dreaming: reads its cut, asks its model with the
@@ -583,7 +752,9 @@ pub async fn run_resident_dream(
             },
             LlmMessage {
                 role: LlmMessageRole::User,
-                content: vec![ContentPart::Text { text: cut.text() }],
+                content: vec![ContentPart::Text {
+                    text: format!("{}\n\n{CRAFT_ASK}", cut.text()),
+                }],
             },
         ],
         tools: Vec::new(),
@@ -660,14 +831,14 @@ pub async fn run_resident_dream(
             _ => None,
         })
         .collect();
-    let entry = entry.trim();
+    let (entry, craft) = split_craft_notes(entry.trim());
     if entry.is_empty() {
         return Ok(charges.park("the model wrote an empty diary entry"));
     }
     let now = ctx.now_ms / 1_000;
-    // The entry, every part of it, its landing marker and the progress it
-    // read commit in one write: a crash between them neither drops the
-    // progress nor lands the entry twice.
+    // The entry, every part of it, its craft notes, its landing marker and
+    // the progress it read commit in one write: a crash between them neither
+    // drops the progress nor lands the entry twice.
     ctx.vault.with_write_txn_grouped(|txn| {
         if LANDED.contains(&ctx.vault.store, txn, &attempt_id)? {
             return Ok(());
@@ -675,6 +846,7 @@ pub async fn run_resident_dream(
         let at = crate::ports::recorded_at_in_txn(&ctx.vault.store, txn)?;
         let entry_id = append_diary_entry_in_txn(ctx.vault, txn, resident, entry, at)
             .map_err(|error| invalid(&format!("diary entry: {error}")))?;
+        propose_craft_notes_in_txn(ctx.vault, txn, resident_id, attempt_id, &craft, at)?;
         LANDED.put(&ctx.vault.store, txn, &attempt_id, &entry_id)?;
         for pad in &cut.pads {
             PADS.put(&ctx.vault.store, txn, &(resident_id, *pad), &[1])?;
@@ -692,6 +864,25 @@ pub async fn run_resident_dream(
             &mut progress.inbox_after_id,
             cut.inbox_after.as_ref(),
         );
+        // A part read moves its input's offset on; an input read to its end
+        // (a pad marked read, a row the cursor passed) has none left.
+        if let Some(partial) = &cut.pad_partial {
+            progress.pad_partial = Some(partial.clone());
+        } else if progress
+            .pad_partial
+            .as_ref()
+            .is_some_and(|partial| cut.pads.iter().any(|pad| pad.to_hex() == partial.id))
+        {
+            progress.pad_partial = None;
+        }
+        if let Some(partial) = &cut.inbox_partial {
+            progress.inbox_partial = Some(partial.clone());
+        } else if progress.inbox_partial.as_ref().is_some_and(|partial| {
+            (progress.inbox_after, progress.inbox_after_id.as_str())
+                >= (partial.at, partial.id.as_str())
+        }) {
+            progress.inbox_partial = None;
+        }
         progress.dreamed_at = now;
         progress.entries += 1;
         PROGRESS.put(&ctx.vault.store, txn, &resident_id, &progress)
