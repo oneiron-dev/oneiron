@@ -1515,6 +1515,13 @@ export class Oneiron {
       answers: (input: Facade.QuestionAnswersRequest): Facade.QuestionAnswer[] => this.#call(() => this.#client.vaultQuestionsAnswers(input) as Facade.QuestionAnswer[]),
       /** Refreshes the caller's standing question by hand, now, over every unit its current version covers, on the host's ladder as the standing pump answers it. */
       refresh: (input: Facade.QuestionRefreshRequest): Facade.AnswerRecord[] => this.#call(() => this.#client.vaultQuestionsRefresh(input) as Facade.AnswerRecord[]),
+      /** Reads the caller's standing question outcome labels and calibration pairs, each pairing an answer prediction and probability with its mapped label. */
+      outcomes: Object.assign((input: Facade.QuestionOutcomesRequest): Facade.QuestionOutcomes => this.#call(() => this.#client.vaultQuestionsOutcomes(input) as Facade.QuestionOutcomes), {
+        /** Projects the caller's standing question bound outcomes over current facts, idempotently binding each admissible fact in an answer horizon as its label. */
+        project: (input: Facade.QuestionOutcomesProjectRequest): Facade.QuestionOutcomesProjected => this.#call(() => this.#client.vaultQuestionsOutcomesProject(input) as Facade.QuestionOutcomesProjected),
+      }),
+      /** Reads the caller's standing question scheduling head: its current version, paused state, last refresh and any failed-refresh hold. */
+      schedule: (input: Facade.QuestionScheduleRequest): Facade.QuestionScheduleHead | null => this.#call(() => this.#client.vaultQuestionsSchedule(input) as Facade.QuestionScheduleHead | null),
     },
     decisions: {
       bands: {

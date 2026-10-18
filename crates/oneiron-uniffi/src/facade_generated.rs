@@ -2331,6 +2331,21 @@ export_facade! {
     let output = client.vault_questions_refresh(&input)?;
     crate::codec::lift_record("vault.questions.refresh", &output)
 };
+"vault.questions.outcomes" => fn vault_questions_outcomes(&self, input: QuestionOutcomesRequest) -> QuestionOutcomes = |client| {
+    let input: oneiron::receipt::QuestionOutcomesRequest = crate::codec::lower_record("vault.questions.outcomes", input)?;
+    let output = client.vault_questions_outcomes(&input)?;
+    crate::codec::lift_record("vault.questions.outcomes", &output)
+};
+"vault.questions.outcomes.project" => fn vault_questions_outcomes_project(&self, input: QuestionOutcomesProjectRequest) -> QuestionOutcomesProjected = |client| {
+    let input: oneiron::receipt::QuestionOutcomesProjectRequest = crate::codec::lower_record("vault.questions.outcomes.project", input)?;
+    let output = client.vault_questions_outcomes_project(&input)?;
+    crate::codec::lift_record("vault.questions.outcomes.project", &output)
+};
+"vault.questions.schedule" => fn vault_questions_schedule(&self, input: QuestionScheduleRequest) -> Option<QuestionScheduleHead> = |client| {
+    let input: oneiron::receipt::QuestionScheduleRequest = crate::codec::lower_record("vault.questions.schedule", input)?;
+    let output = client.vault_questions_schedule(&input)?;
+    crate::codec::lift_record("vault.questions.schedule", &output)
+};
 "vault.decisions.bands.read" => fn vault_decisions_bands_read(&self, input: DecisionBandReadRequest) -> LearnedBand = |client| {
     let input: oneiron::llm::decision::DecisionBandReadRequest = crate::codec::lower_record("vault.decisions.bands.read", input)?;
     let output = client.vault_decisions_bands_read(&input)?;

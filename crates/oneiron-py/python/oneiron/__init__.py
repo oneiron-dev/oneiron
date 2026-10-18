@@ -2819,6 +2819,21 @@ class Oneiron:
         def refresh(self, spec):
             """Refreshes the caller's standing question by hand, now, over every unit its current version covers, on the host's ladder as the standing pump answers it."""
             return json.loads(_translate(lambda: self._client.vault_questions_refresh(json.dumps(spec))))
+        @property
+        def outcomes(self) -> "Oneiron._VaultQuestionsOutcomesVerbs":
+            return Oneiron._VaultQuestionsOutcomesVerbs(self._client)
+        def schedule(self, spec):
+            """Reads the caller's standing question scheduling head: its current version, paused state, last refresh and any failed-refresh hold."""
+            return json.loads(_translate(lambda: self._client.vault_questions_schedule(json.dumps(spec))))
+    class _VaultQuestionsOutcomesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Reads the caller's standing question outcome labels and calibration pairs, each pairing an answer prediction and probability with its mapped label."""
+            return json.loads(_translate(lambda: self._client.vault_questions_outcomes(json.dumps(spec))))
+        def project(self, spec):
+            """Projects the caller's standing question bound outcomes over current facts, idempotently binding each admissible fact in an answer horizon as its label."""
+            return json.loads(_translate(lambda: self._client.vault_questions_outcomes_project(json.dumps(spec))))
     class _VaultDecisionsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

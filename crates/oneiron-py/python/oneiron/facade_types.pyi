@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 614 facade rows, 2294 declarations.
-Inputs: 562 of 614 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 545 of 614 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 617 facade rows, 2300 declarations.
+Inputs: 565 of 617 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 548 of 617 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 92; unread shapes: 0.
 """
 
@@ -9345,6 +9345,24 @@ class QuestionAnswerArtifact(ArtifactAskRecord):
 QuestionAnswer = QuestionAnswerGraph | QuestionAnswerArtifact
 class QuestionRefreshRequest(TypedDict):
     id: EntityId
+class QuestionOutcomesRequest(TypedDict):
+    id: EntityId
+class QuestionOutcomes(TypedDict):
+    labels: list[OutcomeLabel]
+    calibration: list[CalibrationPair]
+class QuestionOutcomesProjectRequest(TypedDict):
+    id: EntityId
+class QuestionOutcomesProjected(TypedDict):
+    id: EntityId
+    projected: int
+class QuestionScheduleRequest(TypedDict):
+    id: EntityId
+class QuestionScheduleHead(TypedDict):
+    id: str
+    version: int
+    paused: bool
+    last_refresh: NotRequired[int | None]
+    retry_at: NotRequired[int | None]
 class DecisionBandReadRequest(TypedDict):
     question: DecisionQuestion
     reversibility: Reversibility

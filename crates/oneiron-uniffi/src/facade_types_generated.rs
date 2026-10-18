@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 614 facade rows, 2232 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 12; generated in and out: 574.
+// UniFFI census: 617 facade rows, 2238 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 12; generated in and out: 577.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -28728,6 +28728,68 @@ pub enum QuestionAnswer {
 pub struct QuestionRefreshRequest {
     #[serde(rename = "id")]
     pub id: String,
+}
+
+/// `oneiron::receipt::questions::QuestionOutcomesRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionOutcomesRequest {
+    #[serde(rename = "id")]
+    pub id: String,
+}
+
+/// `oneiron::receipt::questions::QuestionOutcomes`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct QuestionOutcomes {
+    #[serde(rename = "labels")]
+    pub labels: Vec<OutcomeLabel>,
+    #[serde(rename = "calibration")]
+    pub calibration: Vec<CalibrationPair>,
+}
+
+/// `oneiron::receipt::questions::QuestionOutcomesProjectRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionOutcomesProjectRequest {
+    #[serde(rename = "id")]
+    pub id: String,
+}
+
+/// `oneiron::receipt::questions::QuestionOutcomesProjected`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct QuestionOutcomesProjected {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "projected")]
+    pub projected: u64,
+}
+
+/// `oneiron::receipt::questions::QuestionScheduleRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionScheduleRequest {
+    #[serde(rename = "id")]
+    pub id: String,
+}
+
+/// `oneiron::llm::decision::questions::records::QuestionScheduleHead`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionScheduleHead {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "version")]
+    pub version: u32,
+    #[serde(rename = "paused")]
+    pub paused: bool,
+    #[serde(
+        rename = "last_refresh",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub last_refresh: Option<u64>,
+    #[serde(rename = "retry_at", default, skip_serializing_if = "Option::is_none")]
+    pub retry_at: Option<u64>,
 }
 
 /// `oneiron::llm::decision::policy::DecisionBandReadRequest`.
