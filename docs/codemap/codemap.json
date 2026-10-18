@@ -12736,7 +12736,7 @@
      "path": "src/code_run/storage/compaction.rs",
      "purpose": "Node-local executor coverage: typed run/step binding to a committed epoch SUMMARY",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -14493,7 +14493,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/compaction/driver/integration.rs",
@@ -14707,28 +14707,34 @@
      "path": "src/compaction/packet_source.rs",
      "purpose": "The packet door's source bindings (FIX 4465)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 1,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "CompactionCall",
+      "CompactionEvidence",
       "CompactionExecution",
       "CompactionHomeRef",
+      "CompactionLanding",
+      "CompactionLandingReceipt",
+      "CompactionStepRef",
       "CompactionUsage",
       "SelfCompactionUnavailable"
      ],
      "path": "src/compaction/self_writer.rs",
      "purpose": "The agent as its own compaction writer (FIX 4465, owner 10-19: \"the toggle sets WHO writes, not which model\")",
      "surface": {
-      "crate-vis": 8,
-      "enum": 1,
-      "fn": 3,
-      "struct": 3
+      "const": 1,
+      "crate-vis": 12,
+      "enum": 2,
+      "fn": 4,
+      "struct": 7
      }
     },
     {
@@ -20433,6 +20439,24 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CompactionCheckDeclaration",
+      "CompactionCheckModel",
+      "CompactionCheckVerdict"
+     ],
+     "path": "src/dreamer_runner/maintenance/compaction_check.rs",
+     "purpose": "The Dreamer's check of a self-written compaction (FIX 4465 B; owner 10-19: the Dreamer \"checks the agent's…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -20575,17 +20599,17 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/maintenance/mod.rs",
      "purpose": "Scheduled curator and harness-evaluation facets on one gated Dreamer authority, and the Coach's nightly…",
      "surface": {
       "const": 3,
-      "crate-vis": 7,
+      "crate-vis": 9,
       "fn": 1,
-      "mod": 16,
-      "re-export": 7
+      "mod": 17,
+      "re-export": 8
      }
     },
     {
@@ -23214,6 +23238,26 @@
      "purpose": "The executor's side of the compaction host: landing a finished pass, the token feed, and sealing a window…",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/compaction_host/check_evidence.rs",
+     "purpose": "The retained evidence of a self-written summary's span, as its Dreamer check reads it (FIX 4465 B): the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/compaction_host/self_steps.rs",
+     "purpose": "A flight's self-written passes, filed before any of them lands (FIX 4465 B): every paid call, a try the gate…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -31324,6 +31368,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/llm/step/compaction_step.rs",
+     "purpose": "The actor-bound compaction step (FIX 4465 B): each paid call of a self-written compaction pass, the tries…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/llm/step/execute.rs",
      "purpose": "Durable step execution: memo/admission/deadline orchestration with retry and lease settlement",
      "surface": {
@@ -31432,7 +31486,7 @@
      "path": "src/llm/step/step_claim.rs",
      "purpose": "Terminal dreamer.step claim write, step-claim codec, and memo-index maintenance",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 22
      }
     },
     {
@@ -58723,7 +58777,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 60,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -58779,7 +58833,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 28,
+     "files": 30,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -59038,7 +59092,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 102,
+     "files": 103,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -59740,7 +59794,7 @@
    },
    "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3645,
+   "source_files": 3649,
    "test_files": 902
   },
   "oneiron-android": {
@@ -70934,6 +70988,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/dreamer/compaction_check.rs",
+     "purpose": "The host's loan to the Dreamer's check of a self-written compaction (FIX 4465 B): the weaver's narrative…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/eval_authoring.rs",
      "purpose": "The Coach's eval authoring (ARCH-0053 \"Eval authoring\", OF-578): each night it keeps each seat's test set…",
      "surface": {
@@ -80702,7 +80766,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 47,
+     "files": 48,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81138,7 +81202,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 754,
+   "source_files": 755,
    "test_files": 182
   },
   "oneiron-spawn": {
