@@ -987,6 +987,12 @@ impl OneironClient {
                 "vault.agents.spawn.get" => remote_agent_verb_output::<
                     oneiron::team::doors::PlannedSpawnObservation,
                 >(client, verb, &input),
+                "vault.tasks.cancel_force" => remote_agent_verb_output::<
+                    oneiron::task_verb::run_doors::CancelForceReceipt,
+                >(client, verb, &input),
+                "vault.runs.branches.get" => remote_agent_verb_output::<
+                    oneiron::task_verb::run_doors::RunBranchesView,
+                >(client, verb, &input),
                 "vault.workspace.establish" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::WorkspacePresetReceipt,
                 >(client, verb, &input),
@@ -5516,6 +5522,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.agents.spawn.get", value)
+    }
+    pub fn vault_tasks_cancel_force(
+        &self,
+        input: &oneiron::task_verb::run_doors::CancelForceRequest,
+    ) -> Result<oneiron::task_verb::run_doors::CancelForceReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.tasks.cancel_force", value)
+    }
+    pub fn vault_runs_branches_get(
+        &self,
+        input: &oneiron::task_verb::run_doors::RunBranchesRequest,
+    ) -> Result<oneiron::task_verb::run_doors::RunBranchesView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.runs.branches.get", value)
     }
     pub fn vault_workspace_establish(
         &self,

@@ -314,6 +314,8 @@ both bindings and their export-census tests in one change.
 - `vault.task_types.pin`
 - `vault.task_types.get`
 - `vault.agents.spawn.get`
+- `vault.tasks.cancel_force`
+- `vault.runs.branches.get`
 - `vault.workspace.establish`
 - `vault.workspace.members.onboard`
 - `vault.workspace.roster`

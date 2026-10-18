@@ -2771,6 +2771,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_tasks_cancel_force(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.tasks.cancel_force", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_runs_branches_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.runs.branches.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_workspace_establish(
         &self,
         input: serde_json::Value,

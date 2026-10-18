@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 540 facade rows, 2047 declarations.
-Inputs: 489 of 540 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 483 of 540 fully typed, 57 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 542 facade rows, 2064 declarations.
+Inputs: 491 of 542 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 485 of 542 fully typed, 57 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 89; unread shapes: 0.
 """
 
@@ -6442,6 +6442,94 @@ class PlannedSpawnObservation(TypedDict):
     critics: list[CriticObservation]
     learning: list[LearningObservation]
     issues: list[ObservationIssue]
+class CancelForceRequest(TypedDict):
+    task_ref: EntityId
+    reason: NotRequired[str | None]
+AttemptState = Literal["Queued", "Leased", "Paused", "Completed", "Failed", "Cancelled", "Scheduled", "Landing", "Abandoned"]
+AgentRunStatus = Literal["spawned", "working", "needs_input", "delivered", "archived", "failed", "abandoned"]
+class RunAskQuestion(TypedDict):
+    who: str
+    prompt: str
+    options: list[str]
+    deadline: NotRequired[int | None]
+RunAskAnswerKind = Literal["Word", "Companion", "Default", "Unknown"]
+class RunAskAnswer(TypedDict):
+    who: str
+    answer: str
+    kind: RunAskAnswerKind
+    at: int
+class RunAsk(TypedDict):
+    handle: str
+    questions: list[RunAskQuestion]
+    answers: list[RunAskAnswer]
+class RunSignalKindSteerBody(TypedDict):
+    instruction: str
+class RunSignalKindSteer(TypedDict):
+    Steer: RunSignalKindSteerBody
+class RunSignalKindInterjectBody(TypedDict):
+    content: str
+class RunSignalKindInterject(TypedDict):
+    Interject: RunSignalKindInterjectBody
+class RunSignalKindCancelBody(TypedDict):
+    standing: CancelStanding
+    reason: NotRequired[str | None]
+class RunSignalKindCancel(TypedDict):
+    Cancel: RunSignalKindCancelBody
+class RunSignalKindAskAnswerBody(TypedDict):
+    handle: str
+    who: str
+    answer: str
+    kind: RunAskAnswerKind
+class RunSignalKindAskAnswer(TypedDict):
+    AskAnswer: RunSignalKindAskAnswerBody
+RunSignalKind = RunSignalKindSteer | RunSignalKindInterject | RunSignalKindCancel | RunSignalKindAskAnswer
+class RunBranchSignal(TypedDict):
+    key: str
+    actor: str
+    kind: RunSignalKind
+    state: RunSignalState
+CancelMode = Literal["landed", "forced"]
+class AttemptCancellation(TypedDict):
+    mode: CancelMode
+    grounds: NotRequired[ForceCancelGrounds | None]
+    actor: str
+    at: int
+    reason: NotRequired[str | None]
+    trigger: NotRequired[LandingTrigger | None]
+    reserve_units: int
+    reserve_spent_units: int
+class AttemptCancelPressure(TypedDict):
+    requests: NotRequired[int]
+    rejections: NotRequired[int]
+    pending: NotRequired[int]
+class AttemptCancelState(TypedDict):
+    landing: NotRequired[AttemptLanding | None]
+    resume_point: NotRequired[AttemptResumePoint | None]
+    cancellation: NotRequired[AttemptCancellation | None]
+    pressure: NotRequired[AttemptCancelPressure]
+    receipts: NotRequired[list[AttemptCancelReceipt]]
+    reserve: NotRequired[AttemptLandingReserve]
+class RunBranchView(TypedDict):
+    branch: str
+    run_id: NotRequired[str | None]
+    state: AttemptState
+    agent_status: AgentRunStatus
+    attempt_count: int
+    result_ref: NotRequired[str | None]
+    last_error: NotRequired[str | None]
+    asks: list[RunAsk]
+    signals: list[RunBranchSignal]
+    cancel_state: AttemptCancelState
+class CancelForceReceipt(TypedDict):
+    task_ref: EntityId
+    effected: bool
+    forced: int
+    branches: list[RunBranchView]
+class RunBranchesRequest(TypedDict):
+    task_ref: EntityId
+class RunBranchesView(TypedDict):
+    task_ref: EntityId
+    branches: list[RunBranchView]
 class WorkspaceRosterPreset(TypedDict):
     workspace_ref: str
     workspace_vault_id: str

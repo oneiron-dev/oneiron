@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 540 facade rows, 1976 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 10; generated in and out: 503.
+// UniFFI census: 542 facade rows, 1993 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 10; generated in and out: 505.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -19625,6 +19625,287 @@ pub struct PlannedSpawnObservation {
     pub learning: Vec<LearningObservation>,
     #[serde(rename = "issues")]
     pub issues: Vec<ObservationIssue>,
+}
+
+/// `oneiron::task_verb::run_doors::CancelForceRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CancelForceRequest {
+    #[serde(rename = "task_ref")]
+    pub task_ref: String,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// `oneiron::attempt_queue::types::AttemptState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AttemptState {
+    #[serde(rename = "Queued")]
+    Queued,
+    #[serde(rename = "Leased")]
+    Leased,
+    #[serde(rename = "Paused")]
+    Paused,
+    #[serde(rename = "Completed")]
+    Completed,
+    #[serde(rename = "Failed")]
+    Failed,
+    #[serde(rename = "Cancelled")]
+    Cancelled,
+    #[serde(rename = "Scheduled")]
+    Scheduled,
+    #[serde(rename = "Landing")]
+    Landing,
+    #[serde(rename = "Abandoned")]
+    Abandoned,
+}
+
+/// `oneiron::agent_run_status::AgentRunStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AgentRunStatus {
+    #[serde(rename = "spawned")]
+    Spawned,
+    #[serde(rename = "working")]
+    Working,
+    #[serde(rename = "needs_input")]
+    NeedsInput,
+    #[serde(rename = "delivered")]
+    Delivered,
+    #[serde(rename = "archived")]
+    Archived,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "abandoned")]
+    Abandoned,
+}
+
+/// `oneiron::run_tree::signal::RunAskQuestion`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RunAskQuestion {
+    #[serde(rename = "who")]
+    pub who: String,
+    #[serde(rename = "prompt")]
+    pub prompt: String,
+    #[serde(rename = "options")]
+    pub options: Vec<String>,
+    #[serde(rename = "deadline", default, skip_serializing_if = "Option::is_none")]
+    pub deadline: Option<u64>,
+}
+
+/// `oneiron::run_tree::signal::RunAskAnswerKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RunAskAnswerKind {
+    #[serde(rename = "Word")]
+    Word,
+    #[serde(rename = "Companion")]
+    Companion,
+    #[serde(rename = "Default")]
+    Default,
+    #[serde(rename = "Unknown")]
+    Unknown,
+}
+
+/// `oneiron::run_tree::signal::RunAskAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RunAskAnswer {
+    #[serde(rename = "who")]
+    pub who: String,
+    #[serde(rename = "answer")]
+    pub answer: String,
+    #[serde(rename = "kind")]
+    pub kind: RunAskAnswerKind,
+    #[serde(rename = "at")]
+    pub at: u64,
+}
+
+/// `oneiron::run_tree::signal::RunAsk`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RunAsk {
+    #[serde(rename = "handle")]
+    pub handle: String,
+    #[serde(rename = "questions")]
+    pub questions: Vec<RunAskQuestion>,
+    #[serde(rename = "answers")]
+    pub answers: Vec<RunAskAnswer>,
+}
+
+/// `oneiron::run_tree::signal::RunSignalKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RunSignalKind {
+    #[serde(rename = "Steer")]
+    Steer {
+        #[serde(rename = "instruction")]
+        instruction: String,
+    },
+    #[serde(rename = "Interject")]
+    Interject {
+        #[serde(rename = "content")]
+        content: String,
+    },
+    #[serde(rename = "Cancel")]
+    Cancel {
+        #[serde(rename = "standing")]
+        standing: CancelStanding,
+        #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+    #[serde(rename = "AskAnswer")]
+    AskAnswer {
+        #[serde(rename = "handle")]
+        handle: String,
+        #[serde(rename = "who")]
+        who: String,
+        #[serde(rename = "answer")]
+        answer: String,
+        #[serde(rename = "kind")]
+        kind: RunAskAnswerKind,
+    },
+}
+
+/// `oneiron::run_tree::signal::RunBranchSignal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RunBranchSignal {
+    #[serde(rename = "key")]
+    pub key: String,
+    #[serde(rename = "actor")]
+    pub actor: String,
+    #[serde(rename = "kind")]
+    pub kind: RunSignalKind,
+    #[serde(rename = "state")]
+    pub state: RunSignalState,
+}
+
+/// `oneiron::attempt_queue::cancel::types::CancelMode`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CancelMode {
+    #[serde(rename = "landed")]
+    Landed,
+    #[serde(rename = "forced")]
+    Forced,
+}
+
+/// `oneiron::attempt_queue::cancel::types::AttemptCancellation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AttemptCancellation {
+    #[serde(rename = "mode")]
+    pub mode: CancelMode,
+    #[serde(rename = "grounds", default, skip_serializing_if = "Option::is_none")]
+    pub grounds: Option<ForceCancelGrounds>,
+    #[serde(rename = "actor")]
+    pub actor: String,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(rename = "trigger", default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<LandingTrigger>,
+    #[serde(rename = "reserve_units")]
+    pub reserve_units: u64,
+    #[serde(rename = "reserve_spent_units")]
+    pub reserve_spent_units: u64,
+}
+
+/// `oneiron::attempt_queue::cancel::types::AttemptCancelPressure`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AttemptCancelPressure {
+    #[serde(rename = "requests", default, skip_serializing_if = "Option::is_none")]
+    pub requests: Option<u32>,
+    #[serde(
+        rename = "rejections",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub rejections: Option<u32>,
+    #[serde(rename = "pending", default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<u32>,
+}
+
+/// `oneiron::attempt_queue::cancel::types::AttemptCancelState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AttemptCancelState {
+    #[serde(rename = "landing", default, skip_serializing_if = "Option::is_none")]
+    pub landing: Option<AttemptLanding>,
+    #[serde(
+        rename = "resume_point",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub resume_point: Option<AttemptResumePoint>,
+    #[serde(
+        rename = "cancellation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cancellation: Option<AttemptCancellation>,
+    #[serde(rename = "pressure", default, skip_serializing_if = "Option::is_none")]
+    pub pressure: Option<AttemptCancelPressure>,
+    #[serde(rename = "receipts", default, skip_serializing_if = "Option::is_none")]
+    pub receipts: Option<Vec<AttemptCancelReceipt>>,
+    #[serde(rename = "reserve", default, skip_serializing_if = "Option::is_none")]
+    pub reserve: Option<AttemptLandingReserve>,
+}
+
+/// `oneiron::task_verb::run_doors::RunBranchView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RunBranchView {
+    #[serde(rename = "branch")]
+    pub branch: String,
+    #[serde(rename = "run_id", default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(rename = "state")]
+    pub state: AttemptState,
+    #[serde(rename = "agent_status")]
+    pub agent_status: AgentRunStatus,
+    #[serde(rename = "attempt_count")]
+    pub attempt_count: u32,
+    #[serde(
+        rename = "result_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub result_ref: Option<String>,
+    #[serde(
+        rename = "last_error",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub last_error: Option<String>,
+    #[serde(rename = "asks")]
+    pub asks: Vec<RunAsk>,
+    #[serde(rename = "signals")]
+    pub signals: Vec<RunBranchSignal>,
+    #[serde(rename = "cancel_state")]
+    pub cancel_state: AttemptCancelState,
+}
+
+/// `oneiron::task_verb::run_doors::CancelForceReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CancelForceReceipt {
+    #[serde(rename = "task_ref")]
+    pub task_ref: String,
+    #[serde(rename = "effected")]
+    pub effected: bool,
+    #[serde(rename = "forced")]
+    pub forced: u32,
+    #[serde(rename = "branches")]
+    pub branches: Vec<RunBranchView>,
+}
+
+/// `oneiron::task_verb::run_doors::RunBranchesRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RunBranchesRequest {
+    #[serde(rename = "task_ref")]
+    pub task_ref: String,
+}
+
+/// `oneiron::task_verb::run_doors::RunBranchesView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RunBranchesView {
+    #[serde(rename = "task_ref")]
+    pub task_ref: String,
+    #[serde(rename = "branches")]
+    pub branches: Vec<RunBranchView>,
 }
 
 /// `oneiron::workspace_roster::intent::WorkspaceRosterPreset`.

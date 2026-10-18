@@ -334,6 +334,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.task_types.pin", post(facade_route))
         .route("/vault.task_types.get", post(facade_route))
         .route("/vault.agents.spawn.get", post(facade_route))
+        .route("/vault.tasks.cancel_force", post(facade_route))
+        .route("/vault.runs.branches.get", post(facade_route))
         .route("/vault.workspace.establish", post(facade_route))
         .route("/vault.workspace.members.onboard", post(facade_route))
         .route("/vault.workspace.roster", post(facade_route))
