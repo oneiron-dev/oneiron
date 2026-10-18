@@ -363,6 +363,7 @@ impl Memory<'_> {
                 format,
                 Some(host.lease()),
                 &RecallExecution {
+                    hyde: door.hyde,
                     telemetry: input.telemetry.as_ref(),
                     deadline,
                     embedding,
@@ -389,6 +390,7 @@ impl Memory<'_> {
                 format,
                 Some(host.lease()),
                 &RecallExecution {
+                    hyde: door.hyde,
                     telemetry: input.telemetry.as_ref(),
                     deadline: deadline.as_ref(),
                     reranker: Some(&capture),
@@ -518,6 +520,7 @@ impl Memory<'_> {
                 format,
                 Some(host.lease()),
                 &RecallExecution {
+                    hyde: door.hyde,
                     telemetry: input.telemetry.as_ref(),
                     deadline: deadline.as_ref(),
                     reranker: Some(&prepared),

@@ -4,11 +4,13 @@ use std::collections::BTreeMap;
 
 use crate::{EntityId, Error, Result};
 
+pub mod host;
+
 pub const HYDE_MAX_SUBQUERIES: usize = 3;
 pub const HYDE_RETRY_LIMIT_MULTIPLIER: usize = 2;
 pub const HYDE_RETRY_MAX_LIMIT: usize = 200;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct GroundingContext {
     pub bindings: BTreeMap<String, String>,
 }
@@ -72,12 +74,12 @@ pub(crate) fn normalized_subqueries(subqueries: &[String]) -> Vec<String> {
     normalized
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct HydeRequest {
     pub query: String,
     pub max_subqueries: usize,
 }
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct HydeExpansion {
     pub grounded_query: String,
     pub hypothetical_answer: String,
@@ -95,7 +97,7 @@ pub struct CompletionRequest {
     pub query: String,
     pub candidates: Vec<CompletionCandidate>,
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub enum EvidenceVerdict {
     Sufficient,
     Insufficient { gaps: Vec<String> },
@@ -105,8 +107,41 @@ pub trait HydeExpander: Send + Sync {
     fn expand(&self, request: &HydeRequest) -> Result<HydeExpansion>;
     fn assess_evidence(&self, request: &CompletionRequest) -> Result<EvidenceVerdict>;
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct HydeOptions {
     pub channel_limit: usize,
     pub retry_once: bool,
+}
+
+/// The host's expansion, grounding and options, bound outside the public recall input.
+pub type HydeBinding<'a> = (&'a dyn HydeExpander, &'a GroundingContext, HydeOptions);
+
+impl HydeOptions {
+    pub fn validate(&self) -> Result<()> {
+        if self.channel_limit == 0 {
+            return Err(Error::InvalidConfig(
+                "hyde channel_limit must be greater than zero".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// The same vector guards for a host completion and for the retrieval that consumes it.
+pub fn validate_hyde_expansion(vault: &crate::Vault, expansion: &HydeExpansion) -> Result<()> {
+    if expansion.embedding.is_empty() {
+        return Err(Error::InvalidConfig("hyde embedding must not be empty".to_owned()));
+    }
+    if expansion.embedding.len() != vault.config.dimensions
+        && vault.config.fast_dims.map(usize::from) != Some(expansion.embedding.len())
+    {
+        return Err(Error::DimensionMismatch {
+            expected: vault.config.dimensions,
+            got: expansion.embedding.len(),
+        });
+    }
+    if let Some(error) = Error::invalid_vector_component(&expansion.embedding) {
+        return Err(error);
+    }
+    Ok(())
 }

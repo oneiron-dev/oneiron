@@ -25,6 +25,7 @@ mod presence;
 mod read_shape;
 mod reader_runner;
 mod recall;
+mod recall_hyde;
 mod recall_rerank;
 mod resident_pump;
 mod run_host_door;

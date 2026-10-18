@@ -107,6 +107,17 @@ impl<'a> ContextPackBuilder<'a> {
         self
     }
 
+    /// Runs the pipeline's host-injected expansion and one bounded evidence retry.
+    pub fn hyde(
+        mut self,
+        expander: &'a dyn crate::query_expansion::HydeExpander,
+        grounding: crate::query_expansion::GroundingContext,
+        options: crate::query_expansion::HydeOptions,
+    ) -> Self {
+        self.pipeline = self.pipeline.hyde(expander, grounding, options);
+        self
+    }
+
     /// Replaces the vault's affect retrieval policy for this pack (OF-423).
     pub fn affect_policy(mut self, policy: crate::pipeline::AffectRetrievalPolicy) -> Self {
         self.pipeline = self.pipeline.affect_policy(policy);

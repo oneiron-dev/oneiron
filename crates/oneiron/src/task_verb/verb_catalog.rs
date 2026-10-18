@@ -72,6 +72,11 @@ pub enum AgentVerb {
     VaultRetrievalAgingConfigure,
     VaultRetrievalWeightsGet,
     VaultRetrievalWeightsConfigure,
+    VaultRetrievalHydeConfigure,
+    VaultRetrievalHydeGet,
+    VaultRetrievalHydePending,
+    VaultRetrievalHydeComplete,
+    VaultRetrievalHydeReceipt,
     VaultAffectAnnotationsPut,
     VaultTaggingStatus,
     VaultTaggingTags,
@@ -934,6 +939,11 @@ impl AgentVerb {
         Self::VaultRetrievalAgingConfigure,
         Self::VaultRetrievalWeightsGet,
         Self::VaultRetrievalWeightsConfigure,
+        Self::VaultRetrievalHydeConfigure,
+        Self::VaultRetrievalHydeGet,
+        Self::VaultRetrievalHydePending,
+        Self::VaultRetrievalHydeComplete,
+        Self::VaultRetrievalHydeReceipt,
         Self::VaultAffectAnnotationsPut,
         Self::VaultTaggingStatus,
         Self::VaultTaggingTags,
@@ -1799,6 +1809,11 @@ impl AgentVerb {
             Self::VaultRetrievalAgingConfigure => "vault.retrieval.aging.configure",
             Self::VaultRetrievalWeightsGet => "vault.retrieval.weights.get",
             Self::VaultRetrievalWeightsConfigure => "vault.retrieval.weights.configure",
+            Self::VaultRetrievalHydeConfigure => "vault.retrieval.hyde.configure",
+            Self::VaultRetrievalHydeGet => "vault.retrieval.hyde.get",
+            Self::VaultRetrievalHydePending => "vault.retrieval.hyde.pending",
+            Self::VaultRetrievalHydeComplete => "vault.retrieval.hyde.complete",
+            Self::VaultRetrievalHydeReceipt => "vault.retrieval.hyde.receipt",
             Self::VaultAffectAnnotationsPut => "vault.affect.annotations.put",
             Self::VaultTaggingStatus => "vault.tagging.status",
             Self::VaultTaggingTags => "vault.tagging.tags",
@@ -2682,6 +2697,11 @@ impl AgentVerb {
                 | Self::VaultRetrievalAgingConfigure
                 | Self::VaultRetrievalWeightsGet
                 | Self::VaultRetrievalWeightsConfigure
+                | Self::VaultRetrievalHydeConfigure
+                | Self::VaultRetrievalHydeGet
+                | Self::VaultRetrievalHydePending
+                | Self::VaultRetrievalHydeComplete
+                | Self::VaultRetrievalHydeReceipt
                 | Self::VaultAffectAnnotationsPut
                 | Self::VaultTaggingStatus
                 | Self::VaultTaggingTags
@@ -3571,6 +3591,11 @@ impl AgentVerb {
                 | Self::VaultRetrievalAgingConfigure
                 | Self::VaultRetrievalWeightsGet
                 | Self::VaultRetrievalWeightsConfigure
+                | Self::VaultRetrievalHydeConfigure
+                | Self::VaultRetrievalHydeGet
+                | Self::VaultRetrievalHydePending
+                | Self::VaultRetrievalHydeComplete
+                | Self::VaultRetrievalHydeReceipt
                 | Self::VaultAffectAnnotationsPut
                 | Self::VaultTaggingStatus
                 | Self::VaultTaggingTags
@@ -4364,6 +4389,7 @@ impl AgentVerb {
             Self::SelfStandingList
                 | Self::SelfInboxList
                 | Self::Describe
+                | Self::VaultRetrievalHydePending
                 | Self::VaultRetrievalRuns
                 | Self::VaultRetrievalTurn
                 | Self::VaultRetrievalOutcomesPut
@@ -4542,6 +4568,11 @@ impl AgentVerb {
                 | Self::VaultRetrievalAgingConfigure
                 | Self::VaultRetrievalWeightsGet
                 | Self::VaultRetrievalWeightsConfigure
+                | Self::VaultRetrievalHydeConfigure
+                | Self::VaultRetrievalHydeGet
+                | Self::VaultRetrievalHydePending
+                | Self::VaultRetrievalHydeComplete
+                | Self::VaultRetrievalHydeReceipt
                 | Self::VaultTaggingStatus
                 | Self::VaultTaggingTags
                 | Self::VaultTaggingHistory
@@ -5343,6 +5374,8 @@ impl AgentVerb {
                 | Self::VaultClaimsUpsert
                 | Self::VaultRetrievalAgingConfigure
                 | Self::VaultRetrievalWeightsConfigure
+                | Self::VaultRetrievalHydeConfigure
+                | Self::VaultRetrievalHydeComplete
                 | Self::VaultAffectAnnotationsPut
                 | Self::VaultAffectClaimsConsolidate
                 | Self::VaultAffectCopingRecord
@@ -5922,6 +5955,11 @@ impl AgentVerb {
             Self::VaultRetrievalAgingConfigure => &["spec"],
             Self::VaultRetrievalWeightsGet => &["spec"],
             Self::VaultRetrievalWeightsConfigure => &["spec"],
+            Self::VaultRetrievalHydeConfigure => &["spec"],
+            Self::VaultRetrievalHydeGet => &["spec"],
+            Self::VaultRetrievalHydePending => &["spec"],
+            Self::VaultRetrievalHydeComplete => &["spec"],
+            Self::VaultRetrievalHydeReceipt => &["spec"],
             Self::VaultAffectAnnotationsPut => &["spec"],
             Self::VaultTaggingStatus => &["spec"],
             Self::VaultTaggingTags => &["spec"],
@@ -6785,6 +6823,11 @@ impl AgentVerb {
             Self::VaultRetrievalAgingConfigure => &["spec"],
             Self::VaultRetrievalWeightsGet => &["spec"],
             Self::VaultRetrievalWeightsConfigure => &["spec"],
+            Self::VaultRetrievalHydeConfigure => &["spec"],
+            Self::VaultRetrievalHydeGet => &["spec"],
+            Self::VaultRetrievalHydePending => &["spec"],
+            Self::VaultRetrievalHydeComplete => &["spec"],
+            Self::VaultRetrievalHydeReceipt => &["spec"],
             Self::VaultAffectAnnotationsPut => &["spec"],
             Self::VaultTaggingStatus => &["spec"],
             Self::VaultTaggingTags => &["spec"],
@@ -7778,6 +7821,21 @@ impl AgentVerb {
             }
             Self::VaultRetrievalWeightsConfigure => {
                 "The owner sets independent retrieval priors against the current manifest hash; zero disables each prior without changing confidence or authority."
+            }
+            Self::VaultRetrievalHydeConfigure => {
+                "The owner binds or disables a host HyDE expander for paid recall; replacing the binding cancels unanswered work."
+            }
+            Self::VaultRetrievalHydeGet => {
+                "The owner reads the serving host HyDE binding, grounding and bounded retry options."
+            }
+            Self::VaultRetrievalHydePending => {
+                "Lists pending expansion and evidence-assessment work for the same credential that called recall; free efforts enqueue nothing."
+            }
+            Self::VaultRetrievalHydeComplete => {
+                "Completes one credential-bound host expansion or evidence assessment, or reports failure; late bytes are receipted and discarded."
+            }
+            Self::VaultRetrievalHydeReceipt => {
+                "Reads one credential-bound host completion receipt, including expired work and late answers discarded at the recall deadline."
             }
             Self::VaultAffectAnnotationsPut => {
                 "Writes one sourced TURN VAD annotation through ordinary scoped claim admission and the caller credential; the receipt states its approval."

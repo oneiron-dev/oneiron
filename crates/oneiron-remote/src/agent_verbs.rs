@@ -249,6 +249,21 @@ impl OneironClient {
                 "vault.retrieval.weights.configure" => remote_agent_verb_output::<
                     oneiron::policy_manifest_doors::RetrievalWeightsReceipt,
                 >(client, verb, &input),
+                "vault.retrieval.hyde.configure" => remote_agent_verb_output::<
+                    oneiron::query_expansion::host::HydeHostConfiguration,
+                >(client, verb, &input),
+                "vault.retrieval.hyde.get" => remote_agent_verb_output::<
+                    oneiron::query_expansion::host::HydeHostConfiguration,
+                >(client, verb, &input),
+                "vault.retrieval.hyde.pending" => remote_agent_verb_output::<
+                    Vec<oneiron::query_expansion::host::HydeHostWork>,
+                >(client, verb, &input),
+                "vault.retrieval.hyde.complete" => remote_agent_verb_output::<
+                    oneiron::query_expansion::host::HydeHostReceipt,
+                >(client, verb, &input),
+                "vault.retrieval.hyde.receipt" => remote_agent_verb_output::<
+                    Option<oneiron::query_expansion::host::HydeHostReceipt>,
+                >(client, verb, &input),
                 "vault.affect.annotations.put" => {
                     remote_agent_verb_output::<oneiron::memory::CommitReceipt>(client, verb, &input)
                 }
@@ -3526,6 +3541,66 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.retrieval.weights.configure", value)
+    }
+    pub fn vault_retrieval_hyde_configure(
+        &self,
+        input: &oneiron::query_expansion::host::HydeHostConfigureRequest,
+    ) -> Result<oneiron::query_expansion::host::HydeHostConfiguration, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.retrieval.hyde.configure", value)
+    }
+    pub fn vault_retrieval_hyde_get(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::query_expansion::host::HydeHostConfiguration, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.retrieval.hyde.get", value)
+    }
+    pub fn vault_retrieval_hyde_pending(
+        &self,
+        input: &oneiron::query_expansion::host::HydeHostPendingRequest,
+    ) -> Result<Vec<oneiron::query_expansion::host::HydeHostWork>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.retrieval.hyde.pending", value)
+    }
+    pub fn vault_retrieval_hyde_complete(
+        &self,
+        input: &oneiron::query_expansion::host::HydeHostCompleteRequest,
+    ) -> Result<oneiron::query_expansion::host::HydeHostReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.retrieval.hyde.complete", value)
+    }
+    pub fn vault_retrieval_hyde_receipt(
+        &self,
+        input: &oneiron::query_expansion::host::HydeHostReceiptRequest,
+    ) -> Result<Option<oneiron::query_expansion::host::HydeHostReceipt>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.retrieval.hyde.receipt", value)
     }
     pub fn vault_affect_annotations_put(
         &self,

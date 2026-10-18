@@ -434,6 +434,18 @@ export class Oneiron {
         /** The owner sets independent retrieval priors against the current manifest hash; zero disables each prior without changing confidence or authority. */
         configure: (input: Facade.RetrievalWeightsConfigureRequest): Facade.RetrievalWeightsReceipt => this.#call(() => this.#client.vaultRetrievalWeightsConfigure(input) as Facade.RetrievalWeightsReceipt),
       },
+      hyde: {
+        /** The owner binds or disables a host HyDE expander for paid recall; replacing the binding cancels unanswered work. */
+        configure: (input: Facade.HydeHostConfigureRequest): Facade.HydeHostConfiguration => this.#call(() => this.#client.vaultRetrievalHydeConfigure(input) as Facade.HydeHostConfiguration),
+        /** The owner reads the serving host HyDE binding, grounding and bounded retry options. */
+        get: (input: Facade.EmptyRequest = {}): Facade.HydeHostConfiguration => this.#call(() => this.#client.vaultRetrievalHydeGet(input) as Facade.HydeHostConfiguration),
+        /** Lists pending expansion and evidence-assessment work for the same credential that called recall; free efforts enqueue nothing. */
+        pending: (input: Facade.HydeHostPendingRequest): Facade.HydeHostWork[] => this.#call(() => this.#client.vaultRetrievalHydePending(input) as Facade.HydeHostWork[]),
+        /** Completes one credential-bound host expansion or evidence assessment, or reports failure; late bytes are receipted and discarded. */
+        complete: (input: Facade.HydeHostCompleteRequest): Facade.HydeHostReceipt => this.#call(() => this.#client.vaultRetrievalHydeComplete(input) as Facade.HydeHostReceipt),
+        /** Reads one credential-bound host completion receipt, including expired work and late answers discarded at the recall deadline. */
+        receipt: (input: Facade.HydeHostReceiptRequest): Facade.HydeHostReceipt | null => this.#call(() => this.#client.vaultRetrievalHydeReceipt(input) as Facade.HydeHostReceipt | null),
+      },
       /** Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle. */
       recall: (input: Facade.RecallRequest): Facade.MemoryPack => this.#call(() => this.#client.vaultRetrievalRecall(input) as Facade.MemoryPack),
       /** The owner reads finalized local retrieval runs and their independent outcome sidecars, newest first. */

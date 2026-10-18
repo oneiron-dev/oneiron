@@ -200,6 +200,7 @@ pub struct SyncServer {
     /// Where rerank calls run when their door cannot drive them on its
     /// caller's runtime.
     pub(crate) rerank_runtime: super::recall_rerank::CallRuntime,
+    pub(crate) hyde_host: Arc<super::recall_hyde::HydeHost>,
     /// Host-injected, request-by-request egress decision for nonlocal extraction.
     pub(crate) extraction_egress: Option<Arc<dyn oneiron::llm::ExtractionEgressPredicate>>,
     /// The vault's path, backup plan and schedule, set by `serve`. `None`
@@ -483,6 +484,7 @@ impl SyncServer {
             ai: crate::ai_host::AiHandle::inert(),
             pattern_launch_runner: None,
             rerank_runtime: Default::default(),
+            hyde_host: Default::default(),
             extraction_egress: None,
             owner_host: None,
             feedback: None,
