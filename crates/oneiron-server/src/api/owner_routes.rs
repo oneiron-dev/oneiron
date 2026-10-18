@@ -179,9 +179,15 @@ pub(super) fn off_record_routes() -> Router<Arc<SyncServer>> {
 }
 
 /// The owner door. Every refusal is the same 403, so a caller learns nothing
-/// about which check failed. The proof it returns carries the verified slip.
+/// about which check failed. The proof it returns carries the verified slip,
+/// except a managed vault's owner's, whom its supervisor attested for this
+/// one request (`ManagedOwnerAction`): that proof holds only while the
+/// person is the vault's live recorded owner ([`managed_owner_proof`]).
 pub(crate) fn owner(auth: &CoreAuth, server: &SyncServer) -> Result<AuthenticatedOwner, ApiError> {
     let refused = || ApiError::forbidden_scope("owner");
+    if let Some(holder) = auth.managed_owner() {
+        return managed_owner_proof(server, holder)?.ok_or_else(refused);
+    }
     if server.managed_issuer.is_some() || !auth.is_owner_grade() {
         return Err(refused());
     }
@@ -201,6 +207,28 @@ pub(crate) fn owner(auth: &CoreAuth, server: &SyncServer) -> Result<Authenticate
         .vault()
         .bind_owner_credential(owner, slip.clone())
         .map_err(|_| refused())
+}
+
+/// A managed vault's attested owner's proof: the recorded owner `holder`
+/// names, while that owner is live; `None` for anyone else. There is no
+/// slip to bind, so the proof is this request's alone.
+pub(crate) fn managed_owner_proof(
+    server: &SyncServer,
+    holder: oneiron::EntityId,
+) -> Result<Option<AuthenticatedOwner>, ApiError> {
+    let refused = || ApiError::forbidden_scope("owner");
+    let Some(owner) = server
+        .vault()
+        .authenticate_recorded_owner(holder, &holder.to_hex(), GateDecisionId::now())
+        .map_err(|_| refused())?
+    else {
+        return Ok(None);
+    };
+    Ok(server
+        .vault()
+        .is_live_vault_owner(&owner)
+        .map_err(|_| refused())?
+        .then_some(owner))
 }
 
 /// The owner door for a route that runs one SDK row: the proof, and the

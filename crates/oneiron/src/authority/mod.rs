@@ -264,6 +264,8 @@ pub(crate) use world_key_support::{
     next_sequence, own_world_key_records_in_txn, owner_root_record_in_txn,
     owner_root_records_in_txn, scope_head, sign_side_entry, standing_rows,
 };
+#[cfg(feature = "sync")]
+pub(crate) use world_privacy::side_world;
 pub use world_privacy::{
     Destination, EffectiveModelOrder, EffectiveRead, EffectiveWorldPrivacy, FoldedWorld,
     WorldEditStanding,
