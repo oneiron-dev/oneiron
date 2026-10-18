@@ -2468,7 +2468,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "VaultRecoveryRequest"
@@ -2476,7 +2476,7 @@
      "path": "src/authority/history_transfer.rs",
      "purpose": "Signed-history migration and independently authorized per-vault re-root doors",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 7,
       "struct": 1
      }
@@ -2572,6 +2572,7 @@
      "path": "src/authority/left_notices.rs",
      "purpose": "A removed person's own notices of losing a shared vault (OF-158 client leave)",
      "surface": {
+      "crate-vis": 1,
       "fn": 3
      }
     },
@@ -22228,13 +22229,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/entity_doc/carried.rs",
      "purpose": "A MESSAGE's document between the owner's machines (FIX 853)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -22371,7 +22372,7 @@
      "path": "src/entity_doc/pins.rs",
      "purpose": "Causal citation floors, retained quotes and the owner's shallow-purge door",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 9,
       "struct": 2
@@ -35872,7 +35873,7 @@
      "path": "src/ports/integrity.rs",
      "purpose": "Source-prefix dependency index and deletion invalidation in the caller's transaction",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 25
      }
     },
     {
@@ -36079,7 +36080,7 @@
      "path": "src/ports/mod.rs",
      "purpose": "Transaction-composable storage ports",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "re-export": 7
      }
     },
@@ -45342,7 +45343,7 @@
      "path": "src/sync/connection/mod.rs",
      "purpose": "WebSocket connection manager with debounced sync and reconnection",
      "surface": {
-      "fn": 17,
+      "fn": 16,
       "re-export": 3,
       "struct": 3
      }
@@ -46309,7 +46310,7 @@
      "path": "src/sync/selector/born_with.rs",
      "purpose": "Born-with text on a copy to another vault (OF-491)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 2,
       "struct": 1
      }
@@ -46469,7 +46470,7 @@
      "purpose": "Leaving a shared vault, the device side (OF-158)",
      "surface": {
       "enum": 1,
-      "fn": 7,
+      "fn": 6,
       "struct": 2
      }
     },
@@ -54921,7 +54922,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 191,
+   "over_bar": 192,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3343,
    "test_files": 902
