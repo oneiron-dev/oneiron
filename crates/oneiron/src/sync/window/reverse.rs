@@ -209,6 +209,7 @@ fn reverse_rematerialize_scan(
     let mut count = 0u32;
     let mut wrote_any = false;
     let mut mirror_sources = BTreeMap::new();
+    let mut messages = Vec::new();
     let entities_in_range_set: HashSet<EntityId> = entities_in_range.iter().copied().collect();
     let mut protected_tombstones = HashSet::new();
     let mut entity_tombstones = Vec::new();
@@ -471,15 +472,15 @@ fn reverse_rematerialize_scan(
             {
                 wrote_any = true;
             }
-            // FIX 853: a MESSAGE's document quote pins ride beside it.
+            // FIX 853: a MESSAGE's document and its quote pins ride beside
+            // it, mirrored after this pass commits.
             if window_key.world().is_none()
                 && EntityMetadataHeader::parse(&raw).is_some_and(|header| {
                     header.entity_type == crate::registry::ENTITY_TYPE_MESSAGE
                 })
                 && map_contains_binary(&entities_map, &hex_id)
-                && crate::sync::document_pins::mirror_document_pins(vault, doc, id)?
             {
-                wrote_any = true;
+                messages.push(*id);
             }
         }
 
@@ -613,6 +614,12 @@ fn reverse_rematerialize_scan(
     if wrote_any {
         let origin = bridge::origin_for_mirrors(&mirror_sources)?;
         doc.commit_with(CommitOptions::new().origin(&origin));
+    }
+    // FIX 853: each document and pin commits on its own, a part to a
+    // commit, so no one update outgrows a frame.
+    for id in &messages {
+        crate::sync::message_docs::mirror_message_document(vault, doc, id, window_key)?;
+        crate::sync::document_pins::mirror_document_pins(vault, doc, id)?;
     }
     Ok(count)
 }

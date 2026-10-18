@@ -581,6 +581,7 @@ pub(crate) fn capture_canonical_window_within(
             "room_turns",
             "room_facts",
             "document_pins",
+            "message_docs",
             "withdrawn_cutoffs",
         ]
         .contains(&name.as_str())

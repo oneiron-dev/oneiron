@@ -4,6 +4,8 @@
 //! commit CRDT operations; only indexed projections may materialize the text.
 //! Documents are loaded lazily, snapshot before ordered pending updates.
 
+#[cfg(feature = "sync")]
+mod carried;
 mod citation_floor;
 mod document;
 mod forks;
@@ -33,6 +35,8 @@ pub(crate) use recovery::{
 };
 mod verbs;
 
+#[cfg(feature = "sync")]
+pub(crate) use carried::{CarriedDocument, DocumentMerge};
 pub use document::{Birth, EntityDoc, TextChange};
 pub use forks::{
     DocAuthorization, ForkRecord, ForkRequest, ForkStatus, ProposalBundle, SettleVerb, TextReceipt,
