@@ -209,6 +209,9 @@ pub struct NapiGateReceipt {
     pub content_kind: String,
     /// 32-hex claim id, if any.
     pub claim_ref: Option<String>,
+    /// That claim as a typed record ref (OF-063), labelled with its kind and
+    /// id.
+    pub claim: Option<NapiRecordRef>,
     /// A family receipt's own fields (a hook run's hook, CODE id, body hash
     /// and run key), with its trigger, job and principal refs. Empty on a
     /// gate-ledger row.
@@ -675,6 +678,22 @@ pub struct NapiDreamerJobView {
     pub created_at: i64,
     /// Unix seconds.
     pub updated_at: i64,
+    /// The job's park, when the runner parked it (DOOR-144 A): its work
+    /// remains for a later resume. Absent when it holds no park row.
+    pub parked: Option<NapiDreamerParkedJobView>,
+}
+
+/// The public face of one parked Dreamer job (DOOR-144 A): which job, why
+/// and when.
+#[napi(object)]
+pub struct NapiDreamerParkedJobView {
+    /// 32-hex job id.
+    pub job_ref: String,
+    /// Why it parked: `provider_unavailable` | `executor_error` |
+    /// `checkpoint` | `cancelled` | `signal` | `other`.
+    pub cause: String,
+    /// Unix seconds.
+    pub parked_at: i64,
 }
 
 /// One outbound schedule request (rides OF-327; the bridge never delivers).

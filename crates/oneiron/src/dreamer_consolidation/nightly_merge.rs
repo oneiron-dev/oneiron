@@ -63,6 +63,21 @@ pub(crate) fn record_outputs(vault: &Vault, attempt: AttemptId, ids: &[EntityId]
     })
 }
 
+/// The existing extraction and merge result ledgers in the caller's snapshot.
+pub(crate) fn outputs_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+) -> Result<Vec<EntityId>> {
+    let mut outputs = OUTPUT.get(&vault.store, txn, &attempt)?.unwrap_or_default();
+    if let Some(merged) = MERGED.get(&vault.store, txn, &attempt)? {
+        outputs.extend(merged.outputs);
+    }
+    outputs.sort_unstable();
+    outputs.dedup();
+    Ok(outputs)
+}
+
 /// Outputs already accepted by the promotion sink for this attempt.
 pub(crate) fn extraction_outputs(vault: &Vault, attempt: AttemptId) -> Result<Vec<EntityId>> {
     let txn = vault.store.env.read_txn()?;

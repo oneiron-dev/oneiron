@@ -480,7 +480,7 @@ pub enum AiVoice {
 
 /// One `ai.*` call's answer: the model that answered, its parts, and what
 /// its provider counted.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AiAnswer {
     pub model: String,
     pub parts: Vec<AiPart>,
