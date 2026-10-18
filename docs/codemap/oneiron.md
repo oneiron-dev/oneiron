@@ -3705,7 +3705,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/federation_burst/tests.rs` | test | s | 1 crate-vis | — | — |
 | `src/sync/home_proof.rs` | src | s | 1 fn · 1 const · 2 crate-vis | — | OF-534 G6/G7: the home names itself to the device that dials it |
 | `src/sync/ingest/birth_watch.rs` | src | s | 3 crate-vis | — | The rows a federated import watches for their births |
-| `src/sync/ingest/delivery.rs` | src | s | 1 fn · 5 crate-vis | — | Which records a federation pact delivered here, and at which consent epoch (FIX 321) |
+| `src/sync/ingest/delivery.rs` | src | m | 1 fn · 6 crate-vis | — | Which records a federation pact delivered here, and at which consent epoch (FIX 321) |
 | `src/sync/ingest/entity.rs` | src | m | 11 crate-vis | — | The entity-ingest ladder: one admission for every replicated entities-map value |
 | `src/sync/ingest/mod.rs` | src | s | 7 crate-vis | — | One ingest entry per replicated container: every entities-map value and every tombstone takes the same… |
 | `src/sync/ingest/order.rs` | src | s | 2 crate-vis | — | The order one pass or delta visits AUTHORITY_LOG rows in |

@@ -47010,13 +47010,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/ingest/delivery.rs",
      "purpose": "Which records a federation pact delivered here, and at which consent epoch (FIX 321)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1
      }
     },
