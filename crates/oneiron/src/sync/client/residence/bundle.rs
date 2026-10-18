@@ -13,6 +13,10 @@
 //!
 //! A commit names the recovery root this machine pins, so a kit-only restore
 //! can read the generation through the home's kit door (`kit_fetch`).
+//!
+//! A phone takes no generation in and uploads none, and no machine relays to a
+//! home it knows is a phone (FIX 3349, `holds_sealed_bundle`). A phone still
+//! sweeps its erases from the kept pad objects.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -29,7 +33,8 @@ use crate::sync::client::{SyncClientConfig, SyncResidenceMode};
 use crate::sync::manager::WindowManager;
 use crate::sync::residence::{
     SEALED_BUNDLE_PUT_PART_MAX, SEALED_BUNDLE_READ_PART_MAX, SealedBundleObject, SealedBundleTake,
-    sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex, sealed_generation_hex,
+    holds_sealed_bundle, sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex,
+    sealed_generation_hex,
 };
 use crate::sync::transport::TransportError;
 use crate::world_keys::{
@@ -66,6 +71,26 @@ fn holder_destination(vault: &Vault, home: PeerMachine) -> Destination {
         PeerMachine::Proven { machine, .. } => Destination::Machine(machine),
         PeerMachine::Unknown => Destination::Unknown,
     }
+}
+
+/// Whether the home may keep the vault's sealed copies: false for a home whose
+/// proof stands here on a phone's profile, the one its proof stands on
+/// (`AuthorityFold::machine_proof_key`). A home this machine cannot name
+/// judges itself: its own doors refuse when it is a phone.
+fn home_holds_sealed_bundle(vault: &Vault, home: PeerMachine) -> crate::error::Result<bool> {
+    let PeerMachine::Proven { machine, .. } = vault.peer_machine_stands(home) else {
+        return Ok(true);
+    };
+    let fold = vault.authority_fold()?;
+    let class = match fold.trusted_machine(machine) {
+        Some(trusted) => Some(trusted.profile.device_class),
+        None => fold
+            .machine(machine)
+            .and_then(|folded| folded.roster.as_ref())
+            .filter(|roster| roster.is_live())
+            .map(|roster| roster.profile.device_class),
+    };
+    Ok(class.is_none_or(holds_sealed_bundle))
 }
 
 /// The recovery root this machine pins, when it pins one: a commit names it
@@ -187,6 +212,7 @@ impl SyncClient {
     /// erase's sweep of every kept pad object, then, once per UTC slot, the
     /// take of the home's newest generation and, on an eligible publisher, the
     /// slot's upload. A federation lane and a machine not mine here do
+    /// nothing; a phone only sweeps, and a home known to be a phone gets
     /// nothing.
     pub async fn relay_sealed_bundle(&self) -> Result<SealedBundleRelay, TransportError> {
         relay_sealed_bundle(&self.manager, &self.config).await
@@ -227,17 +253,31 @@ pub(crate) async fn relay_sealed_bundle(
     let now_slot = sealed_bundle_slot(vault.store.clock.now_recorded_at());
     let cursor = load_cursor(vault).map_err(storage)?;
     let erased = erased_due(vault, now_slot).map_err(storage)?;
-    if erased.is_empty() && cursor.slot >= now_slot {
+    // A phone takes no generation in and uploads none (FIX 3349).
+    let slot_due = cursor.slot < now_slot && holds_sealed_bundle(vault.config.machine_device_class);
+    if erased.is_empty() && !slot_due {
         return Ok(relay);
     }
     let budgets = residence_budgets(vault)?;
     let Some(mut rpc) = ResidenceRpc::connect(vault, config, budgets).await? else {
         return Err(TransportError::Storage("home node offline".into()));
     };
+    // A home this machine knows is a phone keeps no sealed copy: nothing goes
+    // to it, and the slot is finished.
+    if !home_holds_sealed_bundle(vault, rpc.home).map_err(storage)? {
+        if slot_due {
+            let cursor = Cursor {
+                slot: now_slot,
+                ..cursor
+            };
+            store_cursor(vault, cursor).map_err(storage)?;
+        }
+        return Ok(relay);
+    }
     if !erased.is_empty() {
         relay.erased = sweep_erased(vault, &mut rpc, &erased, now_slot).await?;
     }
-    if cursor.slot < now_slot {
+    if slot_due {
         let slot = SlotRelay {
             manager,
             slot: now_slot,

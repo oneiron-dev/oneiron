@@ -27,6 +27,8 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
 - [Documents API handoff](documents-api-handoff.md) — the document engine's contract
   (`oneiron_docedit::contract`, schema 1): ops, media types, limits, refusal codes, and what the
   hosted documents API in oneiron-cloud owns (auth, metering, hosting, session images).
+- [Deck export gate run](deck-gate.md) — OF-510 `pptx-live-v1`: the engine half on a Linux fleet
+  host, the Office half on the Mac mini, and the command that records the oracle receipt.
 - [Load bench](load-bench.md) — `oneiron-bench load` runs the shipped server under synthetic
   load (facade ingest, recall per grade and agent count, fairness, memory) and compares two
   commits' JSON results.

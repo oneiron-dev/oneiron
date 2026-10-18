@@ -699,9 +699,8 @@ microsoft_tsc = "/opt/typescript-7.1.0-dev.20261010.1/package/lib/tsc"  # option
 
 Shadow mode blocks nothing and changes no program's result. Once a step's own
 state is saved, the check's report is appended to the run's replay record as
-`executor/repl/<step>.code-check.json`: backend and pin, latency, the first 32
-diagnostics in program coordinates (`diagnostics_omitted` counts the rest), or
-a failure code. Each check also logs one `oneiron::code_check` line with the
+`executor/repl/<step>.code-check.json`: backend and pin, latency, every
+diagnostic in program coordinates with its whole message, or a failure code. Each check also logs one `oneiron::code_check` line with the
 step's outcome (`completed`, `waiting`, `continued` or `failed`) and the
 running counts. A step that fails keeps no report, and neither does a run in an
 off-record session, whose overlay is quota-bounded; their checks are only in
@@ -1266,6 +1265,20 @@ A call opens with one JSON line:
 - They pass the same doors at the on-device locality, then the owner door.
 - A bad or missing token closes the socket before any audio. An admitted call
   is answered `{"op":"accepted"}`.
+- On a managed vault (`serve --managed-by-hypnos`, its `[models.voice]` from
+  `--models-file`) the hello carries no slip:
+  `{"op":"hello","managed_owner":{"holder_ref":"..","mac":".."},"issued_at":..,"sample_rate":16000,"channels":1}`.
+  `managed_owner` is the supervisor's `ManagedOwnerAction` for the vault's
+  owner, signed with `ManagedOwnerRequest::voice(room, roster, issued_at)`:
+  method `VOICE`, path `/voice`, the hello's `room` and `roster` (empty when
+  absent) as the first two bound values, and `issued_at` (Unix seconds) as
+  eight big-endian body bytes. The vault takes each attestation once, within
+  60 seconds of its `issued_at`. The call then runs as that person off-device,
+  while the owner door still names them the vault's live owner (checked again
+  every five seconds). Each call is admitted like a served write, so a frozen
+  vault takes no call, and a call in flight keeps a reap from finding the
+  vault quiescent. A slip hello on a managed vault, or a managed hello on a
+  plain one, is refused.
 
 After that the stream carries:
 - **the transcript ops** (`open`, `partial`, `final`, `close`);

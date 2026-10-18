@@ -5795,6 +5795,66 @@
       }
     },
     {
+      "name": "vault.notes.set_overrides",
+      "description": "Sets the extraction, context and retention defaults one NOTE overrides over its kind's, by its author or the owner; empty overrides clear them. An override never widens a scope or grant check.",
+      "refs": ["/note_ref"],
+      "input": "crate::note::SetNoteOverridesRequest",
+      "output": "crate::note::NoteDefaultsView",
+      "call": "memory.set_note_overrides(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "note_ref"
+        ]
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Sets the defaults one NOTE overrides over its kind's; empty overrides clear them.\n",
+          "ts": "/** Sets the defaults one NOTE overrides over its kind's; empty overrides clear them. */",
+          "py": "Sets the defaults one NOTE overrides over its kind's; empty overrides clear them."
+        }
+      }
+    },
+    {
+      "name": "vault.notes.defaults",
+      "description": "One NOTE's overrides and the extraction, context and retention defaults its gates read after them.",
+      "refs": ["/note_ref"],
+      "input": "crate::note::NoteRefRequest",
+      "output": "crate::note::NoteDefaultsView",
+      "call": "memory.note_defaults(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "note_ref"
+        ]
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// One NOTE's overrides and the defaults its gates read after them.\n",
+          "ts": "/** One NOTE's overrides and the defaults its gates read after them. */",
+          "py": "One NOTE's overrides and the defaults its gates read after them."
+        }
+      }
+    },
+    {
       "name": "self.fold",
       "input": "crate::compaction::FoldMarkInput",
       "output": "crate::compaction::FoldReply<crate::compaction::FoldMarked>",
