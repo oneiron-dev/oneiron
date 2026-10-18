@@ -651,9 +651,9 @@
      "purpose": "AgentDefinition domain types, key/limit consts, and constructors",
      "surface": {
       "const": 14,
-      "crate-vis": 59,
+      "crate-vis": 60,
       "enum": 5,
-      "fn": 26,
+      "fn": 27,
       "struct": 4
      }
     },
@@ -11658,6 +11658,22 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "CompactionHome",
+      "CompactionHostBinding",
+      "CompactionIdentity",
+      "RenderedHome"
+     ],
+     "path": "src/code_run/compaction_home.rs",
+     "purpose": "The agent's home as its own compaction wears it (FIX 4465; the home is the self-model, voice, diary and…",
+     "surface": {
+      "fn": 8,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "BlastRadiusWalk",
       "CodeConsentRequest",
       "CodeEmissionAdmission",
@@ -12025,7 +12041,7 @@
      "surface": {
       "crate-vis": 19,
       "mod": 6,
-      "re-export": 18
+      "re-export": 19
      }
     },
     {
@@ -14011,11 +14027,11 @@
      "purpose": "DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must…",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 10,
       "mod": 1,
-      "re-export": 6,
+      "re-export": 8,
       "struct": 3
      }
     },
@@ -14026,7 +14042,7 @@
      "path": "src/compaction/driver/integration.rs",
      "purpose": "Transactional epoch integration, typed executor coverage, and swap plans",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2
      }
     },
@@ -14222,6 +14238,40 @@
      "path": "src/compaction/output/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CompactionHostLog",
+      "CompactionSource"
+     ],
+     "path": "src/compaction/packet_source.rs",
+     "purpose": "The packet door's source bindings (FIX 4465)",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CompactionExecution",
+      "CompactionHomeRef",
+      "CompactionUsage",
+      "SelfCompactionUnavailable"
+     ],
+     "path": "src/compaction/self_writer.rs",
+     "purpose": "The agent as its own compaction writer (FIX 4465, owner 10-19: \"the toggle sets WHO writes, not which model\")",
+     "surface": {
+      "crate-vis": 8,
+      "enum": 1,
+      "fn": 3,
+      "struct": 3
+     }
     },
     {
      "bucket": "s",
@@ -56424,7 +56474,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 83,
+     "files": 84,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56501,7 +56551,7 @@
      "purpose": "Commitment timer-wake bridge (CMT-3, ONE-1540): due phase → Dreamer attempt → inbox proposal → OF-327 delivery"
     },
     "compaction": {
-     "files": 19,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -57707,7 +57757,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3516,
+   "source_files": 3519,
    "test_files": 902
   },
   "oneiron-android": {
@@ -65834,6 +65884,8 @@
       "ExtractionEgressPredicate",
       "PurposeDefault",
       "PurposeDefaultTable",
+      "SelfCompactionDefault",
+      "SelfCompactionSource",
       "ValidatedPurposeDefaults",
       "VoiceBackendBinding",
       "VoiceLane",
@@ -65842,9 +65894,9 @@
      "path": "src/llm/defaults.rs",
      "purpose": "Inference defaults as data: the shipped purpose-default table, its validation and the routing rules it implies",
      "surface": {
-      "enum": 2,
-      "fn": 13,
-      "struct": 4,
+      "enum": 3,
+      "fn": 15,
+      "struct": 5,
       "trait": 1
      }
     },
@@ -68783,6 +68835,26 @@
      "notable": [],
      "path": "src/ai_host/compaction.rs",
      "purpose": "Compaction for code mode's runs (agent-runtime-v1 §d7)",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/compaction/self_writer.rs",
+     "purpose": "The agent's own compaction writer (FIX 4465, owner 10-19: \"the toggle sets WHO writes, not which model\")",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/compaction/serve.rs",
+     "purpose": "The house compaction route's call (moved from `compaction.rs`): one pass's request, admitted on the role's…",
      "surface": {
       "crate-vis": 7
      }
@@ -78146,7 +78218,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 43,
+     "files": 45,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78575,7 +78647,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 707,
+   "source_files": 709,
    "test_files": 182
   },
   "oneiron-spawn": {
