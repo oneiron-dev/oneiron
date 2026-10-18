@@ -406,3 +406,133 @@ impl Vault {
         })
     }
 }
+
+impl Vault {
+    /// The owner applies the `prompt_inject` the Coach drafted on one card,
+    /// as they approve it in `approval` (FIX 3694): the failed attempt the
+    /// card names goes on as a new attempt, from a checkpoint of its run,
+    /// with the approved prompt: the Coach's proposal, or the owner's own
+    /// edit of it, kept beside the draft it edits. The checkpoint is
+    /// resolved first, from its own reads; then one write transaction
+    /// revalidates the owner, reads the card and its standing ask again,
+    /// checks them, and applies the approval
+    /// (`agent_dispatch::apply_prompt_inject_in_txn`): the TASK, the
+    /// successor and its spend, its continuation, the application and the
+    /// card. Applying the same approval again returns the successor it made.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::EntityNotFound`] for an unknown card; [`Error::InvalidConfig`]
+    /// when the approval no longer matches the card (another ask, no
+    /// `prompt_inject` draft, evidence that grew since the ask, an attempt
+    /// that moved), for an empty prompt, and for each continuation
+    /// refusal, whose message is exactly its code; owner revalidation
+    /// errors; the queue's refusals; storage errors.
+    pub fn apply_coach_prompt_inject_on_agent_health_card(
+        &self,
+        owner: &AuthenticatedOwner,
+        approval: &crate::agent_dispatch::ConcernPromptInjectRequest,
+    ) -> Result<crate::agent_dispatch::ConcernPromptInjectOutcome> {
+        let key = parse_card_ref(&approval.card).ok_or(Error::EntityNotFound)?;
+        let card = self
+            .agent_health_card(&approval.card)?
+            .ok_or(Error::EntityNotFound)?;
+        Self::prompt_inject_ask(&card, approval)?;
+        if approval.prompt.trim().is_empty() {
+            return Err(refused("the prompt is empty"));
+        }
+        let attempt = card
+            .attempt
+            .ok_or_else(|| refused("this card names no failed attempt"))?;
+        let predecessor = AttemptId::from_bytes(attempt.as_bytes())?;
+        // The executor's checkpoint reads open snapshots of their own:
+        // before the writer, never inside it. The step is theirs to choose.
+        let checkpoint = crate::agent_dispatch::continuation_checkpoint(
+            self,
+            predecessor,
+            approval.checkpoint.as_deref(),
+        )?;
+        let handle = card_ref(&key);
+        let now = self.store.clock.now_recorded_at();
+        let applied = self.with_write_txn_grouped(|txn| {
+            let by = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+            let mut card = CARDS
+                .get(&self.store, txn, &key)?
+                .ok_or(Error::EntityNotFound)?;
+            // New evidence moves the card to a newer attempt: the checkpoint
+            // above is the old one's.
+            if card.attempt != Some(attempt) {
+                return Err(refused("the card's failed attempt moved since you read it"));
+            }
+            let (ask, proposal) = Self::prompt_inject_ask(&card, approval)?;
+            let bound = crate::agent_dispatch::PromptInjectApproval {
+                card: &handle,
+                ask: &ask.attempt,
+                proposal,
+                diagnostic: ask.diagnostic,
+                subject: card.subject,
+                task: card.task,
+                predecessor,
+                checkpoint,
+                prompt: &approval.prompt,
+                by,
+                now,
+            };
+            let applied = crate::agent_dispatch::apply_prompt_inject_in_txn(self, txn, &bound)?;
+            if !applied.replayed {
+                card.updated_at = now;
+                CARDS.put(&self.store, txn, &key, &card)?;
+            }
+            Ok(applied)
+        })?;
+        // Committed: the successor is claimable, and its TASK live again.
+        if !applied.replayed {
+            self.store.notify_attempt_observers();
+            if let Some(task) = applied.task {
+                self.store.notify_task_updates([task]);
+            }
+        }
+        Ok(crate::agent_dispatch::ConcernPromptInjectOutcome {
+            card: handle,
+            successor: crate::entity_id::bytes_to_hex_lower(applied.successor.as_bytes()),
+            approval: applied.approval.to_hex(),
+            checkpoint: checkpoint.id()?.to_hex(),
+            replayed: applied.replayed,
+        })
+    }
+
+    /// The ask the owner read, still standing on `card`, with its
+    /// `prompt_inject` draft's proposal, asked over the card's evidence as it
+    /// stands. The approved prompt may differ from the proposal: the owner's
+    /// own edit is their approval, and the draft stays beside it as evidence.
+    fn prompt_inject_ask<'a>(
+        card: &'a AgentHealthCard,
+        approval: &crate::agent_dispatch::ConcernPromptInjectRequest,
+    ) -> Result<(&'a AgentHealthCoachAsk, &'a str)> {
+        let Some(standing) = card
+            .coach
+            .as_ref()
+            .filter(|standing| standing.attempt == approval.ask)
+        else {
+            return Err(refused(
+                "the Coach's ask on this card moved since you read it",
+            ));
+        };
+        let Some(draft) = standing
+            .answer
+            .as_ref()
+            .and_then(|answer| answer.draft.as_ref())
+            .filter(|draft| draft.route == AgentHealthCoachRoute::PromptInject)
+        else {
+            return Err(refused(
+                "the Coach's answer on this card proposes no prompt injection",
+            ));
+        };
+        if standing.diagnostic != card.diagnostics.last().copied() {
+            return Err(refused(
+                "the card's evidence moved since the Coach was asked",
+            ));
+        }
+        Ok((standing, &draft.proposal))
+    }
+}

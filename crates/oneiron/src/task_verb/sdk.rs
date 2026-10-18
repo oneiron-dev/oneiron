@@ -497,6 +497,9 @@ pub use super::recall_door::{
     RECALL_MEDIA_UNSERVED, RecallDoor, recall_at_door, recall_at_door_seeded, recall_unembedded,
     recall_with_vector,
 };
+pub use super::sdk_agents::*;
+pub use super::sdk_calendar::*;
+pub use super::sdk_workspace::*;
 pub use super::sdk_campaign_split::*;
 pub use super::sdk_catalog_fragment::{
     CATALOG_FRAGMENT_REVISION, CatalogFragment, code_mode_catalog_fragment,
@@ -511,7 +514,9 @@ pub use super::sdk_explain::*;
 pub use super::sdk_fanout_launch::*;
 pub use super::sdk_guest_revoke::*;
 pub use super::sdk_host::*;
+pub use super::sdk_hub::*;
 pub use super::sdk_legal_hold::*;
+pub use super::sdk_live_run::*;
 pub use super::sdk_mesh::*;
 pub use super::sdk_record_erase::*;
 pub use super::sdk_research::*;
@@ -574,7 +579,9 @@ include!("sdk_generated.rs");
 /// the rows the run answers itself. The guest's method table, the executor
 /// prompt and dispatch all read this list.
 pub fn code_mode_verb_names() -> impl Iterator<Item = &'static str> + Clone {
-    let host = AgentVerb::ALL.iter().map(|verb| verb.as_str());
+    let host = AgentVerb::ALL.iter()
+        .filter(|verb| RunVerb::from_name(verb.as_str()).is_none())
+        .map(|verb| verb.as_str());
     host.chain(RunVerb::ALL.iter().map(|verb| verb.as_str()))
 }
 

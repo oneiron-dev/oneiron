@@ -23,7 +23,7 @@ use super::join_consent::{
 };
 use super::join_receipt::{
     JOINS, JoinFiling, JoinParticipation, JoinReceipt, JoinReceiptRef, READY, RecordedAnswer,
-    intent_digest, is_join_ref, join_ref, ready_key,
+    RosterActor, intent_digest, is_join_ref, join_ref, ready_key,
 };
 use crate::agent_dispatch::{AgentDispatcher, SpendScopeId, SpendState, payer_binds_in_txn};
 use crate::conversation::{
@@ -436,8 +436,8 @@ fn file_join_in_txn(
             intent_digest,
             request: request.clone(),
             history,
-            filed_by: caller.entity_ref(),
-            principal,
+            filed_by: RosterActor::Actor(caller.entity_ref()),
+            principal: principal.map(RosterActor::Actor),
             answers: Vec::new(),
             filed_at: now,
         },
@@ -451,8 +451,8 @@ fn file_join_in_txn(
     {
         filing.answers.push(RecordedAnswer {
             part: ConsentPart::Subject,
-            by: request.subject.id(),
-            actor: caller.entity_ref(),
+            by: RosterActor::Actor(request.subject.id()),
+            actor: RosterActor::Actor(caller.entity_ref()),
             grant: true,
             spend_scope: None,
             answer_ref: answer_ref(vault)?,
@@ -472,8 +472,8 @@ fn file_join_in_txn(
     {
         filing.answers.push(RecordedAnswer {
             part: ConsentPart::Spend,
-            by: payer.party,
-            actor: caller.entity_ref(),
+            by: RosterActor::Actor(payer.party),
+            actor: RosterActor::Actor(caller.entity_ref()),
             grant: true,
             spend_scope: Some(scope.clone()),
             answer_ref: answer_ref(vault)?,
@@ -531,8 +531,8 @@ pub fn rooms_consent_in_txn(
     let mut filing = receipt.into_filing();
     filing.answers.push(RecordedAnswer {
         part: answer.part,
-        by,
-        actor: caller.entity_ref(),
+        by: RosterActor::Actor(by),
+        actor: RosterActor::Actor(caller.entity_ref()),
         grant: answer.grant,
         spend_scope,
         answer_ref: answer_ref(vault)?,
@@ -599,7 +599,7 @@ fn settle_in_txn(
         vault,
         txn,
         &filing.request,
-        filing.principal,
+        filing.principal.and_then(RosterActor::id),
         &filing.answers,
         now,
     )?;

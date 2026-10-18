@@ -673,7 +673,7 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     OwnerRoute {
         method: "post",
         path: "/guests/revoke",
-        summary: "\"<hex>\"}: an unknown or non-guest grant is not found, and a disconnect the fold refuses fails the whole revoke.",
+        summary: "Withdraw one guest's grant (`grant_ref`): an unknown or non-guest grant is not found, and a disconnect the fold refuses fails the whole revoke. With the optional `peer` (the former peer's host origin, `https://host[:port]`), queue one courtesy-delete ask per ended pact once the revoke is durable; each courtesy target reports `deletion_request_status` (`queued` or `not_requested`) with its `request` id or its `error`, and the disclosure says `queued` when any ask queued. Copied bytes are never recallable.",
         row: Some("vault.guests.revoke"),
     },
     OwnerRoute {
@@ -758,6 +758,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         method: "post",
         path: "/inbox/concern/apply",
         summary: "Applies the Coach's skill edit on one card as the owner approves it.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/inbox/concern/apply-prompt-inject",
+        summary: "Applies the Coach's prompt injection on one card as the owner approves or edits it: the failed attempt goes on as a new one, from its pre-fail checkpoint.",
         row: None,
     },
     OwnerRoute {
@@ -1701,7 +1707,7 @@ fn operation(route: &OwnerRoute, path: &str) -> Value {
 const LEFT_SLIP_ROUTES: &[(&str, &str)] = &[
     (
         "/v1/shared/left-notices",
-        "The removed person's own loss-of-access notices, each signed by this host's root key.",
+        "The removed person's own loss-of-access notices, each signed by this host's root key. Optional application/json body: `authority_heads` (array of 64-hex authority-entry hashes; omitted or empty requests the full handoff chain). The JSON answer has `notices` (signed shared-act outcomes) and `handoff` (array of hex-encoded signed ReRoot rows, parents first, from those heads to this host's signing root; empty when already folded).",
     ),
     (
         "/v1/shared/removal-export",
@@ -1712,6 +1718,34 @@ const LEFT_SLIP_ROUTES: &[(&str, &str)] = &[
         "The one archive the removal receipt receipt_id delivered to the removed person, while within its term; not found after it.",
     ),
 ];
+
+/// A left-slip route's optional JSON body and its answer's schema:
+/// `/v1/shared/left-notices` names both (FIX 3372); the export routes take
+/// no body and answer a plain object.
+fn left_slip_shapes(path: &str) -> (Option<Value>, Value) {
+    if path != "/v1/shared/left-notices" {
+        return (None, json!({"type": "object"}));
+    }
+    let body = json!({
+        "required": false,
+        "content": {"application/json": {"schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "authority_heads": {"type": "array", "items": {"type": "string"}, "description": "The authority-entry hashes the person's env folded, 64 hex each; omitted or empty asks for the whole handoff chain."}
+            }
+        }}}
+    });
+    let answer = json!({
+        "type": "object",
+        "required": ["notices", "handoff"],
+        "properties": {
+            "notices": {"type": "array", "items": {"type": "object"}, "description": "The person's signed shared-act outcomes."},
+            "handoff": {"type": "array", "items": {"type": "string"}, "description": "The signed ReRoot rows, hex, parents first, from those heads to the key that signed `notices`; empty when already folded."}
+        }
+    });
+    (Some(body), answer)
+}
 
 /// Adds the removed device's routes to `spec`'s paths.
 pub(crate) fn merge_left_slip_paths(spec: &mut Value) {
@@ -1726,17 +1760,21 @@ pub(crate) fn merge_left_slip_paths(spec: &mut Value) {
         if path.ends_with("{receipt_id}") {
             parameters.push(json!({"name": "receipt_id", "in": "path", "required": true, "schema": {"type": "string"}, "description": "The removal receipt's id, 32 hex."}));
         }
-        let operation = json!({
+        let (body, answer) = left_slip_shapes(path);
+        let mut operation = json!({
             "tags": ["shared"],
             "summary": summary,
             "operationId": format!("left_slip_{}", path.trim_start_matches("/v1/shared/").replace(['/', '-', '{', '}'], "_")),
             "parameters": parameters,
             "responses": {
-                "200": {"description": "The removed person's answer.", "content": {"application/json": {"schema": {"type": "object"}}}},
+                "200": {"description": "The removed person's answer.", "content": {"application/json": {"schema": answer}}},
                 "401": {"description": "The slip or its proof does not verify, or the nonce was spent.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ApiError"}}}},
                 "404": {"description": "No archive this receipt delivered to the person is within its term.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ApiError"}}}}
             }
         });
+        if let (Some(body), Some(fields)) = (body, operation.as_object_mut()) {
+            fields.insert("requestBody".to_owned(), body);
+        }
         if let Some(item) = paths
             .entry((*path).to_owned())
             .or_insert_with(|| json!({}))

@@ -31,6 +31,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/inbox/concern/outcome", post(set_outcome))
         .route("/inbox/concern/move", post(take_move))
         .route("/inbox/concern/apply", post(apply_edit))
+        .route(
+            "/inbox/concern/apply-prompt-inject",
+            post(apply_prompt_inject),
+        )
 }
 
 #[derive(Debug, Deserialize)]
@@ -161,6 +165,38 @@ async fn apply_edit(
             Err(error) => Err(error.into()),
         }
     })
+    .await?;
+    Ok(Json(outcome))
+}
+
+/// `POST /v1/owner/inbox/concern/apply-prompt-inject`: applies the Coach's
+/// `prompt_inject` on one card as the owner approves it: the ask they read,
+/// the prompt (the Coach's proposal, or the owner's own edit of it), and
+/// optionally the checkpoint the failed run continues from. The failed
+/// attempt goes on as a new attempt from that checkpoint with the approved
+/// prompt; applying the same approval again returns the same successor. A
+/// refusal names its `continuation_*` code.
+async fn apply_prompt_inject(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<oneiron::agent_dispatch::ConcernPromptInjectRequest>, JsonRejection>,
+) -> OwnerReply<oneiron::agent_dispatch::ConcernPromptInjectOutcome> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let outcome = blocking(
+        move || -> OwnerResult<oneiron::agent_dispatch::ConcernPromptInjectOutcome> {
+            match server
+                .vault()
+                .apply_coach_prompt_inject_on_agent_health_card(&owner, &request)
+            {
+                Ok(outcome) => Ok(outcome),
+                Err(error) if error.kind() == oneiron::ErrorKind::EntityNotFound => {
+                    Err(OwnerError::NotFound("concern_card", request.card))
+                }
+                Err(error) => Err(error.into()),
+            }
+        },
+    )
     .await?;
     Ok(Json(outcome))
 }

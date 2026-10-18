@@ -30,6 +30,7 @@ mod authorship;
 mod birth_position;
 mod booking;
 mod claim_conflict;
+mod claim_admission;
 mod conflict_settle;
 mod diary_read;
 mod dreamer_revert;
@@ -39,6 +40,7 @@ pub(crate) use booking::booking_error;
 pub(crate) use outbound::facade_error_from_outbound_dispatch;
 pub(crate) mod booking_publication;
 mod campaign;
+pub mod channel_doors;
 pub mod caps;
 mod chat;
 mod claims;
@@ -62,12 +64,14 @@ mod outbound;
 mod owner_door;
 mod presented_credential;
 mod read_lane;
+mod read_selection;
 mod reads;
 mod recall;
 mod report;
 mod result_attachment;
 mod room_turn;
 mod shape_doors;
+mod scoped_export;
 mod structural;
 mod subscriptions;
 mod support;
@@ -101,6 +105,7 @@ pub(crate) use claim_conflict::claim_conflict_ruling_gate_refs_in_txn;
 pub use claim_conflict::{
     ClaimConflictBundle, ClaimConflictMember, ClaimConflictQuestion, ClaimConflictReceipt,
 };
+pub use claim_admission::{AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput, ScopedCommitRequest};
 pub use claims::{
     ClaimChangeVerdict, ClaimInput, ClaimProposalReview, ClaimProposalReviewRequest,
     ClaimSettleDecision, ClaimSettleRequest, ClaimSettlement, ClaimSettlementAnswer,
@@ -157,6 +162,7 @@ pub use outbound::{
     CalendarInviteSurfaceMethod, OutboundDraftInput, OutboundIntentReceipt,
     OutboundScheduleContext,
 };
+pub use read_selection::RecallWorlds;
 pub use reads::{ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts};
 pub(crate) use recall::check_recall_request;
 pub use recall::{
@@ -176,6 +182,7 @@ pub use structural::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, EntityRefReceipt, EntityView,
     HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput, TextIndexField,
 };
+pub use scoped_export::{ChannelCeiling, CredentialCeiling, ExportChannel, RecordPosition, RecordSelector, ScopeAxisInput, ScopeSensitivityBand, ScopeSensitivityInput, ScopedExport, ScopedExportRecord, ScopedExportRequest};
 pub use subscriptions::{MemorySubscriptionOwner, ScopedView};
 pub use support::{HostWriteOrigin, Memory, RewriteAdmit, parse_actor_key, resolve_entity_ref};
 pub use transcript::{

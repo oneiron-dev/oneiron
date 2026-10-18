@@ -18,6 +18,10 @@ side_tables! {
     AGENT_DISPATCH_COMM_WIDEN: VaultMeta b"agent.dispatch.comm.v1\0" Named Engine;
     /// Resumable partial-result hold for one gracefully stopped spawn (OF-541). Key: id16.
     AGENT_DISPATCH_PLAN_HOLD: VaultMeta b"agent.dispatch.hold.v1\0" LegacyJson;
+    /// FIX 3694: the owner's applied prompt continuation of one failed agent attempt: the card,
+    /// ask and diagnostic it answered, the approving owner and when, the approval's fingerprint
+    /// and id, and the successor attempt it enqueued. Key: id16(failed attempt).
+    AGENT_DISPATCH_PROMPT_INJECT: VaultMeta b"agent.dispatch.prompt_inject.v1\0" Named Engine;
     /// Approved board-widened context slice override recorded for one parent attempt. Key: id16.
     AGENT_DISPATCH_WIDEN_SLICE: VaultMeta b"agent.dispatch.slice.v1\0" LegacyJson Authored;
     /// One node of a launch's spend lease tree (root launch or child attempt). Key: string.
@@ -404,6 +408,11 @@ side_tables! {
     /// Node-local executor coverage bound to a minted epoch SUMMARY (fixed 73-byte frame). Key:
     /// id16(run) + id16(summary).
     CODE_RUN_COMPACTION: VaultMeta b"code_run:compaction:v1:" Raw;
+    /// A successor attempt's approved continuation of a failed run (FIX 3694): the Failed
+    /// predecessor, its run, the step the child starts at, the owner's approval, the approved
+    /// prompt and its digest, the start body's digest and its capsule's lease generation. Key:
+    /// id16(successor attempt).
+    CODE_RUN_CONTINUATION: VaultMeta b"code_run:continuation:v1:" Named Authored;
     /// One contribution check's matched-fork rows (FIX 3028): each fork's receipt (the capsule it
     /// regenerated, its request hash, model, seed, response body ref, anchor hash and score), or
     /// why the pair is unavailable for good. Key: hash32(attempt receipt, skill, axis) +

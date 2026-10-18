@@ -119,7 +119,9 @@
       "output": "crate::memory::DiaryReadsView",
       "call": "memory.diary_reads(&input)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -129,7 +131,9 @@
       "output": "crate::memory::DiaryReadRequest",
       "call": "memory.answer_diary_read(&input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -163,8 +167,12 @@
       "output": "crate::inbox::NotificationPage",
       "call": "memory.inbox_list(input.after.as_deref(), input.limit.unwrap_or(crate::inbox::INBOX_PAGE_DEFAULT))?",
       "scope": "Read",
-      "admission": {"lane_record_scope": true},
-      "mcp_fields": {"spec": "$"},
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
       "page": {
         "rows": "rows",
         "cursor": "next_after"
@@ -180,8 +188,12 @@
       "output": "crate::inbox::NotificationRow",
       "call": "memory.inbox_mark(&input.notification_ref, input.mark)?",
       "scope": "Write",
-      "admission": {"lane_record_scope": true},
-      "mcp_fields": {"spec": "$"},
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
       "mcp_scope": "filtered",
       "mcp_served_output": "oneiron::EntityId::from_hex(&output.id).ok()",
       "section": false
@@ -192,7 +204,9 @@
       "output": "crate::dreamer_runner::maintenance::agent_health::AgentHealthCardView",
       "call": "memory.concern_card(&input)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -201,7 +215,9 @@
       "output": "crate::dreamer_runner::maintenance::agent_health::ConcernCardSummary",
       "call": "memory.concern_outcome(&input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -210,7 +226,9 @@
       "output": "crate::dreamer_runner::maintenance::agent_health::ConcernMoveOutcome",
       "call": "memory.concern_move(&input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -220,7 +238,9 @@
       "output": "crate::memory::PeoplePage",
       "call": "memory.people_list(&input)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -230,7 +250,9 @@
       "output": "crate::context_board::PersonRow",
       "call": "memory.people_get(&input)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -240,7 +262,9 @@
       "output": "crate::vault_shape::ShapeRead",
       "call": "memory.shape_read()?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -250,7 +274,9 @@
       "output": "crate::vault_shape::ShapePlan",
       "call": "memory.shape_plan(&input)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -261,7 +287,9 @@
       "call": "memory.shape_apply(&input)?",
       "host_door": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -272,7 +300,9 @@
       "call": "memory.message_person(&input)?",
       "scope": "Write",
       "lands_turn": true,
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -282,7 +312,9 @@
       "output": "crate::memory::GrantAskReceipt",
       "call": "memory.grants_ask(&input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -303,7 +335,9 @@
     {
       "name": "cancel",
       "description": "Cancels one TASK under the caller's own-scoped auto default, abandoning only unlanded work.",
-      "refs": ["/task_ref"],
+      "refs": [
+        "/task_ref"
+      ],
       "input": "TaskRequest",
       "output": "crate::task_verb::TaskCancelReceipt",
       "mcp_served": "oneiron::EntityId::from_hex(&input.task_ref).ok()",
@@ -340,7 +374,9 @@
     {
       "name": "steer",
       "description": "The TASK's spawner nudges its live run; a resend with the same key answers the first receipt.",
-      "refs": ["/task_ref"],
+      "refs": [
+        "/task_ref"
+      ],
       "input": "SteerRequest",
       "output": "crate::task_verb::sdk::SteerReceipt",
       "call": "crate::task_verb::sdk::steer_child(memory, input)?",
@@ -402,7 +438,14 @@
     {
       "name": "tasks.create",
       "description": "Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway.",
-      "prose_links": ["/label", "/spec/title", "/spec/description", "/spec/brief", "/spec/notes", "/spec/instructions"],
+      "prose_links": [
+        "/label",
+        "/spec/title",
+        "/spec/description",
+        "/spec/brief",
+        "/spec/notes",
+        "/spec/instructions"
+      ],
       "input": "TaskCreateRequest",
       "output": "crate::task_verb::TaskCreateReceipt",
       "call": "memory.tasks_create(&crate::task_verb::sdk::task_create_spec(memory, input)?)?",
@@ -446,7 +489,9 @@
       "output": "Option<crate::task_verb::sdk::FanoutLaunchView>",
       "call": "crate::task_verb::sdk::read_fanout_launch(memory, input)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -458,7 +503,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -470,7 +517,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -482,13 +531,17 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
       "name": "tasks.update",
       "description": "Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK.",
-      "refs": ["/task_ref"],
+      "refs": [
+        "/task_ref"
+      ],
       "input": "TaskUpdateRequest",
       "output": "crate::task_verb::TaskUpdateReceipt",
       "outputs_by_input": {
@@ -513,7 +566,9 @@
     {
       "name": "tasks.accept",
       "description": "Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports.",
-      "refs": ["/task_ref"],
+      "refs": [
+        "/task_ref"
+      ],
       "input": "crate::task_verb::TaskAccept",
       "output": "crate::task_verb::TaskCallReceipt",
       "mcp_served": "[input.task_ref]",
@@ -566,37 +621,22 @@
     },
     {
       "name": "vault.claims.upsert",
-      "description": "Commits one claim through the gate, superseding the prior active claim on the same subject, scope and predicate.",
-      "refs": ["/subject_ref", "/world_ref", "/relationship_ref"],
-      "input": "crate::memory::ClaimInput",
+      "description": "Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance.",
+      "refs": [
+        "/subject_ref",
+        "/evidence_turn_refs/*"
+      ],
+      "input": "crate::memory::ScopedClaimInput",
       "output": "crate::memory::CommitReceipt",
-      "call": "memory.claim_upsert(&input)?",
+      "call": "memory.claim_upsert_scoped(&input)?",
       "scope": "Write",
       "proposes": true,
       "admission": {
-        "validate": "crate::memory::caps::check_claim_input(&input)?;"
+        "claim_record_scope": true
       },
       "section": false,
       "mcp_served_output": "[Some(output.claim_short_id.as_str()), output.superseded_short_id.as_deref()].into_iter().flatten().filter_map(|reference| oneiron::memory::resolve_entity_ref(&server.vault, reference).ok())",
-      "binding": {
-        "args": [
-          {
-            "name": "claim",
-            "kind": "claim"
-          }
-        ],
-        "docs": {
-          "remote": "    /// Upserts one claim through the gated claim-candidate path.\n",
-          "ts": "/** Upserts one claim. The consent gate, not this call, decides approval. */",
-          "py": "Upserts one claim. The consent gate, not this call, decides approval."
-        }
-      },
-      "uniffi": {
-        "args": {
-          "claim": "ClaimInput"
-        },
-        "output": "CommitReceipt"
-      }
+      "mcp_scope": "filtered"
     },
     {
       "name": "vault.recall",
@@ -673,7 +713,8 @@
           "query_affect": "Option<QueryAffect>"
         },
         "output": "MemoryPack"
-      }
+      },
+      "mcp_scope": "filtered"
     },
     {
       "name": "vault.export",
@@ -703,6 +744,32 @@
           "py": "Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`)."
         }
       }
+    },
+    {
+      "name": "vault.scope.ceiling",
+      "description": "Reads the caller credential ceiling as a typed ceiling, never as a record position.",
+      "input": "EmptyRequest",
+      "output": "crate::memory::CredentialCeiling",
+      "call": "memory.credential_ceiling()?",
+      "scope": "Read",
+      "admission": {
+        "credential_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false
+    },
+    {
+      "name": "vault.export.scoped",
+      "description": "Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding.",
+      "input": "crate::memory::ScopedExportRequest",
+      "output": "crate::memory::ScopedExport",
+      "call": "memory.export_scoped(&input)?",
+      "scope": "Read",
+      "admission": {
+        "scoped_export": true
+      },
+      "mcp_scope": "filtered",
+      "section": false
     },
     {
       "name": "vault.receipts",
@@ -751,7 +818,9 @@
       "output": "crate::memory::PulledImage",
       "call": "memory.view_image(&input)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false,
       "binding": {
         "wire": "json",
@@ -789,7 +858,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -801,7 +872,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -958,7 +1031,9 @@
       "output": "crate::campaign::surface::CampaignProgramRecord",
       "call": "memory.campaign_program_create(&input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -968,7 +1043,9 @@
       "output": "crate::campaign::surface::CampaignProgramReadResult",
       "call": "memory.campaign_program_read(&input)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -978,7 +1055,9 @@
       "output": "crate::campaign::surface::CampaignProgramRecord",
       "call": "memory.campaign_program_update(&input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -988,7 +1067,9 @@
       "output": "crate::campaign::surface::CampaignProgramRecord",
       "call": "memory.campaign_program_archive(&input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -998,7 +1079,9 @@
       "output": "crate::claim::WeaveReportView",
       "call": "memory.weave_report(None, &input)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1010,7 +1093,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1023,7 +1108,9 @@
       "host_door_lists": true,
       "host_door_lens_owner": true,
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1035,7 +1122,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1047,7 +1136,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1059,7 +1150,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1071,7 +1164,232 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skill_hubs.put",
+      "description": "The owner registers or revises a hub source; hub trust never grants activation authority.",
+      "input": "SkillHubPutRequest",
+      "output": "crate::task_verb::sdk::SkillHubConfigured",
+      "call": "crate::task_verb::sdk::skill_hub_put_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skill_hubs.put\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skill_hubs.get",
+      "description": "Reads one configured hub as the owner.",
+      "input": "SkillHubRequest",
+      "output": "crate::skill_hub::SkillHubRecord",
+      "call": "crate::task_verb::sdk::skill_hub_get_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skill_hubs.get\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skill_hubs.publishers.admit",
+      "description": "The owner admits a foreign publisher to offer candidates from one configured hub, and nothing else.",
+      "input": "SkillPublisherRequest",
+      "output": "crate::task_verb::sdk::SkillPublisherAdmission",
+      "call": "crate::task_verb::sdk::skill_publisher_admit_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skill_hubs.publishers.admit\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skill_hubs.publishers.revoke",
+      "description": "The owner revokes the exact offer-only publisher grant; foreign hooks recheck it before running.",
+      "input": "SkillPublisherRequest",
+      "output": "crate::task_verb::sdk::HubConsentReceipt",
+      "call": "crate::task_verb::sdk::skill_publisher_revoke_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skill_hubs.publishers.revoke\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skill_hubs.refs.get",
+      "description": "Reads one hub ref policy, pin and separate seen and trusted revisions as the owner.",
+      "input": "HubRefRequest",
+      "output": "Option<crate::skill_hub::TrackedHubRef>",
+      "call": "crate::task_verb::sdk::hub_ref_get_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skill_hubs.refs.get\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skill_hubs.refs.set",
+      "description": "The owner changes one hub ref policy and pin without fetching or trusting new bytes.",
+      "input": "HubRefSetRequest",
+      "output": "crate::skill_hub::TrackedHubRef",
+      "call": "crate::task_verb::sdk::hub_ref_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skill_hubs.refs.set\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.install",
+      "description": "The owner fetches a pinned hub pack as its foreign publisher; code stays Candidate and hooks wait for consent.",
+      "input": "HubImportRequest",
+      "output": "crate::task_verb::sdk::PackPutReceipt",
+      "call": "crate::task_verb::sdk::hub_pack_install_as_owner(memory.vault(), &memory.embedded_owner(\"vault.packs.install\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.sync",
+      "description": "The owner syncs a hub pack at its stored ref policy; wider hooks keep their old bindings until re-consent.",
+      "input": "HubPackRequest",
+      "output": "crate::task_verb::sdk::PackPutReceipt",
+      "call": "crate::task_verb::sdk::hub_pack_sync_as_owner(memory.vault(), &memory.embedded_owner(\"vault.packs.sync\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.get",
+      "description": "Reads an installed pack and its exact source, pin, publisher and requested powers as the owner.",
+      "input": "HubPackRequest",
+      "output": "Option<crate::skill_hub::pack_catalog::PackInstallReceipt>",
+      "call": "crate::task_verb::sdk::hub_pack_get_as_owner(memory.vault(), &memory.embedded_owner(\"vault.packs.get\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skills.import",
+      "description": "The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask.",
+      "input": "HubImportRequest",
+      "output": "crate::task_verb::sdk::HubSkillImported",
+      "call": "crate::task_verb::sdk::hub_skill_import_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.import\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skills.sync",
+      "description": "The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities.",
+      "input": "HubSkillRequest",
+      "output": "crate::task_verb::sdk::HubSkillSyncReceipt",
+      "call": "crate::task_verb::sdk::hub_skill_sync_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.sync\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skills.receipts",
+      "description": "Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner.",
+      "input": "HubSkillRequest",
+      "output": "crate::task_verb::sdk::HubSkillReceipts",
+      "call": "crate::task_verb::sdk::hub_skill_receipts_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.receipts\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skills.permissions.approve",
+      "description": "The owner answers one imported skill permission ask at its exact hub source.",
+      "input": "HubSkillPermissionRequest",
+      "output": "crate::task_verb::sdk::HubConsentReceipt",
+      "call": "crate::task_verb::sdk::hub_skill_permissions_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.permissions.approve\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.hooks.bind",
+      "description": "The owner consents to the installed pack hook capabilities, including a widening update; publisher identity stays foreign.",
+      "input": "HubHookBindRequest",
+      "output": "Vec<crate::EntityId>",
+      "call": "crate::task_verb::sdk::hub_hooks_bind_as_owner(memory.vault(), &memory.embedded_owner(\"vault.packs.hooks.bind\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.hooks.list",
+      "description": "Reads live pack hook bindings as the owner, excluding revoked foreign publisher grants.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::task_verb::sdk::HubHookBindingRow>",
+      "call": "crate::task_verb::sdk::hub_hooks_list_as_owner(memory.vault(), &memory.embedded_owner(\"vault.packs.hooks.list\")?, &crate::task_verb::sdk::EmptyRequest {})?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.hooks.qualify",
+      "description": "The owner qualifies a Candidate hub hook pack by real sandbox replay; qualification does not consent to wider hooks.",
+      "input": "HubHookQualifyRequest",
+      "output": "crate::task_verb::sdk::HubHookQualificationReceipt",
+      "call": "crate::task_verb::sdk::hub_hooks_qualify_embedded(memory, &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1209,7 +1527,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1221,7 +1541,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1231,7 +1553,9 @@
       "output": "crate::lens::InspectionResolved",
       "call": "memory.inspection_resolve(&input)?",
       "scope": "Read",
-      "admission": {"lane_record_scope": true},
+      "admission": {
+        "lane_record_scope": true
+      },
       "section": false
     },
     {
@@ -1243,7 +1567,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1255,7 +1581,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1267,7 +1595,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1279,7 +1609,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1291,7 +1623,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1303,7 +1637,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1316,7 +1652,9 @@
       "host_door_lists": true,
       "scope": "Read",
       "mcp_fields": {},
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1328,7 +1666,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1340,7 +1680,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1352,7 +1694,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1364,7 +1708,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1376,7 +1722,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1388,7 +1736,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1400,7 +1750,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1412,7 +1764,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1424,7 +1778,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1436,7 +1792,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1448,7 +1806,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1460,7 +1820,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1472,7 +1834,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1484,7 +1848,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1496,7 +1862,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1508,7 +1876,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1519,7 +1889,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1531,7 +1903,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1543,7 +1917,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1555,7 +1931,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1567,7 +1945,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1579,7 +1959,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1591,7 +1973,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1603,7 +1987,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1613,7 +1999,9 @@
       "output": "crate::autoreason_campaign::research::ResearchBinding",
       "call": "crate::task_verb::sdk::research_bind(memory, input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1623,7 +2011,9 @@
       "output": "crate::autoreason_campaign::research::ExperimentNode",
       "call": "crate::task_verb::sdk::research_fork(memory, input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1633,7 +2023,9 @@
       "output": "crate::autoreason_campaign::research::ExperimentNode",
       "call": "crate::task_verb::sdk::research_weave(memory, input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1643,7 +2035,9 @@
       "output": "crate::autoreason_campaign::research::ExperimentNode",
       "call": "crate::task_verb::sdk::research_measure_search(memory, input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1653,7 +2047,9 @@
       "output": "crate::autoreason_campaign::research::ExperimentNode",
       "call": "crate::task_verb::sdk::research_measure_held_out(memory, input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1665,7 +2061,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1675,7 +2073,9 @@
       "output": "crate::autoreason_campaign::research::ExperimentNode",
       "call": "crate::task_verb::sdk::research_mark_invalid(memory, input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1685,7 +2085,9 @@
       "output": "crate::autoreason_campaign::research::ExperimentNode",
       "call": "crate::task_verb::sdk::research_prune(memory, input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1695,7 +2097,9 @@
       "output": "crate::autoreason_campaign::research::SelectionReceipt",
       "call": "crate::task_verb::sdk::research_select(memory, input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1705,7 +2109,9 @@
       "output": "crate::autoreason_campaign::research::PromotionBasis",
       "call": "crate::task_verb::sdk::research_promotion_basis(memory, input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1715,7 +2121,9 @@
       "output": "crate::skill_optimize::EvalRelease",
       "call": "crate::task_verb::sdk::research_reserve_confirmation(memory, input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1725,7 +2133,9 @@
       "output": "crate::autoreason_campaign::research::CampaignPromotionReceipt",
       "call": "crate::task_verb::sdk::research_promote(memory, input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1735,7 +2145,9 @@
       "output": "crate::entity_id::EntityId",
       "call": "crate::task_verb::sdk::research_reserve_work(memory, input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1745,7 +2157,9 @@
       "output": "crate::autoreason_campaign::research::ResearchReservation",
       "call": "crate::task_verb::sdk::research_settle_work(memory, input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1755,7 +2169,9 @@
       "output": "crate::autoreason_campaign::research::ResearchReservation",
       "call": "crate::task_verb::sdk::research_refund_work(memory, input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1765,7 +2181,9 @@
       "output": "crate::autoreason_campaign::research::SelectionBenchmark",
       "call": "crate::task_verb::sdk::research_record_benchmark(memory, input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1778,7 +2196,9 @@
       "host_door_lists": true,
       "scope": "Read",
       "mcp_fields": {},
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1790,7 +2210,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1802,7 +2224,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1814,7 +2238,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1827,7 +2253,9 @@
       "host_door_lists": true,
       "scope": "Read",
       "mcp_fields": {},
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1840,7 +2268,9 @@
       "host_door_lists": true,
       "scope": "Read",
       "mcp_fields": {},
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1852,7 +2282,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1864,7 +2296,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1877,7 +2311,9 @@
       "host_door_lists": true,
       "scope": "Read",
       "mcp_fields": {},
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1890,7 +2326,9 @@
       "host_door_lists": true,
       "scope": "Read",
       "mcp_fields": {},
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1902,7 +2340,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1915,7 +2355,9 @@
       "host_door_lists": true,
       "scope": "Read",
       "mcp_fields": {},
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1927,7 +2369,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1939,7 +2383,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1951,7 +2397,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1963,7 +2411,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1975,7 +2425,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1987,7 +2439,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -1999,7 +2453,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -2011,7 +2467,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -2023,7 +2481,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -2036,7 +2496,9 @@
       "host_door_lists": true,
       "scope": "Read",
       "mcp_fields": {},
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -2048,7 +2510,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -2060,7 +2524,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -2141,7 +2607,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -2153,7 +2621,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -2165,7 +2635,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -2177,7 +2649,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -2189,7 +2663,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -2201,7 +2677,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -2213,7 +2691,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -2253,7 +2733,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -2265,7 +2747,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -2277,7 +2761,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -2290,7 +2776,9 @@
       "host_door_lists": true,
       "scope": "Read",
       "mcp_fields": {},
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -2302,7 +2790,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -2648,6 +3138,90 @@
       }
     },
     {
+      "name": "vault.agents.create",
+      "description": "The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched.",
+      "input": "crate::task_verb::sdk::AgentDefinitionCreateRequest",
+      "output": "crate::task_verb::sdk::AgentDefinitionView",
+      "call": "crate::task_verb::sdk::create_agent_definition_as(memory.vault(), &memory.embedded_owner(\"vault.agents.create\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.agents.get",
+      "description": "The owner reads one saved agent composition and its version and approval state.",
+      "input": "crate::task_verb::sdk::AgentDefinitionRequest",
+      "output": "crate::task_verb::sdk::AgentDefinitionView",
+      "call": "crate::task_verb::sdk::read_agent_definition_as(memory.vault(), &memory.embedded_owner(\"vault.agents.get\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.agents.update",
+      "description": "The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision.",
+      "input": "crate::task_verb::sdk::AgentDefinitionUpdateRequest",
+      "output": "crate::task_verb::sdk::AgentDefinitionView",
+      "call": "crate::task_verb::sdk::update_agent_definition_as(memory.vault(), &memory.embedded_owner(\"vault.agents.update\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.workspace.establish",
+      "description": "The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted.",
+      "input": "crate::task_verb::sdk::WorkspacePresetRequest",
+      "output": "crate::task_verb::sdk::WorkspacePresetReceipt",
+      "call": "crate::task_verb::sdk::establish_workspace_as(memory.vault(), &memory.embedded_owner(\"vault.workspace.establish\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.workspace.members.onboard",
+      "description": "A holder of the workspace AddMember power runs resumable member and companion onboarding. Bringing an existing companion requires the member's own caller proof; mailbox enrollment is separate.",
+      "input": "crate::task_verb::sdk::WorkspaceMemberOnboardRequest",
+      "output": "crate::workspace_roster::MemberOnboardingOutcome",
+      "call": "crate::task_verb::sdk::onboard_workspace_member_as(memory.vault(), &memory.embedded_owner(\"vault.workspace.members.onboard\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.workspace.roster",
+      "description": "The owner reads the workspace house and companion roster with their actor, subject and facet refs.",
+      "input": "crate::task_verb::sdk::WorkspaceRosterRequest",
+      "output": "Vec<crate::workspace_roster::WorkspaceRosterEntry>",
+      "call": "crate::task_verb::sdk::read_workspace_roster_as(memory.vault(), &memory.embedded_owner(\"vault.workspace.roster\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.agents.export_pack",
       "description": "An agent's travelling AgentPack folder, read through the caller's admission, with the born-with text the caller chose and a share receipt listing it and the knowledge kept home.",
       "input": "crate::share_travel::AgentPackExportRequest",
@@ -2732,7 +3306,9 @@
       "output": "Vec<crate::edit_settle::OrganWaitView>",
       "call": "memory.artifacts_waits(&input)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false,
       "binding": {
         "wire": "json",
@@ -2826,7 +3402,13 @@
     {
       "name": "vault.artifacts.propose_deck",
       "description": "Runs one native deck transaction over an artifact's head and holds the proposal for Keep.",
-      "refs": ["/context/thread", "/made_by/inputs/*/row", "/made_by/trigger/task", "/made_by/trigger/ask", "/made_by/trigger/skill"],
+      "refs": [
+        "/context/thread",
+        "/made_by/inputs/*/row",
+        "/made_by/trigger/task",
+        "/made_by/trigger/ask",
+        "/made_by/trigger/skill"
+      ],
       "input": "crate::blob_artifact::DeckProposeRequest",
       "output": "crate::blob_artifact::DeckProposeOutcome",
       "call": "memory.artifacts_propose_deck(&input)?",
@@ -2851,7 +3433,12 @@
     {
       "name": "vault.artifacts.propose_output",
       "description": "Offers one native organ result to an artifact as its next version, held for Keep.",
-      "refs": ["/made_by/inputs/*/row", "/made_by/trigger/task", "/made_by/trigger/ask", "/made_by/trigger/skill"],
+      "refs": [
+        "/made_by/inputs/*/row",
+        "/made_by/trigger/task",
+        "/made_by/trigger/ask",
+        "/made_by/trigger/skill"
+      ],
       "input": "crate::blob_artifact::NativeOutputRequest",
       "output": "crate::edit_settle::PendingProposalView",
       "call": "memory.artifacts_propose_output(&input)?",
@@ -2876,7 +3463,9 @@
     {
       "name": "vault.artifacts.keep",
       "description": "Settles one waiting artifact proposal into a version.",
-      "refs": ["/artifact_ref"],
+      "refs": [
+        "/artifact_ref"
+      ],
       "input": "crate::blob_artifact::ProposalSettleRequest",
       "output": "crate::blob_artifact::KeptProposal",
       "call": "memory.artifacts_keep(&input)?",
@@ -2901,7 +3490,9 @@
     {
       "name": "vault.artifacts.discard",
       "description": "Drops one waiting artifact proposal, once.",
-      "refs": ["/artifact_ref"],
+      "refs": [
+        "/artifact_ref"
+      ],
       "input": "crate::blob_artifact::ProposalSettleRequest",
       "output": "crate::blob_artifact::DiscardedProposal",
       "call": "memory.artifacts_discard(&input)?",
@@ -2926,7 +3517,9 @@
     {
       "name": "vault.artifacts.undo",
       "description": "Undoes one Keep by appending a new version.",
-      "refs": ["/artifact_ref"],
+      "refs": [
+        "/artifact_ref"
+      ],
       "input": "crate::blob_artifact::ProposalSettleRequest",
       "output": "crate::blob_artifact::UndoneKeep",
       "call": "memory.artifacts_undo(&input)?",
@@ -3005,7 +3598,12 @@
     {
       "name": "ask",
       "description": "Asks people or an authority a typed question and returns at admission with the ask's handle.",
-      "refs": ["/what/reference/claim", "/what/reference/turn", "/what/context_refs/*/claim", "/what/context_refs/*/turn"],
+      "refs": [
+        "/what/reference/claim",
+        "/what/reference/turn",
+        "/what/context_refs/*/claim",
+        "/what/context_refs/*/turn"
+      ],
       "input": "crate::task_verb::sdk::TaskAskRequest",
       "output": "crate::task_verb::TaskAskReceipt",
       "call": "memory.tasks_ask(&input.into_spec()?)?",
@@ -3034,15 +3632,25 @@
       "binding": {
         "generic": true,
         "args": [
-          {"name": "handle", "type": "crate::task_verb::TaskAskHandle"},
-          {"name": "step_key", "type": "String", "default": "sdk.wait"}
+          {
+            "name": "handle",
+            "type": "crate::task_verb::TaskAskHandle"
+          },
+          {
+            "name": "step_key",
+            "type": "String",
+            "default": "sdk.wait"
+          }
         ]
       }
     },
     {
       "name": "tasks.answer",
       "description": "Admits one person's word on an ask; the word is evidence, never approval.",
-      "refs": ["/word/provenance_refs/*/claim", "/word/provenance_refs/*/turn"],
+      "refs": [
+        "/word/provenance_refs/*/claim",
+        "/word/provenance_refs/*/turn"
+      ],
       "input": "crate::task_verb::sdk::TaskAnswerRequest",
       "output": "crate::task_verb::TaskAskAnswer",
       "mcp_served": "[input.handle.group_ref]",
@@ -3057,8 +3665,14 @@
       "binding": {
         "generic": true,
         "args": [
-          {"name": "handle", "type": "crate::task_verb::TaskAskHandle"},
-          {"name": "word", "type": "crate::task_verb::TaskAskWord"}
+          {
+            "name": "handle",
+            "type": "crate::task_verb::TaskAskHandle"
+          },
+          {
+            "name": "word",
+            "type": "crate::task_verb::TaskAskWord"
+          }
         ]
       }
     },
@@ -3082,7 +3696,11 @@
       "binding": {
         "generic": true,
         "args": [
-          {"name": "handle", "field": "$", "type": "crate::task_verb::TaskAskHandle"}
+          {
+            "name": "handle",
+            "field": "$",
+            "type": "crate::task_verb::TaskAskHandle"
+          }
         ]
       }
     },
@@ -3096,7 +3714,10 @@
       "mcp_fields": {},
       "mcp_scope": "unrestricted",
       "section": false,
-      "binding": {"generic": true, "args": []}
+      "binding": {
+        "generic": true,
+        "args": []
+      }
     },
     {
       "name": "vault.rooms.messages",
@@ -3122,9 +3743,18 @@
       "binding": {
         "generic": true,
         "args": [
-          {"name": "room_ref", "type": "String"},
-          {"name": "after", "type": "Option<String>"},
-          {"name": "limit", "type": "Option<usize>"}
+          {
+            "name": "room_ref",
+            "type": "String"
+          },
+          {
+            "name": "after",
+            "type": "Option<String>"
+          },
+          {
+            "name": "limit",
+            "type": "Option<usize>"
+          }
         ]
       }
     },
@@ -3164,7 +3794,10 @@
       "binding": {
         "generic": true,
         "args": [
-          {"name": "room_ref", "type": "String"}
+          {
+            "name": "room_ref",
+            "type": "String"
+          }
         ]
       }
     },
@@ -3195,9 +3828,18 @@
       "binding": {
         "generic": true,
         "args": [
-          {"name": "room_ref", "type": "String"},
-          {"name": "after", "type": "Option<String>"},
-          {"name": "limit", "type": "Option<usize>"}
+          {
+            "name": "room_ref",
+            "type": "String"
+          },
+          {
+            "name": "after",
+            "type": "Option<String>"
+          },
+          {
+            "name": "limit",
+            "type": "Option<usize>"
+          }
         ]
       }
     },
@@ -3220,8 +3862,14 @@
       "binding": {
         "generic": true,
         "args": [
-          {"name": "room_ref", "type": "String"},
-          {"name": "turn_ref", "type": "String"}
+          {
+            "name": "room_ref",
+            "type": "String"
+          },
+          {
+            "name": "turn_ref",
+            "type": "String"
+          }
         ]
       }
     },
@@ -3244,8 +3892,14 @@
       "binding": {
         "generic": true,
         "args": [
-          {"name": "room_ref", "type": "String"},
-          {"name": "turn_ref", "type": "String"}
+          {
+            "name": "room_ref",
+            "type": "String"
+          },
+          {
+            "name": "turn_ref",
+            "type": "String"
+          }
         ]
       }
     },
@@ -3256,9 +3910,16 @@
       "output": "crate::conversation_dag::ReplyStripsPage",
       "call": "memory.rooms_reply_strips(&input)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
-      "mcp_fields": {"spec": "$"},
-      "page": {"rows": "groups", "cursor": "next_after"},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "page": {
+        "rows": "groups",
+        "cursor": "next_after"
+      },
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -3278,8 +3939,14 @@
       "binding": {
         "generic": true,
         "args": [
-          {"name": "room_ref", "type": "String"},
-          {"name": "turn_ref", "type": "String"}
+          {
+            "name": "room_ref",
+            "type": "String"
+          },
+          {
+            "name": "turn_ref",
+            "type": "String"
+          }
         ]
       }
     },
@@ -3305,7 +3972,9 @@
       "output": "crate::genui::ProjectProposalCard",
       "call": "memory.projects_propose(&input)?",
       "scope": "Write",
-      "mcp_fields": {"spec": "$"},
+      "mcp_fields": {
+        "spec": "$"
+      },
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -3316,7 +3985,9 @@
       "output": "Vec<crate::workspace_roster::ProjectCardRecord>",
       "call": "memory.projects_proposals(crate::EntityId::from_hex(&input.conversation_ref)?)?",
       "scope": "Read",
-      "mcp_fields": {"spec": "$"},
+      "mcp_fields": {
+        "spec": "$"
+      },
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -3327,7 +3998,9 @@
       "output": "crate::task_verb::sdk::ProjectCardDismissal",
       "call": "ProjectCardDismissal { dismissed: memory.projects_dismiss_card(&input.card_id)?, card_id: input.card_id }",
       "scope": "Write",
-      "mcp_fields": {"spec": "$"},
+      "mcp_fields": {
+        "spec": "$"
+      },
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -3341,7 +4014,9 @@
       "host_door_lists": true,
       "host_door_session": true,
       "scope": "Write",
-      "mcp_fields": {"spec": "$"},
+      "mcp_fields": {
+        "spec": "$"
+      },
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -3352,7 +4027,9 @@
       "output": "crate::workspace_roster::ProjectRosterWriteOutcome",
       "call": "memory.projects_write_roster(input.project, &input.record)?",
       "scope": "Write",
-      "mcp_fields": {"spec": "$"},
+      "mcp_fields": {
+        "spec": "$"
+      },
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -3363,7 +4040,9 @@
       "output": "crate::workspace_roster::ProjectGoalInterviewContext",
       "call": "memory.projects_goal_intake(crate::EntityId::from_hex(&input.project_ref)?)?",
       "scope": "Read",
-      "mcp_fields": {"spec": "$"},
+      "mcp_fields": {
+        "spec": "$"
+      },
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -3469,9 +4148,17 @@
       "output": "crate::workspace_roster::OffersPage",
       "call": "memory.rooms_offers(&input)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
-      "mcp_fields": {"spec": "$", "room_ref": "=room"},
-      "page": {"rows": "rows", "cursor": "next_after"},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$",
+        "room_ref": "=room"
+      },
+      "page": {
+        "rows": "rows",
+        "cursor": "next_after"
+      },
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -3482,8 +4169,12 @@
       "output": "Vec<crate::skill_optimize::ProjectGoalRevisionProposal>",
       "call": "memory.projects_goal_revisions(crate::EntityId::from_hex(&input.project_ref)?)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
-      "mcp_fields": {"spec": "$"},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -3494,7 +4185,9 @@
       "output": "crate::task_verb::sdk::ProjectGoalDismissReceipt",
       "call": "ProjectGoalDismissReceipt { dismissed: memory.projects_goal_dismiss(crate::EntityId::from_hex(&input.project_ref)?, crate::EntityId::from_hex(&input.expected_goal_ref)?, &input.question_digest)? }",
       "scope": "Write",
-      "mcp_fields": {"spec": "$"},
+      "mcp_fields": {
+        "spec": "$"
+      },
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -3506,7 +4199,9 @@
       "call": "memory.tasks_route_project_tradeoff(crate::EntityId::from_hex(&input.task_ref)?, crate::EntityId::from_hex(&input.proposal_ref)?)?",
       "scope": "Write",
       "lands_turn": true,
-      "mcp_fields": {"spec": "$"},
+      "mcp_fields": {
+        "spec": "$"
+      },
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -3545,8 +4240,12 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
-      "mcp_fields": {"spec": "$"},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -3573,7 +4272,9 @@
       "output": "crate::workspace_roster::RoomStanding",
       "call": "memory.rooms_host_pin(&input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "mcp_fields": {
         "spec": "$"
       },
@@ -3587,7 +4288,9 @@
       "output": "crate::workspace_roster::RoomStanding",
       "call": "memory.rooms_host_hand(&input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "mcp_fields": {
         "spec": "$"
       },
@@ -3860,7 +4563,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -3871,7 +4576,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -3882,7 +4589,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -3893,7 +4602,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -3904,7 +4615,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -3915,7 +4628,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -3927,7 +4642,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -3938,7 +4655,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -3949,7 +4668,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -3960,7 +4681,9 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -4474,31 +5197,34 @@
     {
       "name": "vault.commit",
       "description": "Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted.",
-      "refs": ["/claims/*/subject_ref", "/claims/*/world_ref", "/claims/*/relationship_ref"],
-      "uniffi": {
-        "args": {
-          "claims": "Vec<ClaimInput>"
-        },
-        "output": "Vec<CommitOutcome>"
-      },
-      "input": "CommitRequest",
+      "refs": [
+        "/claims/*/subject_ref",
+        "/claims/*/evidence_turn_refs/*"
+      ],
+      "input": "crate::memory::ScopedCommitRequest",
       "output": "Vec<crate::memory::CommitOutcome>",
-      "call": "memory.commit(&input.claims)?",
+      "call": "memory.commit_scoped(&input.claims, false)?",
       "scope": "Write",
       "admission": {
-        "validate": "crate::memory::caps::check_batch_len(\"claims\", input.claims.len())?; for claim in &input.claims { crate::memory::caps::check_claim_input(claim)?; }"
+        "claim_record_scope": true,
+        "validate": "crate::memory::caps::check_batch_len(\"claims\", input.claims.len())?;"
       },
       "section": false,
       "binding": {
         "native": "agent_verb",
         "request": true
       },
-      "proposes": true
+      "proposes": true,
+      "mcp_scope": "filtered"
     },
     {
       "name": "vault.remember",
       "description": "Commits one claim through the gate, the same as vault.claims.upsert.",
-      "refs": ["/subject_ref", "/world_ref", "/relationship_ref"],
+      "refs": [
+        "/subject_ref",
+        "/world_ref",
+        "/relationship_ref"
+      ],
       "uniffi": {
         "args": {
           "claim": "ClaimInput"
@@ -4522,7 +5248,9 @@
     {
       "name": "vault.claims.retract",
       "description": "Retracts one active claim: a deliberate withdrawal that preserves the record.",
-      "refs": ["/claim_ref"],
+      "refs": [
+        "/claim_ref"
+      ],
       "uniffi": {
         "args": {
           "claim_ref": "String"
@@ -4543,7 +5271,9 @@
     {
       "name": "vault.forget",
       "description": "Retracts claims by exact claim or by subject and predicate; never a hard delete.",
-      "refs": ["/claim_ref"],
+      "refs": [
+        "/claim_ref"
+      ],
       "uniffi": {
         "args": {
           "selector": "ForgetSelector"
@@ -4560,6 +5290,76 @@
         "native": "agent_verb",
         "request": true
       }
+    },
+    {
+      "name": "vault.booking.page_token",
+      "description": "The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority.",
+      "input": "crate::task_verb::sdk::BookingPageTokenRequest",
+      "output": "crate::task_verb::sdk::BookingPageTokenResponse",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.page_token\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.calendar.read",
+      "description": "Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt.",
+      "input": "crate::calendar::CalendarReadRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::calendar::CalendarEventView>>",
+      "call": "memory.calendar_read(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false
+    },
+    {
+      "name": "vault.calendar.search",
+      "description": "Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt.",
+      "input": "crate::calendar::CalendarSearchRequest",
+      "output": "crate::claim::ScopedReadResult<Vec<crate::calendar::CalendarEventView>>",
+      "call": "memory.calendar_search(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false
+    },
+    {
+      "name": "vault.calendar.freebusy",
+      "description": "Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt.",
+      "input": "crate::task_verb::sdk::CalendarFreebusyRequest",
+      "output": "crate::claim::ScopedReadResult<crate::memory::CalendarFreebusyDto>",
+      "call": "memory.calendar_freebusy(&input.calendars, input.range.to_time_range())?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false
+    },
+    {
+      "name": "vault.calendar.transcript.ingest",
+      "description": "Ingests an uploaded UTF-8 transcript as the caller, retaining source labels and atomically closing its SESSION with ordered TURNs and extraction wake receipts.",
+      "refs": [
+        "/source_blob_ref"
+      ],
+      "input": "crate::calendar::transcript::TranscriptFileDropInput",
+      "output": "crate::calendar::transcript::TranscriptIngestOutcome",
+      "call": "memory.calendar_transcript_ingest(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "source_blob_ref"
+        ]
+      },
+      "section": false
     },
     {
       "name": "vault.claims.list",
@@ -4611,7 +5411,9 @@
     {
       "name": "vault.delete",
       "description": "Deletes one entity under a named reason; an owner verb that only a verified human may call.",
-      "refs": ["/entity_ref"],
+      "refs": [
+        "/entity_ref"
+      ],
       "uniffi": {
         "args": {
           "entity_ref": "String",
@@ -4779,7 +5581,9 @@
     {
       "name": "vault.structural.put",
       "description": "Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit.",
-      "refs": ["/edges/*/target_ref"],
+      "refs": [
+        "/edges/*/target_ref"
+      ],
       "uniffi": {
         "args": {
           "input": "StructuralPutInput"
@@ -4802,7 +5606,9 @@
     {
       "name": "vault.habits.checkin",
       "description": "Appends one immutable check-in under a Habit TASK.",
-      "refs": ["/habit_ref"],
+      "refs": [
+        "/habit_ref"
+      ],
       "uniffi": {
         "args": {
           "input": "HabitCheckinInput"
@@ -4825,7 +5631,9 @@
     {
       "name": "vault.claims.admit",
       "description": "Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides.",
-      "refs": ["/subject_ref"],
+      "refs": [
+        "/subject_ref"
+      ],
       "uniffi": {
         "args": {
           "input": "AdmitImportedClaimInput"
@@ -4853,86 +5661,127 @@
       "output": "Option<crate::blob_artifact::ArtifactView>",
       "call": "memory.artifacts_create(&input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
-      "mcp_fields": {"spec": "$"},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
       "mcp_scope": "unrestricted",
       "section": false
     },
     {
       "name": "vault.esign.create",
       "description": "Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act.",
-      "refs": ["/document_ref", "/draft/items/*/artifact_ref"],
+      "refs": [
+        "/document_ref",
+        "/draft/items/*/artifact_ref"
+      ],
       "input": "crate::blob_artifact::esign::EsignCreateRequest",
       "output": "crate::blob_artifact::esign::EsignDraftView",
       "call": "memory.esign_create(&input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
-      "mcp_fields": {"spec": "$"},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
       "mcp_scope": "unrestricted",
       "section": false
     },
     {
       "name": "vault.esign.get",
       "description": "Reads one signing document as its trail folds: its status, recipients, filled fields and its hash-chained audit trail.",
-      "refs": ["/document_ref"],
+      "refs": [
+        "/document_ref"
+      ],
       "input": "crate::blob_artifact::esign::EsignGetRequest",
       "output": "crate::blob_artifact::esign::EsignDocumentView",
       "call": "memory.esign_get(&input)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
-      "mcp_fields": {"spec": "$"},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
       "mcp_scope": "unrestricted",
       "section": false
     },
     {
       "name": "vault.esign.links.issue",
       "description": "The vault owner mints the signing links of a drafted document and receives each new one once, to deliver to its recipient.",
-      "refs": ["/document_ref"],
+      "refs": [
+        "/document_ref"
+      ],
       "input": "crate::blob_artifact::esign::EsignLinksIssueRequest",
       "output": "crate::blob_artifact::esign::EsignLinksView",
       "call": "memory.esign_links_issue(&input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
-      "mcp_fields": {"spec": "$"},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
       "mcp_scope": "unrestricted",
       "section": false
     },
     {
       "name": "vault.esign.send_for_signature",
       "description": "Sends a drafted signing document to its recipients through the outbound gate, as the caller; an agent sends only within its principal envelope.",
-      "refs": ["/document_ref"],
+      "refs": [
+        "/document_ref"
+      ],
       "input": "crate::blob_artifact::esign::EsignDispatchRequest",
       "output": "crate::blob_artifact::esign::EsignDispatchView",
       "call": "memory.esign_send_for_signature(&input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
-      "mcp_fields": {"spec": "$"},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
       "mcp_scope": "unrestricted",
       "section": false
     },
     {
       "name": "vault.esign.remind",
       "description": "Reminds the recipients whose turn it is to sign a pending document, through the outbound gate, as the caller.",
-      "refs": ["/document_ref"],
+      "refs": [
+        "/document_ref"
+      ],
       "input": "crate::blob_artifact::esign::EsignDispatchRequest",
       "output": "crate::blob_artifact::esign::EsignDispatchView",
       "call": "memory.esign_remind(&input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
-      "mcp_fields": {"spec": "$"},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
       "mcp_scope": "unrestricted",
       "section": false
     },
     {
       "name": "vault.esign.void",
       "description": "Withdraws a drafted or pending signing document unsealed and tells its recipients why, through the outbound gate, as the caller.",
-      "refs": ["/document_ref"],
+      "refs": [
+        "/document_ref"
+      ],
       "input": "crate::blob_artifact::esign::EsignVoidRequest",
       "output": "crate::blob_artifact::esign::EsignDispatchView",
       "call": "memory.esign_void(&input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
-      "mcp_fields": {"spec": "$"},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -4943,8 +5792,12 @@
       "output": "crate::core_write::CoreEntityWriteReceipt",
       "call": "memory.conversations_create(&input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
-      "mcp_fields": {"spec": "$"},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -4957,8 +5810,12 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
-      "mcp_fields": {"spec": "$"},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -4971,8 +5828,12 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
-      "mcp_fields": {"spec": "$"},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -4985,8 +5846,12 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
-      "mcp_fields": {"spec": "$"},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -5732,8 +6597,12 @@
       "output": "crate::memory::DreamerAttemptRef",
       "call": "memory_requests::enqueue_consolidation(memory, input)?",
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
-      "mcp_fields": {"spec": "$"},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -5750,27 +6619,29 @@
       "output": "Option<crate::memory::DreamerAttemptView>",
       "call": "memory_requests::dreamer_attempt_status(memory, input)?",
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
-      "mcp_fields": {"spec": "$"},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
       "mcp_scope": "unrestricted",
       "section": false
     },
     {
       "name": "vault.claims.seed",
       "description": "Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt.",
-      "refs": ["/claims/*/subject_ref", "/claims/*/world_ref", "/claims/*/relationship_ref"],
-      "uniffi": {
-        "args": {
-          "claims": "Vec<ClaimInput>"
-        },
-        "output": "Vec<CommitOutcome>"
-      },
-      "input": "CommitRequest",
+      "refs": [
+        "/claims/*/subject_ref",
+        "/claims/*/evidence_turn_refs/*"
+      ],
+      "input": "crate::memory::ScopedCommitRequest",
       "output": "Vec<crate::memory::CommitOutcome>",
-      "call": "memory_requests::seed_claims(memory, input)?",
+      "call": "memory.commit_scoped(&input.claims, true)?",
       "scope": "Write",
       "admission": {
-        "validate": "crate::memory::caps::check_batch_len(\"claims\", input.claims.len())?; for claim in &input.claims { crate::memory::caps::check_claim_input(claim)?; }"
+        "claim_record_scope": true,
+        "validate": "crate::memory::caps::check_batch_len(\"claims\", input.claims.len())?;"
       },
       "section": false,
       "binding": {
@@ -5778,13 +6649,227 @@
         "request": true
       },
       "proposes": true,
-      "mcp_fields": {"spec": "$"},
-      "mcp_scope": "unrestricted"
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "filtered"
+    },
+    {
+      "name": "vault.channel_identities.provision",
+      "description": "Provision an engine-held channel address, handle or shared presence through the existing lifecycle gate.",
+      "input": "crate::memory::channel_doors::ChannelIdentityProvisionRequest",
+      "output": "crate::memory::channel_doors::ChannelIdentityLifecycleReceipt",
+      "call": "memory.channel_identity_provision_as(&memory.embedded_owner(\"vault.channel_identities.provision\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.channel_identities.bind",
+      "description": "Bind a requested identity or an existing delegated account with transaction-verified custody.",
+      "input": "crate::memory::channel_doors::ChannelIdentityBindRequest",
+      "output": "crate::memory::channel_doors::ChannelIdentityLifecycleReceipt",
+      "call": "memory.channel_identity_bind_as(&memory.embedded_owner(\"vault.channel_identities.bind\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.channel_identities.fulfill",
+      "description": "Record owner-confirmed fulfillment of a pending channel identity; delegated custody is revalidated.",
+      "input": "crate::memory::channel_doors::ChannelIdentityRequest",
+      "output": "crate::memory::channel_doors::ChannelIdentityLifecycleReceipt",
+      "call": "memory.channel_identity_fulfill_as(&memory.embedded_owner(\"vault.channel_identities.fulfill\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.channel_identities.rotate",
+      "description": "Rotate an engine-held channel identity through its lifecycle gate; delegated accounts cannot rotate.",
+      "input": "crate::memory::channel_doors::ChannelIdentityRequest",
+      "output": "crate::memory::channel_doors::ChannelIdentityLifecycleReceipt",
+      "call": "memory.channel_identity_rotate_as(&memory.embedded_owner(\"vault.channel_identities.rotate\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.channel_identities.release",
+      "description": "Release a channel identity through its lifecycle gate, retaining engine-held addresses under the never-recycle rule.",
+      "input": "crate::memory::channel_doors::ChannelIdentityReleaseRequest",
+      "output": "crate::memory::channel_doors::ChannelIdentityLifecycleReceipt",
+      "call": "memory.channel_identity_release_as(&memory.embedded_owner(\"vault.channel_identities.release\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.channel_identities.route_inbound",
+      "description": "Read and receipt the gated inbound routing disposition of a channel identity, including retirement holds.",
+      "input": "crate::memory::channel_doors::ChannelIdentityRequest",
+      "output": "crate::memory::channel_doors::ChannelIdentityLifecycleReceipt",
+      "call": "memory.channel_identity_route_inbound_as(&memory.embedded_owner(\"vault.channel_identities.route_inbound\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.channel_identities.get",
+      "description": "Read live channel identity facts, custody, lifecycle and outbound capability without granting permission to send.",
+      "input": "crate::memory::channel_doors::ChannelIdentityRequest",
+      "output": "crate::memory::channel_doors::ChannelIdentityView",
+      "call": "memory.channel_identity_get(input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.channel_identities.selection.rules",
+      "description": "Read the compiled relationship selection law and authenticated writer provenance.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "crate::channel_identity_selection::ChannelIdentitySelectionRuleSet",
+      "call": "memory.channel_selection_rules()?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.channel_identities.selection.update",
+      "description": "Amend relationship selection rules at an expected revision as the authenticated owner or an authorized agent writer.",
+      "input": "crate::memory::channel_doors::ChannelSelectionUpdateRequest",
+      "output": "crate::channel_identity_selection::ChannelIdentitySelectionRuleSet",
+      "call": "memory.channel_selection_update(input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.channel_identities.select",
+      "description": "Select a live channel identity under relationship rules, retaining an existing thread passport mask.",
+      "input": "crate::memory::channel_doors::ChannelSelectionRequest",
+      "output": "crate::memory::channel_doors::ChannelSelectionView",
+      "call": "memory.channel_identity_select(input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.channel_identities.passports.get",
+      "description": "Read one receiving identity and Message-ID passport through the caller credential.",
+      "input": "crate::memory::channel_doors::ThreadPassportRequest",
+      "output": "crate::memory::channel_doors::ThreadPassportLookup",
+      "call": "memory.channel_thread_passport(input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.channel_identities.passports.list",
+      "description": "Read canonical thread passports and the sticky identity, actor and facet mask.",
+      "input": "crate::memory::channel_doors::ThreadPassportsRequest",
+      "output": "crate::memory::channel_doors::ThreadPassportsView",
+      "call": "memory.channel_thread_passports(input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.delivery_window.policy.put",
+      "description": "The owner writes one typed interrupt-only delivery-window policy through the gated claim writer.",
+      "input": "crate::memory::channel_doors::DeliveryWindowPolicyPutRequest",
+      "output": "crate::memory::CommitReceipt",
+      "call": "memory.delivery_window_put_as(&memory.embedded_owner(\"vault.delivery_window.policy.put\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.delivery_window.policy.list",
+      "description": "Read typed delivery-window policy rows with approval, source, lifecycle and validity provenance.",
+      "input": "crate::memory::channel_doors::DeliveryWindowPolicyRequest",
+      "output": "crate::memory::channel_doors::DeliveryWindowPolicies",
+      "call": "memory.delivery_window_policies(input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.delivery_window.policy.retract",
+      "description": "The owner retracts a delivery-window policy through the existing claim lifecycle door.",
+      "input": "crate::memory::channel_doors::DeliveryWindowPolicyRetractRequest",
+      "output": "crate::memory::CommitReceipt",
+      "call": "memory.delivery_window_retract_as(&memory.embedded_owner(\"vault.delivery_window.policy.retract\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.delivery_window.evaluate",
+      "description": "Preview live delivery-window policy with the engine evaluator; the preview does not authorize or release an effect.",
+      "input": "crate::memory::channel_doors::DeliveryWindowEvaluateRequest",
+      "output": "crate::memory::channel_doors::DeliveryWindowPreview",
+      "call": "memory.delivery_window_evaluate(input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
     },
     {
       "name": "connector.outbound.schedule",
       "description": "Schedules one send through a granted outbound connector, gated and held for delivery.",
-      "refs": ["/content_ref"],
+      "refs": [
+        "/content_ref"
+      ],
       "input": "OutboundScheduleRequest",
       "output": "crate::memory::OutboundIntentReceipt",
       "call": "crate::task_verb::sdk::connector_outbound_schedule_draft(memory, input)?",
@@ -5835,7 +6920,9 @@
     {
       "name": "vault.notes.create",
       "description": "Creates a NOTE of a registered kind, its first authored text as its birth.",
-      "prose_links": ["/markdown"],
+      "prose_links": [
+        "/markdown"
+      ],
       "input": "CreateNoteRequest",
       "output": "crate::memory::EntityRefReceipt",
       "call": "memory.create_note(&input.kind, &input.markdown)?",
@@ -5852,7 +6939,9 @@
     {
       "name": "vault.notes.from_entity",
       "description": "Creates a NOTE of a registered kind from an existing entity.",
-      "refs": ["/source_ref"],
+      "refs": [
+        "/source_ref"
+      ],
       "input": "CreateNoteFromEntityRequest",
       "output": "crate::memory::EntityRefReceipt",
       "call": "memory.create_note_from_entity(&input.source_ref, &input.kind)?",
@@ -5938,8 +7027,12 @@
     {
       "name": "vault.notes.edit",
       "description": "Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending.",
-      "refs": ["/note_ref"],
-      "prose_links": ["/edit/text"],
+      "refs": [
+        "/note_ref"
+      ],
+      "prose_links": [
+        "/edit/text"
+      ],
       "input": "EditNoteRequest",
       "output": "crate::note::NoteProgramEditOutcome",
       "call": "memory.edit_note(&input.note_ref, &input.edit)?",
@@ -5959,7 +7052,9 @@
     {
       "name": "vault.notes.seal",
       "description": "Seals one NOTE by its author or the owner: its document freezes at the current frontier, a later edit opens a fork, and the seal stays.",
-      "refs": ["/note_ref"],
+      "refs": [
+        "/note_ref"
+      ],
       "input": "crate::note::NoteRefRequest",
       "output": "crate::note::NoteSeal",
       "call": "memory.seal_note(&input)?",
@@ -5989,7 +7084,9 @@
     {
       "name": "vault.notes.lifecycle",
       "description": "Where one NOTE stands (active, sealed, archived or tombstoned) and its seal, if it has one.",
-      "refs": ["/note_ref"],
+      "refs": [
+        "/note_ref"
+      ],
       "input": "crate::note::NoteRefRequest",
       "output": "crate::note::NoteLifecycleView",
       "call": "memory.note_lifecycle(&input)?",
@@ -6019,7 +7116,9 @@
     {
       "name": "vault.notes.set_overrides",
       "description": "Sets the extraction, context and retention defaults one NOTE overrides over its kind's, by its author or the owner; empty overrides clear them. An override never widens a scope or grant check.",
-      "refs": ["/note_ref"],
+      "refs": [
+        "/note_ref"
+      ],
       "input": "crate::note::SetNoteOverridesRequest",
       "output": "crate::note::NoteDefaultsView",
       "call": "memory.set_note_overrides(&input)?",
@@ -6049,7 +7148,9 @@
     {
       "name": "vault.notes.defaults",
       "description": "One NOTE's overrides and the extraction, context and retention defaults its gates read after them.",
-      "refs": ["/note_ref"],
+      "refs": [
+        "/note_ref"
+      ],
       "input": "crate::note::NoteRefRequest",
       "output": "crate::note::NoteDefaultsView",
       "call": "memory.note_defaults(&input)?",
@@ -6082,7 +7183,13 @@
       "output": "crate::compaction::FoldReply<crate::compaction::FoldMarked>",
       "scope": "Write",
       "context": "run",
-      "effect": "Fold"
+      "effect": "Fold",
+      "host": {
+        "input": "crate::code_run::fold_api::FoldMarkRequest",
+        "description": "Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands.",
+        "host_door_caller": true,
+        "host_door_session": false
+      }
     },
     {
       "name": "self.compact",
@@ -6090,7 +7197,13 @@
       "output": "crate::compaction::FoldReply<crate::compaction::FoldCompactAsked>",
       "scope": "Write",
       "context": "run",
-      "effect": "Fold"
+      "effect": "Fold",
+      "host": {
+        "input": "crate::code_run::fold_api::FoldCompactRequest",
+        "description": "Asks the attached run to fold its pending marks in one batch at its next step boundary; read self.history for landed folds and epochs.",
+        "host_door_caller": true,
+        "host_door_session": false
+      }
     },
     {
       "name": "self.unfold",
@@ -6098,7 +7211,13 @@
       "output": "crate::compaction::FoldReply<crate::compaction::FoldUnfolded>",
       "scope": "Write",
       "context": "run",
-      "effect": "Fold"
+      "effect": "Fold",
+      "host": {
+        "input": "crate::code_run::fold_api::FoldUnfoldRequest",
+        "description": "Appends a fold of the attached run after its current tail, without replacing the earlier stub.",
+        "host_door_caller": true,
+        "host_door_session": false
+      }
     },
     {
       "name": "self.folds",
@@ -6106,7 +7225,13 @@
       "output": "crate::compaction::FoldReply<crate::compaction::FoldList>",
       "scope": "Read",
       "context": "run",
-      "effect": "Fold"
+      "effect": "Fold",
+      "host": {
+        "input": "crate::code_run::fold_api::FoldRunRequest",
+        "description": "Lists the attached run's landed folds, pending marks and outstanding compact ask.",
+        "host_door_caller": true,
+        "host_door_session": false
+      }
     },
     {
       "name": "tasks.refuse",
@@ -6122,7 +7247,11 @@
       "output": "crate::code_run::AgentSpawnOutput",
       "scope": "Write",
       "context": "run",
-      "effect": "AgentsSpawn"
+      "effect": "AgentsSpawn",
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::AgentSpawnInput>",
+        "description": "Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity."
+      }
     },
     {
       "name": "self.leader.advice",
@@ -6146,7 +7275,11 @@
       "output": "crate::code_run::LeaderSplitOutput",
       "scope": "Write",
       "context": "run",
-      "effect": "LeaderSplit"
+      "effect": "LeaderSplit",
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::LeaderSplitInput>",
+        "description": "Splits the attached leader run into a subproject inside its own TASK wrapper; spec may name only the child leader and a narrower scope."
+      }
     },
     {
       "name": "self.skills.call",
@@ -6202,6 +7335,50 @@
       "scope": "Write",
       "context": "run",
       "effect": "Summarize"
+    },
+    {
+      "name": "self.run.attach",
+      "description": "Attaches the caller's own credential to its leased live run and returns the handle required by the public fold and history calls.",
+      "input": "crate::code_run::fold_api::RunAttachRequest",
+      "output": "crate::code_run::fold_api::RunAttached",
+      "call": "crate::code_run::fold_api::host_required(memory, &input)?",
+      "host_door": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "self.folds.describe",
+      "description": "Reads one pending mark or landed fold of the attached run, with its Generated stub, source ids and retained result handles.",
+      "input": "crate::code_run::fold_api::FoldUnfoldRequest",
+      "output": "crate::compaction::FoldReply<crate::compaction::FoldDescription>",
+      "call": "crate::code_run::fold_api::host_required(memory, &input)?",
+      "host_door": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door_lists": true
+    },
+    {
+      "name": "self.history",
+      "description": "Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled.",
+      "input": "crate::code_run::fold_api::FoldHistoryRequest",
+      "output": "crate::engine_executor::history::FoldHistory",
+      "call": "crate::code_run::fold_api::host_required(memory, &input)?",
+      "host_door": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door_lists": true
     }
   ]
 }

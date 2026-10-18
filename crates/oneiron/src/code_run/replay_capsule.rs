@@ -12,16 +12,27 @@
 //! site finalizes once the call is done ([`finalize_step_captures`]). A
 //! capture that fails, or a call no rung answered, leaves no replayable
 //! capsule, and the live step goes on as if none was asked.
+//!
+//! An executor step's capsule also holds the run's state before the step
+//! (FIX 3694): its replay row as stored, with the config and teaching it ran
+//! under, in a body the run owns. A continuation of a failed run forks from
+//! the start of its failing step.
 
 use std::cell::RefCell;
 
 use serde::{Deserialize, Serialize};
 
-use super::storage::{finalize_capsule, put_capsule, store_capsule_request};
+use super::codec::encode_code_run_replay_record;
+use super::replay::CodeRunReplayRecord;
+use super::storage::{finalize_capsule, put_capsule, store_capsule_request, store_capsule_start};
 use crate::attempt_queue::AttemptId;
 use crate::compaction::output::OutputRef;
+use crate::llm::ReasoningEffort;
 use crate::vault::VaultId;
-use crate::{ContentPart, EntityId, LlmMessage, LlmRequest, ModelId, ModelLocality, Result, Vault};
+use crate::{
+    ContentPart, EntityId, LlmMessage, LlmRequest, ModelId, ModelLocality, ModelTierRef, Result,
+    Vault,
+};
 
 /// The most staged captures one thread holds while their calls are out. A
 /// thread that stages more drops its oldest, which then stays unreplayable.
@@ -153,6 +164,39 @@ pub struct StepReplayCapsule {
     pub binding: Option<CapsuleRungBinding>,
     /// Unix seconds it was captured.
     pub captured_at: u64,
+    /// The executor run's state before the step; `None` for a workflow step
+    /// and for a start that was not captured.
+    pub start: Option<ExecutorStepStart>,
+}
+
+/// The executor run's state before the step (FIX 3694): what a
+/// continuation forks from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutorStepStart {
+    /// The start body (its encoded prefix row, its config, its teaching
+    /// fingerprint), owned by the run.
+    pub body: OutputRef,
+    pub path: String,
+    /// BLAKE3 of the body bytes.
+    pub digest: [u8; 32],
+    /// The bridge log's length at the step's start.
+    pub bridge_start: u64,
+}
+
+/// The body an [`ExecutorStepStart`] names: the run's replay row as stored
+/// before the step, with no live-run binding, and what the run ran under.
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct StepStartBody {
+    /// The prefix row, as [`encode_code_run_replay_record`] encodes it.
+    pub(crate) record: Vec<u8>,
+    pub(crate) task: String,
+    pub(crate) model: ModelId,
+    pub(crate) model_locality: ModelLocality,
+    pub(crate) seat_effort: Option<ReasoningEffort>,
+    pub(crate) global_tier: ModelTierRef,
+    pub(crate) soft_steps: u32,
+    /// The resolved teaching the run's provider work was produced under.
+    pub(crate) prompt_fingerprint: String,
 }
 
 /// One step a capture site is about to send.
@@ -166,6 +210,20 @@ pub(crate) struct StepCapture<'a> {
     /// The task the request carries, which `exposures` index into.
     pub(crate) task: &'a str,
     pub(crate) exposures: &'a [TaskExposure],
+    /// An executor step's run state and config; `None` for a workflow step.
+    pub(crate) start: Option<StepStartCapture<'a>>,
+}
+
+/// An executor step's run as the step starts: its row as it stands, and the
+/// config fields and teaching fingerprint it runs under.
+pub(crate) struct StepStartCapture<'a> {
+    pub(crate) record: &'a CodeRunReplayRecord,
+    pub(crate) model: &'a ModelId,
+    pub(crate) model_locality: ModelLocality,
+    pub(crate) seat_effort: Option<ReasoningEffort>,
+    pub(crate) global_tier: &'a ModelTierRef,
+    pub(crate) soft_steps: u32,
+    pub(crate) prompt_fingerprint: &'a str,
 }
 
 /// A staged capture waiting for its call's answering rung.
@@ -266,6 +324,7 @@ pub fn capture_workflow_step(
             request,
             task: "",
             exposures: &[],
+            start: None,
         },
     );
 }
@@ -306,6 +365,13 @@ fn stage(vault: &Vault, capture: &StepCapture<'_>) -> Result<Option<Awaiting>> {
         capture.lease_generation, capture.step
     );
     let request = store_capsule_request(vault, capture.run, path.clone(), &bytes)?;
+    // A start that fails is logged, and the capsule goes on without it.
+    let start = capture.start.as_ref().and_then(|start| {
+        stage_start(vault, capture, start).unwrap_or_else(|error| {
+            tracing::warn!(kind = ?error.kind(), "a step start was not captured");
+            None
+        })
+    });
     let capsule = StepReplayCapsule {
         attempt,
         lease_generation: capture.lease_generation,
@@ -324,6 +390,7 @@ fn stage(vault: &Vault, capture: &StepCapture<'_>) -> Result<Option<Awaiting>> {
             .and_then(serde_json::Value::as_u64),
         binding: None,
         captured_at: crate::unix_seconds_now(),
+        start,
     };
     let key = (attempt, u64::from(capture.lease_generation), capture.step);
     put_capsule(vault, &key, &capsule)?;
@@ -332,6 +399,46 @@ fn stage(vault: &Vault, capture: &StepCapture<'_>) -> Result<Option<Awaiting>> {
         key,
         messages,
         binding: None,
+    }))
+}
+
+/// Stores the run's state before the step as a body the run owns: its replay
+/// row as stored, which the side-row wall already admitted, with its
+/// live-run binding cleared. `None` when no row is stored or the stored row
+/// is not the one the step starts from.
+fn stage_start(
+    vault: &Vault,
+    capture: &StepCapture<'_>,
+    start: &StepStartCapture<'_>,
+) -> Result<Option<ExecutorStepStart>> {
+    let Some(mut record) = vault.get_code_run_replay_record(&capture.run)? else {
+        return Ok(None);
+    };
+    if record.generation()? != start.record.generation()? {
+        return Ok(None);
+    }
+    record.live_run = None;
+    let body = StepStartBody {
+        record: encode_code_run_replay_record(&record)?,
+        task: capture.task.to_owned(),
+        model: start.model.clone(),
+        model_locality: start.model_locality,
+        seat_effort: start.seat_effort,
+        global_tier: start.global_tier.clone(),
+        soft_steps: start.soft_steps,
+        prompt_fingerprint: start.prompt_fingerprint.to_owned(),
+    };
+    let bytes = rmp_serde::to_vec_named(&body)
+        .map_err(|error| crate::Error::InvalidConfig(format!("capsule start: {error}")))?;
+    let path = format!(
+        "replay/capsule/{}/{:06}.start.msgpack",
+        capture.lease_generation, capture.step
+    );
+    Ok(Some(ExecutorStepStart {
+        body: store_capsule_start(vault, capture.run, path.clone(), &bytes)?,
+        path,
+        digest: *blake3::hash(&bytes).as_bytes(),
+        bridge_start: record.bridge_calls.len() as u64,
     }))
 }
 
