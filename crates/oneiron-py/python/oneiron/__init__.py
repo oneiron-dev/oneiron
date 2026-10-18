@@ -669,6 +669,9 @@ class Oneiron:
         def gate(self) -> "Oneiron._VaultGateVerbs":
             return Oneiron._VaultGateVerbs(self._client)
         @property
+        def learning(self) -> "Oneiron._VaultLearningVerbs":
+            return Oneiron._VaultLearningVerbs(self._client)
+        @property
         def settings(self) -> "Oneiron._VaultSettingsVerbs":
             return Oneiron._VaultSettingsVerbs(self._client)
         @property
@@ -1789,6 +1792,15 @@ class Oneiron:
         def set(self, spec):
             """The owner sets the calibrated checker model, slot, confidence floor and shadow or enforce mode without changing other model bindings."""
             return json.loads(_translate(lambda: self._client.vault_gate_checker_set(json.dumps(spec))))
+    class _VaultLearningVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def read(self, spec):
+            """The owner reads a measured learning cell, its explicit prior, derived UNTESTED mark, projector heads and anchored evidence; borrowed provenance stays separate from own runs."""
+            return json.loads(_translate(lambda: self._client.vault_learning_read(json.dumps(spec))))
+        def projection(self, spec):
+            """The owner observes the stored projection receipt for an anchored attempt outcome; an absent receipt means projection has not committed, never a successful empty projection."""
+            return json.loads(_translate(lambda: self._client.vault_learning_projection(json.dumps(spec))))
     class _VaultSettingsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2918,6 +2930,9 @@ class Oneiron:
         def reply(self, spec):
             """Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs."""
             return json.loads(_translate(lambda: self._client.ai_reply(json.dumps(spec))))
+        @property
+        def voice(self) -> "Oneiron._AiVoiceVerbs":
+            return Oneiron._AiVoiceVerbs(self._client)
         def options(self, spec):
             """The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."""
             return json.loads(_translate(lambda: self._client.ai_options(json.dumps(spec))))
@@ -2948,6 +2963,33 @@ class Oneiron:
         def receipt(self, spec):
             """Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease."""
             return json.loads(_translate(lambda: self._client.ai_steps_receipt(json.dumps(spec))))
+    class _AiVoiceVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def start(self, spec):
+            """Opens an owner-bound live media session on the configured voice routes, using the caller credential, room audience and existing budget gates."""
+            return json.loads(_translate(lambda: self._client.ai_voice_start(json.dumps(spec))))
+        def audio(self, spec):
+            """Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech retires old output through the shared cancellation path."""
+            return json.loads(_translate(lambda: self._client.ai_voice_audio(json.dumps(spec))))
+        def events(self, spec):
+            """Reads ordered utterance and epoch events, PCM, flushes, playout stops, safeguard receipts and notices; advancing the cursor releases consumed events."""
+            return json.loads(_translate(lambda: self._client.ai_voice_events(json.dumps(spec))))
+        def ack(self, spec):
+            """Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed."""
+            return json.loads(_translate(lambda: self._client.ai_voice_ack(json.dumps(spec))))
+        def usage(self, spec):
+            """Observes actual voice-brain run settlements and a terminal boundary after producer teardown, epoch retirement, TTS cancel and client playout acknowledgment."""
+            return json.loads(_translate(lambda: self._client.ai_voice_usage(json.dumps(spec))))
+        def tool(self, spec):
+            """Calls a connector under the caller grant and carries its delivered result, marked foreign, into the next voice utterance for parallel sentence safeguards."""
+            return json.loads(_translate(lambda: self._client.ai_voice_tool(json.dumps(spec))))
+        def end(self, spec):
+            """Ends live voice through the shared cancellation path; keeps the session available for final playout acknowledgment and usage observation."""
+            return json.loads(_translate(lambda: self._client.ai_voice_end(json.dumps(spec))))
+        def close(self, spec):
+            """Ends and releases a live voice session and its retained events; read terminal usage and acknowledge playout before closing."""
+            return json.loads(_translate(lambda: self._client.ai_voice_close(json.dumps(spec))))
     class _AiVideoVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

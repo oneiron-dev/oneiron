@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 538 facade rows, 2012 declarations.
-Inputs: 488 of 538 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 477 of 538 fully typed, 61 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 548 facade rows, 2058 declarations.
+Inputs: 497 of 548 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 486 of 548 fully typed, 62 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 90; unread shapes: 0.
 """
 
@@ -5169,6 +5169,158 @@ class GateCheckerSet(TypedDict):
 class GateCheckerReceipt(TypedDict):
     binding: VerdictBinding
     receipt_ref: str
+MeasuredLearningPredicate = Literal["learning.reliability", "learning.edit_cost", "learning.retest_noise", "learning.setting"]
+class CellTypeRef(TypedDict):
+    node_id: str
+    tree_version: int
+class LearningCellKey(TypedDict):
+    subject: str
+    predicate: MeasuredLearningPredicate
+    executor: NotRequired[str | None]
+    typeRef: NotRequired[CellTypeRef | None]
+    axis: NotRequired[str | None]
+    consent_scope: NotRequired[str | None]
+    setting_key: NotRequired[str | None]
+class LearningReadRequest(TypedDict):
+    cell: LearningCellKey
+    project_ref: NotRequired[str | None]
+class LearningBetaValue(TypedDict):
+    alpha: float
+    beta: float
+class LearningMeanValue(TypedDict):
+    mean: float
+    spread: float
+class MeasuredLearningValueBeta(TypedDict):
+    form: Literal["beta"]
+    value: LearningBetaValue
+class MeasuredLearningValueMean(TypedDict):
+    form: Literal["mean"]
+    value: LearningMeanValue
+class MeasuredLearningValueCounts(TypedDict):
+    form: Literal["counts"]
+    value: dict[str, float]
+MeasuredLearningValue = MeasuredLearningValueBeta | MeasuredLearningValueMean | MeasuredLearningValueCounts
+PriorOrigin = Literal["shipped", "provenance", "carried", "parent", "model", "seed"]
+LearningPriorValue = LearningBetaValue | LearningMeanValue | dict[str, float]
+LearningPriorView = TypedDict("LearningPriorView", {"origin": PriorOrigin, "value": LearningPriorValue, "weight_runs": float, "from": NotRequired[str | None]})
+class EstimateLabels(TypedDict):
+    by_judge: NotRequired[dict[str, float]]
+    converted: NotRequired[float]
+    on_judge_model: NotRequired[float]
+    outcome_counts: NotRequired[dict[str, float] | None]
+class EstimateWindow(TypedDict):
+    half_life: int
+MeasuredLearningEstimate = dict[str, Any]
+class LearningHeadView(TypedDict):
+    claim_ref: str
+    at: int
+    evidence_receipts: list[str]
+    supersedes: list[str]
+class AnchorHeldOut(TypedDict):
+    kind: Literal["held_out"]
+class AnchorOwnerVerdict(TypedDict):
+    kind: Literal["owner_verdict"]
+class AnchorWorldOutcome(TypedDict):
+    kind: Literal["world_outcome"]
+class AnchorAudit(TypedDict):
+    kind: Literal["audit"]
+    rate: float
+class AnchorRetest(TypedDict):
+    kind: Literal["retest"]
+class AnchorFittingCheck(TypedDict):
+    kind: Literal["fitting_check"]
+Anchor = AnchorHeldOut | AnchorOwnerVerdict | AnchorWorldOutcome | AnchorAudit | AnchorRetest | AnchorFittingCheck
+class ObservationSuccess(TypedDict):
+    kind: Literal["success"]
+    v: bool
+class ObservationMagnitude(TypedDict):
+    kind: Literal["magnitude"]
+    v: float
+class ObservationCategory(TypedDict):
+    kind: Literal["category"]
+    v: str
+Observation = ObservationSuccess | ObservationMagnitude | ObservationCategory
+class ContributionCheck(TypedDict):
+    receipt: str
+    contributed: bool
+class SkillContribution(TypedDict):
+    skill: EntityId
+    check: ContributionCheck
+class UsedProvenanceEdge(TypedDict):
+    derived: EntityId
+    source: EntityId
+    check: NotRequired[ContributionCheck | None]
+class CreditOptions(TypedDict):
+    enabled: bool
+    depth_cap: NotRequired[int | None]
+    check_every_hop: bool
+class PackAttributionFields(TypedDict):
+    typeRef: CellTypeRef
+    executor: str
+    judge: str
+    pattern: EntityId
+    team_shape: list[str]
+    decider: EntityId
+    project: NotRequired[EntityId | None]
+    output: NotRequired[EntityId | None]
+    contributions: list[SkillContribution]
+    used_edges: list[UsedProvenanceEdge]
+    credit: CreditOptions
+class PackLearningContext(TypedDict):
+    attempt_receipt: str
+    outcome_receipt: str
+    attribution: PackAttributionFields
+class EvidenceRow(TypedDict):
+    at: int
+    anchor: Anchor
+    observation: Observation
+    weight: float
+    judge: NotRequired[str | None]
+    on_judge_model: NotRequired[bool]
+    outcome_label: NotRequired[str | None]
+    pack_attribution: NotRequired[PackLearningContext | None]
+    goal_revision: NotRequired[str | None]
+class LearningEvidenceView(TypedDict):
+    receipt: str
+    evidence: EvidenceRow
+class LearningProvenanceView(TypedDict):
+    cell: LearningCellKey
+    heads: list[LearningHeadView]
+    evidence: list[LearningEvidenceView]
+class MeasuredLearningView(TypedDict):
+    estimate: MeasuredLearningEstimate
+    own: bool
+    borrowed_from: NotRequired[LearningCellKey | None]
+    attributed_outcome_receipts: list[str]
+    provenance: LearningProvenanceView
+    prior_provenance: NotRequired[LearningProvenanceView | None]
+class LearningCellView(TypedDict):
+    cell: LearningCellKey
+    view: MeasuredLearningView
+class LearningProjectionRequest(TypedDict):
+    attempt_receipt: str
+    outcome_receipt: str
+    axis: str
+class LateCreditShare(TypedDict):
+    subject: EntityId
+    origin_skill: NotRequired[EntityId | None]
+    chain: list[UsedProvenanceEdge]
+    decay: float
+    weight: float
+class LateCreditReceipt(TypedDict):
+    receipt_id: str
+    attempt_receipt: str
+    outcome_receipt: str
+    anchor: Anchor
+    succeeded: bool
+    axis: str
+    at: int
+    goal_revision: NotRequired[str | None]
+    attribution: PackAttributionFields
+    direct_subjects: list[EntityId]
+    shares: list[LateCreditShare]
+class LearningProjectionView(TypedDict):
+    receipt: NotRequired[LateCreditReceipt | None]
 class LearningSettingsRequest(TypedDict):
     key: NotRequired[str | None]
 class LearningSettingSpecView(TypedDict):
@@ -6528,9 +6680,6 @@ class CritiqueProvenance(TypedDict):
     model_id: str
     model_revision: NotRequired[str | None]
 LearningPredicate = Literal["reliability", "edit_cost", "retest_noise", "setting"]
-class CellTypeRef(TypedDict):
-    node_id: str
-    tree_version: int
 class LearningCell(TypedDict):
     predicate: LearningPredicate
     subject: EntityId
@@ -7545,6 +7694,149 @@ class ContextEmitReceipt(TypedDict):
     request_digest: str
     result_digest: str
     context: ContextReceiptFields
+class LiveVoiceStartRequest(TypedDict):
+    sample_rate: int
+    channels: int
+    room_ref: NotRequired[str | None]
+    roster_ref: NotRequired[str | None]
+class LiveVoiceSession(TypedDict):
+    session_ref: str
+    sample_rate: int
+    channels: int
+class LiveVoiceAudioRequest(TypedDict):
+    session_ref: str
+    utterance_id: str
+    pcm_base64: str
+    speaking: bool
+    end_utterance: NotRequired[bool]
+class LiveVoiceProcessed(TypedDict):
+    session_ref: str
+    cursor: int
+    ended: bool
+class LiveVoiceEventsRequest(TypedDict):
+    session_ref: str
+    after: NotRequired[int]
+    limit: NotRequired[int | None]
+LiveVoiceStopReason = Literal["user_barge_in", "safeguard", "roster_changed", "output_failed", "session_end"]
+class LiveVoiceEventKindGenerationStarted(TypedDict):
+    kind: Literal["generation_started"]
+    run: str
+    context_sources: list[str]
+class LiveVoiceEventKindPcm(TypedDict):
+    kind: Literal["pcm"]
+    sample_rate: int
+    pcm_base64: str
+class LiveVoiceEventKindPlayoutEnd(TypedDict):
+    kind: Literal["playout_end"]
+class LiveVoiceEventKindFlush(TypedDict):
+    kind: Literal["flush"]
+class LiveVoiceEventKindPlayoutStop(TypedDict):
+    kind: Literal["playout_stop"]
+    reason: LiveVoiceStopReason
+class LiveVoiceEventKindMediaCancelled(TypedDict):
+    kind: Literal["media_cancelled"]
+class LiveVoiceEventKindSafeguard(TypedDict):
+    kind: Literal["safeguard"]
+    action: PolicyEnforcementAction
+    receipt_ref: NotRequired[str | None]
+    custom_tier_skipped: bool
+class LiveVoiceEventKindNotice(TypedDict):
+    kind: Literal["notice"]
+    notice: GateSystemNoticeRecord
+class LiveVoiceEventKindMemories(TypedDict):
+    kind: Literal["memories"]
+    found: int
+    heard: int
+    receipts: list[ScopedReadReceipt]
+class LiveVoiceEventKindToolContext(TypedDict):
+    kind: Literal["tool_context"]
+    source: str
+class LiveVoiceEventKindFinished(TypedDict):
+    kind: Literal["finished"]
+class LiveVoiceEventKindError(TypedDict):
+    kind: Literal["error"]
+    code: str
+class LiveVoiceEventKindSessionEnded(TypedDict):
+    kind: Literal["session_ended"]
+LiveVoiceEventKind = LiveVoiceEventKindGenerationStarted | LiveVoiceEventKindPcm | LiveVoiceEventKindPlayoutEnd | LiveVoiceEventKindFlush | LiveVoiceEventKindPlayoutStop | LiveVoiceEventKindMediaCancelled | LiveVoiceEventKindSafeguard | LiveVoiceEventKindNotice | LiveVoiceEventKindMemories | LiveVoiceEventKindToolContext | LiveVoiceEventKindFinished | LiveVoiceEventKindError | LiveVoiceEventKindSessionEnded
+class LiveVoiceEvent(TypedDict):
+    sequence: int
+    utterance_id: NotRequired[str | None]
+    generation: NotRequired[int | None]
+    event: LiveVoiceEventKind
+class LiveVoiceEvents(TypedDict):
+    session_ref: str
+    cursor: int
+    ended: bool
+    events: list[LiveVoiceEvent]
+LiveVoiceAckKind = Literal["drained", "stopped"]
+class LiveVoiceAckRequest(TypedDict):
+    session_ref: str
+    generation: int
+    event_sequence: int
+    kind: LiveVoiceAckKind
+class LiveVoiceUsageRequest(TypedDict):
+    session_ref: str
+    generation: int
+class LiveVoiceUsage(TypedDict):
+    session_ref: str
+    utterance_id: str
+    generation: int
+    run: str
+    terminal: bool
+    metering_enabled: bool
+    settlements: list[RunRungSettlement]
+MutationIntent = Literal["preview", "explicit_mutation"]
+class ConnectorCallRequest(TypedDict):
+    name: str
+    tool: str
+    arguments: NotRequired[Any]
+    mutation: NotRequired[MutationIntent]
+class LiveVoiceToolRequest(TypedDict):
+    session_ref: str
+    call: ConnectorCallRequest
+class ConnectorToolResult(TypedDict):
+    source: str
+    foreign: bool
+    content: Any
+    structured_content: NotRequired[Any | None]
+    is_error: bool
+    rpc_error: NotRequired[Any | None]
+class ConnectorQuestion(TypedDict):
+    key: str
+    message: str
+    requested_schema: Any
+class ConnectorCallReplyDelivered(TypedDict):
+    outcome: Literal["delivered"]
+    result: NotRequired[ConnectorToolResult | None]
+    reasons: NotRequired[list[str]]
+class ConnectorCallReplyHeld(TypedDict):
+    outcome: Literal["held"]
+    call_ref: str
+    decision_ref: NotRequired[str | None]
+    reasons: list[str]
+class ConnectorCallReplyRefused(TypedDict):
+    outcome: Literal["refused"]
+    decision_ref: NotRequired[str | None]
+    reasons: list[str]
+class ConnectorCallReplyPendingDelivery(TypedDict):
+    outcome: Literal["pending_delivery"]
+    call_ref: NotRequired[str | None]
+    reasons: list[str]
+class ConnectorCallReplyAwaitingInput(TypedDict):
+    outcome: Literal["awaiting_input"]
+    handle: str
+    source: str
+    foreign: bool
+    questions: list[ConnectorQuestion]
+    expires_at_ms: int
+    reasons: NotRequired[list[str]]
+ConnectorCallReply = ConnectorCallReplyDelivered | ConnectorCallReplyHeld | ConnectorCallReplyRefused | ConnectorCallReplyPendingDelivery | ConnectorCallReplyAwaitingInput
+class LiveVoiceToolReply(TypedDict):
+    processed: LiveVoiceProcessed
+    reply: ConnectorCallReply
+class LiveVoiceSessionRequest(TypedDict):
+    session_ref: str
 class AiOptionsRequest(TypedDict):
     operation: NotRequired[str | None]
     inputs: NotRequired[list[str]]
@@ -8014,49 +8306,6 @@ class ConnectorView(TypedDict):
     registered_at: int
     status_changed_at: NotRequired[int | None]
     budgeted_as_sends: bool
-MutationIntent = Literal["preview", "explicit_mutation"]
-class ConnectorCallRequest(TypedDict):
-    name: str
-    tool: str
-    arguments: NotRequired[Any]
-    mutation: NotRequired[MutationIntent]
-class ConnectorToolResult(TypedDict):
-    source: str
-    foreign: bool
-    content: Any
-    structured_content: NotRequired[Any | None]
-    is_error: bool
-    rpc_error: NotRequired[Any | None]
-class ConnectorQuestion(TypedDict):
-    key: str
-    message: str
-    requested_schema: Any
-class ConnectorCallReplyDelivered(TypedDict):
-    outcome: Literal["delivered"]
-    result: NotRequired[ConnectorToolResult | None]
-    reasons: NotRequired[list[str]]
-class ConnectorCallReplyHeld(TypedDict):
-    outcome: Literal["held"]
-    call_ref: str
-    decision_ref: NotRequired[str | None]
-    reasons: list[str]
-class ConnectorCallReplyRefused(TypedDict):
-    outcome: Literal["refused"]
-    decision_ref: NotRequired[str | None]
-    reasons: list[str]
-class ConnectorCallReplyPendingDelivery(TypedDict):
-    outcome: Literal["pending_delivery"]
-    call_ref: NotRequired[str | None]
-    reasons: list[str]
-class ConnectorCallReplyAwaitingInput(TypedDict):
-    outcome: Literal["awaiting_input"]
-    handle: str
-    source: str
-    foreign: bool
-    questions: list[ConnectorQuestion]
-    expires_at_ms: int
-    reasons: NotRequired[list[str]]
-ConnectorCallReply = ConnectorCallReplyDelivered | ConnectorCallReplyHeld | ConnectorCallReplyRefused | ConnectorCallReplyPendingDelivery | ConnectorCallReplyAwaitingInput
 class ConnectorSchemaRequest(TypedDict):
     name: str
     tool: str

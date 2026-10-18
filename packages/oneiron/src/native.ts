@@ -266,6 +266,8 @@ vaultGatePolicyPut(input: unknown): unknown
 vaultGatePolicyPropose(input: unknown): unknown
 vaultGateCheckerGet(input: unknown): unknown
 vaultGateCheckerSet(input: unknown): unknown
+vaultLearningRead(input: unknown): unknown
+vaultLearningProjection(input: unknown): unknown
 vaultSettingsLearning(input: unknown): unknown
 vaultSettingsLearningPut(input: unknown): unknown
 vaultSettingsLearningClear(input: unknown): unknown
@@ -411,6 +413,14 @@ aiStepsSubmit(input: unknown): unknown
 aiStepsReceipt(input: unknown): unknown
 aiReply(input: unknown): unknown
 vaultReceiptsContext(input: unknown): unknown
+aiVoiceStart(input: unknown): unknown
+aiVoiceAudio(input: unknown): unknown
+aiVoiceEvents(input: unknown): unknown
+aiVoiceAck(input: unknown): unknown
+aiVoiceUsage(input: unknown): unknown
+aiVoiceTool(input: unknown): unknown
+aiVoiceEnd(input: unknown): unknown
+aiVoiceClose(input: unknown): unknown
 aiOptions(input: unknown): unknown
 aiImage(input: unknown): unknown
 aiSpeech(input: unknown): unknown
