@@ -1407,7 +1407,7 @@
      "path": "src/anchored_annotation/anchor_text.rs",
      "purpose": "What an anchor says: the text under a locator in one version's bytes, the exact places those words occur in…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -1453,7 +1453,7 @@
      "purpose": "ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief…",
      "surface": {
       "crate-vis": 2,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -1561,6 +1561,45 @@
      "surface": {
       "crate-vis": 10,
       "fn": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/anchored_annotation/verbs.rs",
+     "purpose": "Credential-bound adapters over the engine's anchored annotation lifecycle",
+     "surface": {
+      "fn": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AnnotationAnchorView",
+      "AnnotationAssignRequest",
+      "AnnotationBriefView",
+      "AnnotationCommentRequest",
+      "AnnotationCommentView",
+      "AnnotationDriftView",
+      "AnnotationLocator",
+      "AnnotationPinRequest",
+      "AnnotationResolution",
+      "AnnotationStateRequest",
+      "AnnotationThreadOpenRequest",
+      "AnnotationThreadRequest",
+      "AnnotationThreadState",
+      "AnnotationThreadView",
+      "ArtifactUnitView",
+      "ArtifactUnitsRequest",
+      "ArtifactUnitsView"
+     ],
+     "path": "src/anchored_annotation/wire.rs",
+     "purpose": "Typed wire shapes for artifact units and anchored comment threads",
+     "surface": {
+      "enum": 4,
+      "struct": 13
      }
     },
     {
@@ -49214,7 +49253,7 @@
      "purpose": "—",
      "surface": {
       "const": 3,
-      "fn": 465
+      "fn": 473
      }
     },
     {
@@ -54505,7 +54544,7 @@
      "purpose": "Multilingual analyzer subsystem"
     },
     "anchored_annotation": {
-     "files": 14,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -55984,7 +56023,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3409,
+   "source_files": 3411,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64397,7 +64436,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 415
+      "fn": 423
      }
     },
     {
@@ -65445,7 +65484,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 416
+      "fn": 424
      }
     },
     {
@@ -76525,6 +76564,20 @@
       "AiVideoTicket",
       "AiVoice",
       "AllRelationships",
+      "AnnotationAnchorView",
+      "AnnotationAssignRequest",
+      "AnnotationBriefView",
+      "AnnotationCommentRequest",
+      "AnnotationCommentView",
+      "AnnotationDriftView",
+      "AnnotationLocator",
+      "AnnotationPinRequest",
+      "AnnotationResolution",
+      "AnnotationStateRequest",
+      "AnnotationThreadOpenRequest",
+      "AnnotationThreadRequest",
+      "AnnotationThreadState",
+      "AnnotationThreadView",
       "AnswerContract",
       "AnswerRecord",
       "AnswerSheetAtom",
@@ -76545,7 +76598,10 @@
       "ArtifactExportRequest",
       "ArtifactKind",
       "ArtifactRefRequest",
+      "ArtifactUnitView",
       "ArtifactUnits",
+      "ArtifactUnitsRequest",
+      "ArtifactUnitsView",
       "ArtifactVersionView",
       "ArtifactView",
       "AskAct",
@@ -78012,8 +78068,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 426,
-      "struct": 1111
+      "enum": 430,
+      "struct": 1124
      }
     },
     {
