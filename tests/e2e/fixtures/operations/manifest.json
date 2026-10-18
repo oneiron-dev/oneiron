@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "area": "operations",
+  "assets": [
+    {
+      "id": "operations-cases",
+      "path": "cases.json",
+      "source": {
+        "uri": "owner-authored:oneiron-e2e-operations-20261018",
+        "revision": "1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "db7d4d0850e2a026938d2249187e863d79f5e6fc25500cd23dba60c9577a81db",
+      "expectedFacts": {
+        "consecutiveProviderFailures": 3,
+        "diagnosticUntrustedDetail": null,
+        "burstIntents": 4,
+        "burstFixtureRowBound": 2,
+        "automaticRealChatExports": 0,
+        "metadataFree": true,
+        "quotedTextRequiresScopedDisclosure": true
+      },
+      "scenarios": [
+        "OPERATIONS-01",
+        "OPERATIONS-02",
+        "OPERATIONS-03",
+        "OPERATIONS-04",
+        "OPERATIONS-05",
+        "OPERATIONS-06",
+        "OPERATIONS-07"
+      ],
+      "requires": []
+    },
+    {
+      "id": "operations-generic-pack",
+      "path": "PACK.md",
+      "source": {
+        "uri": "owner-authored:oneiron-e2e-operations-20261018",
+        "revision": "1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "c83f83352028ca1f41eabc5947ac87036343ac6ac5422e109dc085a2b18bbaf6",
+      "expectedFacts": {
+        "name": "operations.example",
+        "version": "1.0.0",
+        "kind": "capability",
+        "predicates": [
+          "operations.example.color"
+        ],
+        "grants": [],
+        "skills": [],
+        "code": false,
+        "hooks": [],
+        "organs": []
+      },
+      "scenarios": [
+        "OPERATIONS-05"
+      ],
+      "requires": []
+    }
+  ]
+}
