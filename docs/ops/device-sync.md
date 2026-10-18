@@ -89,6 +89,23 @@ home_node_id = 1234567890123456789   # the home's sync_node_id, from `oneiron wh
 
 The section is file-only: no environment variable or flag sets it.
 
+## The credential renews itself
+
+The paired credential's slip has a lifetime. serve renews it at the home once at start, then at
+half each new slip's lifetime (`POST /v1/core/slips/renew`, at the http(s) origin of
+`home_url`: `wss` becomes `https`, `ws` becomes `http`, and `/ws` is dropped). The lifetime comes
+from the new slip itself, never from the home's clock against this machine's. The request
+carries the slip, a holder proof with its key, and this machine's own proof.
+
+- On success the replacement, bound to the same seed, is written over the credential file (the
+  enrolled `.cred` or the hand-named `credential_file`): to a new owner-only file beside it,
+  synced, then renamed over it. The connection then stops and starts again on the new slip.
+- On failure the file and the connection stay as they are, and the renewal is tried again after
+  30 seconds, doubling up to 15 minutes. The old slip works until it runs out.
+- A refusal (an expired or revoked slip, or a machine the home no longer counts as the owner's)
+  stands until serve starts again. Pair the machine again: with the vault stopped, remove both
+  device-sync files and run `oneiron device enrol` with a new link.
+
 ## What the log shows
 
 - `device sync started` with this machine's id, the home's, and `over` (`mesh` or `url`).
@@ -96,6 +113,11 @@ The section is file-only: no environment variable or flag sets it.
   on without the connection.
 - `device sync` warnings for connection errors. The connection retries with backoff up to a
   minute.
+- `device credential renewed`, with the seconds until the next renewal; `device sync reconnects
+  on its renewed credential` after it.
+- `device credential renewal failed (<reason>)` with the seconds until it tries again, and
+  `device credential renewal refused (<reason>)` (pair again) or `renewal off (<reason>)` when
+  it will not try again before the next start.
 - `mesh model catalog kept the vault's own routes`, with the model ids, when another node
   offers a model that this vault already routes another way (a pack or a local row). That row
   wins.
