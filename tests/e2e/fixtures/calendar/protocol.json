@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "status": "Protocol corpus only; blocked scenarios do not start a fake service. Bind to production HTTP adapters via ScriptedProviders only after the typed configure/poll/sync doors exist.",
+  "noEngineSimulation": true,
+  "icsFeed": {
+    "path": "/calendar.ics",
+    "method": "GET",
+    "steps": [
+      {
+        "id": "initial",
+        "status": 200,
+        "etag": "\"v0\"",
+        "asset": "calendar-passport-v0"
+      },
+      {
+        "id": "same-complete-body",
+        "status": 200,
+        "etag": "\"v0\"",
+        "asset": "calendar-passport-v0"
+      },
+      {
+        "id": "higher-sequence",
+        "status": 200,
+        "etag": "\"v1\"",
+        "asset": "calendar-passport-v1"
+      },
+      {
+        "id": "same-sequence-body-drift",
+        "status": 200,
+        "etag": "\"v1-drift\"",
+        "asset": "calendar-passport-drift"
+      },
+      {
+        "id": "complete-empty-calendar",
+        "status": 200,
+        "etag": "\"empty\"",
+        "asset": "calendar-passport-absent"
+      }
+    ],
+    "contentType": "text/calendar; charset=utf-8",
+    "credential": "Runtime-generated loopback URL stored in custody; payloads/logs refer only to its secret_ref, never the URL."
+  },
+  "caldav": {
+    "collection": "/calendars/owner/work/",
+    "resource": "/calendars/owner/work/invite.ics",
+    "discovery": {
+      "method": "PROPFIND",
+      "depth": "0",
+      "body": "<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\"><d:prop><d:sync-token/><d:resourcetype/></d:prop></d:propfind>",
+      "status": 207,
+      "contentType": "application/xml",
+      "response": "<?xml version=\"1.0\"?><d:multistatus xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\"><d:response><d:href>/calendars/owner/work/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/><c:calendar/></d:resourcetype><d:sync-token>fixture-sync-0</d:sync-token></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>"
+    },
+    "conditionalPut": {
+      "method": "PUT",
+      "requestBody": "Capture exact staged ICS bytes from the REAL engine. Assert one VCALENDAR/VEVENT, fixture UID, sequence 1, 18:00Z and organizer; no independent renderer as a substitute.",
+      "headers": {
+        "if-match": "\"fixture-etag-0\""
+      },
+      "response": {
+        "status": 204,
+        "headers": {
+          "ETag": "\"fixture-etag-1\""
+        }
+      }
+    },
+    "syncReport": {
+      "method": "REPORT",
+      "depth": "1",
+      "request": "<?xml version=\"1.0\"?><d:sync-collection xmlns:d=\"DAV:\"><d:sync-token>fixture-sync-0</d:sync-token><d:sync-level>1</d:sync-level><d:prop><d:getetag/></d:prop></d:sync-collection>",
+      "status": 207,
+      "contentType": "application/xml",
+      "response": "<?xml version=\"1.0\"?><d:multistatus xmlns:d=\"DAV:\"><d:sync-token>fixture-sync-1</d:sync-token><d:response><d:href>/calendars/owner/work/invite.ics</d:href><d:propstat><d:prop><d:getetag>\"fixture-etag-1\"</d:getetag></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>"
+    },
+    "getEcho": {
+      "method": "GET",
+      "status": 200,
+      "headers": {
+        "ETag": "\"fixture-etag-1\"",
+        "Content-Type": "text/calendar; charset=utf-8"
+      },
+      "responseBody": "Exact bytes captured from conditionalPut; calendar-caldav-echo is a semantic oracle, not assumed renderer output."
+    },
+    "sinkBoundary": "Record only external HTTP requests. Do not read the vault, expose internal counters, mint receipts or settle lifecycle transitions in the sink. Fail unexpected methods/resources; close via ownResource and retain redacted protocol diagnostics."
+  },
+  "imip": {
+    "boundary": "A host-configured local outbound delivery sink, not a Rust OutboundResultSender injected by the test. Its public server configuration is missing and remains a prerequisite.",
+    "parts": [
+      {
+        "asset": "calendar-invite-request",
+        "contentType": "text/calendar; method=REQUEST; charset=utf-8",
+        "uid": "invite@calendar.example.test",
+        "sequence": 0
+      },
+      {
+        "asset": "calendar-invite-update",
+        "contentType": "text/calendar; method=REQUEST; charset=utf-8",
+        "uid": "invite@calendar.example.test",
+        "sequence": 1
+      }
+    ],
+    "inbound": [
+      {
+        "asset": "calendar-invite-acceptance",
+        "method": "REPLY",
+        "sequence": 1
+      },
+      {
+        "asset": "calendar-invite-cancel",
+        "method": "CANCEL",
+        "sequence": 2
+      }
+    ],
+    "expected": "Zero delivery before agreement/grant; one delivery per accepted intent, no duplicate on replay. PARTSTAT acceptance alone never proves attendance."
+  }
+}

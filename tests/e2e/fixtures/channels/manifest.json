@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "area": "channels",
+  "assets": [
+    {
+      "id": "channels-scenarios",
+      "path": "scenarios.json",
+      "source": {
+        "uri": "independent-oracle:channels-owner-canon-20261018",
+        "revision": "ee3d7170f3b6e684cdc737dc93adfb94478cb1c3b8268cd879cc5e925085d20d"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "410bbbf8a2e545d6aadb32093eeebe9b1c86da6c907ae422e1ae1b43fba525f9",
+      "expectedFacts": {
+        "scenarioCount": 9,
+        "plannedIds": [
+          "CHANNELS-01",
+          "CHANNELS-02",
+          "CHANNELS-03",
+          "CHANNELS-04",
+          "CHANNELS-05",
+          "CHANNELS-06",
+          "CHANNELS-07",
+          "CHANNELS-08",
+          "CHANNELS-09"
+        ],
+        "registryRows": [
+          "OF-188",
+          "OF-189",
+          "OF-213",
+          "OF-247",
+          "OF-272",
+          "OF-277",
+          "OF-327",
+          "OF-347",
+          "OF-372",
+          "OF-373",
+          "OF-374",
+          "OF-402",
+          "OF-404",
+          "OF-413",
+          "OF-416",
+          "OF-435",
+          "OF-517",
+          "OF-519"
+        ],
+        "oracle": "Pinned canon, owner G01 ruling and authored inputs; never engine output. Every complete flow remains BLOCKED until its typed calls exist.",
+        "registrationOnly": true,
+        "runtimeProviderScriptsQualified": false,
+        "missingPublicCalls": {
+          "CHANNELS-01": "waits on typed connector-pack qualification/advisory and grant-slate admission HTTP and SDK calls",
+          "CHANNELS-02": "waits on typed connector-pack permission/protocol delta-consent HTTP and SDK calls",
+          "CHANNELS-03": "waits on typed channel-identity and delivery-window policy HTTP and SDK calls for dispatch setup",
+          "CHANNELS-04": "waits on typed channel-identity lifecycle, selection-rule and thread-passport HTTP and SDK calls",
+          "CHANNELS-05": "waits on typed receiving ChannelIdentity provisioning/binding HTTP and SDK calls",
+          "CHANNELS-06": "waits on typed member-account send-as/draft and per-send consent HTTP and SDK calls",
+          "CHANNELS-07": "waits on typed campaign enrollment, earned-stage evidence and unsubscribe HTTP and SDK calls",
+          "CHANNELS-08": "waits on typed compliance-pack amendment, owner approval and verification HTTP and SDK calls",
+          "CHANNELS-09": "waits on typed outreach workflow execution/proposal and earned-stage outcome settlement calls"
+        },
+        "constantsChanged": false
+      },
+      "scenarios": [
+        "CHANNELS-01",
+        "CHANNELS-02",
+        "CHANNELS-03",
+        "CHANNELS-04",
+        "CHANNELS-05",
+        "CHANNELS-06",
+        "CHANNELS-07",
+        "CHANNELS-08",
+        "CHANNELS-09"
+      ],
+      "requires": []
+    }
+  ]
+}

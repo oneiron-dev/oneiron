@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "area": "artifacts",
+  "assets": [
+    {
+      "id": "artifacts-scenarios",
+      "path": "scenarios.json",
+      "source": {
+        "uri": "independent-specification:owner-artifacts-e2e-20261018",
+        "revision": "1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "c6d17ab21bd198b5db169a74ddf3b3e24f6a5cb25b2da9d59bd8c126654858dc",
+      "expectedFacts": {
+        "scenarioCount": 9,
+        "blockedIds": [
+          "ARTIFACTS-01",
+          "ARTIFACTS-02",
+          "ARTIFACTS-03",
+          "ARTIFACTS-04",
+          "ARTIFACTS-05",
+          "ARTIFACTS-06",
+          "ARTIFACTS-07",
+          "ARTIFACTS-08",
+          "ARTIFACTS-09"
+        ],
+        "oracle": "Pinned canon/owner law and independently authored content/arithmetic, never engine output. This is a design fixture, not an Office oracle capture.",
+        "officeOraclePackagesPresent": false,
+        "realOrganBinariesPresent": false,
+        "allRequiredIdsRegistered": true
+      },
+      "scenarios": [
+        "ARTIFACTS-01",
+        "ARTIFACTS-02",
+        "ARTIFACTS-03",
+        "ARTIFACTS-04",
+        "ARTIFACTS-05",
+        "ARTIFACTS-06",
+        "ARTIFACTS-07",
+        "ARTIFACTS-08",
+        "ARTIFACTS-09"
+      ],
+      "requires": []
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "area": "surfaces",
+  "assets": [
+    {
+      "id": "surfaces-scenarios",
+      "path": "scenarios.json",
+      "source": {
+        "uri": "owner-authored:oneiron-e2e-surfaces-20261018",
+        "revision": "1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "4e019e7896aa51d3924c3ad35498e007d8f4dbecc498f1451dd21f6c67e1c4dd",
+      "expectedFacts": {
+        "plannedTests": 9,
+        "runnable": [
+          "SURFACES-04"
+        ],
+        "blocked": [
+          "SURFACES-01",
+          "SURFACES-02",
+          "SURFACES-03",
+          "SURFACES-05",
+          "SURFACES-06",
+          "SURFACES-07",
+          "SURFACES-08",
+          "SURFACES-09"
+        ],
+        "engineConstantsChanged": false,
+        "oracle": "Independently authored scenario values and canon invariants; source pins describe bindings only."
+      },
+      "scenarios": [
+        "SURFACES-01",
+        "SURFACES-02",
+        "SURFACES-03",
+        "SURFACES-04",
+        "SURFACES-05",
+        "SURFACES-06",
+        "SURFACES-07",
+        "SURFACES-08",
+        "SURFACES-09"
+      ],
+      "requires": []
+    }
+  ]
+}

@@ -1,0 +1,912 @@
+{
+  "version": 1,
+  "area": "Calendar and booking",
+  "bindingHead": "1aec7a3c94647f7f2cb012aaa9e4e3c2ff3d7cd3",
+  "ruling": "G01: designed verbs wait for typed HTTP and SDK calls. A TODO is BLOCKED, not passing coverage. No generic facade casts, structural/claim writes impersonating a calendar projector, execute_code or internal trait injection.",
+  "sourcePins": {
+    "canon": [
+      {
+        "path": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0060-event-ics-meetings-v1.md",
+        "sha256": "df9af271b497618aa219679d0bb949682ad04067e326bffcce9e5a8fd80fdc3d"
+      },
+      {
+        "path": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0062-booking-loop-v1.md",
+        "sha256": "bec12d11a5cf05efaf7476ae9820d24fb6a89544d3ba2a9736bb0ba4c2a87144"
+      },
+      {
+        "path": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0063-agent-inbox-email-identity-v1.md",
+        "sha256": "e713deabcb3a46144bf3bbd082e177662e6e422703a028ef4f1e7a420f39d409"
+      },
+      {
+        "path": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/extraction/oneiron-arch-0036-model-families-v1.md",
+        "sha256": "f1d847a24975aa46e00bc43f8ec6ce52d53f806045b587772e71380a3670372c"
+      },
+      {
+        "path": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/core/oneiron-arch-0002-structural-entities.md",
+        "sha256": "13e02238b5844f7ff37b6f37e17f3e57b1f998856277491664f7a6bb7bb1ce54",
+        "section": "ent-event"
+      }
+    ],
+    "registry": {
+      "path": "/Users/olety/Desktop/code/oneiron-docs/registry/oneiron.json",
+      "sha256": "8f56eb0c82be8475001e0127735558a0c6aa5721017138f9d68b951f87b19be7",
+      "rows": [
+        "OF-004",
+        "OF-405",
+        "OF-406",
+        "OF-407",
+        "OF-411",
+        "OF-412"
+      ]
+    },
+    "binding": [
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/scripts/sdk/agent-verbs.json",
+        "sha256": "d4fa36be976e4195323bf342a0e21a49f8965a2533536d7f6c0c2b9f2570911a"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/packages/oneiron-client/src/facade.ts",
+        "sha256": "e0cb73a45e493baa7182b10bc076eeb198984d15bcbc19add0fbc62c22912c76"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/packages/oneiron-client/src/facade-types.ts",
+        "sha256": "d64b62450805589152ac08d4dc99a6504c33862d0600449904ff264a45ad7e6a"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/packages/oneiron-client/src/index.ts",
+        "sha256": "a7d217a0c748bbfdb1cf0a3fcca20de8a03e71844e739fc148465420205eb149"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/packages/oneiron/src/agent-verbs.ts",
+        "sha256": "b5f8633317cc8e39d5ef970e65964d040d76216fff7400a91a3b90ccc1663b7b"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/packages/oneiron/src/facade-types.ts",
+        "sha256": "d64b62450805589152ac08d4dc99a6504c33862d0600449904ff264a45ad7e6a"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/packages/oneiron/README.md",
+        "sha256": "6459fe7b752d2b9ae516ef58475252aa047f04c5f1e432a393e6a4d960348097"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/oneiron.skills.md",
+        "sha256": "9335428a1e29b40abddaf55350c9d95bbce6d50385ada010f5fff2b422851ace"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/crates/oneiron-server/src/cli.rs",
+        "sha256": "81eb90def61131fc4c8988941876972ec619af98c1f97d170bcabea50a34bf33"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/crates/oneiron-server/src/api/openapi_registry.rs",
+        "sha256": "38a4872df012265d0df3d2d749585957ecd57826b1478e29ff06962eccb1e145"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/crates/oneiron-server/src/api/openapi/booking_schemas.rs",
+        "sha256": "5070790747f1c21288a1dc6305be72bcafb41f594a9bdcb96569e10e195adc25"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/crates/oneiron-server/src/api/openapi/endpoints_merge.rs",
+        "sha256": "edbcb928be6877398c1a0417f399852d7cf7dd617ec98fc6af063bb36956ba0f"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/crates/oneiron-server/src/api/booking.rs",
+        "sha256": "e5a8048fd36a9476c4b5f1c6f9afe53a19f95343d809c1bb48e7c143be83d2f6"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/crates/oneiron-server/src/api/booking/public.rs",
+        "sha256": "d2ebb4502cde06531ef6c1cd815357d9461d633885f00afe662d10efeede278f"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/crates/oneiron-server/src/api/booking/front.rs",
+        "sha256": "61ba64117a4f65d00959ff37a1a995c7fe0b154e269abbb8911ad28c896ce5e6"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/crates/oneiron-server/src/api/booking/page_token.rs",
+        "sha256": "c5f7c03134a8ed3408beaeb4b3ec99c14f5fb74219d9fe860b9ccb8ebf9cf4ee"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/crates/oneiron-server/src/mcp/tool_catalog.rs",
+        "sha256": "d7eba883380384956a7fd12756e28eb352746a787121696f4f4df3119fdd25b0"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/crates/oneiron-server/src/mcp/surface.rs",
+        "sha256": "4b2318c9679317cf1fb5f6c03ecf611de57c28311d6708b89a84431e3584dbae"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/crates/oneiron-server/src/api/mcp_gateway/actor_dispatch.rs",
+        "sha256": "bc7da31ce9e92fe1527424a4042cf3f3d32af18b10d5b889c5522ad6a2038ac1"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/crates/oneiron-server/src/api/tests/mcp_scoping.rs",
+        "sha256": "37805ffd543944723351a95b987f7f1946c9673dbcad4a72aeff9f576132081a"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/crates/oneiron/src/calendar/origin.rs",
+        "sha256": "cddc9709ab6b2c503ee1e68775c771d6ad1e6207bf08ed9567ec3dddd3be3fea"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/crates/oneiron/src/calendar/query/requests.rs",
+        "sha256": "17fce5408910d22f8a5c689a3a4c2796d3549dd28152202b8dfea568d63726ec"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/crates/oneiron/src/calendar/claims/values.rs",
+        "sha256": "6917f8d7e2843b1141d68937ce96e94042152958c11ece0257511fe3627fa254"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/crates/oneiron/src/calendar/ingest/poll.rs",
+        "sha256": "134b93542aead24672233908c86f3f9036a9759a314b74b26b3ab2c6984bf86d"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/crates/oneiron/src/memory/outbound/invite.rs",
+        "sha256": "22a8a093442f26f5cddc146158998cc1a465179d4545bfb4c87aad8180e41c50"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/crates/oneiron/src/calendar/transcript.rs",
+        "sha256": "8769bad544149df2e75b3700eccd5d74c95a09807bf36cb5cebf53ef2b293e8e"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/crates/oneiron/src/calendar/outcome.rs",
+        "sha256": "a196736efa71ac513ea870e74fa609d4a6d9dafe3f4ad6d426f1f25f698baa13"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/crates/oneiron/src/calendar/prep/pack.rs",
+        "sha256": "f5dae388583e40292e0223f2acac094623444d93615da4e86bd987405124d7f2"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/crates/oneiron/src/calendar/prep/wake.rs",
+        "sha256": "0d20931efe8db1a624595d0bc400caaab32824e3aba64df3eedb17b2d44133fd"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/crates/oneiron/src/calendar/connectors/seat.rs",
+        "sha256": "fdd226ba1fedf485e5a24943663718133a80fe5415da796b3bfc8631718d9a3a"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/crates/oneiron/src/booking/agent_api.rs",
+        "sha256": "e26373b261a1e7b26754130e337f9c0dbabbeb2cc3edd2259bcdd7fbcffe384b"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/crates/oneiron/src/booking/constraint.rs",
+        "sha256": "b945d14bd58a8f06112f09e9b2fa04b72dfa0194a3ec79f98ffe15ae953a997c"
+      },
+      {
+        "path": "/Users/olety/.claude/worktrees/solq-e2e-calendar/crates/oneiron/src/claim/scoped_read/receipt.rs",
+        "sha256": "347d5478e88a9679593e1bc4c289fcb513caa3bd91def6bc58f0a096334af8b0"
+      }
+    ],
+    "rulings": {
+      "path": "/Users/olety/Desktop/temp/vibe-build-20261017/e2e-rulings.md",
+      "sha256": "e1e02bfb1592280b869b9963bf6c8d5c8a9880d018438dbbdae27bcda87d90df"
+    }
+  },
+  "execution": {
+    "profile": "deterministic",
+    "slots": 1,
+    "estimatedSerialSeconds": 55,
+    "freshVaultPerId": true,
+    "harness": "EngineFixture.start + paired signed HTTP/CLI, anonymous PublicHttpClient for public booking, ScriptedProviders only for external protocols, loadFixtures for verified bytes/facts. All setup/observations remain public.",
+    "completion": "Await public receipts/status and external barriers with deadlines, never private ticks or fixed sleeps. TODO registrations do not start a server.",
+    "symbolicRefs": "Fixture labels denote values to bind from real public responses, not fabricated EntityIds, principals, claims, tokens or credentials. Calendar inclusive query ranges and half-open booking slots are distinct."
+  },
+  "assumptionsAndConstants": {
+    "engineDefaultsChanged": false,
+    "fixturePolicyOnly": {
+      "bookingDurationMinutes": 30,
+      "slotStepMinutes": 30,
+      "noticeSeconds": 0,
+      "bookingWindowSeconds": 604800,
+      "buffersMinutes": 0,
+      "outcomeGraceSeconds": 1,
+      "pollCadenceSeconds": 300
+    },
+    "readDefaultsNotOverridden": {
+      "holdTtlSeconds": 300,
+      "outcomeGraceSeconds": 1800,
+      "prepLeadSeconds": 2700,
+      "prepMaxWords": 250
+    },
+    "realTime": "Booking uses a future UTC day from the Linux host clock; meeting end/grace is a short wall-time fixture only if typed owner policy supports it. Historical DST imports use explicit instants, no fake clock."
+  },
+  "bindingFindings": {
+    "present": [
+      "Typed HTTP /api/booking/{page_token}/agent-instructions, availability, book, reschedule, cancel with OpenAPI Booking* schemas.",
+      "Anonymous /public/booking/{page_token}, availability, constraint-turn and verbs/{hold|confirm|reschedule|cancel}; the public route wraps BookingOperationRequest, unlike protected /api/booking bodies.",
+      "Owner vault.claims.upsert supports booking.public_page; its ordinary claim receipt does not supply page_token."
+    ],
+    "missing": [
+      "Calendar origin writers, ICS feed configure/poll/approval observation, calendar read/search/occurrence/instance move, invite/connector sync and prep/outcome/transcript lack typed HTTP/SDK bindings.",
+      "No supported public owner page-token discovery observed; tests must not copy the private digest derivation.",
+      "Generated SDK catalogs contain no calendar/booking calls.",
+      "oneiron.book and oneiron.calendar are RETIRED MCP names, explicitly rejected in current mcp_scoping.rs; older oneiron.skills.md booking prose is stale."
+    ],
+    "notClaimed": "The existence of Rust domain DTOs or OpenAPI booking schemas is not evidence of a callable calendar verb or MCP tool. No endpoint path is invented for an unbound design."
+  },
+  "bookingFixture": {
+    "timeAnchor": "Compute next UTC midnight from the test host wall clock, plus 2 days. Use explicit UTC arithmetic only; no server/availability output chooses expected slots.",
+    "eventType": {
+      "key": "intro",
+      "duration_min": 30,
+      "slot_step_min": 30,
+      "pre_buffer_min": 0,
+      "post_buffer_min": 0,
+      "min_notice_secs": 0,
+      "booking_window_secs": 604800,
+      "daily_cap": null,
+      "weekly_cap": null,
+      "routing": "either"
+    },
+    "hostHours": {
+      "host_tz": "UTC",
+      "workingWindowMinutes": [
+        540,
+        720
+      ],
+      "weekdays": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ]
+    },
+    "slotA": {
+      "startSecondOfDay": 32400,
+      "endSecondOfDay": 34200
+    },
+    "slotB": {
+      "startSecondOfDay": 39600,
+      "endSecondOfDay": 41400
+    },
+    "busy": {
+      "startSecondOfDay": 36000,
+      "endSecondOfDay": 37800,
+      "name": "Private therapy cobalt-sentinel",
+      "description": "Never disclose this appointment body",
+      "attendee": "private-person@example.test",
+      "location": "Hidden clinic"
+    },
+    "transparentControl": {
+      "startSecondOfDay": 32400,
+      "endSecondOfDay": 34200,
+      "busy_transparency": "free"
+    },
+    "visitorA": {
+      "session_ref": "visitor-a",
+      "booker_email": "visitor-a@example.test"
+    },
+    "visitorB": {
+      "session_ref": "visitor-b",
+      "booker_email": "visitor-b@example.test"
+    },
+    "defaultHoldTtlSeconds": 300,
+    "setup": "Typed public calendar EVENT creation, host calendar membership, owner publication and standing invite grant, and server-issued page-token discovery; IDs and tokens are response bindings, never authored hashes."
+  },
+  "scenarios": [
+    {
+      "id": "CALENDAR-01",
+      "name": "EVENT origins and time kinds should work",
+      "surface": "HTTP + CLI",
+      "setup": "Native, imported and extracted event fixtures.",
+      "steps": [
+        "ingest all",
+        "query UTC windows",
+        "read raw time-kind/origin/provenance",
+        "delete imported source"
+      ],
+      "expect": "Shared temporal queries preserve distinct origins and semantics; all-day/floating are not silently coerced to UTC midnight.",
+      "source": [
+        "/oneiron/agents/oneiron-arch-0060-event-ics-meetings-v1/#treatment",
+        "/registry/oneiron/#OF-004",
+        "/registry/oneiron/#OF-405"
+      ],
+      "rows": [
+        "OF-004",
+        "OF-405"
+      ],
+      "status": "BLOCKED",
+      "fixtureIds": [
+        "calendar-origins",
+        "calendar-scenarios"
+      ],
+      "blockingPrerequisites": [
+        "typed HTTP/SDK calendar origin writers, ICS import, and calendar.search/read"
+      ],
+      "inputs": {
+        "native": {
+          "origin": "native",
+          "summary": "Native audit block",
+          "occurred": {
+            "start": 1792846800,
+            "end": 1792848599
+          },
+          "forbiddenFields": [
+            "evidenceTurnIds",
+            "sourceFrontiers"
+          ]
+        },
+        "extracted": {
+          "origin": "dreamer",
+          "summary": "Cobalt launch happened",
+          "evidence": "A separately ingested TURN says: The cobalt launch happened on 2026-10-24 at 11:00 UTC.",
+          "evidenceTurnIds": "nonempty live TURN refs returned by public ingestion",
+          "sourceFrontiers": "the public evidence frontiers",
+          "forbiddenFields": [
+            "rrule",
+            "calendarName"
+          ]
+        },
+        "import": {
+          "fixture": "calendar-origins",
+          "system": "fixture-origins",
+          "origin": "imported",
+          "importSource": "the public source handle",
+          "externalId": "the fixture VEVENT UID"
+        },
+        "query": {
+          "calendars": [],
+          "range": {
+            "start": 1792800000,
+            "end": 1793059199
+          },
+          "text": null,
+          "limit": 200
+        },
+        "delete": "Erase only the imported source via its typed public source door, using CLI api for the matching protected read. Do not delete the independent extraction TURN."
+      },
+      "expectedFacts": {
+        "absolute": {
+          "uid": "absolute@calendar.example.test",
+          "kind": "absolute",
+          "start_utc": 1792843200,
+          "exclusiveEndUtc": 1792845000,
+          "indexEndUtcInclusive": 1792844999
+        },
+        "zoned": {
+          "uid": "zoned@calendar.example.test",
+          "kind": "zoned",
+          "tz": "Europe/London",
+          "wallStart": "2026-10-24T15:00:00",
+          "start_utc": 1792850400,
+          "exclusiveEndUtc": 1792852200,
+          "indexEndUtcInclusive": 1792852199
+        },
+        "floating": {
+          "uid": "floating@calendar.example.test",
+          "kind": "floating",
+          "wallStart": "2026-10-24T09:30:00",
+          "wallEnd": "2026-10-24T10:30:00",
+          "tz": null,
+          "implicitUtcAnchorForbidden": true
+        },
+        "allDay": {
+          "uid": "all-day@calendar.example.test",
+          "kind": "all_day",
+          "startDate": "2026-10-24",
+          "exclusiveEndDate": "2026-10-26",
+          "implicitUtcMidnightForbidden": true
+        },
+        "origins": [
+          "native",
+          "imported",
+          "dreamer"
+        ],
+        "provenance": "Projector-recorded origin; imported trust on feed claims; real DerivedFrom evidence for dreamer only. Read the raw typed claims as well as temporal rows.",
+        "afterSourceErase": "No erased imported evidence surfaces as live; native EVENT and separately sourced dreamer EVENT retain their identities and origins. Source erasure is not feed-disappearance cancellation."
+      }
+    },
+    {
+      "id": "CALENDAR-02",
+      "name": "Calendar passport rescan and cancellation should work",
+      "surface": "HTTP",
+      "setup": "ICS feed with stable UID and sequence/hash variants.",
+      "steps": [
+        "poll twice",
+        "change sequence",
+        "change same-sequence body",
+        "remove UID",
+        "inspect event history"
+      ],
+      "expect": "Passport deduplicates same revision, updates actual changes, and disappearance cancels instead of duplicating or erasing history.",
+      "source": [
+        "/oneiron/agents/oneiron-arch-0060-event-ics-meetings-v1/#treatment",
+        "/oneiron/agents/oneiron-arch-0060-event-ics-meetings-v1/#passports",
+        "/registry/oneiron/#OF-405",
+        "/registry/oneiron/#OF-406"
+      ],
+      "rows": [
+        "OF-405",
+        "OF-406"
+      ],
+      "status": "BLOCKED",
+      "fixtureIds": [
+        "calendar-passport-v0",
+        "calendar-passport-v1",
+        "calendar-passport-drift",
+        "calendar-passport-absent",
+        "calendar-protocol",
+        "calendar-scenarios"
+      ],
+      "blockingPrerequisites": [
+        "typed HTTP/SDK ICS feed configure/poll and passport revision observation"
+      ],
+      "inputs": {
+        "pollConfig": {
+          "secret_ref": "ics-feed:fixture-revisions",
+          "system": "fixture-revisions",
+          "cadence_min_seconds": 300,
+          "cadence_max_seconds": 300
+        },
+        "pollOrder": [
+          "calendar-passport-v0",
+          "calendar-passport-v0",
+          "calendar-passport-v1",
+          "calendar-passport-drift",
+          "calendar-passport-absent"
+        ],
+        "transport": "Five explicit complete HTTP 200 responses, including a second 200 with identical bytes: test semantic dedupe, not only 304 handling.",
+        "approval": "Approve imported candidate batches publicly before asking surfaceable calendar reads; never write an AUTO claim to impersonate import admission."
+      },
+      "expectedFacts": {
+        "uid": "revision@calendar.example.test",
+        "eventIdentityCount": 1,
+        "revisionHeads": [
+          {
+            "sequence": 0,
+            "summary": "Agenda alpha"
+          },
+          {
+            "sequence": 0,
+            "summary": "Agenda alpha",
+            "newSemanticRevision": false
+          },
+          {
+            "sequence": 1,
+            "summary": "Agenda beta"
+          },
+          {
+            "sequence": 1,
+            "summary": "Agenda gamma"
+          },
+          {
+            "sequence": 1,
+            "status": "cancelled",
+            "basis": "imported_absence",
+            "presence": "absent"
+          }
+        ],
+        "history": "The alpha, beta and gamma revisions remain addressable in public history; the second identical 200 adds no semantic revision; one live passport for system/UID, its prior heads retained.",
+        "absence": "Only a successful complete feed omits the UID. No parse/transport failure is an absence. This fixture has exactly one inbound source, so all-inbound-absent applies.",
+        "hash": "Initial and repeated content_hash equal; beta and gamma differ despite equal sequence. Never calculate the engine semantic hash in the test."
+      }
+    },
+    {
+      "id": "CALENDAR-03",
+      "name": "Recurring meetings across DST should work",
+      "surface": "HTTP",
+      "setup": "Licensed tiny timezone fixture with independent expected UTC instants and one exception.",
+      "steps": [
+        "import",
+        "expand bounded window",
+        "query around transition",
+        "move one instance"
+      ],
+      "expect": "Wall-time recurrence survives DST, exception remains in series, original ICS remains available.",
+      "source": [
+        "/oneiron/agents/oneiron-arch-0060-event-ics-meetings-v1/#treatment",
+        "/oneiron/agents/oneiron-arch-0060-event-ics-meetings-v1/#time",
+        "/registry/oneiron/#OF-405"
+      ],
+      "rows": [
+        "OF-405"
+      ],
+      "status": "BLOCKED",
+      "fixtureIds": [
+        "calendar-dst-series",
+        "calendar-dst-series-moved",
+        "calendar-scenarios"
+      ],
+      "blockingPrerequisites": [
+        "typed HTTP/SDK ICS import, bounded calendar occurrences, and instance move"
+      ],
+      "inputs": {
+        "zone": "Europe/London",
+        "window": {
+          "start": 1792281600,
+          "end": 1794268800
+        },
+        "rrule": "FREQ=WEEKLY;BYDAY=MO;COUNT=4",
+        "exceptionKey": {
+          "uid": "dst-series@calendar.example.test",
+          "original_start_utc": 1793610000
+        },
+        "move": {
+          "uid": "dst-series@calendar.example.test",
+          "original_start_utc": 1793005200,
+          "newStartUtc": 1793010600
+        },
+        "moveMethod": "Typed public instance-move operation; dst-series-moved.ics is the independent expected interchange resource, not a substitute write of calendar claims."
+      },
+      "expectedFacts": {
+        "oracle": "Original CC0 civil-time fixture. London is UTC+01 on 19 October 2026; it changes to UTC+00 on 25 October. Fixed explicit expected UTC literals are parsed as seconds only; no engine/tz/rrule code computes the expected recurrence.",
+        "unmodifiedMasterUtc": [
+          "2026-10-19T08:00:00Z",
+          "2026-10-26T09:00:00Z",
+          "2026-11-02T09:00:00Z",
+          "2026-11-09T09:00:00Z"
+        ],
+        "initialOccurrencesUtc": [
+          "2026-10-19T08:00:00Z",
+          "2026-10-26T09:00:00Z",
+          "2026-11-02T11:00:00Z",
+          "2026-11-09T09:00:00Z"
+        ],
+        "initialOccurrences": [
+          1792396800,
+          1793005200,
+          1793617200,
+          1794214800
+        ],
+        "afterMoveOccurrencesUtc": [
+          "2026-10-19T08:00:00Z",
+          "2026-10-26T10:30:00Z",
+          "2026-11-02T11:00:00Z",
+          "2026-11-09T09:00:00Z"
+        ],
+        "afterMoveOccurrences": [
+          1792396800,
+          1793010600,
+          1793617200,
+          1794214800
+        ],
+        "masterAndExceptions": "One UID/master; both detached instances link to that master by their ORIGINAL occurrence starts. Old slots disappear, no duplicate instances; verbatim rrule remains.",
+        "rawArchive": "Fetch the ORIGINAL imported ICS blob version through the public artifact door and compare every byte with calendar-dst-series, including X-FIXTURE-OPAQUE. A later revision must not overwrite it."
+      }
+    },
+    {
+      "id": "CALENDAR-04",
+      "name": "Invite and two-way echo suppression should work",
+      "surface": "HTTP",
+      "setup": "Local iMIP and CalDAV fakes with standing invite grant.",
+      "steps": [
+        "invite",
+        "update time",
+        "receive echo",
+        "receive acceptance/cancel",
+        "inspect UID and receipts"
+      ],
+      "expect": "One UID survives sequence updates, echo does not create second event and outbound transport remains gated.",
+      "source": [
+        "/oneiron/agents/oneiron-arch-0060-event-ics-meetings-v1/#treatment",
+        "/oneiron/agents/oneiron-arch-0063-agent-inbox-email-identity-v1/#law",
+        "/registry/oneiron/#OF-406"
+      ],
+      "rows": [
+        "OF-406"
+      ],
+      "status": "BLOCKED",
+      "fixtureIds": [
+        "calendar-invite-request",
+        "calendar-invite-update",
+        "calendar-invite-acceptance",
+        "calendar-invite-cancel",
+        "calendar-caldav-echo",
+        "calendar-protocol",
+        "calendar-scenarios"
+      ],
+      "blockingPrerequisites": [
+        "typed HTTP/SDK calendar.invite and CalDAV seat configure/sync",
+        "Public host configuration of an iMIP sender and CalDAV wire; do not inject OutboundResultSender/CalDavWire from a Rust test."
+      ],
+      "inputs": {
+        "uid": "invite@calendar.example.test",
+        "recipient": "visitor@example.test",
+        "organizer": "calendar@house.example.test",
+        "inviteShape": {
+          "method": "request",
+          "uid": "invite@calendar.example.test",
+          "sequence": 0,
+          "ics_blob_ref": "public uploaded immutable fixture blob ref",
+          "recipient": "visitor@example.test"
+        },
+        "seatConfig": {
+          "seat_ref": "fixture-caldav",
+          "secret_ref": "caldav:fixture",
+          "system": "fixture-caldav",
+          "calendar_ref": "/calendars/owner/work/",
+          "cadence_jitter_min_seconds": 300,
+          "cadence_jitter_max_seconds": 300
+        },
+        "ordering": [
+          "Try the same invite before recipient agreement/standing grant and observe refusal with zero sink deliveries.",
+          "Publish an authorised fixture page/standing invite grant, record recipient agreement and house sending identity through typed owner calls.",
+          "Invite at 17:00Z (sequence 0), move to 18:00Z (sequence 1), push conditionally, pull exact echo.",
+          "Receive ACCEPTED reply at sequence 1, then valid METHOD:CANCEL at sequence 2.",
+          "Inspect EVENT, passport heads and per-effect intent receipts."
+        ]
+      },
+      "expectedFacts": {
+        "uidCount": 1,
+        "eventCount": 1,
+        "requestSequences": [
+          0,
+          1
+        ],
+        "cancelSequence": 2,
+        "echo": "No second EVENT and no semantic head change on an exact stored-resource echo. Capture and replay the actual staged bytes in the sink; calendar-caldav-echo documents independent semantic content, not an assumed byte-identical engine renderer.",
+        "acceptance": "Attendee partstat becomes ACCEPTED; RSVP alone is NOT attendance evidence.",
+        "cancellation": "Same event/UID, cancelled status and retained history; no re-invite loop.",
+        "gate": "Each emitted effect has one receipted gate/intent settlement. Cold/no-grant refusal sends zero bytes; house primary calendar identity, not a side-domain sender. Exact retry never sends twice."
+      }
+    },
+    {
+      "id": "CALENDAR-05",
+      "name": "Meeting prep and earned outcome should work",
+      "surface": "HTTP",
+      "setup": "Meeting-class event, focus block and no attendance evidence.",
+      "steps": [
+        "request prep",
+        "pass scheduled end using short fixture times",
+        "inspect unknown outcome",
+        "ingest transcript",
+        "confirm owner response"
+      ],
+      "expect": "Prep cites scoped evidence, time alone never proves attendance and nonmeeting events do not trigger attendance questions.",
+      "source": [
+        "/oneiron/agents/oneiron-arch-0060-event-ics-meetings-v1/#treatment",
+        "/oneiron/agents/oneiron-arch-0060-event-ics-meetings-v1/#outcomes",
+        "/registry/oneiron/#OF-407"
+      ],
+      "rows": [
+        "OF-407"
+      ],
+      "status": "BLOCKED",
+      "fixtureIds": [
+        "calendar-meeting-transcript",
+        "calendar-scenarios"
+      ],
+      "blockingPrerequisites": [
+        "typed HTTP/SDK meeting prep, transcript file-drop, and outcome/check-in",
+        "Public owner grace policy and due-check-in observation/trigger, not a private wake tick."
+      ],
+      "inputs": {
+        "meeting": {
+          "name": "Cobalt audit with Mira",
+          "externalAttendee": "Mira",
+          "start": "fixture clock anchor + 1 second",
+          "end": "fixture clock anchor + 2 seconds"
+        },
+        "controlEvents": [
+          "solo focus block",
+          "all-day ambience"
+        ],
+        "prepEvidence": {
+          "commitment": "Send Mira the cobalt audit scope.",
+          "thread": "Mira asked which audit boundaries apply.",
+          "outOfScope": "Private unrelated medical dossier: do not disclose."
+        },
+        "gracePolicy": {
+          "defaultSeconds": 1800,
+          "fixtureOverrideSeconds": 1,
+          "condition": "Only if a documented typed owner row supports it; otherwise this flow remains BLOCKED. No engine default changes."
+        },
+        "prepPolicy": {
+          "defaultLeadSeconds": 2700,
+          "maxWords": 250,
+          "externalOnly": true
+        },
+        "transcript": "calendar-meeting-transcript",
+        "ownerAnswer": {
+          "answer": "held",
+          "authority": "real owner proof through typed check-in/HumanRuled door"
+        },
+        "independentAttestationCase": "Use a second meeting-class EVENT without transcript for the owner answer; never fake machine evidence or overwrite its provenance."
+      },
+      "expectedFacts": {
+        "prep": "Prior commitments before attendee threads; <=250 words, citations only to the fixture-scoped public evidence refs. No unrelated dossier. Empty useful evidence => no pack.",
+        "afterEndAndGrace": "Outcome unknown (or no known outcome head yet), never held/no_show from time alone; unanswered check-in for the meeting only.",
+        "controlEvents": "Focus and all-day controls never get attendance questions.",
+        "transcript": "SESSION and two ordered TURNs, linked to the meeting through the typed file-drop flow; machine-evidenced attendance (wire held, basis machine) names the transcript evidence.",
+        "ownerAnswer": "The independent meeting outcome is held, basis owner_attested, under the real owner act; an unrelated actor cannot attest.",
+        "silence": "Unknown causes no no-show recovery send; a scheduled end or ACCEPTED RSVP is not evidence."
+      }
+    },
+    {
+      "id": "CALENDAR-06",
+      "name": "Booking disclosure and race should work",
+      "surface": "HTTP public booking API",
+      "setup": "Two visitors and busy calendar with private titles.",
+      "steps": [
+        "read instructions/availability",
+        "hold same slot concurrently",
+        "confirm contenders",
+        "inspect calendar and response"
+      ],
+      "expect": "Public slots reveal no calendar internals; home writer revalidates so at most one incompatible booking settles.",
+      "source": [
+        "/oneiron/agents/oneiron-arch-0062-booking-loop-v1/#lifecycle",
+        "/registry/oneiron/#OF-411",
+        "/registry/oneiron/#OF-412"
+      ],
+      "rows": [
+        "OF-411",
+        "OF-412"
+      ],
+      "status": "BLOCKED",
+      "fixtureIds": [
+        "calendar-scenarios"
+      ],
+      "blockingPrerequisites": [
+        "public owner booking page-token discovery and typed calendar busy-event setup/read"
+      ],
+      "inputs": {
+        "bookingFixture": "bookingFixture",
+        "race": "Two distinct anonymous PublicHttpClient instances, no owner credential. Read public slots, then Promise.all distinct-session holds of slotA. Confirm every valid live hold concurrently. Never put idempotency keys in place of writer conflict handling.",
+        "instructions": "Owner-authenticated GET /api/booking/{page_token}/agent-instructions is separate from the anonymous /public/booking routes; do not assert anonymous access to the protected instructions route."
+      },
+      "expectedFacts": {
+        "availabilityShape": {
+          "op": "availability",
+          "result": {
+            "slots": "only start_utc/end_utc/rank per slot",
+            "flex_used": false
+          }
+        },
+        "instructionsOperations": [
+          "availability",
+          "book",
+          "reschedule",
+          "cancel"
+        ],
+        "sameOriginPaths": true,
+        "privacy": "Allowlist all public response fields and reject values/keys containing any private fixture title, body, attendee, location, calendar/event ID, busy source or raw busy interval. Public ceiling SLOTS, not BUSY.",
+        "expectedBusyMask": "No offered interval overlaps 10:00-10:30Z; transparent 09:00 block does not consume availability. slotA and slotB are independently valid.",
+        "race": "Exactly one contender confirms in this otherwise free fixture, and at most one incompatible EVENT settles. A loser may lose at hold or confirm; require a typed slot_taken/alternatives or real refusal, never count two success-shaped quarantined responses as bookings.",
+        "writer": "Owner calendar, booking heads and effect receipts show one confirmed EVENT; no live hold row fabricated for a contender rejected at hold. All alternatives are offerable fixture slots and disclose no internals."
+      }
+    },
+    {
+      "id": "CALENDAR-07",
+      "name": "Booking reschedule cancel and token scope should work",
+      "surface": "HTTP + MCP oneiron.book",
+      "setup": "Confirmed booking and opaque action-specific tokens.",
+      "steps": [
+        "try wrong token operation",
+        "reschedule",
+        "replay",
+        "cancel",
+        "inspect EVENT and UID"
+      ],
+      "expect": "Tokens authorize only named action, retries are idempotent, and lifecycle reuses event UID with ordered changes.",
+      "source": [
+        "/oneiron/agents/oneiron-arch-0062-booking-loop-v1/#lifecycle",
+        "/registry/oneiron/#OF-411",
+        "/registry/oneiron/#OF-412"
+      ],
+      "rows": [
+        "OF-411",
+        "OF-412"
+      ],
+      "status": "BLOCKED",
+      "fixtureIds": [
+        "calendar-scenarios"
+      ],
+      "blockingPrerequisites": [
+        "typed MCP booking lifecycle replacing retired oneiron.book and calendar passport reads",
+        "Public page-token discovery and typed calendar observations used by CALENDAR-06."
+      ],
+      "inputs": {
+        "bookingFixture": "bookingFixture",
+        "setup": "Hold and confirm slotA via HTTP, save the two distinct opaque action tokens privately.",
+        "wrongActions": [
+          "cancel_token used as reschedule_token",
+          "reschedule_token used as cancel_token",
+          "hold_token used for either amendment",
+          "token presented on another page"
+        ],
+        "move": "Reschedule slotA to slotB through the canon MCP booking lifecycle after a typed supported binding exists. Keep the real tool error/result envelope, not execute_code.",
+        "replay": "Repeat the exact reschedule request with the same idempotency key, then repeat cancel with its own unchanged key; inspect snapshots/history after EACH operation."
+      },
+      "expectedFacts": {
+        "tokenScope": "Every wrong action refuses without event/passport/history/outbound changes. Tokens are bearer secrets, never logged or interpreted as event IDs.",
+        "uid": "One EVENT id and UID for confirm/move/cancel; changed occurrence only on move.",
+        "sequences": [
+          0,
+          1,
+          2
+        ],
+        "statuses": [
+          "confirmed",
+          "confirmed",
+          "cancelled"
+        ],
+        "replay": "Replay returns the same public action result and adds no semantic revision or outbound effect. The same reschedule token and cancel token remain action-scoped across retries.",
+        "orderedHistory": "Confirm < reschedule < cancel in receipt/history order, not by assuming wall timestamps are distinct. Earlier versions stay addressable."
+      }
+    },
+    {
+      "id": "CALENDAR-08",
+      "name": "Booking needs an explicit choice should work",
+      "surface": "HTTP",
+      "setup": "Scripted conversational booking helper and no suitable initial slot.",
+      "steps": [
+        "submit natural-language preferences",
+        "inspect suggested slots",
+        "do not confirm",
+        "negotiate alternative",
+        "explicitly confirm"
+      ],
+      "expect": "Language suggests, never silently books; explicit authorized confirmation drives lifecycle and no-fit response preserves privacy.",
+      "source": [
+        "/oneiron/agents/oneiron-arch-0062-booking-loop-v1/#lifecycle",
+        "/oneiron/extraction/oneiron-arch-0036-model-families-v1/#model-line",
+        "/registry/oneiron/#OF-412"
+      ],
+      "rows": [
+        "OF-412"
+      ],
+      "status": "BLOCKED",
+      "fixtureIds": [
+        "calendar-scenarios"
+      ],
+      "blockingPrerequisites": [
+        "typed SDK booking constraint-turn and public owner booking page-token discovery",
+        "Public inference decision-seat binding and permission for the scripted constraint parser."
+      ],
+      "inputs": {
+        "bookingFixture": "bookingFixture",
+        "initialText": "Only evenings after 20:00 UTC, please.",
+        "alternativeText": "Then 11:00 UTC on the same day works.",
+        "firstParserResult": {
+          "disposition": "constraint",
+          "object": {
+            "schema_version": 1,
+            "weekdays": [],
+            "local_time_windows": [
+              {
+                "start_minute": 1200,
+                "end_minute": 1260
+              }
+            ],
+            "utc_window": null,
+            "allow_flex_pool": false
+          },
+          "visitor_tz_override": "UTC"
+        },
+        "secondParserResult": {
+          "disposition": "constraint",
+          "object": {
+            "schema_version": 1,
+            "weekdays": [],
+            "local_time_windows": [
+              {
+                "start_minute": 660,
+                "end_minute": 690
+              }
+            ],
+            "utc_window": null,
+            "allow_flex_pool": false
+          },
+          "visitor_tz_override": "UTC"
+        },
+        "provider": "ScriptedProviders on the declared production typed-decision adapter; exact typed values and declared usage, never prompt-string matching or a fake solver. Confirm exact response schema at activation; disposition here is a semantic fixture label.",
+        "frontInput": {
+          "event_type": "intro",
+          "window": "the independent future UTC day",
+          "visitor_tz": "UTC",
+          "free_text": "one fixture sentence at a time",
+          "session_ref": "visitor-a"
+        },
+        "explicitChoice": "Read real booking.select_slot button arguments, verify slotB against authored expected times, hold that slot using returned HoldContext, then explicitly confirm the held token with qualified intake."
+      },
+      "expectedFacts": {
+        "firstOutcome": "continue_by_email with canonical evening constraint, event_type, UTC visitor_tz and same session_ref; no raw preference sentence, private reason, calendar body, busy interval or owner address.",
+        "secondOutcome": "slots with the single independently expected 11:00-11:30Z offer; slot controls are solver-produced, never invented by model prose.",
+        "beforeTap": "Zero new EVENTs and no lifecycle mutation receipts after both free-text turns and after inspecting offers.",
+        "afterHold": "Still zero confirmed EVENTs until explicit confirmation; no language-only booking.",
+        "afterConfirm": "Exactly one confirmed EVENT at slotB; one stable UID and receipted authorised confirmation; no extra event from negotiations.",
+        "privacy": "No-fit and slots responses obey public SLOTS ceiling and do not explain the private busy title/body/attendee/location."
+      }
+    }
+  ]
+}
