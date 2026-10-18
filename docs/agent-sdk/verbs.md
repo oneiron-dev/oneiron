@@ -33,6 +33,8 @@ both bindings and their export-census tests in one change.
 - `describe`
 - `tasks.create`
 - `tasks.wave`
+- `vault.fanout.spawn`
+- `vault.fanout.slots`
 - `vault.fanout.launch`
 - `self.budget`
 - `self.budget.land`
