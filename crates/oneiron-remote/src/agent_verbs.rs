@@ -275,6 +275,9 @@ impl OneironClient {
                 "self.credential.attenuate" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::CredentialAttenuated,
                 >(client, verb, &input),
+                "vault.scope.position" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<Option<oneiron::memory::RecordPosition>>,
+                >(client, verb, &input),
                 "vault.scope.ceiling" => remote_agent_verb_output::<
                     oneiron::memory::CredentialCeiling,
                 >(client, verb, &input),
@@ -3198,6 +3201,21 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.credential.attenuate", value)
+    }
+    pub fn vault_scope_position(
+        &self,
+        input: &oneiron::memory::RecordPositionRequest,
+    ) -> Result<
+        oneiron::claim::ScopedReadResult<Option<oneiron::memory::RecordPosition>>,
+        MemoryError,
+    > {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.scope.position", value)
     }
     pub fn vault_scope_ceiling(
         &self,

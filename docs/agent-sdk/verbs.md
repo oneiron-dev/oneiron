@@ -82,6 +82,7 @@ both bindings and their export-census tests in one change.
 - `vault.retrieval.replay`
 - `vault.export`
 - `self.credential.attenuate`
+- `vault.scope.position`
 - `vault.scope.ceiling`
 - `vault.export.scoped`
 - `vault.receipts`

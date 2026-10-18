@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 700 facade rows, 2527 declarations.
-Inputs: 648 of 700 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 625 of 700 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 701 facade rows, 2529 declarations.
+Inputs: 649 of 701 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 626 of 701 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 95; unread shapes: 0.
 """
 
@@ -2115,23 +2115,42 @@ class Scope(TypedDict):
     audience: NotRequired[ScopeAxis[ScopeId]]
     verbs: NotRequired[ScopeAxis[str]]
     sensitivity: NotRequired[SensitivityCeiling]
-class SlipCaveat(TypedDict):
-    scope: NotRequired[Scope | None]
+class CredentialCeiling(TypedDict):
+    kind: Literal["ceiling"]
+    scope: Scope
+TypeByteFamily = Literal["Conversation", "People", "World", "Content", "AgentsAndSurfacing", "CoreOverflow", "AuthorityPolicyCustody", "AuditObservability", "OutboundCommunicationConsent", "RegistriesDerived", "Productivity", "Code", "Documents", "Companion", "PackOverflow"]
+class SelectorRangeFamily(TypedDict):
+    Family: TypeByteFamily
+SelectorRange = Literal["Semantic", "Core", "Maintenance"] | SelectorRangeFamily
+class FederationDirectionScope(TypedDict):
+    worlds: ScopeAxis[ScopeId]
+    facets: ScopeAxis[ScopeId]
+    bands: ScopeAxis[SelectorRange]
+class CredentialPactCeiling(TypedDict):
+    grant_ref: ScopeId
+    ceiling: FederationDirectionScope
+class CredentialCaveat(TypedDict):
+    scope: NotRequired[CredentialCeiling | None]
     expires_at: NotRequired[int | None]
     ttl_secs: NotRequired[int | None]
-    single_use: bool
+    single_use: NotRequired[bool]
     records: NotRequired[list[str] | None]
     channels: NotRequired[list[str] | None]
-    pact: NotRequired[tuple[ScopeId, list[int]] | None]
+    pact: NotRequired[CredentialPactCeiling | None]
 class CredentialAttenuationRequest(TypedDict):
     holder_seed: list[int]
-    caveat: SlipCaveat
+    caveat: CredentialCaveat
     next_binding_key: NotRequired[list[int] | None]
 class CredentialAttenuated(TypedDict):
     token: str
     binding_key: list[int]
-class CredentialCeiling(TypedDict):
-    kind: Literal["ceiling"]
+class RecordPositionRequest(TypedDict):
+    record_ref: str
+class ScopedReadResult(TypedDict, Generic[T]):
+    value: T
+    narrowing: ScopedReadReceipt
+class RecordPosition(TypedDict):
+    kind: Literal["position"]
     scope: Scope
 class RecordSelector(TypedDict):
     worlds: NotRequired[RecallWorlds | None]
@@ -2166,9 +2185,6 @@ class ExportChannel(TypedDict):
 class ScopedExportRequest(TypedDict):
     selector: RecordSelector
     channel: ExportChannel
-class RecordPosition(TypedDict):
-    kind: Literal["position"]
-    scope: Scope
 MadeByInputRole = Literal["input", "prompt"]
 class MadeByInput(TypedDict):
     row: str
@@ -4156,14 +4172,6 @@ class ConnectGrant(TypedDict):
     guest_actor: str
     resolved_scope: Scope
     expires_at: NotRequired[int | None]
-TypeByteFamily = Literal["Conversation", "People", "World", "Content", "AgentsAndSurfacing", "CoreOverflow", "AuthorityPolicyCustody", "AuditObservability", "OutboundCommunicationConsent", "RegistriesDerived", "Productivity", "Code", "Documents", "Companion", "PackOverflow"]
-class SelectorRangeFamily(TypedDict):
-    Family: TypeByteFamily
-SelectorRange = Literal["Semantic", "Core", "Maintenance"] | SelectorRangeFamily
-class FederationDirectionScope(TypedDict):
-    worlds: ScopeAxis[ScopeId]
-    facets: ScopeAxis[ScopeId]
-    bands: ScopeAxis[SelectorRange]
 class OfferConnect(TypedDict):
     peer_vault: str
     grant: str
@@ -6483,9 +6491,6 @@ class LensDefaultRequest(TypedDict):
     dossiers: NotRequired[list[LensDossierSource]]
     threads: NotRequired[list[str]]
     as_of: NotRequired[int | None]
-class ScopedReadResult(TypedDict, Generic[T]):
-    value: T
-    narrowing: ScopedReadReceipt
 class DisclosureOfferRequest(TypedDict):
     contact: str
     scope: Scope
