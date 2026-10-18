@@ -98,6 +98,14 @@ vaultFanoutResumeAs(input: unknown): unknown
 vaultFanoutAck(input: unknown): unknown
 tasksUpdate(input: unknown): unknown
 tasksAccept(input: unknown): unknown
+vaultCommitMessage(input: unknown): unknown
+vaultBeginMessageStream(input: unknown): unknown
+vaultAppendToStream(input: unknown): unknown
+vaultFlushStream(input: unknown): unknown
+vaultFinalizeStream(input: unknown): unknown
+vaultCancelStream(input: unknown): unknown
+vaultMessageStreamPartial(input: unknown): unknown
+vaultMessagesDurability(input: unknown): unknown
 vaultWitness(turn: WitnessTurn): WitnessReceipt
 vaultClaimsUpsert(input: unknown): unknown
 vaultRecall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined, as_of: number | undefined, deadline_ms: number | undefined, media: RecallMedia | undefined, query_affect: QueryAffect | undefined): MemoryPack
@@ -123,6 +131,12 @@ vaultAffectWellnessPolicyGet(input: unknown): unknown
 vaultAffectWellnessPolicyConfigure(input: unknown): unknown
 vaultAffectWellnessDerive(input: unknown): unknown
 vaultAffectWellnessGet(input: unknown): unknown
+vaultCluster(input: unknown): unknown
+vaultClusterProposal(input: unknown): unknown
+vaultClusterPropose(input: unknown): unknown
+vaultClusterMerge(input: unknown): unknown
+vaultClusterSplit(input: unknown): unknown
+vaultClusterResolveProposal(input: unknown): unknown
 vaultRetrievalRecall(input: unknown): unknown
 vaultRetrievalRuns(input: unknown): unknown
 vaultRetrievalRun(input: unknown): unknown
@@ -534,6 +548,13 @@ vaultCodeCheckoutTakeover(input: unknown): unknown
 vaultCodeCheckoutPublish(input: unknown): unknown
 vaultCodeCheckoutSettle(input: unknown): unknown
 vaultCodeCheckoutTeardown(input: unknown): unknown
+vaultCodeViewsMaterialize(input: unknown): unknown
+vaultCodeViewsGet(input: unknown): unknown
+vaultCodeViewsRead(input: unknown): unknown
+vaultCodeViewsAction(input: unknown): unknown
+vaultCodeViewsBuild(input: unknown): unknown
+vaultCodeCacheGet(input: unknown): unknown
+vaultCodeCacheReuse(input: unknown): unknown
 vaultCodeSnapshotsIngest(input: unknown): unknown
 vaultCodeSnapshotsGet(input: unknown): unknown
 vaultCodeSnapshotsRead(input: unknown): unknown
@@ -717,6 +738,12 @@ vaultCalendarInstancesMove(input: unknown): unknown
 vaultCalendarRead(input: unknown): unknown
 vaultCalendarSearch(input: unknown): unknown
 vaultCalendarFreebusy(input: unknown): unknown
+vaultCalendarPrep(input: unknown): unknown
+vaultCalendarEventOutcome(input: unknown): unknown
+vaultCalendarCheckInDue(input: unknown): unknown
+vaultCalendarCheckInAnswer(input: unknown): unknown
+vaultCalendarOutcomePolicyGet(input: unknown): unknown
+vaultCalendarOutcomePolicySet(input: unknown): unknown
 vaultCalendarTranscriptIngest(input: unknown): unknown
 vaultClaimsList(input: unknown): unknown
 vaultClaimsDemote(input: unknown): unknown

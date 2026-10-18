@@ -70,7 +70,7 @@ const PREP_SECTION_ORDER: [PrepSectionKind; 3] = [
 /// Declaration order IS the precedence rule, and `Ord` is derived from it: prior
 /// commitments first, recent threads with those people second, dossier or
 /// company delta third.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PrepSectionKind {
     /// Commitments involving the meeting or its attendees.
@@ -101,7 +101,7 @@ const fn prep_section_kind_for(entity_type: u8) -> Option<PrepSectionKind> {
 }
 
 /// One row of prep evidence, with the vault rows that back it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PrepItem {
     /// Which section this row ranks into.
     pub kind: PrepSectionKind,
@@ -114,7 +114,7 @@ pub struct PrepItem {
 }
 
 /// One ranked section of a pack. Empty sections are dropped, never rendered.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PrepSection {
     /// Which section this is.
     pub kind: PrepSectionKind,
@@ -126,7 +126,7 @@ pub struct PrepSection {
 ///
 /// Structured data only: no prose, no persona, no localized text. It is a value
 /// returned to the caller and never an entity, a claim, or a cache row.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PrepPack {
     /// Hex id of the EVENT this pack is about.
     pub event_ref: String,
@@ -175,13 +175,43 @@ pub fn build_prep_pack(vault: &Vault, request: &PrepBuildRequest) -> Result<Opti
         return Ok(None);
     }
     let candidates = prep_context_candidates(vault, &request.event, request.fired_at)?;
-    let items = prep_items_from_candidates(vault, &request.event, &candidates)?;
-    Ok(assemble_prep_pack(
-        &request.event,
-        request.fired_at,
-        request.policy,
-        items,
-    ))
+    pack_from_candidates(vault, request, &candidates)
+}
+
+/// The same assembly, with retrieval and citations narrowed by the caller's lane.
+pub(crate) fn build_prep_pack_scoped(
+    read: &crate::claim::ScopedRead<'_>,
+    request: &PrepBuildRequest,
+) -> Result<crate::claim::ScopedReadResult<Option<PrepPack>>> {
+    if !prep_is_eligible(&request.event, request.policy) {
+        return Ok(crate::claim::ScopedReadResult {
+            value: None,
+            receipt: read.read_receipt(None, 0)?,
+        });
+    }
+    let (filter, policy) = read.recall_plan()?;
+    let admitted = |_: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>, id: &EntityId| {
+        read.recall_candidate_in(txn, &policy, &filter, id)
+    };
+    let (scoped, _) = prep_context_builder(read.vault(), &request.event, request.fired_at)
+        .authority_filter(filter.clone())
+        .filter_candidates(&admitted)
+        .run_scoped_with_run_status(read)?;
+    let mut candidates = scoped.value.results;
+    candidates.extend(scoped.value.neighbors);
+    Ok(crate::claim::ScopedReadResult {
+        value: pack_from_candidates(read.vault(), request, &candidates)?,
+        receipt: scoped.receipt,
+    })
+}
+
+fn pack_from_candidates(
+    vault: &Vault,
+    request: &PrepBuildRequest,
+    candidates: &[ContextEntity],
+) -> Result<Option<PrepPack>> {
+    let items = prep_items_from_candidates(vault, &request.event, candidates)?;
+    Ok(assemble_prep_pack(&request.event, request.fired_at, request.policy, items))
 }
 
 /// Runs the scoped live assembly around one EVENT.
@@ -196,6 +226,17 @@ fn prep_context_candidates(
     event: &PrepEvent,
     fired_at: u64,
 ) -> Result<Vec<ContextEntity>> {
+    let pack = prep_context_builder(vault, event, fired_at).run()?;
+    let mut candidates = pack.results;
+    candidates.extend(pack.neighbors);
+    Ok(candidates)
+}
+
+fn prep_context_builder<'a>(
+    vault: &'a Vault,
+    event: &PrepEvent,
+    fired_at: u64,
+) -> crate::context_pack::ContextPackBuilder<'a> {
     let mut seeds = Vec::with_capacity(1 + event.attendee_refs.len());
     seeds.push(event.event_ref);
     for attendee in &event.attendee_refs {
@@ -207,17 +248,12 @@ fn prep_context_candidates(
         }
     }
 
-    let pack = vault
+    vault
         .context_pack()
         .search_ppr(&seeds, PREP_CONTEXT_EDGE_HOP)
         .filter_types(&PREP_CONTEXT_ENTITY_TYPES)
         .filter_learned_range(0, fired_at)
         .limit(PREP_CONTEXT_CANDIDATE_LIMIT)
-        .run()?;
-
-    let mut candidates = pack.results;
-    candidates.extend(pack.neighbors);
-    Ok(candidates)
 }
 
 /// Turns assembled candidates into ranked rows, dropping everything that says

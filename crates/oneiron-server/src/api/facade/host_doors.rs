@@ -16,7 +16,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use oneiron::llm::media::{AiOperation, MediaPart, MediaRequest, Modality};
+use oneiron::llm::media::{AiOperation, MediaRequest, Modality};
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
@@ -29,10 +29,7 @@ use oneiron::task_verb::sdk::{
     AiVideoCancelled, AiVideoJob, AiVideoJobRequest, AiVideoTicket, AiVoice, HookReplayRow,
     HooksReplayRequest, PackPutReceipt, PackPutRequest,
 };
-use oneiron::{
-    CallClass, CallEnvelope, CallPurpose, EdgeActorClass, EntityId, FatalLlmError, LlmError,
-    ModelId, ModelTierRef, ResponseFormat, RetryableLlmError, TierPrecedence,
-};
+use oneiron::{EdgeActorClass, EntityId, FatalLlmError, LlmError, ModelId, RetryableLlmError};
 
 use oneiron::lens::{LensActivateRequest, LensDeactivateRequest};
 use oneiron::receipt::LensActivationReceipt;
@@ -42,11 +39,13 @@ use oneiron::task_verb::sdk::{
     PackSetupReceipt, PackSetupRequest, PackSetupVerifyRequest,
 };
 
-use crate::api::ai::{VoiceRefusal, bind_voice, caller_options};
+use crate::api::ai::{
+    MediaCallParts, MediaCallRefusal, VoiceRefusal, caller_options, prepare_media_call,
+};
 use crate::auth::CoreAuth;
 use crate::builtin_host::HostConnectionChecks;
 use crate::models::RungVoices;
-use crate::server::SyncServer;
+use crate::server::{MediaRefusal, SyncServer};
 
 // The signed authority history doors, under the audit door's owner proof.
 pub(crate) use super::artifact_hosting_doors::*;
@@ -73,6 +72,7 @@ pub(crate) use super::voice_bank_doors::*;
 // The owner's legal-hold doors (OF-470) too.
 pub(crate) use super::asr_doors::*;
 pub(crate) use super::cleanup_doors::*;
+pub(crate) use super::clustering_doors::*;
 pub(crate) use super::extraction_doors::*;
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
@@ -149,6 +149,7 @@ pub(crate) use super::checkout_doors::*;
 pub(crate) use super::origin_doors::*;
 // The owner's code snapshot doors (DOOR-118), likewise.
 pub(crate) use super::codebase_doors::*;
+pub(crate) use super::code_view_doors::*;
 // The owner's task-type tree doors (DOOR-111) and run doors (DOOR-100),
 // likewise.
 pub(crate) use super::coordination_doors::*;
@@ -1011,16 +1012,12 @@ async fn vault_hooks_replay_answer(
     input: HooksReplayRequest,
 ) -> MemoryResult<(Vec<HookReplayRow>, Option<Vec<EntityId>>)> {
     let owner = owner_proof(auth, server, "vault.hooks.replay")?;
-    let Some(runtime) = server.hook_runtime.get().cloned() else {
-        return Err(MemoryError::new(
-            MEMORY_CODE_MODEL_UNAVAILABLE,
-            "no hook sandbox runs on this server",
-            &["Serve with fact hooks on (no --no-hooks), on a build with the code sandbox."],
-        ));
-    };
     let verdict = replay_verdict(server);
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || {
+        // The sandbox serve's runner runs on, taken here when no runner took
+        // it: `--no-hooks` stops the runner, not an explicit replay.
+        let runtime = crate::commands::hook_sandbox(&server).map_err(no_hook_sandbox)?;
         oneiron::task_verb::sdk::replay_hooks_as_owner_listing(
             server.vault(),
             &owner,
@@ -1031,6 +1028,16 @@ async fn vault_hooks_replay_answer(
     })
     .await
     .map_err(|_| internal("vault.hooks.replay"))?
+}
+
+/// An explicit replay's refusal when no hook sandbox loads: this build has
+/// none, or it did not build (`reason`).
+pub(super) fn no_hook_sandbox(reason: String) -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_MODEL_UNAVAILABLE,
+        format!("no hook sandbox runs on this server: {reason}"),
+        &["Serve on a build with the code sandbox (code-sandbox-wasmtime)."],
+    )
 }
 
 /// The verdict host a replay's preview asks: the one the fact-hook runner
@@ -1126,6 +1133,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "calendar.imip.get"
         | "vault.calendar.ics.import"
         | "vault.calendar.instances.move"
+        | "vault.calendar.outcome_policy.get"
+        | "vault.calendar.outcome_policy.set"
+        | "vault.calendar.check_in.due"
+        | "vault.calendar.check_in.answer"
         | "vault.campaign.compliance.install"
         | "vault.campaign.compliance.approve"
         | "vault.campaign.compliance.reject"
@@ -1488,6 +1499,13 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.artifacts.live_preview.revoke_invite"
         | "vault.artifacts.live_preview.share"
         | "vault.artifacts.live_preview.revoke_share"
+        | "vault.code.views.materialize"
+        | "vault.code.views.get"
+        | "vault.code.views.read"
+        | "vault.code.views.action"
+        | "vault.code.views.build"
+        | "vault.code.cache.get"
+        | "vault.code.cache.reuse"
         | "vault.code.snapshots.ingest"
         | "vault.code.snapshots.get"
         | "vault.code.snapshots.read"
@@ -1786,106 +1804,71 @@ fn admit(
     prepare(server, operation, input)
 }
 
-/// A call of `operation`, admitted against the vault's inference policy for
-/// the model it names, ready for its seat's ladder, with the banked voice it
-/// renders in, if any (bound as `/v1/ai/speech` binds it). Its caller's door
-/// admitted the caller.
+/// A call of `operation`, prepared and admitted as `/v1/ai/<operation>`
+/// prepares it ([`prepare_media_call`]), each refusal under the facade's
+/// codes. Its caller's door admitted the caller: the owner's
+/// ([`admit`]) or a run's ([`ai_speech_for_run`]).
 fn prepare(
     server: &SyncServer,
     operation: AiOperation,
     input: AiCallRequest,
 ) -> MemoryResult<(MediaRequest, Option<RungVoices>)> {
-    let media = server.ai.model_runtime().media();
-    let Some((seat, _)) = media.seat(operation) else {
-        return Err(MemoryError::new(
-            MEMORY_CODE_MODEL_UNAVAILABLE,
-            format!("no [models.media.{}] seat serves", operation.as_str()),
-            &["Configure the operation's media seat on this server."],
-        ));
+    let model = match input.model {
+        Some(model) => Some(
+            ModelId::new(model).map_err(|_| MemoryError::bad_request("model is not a model id"))?,
+        ),
+        None => None,
     };
-    let mut model = match input.model {
-        Some(model) => {
-            ModelId::new(model).map_err(|_| MemoryError::bad_request("model is not a model id"))?
-        }
-        None => seat,
-    };
-    let unserved = |model: &ModelId| {
-        MemoryError::bad_request(format!(
-            "{model} serves no {} call here",
-            operation.as_str()
-        ))
-    };
-    if media.locality(operation, &model).is_none() {
-        return Err(unserved(&model));
-    }
-    let (voice, voices) =
-        bind_voice(server, operation, &mut model, input.voice).map_err(voice_refused)?;
-    let Some(locality) = media.locality(operation, &model) else {
-        return Err(unserved(&model));
-    };
-    let mut parts = Vec::new();
-    if let Some(prompt) = input.prompt {
-        parts.push(MediaPart::Text { text: prompt });
-    }
     let decoded = |parts: Vec<oneiron::task_verb::sdk::AiPart>| {
         parts
             .into_iter()
             .map(oneiron::task_verb::sdk::AiPart::into_media)
             .collect::<Option<Vec<_>>>()
     };
-    let (Some(sent), Some(references)) = (decoded(input.input), decoded(input.references)) else {
-        return Err(MemoryError::bad_request(
-            "each part is text, or an image or audio with base64 data",
-        ));
-    };
-    parts.extend(sent);
-    let purpose = CallPurpose::Other {
-        name: format!("ai.{}", operation.as_str()),
-    };
-    let mut request = MediaRequest {
-        model: model.clone(),
-        envelope: CallEnvelope {
-            scope: Default::default(),
-            tier: TierPrecedence::for_purpose(
-                &purpose,
-                ModelTierRef(format!("media-{}", operation.as_str())),
-            ),
-            purpose,
-            class: CallClass::BestEffort,
-            response_format: ResponseFormat::Text,
-            locality,
-            seat_effort: None,
-        },
-        operation,
-        parts,
-        references,
+    let call = MediaCallParts {
+        model,
+        prompt: input.prompt,
+        input: decoded(input.input),
+        references: decoded(input.references),
         params: input.params,
-        voice,
+        voice: input.voice,
     };
-    if let Some(key) = request.admission_request().route_selector_override() {
-        return Err(MemoryError::bad_request(format!(
-            "{key} would pick the model or the route; name the model instead"
-        )));
+    prepare_media_call(server, operation, call).map_err(|refused| media_refused(operation, refused))
+}
+
+/// A refused media call, under the facade's codes: no seat is
+/// `MODEL_UNAVAILABLE`, the vault's inference policy `FORBIDDEN`, a voice
+/// as [`voice_refused`] says, and the call's own shape `BAD_REQUEST`.
+fn media_refused(operation: AiOperation, refused: MediaCallRefusal) -> MemoryError {
+    let unserved = |model: &str| {
+        MemoryError::bad_request(format!(
+            "{model} serves no {} call here",
+            operation.as_str()
+        ))
+    };
+    match refused {
+        MediaCallRefusal::NoSeat => MemoryError::new(
+            MEMORY_CODE_MODEL_UNAVAILABLE,
+            format!("no [models.media.{}] seat serves", operation.as_str()),
+            &["Configure the operation's media seat on this server."],
+        ),
+        MediaCallRefusal::UnservedModel(model) => unserved(&model.to_string()),
+        MediaCallRefusal::Admission(MediaRefusal::UnknownModel) => unserved("the model"),
+        MediaCallRefusal::Voice(refused) => voice_refused(refused),
+        MediaCallRefusal::InvalidPart => {
+            MemoryError::bad_request("each part is text, or an image or audio with base64 data")
+        }
+        MediaCallRefusal::Admission(MediaRefusal::SelectorOverride(key)) => {
+            MemoryError::bad_request(format!(
+                "{key} would pick the model or the route; name the model instead"
+            ))
+        }
+        MediaCallRefusal::Admission(MediaRefusal::Denied(_)) => MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "the vault's inference policy refuses this call",
+            &["Name a model the vault's inference policy admits."],
+        ),
     }
-    let context = oneiron::llm::HostInferenceContext {
-        binding: oneiron::llm::HostInferenceBinding::Advertised { model, locality },
-        extraction_egress: server.extraction_egress.as_deref(),
-    };
-    let authorized = server
-        .vault
-        .authorize_raw_inference(request.admission_request(), &context)
-        .map_err(|_| {
-            MemoryError::new(
-                MEMORY_CODE_FORBIDDEN,
-                "the vault's inference policy refuses this call",
-                &["Name a model the vault's inference policy admits."],
-            )
-        })?;
-    request.envelope = authorized.into_request().envelope;
-    // The world a caller names does not vouch for what it sends: a
-    // fallback judges the call as naming none, as a raw text call is.
-    request.envelope.scope.world = None;
-    Ok((request, voices))
 }
 
 /// A refused voice, under the facade's codes: a banked voice no rung holds

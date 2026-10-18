@@ -1109,6 +1109,113 @@
       "section": true
     },
     {
+      "name": "vault.commit_message",
+      "description": "Writes one whole MESSAGE atomically through the witness gate; birth supplies its immutable conversation, turn and author axes.",
+      "input": "crate::memory::CommitMessageRequest",
+      "output": "crate::memory::WitnessReceipt",
+      "call": "memory.messages_commit(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "lands_turn": true
+    },
+    {
+      "name": "vault.begin_message_stream",
+      "description": "Opens one caller-owned MESSAGE stream, with birth axes for a new message or stored axes for a continuation.",
+      "input": "crate::memory::BeginMessageStreamRequest",
+      "output": "crate::memory::MessageStreamHandle",
+      "call": "memory.messages_begin_stream(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.append_to_stream",
+      "description": "Appends one authored delta to this actor's generation-bound stream through its existing write gate.",
+      "input": "crate::memory::AppendToStreamRequest",
+      "output": "()",
+      "call": "memory.messages_append_stream(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.flush_stream",
+      "description": "Publishes the current partial at once when streamed visibility allows it; atomic mode stays private.",
+      "input": "crate::memory::MessageStreamRequest",
+      "output": "()",
+      "call": "memory.messages_flush_stream(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.finalize_stream",
+      "description": "Commits the stream as final and releases its handle, returning the immutable terminal receipt.",
+      "input": "crate::memory::MessageStreamRequest",
+      "output": "crate::memory::MessageStreamReceipt",
+      "call": "memory.messages_finalize_stream(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "lands_turn": true
+    },
+    {
+      "name": "vault.cancel_stream",
+      "description": "Keeps the stream's text as one incomplete MESSAGE with cancelled finality and the caller's explicit reason.",
+      "input": "crate::memory::CancelStreamRequest",
+      "output": "crate::memory::MessageStreamReceipt",
+      "call": "memory.messages_cancel_stream(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "lands_turn": true
+    },
+    {
+      "name": "vault.message_stream_partial",
+      "description": "Reads only this actor's accepted in-memory partial using its generation-bound stream handle.",
+      "input": "crate::memory::MessageStreamRequest",
+      "output": "crate::memory::MessageStreamPartial",
+      "call": "memory.messages_stream_partial(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.messages.durability",
+      "description": "Reads a MESSAGE's completion, terminal-generation receipts and retained document history through the caller's own read lane.",
+      "input": "crate::memory::MessageDurabilityRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::memory::MessageDurability>>",
+      "call": "memory.messages_durability(&input)?",
+      "scope": "Read",
+      "admission": {
+        "projection_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.witness",
       "description": "Witnesses one conversational turn: its conversation, turn and gated messages, edges and text index, in one atomic batch.",
       "input": "crate::memory::WitnessTurn",
@@ -1581,6 +1688,95 @@
         "unrestricted_record_scope": true
       },
       "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.cluster",
+      "description": "Proposes deterministic complete-link cohorts from readable stored claims and supplied embeddings; exact subject, predicate-root, world and facet partitions never decide truth.",
+      "input": "crate::memory::clustering::ClusterRequest",
+      "output": "crate::claim::ScopedReadResult<crate::memory::clustering::ClusterProposal>",
+      "call": "memory.cluster(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.cluster.proposal",
+      "description": "Inspects a parked merge or split, its original evidence, current resolution and revision for a gated ruling; every reference must remain readable.",
+      "input": "crate::memory::clustering::ClusterProposalRequest",
+      "output": "crate::claim::ScopedReadResult<crate::memory::clustering::ClusterProposalView>",
+      "call": "memory.cluster_proposal(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.cluster.propose",
+      "description": "Parks an explicit merge or split judgment with zero topology effects, under the caller's own owner proof or topology_seal Grant.",
+      "input": "crate::memory::clustering::ClusterProposeRequest",
+      "output": "crate::memory::clustering::ClusterTopologyReceipt",
+      "call": "{ let owner = if input.grant_ref.is_none() { Some(memory.embedded_owner(\"vault.cluster.propose\")?) } else { None }; memory.cluster_propose(owner.as_ref(), &input)? }",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "proposes": true
+    },
+    {
+      "name": "vault.cluster.merge",
+      "description": "Applies a merge judgment through the existing topology gate, preserving claim subjects and recording its redirect shells, evidence and receipt.",
+      "input": "crate::memory::clustering::ClusterMergeRequest",
+      "output": "crate::memory::clustering::ClusterTopologyReceipt",
+      "call": "{ let owner = if input.grant_ref.is_none() { Some(memory.embedded_owner(\"vault.cluster.merge\")?) } else { None }; memory.cluster_merge(owner.as_ref(), &input)? }",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.cluster.split",
+      "description": "Applies a split judgment through the existing topology gate, including zero-head retirement, evidence-guided reassignment and explicit residue.",
+      "input": "crate::memory::clustering::ClusterSplitRequest",
+      "output": "crate::memory::clustering::ClusterTopologyReceipt",
+      "call": "{ let owner = if input.grant_ref.is_none() { Some(memory.embedded_owner(\"vault.cluster.split\")?) } else { None }; memory.cluster_split(owner.as_ref(), &input)? }",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.cluster.resolve_proposal",
+      "description": "Approves, amends then approves, or rejects a parked merge or split under the caller's own authority, comparing its revision and recording the ruling atomically.",
+      "input": "crate::memory::clustering::ClusterResolveRequest",
+      "output": "crate::memory::clustering::ClusterTopologyReceipt",
+      "call": "{ let owner = if input.grant_ref.is_none() { Some(memory.embedded_owner(\"vault.cluster.resolve_proposal\")?) } else { None }; memory.cluster_resolve_proposal(owner.as_ref(), &input)? }",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
       "openapi": true
     },
     {
@@ -3201,7 +3397,7 @@
     },
     {
       "name": "vault.packs.put",
-      "description": "The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks.",
+      "description": "The owner installs a pack folder, or replaces the pack installed under its name, each file sent as text or as content_base64 bytes; the put is the consent for its hooks.",
       "input": "PackPutRequest",
       "output": "crate::task_verb::sdk::PackPutReceipt",
       "call": "crate::task_verb::sdk::put_pack_embedded(memory, input)?",
@@ -7790,6 +7986,111 @@
       "openapi": true
     },
     {
+      "name": "vault.code.views.materialize",
+      "description": "Materialize a private linked working view from verified tested file frontiers in the authenticated owner account.",
+      "input": "crate::memory::code_view_doors::CodeViewMaterializeRequest",
+      "output": "crate::memory::code_view_doors::CodeWorkingView",
+      "call": "memory.code_view_materialize_as(&memory.embedded_owner(\"vault.code.views.materialize\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.views.get",
+      "description": "Read one working view and its immutable tested base under the authenticated owner account.",
+      "input": "crate::memory::code_view_doors::CodeViewRequest",
+      "output": "crate::memory::code_view_doors::CodeWorkingView",
+      "call": "memory.code_view_get_as(&memory.embedded_owner(\"vault.code.views.get\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.views.read",
+      "description": "Read the current bytes of one selected input in the authenticated owner working view.",
+      "input": "crate::memory::code_view_doors::CodeViewReadRequest",
+      "output": "crate::memory::code_view_doors::CodeViewFileBytes",
+      "call": "memory.code_view_read_as(&memory.embedded_owner(\"vault.code.views.read\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.views.action",
+      "description": "Freeze current view input identities and return the REAPI action digest with its exact command bytes and input root digest.",
+      "input": "crate::memory::code_view_doors::CodeViewActionRequest",
+      "output": "crate::memory::code_view_doors::CodeViewAction",
+      "call": "memory.code_view_action_as(&memory.embedded_owner(\"vault.code.views.action\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.views.build",
+      "description": "Run a pinned native owner build or verify leg, reusing clean account-local results and retaining secret-consuming exhaust as tainted.",
+      "input": "crate::memory::code_view_doors::CodeViewBuildRequest",
+      "output": "crate::memory::code_view_doors::CodeCacheOutcome",
+      "call": "memory.code_view_build_as(&memory.embedded_owner(\"vault.code.views.build\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.cache.get",
+      "description": "Read one clean immutable account-local build result by action key without executing a command.",
+      "input": "crate::memory::code_view_doors::CodeCacheReadRequest",
+      "output": "crate::memory::code_view_doors::CodeCacheOutcome",
+      "call": "memory.code_cache_get_as(&memory.embedded_owner(\"vault.code.cache.get\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.cache.reuse",
+      "description": "Reuse an authorized clean action result into another matching working view without dispatching a cold build.",
+      "input": "crate::memory::code_view_doors::CodeViewBuildRequest",
+      "output": "crate::memory::code_view_doors::CodeCacheOutcome",
+      "call": "memory.code_cache_reuse_as(&memory.embedded_owner(\"vault.code.cache.reuse\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.code.snapshots.ingest",
       "description": "Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt.",
       "input": "crate::memory::codebase_doors::CodeSnapshotIngestRequest",
@@ -11389,8 +11690,96 @@
       "openapi": true
     },
     {
+      "name": "vault.calendar.prep",
+      "description": "Builds a fresh caller-scoped meeting PrepPack with commitments first and a 250-word ceiling, or deliberately returns no pack.",
+      "input": "crate::calendar::meeting::CalendarMeetingRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::calendar::PrepPack>>",
+      "call": "memory.calendar_prep(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.calendar.event_outcome",
+      "description": "Reads the caller-visible meeting outcome and its recorded basis; silence projects to unknown and never to held or no_show.",
+      "input": "crate::calendar::meeting::CalendarMeetingRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::calendar::meeting::CalendarEventOutcome>>",
+      "call": "memory.calendar_event_outcome(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.calendar.check_in.due",
+      "description": "Observes whether a meeting check-in is due under owner proof, live evidence and the engine clock, without advancing time or recording an outcome.",
+      "input": "crate::calendar::meeting::CalendarMeetingRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::calendar::meeting::CalendarCheckInDue>>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.calendar.check_in.due\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.calendar.check_in.answer",
+      "description": "The owner answers a due check-in as held, no_show or rescheduled; the caller cannot assert machine evidence or replace it.",
+      "input": "crate::calendar::meeting::CalendarCheckInRequest",
+      "output": "crate::calendar::meeting::CalendarCheckInReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.calendar.check_in.answer\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.calendar.outcome_policy.get",
+      "description": "Reads the owner-configured post-meeting grace policy, including the default 1800 seconds when no override exists.",
+      "input": "EmptyRequest",
+      "output": "crate::calendar::meeting::CalendarOutcomePolicy",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.calendar.outcome_policy.get\", &_input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.calendar.outcome_policy.set",
+      "description": "Sets the post-meeting grace in real seconds under owner proof, without changing event times or minting attendance evidence.",
+      "input": "crate::calendar::meeting::CalendarOutcomePolicy",
+      "output": "crate::calendar::meeting::CalendarOutcomePolicy",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.calendar.outcome_policy.set\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.calendar.transcript.ingest",
-      "description": "Ingests an uploaded UTF-8 transcript as the caller, retaining source labels and atomically closing its SESSION with ordered TURNs and extraction wake receipts.",
+      "description": "Ingests verified uploaded UTF-8 transcript bytes as a closed SESSION with ordered TURNs; an optional meeting link earns a machine outcome through the caller gate.",
       "refs": [
         "/source_blob_ref"
       ],
@@ -11404,7 +11793,8 @@
           "source_blob_ref"
         ]
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.claims.list",
