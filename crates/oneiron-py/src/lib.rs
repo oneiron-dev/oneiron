@@ -454,6 +454,27 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_diagnostics_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.diagnostics.list")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.diagnostics.list", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_diagnostics_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.diagnostics.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.diagnostics.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_coach_inspect(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.coach.inspect")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.coach.inspect", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_people_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.people.list")?;
         let output = py
@@ -6641,6 +6662,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "tasks.refuse")?;
         let output = py
             .detach(|| self.inner.agent_verb("tasks.refuse", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_report_blocked(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.report_blocked")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.report_blocked", input))
             .map_err(raise)?;
         encode(&output)
     }

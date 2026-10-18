@@ -833,6 +833,10 @@ class Oneiron:
         @property
         def reports(self) -> "Oneiron._VaultReportsVerbs": ...
         @property
+        def diagnostics(self) -> "Oneiron._VaultDiagnosticsVerbs": ...
+        @property
+        def coach(self) -> "Oneiron._VaultCoachVerbs": ...
+        @property
         def people(self) -> "Oneiron._VaultPeopleVerbs": ...
         @property
         def shape(self) -> "Oneiron._VaultShapeVerbs": ...
@@ -910,8 +914,6 @@ class Oneiron:
         def research(self) -> "Oneiron._VaultResearchVerbs": ...
         @property
         def evals(self) -> "Oneiron._VaultEvalsVerbs": ...
-        @property
-        def coach(self) -> "Oneiron._VaultCoachVerbs": ...
         @property
         def cleanup(self) -> "Oneiron._VaultCleanupVerbs": ...
         @property
@@ -1041,6 +1043,45 @@ class Oneiron:
             """The owner replaces one durable subject's maker route: the owner inbox, or one admitted publisher its feedback is delivered to."""
         def outbound(self, spec: Facade.ReportOutboundRequest) -> Facade.ReportOutboundView:
             """The owner reads the content-free payload a publisher delivery for one report issue would carry now, with its quoted text only when disclosure approved it."""
+    class _VaultDiagnosticsVerbs:
+        def list(self, spec: Facade.DiagnosticsListRequest) -> Facade.ScopedReadResult[list[Facade.DiagnosticEventView]]:
+            """Lists the engine-authored diagnostic events the caller reads, by class, actor, or evidence, with the read's narrowing receipt."""
+        def get(self, spec: Facade.DiagnosticsGetRequest) -> Facade.ScopedReadResult[Facade.DiagnosticEventView | None]:
+            """Reads one diagnostic event the caller may read, by ref, with the read's narrowing receipt."""
+    class _VaultCoachVerbs:
+        def inspect(self, spec: Facade.CoachInspectRequest) -> Facade.ScopedReadResult[Facade.CoachInspectionView]:
+            """Inspects one blocked report as the Coach reads it: its fenced receipt, linked diagnostic band, working set, and the repair proposal the Coach filed, through the caller's own lane."""
+        @property
+        def training_offers(self) -> "Oneiron._VaultCoachTrainingOffersVerbs": ...
+    class _VaultCoachTrainingOffersVerbs:
+        def __call__(self, spec: Facade.OfferListRequest) -> list[Facade.OfferView]:
+            """Read Coach offer snapshots, their exact owner answers and later promise checks; optionally select a seat or only pending offers."""
+        def get(self, spec: Facade.OfferRef) -> Facade.OfferView | None:
+            """Read one Coach offer snapshot with its owner answer and receipt-backed promise checks."""
+        def trigger(self, spec: Facade.OfferPassRequest) -> Facade.OfferPassRef:
+            """Queue one production Coach training-offer pass under the owner proof; the offer skill decides what to raise and no caller supplies an offer body."""
+        def result(self, spec: Facade.OfferPassRef) -> Facade.OfferPassResult | None:
+            """Read the production Coach offer attempt state and the exact snapshots it raised; a completed pass may raise no offer."""
+        def answer(self, spec: Facade.OfferAnswerRequest) -> Facade.OfferAnswerRecord:
+            """Answer the exact shown Coach snapshot: keep baseline, decline, postpone, approve switch or approve train; training still needs its separate result-swap choice."""
+        def undo(self, spec: Facade.OfferRef) -> Facade.OfferUndoReceipt:
+            """Undo an approved stock switch only while its own seat still holds the switched binding; restore the previous whole binding."""
+        @property
+        def candidates(self) -> "Oneiron._VaultCoachTrainingOffersCandidatesVerbs": ...
+        @property
+        def pilots(self) -> "Oneiron._VaultCoachTrainingOffersPilotsVerbs": ...
+    class _VaultCoachTrainingOffersCandidatesVerbs:
+        def __call__(self, spec: Facade.OfferCandidateQuery) -> list[Facade.OfferCandidateRecord]:
+            """Read pinned own-seat stock or training-recipe candidates, including their incumbent and explicit compute destination."""
+        def prepare(self, spec: Facade.OfferCandidateSetup) -> Facade.OfferCandidateRecord:
+            """Pin an own-seat catalog stock candidate or existing training recipe and its destination; this nominates only and never switches, downloads or trains."""
+    class _VaultCoachTrainingOffersPilotsVerbs:
+        def prepare(self, spec: Facade.OfferPilotPrepare) -> Facade.OfferPilotPrepared:
+            """Prepare an eval-only pilot of a pinned seat candidate, counting its sealed cohort exposure before releasing receipt-backed cases; launch no compute or egress."""
+        def complete(self, spec: Facade.OfferPilotComplete) -> Facade.OfferPilot:
+            """Record immutable owner-evaluator pilot measurements bound to counted own-seat families; fixed code derives sufficiency and preserves unknown cost and score."""
+        def get(self, spec: Facade.OfferPilotRef) -> Facade.OfferPilot | None:
+            """Read one counted Coach pilot, its pins, measurement receipts, one-off cost and computed sufficiency card."""
     class _VaultPeopleVerbs:
         def list(self, spec: Facade.PeopleListRequest) -> Facade.PeoplePage:
             """One page of the people the caller reads, in handle order."""
@@ -1713,38 +1754,6 @@ class Oneiron:
     class _VaultEvalsCohortsVerbs:
         def setup(self, spec: Facade.EvalCohortSetup) -> Facade.EvalAuthoringReport:
             """The owner sets up sealed cohorts from a pinned real inventory through the existing family, case and audited cut doors. Reports refused decisions; never serves sealed content or fabricates labels or skill provenance."""
-    class _VaultCoachVerbs:
-        @property
-        def training_offers(self) -> "Oneiron._VaultCoachTrainingOffersVerbs": ...
-    class _VaultCoachTrainingOffersVerbs:
-        def __call__(self, spec: Facade.OfferListRequest) -> list[Facade.OfferView]:
-            """Read Coach offer snapshots, their exact owner answers and later promise checks; optionally select a seat or only pending offers."""
-        def get(self, spec: Facade.OfferRef) -> Facade.OfferView | None:
-            """Read one Coach offer snapshot with its owner answer and receipt-backed promise checks."""
-        def trigger(self, spec: Facade.OfferPassRequest) -> Facade.OfferPassRef:
-            """Queue one production Coach training-offer pass under the owner proof; the offer skill decides what to raise and no caller supplies an offer body."""
-        def result(self, spec: Facade.OfferPassRef) -> Facade.OfferPassResult | None:
-            """Read the production Coach offer attempt state and the exact snapshots it raised; a completed pass may raise no offer."""
-        def answer(self, spec: Facade.OfferAnswerRequest) -> Facade.OfferAnswerRecord:
-            """Answer the exact shown Coach snapshot: keep baseline, decline, postpone, approve switch or approve train; training still needs its separate result-swap choice."""
-        def undo(self, spec: Facade.OfferRef) -> Facade.OfferUndoReceipt:
-            """Undo an approved stock switch only while its own seat still holds the switched binding; restore the previous whole binding."""
-        @property
-        def candidates(self) -> "Oneiron._VaultCoachTrainingOffersCandidatesVerbs": ...
-        @property
-        def pilots(self) -> "Oneiron._VaultCoachTrainingOffersPilotsVerbs": ...
-    class _VaultCoachTrainingOffersCandidatesVerbs:
-        def __call__(self, spec: Facade.OfferCandidateQuery) -> list[Facade.OfferCandidateRecord]:
-            """Read pinned own-seat stock or training-recipe candidates, including their incumbent and explicit compute destination."""
-        def prepare(self, spec: Facade.OfferCandidateSetup) -> Facade.OfferCandidateRecord:
-            """Pin an own-seat catalog stock candidate or existing training recipe and its destination; this nominates only and never switches, downloads or trains."""
-    class _VaultCoachTrainingOffersPilotsVerbs:
-        def prepare(self, spec: Facade.OfferPilotPrepare) -> Facade.OfferPilotPrepared:
-            """Prepare an eval-only pilot of a pinned seat candidate, counting its sealed cohort exposure before releasing receipt-backed cases; launch no compute or egress."""
-        def complete(self, spec: Facade.OfferPilotComplete) -> Facade.OfferPilot:
-            """Record immutable owner-evaluator pilot measurements bound to counted own-seat families; fixed code derives sufficiency and preserves unknown cost and score."""
-        def get(self, spec: Facade.OfferPilotRef) -> Facade.OfferPilot | None:
-            """Read one counted Coach pilot, its pins, measurement receipts, one-off cost and computed sufficiency card."""
     class _VaultCleanupVerbs:
         def run(self, spec: Facade.CleanupRunRequest) -> Facade.CleanupRunView:
             """The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."""
@@ -2678,6 +2687,8 @@ class Oneiron:
             """Asks the attached run to fold its pending marks in one batch at its next step boundary; read self.history for landed folds and epochs."""
         def unfold(self, spec: Facade.FoldUnfoldRequest) -> Facade.FoldReply[Facade.FoldUnfolded]:
             """Appends a fold of the attached run after its current tail, without replacing the earlier stub."""
+        def report_blocked(self, spec: Facade.LiveRunRequest[Facade.ReportBlockedInput]) -> Facade.ReportBlockedOutput:
+            """Files this credential's attached agent run's own blocked report: a closed category and its detail as the fenced, untrusted leaf of a witnessed receipt for the Coach's Issues job; it grants nothing and completes no task."""
         @property
         def agents(self) -> "Oneiron._SelfAgentsVerbs": ...
         @property

@@ -494,6 +494,72 @@ async fn self_inbox_concern_move(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_diagnostics_list(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.diagnostics.list",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_diagnostics_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.diagnostics.get",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_coach_inspect(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.coach.inspect",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_people_list(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -17648,6 +17714,31 @@ async fn tasks_refuse(
         facade_hooks_post(server, hooks, output).await?,
     ))
 }
+async fn self_report_blocked(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.report_blocked")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.report_blocked", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.report_blocked", value).await?;
+    let output = facade_output(
+        super::host_doors::self_report_blocked(
+            server,
+            auth,
+            call.session()?,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn self_agents_spawn(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -17757,6 +17848,9 @@ pub(crate) async fn call_verb(
         "self.inbox.concern" => self_inbox_concern(server, call, input).await,
         "self.inbox.concern.outcome" => self_inbox_concern_outcome(server, call, input).await,
         "self.inbox.concern.move" => self_inbox_concern_move(server, call, input).await,
+        "vault.diagnostics.list" => vault_diagnostics_list(server, call, input).await,
+        "vault.diagnostics.get" => vault_diagnostics_get(server, call, input).await,
+        "vault.coach.inspect" => vault_coach_inspect(server, call, input).await,
         "vault.people.list" => vault_people_list(server, call, input).await,
         "vault.people.get" => vault_people_get(server, call, input).await,
         "vault.shape.read" => vault_shape_read(server, call, input).await,
@@ -18779,6 +18873,7 @@ pub(crate) async fn call_verb(
         "self.unfold" => self_unfold(server, call, input).await,
         "self.folds" => self_folds(server, call, input).await,
         "tasks.refuse" => tasks_refuse(server, call, input).await,
+        "self.report_blocked" => self_report_blocked(server, call, input).await,
         "self.agents.spawn" => self_agents_spawn(server, call, input).await,
         "self.leader.split" => self_leader_split(server, call, input).await,
         "self.skills.call" => self_skills_call(server, call, input).await,

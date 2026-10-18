@@ -101,6 +101,15 @@ impl OneironClient {
                 "self.inbox.concern.move" => remote_agent_verb_output::<
                     oneiron::dreamer_runner::maintenance::agent_health::ConcernMoveOutcome,
                 >(client, verb, &input),
+                "vault.diagnostics.list" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<Vec<oneiron::memory::DiagnosticEventView>>,
+                >(client, verb, &input),
+                "vault.diagnostics.get" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<Option<oneiron::memory::DiagnosticEventView>>,
+                >(client, verb, &input),
+                "vault.coach.inspect" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<oneiron::memory::CoachInspectionView>,
+                >(client, verb, &input),
                 "vault.people.list" => {
                     remote_agent_verb_output::<oneiron::memory::PeoplePage>(client, verb, &input)
                 }
@@ -2347,6 +2356,9 @@ impl OneironClient {
                 "tasks.refuse" => remote_agent_verb_output::<oneiron::code_run::TaskRefuseOutput>(
                     client, verb, &input,
                 ),
+                "self.report_blocked" => remote_agent_verb_output::<
+                    oneiron::code_run::ReportBlockedOutput,
+                >(client, verb, &input),
                 "self.agents.spawn" => remote_agent_verb_output::<
                     oneiron::code_run::AgentSpawnOutput,
                 >(client, verb, &input),
@@ -2649,6 +2661,50 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.inbox.concern.move", value)
+    }
+    pub fn vault_diagnostics_list(
+        &self,
+        input: &oneiron::memory::DiagnosticsListRequest,
+    ) -> Result<
+        oneiron::claim::ScopedReadResult<Vec<oneiron::memory::DiagnosticEventView>>,
+        MemoryError,
+    > {
+        oneiron::memory::caps::check_limit_nonzero(input.limit)?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.diagnostics.list", value)
+    }
+    pub fn vault_diagnostics_get(
+        &self,
+        input: &oneiron::memory::DiagnosticsGetRequest,
+    ) -> Result<
+        oneiron::claim::ScopedReadResult<Option<oneiron::memory::DiagnosticEventView>>,
+        MemoryError,
+    > {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.diagnostics.get", value)
+    }
+    pub fn vault_coach_inspect(
+        &self,
+        input: &oneiron::memory::CoachInspectRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<oneiron::memory::CoachInspectionView>, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.coach.inspect", value)
     }
     pub fn vault_people_list(
         &self,
@@ -11634,6 +11690,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("tasks.refuse", value)
+    }
+    pub fn self_report_blocked(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::ReportBlockedInput>,
+    ) -> Result<oneiron::code_run::ReportBlockedOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.report_blocked", value)
     }
     pub fn self_agents_spawn(
         &self,

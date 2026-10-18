@@ -348,6 +348,12 @@ class Oneiron:
         def reports(self) -> "Oneiron._VaultReportsVerbs":
             return Oneiron._VaultReportsVerbs(self._client)
         @property
+        def diagnostics(self) -> "Oneiron._VaultDiagnosticsVerbs":
+            return Oneiron._VaultDiagnosticsVerbs(self._client)
+        @property
+        def coach(self) -> "Oneiron._VaultCoachVerbs":
+            return Oneiron._VaultCoachVerbs(self._client)
+        @property
         def people(self) -> "Oneiron._VaultPeopleVerbs":
             return Oneiron._VaultPeopleVerbs(self._client)
         @property
@@ -487,9 +493,6 @@ class Oneiron:
         @property
         def evals(self) -> "Oneiron._VaultEvalsVerbs":
             return Oneiron._VaultEvalsVerbs(self._client)
-        @property
-        def coach(self) -> "Oneiron._VaultCoachVerbs":
-            return Oneiron._VaultCoachVerbs(self._client)
         @property
         def cleanup(self) -> "Oneiron._VaultCleanupVerbs":
             return Oneiron._VaultCleanupVerbs(self._client)
@@ -685,6 +688,72 @@ class Oneiron:
         def outbound(self, spec):
             """The owner reads the content-free payload a publisher delivery for one report issue would carry now, with its quoted text only when disclosure approved it."""
             return json.loads(_translate(lambda: self._client.vault_reports_outbound(json.dumps(spec))))
+    class _VaultDiagnosticsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def list(self, spec):
+            """Lists the engine-authored diagnostic events the caller reads, by class, actor, or evidence, with the read's narrowing receipt."""
+            return json.loads(_translate(lambda: self._client.vault_diagnostics_list(json.dumps(spec))))
+        def get(self, spec):
+            """Reads one diagnostic event the caller may read, by ref, with the read's narrowing receipt."""
+            return json.loads(_translate(lambda: self._client.vault_diagnostics_get(json.dumps(spec))))
+    class _VaultCoachVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def inspect(self, spec):
+            """Inspects one blocked report as the Coach reads it: its fenced receipt, linked diagnostic band, working set, and the repair proposal the Coach filed, through the caller's own lane."""
+            return json.loads(_translate(lambda: self._client.vault_coach_inspect(json.dumps(spec))))
+        @property
+        def training_offers(self) -> "Oneiron._VaultCoachTrainingOffersVerbs":
+            return Oneiron._VaultCoachTrainingOffersVerbs(self._client)
+    class _VaultCoachTrainingOffersVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Read Coach offer snapshots, their exact owner answers and later promise checks; optionally select a seat or only pending offers."""
+            return json.loads(_translate(lambda: self._client.vault_coach_training_offers(json.dumps(spec))))
+        def get(self, spec):
+            """Read one Coach offer snapshot with its owner answer and receipt-backed promise checks."""
+            return json.loads(_translate(lambda: self._client.vault_coach_training_offers_get(json.dumps(spec))))
+        def trigger(self, spec):
+            """Queue one production Coach training-offer pass under the owner proof; the offer skill decides what to raise and no caller supplies an offer body."""
+            return json.loads(_translate(lambda: self._client.vault_coach_training_offers_trigger(json.dumps(spec))))
+        def result(self, spec):
+            """Read the production Coach offer attempt state and the exact snapshots it raised; a completed pass may raise no offer."""
+            return json.loads(_translate(lambda: self._client.vault_coach_training_offers_result(json.dumps(spec))))
+        def answer(self, spec):
+            """Answer the exact shown Coach snapshot: keep baseline, decline, postpone, approve switch or approve train; training still needs its separate result-swap choice."""
+            return json.loads(_translate(lambda: self._client.vault_coach_training_offers_answer(json.dumps(spec))))
+        def undo(self, spec):
+            """Undo an approved stock switch only while its own seat still holds the switched binding; restore the previous whole binding."""
+            return json.loads(_translate(lambda: self._client.vault_coach_training_offers_undo(json.dumps(spec))))
+        @property
+        def candidates(self) -> "Oneiron._VaultCoachTrainingOffersCandidatesVerbs":
+            return Oneiron._VaultCoachTrainingOffersCandidatesVerbs(self._client)
+        @property
+        def pilots(self) -> "Oneiron._VaultCoachTrainingOffersPilotsVerbs":
+            return Oneiron._VaultCoachTrainingOffersPilotsVerbs(self._client)
+    class _VaultCoachTrainingOffersCandidatesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Read pinned own-seat stock or training-recipe candidates, including their incumbent and explicit compute destination."""
+            return json.loads(_translate(lambda: self._client.vault_coach_training_offers_candidates(json.dumps(spec))))
+        def prepare(self, spec):
+            """Pin an own-seat catalog stock candidate or existing training recipe and its destination; this nominates only and never switches, downloads or trains."""
+            return json.loads(_translate(lambda: self._client.vault_coach_training_offers_candidates_prepare(json.dumps(spec))))
+    class _VaultCoachTrainingOffersPilotsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def prepare(self, spec):
+            """Prepare an eval-only pilot of a pinned seat candidate, counting its sealed cohort exposure before releasing receipt-backed cases; launch no compute or egress."""
+            return json.loads(_translate(lambda: self._client.vault_coach_training_offers_pilots_prepare(json.dumps(spec))))
+        def complete(self, spec):
+            """Record immutable owner-evaluator pilot measurements bound to counted own-seat families; fixed code derives sufficiency and preserves unknown cost and score."""
+            return json.loads(_translate(lambda: self._client.vault_coach_training_offers_pilots_complete(json.dumps(spec))))
+        def get(self, spec):
+            """Read one counted Coach pilot, its pins, measurement receipts, one-off cost and computed sufficiency card."""
+            return json.loads(_translate(lambda: self._client.vault_coach_training_offers_pilots_get(json.dumps(spec))))
     class _VaultPeopleVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1833,60 +1902,6 @@ class Oneiron:
         def setup(self, spec):
             """The owner sets up sealed cohorts from a pinned real inventory through the existing family, case and audited cut doors. Reports refused decisions; never serves sealed content or fabricates labels or skill provenance."""
             return json.loads(_translate(lambda: self._client.vault_evals_cohorts_setup(json.dumps(spec))))
-    class _VaultCoachVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        @property
-        def training_offers(self) -> "Oneiron._VaultCoachTrainingOffersVerbs":
-            return Oneiron._VaultCoachTrainingOffersVerbs(self._client)
-    class _VaultCoachTrainingOffersVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def __call__(self, spec):
-            """Read Coach offer snapshots, their exact owner answers and later promise checks; optionally select a seat or only pending offers."""
-            return json.loads(_translate(lambda: self._client.vault_coach_training_offers(json.dumps(spec))))
-        def get(self, spec):
-            """Read one Coach offer snapshot with its owner answer and receipt-backed promise checks."""
-            return json.loads(_translate(lambda: self._client.vault_coach_training_offers_get(json.dumps(spec))))
-        def trigger(self, spec):
-            """Queue one production Coach training-offer pass under the owner proof; the offer skill decides what to raise and no caller supplies an offer body."""
-            return json.loads(_translate(lambda: self._client.vault_coach_training_offers_trigger(json.dumps(spec))))
-        def result(self, spec):
-            """Read the production Coach offer attempt state and the exact snapshots it raised; a completed pass may raise no offer."""
-            return json.loads(_translate(lambda: self._client.vault_coach_training_offers_result(json.dumps(spec))))
-        def answer(self, spec):
-            """Answer the exact shown Coach snapshot: keep baseline, decline, postpone, approve switch or approve train; training still needs its separate result-swap choice."""
-            return json.loads(_translate(lambda: self._client.vault_coach_training_offers_answer(json.dumps(spec))))
-        def undo(self, spec):
-            """Undo an approved stock switch only while its own seat still holds the switched binding; restore the previous whole binding."""
-            return json.loads(_translate(lambda: self._client.vault_coach_training_offers_undo(json.dumps(spec))))
-        @property
-        def candidates(self) -> "Oneiron._VaultCoachTrainingOffersCandidatesVerbs":
-            return Oneiron._VaultCoachTrainingOffersCandidatesVerbs(self._client)
-        @property
-        def pilots(self) -> "Oneiron._VaultCoachTrainingOffersPilotsVerbs":
-            return Oneiron._VaultCoachTrainingOffersPilotsVerbs(self._client)
-    class _VaultCoachTrainingOffersCandidatesVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def __call__(self, spec):
-            """Read pinned own-seat stock or training-recipe candidates, including their incumbent and explicit compute destination."""
-            return json.loads(_translate(lambda: self._client.vault_coach_training_offers_candidates(json.dumps(spec))))
-        def prepare(self, spec):
-            """Pin an own-seat catalog stock candidate or existing training recipe and its destination; this nominates only and never switches, downloads or trains."""
-            return json.loads(_translate(lambda: self._client.vault_coach_training_offers_candidates_prepare(json.dumps(spec))))
-    class _VaultCoachTrainingOffersPilotsVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def prepare(self, spec):
-            """Prepare an eval-only pilot of a pinned seat candidate, counting its sealed cohort exposure before releasing receipt-backed cases; launch no compute or egress."""
-            return json.loads(_translate(lambda: self._client.vault_coach_training_offers_pilots_prepare(json.dumps(spec))))
-        def complete(self, spec):
-            """Record immutable owner-evaluator pilot measurements bound to counted own-seat families; fixed code derives sufficiency and preserves unknown cost and score."""
-            return json.loads(_translate(lambda: self._client.vault_coach_training_offers_pilots_complete(json.dumps(spec))))
-        def get(self, spec):
-            """Read one counted Coach pilot, its pins, measurement receipts, one-off cost and computed sufficiency card."""
-            return json.loads(_translate(lambda: self._client.vault_coach_training_offers_pilots_get(json.dumps(spec))))
     class _VaultCleanupVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3523,6 +3538,9 @@ class Oneiron:
         def unfold(self, spec):
             """Appends a fold of the attached run after its current tail, without replacing the earlier stub."""
             return json.loads(_translate(lambda: self._client.self_unfold(json.dumps(spec))))
+        def report_blocked(self, spec):
+            """Files this credential's attached agent run's own blocked report: a closed category and its detail as the fenced, untrusted leaf of a witnessed receipt for the Coach's Issues job; it grants nothing and completes no task."""
+            return json.loads(_translate(lambda: self._client.self_report_blocked(json.dumps(spec))))
         @property
         def agents(self) -> "Oneiron._SelfAgentsVerbs":
             return Oneiron._SelfAgentsVerbs(self._client)

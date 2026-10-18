@@ -110,6 +110,21 @@ export_facade! {
     let output = client.self_inbox_concern_move(&input)?;
     crate::codec::lift_record("self.inbox.concern.move", &output)
 };
+"vault.diagnostics.list" => fn vault_diagnostics_list(&self, input: DiagnosticsListRequest) -> ScopedReadResultDiagnosticEventViewList = |client| {
+    let input: oneiron::memory::DiagnosticsListRequest = crate::codec::lower_record("vault.diagnostics.list", input)?;
+    let output = client.vault_diagnostics_list(&input)?;
+    crate::codec::lift_record("vault.diagnostics.list", &output)
+};
+"vault.diagnostics.get" => fn vault_diagnostics_get(&self, input: DiagnosticsGetRequest) -> ScopedReadResultOptionalDiagnosticEventView = |client| {
+    let input: oneiron::memory::DiagnosticsGetRequest = crate::codec::lower_record("vault.diagnostics.get", input)?;
+    let output = client.vault_diagnostics_get(&input)?;
+    crate::codec::lift_record("vault.diagnostics.get", &output)
+};
+"vault.coach.inspect" => fn vault_coach_inspect(&self, input: CoachInspectRequest) -> ScopedReadResultCoachInspectionView = |client| {
+    let input: oneiron::memory::CoachInspectRequest = crate::codec::lower_record("vault.coach.inspect", input)?;
+    let output = client.vault_coach_inspect(&input)?;
+    crate::codec::lift_record("vault.coach.inspect", &output)
+};
 "vault.people.list" => fn vault_people_list(&self, input: PeopleListRequest) -> PeoplePage = |client| {
     let input: oneiron::memory::PeopleListRequest = crate::codec::lower_record("vault.people.list", input)?;
     let output = client.vault_people_list(&input)?;
@@ -3750,6 +3765,11 @@ export_facade! {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::TaskRefuseInput> = crate::codec::lower_record("tasks.refuse", input)?;
     let output = client.tasks_refuse(&input)?;
     crate::codec::lift_record("tasks.refuse", &output)
+};
+"self.report_blocked" => fn self_report_blocked(&self, input: LiveRunRequestReportBlockedInput) -> ReportBlockedOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::ReportBlockedInput> = crate::codec::lower_record("self.report_blocked", input)?;
+    let output = client.self_report_blocked(&input)?;
+    crate::codec::lift_record("self.report_blocked", &output)
 };
 "self.agents.spawn" => fn self_agents_spawn(&self, input: LiveRunRequestAgentSpawnInput) -> AgentSpawnOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::AgentSpawnInput> = crate::codec::lower_record("self.agents.spawn", input)?;

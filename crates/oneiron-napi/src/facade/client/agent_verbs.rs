@@ -170,6 +170,30 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_diagnostics_list(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.diagnostics.list", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_diagnostics_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.diagnostics.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_coach_inspect(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.coach.inspect", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_people_list(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.people.list", input)
@@ -6830,6 +6854,12 @@ impl NativeClient {
     pub fn tasks_refuse(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("tasks.refuse", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_report_blocked(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.report_blocked", input)
             .map_err(facade_error)
     }
     #[napi]
