@@ -730,8 +730,64 @@ fn shift(doc: &LoroDoc, sheet: &str, edit: XlsxAxisEdit) -> Result<()> {
     let (key, name) = (held.key.clone(), held.name.clone());
     let mut after = before.clone();
     axis(&mut after, &key, &name, &edit, true)?;
+    if !edit.delete {
+        neighbour_formats(&mut after, &key, &edit);
+    }
     after.axes.push((key, edit));
     write_back(doc, &before, &after)
+}
+
+/// Format inserted rows like the row above them, and inserted columns like
+/// the column to their left, as Excel's insert does by default; at the
+/// sheet's first row or column, like the one after them. Each formatted cell
+/// of that line gives its format to the blank cells inserted beside it,
+/// outside the read-only ranges. The cells are the body's writes, so an
+/// export writes them as it writes any cell.
+fn neighbour_formats(body: &mut XlsxBody, key: &str, edit: &XlsxAxisEdit) {
+    let Some(sheet) = body.sheets.iter_mut().find(|sheet| sheet.key == key) else {
+        return;
+    };
+    let source = if edit.at > 1 {
+        edit.at - 1
+    } else {
+        edit.at + edit.count
+    };
+    let line = |(row, col): (u32, u32)| match edit.axis {
+        XlsxAxis::Row => row,
+        XlsxAxis::Column => col,
+    };
+    let formatted: Vec<((u32, u32), Option<u32>, Option<String>)> = sheet
+        .cells
+        .iter()
+        .filter(|(at, cell)| {
+            line(**at) == source
+                && cell.locked.is_none()
+                && (cell.style.is_some() || cell.format.is_some())
+        })
+        .map(|(at, cell)| (*at, cell.style, cell.format.clone()))
+        .collect();
+    for ((row, col), style, format) in formatted {
+        for new in edit.at..edit.at.saturating_add(edit.count) {
+            let (row, col) = match edit.axis {
+                XlsxAxis::Row => (new, col),
+                XlsxAxis::Column => (row, new),
+            };
+            let address = a1(col, row);
+            if parse_a1(&address).is_none()
+                || sheet.locked.iter().any(|area| area.contains(col, row))
+            {
+                continue;
+            }
+            sheet.cells.entry((row, col)).or_insert_with(|| BodyCell {
+                address,
+                value: XlsxValue::Blank,
+                formula: None,
+                style,
+                format: format.clone(),
+                locked: None,
+            });
+        }
+    }
 }
 
 /// Insert or delete rows or columns in the sheet keyed `key`, which formulas
