@@ -395,12 +395,16 @@ async fn refuse_frozen_writes(
     next: Next,
 ) -> Response {
     if state.server.managed_issuer.is_some() {
-        // This one route needs the SUPERVISOR'S holder action, not the host
-        // root. Verify the account-authenticated assertion against the
-        // per-spawn secret and the exact request body before removing every
-        // forwarded credential. Unverified headers never become extensions.
+        // The widen answer routes need the SUPERVISOR'S holder action, not
+        // the host root. Verify the account-authenticated assertion against
+        // the per-spawn secret and the exact request body before removing
+        // every forwarded credential. Unverified headers never become
+        // extensions.
         if request.method() == Method::POST
-            && request.uri().path() == "/v1/core/consent/widen/accept"
+            && matches!(
+                request.uri().path(),
+                "/v1/core/consent/widen/accept" | "/v1/core/consent/widen/reject"
+            )
         {
             let assertion = request
                 .headers()
