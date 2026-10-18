@@ -17953,6 +17953,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/confession.rs",
+     "purpose": "The confession ask and its parse (OF-544, ARCH-0079): after a DONE line, one fenced block naming each…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -18087,8 +18097,8 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 20,
-      "mod": 3,
+      "crate-vis": 21,
+      "mod": 4,
       "re-export": 18
      }
     },
@@ -18468,7 +18478,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "TaskRealizeModel"
@@ -18477,6 +18487,7 @@
      "purpose": "A Dreamer-lane TASK's realization: the one row `tasks.create` queues for a TASK routed to the Dreamer",
      "surface": {
       "const": 1,
+      "crate-vis": 2,
       "fn": 1,
       "struct": 1
      }
@@ -19185,9 +19196,9 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 26,
+      "const": 27,
       "crate-vis": 8,
-      "fn": 12,
+      "fn": 13,
       "trait": 1
      }
     },
@@ -42860,10 +42871,10 @@
      "path": "src/skill_optimize/eval_set.rs",
      "purpose": "OF-578 (ARCH-0053 \"Eval authoring\", RESEARCH-0937; EVAL-SKILL = A, EVAL-COLDSTART = C, NOT-WORSE = A): the…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 4,
       "fn": 7,
-      "re-export": 2,
+      "re-export": 4,
       "struct": 4
      }
     },
@@ -42871,6 +42882,58 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "CandidateLabel",
+      "CohortSummary",
+      "EvalAuthoringInventory",
+      "EvalCandidate",
+      "EvalSourceGroup",
+      "PurposeCounts",
+      "SeatInventory",
+      "UncutFamily"
+     ],
+     "path": "src/skill_optimize/eval_set/authoring.rs",
+     "purpose": "The eval-authoring pass (OF-578, ARCH-0053 \"Eval authoring\"): the Coach's nightly upkeep of each seat's test…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "re-export": 1,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CaseDecision",
+      "CutDecision",
+      "EvalAuthoringPlan",
+      "EvalAuthoringReport",
+      "EvalAuthoringSkip",
+      "EvalCohortDecision",
+      "FamilyDecision"
+     ],
+     "path": "src/skill_optimize/eval_set/authoring/apply.rs",
+     "purpose": "The plan the eval-authoring skill answers with, checked whole against its inventory and applied in order…",
+     "surface": {
+      "fn": 1,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/eval_set/authoring/lineage.rs",
+     "purpose": "The lineage fixed code resolves for a candidate, from the existing readers' explicit links only: the…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CohortRetirement",
       "EvalCohort",
       "EvalExposure",
       "EvalExposureCounts",
@@ -42880,10 +42943,30 @@
      "path": "src/skill_optimize/eval_set/cohort.rs",
      "purpose": "Date-cut sealed cohorts and the exposure ledger (ARCH-0053: \"The ledger counts what each sealed cohort has…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 8,
       "enum": 1,
-      "fn": 5,
-      "struct": 4
+      "fn": 6,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AuditCase",
+      "AuditCoverage",
+      "AuditMethodPin",
+      "CoverageGap",
+      "EvalCutAudit",
+      "EvalCutAuditDraft",
+      "NearCopyFlag"
+     ],
+     "path": "src/skill_optimize/eval_set/cut_audit.rs",
+     "purpose": "The near-copy audit every cohort cut commits with (ARCH-0053: \"At each cut, a near-copy audit runs across…",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 1,
+      "struct": 7
      }
     },
     {
@@ -43226,7 +43309,7 @@
       "const": 1,
       "crate-vis": 2,
       "enum": 4,
-      "fn": 9,
+      "fn": 10,
       "struct": 10
      }
     },
@@ -53630,7 +53713,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 65,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54414,7 +54497,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 35,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -54675,7 +54758,7 @@
    },
    "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3325,
+   "source_files": 3330,
    "test_files": 902
   },
   "oneiron-android": {
@@ -65505,6 +65588,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/eval_authoring.rs",
+     "purpose": "The Coach's eval authoring (ARCH-0053 \"Eval authoring\", OF-578): each night it keeps each seat's test set…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/failure_signals.rs",
      "purpose": "The host's failure-signal sender (OF-380)",
      "surface": {
@@ -74037,7 +74130,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 40,
+     "files": 41,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -74452,7 +74545,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 630,
+   "source_files": 631,
    "test_files": 182
   },
   "oneiron-spawn": {
