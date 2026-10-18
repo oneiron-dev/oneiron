@@ -81,6 +81,7 @@ pub(crate) use super::vault_shape_doors::*;
 pub(crate) use super::embedding_space_doors::*;
 // The owner's fan-out ruling doors (OF-393), likewise.
 pub(crate) use super::fanout_doors::*;
+pub(crate) use super::budget_doors::*;
 // The owner's learned-setting doors, likewise.
 pub(crate) use super::setting_doors::*;
 // The owner's historical secret lift sweep door (OF-067), likewise.
@@ -1061,6 +1062,13 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.claims.review"
         | "vault.claims.settle"
         | "vault.settings.wake_policy.set"
+        | "vault.budgets.lease.open"
+        | "vault.budgets.lease"
+        | "vault.budgets.lease.top_up"
+        | "vault.budgets.hold"
+        | "vault.budgets.hold.resume"
+        | "vault.budgets.local"
+        | "vault.budgets.settlements"
         | "vault.research.evaluate_split" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"
         | "vault.shared.propose_transfer"
