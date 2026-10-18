@@ -14,7 +14,7 @@ use super::{
 use crate::autoreason_campaign::CampaignResult;
 
 /// One categorical dimension proposed from this task's goal and samples.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ArchiveAxis {
     pub name: String,
@@ -22,7 +22,7 @@ pub struct ArchiveAxis {
 }
 
 /// Descriptors are output kinds, never optimization axes of a skill or goal.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ArchiveDescriptor {
     Axes {
@@ -160,7 +160,7 @@ pub struct ArchiveAxesRequest<'a> {
 }
 
 /// The proposal's receipt retains the recipe/model provenance outside this view.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ArchiveAxesProposal {
     pub receipt: EntityId,

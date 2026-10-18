@@ -1122,6 +1122,42 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.research.archive.install",
+                crate::code_run::vault_read::request_schema::<
+                    crate::autoreason_campaign::archive::CampaignArchiveInstall,
+                >(),
+            ),
+            (
+                "vault.research.archive.record",
+                crate::code_run::vault_read::request_schema::<
+                    crate::autoreason_campaign::archive::CampaignArchiveOutput,
+                >(),
+            ),
+            (
+                "vault.research.archive.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::autoreason_campaign::archive::CampaignArchiveRequest,
+                >(),
+            ),
+            (
+                "vault.research.archive.best",
+                crate::code_run::vault_read::request_schema::<
+                    crate::autoreason_campaign::archive::CampaignArchiveRequest,
+                >(),
+            ),
+            (
+                "vault.research.archive.repropose",
+                crate::code_run::vault_read::request_schema::<
+                    crate::autoreason_campaign::archive::CampaignArchiveReproposal,
+                >(),
+            ),
+            (
+                "vault.research.archive.coverage",
+                crate::code_run::vault_read::request_schema::<
+                    crate::autoreason_campaign::archive::CampaignArchiveCoverage,
+                >(),
+            ),
+            (
                 "vault.evals.inventory",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::EvalInventoryWire,
@@ -3792,6 +3828,12 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.off_record.claims.upsert",
     "self.off_record.execute",
     "vault.research.create_child",
+    "vault.research.archive.install",
+    "vault.research.archive.record",
+    "vault.research.archive.get",
+    "vault.research.archive.best",
+    "vault.research.archive.repropose",
+    "vault.research.archive.coverage",
     "vault.evals.cohorts.setup",
     "vault.cleanup.run",
     "vault.entities.mention",
@@ -4306,6 +4348,24 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.research.create_child" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::ResearchChildReceipt,
+        >(),
+        "vault.research.archive.install" => crate::code_run::vault_read::request_schema::<
+            crate::autoreason_campaign::archive::CampaignArchiveView,
+        >(),
+        "vault.research.archive.record" => crate::code_run::vault_read::request_schema::<
+            crate::autoreason_campaign::archive::CampaignArchiveView,
+        >(),
+        "vault.research.archive.get" => crate::code_run::vault_read::request_schema::<
+            crate::autoreason_campaign::archive::CampaignArchiveRecord,
+        >(),
+        "vault.research.archive.best" => crate::code_run::vault_read::request_schema::<
+            crate::autoreason_campaign::archive::CampaignArchiveView,
+        >(),
+        "vault.research.archive.repropose" => crate::code_run::vault_read::request_schema::<
+            crate::autoreason_campaign::archive::CampaignArchiveView,
+        >(),
+        "vault.research.archive.coverage" => crate::code_run::vault_read::request_schema::<
+            crate::autoreason_campaign::archive::CampaignArchiveAdmission,
         >(),
         "vault.evals.cohorts.setup" => crate::code_run::vault_read::request_schema::<
             crate::skill_optimize::EvalAuthoringReport,
@@ -6456,6 +6516,48 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.research.archive" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.research.archive.install" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.research.archive.record" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.research.archive.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.research.archive.best" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.research.archive.repropose" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.research.archive.coverage" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -10221,6 +10323,30 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.research.archive" => {
             let _input: crate::task_verb::sdk::ResearchArchiveWire = decode(value.clone())?;
         }
+        "vault.research.archive.install" => {
+            let _input: crate::autoreason_campaign::archive::CampaignArchiveInstall =
+                decode(value.clone())?;
+        }
+        "vault.research.archive.record" => {
+            let _input: crate::autoreason_campaign::archive::CampaignArchiveOutput =
+                decode(value.clone())?;
+        }
+        "vault.research.archive.get" => {
+            let _input: crate::autoreason_campaign::archive::CampaignArchiveRequest =
+                decode(value.clone())?;
+        }
+        "vault.research.archive.best" => {
+            let _input: crate::autoreason_campaign::archive::CampaignArchiveRequest =
+                decode(value.clone())?;
+        }
+        "vault.research.archive.repropose" => {
+            let _input: crate::autoreason_campaign::archive::CampaignArchiveReproposal =
+                decode(value.clone())?;
+        }
+        "vault.research.archive.coverage" => {
+            let _input: crate::autoreason_campaign::archive::CampaignArchiveCoverage =
+                decode(value.clone())?;
+        }
         "vault.evals.inventory" => {
             let _input: crate::task_verb::sdk::EvalInventoryWire = decode(value.clone())?;
         }
@@ -12261,6 +12387,22 @@ pub fn invoke(
             encode(vault_research_create_child(memory, decode(value)?)?)
         }
         "vault.research.archive" => encode(vault_research_archive(memory, decode(value)?)?),
+        "vault.research.archive.install" => {
+            encode(vault_research_archive_install(memory, decode(value)?)?)
+        }
+        "vault.research.archive.record" => {
+            encode(vault_research_archive_record(memory, decode(value)?)?)
+        }
+        "vault.research.archive.get" => encode(vault_research_archive_get(memory, decode(value)?)?),
+        "vault.research.archive.best" => {
+            encode(vault_research_archive_best(memory, decode(value)?)?)
+        }
+        "vault.research.archive.repropose" => {
+            encode(vault_research_archive_repropose(memory, decode(value)?)?)
+        }
+        "vault.research.archive.coverage" => {
+            encode(vault_research_archive_coverage(memory, decode(value)?)?)
+        }
         "vault.evals.inventory" => encode(vault_evals_inventory(memory, decode(value)?)?),
         "vault.evals.cohorts.setup" => encode(vault_evals_cohorts_setup(memory, decode(value)?)?),
         "vault.research.bind" => encode(vault_research_bind(memory, decode(value)?)?),
@@ -15052,6 +15194,42 @@ pub fn vault_research_archive(
     input: crate::task_verb::sdk::ResearchArchiveWire,
 ) -> MemoryResult<crate::task_verb::sdk::ResearchArchive> {
     crate::task_verb::sdk::research_archive(memory, input)
+}
+pub fn vault_research_archive_install(
+    memory: &Memory<'_>,
+    input: crate::autoreason_campaign::archive::CampaignArchiveInstall,
+) -> MemoryResult<crate::autoreason_campaign::archive::CampaignArchiveView> {
+    crate::task_verb::sdk::research_archive_install(memory, input)
+}
+pub fn vault_research_archive_record(
+    memory: &Memory<'_>,
+    input: crate::autoreason_campaign::archive::CampaignArchiveOutput,
+) -> MemoryResult<crate::autoreason_campaign::archive::CampaignArchiveView> {
+    crate::task_verb::sdk::research_archive_record(memory, input)
+}
+pub fn vault_research_archive_get(
+    memory: &Memory<'_>,
+    input: crate::autoreason_campaign::archive::CampaignArchiveRequest,
+) -> MemoryResult<crate::autoreason_campaign::archive::CampaignArchiveRecord> {
+    crate::task_verb::sdk::research_archive_get(memory, input)
+}
+pub fn vault_research_archive_best(
+    memory: &Memory<'_>,
+    input: crate::autoreason_campaign::archive::CampaignArchiveRequest,
+) -> MemoryResult<crate::autoreason_campaign::archive::CampaignArchiveView> {
+    crate::task_verb::sdk::research_archive_best(memory, input)
+}
+pub fn vault_research_archive_repropose(
+    memory: &Memory<'_>,
+    input: crate::autoreason_campaign::archive::CampaignArchiveReproposal,
+) -> MemoryResult<crate::autoreason_campaign::archive::CampaignArchiveView> {
+    crate::task_verb::sdk::research_archive_repropose(memory, input)
+}
+pub fn vault_research_archive_coverage(
+    memory: &Memory<'_>,
+    input: crate::autoreason_campaign::archive::CampaignArchiveCoverage,
+) -> MemoryResult<crate::autoreason_campaign::archive::CampaignArchiveAdmission> {
+    crate::task_verb::sdk::research_archive_coverage(memory, input)
 }
 pub fn vault_evals_inventory(
     memory: &Memory<'_>,

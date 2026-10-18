@@ -348,3 +348,5 @@ const EVIDENCE_DIGEST_DOMAIN: &[u8] = b"skill_optimize:evidence:v1\0";
 
 const VERDICT_ROW_LABEL: &str = "skill edit verdict row";
 const SKILL_EDIT_RECEIPT_PREFIX: &str = "skill_edit:";
+
+pub(crate) use goal_axis::skill_edit_goal_in_txn;

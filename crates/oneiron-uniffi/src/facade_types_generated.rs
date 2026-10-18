@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 652 facade rows, 2352 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 13; generated in and out: 611.
+// UniFFI census: 658 facade rows, 2366 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 13; generated in and out: 617.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -13961,6 +13961,216 @@ pub struct ResearchArchive {
     pub promotions: Vec<PromotionBasis>,
     #[serde(rename = "incumbent")]
     pub incumbent: String,
+}
+
+/// `oneiron::autoreason_campaign::archive::axes::ArchiveAxesProposal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ArchiveAxesProposal {
+    #[serde(rename = "receipt")]
+    pub receipt: String,
+    #[serde(rename = "descriptor")]
+    pub descriptor: ArchiveDescriptor,
+}
+
+/// `oneiron::autoreason_campaign::archive::records::CampaignArchiveInstall`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CampaignArchiveInstall {
+    #[serde(rename = "root")]
+    pub root: String,
+    #[serde(rename = "task")]
+    pub task: String,
+    #[serde(rename = "project")]
+    pub project: String,
+    #[serde(rename = "goal_ref")]
+    pub goal_ref: String,
+    #[serde(rename = "quality_metric")]
+    pub quality_metric: ArchiveQualityMetric,
+    #[serde(rename = "sample_outputs")]
+    pub sample_outputs: Vec<ArchiveOutputRef>,
+    #[serde(rename = "proposal")]
+    pub proposal: ArchiveAxesProposal,
+}
+
+/// `oneiron::autoreason_campaign::archive::ArchiveCell`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum ArchiveCell {
+    #[serde(rename = "axes")]
+    Axes {
+        #[serde(rename = "bins")]
+        bins: Vec<String>,
+    },
+    #[serde(rename = "cluster")]
+    Cluster {
+        #[serde(rename = "index")]
+        index: u64,
+    },
+}
+
+/// `oneiron::autoreason_campaign::archive::records::CampaignArchiveBest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CampaignArchiveBest {
+    #[serde(rename = "cell")]
+    pub cell: ArchiveCell,
+    #[serde(rename = "output")]
+    pub output: ArchiveOutputRef,
+    #[serde(rename = "score")]
+    pub score: f64,
+    #[serde(rename = "placement_receipt")]
+    pub placement_receipt: String,
+    #[serde(rename = "scoring_receipt")]
+    pub scoring_receipt: String,
+}
+
+/// `oneiron::autoreason_campaign::archive::records::CampaignArchiveView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CampaignArchiveView {
+    #[serde(rename = "descriptor_revision")]
+    pub descriptor_revision: String,
+    #[serde(rename = "pin")]
+    pub pin: CampaignArchivePin,
+    #[serde(rename = "best")]
+    pub best: Vec<CampaignArchiveBest>,
+    #[serde(rename = "needs_axes_reproposal")]
+    pub needs_axes_reproposal: bool,
+}
+
+/// `oneiron::autoreason_campaign::archive::ArchiveCellJudgment`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ArchiveCellJudgment {
+    #[serde(rename = "receipt")]
+    pub receipt: String,
+    #[serde(rename = "pin_version")]
+    pub pin_version: String,
+    #[serde(rename = "output")]
+    pub output: ArchiveOutputRef,
+    #[serde(rename = "cell")]
+    pub cell: ArchiveCell,
+}
+
+/// `oneiron::autoreason_campaign::archive::records::CampaignArchivePlacement`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum CampaignArchivePlacement {
+    #[serde(rename = "judgment")]
+    Judgment {
+        #[serde(rename = "judgment")]
+        judgment: ArchiveCellJudgment,
+    },
+    #[serde(rename = "embedding")]
+    Embedding {
+        #[serde(rename = "output")]
+        output: ArchiveOutputRef,
+        #[serde(rename = "receipt")]
+        receipt: String,
+        #[serde(rename = "model_revision")]
+        model_revision: String,
+        #[serde(rename = "embedding")]
+        embedding: Vec<f64>,
+    },
+}
+
+/// `oneiron::autoreason_campaign::archive::ArchiveOutputScore`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ArchiveOutputScore {
+    #[serde(rename = "receipt")]
+    pub receipt: String,
+    #[serde(rename = "pin_version")]
+    pub pin_version: String,
+    #[serde(rename = "output")]
+    pub output: ArchiveOutputRef,
+    #[serde(rename = "quality")]
+    pub quality: f64,
+}
+
+/// `oneiron::autoreason_campaign::archive::records::CampaignArchiveOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CampaignArchiveOutput {
+    #[serde(rename = "root")]
+    pub root: String,
+    #[serde(rename = "descriptor_revision")]
+    pub descriptor_revision: String,
+    #[serde(rename = "placement")]
+    pub placement: CampaignArchivePlacement,
+    #[serde(rename = "score")]
+    pub score: ArchiveOutputScore,
+}
+
+/// `oneiron::autoreason_campaign::archive::records::CampaignArchiveRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CampaignArchiveRequest {
+    #[serde(rename = "root")]
+    pub root: String,
+}
+
+/// `oneiron::autoreason_campaign::archive::records::CampaignArchiveRecord`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CampaignArchiveRecord {
+    #[serde(rename = "project")]
+    pub project: String,
+    #[serde(rename = "pin")]
+    pub pin: CampaignArchivePin,
+    #[serde(rename = "placements")]
+    pub placements: Vec<ArchiveCellJudgment>,
+    #[serde(rename = "scores")]
+    pub scores: Vec<ArchiveOutputScore>,
+}
+
+/// `oneiron::autoreason_campaign::archive::records::CampaignArchiveReproposal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CampaignArchiveReproposal {
+    #[serde(rename = "root")]
+    pub root: String,
+    #[serde(rename = "new_root")]
+    pub new_root: String,
+    #[serde(rename = "proposal")]
+    pub proposal: ArchiveAxesProposal,
+}
+
+/// `oneiron::autoreason_campaign::archive::records::CampaignArchiveCoverage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CampaignArchiveCoverage {
+    #[serde(rename = "root")]
+    pub root: String,
+    #[serde(rename = "candidate")]
+    pub candidate: String,
+    #[serde(rename = "incumbent")]
+    pub incumbent: String,
+    #[serde(rename = "descriptor_revision")]
+    pub descriptor_revision: String,
+    #[serde(rename = "incumbent_outputs")]
+    pub incumbent_outputs: Vec<ArchiveOutputRef>,
+    #[serde(rename = "candidate_outputs")]
+    pub candidate_outputs: Vec<ArchiveOutputRef>,
+}
+
+/// `oneiron::autoreason_campaign::archive::records::CampaignArchiveAdmission`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CampaignArchiveAdmission {
+    #[serde(rename = "descriptor_revision")]
+    pub descriptor_revision: String,
+    #[serde(rename = "candidate")]
+    pub candidate: String,
+    #[serde(rename = "required_cells")]
+    pub required_cells: Vec<ArchiveCell>,
+    #[serde(rename = "covered_cells")]
+    pub covered_cells: Vec<ArchiveCell>,
+    #[serde(rename = "admitted")]
+    pub admitted: bool,
 }
 
 /// `oneiron::task_verb::sdk_eval_cohort::EvalInventoryWire`.
