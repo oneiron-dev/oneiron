@@ -27,6 +27,9 @@ pub struct AnchoredPackOutcome {
     /// The anchored rubric axis; never inferred from a task's prose.
     pub axis: String,
     pub at: u64,
+    /// The goal revision the host checked the outcome under, as it froze it.
+    /// `None` leaves the credit unscoped.
+    pub goal_revision: Option<String>,
 }
 
 /// Projects only anchored, attributed outcomes into `learning.reliability`.
@@ -85,6 +88,7 @@ pub fn project_anchored_pack_outcome(
             txn,
             attempt_receipt,
             &outcome.axis,
+            outcome.goal_revision.as_deref(),
             fields.clone(),
         )?;
         if let Some(previous) = CREDIT_RECEIPT.get(&vault.store, txn, &key)? {
@@ -92,6 +96,7 @@ pub fn project_anchored_pack_outcome(
                 || previous.succeeded != outcome.succeeded
                 || previous.at != outcome.at
                 || previous.axis != outcome.axis
+                || previous.goal_revision != outcome.goal_revision
             {
                 return Err(Error::InvalidClaimBody(
                     "an anchored pack outcome cannot be rescored",
@@ -178,6 +183,7 @@ pub fn project_anchored_pack_outcome(
             succeeded: outcome.succeeded,
             axis: outcome.axis.clone(),
             at: outcome.at,
+            goal_revision: outcome.goal_revision.clone(),
             attribution: fields.clone(),
             direct_subjects: direct.keys().copied().collect(),
             shares,
@@ -210,6 +216,7 @@ pub fn project_anchored_pack_outcome(
                 outcome_receipt: outcome.receipt.clone(),
                 attribution: fields.clone(),
             });
+            learning.goal_revision = outcome.goal_revision.clone();
             crate::learning::record_evidence_in_txn(vault, txn, &cell, &learning, now)?;
         }
         // If facts were unavailable, leave this receipt retryable rather than
