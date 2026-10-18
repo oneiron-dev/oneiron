@@ -135,6 +135,17 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.shared.policy.propose", post(facade_route))
         .route("/vault.shared.policy.answer", post(facade_route))
         .route("/vault.shared.policy.change", post(facade_route))
+        .route("/vault.trusted_contacts.name", post(facade_route))
+        .route("/vault.trusted_contacts.list", post(facade_route))
+        .route("/vault.trusted_contacts.consent", post(facade_route))
+        .route("/vault.trusted_contacts.revoke", post(facade_route))
+        .route("/vault.trusted_contacts.dial.set", post(facade_route))
+        .route("/vault.trusted_contacts.tier.set", post(facade_route))
+        .route("/vault.trusted_contacts.concern.asks", post(facade_route))
+        .route(
+            "/vault.trusted_contacts.concern.authorize",
+            post(facade_route),
+        )
         .route("/vault.guests.revoke", post(facade_route))
         .route("/vault.guests.mint_slip", post(facade_route))
         .route("/vault.residence.mode", post(facade_route))
@@ -381,6 +392,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.get", post(facade_route))
         .route("/vault.refs.resolve", post(facade_route))
         .route("/vault.refs.links", post(facade_route))
+        .route("/vault.search.hybrid", post(facade_route))
         .route("/vault.search.bm25", post(facade_route))
         .route("/vault.neighbors", post(facade_route))
         .route("/vault.structural.put", post(facade_route))

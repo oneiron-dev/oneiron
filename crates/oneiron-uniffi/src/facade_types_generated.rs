@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 458 facade rows, 1684 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 9; generated in and out: 422.
+// UniFFI census: 467 facade rows, 1711 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 9; generated in and out: 431.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -9278,6 +9278,266 @@ pub struct SharedActPolicyAnswerRequest {
 pub struct SharedActPolicyChangeRequest {
     #[serde(rename = "change_id")]
     pub change_id: String,
+}
+
+/// `oneiron::counterparty_contact::trusted_contact::TrustedContactReach`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TrustedContactReach {
+    #[serde(rename = "sender")]
+    pub sender: String,
+    #[serde(rename = "channel")]
+    pub channel: String,
+    #[serde(rename = "verb")]
+    pub verb: String,
+    #[serde(rename = "target")]
+    pub target: String,
+}
+
+/// `oneiron::counterparty_contact::trusted_contact::TrustedContactDial`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TrustedContactDial {
+    #[serde(rename = "ask_first")]
+    AskFirst,
+    #[serde(rename = "just_call")]
+    JustCall,
+}
+
+/// `oneiron::task_verb::sdk_trusted_contact::TrustedContactNameRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TrustedContactNameRequest {
+    #[serde(rename = "contact_ref")]
+    pub contact_ref: String,
+    #[serde(rename = "reach")]
+    pub reach: TrustedContactReach,
+    #[serde(rename = "dial")]
+    pub dial: TrustedContactDial,
+}
+
+/// `oneiron::counterparty_contact::trusted_contact::TrustedContactAcceptance`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TrustedContactAcceptance {
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(rename = "adult")]
+    pub adult: bool,
+}
+
+/// `oneiron::counterparty_contact::trusted_contact::TrustedContactParty`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TrustedContactParty {
+    #[serde(rename = "person")]
+    Person,
+    #[serde(rename = "contact")]
+    Contact,
+}
+
+/// `oneiron::counterparty_contact::trusted_contact::TrustedContactRevocation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TrustedContactRevocation {
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(rename = "by")]
+    pub by: TrustedContactParty,
+}
+
+/// `oneiron::counterparty_contact::trusted_contact::TrustedContact`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TrustedContact {
+    #[serde(rename = "person")]
+    pub person: String,
+    #[serde(rename = "contact")]
+    pub contact: String,
+    #[serde(rename = "reach")]
+    pub reach: TrustedContactReach,
+    #[serde(rename = "dial")]
+    pub dial: TrustedContactDial,
+    #[serde(rename = "version")]
+    pub version: u64,
+    #[serde(rename = "named_at")]
+    pub named_at: u64,
+    #[serde(rename = "accepted", default, skip_serializing_if = "Option::is_none")]
+    pub accepted: Option<TrustedContactAcceptance>,
+    #[serde(rename = "revoked", default, skip_serializing_if = "Option::is_none")]
+    pub revoked: Option<TrustedContactRevocation>,
+}
+
+/// `oneiron::task_verb::sdk_trusted_contact::TrustedContactConsentRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TrustedContactConsentRequest {
+    #[serde(rename = "person_ref")]
+    pub person_ref: String,
+    #[serde(rename = "version")]
+    pub version: u64,
+    #[serde(rename = "adult")]
+    pub adult: bool,
+}
+
+/// `oneiron::task_verb::sdk_trusted_contact::TrustedContactRevokeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TrustedContactRevokeRequest {
+    #[serde(rename = "person_ref")]
+    pub person_ref: String,
+    #[serde(rename = "contact_ref")]
+    pub contact_ref: String,
+}
+
+/// `oneiron::task_verb::sdk_trusted_contact::TrustedContactDialRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TrustedContactDialRequest {
+    #[serde(rename = "contact_ref")]
+    pub contact_ref: String,
+    #[serde(rename = "dial")]
+    pub dial: TrustedContactDial,
+}
+
+/// `oneiron::counterparty_contact::trusted_contact::TrustedContactTier`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TrustedContactTier {
+    #[serde(rename = "concern")]
+    Concern,
+    #[serde(rename = "imminent")]
+    Imminent,
+}
+
+/// `oneiron::task_verb::sdk_trusted_contact::TrustedContactTierRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TrustedContactTierRequest {
+    #[serde(rename = "row_ref")]
+    pub row_ref: String,
+    #[serde(rename = "tier")]
+    pub tier: TrustedContactTier,
+}
+
+/// `oneiron::task_verb::sdk_trusted_contact::TrustedContactTierSet`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TrustedContactTierSet {
+    #[serde(rename = "row_ref")]
+    pub row_ref: String,
+    #[serde(rename = "tier")]
+    pub tier: TrustedContactTier,
+}
+
+/// `oneiron::counterparty_contact::trusted_contact::TrustedContactAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TrustedContactAnswer {
+    #[serde(rename = "yes")]
+    pub yes: bool,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(rename = "notified")]
+    pub notified: bool,
+}
+
+/// `oneiron::counterparty_contact::trusted_contact::TrustedContactAsk`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TrustedContactAsk {
+    #[serde(rename = "ask")]
+    pub ask: String,
+    #[serde(rename = "person")]
+    pub person: String,
+    #[serde(rename = "contact")]
+    pub contact: String,
+    #[serde(rename = "version")]
+    pub version: u64,
+    #[serde(rename = "tier")]
+    pub tier: TrustedContactTier,
+    #[serde(rename = "asked_at")]
+    pub asked_at: u64,
+    #[serde(rename = "answer", default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<TrustedContactAnswer>,
+    #[serde(
+        rename = "superseded",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub superseded: Option<u64>,
+}
+
+/// `oneiron::task_verb::sdk_trusted_contact::TrustedContactAuthorizeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TrustedContactAuthorizeRequest {
+    #[serde(rename = "ask_ref")]
+    pub ask_ref: String,
+    #[serde(rename = "yes")]
+    pub yes: bool,
+}
+
+/// `oneiron::task_verb::sdk_trusted_contact::TrustedContactAuthorizationOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TrustedContactAuthorizationOutcome {
+    #[serde(rename = "staged")]
+    Staged,
+    #[serde(rename = "declined")]
+    Declined,
+    #[serde(rename = "superseded")]
+    Superseded,
+}
+
+/// `oneiron::store::gate_decision::types::GateSystemNoticeAction`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct GateSystemNoticeAction {
+    #[serde(rename = "label")]
+    pub label: String,
+    #[serde(rename = "target")]
+    pub target: String,
+}
+
+/// `oneiron::store::gate_decision::types::GateSystemNoticeRecord`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct GateSystemNoticeRecord {
+    #[serde(rename = "notice_type")]
+    pub notice_type: String,
+    #[serde(rename = "channel")]
+    pub channel: String,
+    #[serde(rename = "voice")]
+    pub voice: String,
+    #[serde(rename = "audience")]
+    pub audience: String,
+    #[serde(rename = "body")]
+    pub body: String,
+    #[serde(rename = "row_ref", default, skip_serializing_if = "Option::is_none")]
+    pub row_ref: Option<String>,
+    #[serde(
+        rename = "setting_change_offer",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub setting_change_offer: Option<GateSystemNoticeAction>,
+    #[serde(
+        rename = "policy_plane",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub policy_plane: Option<String>,
+    #[serde(
+        rename = "policy_version",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub policy_version: Option<String>,
+    #[serde(rename = "docs_url", default, skip_serializing_if = "Option::is_none")]
+    pub docs_url: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_trusted_contact::TrustedContactAuthorization`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TrustedContactAuthorization {
+    #[serde(rename = "ask_ref")]
+    pub ask_ref: String,
+    #[serde(rename = "yes")]
+    pub yes: bool,
+    #[serde(rename = "outcome")]
+    pub outcome: TrustedContactAuthorizationOutcome,
+    #[serde(rename = "system_notices")]
+    pub system_notices: Vec<GateSystemNoticeRecord>,
 }
 
 /// `oneiron::task_verb::sdk_guest_revoke::GuestRevokeRequest`.
@@ -22077,6 +22337,109 @@ pub struct RecordLinks {
         skip_serializing_if = "Option::is_none"
     )]
     pub next_after: Option<String>,
+}
+
+/// `oneiron::memory::search_hybrid::HybridPprQuery`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HybridPprQuery {
+    #[serde(rename = "seeds")]
+    pub seeds: Vec<String>,
+    #[serde(rename = "depth")]
+    pub depth: u32,
+}
+
+/// `oneiron::memory::search_hybrid::HybridTemporalQuery`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HybridTemporalQuery {
+    #[serde(rename = "start")]
+    pub start: u64,
+    #[serde(rename = "end")]
+    pub end: u64,
+}
+
+/// `oneiron_contracts::retrieval_telemetry::RetrievalBlendWeights`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RetrievalBlendWeights {
+    #[serde(rename = "recency")]
+    pub recency: f64,
+    #[serde(rename = "salience")]
+    pub salience: f64,
+    #[serde(rename = "confidence")]
+    pub confidence: f64,
+    #[serde(rename = "gravity")]
+    pub gravity: f64,
+}
+
+/// `oneiron::memory::search_hybrid::HybridRankReplay`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HybridRankReplay {
+    #[serde(rename = "now")]
+    pub now: u64,
+    #[serde(rename = "blend_weights")]
+    pub blend_weights: RetrievalBlendWeights,
+}
+
+/// `oneiron::memory::search_hybrid::HybridSearchRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HybridSearchRequest {
+    #[serde(rename = "query", default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+    #[serde(
+        rename = "query_vector",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub query_vector: Option<Vec<f64>>,
+    #[serde(
+        rename = "phonetic_codes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub phonetic_codes: Option<Vec<String>>,
+    #[serde(rename = "ppr", default, skip_serializing_if = "Option::is_none")]
+    pub ppr: Option<HybridPprQuery>,
+    #[serde(rename = "temporal", default, skip_serializing_if = "Option::is_none")]
+    pub temporal: Option<HybridTemporalQuery>,
+    #[serde(rename = "replay", default, skip_serializing_if = "Option::is_none")]
+    pub replay: Option<HybridRankReplay>,
+    #[serde(rename = "limit")]
+    pub limit: u64,
+}
+
+/// `oneiron::memory::search_hybrid::HybridSearchHit`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HybridSearchHit {
+    #[serde(rename = "entity_ref")]
+    pub entity_ref: String,
+    #[serde(
+        rename = "source_revision_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_revision_ref: Option<String>,
+    #[serde(rename = "score")]
+    pub score: f64,
+    #[serde(
+        rename = "access_factor",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub access_factor: Option<f64>,
+    #[serde(rename = "components")]
+    pub components: Vec<RetrievalScoreComponent>,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `HybridSearchHitList`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultHybridSearchHitList {
+    #[serde(rename = "value")]
+    pub value: Vec<HybridSearchHit>,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
 }
 
 /// `oneiron::blob_artifact::create::ArtifactCreateRequest`.

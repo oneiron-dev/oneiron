@@ -357,7 +357,13 @@ pub enum ErrorKind {
     ScopedReadOwnerNotLive,
     EmbeddingTransformChanged,
     ArchivedVault,
+    HostActionRequiresSupportGrant,
 }
+
+/// What a host credential gets for an owner act where no host acts as a
+/// person (FIX 2222, owner ruling "A + support"): the text of
+/// [`Error::HostActionRequiresSupportGrant`].
+pub const HOST_ACTION_REQUIRES_SUPPORT_GRANT_TEXT: &str = "The hosted operator has no owner identity in this vault. Ask the customer for a support grant.";
 
 /// Crate error type.
 #[derive(Debug, thiserror::Error)]
@@ -448,6 +454,12 @@ pub enum Error {
     /// so the run parks on the outage rather than its guest handling it.
     #[error("no provider answered; retry in {retry_after} s")]
     ProviderUnavailable { retry_after: u64 },
+    /// A host credential asked to act as the vault's owner where no host
+    /// acts as a person: a hosted operator's root, or any vault that is not
+    /// self-hosted (FIX 2222). The operator keeps its own admin commands;
+    /// an owner act inside the vault takes the customer's support grant.
+    #[error("{}", HOST_ACTION_REQUIRES_SUPPORT_GRANT_TEXT)]
+    HostActionRequiresSupportGrant,
     /// Artifact-domain failure, see [`ArtifactError`].
     /// Transparent, so Display and `source()` are the leaf's.
     #[error(transparent)]
@@ -601,6 +613,7 @@ impl Error {
             Self::UpstreamToolFailure { .. } => ErrorKind::UpstreamToolFailure,
             Self::RetrievalStageCut => ErrorKind::RetrievalStageCut,
             Self::ProviderUnavailable { .. } => ErrorKind::ProviderUnavailable,
+            Self::HostActionRequiresSupportGrant => ErrorKind::HostActionRequiresSupportGrant,
             Self::Artifact(inner) => inner.kind(),
             Self::Claim(inner) => inner.kind(),
             Self::Code(inner) => inner.kind(),

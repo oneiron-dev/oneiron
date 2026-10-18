@@ -678,6 +678,54 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.trusted_contacts.name",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::TrustedContactNameRequest,
+                >(),
+            ),
+            (
+                "vault.trusted_contacts.list",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::TrustedContactsRequest,
+                >(),
+            ),
+            (
+                "vault.trusted_contacts.consent",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::TrustedContactConsentRequest,
+                >(),
+            ),
+            (
+                "vault.trusted_contacts.revoke",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::TrustedContactRevokeRequest,
+                >(),
+            ),
+            (
+                "vault.trusted_contacts.dial.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::TrustedContactDialRequest,
+                >(),
+            ),
+            (
+                "vault.trusted_contacts.tier.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::TrustedContactTierRequest,
+                >(),
+            ),
+            (
+                "vault.trusted_contacts.concern.asks",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::TrustedContactAsksRequest,
+                >(),
+            ),
+            (
+                "vault.trusted_contacts.concern.authorize",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::TrustedContactAuthorizeRequest,
+                >(),
+            ),
+            (
                 "vault.guests.revoke",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::GuestRevokeRequest,
@@ -2127,6 +2175,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::lens::RecordLinksRequest>(),
             ),
             (
+                "vault.search.hybrid",
+                crate::code_run::vault_read::request_schema::<crate::memory::HybridSearchRequest>(),
+            ),
+            (
                 "vault.search.bm25",
                 crate::code_run::vault_read::request_schema::<QueryBm25Request>(),
             ),
@@ -2688,6 +2740,14 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.shared.policy.propose",
     "vault.shared.policy.answer",
     "vault.shared.policy.change",
+    "vault.trusted_contacts.name",
+    "vault.trusted_contacts.list",
+    "vault.trusted_contacts.consent",
+    "vault.trusted_contacts.revoke",
+    "vault.trusted_contacts.dial.set",
+    "vault.trusted_contacts.tier.set",
+    "vault.trusted_contacts.concern.asks",
+    "vault.trusted_contacts.concern.authorize",
     "vault.off_record.start",
     "vault.off_record.status",
     "vault.off_record.witness",
@@ -2742,6 +2802,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.calendar.read",
     "vault.calendar.search",
     "vault.calendar.freebusy",
+    "vault.search.hybrid",
     "vault.memory.signal_extraction",
     "vault.memory.signal_extraction.result",
     "vault.channel_identities.provision",
@@ -2882,6 +2943,32 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.shared.policy.change" => crate::code_run::vault_read::request_schema::<
             crate::federation::SharedActPolicyChange,
         >(),
+        "vault.trusted_contacts.name" => crate::code_run::vault_read::request_schema::<
+            crate::counterparty_contact::TrustedContact,
+        >(),
+        "vault.trusted_contacts.list" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::counterparty_contact::TrustedContact>,
+        >(),
+        "vault.trusted_contacts.consent" => crate::code_run::vault_read::request_schema::<
+            crate::counterparty_contact::TrustedContact,
+        >(),
+        "vault.trusted_contacts.revoke" => crate::code_run::vault_read::request_schema::<
+            crate::counterparty_contact::TrustedContact,
+        >(),
+        "vault.trusted_contacts.dial.set" => crate::code_run::vault_read::request_schema::<
+            crate::counterparty_contact::TrustedContact,
+        >(),
+        "vault.trusted_contacts.tier.set" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::TrustedContactTierSet,
+        >(),
+        "vault.trusted_contacts.concern.asks" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::counterparty_contact::TrustedContactAsk>,
+        >(),
+        "vault.trusted_contacts.concern.authorize" => {
+            crate::code_run::vault_read::request_schema::<
+                crate::task_verb::sdk::TrustedContactAuthorization,
+            >()
+        }
         "vault.off_record.start" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::OffRecordSessionView,
         >(),
@@ -3043,6 +3130,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.calendar.freebusy" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<crate::memory::CalendarFreebusyDto>,
+        >(),
+        "vault.search.hybrid" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Vec<crate::memory::HybridSearchHit>>,
         >(),
         "vault.memory.signal_extraction" => {
             crate::code_run::vault_read::request_schema::<crate::memory::SignalExtractionTicket>()
@@ -4140,6 +4230,62 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.shared.policy.change" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.trusted_contacts.name" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.trusted_contacts.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.trusted_contacts.consent" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.trusted_contacts.revoke" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.trusted_contacts.dial.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.trusted_contacts.tier.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.trusted_contacts.concern.asks" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.trusted_contacts.concern.authorize" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -5810,6 +5956,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.search.hybrid" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.search.bm25" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -6859,6 +7012,32 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::task_verb::sdk::SharedActPolicyChangeRequest =
                 decode(value.clone())?;
         }
+        "vault.trusted_contacts.name" => {
+            let _input: crate::task_verb::sdk::TrustedContactNameRequest = decode(value.clone())?;
+        }
+        "vault.trusted_contacts.list" => {
+            let _input: crate::task_verb::sdk::TrustedContactsRequest = decode(value.clone())?;
+        }
+        "vault.trusted_contacts.consent" => {
+            let _input: crate::task_verb::sdk::TrustedContactConsentRequest =
+                decode(value.clone())?;
+        }
+        "vault.trusted_contacts.revoke" => {
+            let _input: crate::task_verb::sdk::TrustedContactRevokeRequest = decode(value.clone())?;
+        }
+        "vault.trusted_contacts.dial.set" => {
+            let _input: crate::task_verb::sdk::TrustedContactDialRequest = decode(value.clone())?;
+        }
+        "vault.trusted_contacts.tier.set" => {
+            let _input: crate::task_verb::sdk::TrustedContactTierRequest = decode(value.clone())?;
+        }
+        "vault.trusted_contacts.concern.asks" => {
+            let _input: crate::task_verb::sdk::TrustedContactAsksRequest = decode(value.clone())?;
+        }
+        "vault.trusted_contacts.concern.authorize" => {
+            let _input: crate::task_verb::sdk::TrustedContactAuthorizeRequest =
+                decode(value.clone())?;
+        }
         "vault.guests.revoke" => {
             let _input: crate::task_verb::sdk::GuestRevokeRequest = decode(value.clone())?;
         }
@@ -7745,6 +7924,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.refs.links" => {
             let _input: crate::lens::RecordLinksRequest = decode(value.clone())?;
         }
+        "vault.search.hybrid" => {
+            let input: crate::memory::HybridSearchRequest = decode(value.clone())?;
+            input.validate()?;
+        }
         "vault.search.bm25" => {
             let input: QueryBm25Request = decode(value.clone())?;
             crate::memory::caps::check_query(&input.query)?;
@@ -8243,6 +8426,30 @@ pub fn invoke(
         }
         "vault.shared.policy.answer" => encode(vault_shared_policy_answer(memory, decode(value)?)?),
         "vault.shared.policy.change" => encode(vault_shared_policy_change(memory, decode(value)?)?),
+        "vault.trusted_contacts.name" => {
+            encode(vault_trusted_contacts_name(memory, decode(value)?)?)
+        }
+        "vault.trusted_contacts.list" => {
+            encode(vault_trusted_contacts_list(memory, decode(value)?)?)
+        }
+        "vault.trusted_contacts.consent" => {
+            encode(vault_trusted_contacts_consent(memory, decode(value)?)?)
+        }
+        "vault.trusted_contacts.revoke" => {
+            encode(vault_trusted_contacts_revoke(memory, decode(value)?)?)
+        }
+        "vault.trusted_contacts.dial.set" => {
+            encode(vault_trusted_contacts_dial_set(memory, decode(value)?)?)
+        }
+        "vault.trusted_contacts.tier.set" => {
+            encode(vault_trusted_contacts_tier_set(memory, decode(value)?)?)
+        }
+        "vault.trusted_contacts.concern.asks" => {
+            encode(vault_trusted_contacts_concern_asks(memory, decode(value)?)?)
+        }
+        "vault.trusted_contacts.concern.authorize" => encode(
+            vault_trusted_contacts_concern_authorize(memory, decode(value)?)?,
+        ),
         "vault.guests.revoke" => encode(vault_guests_revoke(memory, decode(value)?)?),
         "vault.guests.mint_slip" => encode(vault_guests_mint_slip(memory, decode(value)?)?),
         "vault.residence.mode" => encode(vault_residence_mode(memory, decode(value)?)?),
@@ -8628,6 +8835,7 @@ pub fn invoke(
         "vault.get" => encode(vault_get(memory, decode(value)?)?),
         "vault.refs.resolve" => encode(vault_refs_resolve(memory, decode(value)?)?),
         "vault.refs.links" => encode(vault_refs_links(memory, decode(value)?)?),
+        "vault.search.hybrid" => encode(vault_search_hybrid(memory, decode(value)?)?),
         "vault.search.bm25" => encode(vault_search_bm25(memory, decode(value)?)?),
         "vault.neighbors" => encode(vault_neighbors(memory, decode(value)?)?),
         "vault.structural.put" => encode(vault_structural_put(memory, decode(value)?)?),
@@ -10111,6 +10319,87 @@ pub fn vault_shared_policy_change(
         memory.vault(),
         &memory.embedded_owner("vault.shared.policy.change")?,
         input,
+    )
+}
+pub fn vault_trusted_contacts_name(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TrustedContactNameRequest,
+) -> MemoryResult<crate::counterparty_contact::TrustedContact> {
+    crate::task_verb::sdk::name_trusted_contact(
+        memory.vault(),
+        &memory.embedded_owner("vault.trusted_contacts.name")?,
+        input,
+    )
+}
+pub fn vault_trusted_contacts_list(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TrustedContactsRequest,
+) -> MemoryResult<Vec<crate::counterparty_contact::TrustedContact>> {
+    crate::task_verb::sdk::read_trusted_contacts(
+        memory.vault(),
+        &memory.embedded_owner("vault.trusted_contacts.list")?,
+        input,
+    )
+}
+pub fn vault_trusted_contacts_consent(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TrustedContactConsentRequest,
+) -> MemoryResult<crate::counterparty_contact::TrustedContact> {
+    crate::task_verb::sdk::consent_trusted_contact(
+        memory.vault(),
+        &memory.embedded_owner("vault.trusted_contacts.consent")?,
+        input,
+    )
+}
+pub fn vault_trusted_contacts_revoke(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TrustedContactRevokeRequest,
+) -> MemoryResult<crate::counterparty_contact::TrustedContact> {
+    crate::task_verb::sdk::revoke_trusted_contact(
+        memory.vault(),
+        &memory.embedded_owner("vault.trusted_contacts.revoke")?,
+        input,
+    )
+}
+pub fn vault_trusted_contacts_dial_set(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TrustedContactDialRequest,
+) -> MemoryResult<crate::counterparty_contact::TrustedContact> {
+    crate::task_verb::sdk::set_trusted_contact_dial(
+        memory.vault(),
+        &memory.embedded_owner("vault.trusted_contacts.dial.set")?,
+        input,
+    )
+}
+pub fn vault_trusted_contacts_tier_set(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TrustedContactTierRequest,
+) -> MemoryResult<crate::task_verb::sdk::TrustedContactTierSet> {
+    crate::task_verb::sdk::set_trusted_contact_tier(
+        memory.vault(),
+        &memory.embedded_owner("vault.trusted_contacts.tier.set")?,
+        input,
+    )
+}
+pub fn vault_trusted_contacts_concern_asks(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TrustedContactAsksRequest,
+) -> MemoryResult<Vec<crate::counterparty_contact::TrustedContactAsk>> {
+    crate::task_verb::sdk::read_trusted_contact_asks(
+        memory.vault(),
+        &memory.embedded_owner("vault.trusted_contacts.concern.asks")?,
+        input,
+    )
+}
+pub fn vault_trusted_contacts_concern_authorize(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TrustedContactAuthorizeRequest,
+) -> MemoryResult<crate::task_verb::sdk::TrustedContactAuthorization> {
+    crate::task_verb::sdk::authorize_trusted_contact_ask(
+        memory.vault(),
+        &memory.embedded_owner("vault.trusted_contacts.concern.authorize")?,
+        input,
+        &crate::policy_model::PolicyModelConfig::default(),
     )
 }
 pub fn vault_guests_revoke(
@@ -12220,6 +12509,13 @@ pub fn vault_refs_links(
     input: crate::lens::RecordLinksRequest,
 ) -> MemoryResult<crate::lens::RecordLinks> {
     memory.record_links(&input)
+}
+pub fn vault_search_hybrid(
+    memory: &Memory<'_>,
+    input: crate::memory::HybridSearchRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::memory::HybridSearchHit>>> {
+    input.validate()?;
+    memory.query_hybrid(&input)
 }
 pub fn vault_search_bm25(
     memory: &Memory<'_>,

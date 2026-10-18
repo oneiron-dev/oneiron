@@ -139,6 +139,14 @@ both bindings and their export-census tests in one change.
 - `vault.shared.policy.propose`
 - `vault.shared.policy.answer`
 - `vault.shared.policy.change`
+- `vault.trusted_contacts.name`
+- `vault.trusted_contacts.list`
+- `vault.trusted_contacts.consent`
+- `vault.trusted_contacts.revoke`
+- `vault.trusted_contacts.dial.set`
+- `vault.trusted_contacts.tier.set`
+- `vault.trusted_contacts.concern.asks`
+- `vault.trusted_contacts.concern.authorize`
 - `vault.guests.revoke`
 - `vault.guests.mint_slip`
 - `vault.residence.mode`
@@ -379,6 +387,7 @@ both bindings and their export-census tests in one change.
 - `vault.get`
 - `vault.refs.resolve`
 - `vault.refs.links`
+- `vault.search.hybrid`
 - `vault.search.bm25`
 - `vault.neighbors`
 - `vault.structural.put`

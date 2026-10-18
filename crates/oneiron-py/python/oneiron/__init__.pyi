@@ -549,6 +549,8 @@ class Oneiron:
         @property
         def members(self) -> "Oneiron._VaultMembersVerbs": ...
         @property
+        def trusted_contacts(self) -> "Oneiron._VaultTrustedContactsVerbs": ...
+        @property
         def guests(self) -> "Oneiron._VaultGuestsVerbs": ...
         @property
         def residence(self) -> "Oneiron._VaultResidenceVerbs": ...
@@ -957,6 +959,32 @@ class Oneiron:
             """The invitee declines their own invitation; nothing is granted."""
         def withdraw_invitation(self, spec: Facade.SharedInvitationWithdrawRequest) -> Facade.SharedActExecutionReceipt:
             """An Admin with the add_member power takes back a pending invitation."""
+    class _VaultTrustedContactsVerbs:
+        def name(self, spec: Facade.TrustedContactNameRequest) -> Facade.TrustedContact:
+            """The vault owner names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again."""
+        def list(self, spec: Facade.TrustedContactsRequest) -> list[Facade.TrustedContact]:
+            """A live person lists every trusted-contact relation they are a side of: those they named and those naming them, under their own credential."""
+        def consent(self, spec: Facade.TrustedContactConsentRequest) -> Facade.TrustedContact:
+            """The named contact, a live person under their own credential, accepts the naming version they were shown and attests they are an adult; the relation is live only after this."""
+        def revoke(self, spec: Facade.TrustedContactRevokeRequest) -> Facade.TrustedContact:
+            """Either side of a trusted-contact relation ends it under their own credential; no notice staged from it is sent after this returns, and its open asks close."""
+        @property
+        def dial(self) -> "Oneiron._VaultTrustedContactsDialVerbs": ...
+        @property
+        def tier(self) -> "Oneiron._VaultTrustedContactsTierVerbs": ...
+        @property
+        def concern(self) -> "Oneiron._VaultTrustedContactsConcernVerbs": ...
+    class _VaultTrustedContactsDialVerbs:
+        def set(self, spec: Facade.TrustedContactDialRequest) -> Facade.TrustedContact:
+            """The vault owner changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands."""
+    class _VaultTrustedContactsTierVerbs:
+        def set(self, spec: Facade.TrustedContactTierRequest) -> Facade.TrustedContactTierSet:
+            """The vault owner names the trusted-contact tier (concern or imminent) of one RouteToHelp policy row; a row never named is a concern."""
+    class _VaultTrustedContactsConcernVerbs:
+        def asks(self, spec: Facade.TrustedContactAsksRequest) -> list[Facade.TrustedContactAsk]:
+            """The vault owner reads their open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled."""
+        def authorize(self, spec: Facade.TrustedContactAuthorizeRequest) -> Facade.TrustedContactAuthorization:
+            """The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing."""
     class _VaultGuestsVerbs:
         def revoke(self, spec: Facade.GuestRevokeRequest) -> Facade.GuestRevokeResponse: ...
         def mint_slip(self, spec: Facade.GuestSlipMintRequest) -> Facade.GuestSlipMinted:
@@ -1491,6 +1519,8 @@ class Oneiron:
         def links(self, spec: Facade.RecordLinksRequest) -> Facade.RecordLinks:
             """A text, the texts a read surface returned, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read."""
     class _VaultSearchVerbs:
+        def hybrid(self, input: Facade.HybridSearchRequest) -> Facade.ScopedReadResult[list[Facade.HybridSearchHit]]:
+            """Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence."""
         def bm25(self, input: Facade.QueryBm25Request) -> Facade.ScopedReadResult[list[Facade.LexicalHit]]:
             """BM25 text search over the engine index; surfaceable claims only."""
     class _VaultStructuralVerbs:

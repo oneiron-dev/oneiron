@@ -3,6 +3,7 @@
 
 mod error;
 
+pub use self::error::MEMORY_CODE_HOST_ACTION_REFUSED;
 pub use self::error::MEMORY_CODE_IDENTITY_UNSETTLED;
 pub use self::error::MEMORY_CODE_INVENTED_REFERENCE;
 pub use self::error::{

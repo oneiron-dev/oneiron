@@ -366,6 +366,10 @@ pub(crate) fn mcp_api_error(error: ApiError) -> McpGatewayError {
     gateway
 }
 
+/// The stable MCP kind of the typed refusal a host credential gets where no
+/// host acts as a person (FIX 2222); its code is -32020, as every refusal's.
+const MCP_HOST_ACTION_REFUSED: &str = "host_action_requires_support_grant";
+
 pub(crate) fn mcp_engine_error(context: &'static str, error: oneiron::Error) -> McpGatewayError {
     // ONE-1936: a stale write-verb target gets its own stable kind, not the
     // generic engine_error bucket, and carries the current head as data. The
@@ -387,6 +391,9 @@ pub(crate) fn mcp_engine_error(context: &'static str, error: oneiron::Error) -> 
         }
         ErrorKind::EntityNotFound => {
             McpGatewayError::new(-32004, "entity_not_found", error.to_string())
+        }
+        ErrorKind::HostActionRequiresSupportGrant => {
+            McpGatewayError::new(-32020, MCP_HOST_ACTION_REFUSED, error.to_string())
         }
         _ => McpGatewayError::new(-32603, "engine_error", format!("{context}: {error}")),
     }
@@ -410,6 +417,7 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
         | oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED
         | oneiron::memory::MEMORY_CODE_BUDGET_SPENT
         | oneiron::memory::MEMORY_CODE_IDENTITY_UNSETTLED
+        | oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED
         | oneiron::MEMORY_CODE_INVALID_STATE => -32020,
         oneiron::MEMORY_CODE_INTERNAL | oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE => -32603,
         _ => -32602,
@@ -422,6 +430,9 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
         // OF-123: an effect whose person is not settled yet keeps its name
         // too, so an agent reads it as `error.data.error_code`, not prose.
         oneiron::memory::MEMORY_CODE_IDENTITY_UNSETTLED => Some("identity_unsettled"),
+        // FIX 2222: one stable kind for the typed host refusal, whichever
+        // door reported it.
+        oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED => Some(MCP_HOST_ACTION_REFUSED),
         _ => None,
     };
     if let Some(kind) = kind {
@@ -961,6 +972,14 @@ fn mcp_agent_verb_input(
         "vault.shared.policy.propose" => a.spec.clone().ok_or_else(invalid),
         "vault.shared.policy.answer" => a.spec.clone().ok_or_else(invalid),
         "vault.shared.policy.change" => a.spec.clone().ok_or_else(invalid),
+        "vault.trusted_contacts.name" => a.spec.clone().ok_or_else(invalid),
+        "vault.trusted_contacts.list" => a.spec.clone().ok_or_else(invalid),
+        "vault.trusted_contacts.consent" => a.spec.clone().ok_or_else(invalid),
+        "vault.trusted_contacts.revoke" => a.spec.clone().ok_or_else(invalid),
+        "vault.trusted_contacts.dial.set" => a.spec.clone().ok_or_else(invalid),
+        "vault.trusted_contacts.tier.set" => a.spec.clone().ok_or_else(invalid),
+        "vault.trusted_contacts.concern.asks" => a.spec.clone().ok_or_else(invalid),
+        "vault.trusted_contacts.concern.authorize" => a.spec.clone().ok_or_else(invalid),
         "vault.guests.revoke" => a.spec.clone().ok_or_else(invalid),
         "vault.guests.mint_slip" => a.spec.clone().ok_or_else(invalid),
         "vault.residence.mode" => a.spec.clone().ok_or_else(invalid),
@@ -1310,6 +1329,7 @@ fn mcp_agent_verb_input(
         "vault.get" => a.spec.clone().ok_or_else(invalid),
         "vault.refs.resolve" => a.spec.clone().ok_or_else(invalid),
         "vault.refs.links" => a.spec.clone().ok_or_else(invalid),
+        "vault.search.hybrid" => a.spec.clone().ok_or_else(invalid),
         "vault.search.bm25" => a.spec.clone().ok_or_else(invalid),
         "vault.neighbors" => a.spec.clone().ok_or_else(invalid),
         "vault.structural.put" => a.spec.clone().ok_or_else(invalid),
@@ -1869,6 +1889,30 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.shared.policy.change" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.trusted_contacts.name" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.trusted_contacts.list" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.trusted_contacts.consent" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.trusted_contacts.revoke" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.trusted_contacts.dial.set" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.trusted_contacts.tier.set" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.trusted_contacts.concern.asks" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.trusted_contacts.concern.authorize" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.guests.revoke" => {
@@ -2616,6 +2660,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.refs.links" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.search.hybrid" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.search.bm25" => {
@@ -5162,6 +5209,167 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_shared_policy_change(server, auth, input)
                     .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.trusted_contacts.name" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.name", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::TrustedContactNameRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_trusted_contacts_name(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.trusted_contacts.list" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.list", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::TrustedContactsRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_trusted_contacts_list(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.trusted_contacts.consent" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.consent", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::TrustedContactConsentRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_trusted_contacts_consent(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.trusted_contacts.revoke" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.revoke", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::TrustedContactRevokeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_trusted_contacts_revoke(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.trusted_contacts.dial.set" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.dial.set", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::TrustedContactDialRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_trusted_contacts_dial_set(
+                server, auth, input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.trusted_contacts.tier.set" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.tier.set", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::TrustedContactTierRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_trusted_contacts_tier_set(
+                server, auth, input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.trusted_contacts.concern.asks" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.concern.asks", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::TrustedContactAsksRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_trusted_contacts_concern_asks(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.trusted_contacts.concern.authorize" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input(
+                "vault.trusted_contacts.concern.authorize",
+                &input,
+            )
+            .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::TrustedContactAuthorizeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_trusted_contacts_concern_authorize(
+                    server, auth, input,
+                )
+                .await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)
@@ -8496,6 +8704,14 @@ async fn execute_agent_verb_row(
             let input: oneiron::lens::RecordLinksRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_refs_links(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.search.hybrid" => {
+            let input: oneiron::memory::HybridSearchRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_search_hybrid(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
