@@ -2059,6 +2059,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "host.compact",
+                crate::code_run::vault_read::request_schema::<
+                    crate::runtime_hooks::host_doors::HostCompactRequest,
+                >(),
+            ),
+            (
+                "host.wake",
+                crate::code_run::vault_read::request_schema::<
+                    crate::runtime_hooks::host_doors::HostWakeRequest,
+                >(),
+            ),
+            (
+                "host.budget.hit",
+                crate::code_run::vault_read::request_schema::<
+                    crate::runtime_hooks::host_doors::HostBudgetHitRequest,
+                >(),
+            ),
+            (
                 "vault.hooks.replay",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::HooksReplayRequest,
@@ -4618,6 +4636,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.secrets.renew",
     "self.secrets.teardown",
     "self.secrets.use",
+    "host.compact",
+    "host.wake",
+    "host.budget.hit",
     "vault.hooks.regen.due",
     "vault.hooks.regen.get",
     "vault.hooks.regen.adopt",
@@ -5486,6 +5507,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "self.secrets.use" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::SecretUseAnswer>()
         }
+        "host.compact" => crate::code_run::vault_read::request_schema::<
+            crate::runtime_hooks::host_doors::HostCompactResult,
+        >(),
+        "host.wake" => crate::code_run::vault_read::request_schema::<
+            crate::runtime_hooks::host_doors::HostWakeResult,
+        >(),
+        "host.budget.hit" => crate::code_run::vault_read::request_schema::<
+            crate::runtime_hooks::host_doors::HostBudgetHitResult,
+        >(),
         "vault.hooks.regen.due" => {
             crate::code_run::vault_read::request_schema::<Vec<crate::EntityId>>()
         }
@@ -8845,6 +8875,27 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.shares.view" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "host.compact" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "host.wake" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "host.budget.hit" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -12953,6 +13004,17 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.shares.view" => {
             let _input: crate::task_verb::sdk::ShareViewRequest = decode(value.clone())?;
         }
+        "host.compact" => {
+            let _input: crate::runtime_hooks::host_doors::HostCompactRequest =
+                decode(value.clone())?;
+        }
+        "host.wake" => {
+            let _input: crate::runtime_hooks::host_doors::HostWakeRequest = decode(value.clone())?;
+        }
+        "host.budget.hit" => {
+            let _input: crate::runtime_hooks::host_doors::HostBudgetHitRequest =
+                decode(value.clone())?;
+        }
         "vault.hooks.replay" => {
             let input: crate::task_verb::sdk::HooksReplayRequest = decode(value.clone())?;
             input.limit()?;
@@ -15212,6 +15274,9 @@ pub fn invoke(
         "vault.shares.create" => encode(vault_shares_create(memory, decode(value)?)?),
         "vault.shares.revoke" => encode(vault_shares_revoke(memory, decode(value)?)?),
         "vault.shares.view" => encode(vault_shares_view(memory, decode(value)?)?),
+        "host.compact" => encode(host_compact(memory, decode(value)?)?),
+        "host.wake" => encode(host_wake(memory, decode(value)?)?),
+        "host.budget.hit" => encode(host_budget_hit(memory, decode(value)?)?),
         "vault.hooks.replay" => encode(vault_hooks_replay(memory, decode(value)?)?),
         "vault.hooks.regen.due" => encode(vault_hooks_regen_due(memory, decode(value)?)?),
         "vault.hooks.regen.get" => encode(vault_hooks_regen_get(memory, decode(value)?)?),
@@ -19307,6 +19372,24 @@ pub fn vault_shares_view(
     input: crate::task_verb::sdk::ShareViewRequest,
 ) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::receipt::SharedBriefView>>> {
     crate::task_verb::sdk::view_shared_brief_as_caller(memory, input)
+}
+pub fn host_compact(
+    memory: &Memory<'_>,
+    input: crate::runtime_hooks::host_doors::HostCompactRequest,
+) -> MemoryResult<crate::runtime_hooks::host_doors::HostCompactResult> {
+    crate::task_verb::sdk::host_only(memory, "host.compact", &input)
+}
+pub fn host_wake(
+    memory: &Memory<'_>,
+    input: crate::runtime_hooks::host_doors::HostWakeRequest,
+) -> MemoryResult<crate::runtime_hooks::host_doors::HostWakeResult> {
+    crate::task_verb::sdk::host_only(memory, "host.wake", &input)
+}
+pub fn host_budget_hit(
+    memory: &Memory<'_>,
+    input: crate::runtime_hooks::host_doors::HostBudgetHitRequest,
+) -> MemoryResult<crate::runtime_hooks::host_doors::HostBudgetHitResult> {
+    crate::task_verb::sdk::host_only(memory, "host.budget.hit", &input)
 }
 pub fn vault_hooks_replay(
     memory: &Memory<'_>,

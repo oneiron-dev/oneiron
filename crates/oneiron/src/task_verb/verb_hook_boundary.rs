@@ -89,6 +89,10 @@ fn row_pre_resumable(
     credential: Option<VerbAskCredential>,
     validate: fn(&str, &Value) -> MemoryResult<()>,
 ) -> MemoryResult<Result<VerbHookPre, VerbHookStop>> {
+    if matches!(verb, "host.compact" | "host.wake" | "host.budget.hit") {
+        memory.embedded_owner(verb)?.revalidate(memory.vault())?;
+        crate::runtime_hooks::host_doors::admit_trigger(memory.vault(), verb, &args)?;
+    }
     let check = |args: &Value| {
         validate(verb, args).map_err(|error| error.to_string())?;
         memory

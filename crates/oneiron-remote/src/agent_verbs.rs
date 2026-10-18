@@ -1213,6 +1213,15 @@ impl OneironClient {
                 "vault.shares.view" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<Option<oneiron::receipt::SharedBriefView>>,
                 >(client, verb, &input),
+                "host.compact" => remote_agent_verb_output::<
+                    oneiron::runtime_hooks::host_doors::HostCompactResult,
+                >(client, verb, &input),
+                "host.wake" => remote_agent_verb_output::<
+                    oneiron::runtime_hooks::host_doors::HostWakeResult,
+                >(client, verb, &input),
+                "host.budget.hit" => remote_agent_verb_output::<
+                    oneiron::runtime_hooks::host_doors::HostBudgetHitResult,
+                >(client, verb, &input),
                 "vault.hooks.replay" => remote_agent_verb_output::<
                     Vec<oneiron::task_verb::sdk::HookReplayRow>,
                 >(client, verb, &input),
@@ -7136,6 +7145,42 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.shares.view", value)
+    }
+    pub fn host_compact(
+        &self,
+        input: &oneiron::runtime_hooks::host_doors::HostCompactRequest,
+    ) -> Result<oneiron::runtime_hooks::host_doors::HostCompactResult, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("host.compact", value)
+    }
+    pub fn host_wake(
+        &self,
+        input: &oneiron::runtime_hooks::host_doors::HostWakeRequest,
+    ) -> Result<oneiron::runtime_hooks::host_doors::HostWakeResult, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("host.wake", value)
+    }
+    pub fn host_budget_hit(
+        &self,
+        input: &oneiron::runtime_hooks::host_doors::HostBudgetHitRequest,
+    ) -> Result<oneiron::runtime_hooks::host_doors::HostBudgetHitResult, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("host.budget.hit", value)
     }
     pub fn vault_hooks_replay(
         &self,

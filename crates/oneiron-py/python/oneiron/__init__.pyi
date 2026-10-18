@@ -380,6 +380,8 @@ class Oneiron:
     def tasks(self) -> "Oneiron._TasksVerbs": ...
     @property
     def reveal(self) -> "Oneiron._RevealVerbs": ...
+    @property
+    def host(self) -> "Oneiron._HostVerbs": ...
     def can(self, request: TaskCanAskRequest) -> TaskAskPreflight: ...
     def peek(self, request: TaskAskHandle) -> list[TaskAskPersonEvidence]: ...
     @overload
@@ -2491,6 +2493,16 @@ class Oneiron:
             """Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt."""
         def describe(self, spec: Facade.RevealDescribeRequest) -> Facade.RevealHandleCard:
             """What a secret handle names, where it was found and what a reveal of it would do now; never the value."""
+    class _HostVerbs:
+        def compact(self, spec: Facade.HostCompactRequest) -> Facade.HostCompactResult:
+            """Compacts a conversation window on the configured cheap backend, preserving add-only hook pins through the existing gate and keyframe mint."""
+        def wake(self, spec: Facade.HostWakeRequest) -> Facade.HostWakeResult:
+            """Schedules the host wake through its typed trigger; pre-hook Skip keeps its reason and Timer includes the engine maintenance lanes."""
+        @property
+        def budget(self) -> "Oneiron._HostBudgetVerbs": ...
+    class _HostBudgetVerbs:
+        def hit(self, spec: Facade.HostBudgetHitRequest) -> Facade.HostBudgetHitResult:
+            """Notifies a spent durable budget seat under Suspend, retaining the original line, root payer, cap and accounting for hook follow-up work."""
     class _AiVerbs:
         @property
         def steps(self) -> "Oneiron._AiStepsVerbs": ...

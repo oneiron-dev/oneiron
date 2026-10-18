@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 780 facade rows, 2722 declarations.
-Inputs: 728 of 780 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 700 of 780 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 783 facade rows, 2732 declarations.
+Inputs: 731 of 783 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 703 of 783 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 99; unread shapes: 0.
 """
 
@@ -7279,6 +7279,52 @@ class SharedBriefView(TypedDict):
     html: str
     citations: list[SharedBriefCitation]
     born_with: BornWith
+class CompactionWindowMessage(TypedDict):
+    message_id: EntityId
+    turn_id: EntityId
+    content: str
+    turn: int
+    tokens: int
+class HostCompactRequest(TypedDict):
+    session_ref: EntityId
+    window: list[CompactionWindowMessage]
+    keep_list: list[str]
+    token_ceiling: int
+class HostCompactResult(TypedDict):
+    epoch: int
+    summary: EntityId
+    text: str
+    keep_list: list[str]
+    first_turn: int
+    last_turn: int
+HostWakeKind = Literal["compaction", "session_end", "event", "timer"]
+class HostWakeRequest(TypedDict):
+    wake_kind: HostWakeKind
+    queue_head: list[EntityId]
+class HostWakeResult(TypedDict):
+    wake_kind: HostWakeKind
+    queue_head: list[EntityId]
+    attempt: str
+    already_queued: bool
+class BudgetExhaustionPolicySuspend(TypedDict):
+    kind: Literal["suspend"]
+class BudgetExhaustionPolicyContinueOnLocal(TypedDict):
+    kind: Literal["continue_on_local"]
+class BudgetExhaustionPolicyOverdraft(TypedDict):
+    kind: Literal["overdraft"]
+    cap: int
+BudgetExhaustionPolicy = BudgetExhaustionPolicySuspend | BudgetExhaustionPolicyContinueOnLocal | BudgetExhaustionPolicyOverdraft
+class HostBudgetHitRequest(TypedDict):
+    seat: str
+    policy: BudgetExhaustionPolicy
+class HostBudgetAccounting(TypedDict):
+    line: SpendScope
+    root: SpendScope
+    spend: SpendRead
+class HostBudgetHitResult(TypedDict):
+    seat: str
+    policy: BudgetExhaustionPolicy
+    accounting: HostBudgetAccounting
 class HooksReplayRequest(TypedDict):
     binding: str
     since: NotRequired[str | None]
