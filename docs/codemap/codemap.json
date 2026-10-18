@@ -2470,6 +2470,19 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CheckpointPolicyHead"
+     ],
+     "path": "src/authority/checkpoint_choice.rs",
+     "purpose": "Folds the owner's signed choices of his vault's checkpoint root policy (mesh PR2c, §A 06, K06; CALLS \"mesh…",
+     "surface": {
+      "crate-vis": 10,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -2490,7 +2503,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CheckpointPosture",
@@ -2501,9 +2514,23 @@
      "purpose": "Who may attest a portable authority checkpoint (OF-469, checkpoint v2): the eligible roots and the quorum…",
      "surface": {
       "const": 3,
+      "crate-vis": 3,
       "enum": 1,
-      "fn": 6,
+      "fn": 9,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CheckpointPolicyView"
+     ],
+     "path": "src/authority/checkpoint_policy_choice.rs",
+     "purpose": "The owner's checkpoint root policy door (mesh PR2c, §A 06, K06): he selects which roots attest his authority…",
+     "surface": {
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -2625,7 +2652,7 @@
      "path": "src/authority/fold_state.rs",
      "purpose": "Folded-state data model and the two-state merge",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 3,
       "fn": 3,
       "struct": 3
@@ -3063,7 +3090,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 26,
-      "re-export": 44
+      "re-export": 46
      }
     },
     {
@@ -4055,7 +4082,7 @@
      "path": "src/authority/world_privacy.rs",
      "purpose": "Folds `WorldPrivacy` edits into each world's effective settings",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "enum": 4,
       "fn": 7,
       "struct": 2
@@ -58866,7 +58893,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 160,
+     "files": 162,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -60324,7 +60351,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3680,
+   "source_files": 3682,
    "test_files": 902
   },
   "oneiron-android": {
@@ -60367,6 +60394,22 @@
   },
   "oneiron-authority": {
    "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CheckpointPolicySet",
+      "CheckpointRootChoice"
+     ],
+     "path": "src/authority/checkpoint_policy.rs",
+     "purpose": "The owner's choice of his vault's checkpoint root policy (mesh PR2c, §A 06, K06), and its wire codec",
+     "surface": {
+      "const": 3,
+      "crate-vis": 2,
+      "fn": 5,
+      "struct": 2
+     }
+    },
     {
      "bucket": "s",
      "kind": "src",
@@ -60521,7 +60564,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary…",
      "surface": {
-      "re-export": 22
+      "re-export": 23
      }
     },
     {
@@ -60880,7 +60923,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 24,
+     "files": 25,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -60910,7 +60953,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 33,
+   "source_files": 34,
    "test_files": 1
   },
   "oneiron-bench": {
@@ -74719,6 +74762,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/checkpoint_policy_routes.rs",
+     "purpose": "`/v1/owner/checkpoint-policy`: the owner selects which roots attest his authority checkpoint images, and how…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -81415,7 +81468,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 413,
+     "files": 414,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -81844,7 +81897,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 763,
+   "source_files": 764,
    "test_files": 182
   },
   "oneiron-spawn": {
