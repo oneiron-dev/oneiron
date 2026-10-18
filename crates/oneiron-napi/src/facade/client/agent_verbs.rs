@@ -361,6 +361,84 @@ impl NativeClient {
         memory_pack_from_engine(output).map_err(boundary_error)
     }
     #[napi]
+    pub fn vault_retrieval_recall(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.recall", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_retrieval_runs(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.runs", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_retrieval_run(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.run", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_retrieval_turn(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.turn", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_retrieval_outcomes_put(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.outcomes.put", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_retrieval_outcomes_end(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.outcomes.end", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_retrieval_trace(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.trace", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_retrieval_export(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.export", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_retrieval_replay(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.replay", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_export(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.export", input)
@@ -2759,6 +2837,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.task_types.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_agents_spawn_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.agents.spawn.get", input)
             .map_err(facade_error)
     }
     #[napi]

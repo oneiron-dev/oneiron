@@ -20,7 +20,10 @@ use crate::store::Store;
 use crate::write_envelope::WriteActor;
 
 mod lift;
+mod receipt_actor;
 pub(crate) use self::lift::{CodeDocumentRows, code_document_texts_in_txn};
+use self::receipt_actor::ReceiptActor;
+pub(crate) use self::receipt_actor::{erase_head_actor_in_txn, erase_ingress_actor_in_txn};
 
 /// Immutable tested snapshot of a code document at one exact operation
 /// frontier: key is the document id then the op-fold hash, raw-concatenated.
@@ -62,7 +65,7 @@ pub(super) struct HeadRow {
 pub(super) struct ReceiptRow {
     operation: String,
     session: String,
-    actor: String,
+    actor: ReceiptActor,
     actor_class: u8,
     provenance: CodeOpProvenance,
     sequence: u64,
@@ -75,20 +78,18 @@ pub(super) struct ReceiptRow {
 }
 
 /// The Loro commit message of one operation. It binds the ingress identity,
-/// actor, edit and provenance into the document's operation fold.
-#[allow(clippy::too_many_arguments)]
+/// edit and provenance into the document's operation fold. The actor stays on
+/// the receipts, so an actor's erase leaves every fold whole (FIX 3520).
 fn op_stamp(
     operation: &str,
     session: &str,
-    actor: &str,
-    actor_class: u8,
     peer_id: u64,
     counter_start: i32,
     edit: &CodeFileEdit,
     provenance: &CodeOpProvenance,
 ) -> Result<String> {
     Ok(format!(
-        "oneiron.code_document.v2:{operation}:{session}:{actor}:{actor_class}:{peer_id}:{counter_start}:{}:{}",
+        "oneiron.code_document.v3:{operation}:{session}:{peer_id}:{counter_start}:{}:{}",
         crate::entity_id::bytes_to_hex_lower(&hash(&encode(edit)?)),
         crate::entity_id::bytes_to_hex_lower(&hash(&encode(provenance)?)),
     ))
@@ -106,11 +107,10 @@ pub(crate) struct CodeFileIngress {
 }
 
 impl ReceiptRow {
-    fn actor(&self) -> Result<WriteActor> {
-        Ok(WriteActor::new(
-            EntityId::from_hex(&self.actor)?,
-            EdgeActorClass::try_from_u8(self.actor_class).ok_or_else(invalid)?,
-        ))
+    /// The actor, or none once that actor was erased (FIX 3520).
+    fn actor(&self) -> Result<Option<WriteActor>> {
+        let class = EdgeActorClass::try_from_u8(self.actor_class).ok_or_else(invalid)?;
+        Ok(self.actor.id().map(|id| WriteActor::new(id, class)))
     }
 
     pub(super) fn attribution(&self) -> Result<CodeOpAttribution> {
@@ -268,7 +268,7 @@ impl Vault {
             let receipt = row.receipt()?;
             if receipt.document_id != session.document_id
                 || receipt.session_id != session.session_id
-                || receipt.actor != actor
+                || receipt.actor != Some(actor)
                 || receipt.provenance != session.provenance
                 || receipt.edit != *edit
             {
@@ -324,7 +324,7 @@ impl Vault {
                 let receipt = row.receipt()?;
                 if receipt.document_id != item.session.document_id
                     || receipt.session_id != item.session.session_id
-                    || receipt.actor != item.actor
+                    || receipt.actor != Some(item.actor)
                     || receipt.provenance != item.session.provenance
                     || receipt.edit != item.edit
                     || receipt.before.text_hash != hash(item.expected_text.as_bytes())
@@ -436,8 +436,6 @@ impl Vault {
         let stamp = op_stamp(
             &operation.to_hex(),
             &session.session_id.to_hex(),
-            &actor.entity_ref().to_hex(),
-            actor.actor_class() as u8,
             peer_id,
             counter_start,
             edit,
@@ -523,7 +521,7 @@ impl Vault {
         let receipt = ReceiptRow {
             operation: operation.to_hex(),
             session: session.session_id.to_hex(),
-            actor: actor.entity_ref().to_hex(),
+            actor: ReceiptActor::Actor(actor.entity_ref()),
             actor_class: actor.actor_class() as u8,
             provenance,
             sequence,
@@ -626,8 +624,6 @@ impl Vault {
                 let message = op_stamp(
                     &r.operation,
                     &r.session,
-                    &r.actor,
-                    r.actor_class,
                     r.peer_id,
                     r.counter_start,
                     &r.edit,

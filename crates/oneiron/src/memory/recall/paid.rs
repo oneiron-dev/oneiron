@@ -363,6 +363,7 @@ impl Memory<'_> {
                 format,
                 Some(host.lease()),
                 &RecallExecution {
+                    telemetry: input.telemetry.as_ref(),
                     deadline,
                     embedding,
                     media,
@@ -388,6 +389,7 @@ impl Memory<'_> {
                 format,
                 Some(host.lease()),
                 &RecallExecution {
+                    telemetry: input.telemetry.as_ref(),
                     deadline: deadline.as_ref(),
                     reranker: Some(&capture),
                     embedding,
@@ -516,6 +518,7 @@ impl Memory<'_> {
                 format,
                 Some(host.lease()),
                 &RecallExecution {
+                    telemetry: input.telemetry.as_ref(),
                     deadline: deadline.as_ref(),
                     reranker: Some(&prepared),
                     embedding,

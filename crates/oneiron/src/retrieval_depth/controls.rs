@@ -342,4 +342,6 @@ pub struct RecallExecution<'a> {
     /// without the rerank stage and need no lease, and their door says so in
     /// the pack ([`crate::memory::RecallRerank::Unavailable`]).
     pub rerank_unavailable: bool,
+    /// The caller's opt-in stage capture and exact turn linkage.
+    pub telemetry: Option<&'a crate::task_verb::sdk::RecallTelemetry>,
 }

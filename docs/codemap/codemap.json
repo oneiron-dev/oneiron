@@ -9303,7 +9303,7 @@
      "path": "src/channel_identity/facts.rs",
      "purpose": "Channel facts as claims (OF-272): every write of a ChannelIdentity row moves its `channel_identity.*` heads…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2,
       "struct": 1
      }
@@ -9343,7 +9343,7 @@
      "path": "src/channel_identity/mod.rs",
      "purpose": "ChannelIdentity record substrate (OF-347 CID-1)",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 14
      }
     },
@@ -11133,7 +11133,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/code_document/mod.rs",
-     "purpose": "Base-mode live code files: actor-stamped Loro operations and verified tested frontiers",
+     "purpose": "Base-mode live code files: stamped Loro operations, receipts naming their actors, and verified tested…",
      "surface": {
       "crate-vis": 2,
       "re-export": 5
@@ -11180,7 +11180,7 @@
      "path": "src/code_document/storage.rs",
      "purpose": "Atomic merge-before-persist of live file edits and immutable tested snapshots",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 9
      }
     },
@@ -11190,6 +11190,16 @@
      "notable": [],
      "path": "src/code_document/storage/lift.rs",
      "purpose": "Code documents the historical lift sweep reads again (OF-067, Engine ruling G2 = b)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_document/storage/receipt_actor.rs",
+     "purpose": "Whose operation a code-document receipt records, and the erase that forgets it (FIX 3520)",
      "surface": {
       "crate-vis": 4
      }
@@ -11221,7 +11231,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 8
      }
     },
@@ -24662,7 +24672,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 64,
+      "crate-vis": 65,
       "mod": 1,
       "re-export": 8
      }
@@ -24977,7 +24987,7 @@
      "path": "src/gate/resolution/manifest_fold.rs",
      "purpose": "Store-scanning manifest fold plus budget-guard and trust adapters",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 2
      }
     },
@@ -25018,7 +25028,7 @@
      "path": "src/gate/resolution/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -32120,7 +32130,7 @@
      "path": "src/memory/shape_doors.rs",
      "purpose": "The vault shape on code mode and MCP (ARCH-0070): the free reads `describe(vault)`, `vault.shape.read` and…",
      "surface": {
-      "fn": 6
+      "fn": 7
      }
     },
     {
@@ -39756,9 +39766,9 @@
      "path": "src/repo_mutation/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "mod": 2,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -39784,7 +39794,7 @@
      "purpose": "—",
      "surface": {
       "const": 1,
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 3
      }
     },
@@ -39799,10 +39809,26 @@
      "path": "src/repo_mutation/proposal.rs",
      "purpose": "Durable per-operation code proposals",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "enum": 2,
       "fn": 6,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PendingRepoProposalErase",
+      "ProposalActor"
+     ],
+     "path": "src/repo_mutation/proposal/actor_erase.rs",
+     "purpose": "Whose act a repo proposal records, and the erase that forgets it (FIX 3520)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 3
      }
     },
     {
@@ -39843,7 +39869,7 @@
      "path": "src/repo_mutation/support.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -39899,7 +39925,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 7,
       "struct": 6,
@@ -49710,7 +49736,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 45,
+      "re-export": 46,
       "struct": 36
      }
     },
@@ -50034,7 +50060,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 589
+      "fn": 599
      }
     },
     {
@@ -50376,6 +50402,29 @@
       "enum": 5,
       "fn": 2,
       "struct": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RecallTelemetry",
+      "RetrievalDiagnosticExport",
+      "RetrievalDiagnosticReplay",
+      "RetrievalDiagnosticRequest",
+      "RetrievalReplayRun",
+      "RetrievalRunEvidence",
+      "RetrievalRunRequest",
+      "RetrievalRunsRequest",
+      "RetrievalTraceRequest",
+      "RetrievalTurnRequest"
+     ],
+     "path": "src/task_verb/sdk_retrieval.rs",
+     "purpose": "Owner-only, tenant-local retrieval diagnostics over the existing finalized ledger",
+     "surface": {
+      "const": 1,
+      "fn": 9,
+      "struct": 10
      }
     },
     {
@@ -50956,9 +51005,37 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/team/door_reads.rs",
+     "purpose": "The joins behind the owner's spawn observation (DOOR-111, S6): what the stores hold for one spawned agent…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "BorrowedCellView",
+      "CoordinationPatternView",
+      "CriticAssociation",
+      "CriticObservation",
+      "LaunchedMember",
+      "LearningCellView",
+      "LearningEvidenceView",
+      "LearningObservation",
+      "ObservationIssue",
+      "PlanObservation",
+      "PlannedSpawnObservation",
+      "PlannedSpawnRead",
+      "ProviderPinView",
+      "ResolvedTeam",
+      "RouteObservation",
+      "RouteStampState",
+      "SkillRevisionView",
+      "SpawnPhase",
       "TaskTypeNodeSpec",
       "TaskTypeNodeView",
       "TaskTypeTreePin",
@@ -50966,14 +51043,17 @@
       "TaskTypeTreeRead",
       "TaskTypeTreeReadReply",
       "TaskTypeTreeView",
+      "TeamBindingView",
+      "TeamReceiptView",
       "TypeStamp"
      ],
      "path": "src/team/doors.rs",
      "purpose": "The owner's task-type tree doors (DOOR-111, OF-541): store an authored tree on an open team-shape fork, and…",
      "surface": {
       "const": 1,
-      "fn": 2,
-      "struct": 8
+      "enum": 5,
+      "fn": 3,
+      "struct": 23
      }
     },
     {
@@ -51124,6 +51204,7 @@
      "path": "src/team/run_binding.rs",
      "purpose": "OF-540: what the host saw a team start do, and the team a run works in",
      "surface": {
+      "crate-vis": 1,
       "fn": 7,
       "struct": 1
      }
@@ -52243,7 +52324,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 2,
-      "fn": 5,
+      "fn": 6,
       "struct": 3
      }
     },
@@ -52324,7 +52405,7 @@
      "path": "src/vault_shape/live.rs",
      "purpose": "The live arrangement read as a shape: every setup-plane row the vault holds now, under the names a seed…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 16
      }
     },
     {
@@ -52389,6 +52470,7 @@
      "path": "src/vault_shape/plan.rs",
      "purpose": "Plan: a pure read at a pinned frontier that renders the difference between a seed and the vault, one item…",
      "surface": {
+      "crate-vis": 1,
       "enum": 2,
       "fn": 6,
       "struct": 3
@@ -55748,11 +55830,11 @@
      "purpose": "—"
     },
     "code_document": {
-     "files": 10,
+     "files": 11,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
-     "purpose": "Base-mode live code files: actor-stamped Loro operations and verified tested frontiers"
+     "purpose": "Base-mode live code files: stamped Loro operations, receipts naming their actors, and verified tested…"
     },
     "code_memory": {
      "files": 7,
@@ -56595,7 +56677,7 @@
      "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators"
     },
     "repo_mutation": {
-     "files": 19,
+     "files": 20,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -56882,14 +56964,14 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 157,
+     "files": 158,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section"
     },
     "team": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -57052,7 +57134,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3476,
+   "source_files": 3480,
    "test_files": 902
   },
   "oneiron-android": {
@@ -65519,7 +65601,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 539
+      "fn": 549
      }
     },
     {
@@ -66568,7 +66650,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 540
+      "fn": 550
      }
     },
     {
@@ -69601,7 +69683,7 @@
      "path": "src/api/facade/coordination_doors.rs",
      "purpose": "The owner's task-type tree doors (DOOR-111), with the owner's own proof: store an authored tree on an open…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -69781,7 +69863,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 105
+      "crate-vis": 106
      }
     },
     {
@@ -69962,6 +70044,16 @@
      "purpose": "Owner-authenticated retained-result reads",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/retrieval_doors.rs",
+     "purpose": "Typed owner-only retrieval diagnostics",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -76827,7 +76919,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/voice_host/public_loop.rs",
@@ -77321,7 +77413,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 364,
+     "files": 365,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -77736,7 +77828,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 694,
+   "source_files": 695,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -78075,6 +78167,7 @@
       "BornFromSource",
       "BornFromView",
       "BornWithField",
+      "BorrowedCellView",
       "BranchBelief",
       "BranchSnapshot",
       "BriefConstraints",
@@ -78327,6 +78420,7 @@
       "ContextDefault",
       "ContextEmitReceipt",
       "ContextPackBudgetControls",
+      "ContextPackMediaQuery",
       "ContextPackRetrievalBudgetControls",
       "ContextReceiptFields",
       "ContextSpec",
@@ -78337,6 +78431,7 @@
       "ConversationTurnCreateInput",
       "CooperativeDeletionDispositionKind",
       "CoordinationPattern",
+      "CoordinationPatternView",
       "CoreBatchEntityInput",
       "CoreBatchEntityReceipt",
       "CoreBatchWriteInput",
@@ -78366,8 +78461,10 @@
       "CredentialCeiling",
       "CreditOptions",
       "Criterion",
+      "CriticAssociation",
       "CriticBinding",
       "CriticLens",
+      "CriticObservation",
       "CriticPrediction",
       "CriticReviewOutcome",
       "CriticReviewSubmit",
@@ -78459,6 +78556,8 @@
       "DocxRun",
       "DollarBasis",
       "DoneMeans",
+      "DoorsLearningCellView",
+      "DoorsLearningEvidenceView",
       "DreamerAttemptView",
       "EditNoteRequest",
       "EmbeddingSpace",
@@ -78726,6 +78825,7 @@
       "LateCreditReceipt",
       "LateCreditShare",
       "LaunchStatement",
+      "LaunchedMember",
       "LeaderSplitInput",
       "LeaderSplitOutput",
       "LearnedBand",
@@ -78737,6 +78837,7 @@
       "LearningEvidenceView",
       "LearningHeadView",
       "LearningMeanValue",
+      "LearningObservation",
       "LearningPredicate",
       "LearningPriorValue",
       "LearningPriorView",
@@ -78854,6 +78955,7 @@
       "MeasuredLearningView",
       "Measurement",
       "MediaAtom",
+      "MediaQueryKind",
       "MediaUsage",
       "MemberAnswer",
       "MemberOnboardingOutcome",
@@ -78950,6 +79052,7 @@
       "NotificationRow",
       "NotificationSource",
       "Observation",
+      "ObservationIssue",
       "Of360Ar3MetricTier",
       "Of360CaseEvalReport",
       "Of360CaseExtractionOutput",
@@ -79106,6 +79209,9 @@
       "PinnedPack",
       "PinnedRef",
       "PixelRegion",
+      "PlanObservation",
+      "PlannedSpawnObservation",
+      "PlannedSpawnRead",
       "PlannerRung",
       "PolicyActionOutcome",
       "PolicyAxes",
@@ -79195,6 +79301,7 @@
       "ProseSpan",
       "ProspectiveQueryHint",
       "ProviderPin",
+      "ProviderPinView",
       "PruneReason",
       "PruneReceipt",
       "PulledImage",
@@ -79229,6 +79336,9 @@
       "Reasoning",
       "ReasoningCause",
       "ReasoningEffort",
+      "RecallEffort",
+      "RecallRequest",
+      "RecallTelemetry",
       "RecallWorlds",
       "ReceiptAtom",
       "ReceiptKind",
@@ -79315,6 +79425,7 @@
       "ResidenceQueued",
       "ResolveRecordRefRequest",
       "ResolvedRole",
+      "ResolvedTeam",
       "ResponseFormat",
       "ResultBodyKind",
       "ResultBodyStatus",
@@ -79342,9 +79453,39 @@
       "ResultTaintState",
       "ResultWithheld",
       "RetentionDefault",
+      "RetrievalAction",
       "RetrievalBlendWeights",
+      "RetrievalDiagnosticExport",
+      "RetrievalDiagnosticReplay",
+      "RetrievalDiagnosticRequest",
+      "RetrievalEndOutcome",
+      "RetrievalOutcome",
+      "RetrievalOutcomeRecord",
+      "RetrievalPolicyAction",
+      "RetrievalPolicyDecision",
+      "RetrievalPolicyEnvelope",
+      "RetrievalPolicyIdentity",
+      "RetrievalPolicyTier",
+      "RetrievalPolicyTrace",
+      "RetrievalReplayInputs",
+      "RetrievalReplayRun",
+      "RetrievalRewardEvidence",
+      "RetrievalRunEvidence",
+      "RetrievalRunId",
+      "RetrievalRunRecord",
+      "RetrievalRunRequest",
+      "RetrievalRunsRequest",
+      "RetrievalScoreBreakdown",
       "RetrievalScoreComponent",
       "RetrievalSignal",
+      "RetrievalState",
+      "RetrievalTrace",
+      "RetrievalTraceChannelRecord",
+      "RetrievalTraceRequest",
+      "RetrievalTraceStage",
+      "RetrievalTraceStageRecord",
+      "RetrievalTurn",
+      "RetrievalTurnRequest",
       "RetryableLlmError",
       "RevealDecision",
       "RevealDescribeRequest",
@@ -79383,6 +79524,8 @@
       "RoomTurn",
       "RoomTurnRequest",
       "RoomWaitKind",
+      "RouteObservation",
+      "RouteStampState",
       "RoutineOutcome",
       "RowBirth",
       "RsiSettlement",
@@ -79578,6 +79721,7 @@
       "SkillHubTrustTier",
       "SkillPublisherAdmission",
       "SkillPublisherRequest",
+      "SkillRevisionView",
       "SkillSaveRequest",
       "SkillSourceFile",
       "SlateDataClass",
@@ -79611,6 +79755,7 @@
       "SpawnKnobU32",
       "SpawnKnobU64",
       "SpawnPattern",
+      "SpawnPhase",
       "SpawnPins",
       "SpendBasis",
       "SpendCapView",
@@ -79718,7 +79863,10 @@
       "TaskWaveRequest",
       "TasksOverflow",
       "TasksSection",
+      "TeamAxis",
+      "TeamBindingView",
       "TeamPlan",
+      "TeamReceiptView",
       "TeamShape",
       "TextBlockAtom",
       "TextBody",
@@ -79831,10 +79979,14 @@
       "WireDeleteReceipt",
       "WireEntityView",
       "WireMentionProvenance",
+      "WireQueryAffect",
       "WireQuoteSpan",
       "WireReadScope",
+      "WireRecallScope",
       "WireRecordRefusal",
       "WireRefusalReason",
+      "WireRetrievalDegradation",
+      "WireRetrievalQuality",
       "WireWitnessAuthor",
       "WireWitnessMessage",
       "WireWitnessReceipt",
@@ -79889,8 +80041,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 513,
-      "struct": 1442
+      "enum": 527,
+      "struct": 1488
      }
     },
     {

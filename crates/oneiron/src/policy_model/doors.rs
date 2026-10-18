@@ -29,7 +29,12 @@ impl PolicyOutboundRequest {
     /// Read named scope records under the caller's credential before classifying.
     pub fn into_request(self, memory: &Memory<'_>) -> MemoryResult<PolicyClassifyRequest> {
         memory.with_verified_actor_write_txn(|_| Ok(()))?;
-        let refs: Vec<String> = self.world_ref.iter().chain(self.project_ref.iter()).cloned().collect();
+        let refs: Vec<String> = self
+            .world_ref
+            .iter()
+            .chain(self.project_ref.iter())
+            .cloned()
+            .collect();
         if !refs.is_empty() {
             memory.hydrate(&refs)?;
         }
@@ -57,9 +62,11 @@ pub(crate) fn validate_owner_patterns(
     patterns: &[super::PolicyPatternRule],
     row_refs: &[String],
 ) -> Result<()> {
-    super::pattern::compile_pattern_rules(patterns, &|category| row_refs.iter().any(|row| row == category))
-        .map(|_| ())
-        .map_err(|defect| crate::Error::InvalidConfig(format!("{} {}", defect.field, defect.reason)))
+    super::pattern::compile_pattern_rules(patterns, &|category| {
+        row_refs.iter().any(|row| row == category)
+    })
+    .map(|_| ())
+    .map_err(|defect| crate::Error::InvalidConfig(format!("{} {}", defect.field, defect.reason)))
 }
 
 /// A hosted decision emits evidence and never accepts it back as authority.
@@ -91,17 +98,32 @@ pub async fn enforce_hosted_relay(
     unavailable_notice: &str,
 ) -> Result<HostedRelayDecision> {
     validate_hosted_relay_notice(config, unavailable_notice)?;
-    let policy = registry.hosted_legal_policy(domain.service_identity()).ok_or_else(|| {
-        crate::Error::InvalidConfig("no hosted policy is bound to the attested relay".to_owned())
-    })?;
-    let (pass, receipt_ref) = vault.relay_boundary_pass_with_receipt(
-        request.clone(), domain, registry, config, safeguard, verdicts,
-    ).await?;
+    let policy = registry
+        .hosted_legal_policy(domain.service_identity())
+        .ok_or_else(|| {
+            crate::Error::InvalidConfig(
+                "no hosted policy is bound to the attested relay".to_owned(),
+            )
+        })?;
+    let (pass, receipt_ref) = vault
+        .relay_boundary_pass_with_receipt(
+            request.clone(),
+            domain,
+            registry,
+            config,
+            safeguard,
+            verdicts,
+        )
+        .await?;
     let halted = pass.must_halt_relay();
     let verdict = pass.boundary_verdict().cloned();
-    let mut system_notices: Vec<_> = verdict.as_ref().and_then(|verdict| {
-        super::notice::policy_notice(verdict.decision, &verdict.category, Some(policy), config)
-    }).into_iter().collect();
+    let mut system_notices: Vec<_> = verdict
+        .as_ref()
+        .and_then(|verdict| {
+            super::notice::policy_notice(verdict.decision, &verdict.category, Some(policy), config)
+        })
+        .into_iter()
+        .collect();
     if halted && pass.degraded().is_some() {
         system_notices.push(crate::store::GateSystemNoticeRecord {
             notice_type: "policy_relay_unavailable".to_owned(),
@@ -110,7 +132,9 @@ pub async fn enforce_hosted_relay(
             audience: super::notice::SYSTEM_NOTICE_AUDIENCE_USER_AND_MODEL.to_owned(),
             body: unavailable_notice.to_owned(),
             row_ref: None,
-            setting_change_offer: super::notice::safe_setting_change_offer(config.hosted_local_model_offer.as_ref()),
+            setting_change_offer: super::notice::safe_setting_change_offer(
+                config.hosted_local_model_offer.as_ref(),
+            ),
             policy_plane: Some(super::PolicyPlane::HostedLegal.as_str().to_owned()),
             policy_version: Some(policy.version.clone()),
             docs_url: Some(policy.docs_url.clone()),
@@ -139,7 +163,9 @@ pub fn validate_hosted_relay_notice(config: &super::PolicyModelConfig, body: &st
     if config.hosted_outage_policy != super::HostedOutagePolicy::Halt
         || body.trim().is_empty()
         || body.len() > crate::store::GATE_SYSTEM_NOTICE_BODY_MAX_LEN
-        || super::notice::safe_setting_change_offer(config.hosted_local_model_offer.as_ref()).is_none() {
+        || super::notice::safe_setting_change_offer(config.hosted_local_model_offer.as_ref())
+            .is_none()
+    {
         return Err(crate::Error::InvalidConfig(
             "a hosted policy door needs halt posture, a bounded service notice and a local-model offer".to_owned(),
         ));
@@ -148,15 +174,25 @@ pub fn validate_hosted_relay_notice(config: &super::PolicyModelConfig, body: &st
 }
 
 /// Embedded owner-plane calls use the same engine with no fabricated model answer.
-pub fn enforce_owner_policy_embedded(memory: &Memory<'_>, input: PolicyOutboundRequest) -> MemoryResult<super::PolicyModelEnforcement> {
+pub fn enforce_owner_policy_embedded(
+    memory: &Memory<'_>,
+    input: PolicyOutboundRequest,
+) -> MemoryResult<super::PolicyModelEnforcement> {
     let request = input.into_request(memory)?;
-    memory.vault().enforce_policy_model(request).map_err(Into::into)
+    memory
+        .vault()
+        .enforce_policy_model(request)
+        .map_err(Into::into)
 }
 
 /// All policy contributions the resolver may read, including the default manifest.
 pub fn policy_manifest_sources(vault: &Vault) -> Result<Vec<EntityId>> {
     let txn = vault.store.env.read_txn()?;
     crate::ports::EntityStoreRead::port_entity_ids_by_type(
-        &vault.store, &txn, crate::registry::ENTITY_TYPE_POLICY_MANIFEST, None,
-    )?.collect()
+        &vault.store,
+        &txn,
+        crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
+        None,
+    )?
+    .collect()
 }
