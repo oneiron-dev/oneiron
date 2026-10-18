@@ -20,6 +20,11 @@ EmbeddedVault(context.filesDir.resolve("memory").absolutePath).use { vault ->
 }
 ```
 
+Beside `put` and `get`, `delete`, `putEdge`, `edgesOut`/`edgesIn`, `putVector` and
+`searchVector` (at most 1000 hits) cross the same boundary, with 32-character hex ids. A vault
+from `bound(actorKey, session)` writes as that caller through the core's raw caller doors
+(OF-063); its `delete` is the owner-only `vault.delete` door, so an id naming no record throws.
+
 The Android workflow (`.github/workflows/android-embedded.yml`) builds
 `aarch64-linux-android` with NDK 27.2.12479018 and API 26, packages the `.so`,
 then runs the Kotlin open/put/get/reopen instrumentation test

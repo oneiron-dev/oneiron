@@ -6,11 +6,14 @@
 //! directly. Each door wraps the row's own call, never a wrapper around it,
 //! so a hook fires once per logical verb. A hook's stop reaches the caller as
 //! a refusal whose `hook` carries the typed stop. A call the generated
-//! `invoke` runs for an on-device caller with no credential saves how to run
-//! it again with its ask, so settlement resumes it (`Vault::drain_verb_asks`);
-//! a retry then answers what it returned. So does a credential caller's call
-//! whose host bound its instrument and door: settlement runs it through that
-//! door, once the host verified the credential again.
+//! `invoke` runs saves how to run it again with its ask, so settlement
+//! resumes it (`Vault::drain_verb_asks`); a retry then answers what it
+//! returned. A credential caller's call whose host bound its instrument and
+//! door runs again through that door, once the host verified the credential
+//! again. Any other call whose handle the drain can rebuild runs again as its
+//! caller, wherever the caller sits, while the authority its ask saved still
+//! stands: the owner still a live owner, or the same Grants under the same
+//! ceiling.
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -151,7 +154,8 @@ fn chain_post(vault: &Vault, pre: VerbHookPre, result: Value) -> MemoryResult<Va
 /// gets the args every rewrite left. The generated `invoke` is its one
 /// caller, so a call on a surface settlement can rebuild saves its resume
 /// target with an ask, and a call settlement already ran answers what it
-/// returned. A `reveal.wait` saves none: settlement would keep the value it
+/// returned: a credential caller's reference first, else its plain caller's.
+/// A plain `reveal.wait` saves none: settlement would keep the value it
 /// returned, so the caller's retry resumes it.
 ///
 /// # Errors
@@ -164,13 +168,15 @@ pub fn row(
     args: Value,
     run: impl FnOnce(Value) -> MemoryResult<Value>,
 ) -> MemoryResult<Value> {
-    let resume = memory
-        .resume_bounds()
-        .filter(|_| verb != AgentVerb::RevealWait.as_str())
-        .map(|(session, room)| VerbResume::Row { session, room });
     // Bound on every call: a retry of a call an ask parked meets its saved
-    // reference whether or not a hook takes the verb now.
+    // reference whether or not a hook takes the verb now. A credential
+    // caller's reference comes first; else a handle the drain can rebuild is
+    // its plain target; else only the caller's retry resumes it.
     let credential = memory.verb_ask_credential();
+    let resume = memory
+        .plain_resume()
+        .filter(|_| credential.is_none() && verb != AgentVerb::RevealWait.as_str())
+        .map(VerbResume::Row);
     let pre = match row_pre_resumable(memory, verb, args, resume, credential, validate_input)? {
         Ok(pre) => pre,
         Err(stop) => return completed(verb, stop),
