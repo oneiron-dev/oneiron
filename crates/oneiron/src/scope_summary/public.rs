@@ -44,21 +44,35 @@ impl SummaryEdit {
         let (anchor, verb) = match self {
             Self::AppendToSection { section, text } => (
                 section,
-                EditVerb::AppendToSection { section: section.clone(), text: text.clone() },
+                EditVerb::AppendToSection {
+                    section: section.clone(),
+                    text: text.clone(),
+                },
             ),
             Self::ReplaceQuotedSpan { span, text } => (
                 span,
-                EditVerb::ReplaceQuotedSpan { span: span.clone(), text: text.clone() },
+                EditVerb::ReplaceQuotedSpan {
+                    span: span.clone(),
+                    text: text.clone(),
+                },
             ),
             Self::InsertAfterAnchor { anchor, text } => (
                 anchor,
-                EditVerb::InsertAfterAnchor { anchor: anchor.clone(), text: text.clone() },
+                EditVerb::InsertAfterAnchor {
+                    anchor: anchor.clone(),
+                    text: text.clone(),
+                },
             ),
         };
         if anchor.frontier() != base {
-            return Err(MemoryError::bad_request("edit anchor differs from its declared base"));
+            return Err(MemoryError::bad_request(
+                "edit anchor differs from its declared base",
+            ));
         }
-        Ok(AnchoredEdit { actor: Some(actor), verb })
+        Ok(AnchoredEdit {
+            actor: Some(actor),
+            verb,
+        })
     }
 }
 
@@ -78,7 +92,9 @@ impl Memory<'_> {
         let request = super::ScopeSummaryRequest {
             target: super::ScopeSummaryTarget::Scope {
                 scope,
-                land_on: input.land_on.as_deref()
+                land_on: input
+                    .land_on
+                    .as_deref()
                     .map(|value| crate::memory::resolve_entity_ref(self.vault(), value))
                     .transpose()?,
                 as_record: input.as_record,
@@ -97,7 +113,10 @@ impl Memory<'_> {
         })
     }
 
-    pub fn summary_status(&self, input: &SummaryStatusRequest) -> MemoryResult<super::ScopeSummaryStatus> {
+    pub fn summary_status(
+        &self,
+        input: &SummaryStatusRequest,
+    ) -> MemoryResult<super::ScopeSummaryStatus> {
         let id = side_id(&input.attempt)?;
         let attempt = crate::attempt_queue::AttemptId::from_bytes(id.as_bytes())?;
         let status = self.vault().scope_summary_status(attempt)?;
@@ -111,20 +130,33 @@ impl Memory<'_> {
     }
 
     /// The document, keep, derivation and stable anchors share the scoped read's snapshot.
-    pub fn read_summary(&self, input: &SummaryReadRequest) -> MemoryResult<ScopedReadResult<Option<SummaryReadView>>> {
+    pub fn read_summary(
+        &self,
+        input: &SummaryReadRequest,
+    ) -> MemoryResult<ScopedReadResult<Option<SummaryReadView>>> {
         let summary = crate::memory::resolve_entity_ref(self.vault(), &input.summary_ref)?;
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         lane.read_projected(&[PointRead::id(summary)], None, |txn, rows| {
-            let Some(row) = rows.into_iter().next().flatten().filter(|row| row.body.is_some()) else {
+            let Some(row) = rows
+                .into_iter()
+                .next()
+                .flatten()
+                .filter(|row| row.body.is_some())
+            else {
                 return Ok::<_, MemoryError>(None);
             };
             if row.entity_type != crate::registry::ENTITY_TYPE_SUMMARY {
                 return Err(MemoryError::bad_request("entity is not a SUMMARY"));
             }
-            let view = crate::entity_doc::summary_read_in_txn(self.vault(), txn, &summary, &input.spans)?;
+            let view =
+                crate::entity_doc::summary_read_in_txn(self.vault(), txn, &summary, &input.spans)?;
             let value = serde_json::to_value(&view)
                 .map_err(|_| MemoryError::bad_request("SUMMARY view encoding"))?;
-            let keys = crate::batch::secret_scan::LiftedKeys::of_json_in_txn(&self.vault().store, txn, &value)?;
+            let keys = crate::batch::secret_scan::LiftedKeys::of_json_in_txn(
+                &self.vault().store,
+                txn,
+                &value,
+            )?;
             self.produced_from([summary]);
             self.lifted_view(view, || Ok(keys)).map(Some)
         })
@@ -132,8 +164,11 @@ impl Memory<'_> {
 
     fn summary_id(&self, reference: &str) -> MemoryResult<EntityId> {
         self.read_summary(&SummaryReadRequest {
-            summary_ref: reference.to_owned(), spans: Vec::new(),
-        })?.value.ok_or_else(absent)?;
+            summary_ref: reference.to_owned(),
+            spans: Vec::new(),
+        })?
+        .value
+        .ok_or_else(absent)?;
         crate::memory::resolve_entity_ref(self.vault(), reference)
     }
 
@@ -154,15 +189,24 @@ impl Memory<'_> {
     pub fn set_summary_keep(&self, input: &SummaryKeepRequest) -> MemoryResult<SummaryKeepResult> {
         let summary = self.summary_id(&input.summary_ref)?;
         self.vault().set_scope_summary_keep(
-            &summary, &input.frontier, &input.keep,
+            &summary,
+            &input.frontier,
+            &input.keep,
             WriteActor::new(self.actor(), self.actor_class()),
-            &self.summary_authorization(), self.vault().now_recorded_at(),
+            &self.summary_authorization(),
+            self.vault().now_recorded_at(),
         )?;
-        let view = self.read_summary(&SummaryReadRequest {
-            summary_ref: summary.to_hex(), spans: Vec::new(),
-        })?.value.ok_or_else(absent)?;
+        let view = self
+            .read_summary(&SummaryReadRequest {
+                summary_ref: summary.to_hex(),
+                spans: Vec::new(),
+            })?
+            .value
+            .ok_or_else(absent)?;
         Ok(SummaryKeepResult {
-            summary_ref: view.summary_ref, frontier: view.frontier, keep: view.metadata.keep,
+            summary_ref: view.summary_ref,
+            frontier: view.frontier,
+            keep: view.metadata.keep,
         })
     }
 
@@ -171,54 +215,126 @@ impl Memory<'_> {
     pub fn edit_summary(&self, input: &SummaryEditRequest) -> MemoryResult<SummaryProposalView> {
         let summary = self.summary_id(&input.summary_ref)?;
         let actor = WriteActor::new(self.actor(), self.actor_class());
-        let edits = input.edits.iter().map(|edit| edit.anchored(actor, &input.base))
+        let edits = input
+            .edits
+            .iter()
+            .map(|edit| edit.anchored(actor, &input.base))
             .collect::<MemoryResult<Vec<_>>>()?;
         if edits.is_empty() {
-            return Err(MemoryError::bad_request("an anchored edit requires operations"));
+            return Err(MemoryError::bad_request(
+                "an anchored edit requires operations",
+            ));
         }
-        self.open_summary_fork(ForkRequest {
-            entity: summary, base: input.base.clone(), actor, edits, rewrite: None,
-        }, None, &[])
+        self.open_summary_fork(
+            ForkRequest {
+                entity: summary,
+                base: input.base.clone(),
+                actor,
+                edits,
+                rewrite: None,
+            },
+            None,
+            &[],
+        )
     }
 
-    pub fn patch_summary(&self, input: &SummaryPatchRequest) -> MemoryResult<SummaryMutationResult> {
+    pub fn patch_summary(
+        &self,
+        input: &SummaryPatchRequest,
+    ) -> MemoryResult<SummaryMutationResult> {
         let summary = self.summary_id(&input.summary_ref)?;
         let actor = WriteActor::new(self.actor(), self.actor_class());
-        let edits = input.edits.iter().map(|edit| edit.anchored(actor, &input.base))
+        let edits = input
+            .edits
+            .iter()
+            .map(|edit| edit.anchored(actor, &input.base))
             .collect::<MemoryResult<Vec<_>>>()?;
         if edits.is_empty() || input.read_refs.is_empty() {
-            return Err(MemoryError::bad_request("a patch requires anchored operations and the sources it read"));
+            return Err(MemoryError::bad_request(
+                "a patch requires anchored operations and the sources it read",
+            ));
         }
-        let proposal = self.open_summary_fork(ForkRequest {
-            entity: summary, base: input.base.clone(), actor, edits, rewrite: None,
-        }, Some(&input.keep), &input.read_refs)?;
-        let read_refs = proposal.bundle.forks.iter().flat_map(|fork| fork.read_refs.clone()).collect();
-        Ok(SummaryMutationResult { proposal, read_refs })
+        let proposal = self.open_summary_fork(
+            ForkRequest {
+                entity: summary,
+                base: input.base.clone(),
+                actor,
+                edits,
+                rewrite: None,
+            },
+            Some(&input.keep),
+            &input.read_refs,
+        )?;
+        let read_refs = proposal
+            .bundle
+            .forks
+            .iter()
+            .flat_map(|fork| fork.read_refs.clone())
+            .collect();
+        Ok(SummaryMutationResult {
+            proposal,
+            read_refs,
+        })
     }
 
-    pub fn regenerate_summary(&self, input: &SummaryRegenerateRequest) -> MemoryResult<SummaryMutationResult> {
+    pub fn regenerate_summary(
+        &self,
+        input: &SummaryRegenerateRequest,
+    ) -> MemoryResult<SummaryMutationResult> {
         let summary = self.summary_id(&input.summary_ref)?;
         if input.text.trim().is_empty() || input.read_refs.is_empty() {
-            return Err(MemoryError::bad_request("a regeneration requires text and the sources it read"));
+            return Err(MemoryError::bad_request(
+                "a regeneration requires text and the sources it read",
+            ));
         }
-        let proposal = self.open_summary_fork(ForkRequest {
-            entity: summary, base: input.base.clone(),
-            actor: WriteActor::new(self.actor(), self.actor_class()),
-            edits: Vec::new(), rewrite: Some(input.text.clone()),
-        }, Some(&input.keep), &input.read_refs)?;
-        let read_refs = proposal.bundle.forks.iter().flat_map(|fork| fork.read_refs.clone()).collect();
-        Ok(SummaryMutationResult { proposal, read_refs })
-    }
-
-    fn open_summary_fork(&self, request: ForkRequest, keep: Option<&str>, read_refs: &[String]) -> MemoryResult<SummaryProposalView> {
-        let bundle = crate::entity_doc::open_summary_proposal(
-            self, &request, keep, read_refs, &self.summary_authorization(),
+        let proposal = self.open_summary_fork(
+            ForkRequest {
+                entity: summary,
+                base: input.base.clone(),
+                actor: WriteActor::new(self.actor(), self.actor_class()),
+                edits: Vec::new(),
+                rewrite: Some(input.text.clone()),
+            },
+            Some(&input.keep),
+            &input.read_refs,
         )?;
-        self.read_summary_proposal(&SummaryProposalRequest { proposal_ref: bundle.proposal })
+        let read_refs = proposal
+            .bundle
+            .forks
+            .iter()
+            .flat_map(|fork| fork.read_refs.clone())
+            .collect();
+        Ok(SummaryMutationResult {
+            proposal,
+            read_refs,
+        })
     }
 
-    pub fn read_summary_proposal(&self, input: &SummaryProposalRequest) -> MemoryResult<SummaryProposalView> {
-        let bundle = self.vault().entity_text_proposal(&side_id(&input.proposal_ref)?)?;
+    fn open_summary_fork(
+        &self,
+        request: ForkRequest,
+        keep: Option<&str>,
+        read_refs: &[String],
+    ) -> MemoryResult<SummaryProposalView> {
+        let bundle = crate::entity_doc::open_summary_proposal(
+            self,
+            &request,
+            keep,
+            read_refs,
+            &self.summary_authorization(),
+        )?;
+        self.read_summary_proposal(&SummaryProposalRequest {
+            proposal_ref: bundle.proposal,
+        })
+    }
+
+    pub fn read_summary_proposal(
+        &self,
+        input: &SummaryProposalRequest,
+    ) -> MemoryResult<SummaryProposalView> {
+        let bundle = self
+            .vault()
+            .entity_text_proposal(&side_id(&input.proposal_ref)?)?;
         let mut entities = std::collections::BTreeSet::new();
         for fork in &bundle.forks {
             entities.insert(self.summary_id(&fork.entity)?);
@@ -226,29 +342,50 @@ impl Memory<'_> {
         let mut forks = Vec::new();
         for record in &bundle.forks {
             forks.push(SummaryForkView {
-                text: self.vault().entity_text_fork_text(&side_id(&record.fork)?)?,
+                text: self
+                    .vault()
+                    .entity_text_fork_text(&side_id(&record.fork)?)?,
                 record: record.clone(),
             });
         }
         let mut receipts = Vec::new();
         for entity in entities {
-            receipts.extend(self.vault().entity_text_receipts(&entity)?.into_iter()
-                .filter(|receipt| receipt.proposal == bundle.proposal));
+            receipts.extend(
+                self.vault()
+                    .entity_text_receipts(&entity)?
+                    .into_iter()
+                    .filter(|receipt| receipt.proposal == bundle.proposal),
+            );
         }
-        let view = SummaryProposalView { bundle, forks, receipts };
+        let view = SummaryProposalView {
+            bundle,
+            forks,
+            receipts,
+        };
         let value = serde_json::to_value(&view)
             .map_err(|_| MemoryError::bad_request("SUMMARY proposal view encoding"))?;
         self.lifted_view(view, || {
             let txn = self.vault().store.env.read_txn()?;
-            Ok(crate::batch::secret_scan::LiftedKeys::of_json_in_txn(&self.vault().store, &txn, &value)?)
+            Ok(crate::batch::secret_scan::LiftedKeys::of_json_in_txn(
+                &self.vault().store,
+                &txn,
+                &value,
+            )?)
         })
     }
 
-    pub fn settle_summary_proposal(&self, input: &SummaryProposalRequest, verb: SettleVerb) -> MemoryResult<SummaryProposalView> {
+    pub fn settle_summary_proposal(
+        &self,
+        input: &SummaryProposalRequest,
+        verb: SettleVerb,
+    ) -> MemoryResult<SummaryProposalView> {
         self.read_summary_proposal(input)?;
         self.vault().settle_text_proposal(
-            &side_id(&input.proposal_ref)?, verb, &self.summary_authorization(),
-            WriteActor::new(self.actor(), self.actor_class()), self.vault().now_recorded_at(),
+            &side_id(&input.proposal_ref)?,
+            verb,
+            &self.summary_authorization(),
+            WriteActor::new(self.actor(), self.actor_class()),
+            self.vault().now_recorded_at(),
         )?;
         self.read_summary_proposal(input)
     }

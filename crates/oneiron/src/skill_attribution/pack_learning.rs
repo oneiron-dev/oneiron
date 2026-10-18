@@ -56,7 +56,9 @@ pub fn project_anchored_pack_outcome_as_owner(
     now: u64,
 ) -> Result<LateCreditReceipt> {
     if outcome.anchor != Anchor::OwnerVerdict {
-        return Err(Error::InvalidClaimBody("the owner door requires an owner verdict"));
+        return Err(Error::InvalidClaimBody(
+            "the owner door requires an owner verdict",
+        ));
     }
     project(vault, Some(owner), attempt_receipt, outcome, now)
 }

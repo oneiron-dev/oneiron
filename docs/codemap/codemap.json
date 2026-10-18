@@ -23115,7 +23115,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/entity_doc/summary.rs",
@@ -30534,8 +30534,8 @@
      "purpose": "Seat-birth model routing above the raw LLM call seam",
      "surface": {
       "enum": 3,
-      "fn": 18,
-      "re-export": 2,
+      "fn": 16,
+      "re-export": 3,
       "struct": 7
      }
     },
@@ -30567,6 +30567,19 @@
       "crate-vis": 6,
       "enum": 1,
       "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TaskSeatReceipt"
+     ],
+     "path": "src/llm/seat/run.rs",
+     "purpose": "A run's immutable seat pin: born once per run, loaded again on resume",
+     "surface": {
+      "fn": 4,
       "struct": 1
      }
     },
@@ -41182,7 +41195,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/scope_summary/public.rs",
@@ -51452,7 +51465,6 @@
       "ProviderPinView",
       "ResolvedTeam",
       "RouteObservation",
-      "RouteStampState",
       "SkillRevisionView",
       "SpawnPhase",
       "TaskTypeNodeSpec",
@@ -51470,7 +51482,7 @@
      "purpose": "The owner's task-type tree doors (DOOR-111, OF-541): store an authored tree on an open team-shape fork, and…",
      "surface": {
       "const": 1,
-      "enum": 5,
+      "enum": 4,
       "fn": 3,
       "struct": 23
      }
@@ -56889,7 +56901,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 99,
+     "files": 100,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -57591,7 +57603,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3509,
+   "source_files": 3510,
    "test_files": 902
   },
   "oneiron-android": {
@@ -70644,7 +70656,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/skill_doors.rs",
@@ -75529,7 +75541,7 @@
      "path": "src/mcp/exec_host.rs",
      "purpose": "MCP code-execution host seam and the engine-native host binding",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "enum": 1,
       "fn": 7,
       "struct": 3,
@@ -80168,7 +80180,6 @@
       "RoomTurnRequest",
       "RoomWaitKind",
       "RouteObservation",
-      "RouteStampState",
       "RoutineOutcome",
       "RowBirth",
       "RsiSettlement",
@@ -80771,7 +80782,7 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 567,
+      "enum": 566,
       "struct": 1594
      }
     },

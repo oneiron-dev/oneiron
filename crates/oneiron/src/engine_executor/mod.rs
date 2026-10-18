@@ -29,9 +29,9 @@ pub(crate) use self::attempt_cancels::{AttemptCancels, stop_attempt_step};
 pub use self::cancel::{CANCEL_POLL_SLICE, StepCancellation};
 pub use self::compaction::{CompactionReport, CompactionSpawn, RunCompaction, WindowFullReason};
 pub use self::driver::EngineNativeExecutor;
-pub use self::skill_call::execute_live_skill_call;
 #[cfg(test)]
 use self::record::step_state_hash;
+pub use self::skill_call::execute_live_skill_call;
 pub(crate) use self::store::{
     RESULT_READ_ROOT, RESULT_REPLY_INLINE_BYTES, clean_for_context, is_result_output_path,
     result_handle_json, store_result_output_path,
