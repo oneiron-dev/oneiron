@@ -329,6 +329,9 @@ class Oneiron:
     @property
     def connector(self) -> "Oneiron._ConnectorVerbs":
         return Oneiron._ConnectorVerbs(self._client)
+    @property
+    def calendar(self) -> "Oneiron._CalendarVerbs":
+        return Oneiron._CalendarVerbs(self._client)
     class _FeedbackVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -901,6 +904,9 @@ class Oneiron:
     class _VaultScopeVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def position(self, spec):
+            """Reads a positively stamped record position through the caller credential and existing read gate, with its narrowing receipt."""
+            return json.loads(_translate(lambda: self._client.vault_scope_position(json.dumps(spec))))
         def ceiling(self, spec=None):
             """Reads the caller credential ceiling as a typed ceiling, never as a record position."""
             return json.loads(_translate(lambda: self._client.vault_scope_ceiling(json.dumps({} if spec is None else spec))))
@@ -2017,6 +2023,21 @@ class Oneiron:
         def replay(self, spec):
             """The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands."""
             return json.loads(_translate(lambda: self._client.vault_hooks_replay(json.dumps(spec))))
+        @property
+        def regen(self) -> "Oneiron._VaultHooksRegenVerbs":
+            return Oneiron._VaultHooksRegenVerbs(self._client)
+    class _VaultHooksRegenVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def due(self, spec=None):
+            """List, as the authenticated owner, the hook bindings of the vault's own packs whose verb table or sandbox contract changed since their last good body passed, with no regen waiting. Runs no regen."""
+            return json.loads(_translate(lambda: self._client.vault_hooks_regen_due(json.dumps({} if spec is None else spec))))
+        def get(self, spec):
+            """Read one hook binding's regen record as the authenticated owner: its last good body hash, contract stamp, intent and pending decision, with the candidate_hash an adoption names. Null for a binding bound under no record. Changes nothing."""
+            return json.loads(_translate(lambda: self._client.vault_hooks_regen_get(json.dumps(spec))))
+        def adopt(self, spec):
+            """Adopt, as the authenticated owner and as their stamp, the regen candidate pending on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. Answers the pack put receipt; only an installed put advances the record."""
+            return json.loads(_translate(lambda: self._client.vault_hooks_regen_adopt(json.dumps(spec))))
     class _VaultArtifactsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3127,6 +3148,15 @@ class Oneiron:
     class _VaultNotesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def bless_brief_kind(self, input: dict[str, Any]) -> Any:
+            """A verified person stamps the brief kind policy seed; it grants no sharing or extraction authority."""
+            return json.loads(_translate(lambda: self._client.vault_notes_bless_brief_kind(json.dumps(input, allow_nan=False))))
+        def author_brief(self, input: dict[str, Any]) -> Any:
+            """Authors markdown with supporting claim citations, capturing source NOTE pins and rechecking their live read authority in the brief write transaction."""
+            return json.loads(_translate(lambda: self._client.vault_notes_author_brief(json.dumps(input, allow_nan=False))))
+        def follow_citation(self, spec):
+            """Follows returned share and claim references under the caller live read scope; revocation stops resolution and hidden citations disclose no quote or lifecycle."""
+            return json.loads(_translate(lambda: self._client.vault_notes_follow_citation(json.dumps(spec))))
         def create(self, input: dict[str, Any]) -> Any:
             """Creates a NOTE of a registered kind, its first authored text as its birth."""
             return json.loads(_translate(lambda: self._client.vault_notes_create(json.dumps(input, allow_nan=False))))
@@ -3690,5 +3720,44 @@ class Oneiron:
         def schedule(self, spec):
             """Schedules one send through a granted outbound connector, gated and held for delivery."""
             return json.loads(_translate(lambda: self._client.connector_outbound_schedule(json.dumps(spec))))
+    class _CalendarVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def invite(self, spec):
+            """Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe."""
+            return json.loads(_translate(lambda: self._client.calendar_invite(json.dumps(spec))))
+        @property
+        def connector(self) -> "Oneiron._CalendarConnectorVerbs":
+            return Oneiron._CalendarConnectorVerbs(self._client)
+        @property
+        def imip(self) -> "Oneiron._CalendarImipVerbs":
+            return Oneiron._CalendarImipVerbs(self._client)
+    class _CalendarConnectorVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def configure(self, spec):
+            """Installs one CalDAV seat under owner proof, with a custody reference, discovery endpoint and nonzero bounded poll cadence."""
+            return json.loads(_translate(lambda: self._client.calendar_connector_configure(json.dumps(spec))))
+        def get(self, spec):
+            """Reads a configured CalDAV seat, its real provider cursor, kill switch and last sync observation under owner proof."""
+            return json.loads(_translate(lambda: self._client.calendar_connector_get(json.dumps(spec))))
+        def pull(self, spec):
+            """Pulls the configured CalDAV seat through the existing import gate and echo law, returning the real cursor and sync counters under owner proof."""
+            return json.loads(_translate(lambda: self._client.calendar_connector_pull(json.dumps(spec))))
+        def write(self, spec):
+            """Writes a readable EVENT to the owner-installed CalDAV seat through the durable conditional-write outbox, never a blind overwrite."""
+            return json.loads(_translate(lambda: self._client.calendar_connector_write(json.dumps(spec))))
+        def kill(self, spec):
+            """Kills a CalDAV seat under owner proof, revoking its advertised verbs and stopping further polling and writes without erasing calendar evidence."""
+            return json.loads(_translate(lambda: self._client.calendar_connector_kill(json.dumps(spec))))
+    class _CalendarImipVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def configure(self, spec):
+            """Installs the host iMIP mail submission endpoint and custody name under owner proof; this configuration grants no invite consent or sending identity."""
+            return json.loads(_translate(lambda: self._client.calendar_imip_configure(json.dumps(spec))))
+        def get(self, spec=None):
+            """Reads the installed host iMIP submission endpoint and custody name under owner proof, never its credential value."""
+            return json.loads(_translate(lambda: self._client.calendar_imip_get(json.dumps({} if spec is None else spec))))
 
 # END GENERATED FACADE VERBS

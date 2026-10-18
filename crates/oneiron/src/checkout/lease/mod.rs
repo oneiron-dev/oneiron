@@ -1,8 +1,8 @@
 mod codec;
 mod lifecycle;
-mod types;
 pub(crate) mod teardown;
 pub(crate) mod transactions;
+mod types;
 
 pub use self::codec::checkout_result_identity;
 // The typed `LEASE`/`TOMBSTONE`/`SETTLEMENT` side tables now own every non-test read/write in

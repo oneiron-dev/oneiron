@@ -43,8 +43,8 @@ pub(crate) fn decode_claim_aging_profiles(
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, value)
         .map_err(|_| invalid("claim aging profiles encoding"))?;
-    let profiles: ClaimAgingProfiles = rmp_serde::from_slice(&bytes)
-        .map_err(|_| invalid("invalid claim aging profiles"))?;
+    let profiles: ClaimAgingProfiles =
+        rmp_serde::from_slice(&bytes).map_err(|_| invalid("invalid claim aging profiles"))?;
     profiles.validate()?;
     Ok(Some(profiles))
 }
@@ -53,7 +53,9 @@ fn view(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ClaimAgingProfilesView> 
     let id = crate::gate::default_policy_manifest_id()?;
     let body = body_in_txn(vault, txn, id)?.ok_or(Error::EntityNotFound)?;
     if !crate::gate::manifest_authenticity::manifest_is_trusted(&vault.store, txn, &id, &body)? {
-        return Err(invalid("claim aging profiles require an owner-trusted manifest"));
+        return Err(invalid(
+            "claim aging profiles require an owner-trusted manifest",
+        ));
     }
     Ok(ClaimAgingProfilesView {
         manifest_ref: id.to_hex(),
@@ -88,7 +90,9 @@ pub fn configure_claim_aging_profiles_as_owner(
         input.profiles.validate()?;
         let current = view(vault, txn)?;
         if current.body_hash != input.expected_body_hash {
-            return Err(invalid("expected_body_hash must match the current policy manifest"));
+            return Err(invalid(
+                "expected_body_hash must match the current policy manifest",
+            ));
         }
         let id = crate::gate::default_policy_manifest_id()?;
         let body = body_in_txn(vault, txn, id)?.ok_or(Error::EntityNotFound)?;
@@ -113,7 +117,10 @@ pub fn configure_claim_aging_profiles_as_owner(
             WriteActor::new(actor, EdgeActorClass::Human),
             id,
             &body,
-            ("allow", vec!["gate.allow.owner_claim_aging_profiles".to_owned()]),
+            (
+                "allow",
+                vec!["gate.allow.owner_claim_aging_profiles".to_owned()],
+            ),
         )?;
         Ok(ClaimAgingProfilesReceipt {
             configuration: view(vault, txn)?,
