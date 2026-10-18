@@ -392,9 +392,13 @@ impl SlotRelay<'_> {
                 })
                 .await
                 .map_err(|error| TransportError::Storage(error.to_string()))?;
-                cursor.taken = Some(newest);
                 match took {
-                    Ok(take) => relay.taken = Some((newest, take)),
+                    Ok(take) => {
+                        cursor.taken = Some(newest);
+                        relay.taken = Some((newest, take));
+                    }
+                    // Not taken: the next slot takes it again before any
+                    // upload (FIX 3358).
                     Err(error) => {
                         cursor.slot = self.slot;
                         store_cursor(vault, cursor).map_err(storage)?;
