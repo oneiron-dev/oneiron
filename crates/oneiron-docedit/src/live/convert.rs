@@ -20,8 +20,8 @@ use super::pptx::{
 };
 use super::reshape::{self, frame_of};
 use crate::design_plan::Cell;
-use crate::edit::Digest;
 use crate::edit::xml::{self, A, P, R, next_part};
+use crate::edit::{Digest, Effect};
 use crate::ooxml::{XmlTree, escape_text};
 use crate::retained_opc::Package;
 use serde::{Deserialize, Serialize};
@@ -172,6 +172,20 @@ impl Conversion {
                 format!("table frame fitted to its grid: {cx} x {cy} EMU")
             }
         }
+    }
+}
+
+/// An edit's or an export's effect as its receipt names it.
+pub fn effect_receipt(effect: &Effect) -> String {
+    match effect {
+        Effect::Converted { node, conversion } => {
+            format!("node {}: {}", node.0, conversion.describe())
+        }
+        Effect::CustomGeometryReplaced => "custom geometry replaced by a preset".to_owned(),
+        Effect::InheritedGeometryOwned => {
+            "inherited geometry replaced by the shape's own preset".to_owned()
+        }
+        other => serde_json::to_string(other).unwrap_or_default(),
     }
 }
 

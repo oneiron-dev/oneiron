@@ -18,7 +18,7 @@ mod held;
 pub mod pptx;
 mod reshape;
 
-pub use convert::Conversion;
+pub use convert::{Conversion, effect_receipt};
 pub use deck_export::{
     ExportKey, ExportOutcome, ExportProfile, Gate, HeldAssets, OracleReceipt, RoundtripReport,
     StepOutcome, attach_evidence, check_picture, project, relationship_changes, roundtrip_check,

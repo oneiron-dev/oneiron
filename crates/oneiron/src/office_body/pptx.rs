@@ -61,7 +61,8 @@ use oneiron_docedit::live::deck_export::PROJECTOR_VERSION;
 use oneiron_docedit::live::{
     ApproveScope, AttributionIndex, DeckFork, DeckOp, ExportOutcome, ExportProfile, Gate,
     HeldAssets, Landing, LandingReceipt, LiveDeck, LiveError, NodeId, OracleReceipt,
-    PreflightReport, StampedOp, attach_evidence, check_picture, land, preflight, project,
+    PreflightReport, StampedOp, attach_evidence, check_picture, effect_receipt, land, preflight,
+    project,
 };
 use oneiron_docedit::retained_opc::{Limits, Package};
 use serde::{Deserialize, Serialize};
@@ -537,6 +538,12 @@ impl Vault {
                         "projector": key.projector,
                         "document_version": export.outcome.document_version,
                         "changed_parts": export.outcome.changed_parts,
+                        "effects": export
+                            .outcome
+                            .effects
+                            .iter()
+                            .map(effect_receipt)
+                            .collect::<Vec<_>>(),
                     }
                 }),
                 made_by: Some(made_by.clone()),
