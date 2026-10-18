@@ -297,6 +297,10 @@ vaultCommit(input: unknown): unknown
 vaultRemember(input: unknown): unknown
 vaultClaimsRetract(input: unknown): unknown
 vaultForget(input: unknown): unknown
+vaultBookingPageToken(input: unknown): unknown
+vaultCalendarRead(input: unknown): unknown
+vaultCalendarSearch(input: unknown): unknown
+vaultCalendarFreebusy(input: unknown): unknown
 vaultClaimsList(input: unknown): unknown
 vaultClaimsHistory(input: unknown): unknown
 vaultDelete(input: unknown): unknown

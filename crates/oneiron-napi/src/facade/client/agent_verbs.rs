@@ -2513,6 +2513,39 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_booking_page_token(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.booking.page_token", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_read(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.read", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_search(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.search", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_freebusy(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.freebusy", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_claims_list(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.claims.list", input)

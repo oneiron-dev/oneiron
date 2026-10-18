@@ -1566,6 +1566,28 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<ForgetRequest>(),
             ),
             (
+                "vault.booking.page_token",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::BookingPageTokenRequest,
+                >(),
+            ),
+            (
+                "vault.calendar.read",
+                crate::code_run::vault_read::request_schema::<crate::calendar::CalendarReadRequest>(
+                ),
+            ),
+            (
+                "vault.calendar.search",
+                crate::code_run::vault_read::request_schema::<crate::calendar::CalendarSearchRequest>(
+                ),
+            ),
+            (
+                "vault.calendar.freebusy",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::CalendarFreebusyRequest,
+                >(),
+            ),
+            (
                 "vault.claims.list",
                 crate::code_run::vault_read::request_schema::<crate::memory::ClaimListFilter>(),
             ),
@@ -3990,6 +4012,34 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.booking.page_token" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.calendar.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.calendar.search" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.calendar.freebusy" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.claims.list" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -5525,6 +5575,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.forget" => {
             let _input: ForgetRequest = decode(value.clone())?;
         }
+        "vault.booking.page_token" => {
+            let _input: crate::task_verb::sdk::BookingPageTokenRequest = decode(value.clone())?;
+        }
+        "vault.calendar.read" => {
+            let _input: crate::calendar::CalendarReadRequest = decode(value.clone())?;
+        }
+        "vault.calendar.search" => {
+            let _input: crate::calendar::CalendarSearchRequest = decode(value.clone())?;
+        }
+        "vault.calendar.freebusy" => {
+            let _input: crate::task_verb::sdk::CalendarFreebusyRequest = decode(value.clone())?;
+        }
         "vault.claims.list" => {
             let input: crate::memory::ClaimListFilter = decode(value.clone())?;
             crate::memory::caps::check_limit_nonzero(input.limit)?;
@@ -6223,6 +6285,10 @@ pub fn invoke(
         "vault.remember" => encode(vault_remember(memory, decode(value)?)?),
         "vault.claims.retract" => encode(vault_claims_retract(memory, decode(value)?)?),
         "vault.forget" => encode(vault_forget(memory, decode(value)?)?),
+        "vault.booking.page_token" => encode(vault_booking_page_token(memory, decode(value)?)?),
+        "vault.calendar.read" => encode(vault_calendar_read(memory, decode(value)?)?),
+        "vault.calendar.search" => encode(vault_calendar_search(memory, decode(value)?)?),
+        "vault.calendar.freebusy" => encode(vault_calendar_freebusy(memory, decode(value)?)?),
         "vault.claims.list" => encode(vault_claims_list(memory, decode(value)?)?),
         "vault.claims.history" => encode(vault_claims_history(memory, decode(value)?)?),
         "vault.delete" => encode(vault_delete(memory, decode(value)?)?),
@@ -8931,6 +8997,30 @@ pub fn vault_forget(
         &["/claim_ref"],
     )?;
     memory_requests::forget_claims(memory, input)
+}
+pub fn vault_booking_page_token(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::BookingPageTokenRequest,
+) -> MemoryResult<crate::task_verb::sdk::BookingPageTokenResponse> {
+    crate::task_verb::sdk::host_only(memory, "vault.booking.page_token", &input)
+}
+pub fn vault_calendar_read(
+    memory: &Memory<'_>,
+    input: crate::calendar::CalendarReadRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::calendar::CalendarEventView>>> {
+    memory.calendar_read(&input)
+}
+pub fn vault_calendar_search(
+    memory: &Memory<'_>,
+    input: crate::calendar::CalendarSearchRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::calendar::CalendarEventView>>> {
+    memory.calendar_search(&input)
+}
+pub fn vault_calendar_freebusy(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::CalendarFreebusyRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::memory::CalendarFreebusyDto>> {
+    memory.calendar_freebusy(&input.calendars, input.range.to_time_range())
 }
 pub fn vault_claims_list(
     memory: &Memory<'_>,

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 345 facade rows, 1373 declarations.
-Inputs: 302 of 345 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 302 of 345 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 349 facade rows, 1383 declarations.
+Inputs: 306 of 349 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 306 of 349 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 74; unread shapes: 0.
 """
 
@@ -5608,6 +5608,37 @@ class ForgetPredicateRequest(TypedDict):
     subject_ref: str
     predicate: str
 ForgetRequest = ClaimRefRequest | ForgetPredicateRequest
+class BookingPageTokenRequest(TypedDict):
+    page_ref: str
+class BookingPageTokenResponse(TypedDict):
+    page_token: str
+class CalendarReadRequest(TypedDict):
+    event_ref: str
+class CalendarEventView(TypedDict):
+    origin: str
+    event_ref: str
+    name: NotRequired[str | None]
+    start_utc: NotRequired[int | None]
+    end_utc: NotRequired[int | None]
+    calendar_systems: list[str]
+    blocks_time: bool
+class CalendarSel(TypedDict):
+    system: NotRequired[str | None]
+class CalendarRangeDto(TypedDict):
+    start: int
+    end: int
+class CalendarSearchRequest(TypedDict):
+    calendars: list[CalendarSel]
+    range: NotRequired[CalendarRangeDto | None]
+    text: NotRequired[str | None]
+    limit: int
+class CalendarFreebusyRequest(TypedDict):
+    calendars: list[CalendarSel]
+    range: CalendarRangeDto
+class CalendarFreebusyIntervalDto(TypedDict):
+    start_utc: int
+    end_utc: int
+CalendarFreebusyDto = list[CalendarFreebusyIntervalDto]
 class ClaimListFilter(TypedDict):
     subject_ref: NotRequired[str | None]
     predicate: NotRequired[str | None]

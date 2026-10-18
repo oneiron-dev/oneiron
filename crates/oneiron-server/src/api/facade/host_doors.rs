@@ -48,6 +48,8 @@ use crate::builtin_host::HostConnectionChecks;
 use crate::models::RungVoices;
 use crate::server::SyncServer;
 
+pub(crate) use super::booking_doors::*;
+
 // The shared-vault doors live beside these; the generated callers name them here.
 pub(crate) use super::shared_act_doors::*;
 // The shared-vault invitation doors (OF-531) too.

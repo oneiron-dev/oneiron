@@ -261,6 +261,7 @@ pub(crate) use symbol_lease::forget_symbols;
 
 mod recall_door;
 pub mod sdk;
+mod sdk_calendar;
 mod sdk_campaign_split;
 mod sdk_catalog_fragment;
 mod sdk_connector;

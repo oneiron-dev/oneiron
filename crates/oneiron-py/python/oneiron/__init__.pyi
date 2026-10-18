@@ -561,6 +561,10 @@ class Oneiron:
             """Commits one claim through the gate, the same as vault.claims.upsert."""
         def forget(self, input: Facade.ForgetRequest) -> list[Facade.CommitReceipt]:
             """Retracts claims by exact claim or by subject and predicate; never a hard delete."""
+        @property
+        def booking(self) -> "Oneiron._VaultBookingVerbs": ...
+        @property
+        def calendar(self) -> "Oneiron._VaultCalendarVerbs": ...
         def delete(self, input: Facade.SafeDeleteRequest) -> Facade.DeleteReceipt:
             """Deletes one entity under a named reason; an owner verb that only a verified human may call."""
         @property
@@ -1147,6 +1151,16 @@ class Oneiron:
     class _VaultDecisionsAsksVerbs:
         def answer(self, spec: Facade.DecisionAskAnswerRequest) -> Facade.DecisionAsk: ...
         def climb(self, spec: Facade.DecisionAskClimbRequest) -> Facade.ResolvedRole | None: ...
+    class _VaultBookingVerbs:
+        def page_token(self, spec: Facade.BookingPageTokenRequest) -> Facade.BookingPageTokenResponse:
+            """The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority."""
+    class _VaultCalendarVerbs:
+        def read(self, spec: Facade.CalendarReadRequest) -> Facade.ScopedReadResult[Facade.CalendarEventView | None]:
+            """Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt."""
+        def search(self, spec: Facade.CalendarSearchRequest) -> Facade.ScopedReadResult[list[Facade.CalendarEventView]]:
+            """Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt."""
+        def freebusy(self, spec: Facade.CalendarFreebusyRequest) -> Facade.ScopedReadResult[Facade.CalendarFreebusyDto]:
+            """Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt."""
     class _VaultWritesVerbs:
         def pending(self, input: Facade.ReceiptsRequest) -> list[Facade.PendingWrite]:
             """Gated writes parked for consent, newest first."""

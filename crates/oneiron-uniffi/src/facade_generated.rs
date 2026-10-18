@@ -1336,6 +1336,26 @@ export_facade! {
     let output = client.vault_forget(&input)?;
     Lift::lift(output)
 };
+"vault.booking.page_token" => fn vault_booking_page_token(&self, input: BookingPageTokenRequest) -> BookingPageTokenResponse = |client| {
+    let input: oneiron::task_verb::sdk::BookingPageTokenRequest = crate::codec::lower_record("vault.booking.page_token", input)?;
+    let output = client.vault_booking_page_token(&input)?;
+    crate::codec::lift_record("vault.booking.page_token", &output)
+};
+"vault.calendar.read" => fn vault_calendar_read(&self, input: CalendarReadRequest) -> ScopedReadResultOptionalCalendarEventView = |client| {
+    let input: oneiron::calendar::CalendarReadRequest = crate::codec::lower_record("vault.calendar.read", input)?;
+    let output = client.vault_calendar_read(&input)?;
+    crate::codec::lift_record("vault.calendar.read", &output)
+};
+"vault.calendar.search" => fn vault_calendar_search(&self, input: CalendarSearchRequest) -> ScopedReadResultCalendarEventViewList = |client| {
+    let input: oneiron::calendar::CalendarSearchRequest = crate::codec::lower_record("vault.calendar.search", input)?;
+    let output = client.vault_calendar_search(&input)?;
+    crate::codec::lift_record("vault.calendar.search", &output)
+};
+"vault.calendar.freebusy" => fn vault_calendar_freebusy(&self, input: CalendarFreebusyRequest) -> ScopedReadResultCalendarFreebusyDto = |client| {
+    let input: oneiron::task_verb::sdk::CalendarFreebusyRequest = crate::codec::lower_record("vault.calendar.freebusy", input)?;
+    let output = client.vault_calendar_freebusy(&input)?;
+    crate::codec::lift_record("vault.calendar.freebusy", &output)
+};
 "vault.claims.list" => fn vault_claims_list(&self, filter: ClaimListFilter) -> ClaimViews = |client| {
     let input: oneiron::memory::ClaimListFilter = filter.lower()?;
     let output = client.vault_claims_list(&input)?;
