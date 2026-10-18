@@ -6,6 +6,14 @@
 //! the window's persisted document rows. Nothing replicated is written: no
 //! tombstone, deletion marker, audit row, Loro op, outbox row or receipt. An
 //! epoch summary's session floor is the one local row it raises.
+//!
+//! Demotion drops what the home can give back, never local truth. A removed
+//! member's entity-document history (heads, forks, pins, citation floors),
+//! row provenance, custody and lifecycle sidecars (blob versions, LFS, code
+//! revisions and snapshots, code memory, receipt archive, birth custody, hub
+//! packages and refinements), gate decisions, task mirror, scope stamp, VAD
+//! metadata and project-room indexes stay in place, and promotion brings its
+//! rows back beside them.
 //! [`purge_left_shared_env_in_txn`] empties a left shared vault's whole
 //! environment the same way (OF-158).
 //!
@@ -328,7 +336,11 @@ impl<'a> Census<'a> {
         let kind = header.entity_type;
         let reason = if self.keep.kinds.contains(&kind) {
             KeepReason::Kind(kind)
-        } else if crate::store::legal_hold::held_in_txn(self.store, txn, id.as_bytes())? {
+        } else if crate::store::legal_hold::held_in_txn(self.store, txn, id.as_bytes())?
+            || crate::world_keys::held_pad_world_in_txn(self.store, txn, raw)?
+        {
+            // A pad whose world or sealed claim is held stays too, whatever
+            // kinds the caller keeps (OF-470).
             KeepReason::LegalHold
         } else if self.keep.bound_actors && (self.bound.contains(id) || is_base_agent_actor(id)?) {
             KeepReason::BoundActor
