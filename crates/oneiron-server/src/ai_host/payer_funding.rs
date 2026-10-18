@@ -21,7 +21,7 @@ use oneiron::llm::decision::{
     ProviderPin,
 };
 use oneiron::llm::run_admission::{PayerAccount, PayerPerson};
-use oneiron::workspace_roster::RoomFunding;
+use oneiron::workspace_roster::RoomSpend;
 use oneiron::{EntityId, Vault};
 
 /// The host-issued queue identity of a payer-needed ask.
@@ -132,35 +132,52 @@ pub(crate) fn scope_funding(
     }))
 }
 
-/// How a launch that `agent` answers in `room`, or its thread `branch`, is
-/// funded (FIX 805): a chat or voice turn, or a queued Continue or Retry.
+/// How a launch that `agent` answers in `room`, or its thread `branch`, for
+/// `requester` is funded (FIX 805): a chat or voice turn, or a queued
+/// Continue or Retry. This is the one place that says which launch is
+/// room-bound (CALLS, FIX 805 room-bound predicate).
+///
 /// Its payer is the PERSON whose consent on the agent's Ready join funds the
 /// place (L02's join receipt, re-proved live), read through that consent's
 /// scope as [`scope_funding`] reads a room-bound call's. A join that
-/// launches no paid work, or that no longer covers the place, is no funding
-/// consent: the launch holds on [`PayerFault::Missing`], never the vault
-/// owner's default. A join that cannot be read holds too. This is the one
-/// place that says which launch is room-bound.
+/// launches no paid work, or that no longer covers the place (or cannot be
+/// read), is no funding consent: the launch holds on
+/// [`PayerFault::Missing`], never the vault owner's default, unless a live
+/// Owner of the vault is the turn's subject, the requester or the PERSON a
+/// person-anchored agent's join speaks for (Engine, 10-18). An Owner's turn
+/// bills the vault account, as it did before rooms were funded. An agent
+/// with no Ready join filed there answers no room launch but the owner's own
+/// conversation, which keeps the vault owner's default.
 pub(crate) fn room_launch_funding(
     vault: &Vault,
     room: EntityId,
     branch: Option<EntityId>,
     agent: EntityId,
+    requester: EntityId,
 ) -> Result<Option<PayerPerson>, PayerFault> {
-    let funding = match vault.room_funding(room, branch, agent) {
-        Ok(funding) => funding,
+    let (person, spend) = match vault.room_funding(room, branch, agent) {
+        Ok(funding) => (funding.person, funding.spend),
         Err(error) => {
             tracing::warn!(%error, room = %room.to_hex(), "a room launch's join could not be read");
-            return Err(PayerFault::Missing { scope: None });
+            (None, RoomSpend::Lapsed)
         }
     };
-    match funding {
-        RoomFunding::Paid { scope, .. } => scope_funding(vault, Some(&scope), true),
-        RoomFunding::NoPaidWork | RoomFunding::Lapsed => Err(PayerFault::Missing { scope: None }),
-        // The room-bound predicate (CALLS, FIX 805): an agent with no Ready
-        // join filed for the place answers no room launch but the owner's
-        // own conversation, which keeps the vault owner's default.
-        RoomFunding::NotJoined => Ok(None),
+    match spend {
+        RoomSpend::Paid { scope, .. } => scope_funding(vault, Some(&scope), true),
+        RoomSpend::NotJoined => Ok(None),
+        RoomSpend::NoPaidWork | RoomSpend::Lapsed => {
+            let owner = |person: EntityId| {
+                matches!(
+                    billing_account(vault, person),
+                    Some(PayerAccount::VaultOwner)
+                )
+            };
+            if owner(requester) || person.is_some_and(owner) {
+                Ok(None)
+            } else {
+                Err(PayerFault::Missing { scope: None })
+            }
+        }
     }
 }
 

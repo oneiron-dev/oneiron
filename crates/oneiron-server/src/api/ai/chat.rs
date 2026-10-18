@@ -499,14 +499,16 @@ fn start_turn(
     // agent's join funds that room (FIX 805), resolved before anything is
     // written: a turn with no payer to bill is refused, typed.
     let funding = match origin {
-        Some(room) => crate::server::blocking(|| room_launch_funding(&vault, room, None, agent))
-            .map_err(|fault| {
-                refused(
-                    StatusCode::PAYMENT_REQUIRED,
-                    fault.reason(),
-                    fault.to_string(),
-                )
-            })?,
+        Some(room) => {
+            crate::server::blocking(|| room_launch_funding(&vault, room, None, agent, actor))
+                .map_err(|fault| {
+                    refused(
+                        StatusCode::PAYMENT_REQUIRED,
+                        fault.reason(),
+                        fault.to_string(),
+                    )
+                })?
+        }
         None => None,
     };
     let hooked = || {

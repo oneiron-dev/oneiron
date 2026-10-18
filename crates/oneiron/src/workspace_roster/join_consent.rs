@@ -376,11 +376,21 @@ pub fn require_actor_join_in_txn(
     require_join_for_branch_in_txn(vault, txn, room, branch, &subject, scope)
 }
 
-/// What funds an actor's work in a room or thread (FIX 805): the spend
-/// consent on the Ready join that covers the place, as
-/// [`room_funding_in_txn`] reads it.
+/// What funds an actor's work in a room or thread (FIX 805), as
+/// [`room_funding_in_txn`] reads it: who the actor takes part as, and the
+/// spend consent on the Ready join that covers the place.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RoomFunding {
+pub struct RoomFunding {
+    /// The PERSON the actor takes part as: itself, or the PERSON a
+    /// person-anchored agent speaks for. `None` for any other agent, or an
+    /// actor that takes part in no room.
+    pub person: Option<EntityId>,
+    pub spend: RoomSpend,
+}
+
+/// The spend consent on the Ready join covering a room or thread.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RoomSpend {
     /// No Ready join was filed for the actor's subject in the place.
     NotJoined,
     /// A Ready join was filed there, but none covers the place against live
@@ -414,11 +424,32 @@ pub fn room_funding_in_txn(
     let subject = match super::rooms::join_subject_for_actor_in_txn(vault, txn, actor, now) {
         Ok(subject) => subject,
         Err(Error::Claim(ClaimError::ActorLacksClaimAuthority { .. })) => {
-            return Ok(RoomFunding::NotJoined);
+            return Ok(RoomFunding {
+                person: None,
+                spend: RoomSpend::NotJoined,
+            });
         }
         Err(error) => return Err(error),
     };
-    let filed = |branch| filed_spend_in_txn(vault, txn, room, branch, &subject, now);
+    let person = match subject {
+        JoinSubject::Person(person) => Some(person),
+        JoinSubject::Agent(_) => None,
+    };
+    let spend = covering_spend_in_txn(vault, txn, room, branch, &subject, now)?;
+    Ok(RoomFunding { person, spend })
+}
+
+/// The spend consent on `subject`'s Ready join covering `room`, or its
+/// thread `branch`, by OF-529's covering rule, decided at `now`.
+fn covering_spend_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    branch: Option<EntityId>,
+    subject: &JoinSubject,
+    now: u64,
+) -> Result<RoomSpend> {
+    let filed = |branch| filed_spend_in_txn(vault, txn, room, branch, subject, now);
     // A receipt filed for the place that does not cover it now.
     let mut lapsed = false;
     if let Some(thread) = branch {
@@ -429,24 +460,24 @@ pub fn room_funding_in_txn(
             Err(error) => return Err(error),
         };
         match filed(branch)? {
-            Filed::Holds(funding) if hears => return Ok(funding),
+            Filed::Holds(spend) if hears => return Ok(spend),
             Filed::Absent => {}
             Filed::Lapsed | Filed::Holds(_) => lapsed = true,
         }
         if !hears {
             lapsed |= !matches!(filed(None)?, Filed::Absent);
             return Ok(if lapsed {
-                RoomFunding::Lapsed
+                RoomSpend::Lapsed
             } else {
-                RoomFunding::NotJoined
+                RoomSpend::NotJoined
             });
         }
     }
     Ok(match filed(None)? {
-        Filed::Holds(funding) => funding,
-        Filed::Lapsed => RoomFunding::Lapsed,
-        Filed::Absent if lapsed => RoomFunding::Lapsed,
-        Filed::Absent => RoomFunding::NotJoined,
+        Filed::Holds(spend) => spend,
+        Filed::Lapsed => RoomSpend::Lapsed,
+        Filed::Absent if lapsed => RoomSpend::Lapsed,
+        Filed::Absent => RoomSpend::NotJoined,
     })
 }
 
@@ -457,7 +488,7 @@ enum Filed {
     /// One was, and it no longer holds against live facts.
     Lapsed,
     /// One was, and it holds: its spend consent.
-    Holds(RoomFunding),
+    Holds(RoomSpend),
 }
 
 /// `subject`'s Ready join filed for exactly `room` and `branch`, decided
@@ -498,9 +529,9 @@ fn filed_spend_in_txn(
     }
     Ok(match consents.spend {
         ConsentState::Granted(SpendConsent::Paid { payer, scope, .. }) => {
-            Filed::Holds(RoomFunding::Paid { payer, scope })
+            Filed::Holds(RoomSpend::Paid { payer, scope })
         }
-        ConsentState::Granted(SpendConsent::NoPaidWork) => Filed::Holds(RoomFunding::NoPaidWork),
+        ConsentState::Granted(SpendConsent::NoPaidWork) => Filed::Holds(RoomSpend::NoPaidWork),
         // A Ready join holds its spend consent.
         ConsentState::Missing(_) | ConsentState::Denied(_) => Filed::Lapsed,
     })

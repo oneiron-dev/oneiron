@@ -221,10 +221,10 @@ async fn call(
     // provider work; a call with no payer to bill is refused, typed. The
     // host's run, each brain turn and the media door all bill it.
     let funding = match &container {
-        Some(binding) => {
-            crate::server::blocking(|| room_launch_funding(vault, binding.container, None, agent))
-                .map_err(|fault| refused(&fault.to_string()))?
-        }
+        Some(binding) => crate::server::blocking(|| {
+            room_launch_funding(vault, binding.container, None, agent, actor)
+        })
+        .map_err(|fault| refused(&fault.to_string()))?,
         None => None,
     };
 
