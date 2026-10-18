@@ -74,6 +74,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::GATE_MANIFEST_RETENTION_HOLDER, LIVE),
     (&t::GATE_MANIFEST_SEEDED_CONFIDENCE, LIVE),
     (&t::GATE_MANIFEST_TRUSTED_ORIGIN, LIVE),
+    // Owed history pairs with the `rm:w:` markers of the rows it holds.
+    (&t::SYNC_MACHINE_HISTORY_OWED, CONTENT),
     (&t::MODEL_MEDIA_JOB, LIVE),
     (&t::SYNC_MESH_PATH_RECEIPT, LIVE),
     (&t::SYNC_NC_E, CONTENT),

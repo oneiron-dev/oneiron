@@ -46,6 +46,7 @@ mod ingest;
 pub mod lease;
 mod local_claims;
 pub(crate) mod loro_support;
+mod machine_history;
 pub mod manager;
 pub mod mesh_path;
 pub(crate) mod message_docs;

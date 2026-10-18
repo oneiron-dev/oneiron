@@ -211,6 +211,16 @@ pub(in crate::sync) fn ingest_entity_in_savepoint(
             &refusal.err,
             value.unwrap_or_default(),
         )?;
+        // FIX 3820: a row refused for a machine history not here owes its
+        // target a fetch.
+        crate::sync::machine_history::owe_refused_in_txn(
+            ctx.vault,
+            parent,
+            ctx.window_key,
+            refusal.id,
+            &refusal.err,
+            value.unwrap_or_default(),
+        )?;
     } else {
         // Rule A: the row's carried birth lands in the savepoint that
         // admitted the row, or not at all.
@@ -231,8 +241,17 @@ pub(in crate::sync) fn ingest_entity_in_savepoint(
         }
         // FIX 3821: a landed machine-history row may advance its target's pin.
         if let Some(id) = step.written() {
-            ctx.vault
+            let outcome = ctx
+                .vault
                 .receive_own_machine_history_row_in_txn(&mut savepoint, &id)?;
+            // FIX 3820: what the landing means for the history owed here.
+            crate::sync::machine_history::note_landed_in_txn(
+                ctx.vault,
+                &mut savepoint,
+                ctx.window_key,
+                outcome,
+                value.unwrap_or_default(),
+            )?;
         }
         savepoint.commit()?;
     }
