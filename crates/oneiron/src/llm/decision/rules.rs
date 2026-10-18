@@ -14,7 +14,8 @@ use serde::{Deserialize, Serialize};
 use super::ladder::{DecisionCall, DecisionProvider, ProviderDecision, validate_pin};
 use super::types::invalid;
 use super::{
-    AnswerContract, DecisionAnswer, DecisionAsk, DecisionQuestion, DecisionRung, ProviderPin,
+    AnswerActor, AnswerContract, DecisionAnswer, DecisionAsk, DecisionQuestion, DecisionRung,
+    ProviderPin,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::derived_domains::DECISION_HOST_RULE;
@@ -22,7 +23,7 @@ use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
 
 /// Every revision of every rule row, keyed by the rule's id and its revision.
-const RULES: SideTable<(EntityId, u64), HostRule, Named> =
+pub(super) const RULES: SideTable<(EntityId, u64), HostRule, Named> =
     SideTable::new(&side_table::DECISION_HOST_RULE);
 
 /// The longest reason a rule row keeps, in bytes: the consent confirm's reason bound.
@@ -53,9 +54,9 @@ pub struct HostRule {
     #[serde(with = "super::codec::entity")]
     pub ask: EntityId,
     pub ask_seq: u64,
-    /// The owner who wrote it.
-    #[serde(with = "super::codec::entity")]
-    pub by: EntityId,
+    /// The owner who wrote it; erased once that owner was erased (FIX 3520).
+    #[serde(with = "super::codec::answer_actor")]
+    pub by: AnswerActor,
     /// Vault clock seconds when it was written.
     pub written_at: u64,
     /// Vault clock seconds when the owner revoked it; none while it stands.
@@ -214,7 +215,7 @@ impl Vault {
             reason: reason.to_owned(),
             ask: ask.id,
             ask_seq: ask.seq,
-            by,
+            by: AnswerActor::Actor(by),
             written_at,
             revoked_at: None,
         };
