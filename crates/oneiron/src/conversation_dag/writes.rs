@@ -385,8 +385,20 @@ pub(crate) fn append_at_in_txn(
                     }
                 }
             }
+            // The trunk record a thread hangs off: the root's parent, which
+            // every later record of the thread repeats from its root.
+            let anchor = if root == id {
+                input.parent
+            } else {
+                let root_body = require_type(&vault.store, txn, &root, ENTITY_TYPE_TURN)?;
+                crate::workspace_roster::thread_binding(&root_body)?
+                    .ok_or_else(|| invalid("missing thread binding"))?
+                    .anchor
+            };
             let binding = crate::workspace_roster::ThreadBinding {
                 root,
+                room: input.conversation,
+                anchor,
                 audience: input.thread_audience.clone().filter(|_| root == id),
             };
             body = crate::workspace_roster::stamp_thread(&body, &binding)?;

@@ -441,7 +441,7 @@ fn mcp_bound_room(
     actor: &McpCallContext,
 ) -> Option<oneiron::context_board::RoomSection> {
     let room = actor.room_turn?;
-    let memory = crate::api::credential_memory(
+    let memory = crate::api::mcp_credential_memory(
         &server.vault,
         actor.auth.as_ref(),
         actor.actor_ref,
@@ -470,7 +470,7 @@ fn mcp_scratchpad_section(
     if actor.actor_class != oneiron::EdgeActorClass::Agent {
         return None;
     }
-    let memory = crate::api::credential_memory(
+    let memory = crate::api::mcp_credential_memory(
         &server.vault,
         actor.auth.as_ref(),
         actor.actor_ref,
@@ -525,7 +525,7 @@ fn mcp_board_sections(
 > {
     let verbs = crate::mcp::generated_verb_tools().map_err(mcp_surface_construction_error)?;
     let verb_section = crate::mcp::mcp_verb_board_section(&verbs).map_err(mcp_board_frame_error)?;
-    let rows = crate::api::credential_memory(
+    let rows = crate::api::mcp_credential_memory(
         &server.vault,
         actor.auth.as_ref(),
         actor.actor_ref,
@@ -656,7 +656,7 @@ fn mcp_fanout_rows(
     if actor.scope.is_narrow() || !actor.has_unrestricted_record_scope() {
         return Ok(Vec::new());
     }
-    let launches = crate::api::credential_memory(
+    let launches = crate::api::mcp_credential_memory(
         &server.vault,
         actor.auth.as_ref(),
         actor.actor_ref,
@@ -679,7 +679,7 @@ fn mcp_readers_section(
     if actor.scope.is_narrow() || !actor.has_unrestricted_record_scope() {
         return None;
     }
-    let memory = crate::api::credential_memory(
+    let memory = crate::api::mcp_credential_memory(
         &server.vault,
         actor.auth.as_ref(),
         actor.actor_ref,
