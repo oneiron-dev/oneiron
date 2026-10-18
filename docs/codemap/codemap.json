@@ -19903,7 +19903,7 @@
      "purpose": "Home-node gate, atomic admission, and the private wake-budget ledger",
      "surface": {
       "crate-vis": 6,
-      "fn": 21
+      "fn": 22
      }
     },
     {
@@ -20943,6 +20943,7 @@
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)",
      "surface": {
       "crate-vis": 12,
+      "mod": 1,
       "re-export": 11
      }
     },
@@ -21147,14 +21148,15 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "SieveAudit"
+      "SieveAudit",
+      "SieveConsumeReceipt"
      ],
      "path": "src/dreamer_wake/sieve/recipes.rs",
      "purpose": "Durable model-rung inputs, queue spending and unbiased retained-span samples",
      "surface": {
-      "crate-vis": 17,
-      "fn": 1,
-      "struct": 1
+      "crate-vis": 18,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -21186,6 +21188,31 @@
      "purpose": "The prose under the sieve's rules: code, sentences, words, and runs of capitalized words and of katakana…",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SieveLeaseCounter",
+      "SieveLeaseRefillRequest",
+      "SieveLeaseRequest",
+      "SieveLeaseView",
+      "SievePageRequest",
+      "SievePolicyRequest",
+      "SievePolicySetRequest",
+      "SieveQueuePage",
+      "SieveReceiptView",
+      "SieveReceiptsPage",
+      "SieveRecipePolicySetRequest",
+      "SieveRetainedPage",
+      "SieveSpanView"
+     ],
+     "path": "src/dreamer_wake/sieve_doors.rs",
+     "purpose": "Typed owner doors over the sieve interest queue, its retained spans, its consumed-span receipts, the sieve…",
+     "surface": {
+      "fn": 9,
+      "struct": 13
      }
     },
     {
@@ -51628,7 +51655,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 764
+      "fn": 773
      }
     },
     {
@@ -58040,7 +58067,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 30,
+     "files": 31,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59043,7 +59070,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3605,
+   "source_files": 3606,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67575,7 +67602,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 728
+      "fn": 737
      }
     },
     {
@@ -68624,7 +68651,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 729
+      "fn": 738
      }
     },
     {
@@ -71987,7 +72014,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 128
+      "crate-vis": 129
      }
     },
     {
@@ -72298,6 +72325,16 @@
      "purpose": "The host doors of the shared-act policy rows (DOOR-129), beside `shared_act_doors`: a live Owner reads every…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/sieve_doors.rs",
+     "purpose": "The owner's sieve doors: the interest queue and its retained spans, consumed-span receipts, the sieve and…",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -79766,7 +79803,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 391,
+     "files": 392,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -80195,7 +80232,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 732,
+   "source_files": 733,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -82480,6 +82517,19 @@
       "SharedVaultRequest",
       "ShedBlocker",
       "ShedCause",
+      "SieveLeaseCounter",
+      "SieveLeaseRefillRequest",
+      "SieveLeaseRequest",
+      "SieveLeaseView",
+      "SievePageRequest",
+      "SievePolicy",
+      "SievePolicySetRequest",
+      "SieveQueuePage",
+      "SieveReceiptView",
+      "SieveReceiptsPage",
+      "SieveRecipePolicySetRequest",
+      "SieveRetainedPage",
+      "SieveSpanView",
       "SignalExtractionClaim",
       "SignalExtractionMessage",
       "SignalExtractionRequest",
@@ -82853,6 +82903,7 @@
       "WaitForInput",
       "WaitForOutput",
       "WakePolicySetRequest",
+      "WakeRecipePolicy",
       "WeaveDigestCadence",
       "WeaveDigestRendered",
       "WeaveDigestRequest",
@@ -82951,7 +83002,7 @@
      "purpose": "—",
      "surface": {
       "enum": 644,
-      "struct": 1913
+      "struct": 1927
      }
     },
     {
