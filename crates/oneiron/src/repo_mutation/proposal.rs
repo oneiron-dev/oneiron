@@ -30,6 +30,8 @@ use crate::side_table::{self, Raw, SideKey, SideTable};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
+pub(super) mod actor_erase;
+
 /// Durable per-operation code proposal. Key: id16.
 pub(super) const PROPOSAL: SideTable<EntityId, RepoProposal, crate::side_table::Named> =
     SideTable::new(&side_table::REPO_MUTATION_PROPOSAL);
@@ -88,8 +90,7 @@ pub struct RepoProposal {
     #[serde(with = "entity_serde")]
     pub id: EntityId,
     pub repo: String,
-    #[serde(with = "entity_serde")]
-    pub actor: EntityId,
+    pub actor: actor_erase::ProposalActor,
     #[serde(with = "entity_serde")]
     pub session: EntityId,
     #[serde(with = "entity_serde")]
@@ -194,7 +195,7 @@ impl RepoProposal {
                 },
             },
         )
-        .with_actor_id(self.actor)
+        .with_recorded_actor(self.actor.id())
         .with_session_id(self.session)
         .with_provenance_claim_id(self.provenance_claim)
         .with_op_provenance(self.op_provenance.clone()))
@@ -302,7 +303,7 @@ impl Vault {
         let row = RepoProposal {
             id: EntityId::now(),
             repo: repo.canonical(),
-            actor,
+            actor: actor_erase::ProposalActor::Actor(actor),
             session,
             provenance_claim,
             op_provenance,
@@ -434,7 +435,7 @@ impl Vault {
             .get(&self.store, &txn, &id)?
             .ok_or(Error::EntityNotFound)?;
         if row.status != RepoProposalStatus::Proposed
-            || critic == row.actor
+            || row.actor.is(critic)
             || critique.provenance.critic_ref != critic.to_hex()
             || critique.candidate_ref != id.to_hex()
             || critique.out_of_scope
@@ -563,6 +564,7 @@ pub(super) fn authorize(
         .ok_or(Error::EntityNotFound)?;
     if row.status != RepoProposalStatus::Approved
         || row.operation_seq.is_some()
+        || row.actor.id().is_none()
         || row.request()? != *request
     {
         return Err(invalid(
@@ -642,7 +644,8 @@ pub(super) fn finish(
         RepoMutationStatus::Failed => RepoProposalStatus::Failed,
         RepoMutationStatus::Prepared => RepoProposalStatus::Approved,
     };
-    if status == RepoMutationStatus::Applied {
+    // An erased actor's write keeps its outcome; no producer is left to restamp its claim.
+    if let (RepoMutationStatus::Applied, Some(actor)) = (status, row.actor.id()) {
         let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
             .ok_or(Error::EntityNotFound)?;
         let bytes = raw
@@ -650,7 +653,7 @@ pub(super) fn finish(
             .ok_or(Error::CorruptedIndex("proposal entity header"))?;
         let mut claim = crate::claim::decode_claim_body(bytes, true)?;
         if claim.predicate != "repo.proposed_diff"
-            || crate::claim::session_claim_producer(&claim) != Some(row.actor)
+            || crate::claim::session_claim_producer(&claim) != Some(actor)
         {
             return Err(Error::CorruptedIndex("proposal claim binding changed"));
         }
@@ -660,7 +663,7 @@ pub(super) fn finish(
         if !row.eligible()? {
             return Err(invalid("proposal approval lost critic coverage"));
         }
-        put_journal_claim(vault, txn, id, row.actor, &claim, row.created_at)?;
+        put_journal_claim(vault, txn, id, actor, &claim, row.created_at)?;
     }
     store(vault, txn, &row)
 }

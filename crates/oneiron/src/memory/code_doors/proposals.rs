@@ -26,7 +26,7 @@ impl Memory<'_> {
         Ok(CodeProposalSubmitted {
             proposal: proposal.id,
             repo,
-            actor: proposal.actor,
+            actor,
             session: proposal.session,
             provenance_claim: proposal.provenance_claim,
             base: fork_hex(&proposal.pre_action_fork_hash),

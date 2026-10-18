@@ -374,9 +374,11 @@ side_tables! {
     /// hash32.
     CODE_DOCUMENT_GENERATION: VaultMeta b"code_document:generation:v1:" Raw;
     /// Current durable head snapshot plus full receipt history for one code document. Key: hash32.
-    CODE_DOCUMENT_HEAD: VaultMeta b"code_document:head:v1:" Named;
+    CODE_DOCUMENT_HEAD: VaultMeta b"code_document:head:v1:" Named
+        => crate::code_document::erase_head_actor_in_txn;
     /// Durable replay-guard receipt for one applied code-file-edit ingress operation. Key: id16.
-    CODE_DOCUMENT_INGRESS: VaultMeta b"code_document:ingress:v1:" Named;
+    CODE_DOCUMENT_INGRESS: VaultMeta b"code_document:ingress:v1:" Named
+        => crate::code_document::erase_ingress_actor_in_txn;
     /// Maps a (repo, path) pair (sha256-hashed) to the code-document id currently living at that
     /// path. Key: hash32.
     CODE_DOCUMENT_PATH: VaultMeta b"code_document:path:v1:" Raw;

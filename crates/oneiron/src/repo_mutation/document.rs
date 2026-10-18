@@ -29,7 +29,7 @@ pub(super) fn land_reviewed_document(vault: &Vault, proposal_id: EntityId) -> Re
         operation: proposal_id,
         session,
         edit: CodeFileEdit::between(&proposal.path, old, new),
-        actor: WriteActor::new(proposal.actor, EdgeActorClass::Agent),
+        actor: WriteActor::new(proposal.actor.live()?, EdgeActorClass::Agent),
         expected_text: old.to_owned(),
     }])?;
     Ok(())
@@ -58,11 +58,15 @@ pub(super) fn resume_reviewed_document(
     if row.merge_stack.is_some() {
         return Ok(None);
     }
+    // An erased actor's write is never resumed: the generic path rolls it back.
+    let Some(actor) = row.actor.id() else {
+        return Ok(None);
+    };
     let request = row.request()?;
     if row.status != RepoProposalStatus::Approved
         || !row.eligible()?
         || row.pre_action_fork_hash != stale.pre_action_fork_hash
-        || Some(row.actor) != stale.actor_id
+        || Some(actor) != stale.actor_id
         || Some(row.session) != stale.session_id
         || stale.operation_subject.as_deref() != Some(row.path.as_str())
         || stale.operation_kind != request.operation.kind()

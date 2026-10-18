@@ -73,6 +73,7 @@ pub(super) struct StoredRepoMutationOplogEntry {
     pub(super) seq: u64,
     pub(super) operation_kind: String,
     pub(super) operation_subject: Option<String>,
+    /// None when no actor was recorded, or once that actor was erased.
     pub(super) actor_id: Option<[u8; 16]>,
     pub(super) session_id: Option<[u8; 16]>,
     pub(super) started_at_ms: u64,
@@ -428,6 +429,37 @@ pub(super) fn public_oplog_entry(
         status: RepoMutationStatus::parse(&stored.status)?,
         failure: stored.failure,
     })
+}
+
+/// Erasing `actor` from the mutation log (FIX 3520): each row it ran keeps
+/// its operation, times, fork hashes, prepared intent and outcome, and names
+/// no actor. Recovery still rolls a prepared row forward or back, but never
+/// resumes an erased actor's reviewed write. One-way, in the erase's own
+/// transaction. An id whose entity is no actor scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or an oplog row that cannot be read.
+pub(crate) fn erase_oplog_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if super::support::names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let mut named = Vec::new();
+    for row in OPLOG.iter_from(&vault.store, wtxn, &[])? {
+        let (key, mut entry) = row?;
+        if entry.actor_id == Some(*actor.as_bytes()) {
+            entry.actor_id = None;
+            named.push((key, entry));
+        }
+    }
+    for (key, entry) in named {
+        OPLOG.put(&vault.store, wtxn, &key, &entry)?;
+    }
+    Ok(())
 }
 
 fn repo_key_hash(repo_key: &str) -> String {

@@ -22,6 +22,9 @@ pub use self::conflict_value::{
     REPO_CONFLICT_RESOLUTION_VALUE_KEYS,
 };
 pub use self::oplog::REPO_MUTATION_OPLOG_SCHEMA_VERSION;
+pub use self::proposal::actor_erase::{
+    ACTOR_ERASE_PENDING_REPO_PROPOSAL, PendingRepoProposalErase, ProposalActor,
+};
 pub use self::trailer::{
     REPO_PROVENANCE_DERIVATION_ENVELOPE_KEYS, REPO_PROVENANCE_NOTES_REF, REPO_PROVENANCE_PREDICATE,
     REPO_PROVENANCE_TRAILER_KEY, REPO_PROVENANCE_VALUE_KEYS, export_repo_provenance_git_note,
@@ -37,6 +40,8 @@ pub use self::types::{
 
 pub(crate) use self::conflict_value::validate_repo_conflict_claim_value;
 pub(crate) use self::git::canonical_mutation_scope;
+pub(crate) use self::oplog::erase_oplog_actor_in_txn;
+pub(crate) use self::proposal::actor_erase::erase_proposal_actor_in_txn;
 
 // The flat repo_mutation.rs module used to provide these names to the test
 // module through `use super::*`; after the directory split the seam re-imports

@@ -127,6 +127,14 @@ impl RepoMutationRequest {
         self
     }
 
+    /// The actor a stored proposal records: none once that actor was erased
+    /// (FIX 3520), and the queue then refuses to run it.
+    #[must_use]
+    pub(super) fn with_recorded_actor(mut self, actor_id: Option<EntityId>) -> Self {
+        self.actor_id = actor_id;
+        self
+    }
+
     #[must_use]
     pub fn with_session_id(mut self, session_id: EntityId) -> Self {
         self.session_id = Some(session_id);
@@ -163,6 +171,7 @@ pub struct RepoMutationOplogEntry {
     pub seq: u64,
     pub operation_kind: String,
     pub operation_subject: Option<String>,
+    /// None when no actor was recorded, or once that actor was erased (FIX 3520).
     pub actor_id: Option<EntityId>,
     pub session_id: Option<EntityId>,
     pub started_at_ms: u64,
