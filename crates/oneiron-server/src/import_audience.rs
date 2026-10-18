@@ -20,7 +20,10 @@ use oneiron::claim::ClaimBody;
 use oneiron::edge::EdgeActorClass;
 use oneiron::ingest::{ImportAudienceState, import_audience_topic};
 use oneiron::llm::decision::catalogue::{IMPORT_AUDIENCE_ASK, IMPORT_AUDIENCE_SENSITIVE};
-use oneiron::llm::decision::{AnswerContract, AskTo, DecisionAnswer, DecisionRung, Reversibility};
+use oneiron::llm::decision::{
+    AnswerContract, AskTo, DecisionAnswer, DecisionAsk, DecisionQuestion, DecisionRung,
+    Reversibility,
+};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::write_envelope::WriteActor;
 use oneiron::{EntityId, Vault};
@@ -91,7 +94,23 @@ fn sweep(server: &SyncServer) -> anyhow::Result<()> {
         return Ok(());
     };
     let vault = server.vault();
+    let mut owner = None;
     for topic in vault.asked_import_audience_topics()? {
+        // An answer whose answerer was erased settles nothing: the owner is asked the
+        // topic's frozen question again, and the next tick reads the new ask (FIX 3520).
+        if let Some((erased, question, evidence)) = vault.erased_import_audience_ask(&topic)? {
+            let reasked = pass_owner(vault, &mut owner)
+                .and_then(|owner| reask(vault, host, owner, topic, erased, &question, &evidence));
+            match reasked {
+                Ok(seq) => {
+                    tracing::info!(topic = %topic.to_hex(), ask = seq, "import audience answerer was erased; the owner is asked again")
+                }
+                Err(error) => {
+                    tracing::warn!(%error, topic = %topic.to_hex(), "import audience topic stays asked for the next tick")
+                }
+            }
+            continue;
+        }
         match vault.settle_import_audience(&topic) {
             Ok(Some(rule)) => {
                 tracing::info!(topic = %topic.to_hex(), rule = %rule.to_hex(), "import audience topic settled")
@@ -111,7 +130,7 @@ fn sweep(server: &SyncServer) -> anyhow::Result<()> {
     if reviews.is_empty() {
         return Ok(());
     }
-    let owner = crate::owner::local_owner(vault)?.revalidate(vault)?;
+    let owner = pass_owner(vault, &mut owner)?;
     for (topic, found) in pending_topics(vault, owner, reviews)? {
         let claims: Vec<EntityId> = found.claims.keys().copied().collect();
         let reviews: Vec<String> = found.reviews.iter().cloned().collect();
@@ -137,6 +156,15 @@ fn sweep(server: &SyncServer) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// The vault owner, read the first time a pass needs it and kept for the rest of it.
+fn pass_owner(vault: &Vault, owner: &mut Option<EntityId>) -> anyhow::Result<EntityId> {
+    if let Some(owner) = *owner {
+        return Ok(owner);
+    }
+    let read = crate::owner::local_owner(vault)?.revalidate(vault)?;
+    Ok(*owner.insert(read))
 }
 
 /// The pending history-import `reviews`' claims, by topic. A claim with no topic joins
@@ -218,25 +246,7 @@ fn open(
             options: options.iter().map(|option| option.label.clone()).collect(),
         },
     )?;
-    let to = AskTo::owner();
-    let mut dial = host.dial(DecisionRung::Human);
-    dial.first = DecisionRung::Human;
-    let mut ladder = host.ladder().ladder();
-    ladder.ask_to = Some(&to);
-    ladder.correlation = Some(topic);
-    ladder.run(
-        &question,
-        owner,
-        &evidence,
-        &state,
-        dial,
-        &host.bands(),
-        Reversibility::ReversibleRead,
-        &RetrievalDeadline::hard(Instant::now(), ASK_BUDGET),
-    )?;
-    let ask = vault
-        .decision_ask_for(&question, owner, &evidence, &to, Some(topic))?
-        .context("the owner ask was not queued")?;
+    let ask = ask_owner(vault, host, owner, topic, &question, &evidence, &state)?;
     if ask.question != question {
         // An ask queued before the owner's projects changed: put the current one.
         host.asks().withdraw(ask.seq)?;
@@ -248,6 +258,60 @@ fn open(
         evidence,
         options,
     })
+}
+
+/// Puts a topic's owner `question` over `evidence` to the owner on the person rung, and
+/// reads the ask back by its frozen question: a new ask, unless the same one is still
+/// open.
+fn ask_owner(
+    vault: &Vault,
+    host: &DecisionHost,
+    owner: EntityId,
+    topic: EntityId,
+    question: &DecisionQuestion,
+    evidence: &[EntityId],
+    state: &serde_json::Value,
+) -> anyhow::Result<DecisionAsk> {
+    let to = AskTo::owner();
+    let mut dial = host.dial(DecisionRung::Human);
+    dial.first = DecisionRung::Human;
+    let mut ladder = host.ladder().ladder();
+    ladder.ask_to = Some(&to);
+    ladder.correlation = Some(topic);
+    ladder.run(
+        question,
+        owner,
+        evidence,
+        state,
+        dial,
+        &host.bands(),
+        Reversibility::ReversibleRead,
+        &RetrievalDeadline::hard(Instant::now(), ASK_BUDGET),
+    )?;
+    vault
+        .decision_ask_for(question, owner, evidence, &to, Some(topic))?
+        .context("the owner ask was not queued")
+}
+
+/// Asks the owner a topic's frozen `question` over `evidence` again, after the answer on
+/// ask `erased` came from an erased answerer, and moves the topic to the new ask; its
+/// options stay the frozen ones. The new ask's number.
+fn reask(
+    vault: &Vault,
+    host: &DecisionHost,
+    owner: EntityId,
+    topic: EntityId,
+    erased: u64,
+    question: &DecisionQuestion,
+    evidence: &[EntityId],
+) -> anyhow::Result<u64> {
+    // The person rung reads no state: the frozen question words the topic.
+    let ask = ask_owner(vault, host, owner, topic, question, evidence, &json!({}))?;
+    anyhow::ensure!(
+        vault.reask_import_audience(&topic, erased, ask.seq)?,
+        "the topic was no longer asked at its erased answer"
+    );
+    Ok(ask.seq)
 }
 
 /// A question's text: the host's wording, then the topic.

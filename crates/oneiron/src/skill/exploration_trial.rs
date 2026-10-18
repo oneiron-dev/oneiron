@@ -385,7 +385,7 @@ fn dispatch_charge_in_txn(
 /// The trial state an answer to an overrun ask leaves: a yes covers
 /// one run of up to `charge` past the slice; anything else declines.
 /// None for a yes whose answerer was erased: that authority ended with
-/// the erase, so the trial waits on and the answer stays (FIX 3520).
+/// the erase, so the answer stays and the overrun is asked again (FIX 3520).
 fn answered(charge: u64, answer: &AskAnswer) -> Option<TrialState> {
     match answer.answer {
         DecisionAnswer::Noul(true) => answer.by.id().map(|_| TrialState::Approved { charge }),
@@ -702,7 +702,8 @@ fn open_in_txn(
 }
 
 /// The board's answer to a pending overrun ask, applied while the trial
-/// still waits on that ask.
+/// still waits on that ask. A yes whose answerer was erased leaves the
+/// overrun pending with no ask, to be asked again from its chain's start.
 fn answer_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -713,15 +714,16 @@ fn answer_in_txn(
     let Some(mut trial) = TRIALS.get(&vault.store, txn, proposal)? else {
         return Err(Error::EntityNotFound);
     };
-    if let TrialState::AskPending(PendingOverrun {
-        seq: Some(held),
-        charge,
-        ..
-    }) = trial.state
-        && held == seq
-        && let Some(state) = answered(charge, answer)
+    if let TrialState::AskPending(pending) = &mut trial.state
+        && pending.seq == Some(seq)
     {
-        trial.state = state;
+        match answered(pending.charge, answer) {
+            Some(state) => trial.state = state,
+            None => {
+                pending.seq = None;
+                pending.climbed_at = None;
+            }
+        }
         TRIALS.put(&vault.store, txn, proposal, &trial)?;
     }
     Ok(trial.state)
@@ -946,7 +948,12 @@ pub(crate) fn drive_exploration_trial(
                     ExplorationTrialStatus::Waiting
                 });
             };
-            vault.with_write_txn_grouped(|txn| answer_in_txn(vault, txn, proposal, seq, &answer))?
+            let state = vault
+                .with_write_txn_grouped(|txn| answer_in_txn(vault, txn, proposal, seq, &answer))?;
+            if let TrialState::AskPending(PendingOverrun { seq: None, .. }) = state {
+                queue_trial_ask(vault, proposal)?;
+            }
+            state
         }
         state => state,
     };
