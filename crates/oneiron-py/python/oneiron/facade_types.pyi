@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 316 facade rows, 1271 declarations.
+Census: 316 facade rows, 1272 declarations.
 Inputs: 273 of 316 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 273 of 316 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 73; unread shapes: 0.
@@ -2508,6 +2508,10 @@ class GuestRevokeDisclosure(TypedDict):
     copied_bytes_recallable: NotRecallable
     recipient_copy_state: GuestCopyState
     deletion_request_status: GuestDeletionRequestStatus
+class GuestRevokeCourtesyTargetView(TypedDict):
+    pact: str
+    peer_vault_id: str
+    epoch_cutoff: int
 class GuestRevokeResponse(TypedDict):
     grant_ref: EntityId
     guest_ref: EntityId
@@ -2516,6 +2520,7 @@ class GuestRevokeResponse(TypedDict):
     revoked_slip_refs: NotRequired[list[str]]
     pact_standing: GuestPactStanding
     disclosure: GuestRevokeDisclosure
+    courtesy_targets: NotRequired[list[GuestRevokeCourtesyTargetView]]
 class GuestSlipMintRequest(TypedDict):
     grant_ref: EntityId
     holder_key: str
@@ -6608,6 +6613,7 @@ class DeckExportView(TypedDict):
     authoritative: bool
     noop: bool
     changed_parts: list[str]
+    effects: list[str]
     record: NotRequired[OfficeBodyExportRecord | None]
     proposed: NotRequired[PendingProposalView | None]
 class DeckGateRequest(TypedDict):

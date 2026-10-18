@@ -92,8 +92,8 @@ pub(crate) use provenance::{
     encode_consolidation_evidence_with_locators, kept_decisions_value,
 };
 pub use resident_dream::{
-    RESIDENT_DREAM_WINDOW_DEFAULT_TOKENS, ResidentDreamModel, ResidentDreamProgress,
-    resident_of_dream_input, run_resident_dream,
+    RESIDENT_DREAM_WINDOW_DEFAULT_TOKENS, ResidentDreamModel, ResidentDreamPartial,
+    ResidentDreamProgress, resident_of_dream_input, run_resident_dream,
 };
 pub(crate) use resident_dream::{resident_dream_input, resident_dream_progress_in_txn};
 pub use resources::ScopedConsolidationWrite;
@@ -118,7 +118,7 @@ pub(crate) use settle::{
 };
 pub use support::*;
 pub use task_realize::{TASK_REALIZE_UNLENT_PARK_REASON, TaskRealizeModel, run_task_realize};
-pub(crate) use task_realize::{seal_task_realize_confession, task_realize_confession};
+pub(crate) use task_realize::{seal_task_realize_confession_in_txn, task_realize_confession};
 pub(crate) use turn_text::{
     TurnText, cited_evidence_bytes, dreamer_may_read_messages_in, dreamer_may_read_turns_in,
     live_turn_text_in, projected_turn_text_in,

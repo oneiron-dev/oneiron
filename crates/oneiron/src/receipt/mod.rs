@@ -47,18 +47,19 @@ pub use self::call::{
 pub use self::decision_asks::{DecisionAskAnswerRequest, DecisionAskClimbRequest};
 pub use self::family::{PendingTrayAsk, PendingTrayQuery};
 pub use self::field_set::{
-    ContextReceiptFields, FIELD_EXECUTOR_SEAT, FIELD_LEARNING_DECIDED_BY, FIELD_LEARNING_PATTERN,
-    FIELD_LEARNING_TEAM_REF, append_context_receipt_fields, append_pack_attribution_fields,
-    append_pack_manifest_fields, append_task_type_fields, append_team_receipt_fields,
-    memories_state_ref,
+    ContextReceiptFields, FIELD_EXECUTOR_ROLE, FIELD_EXECUTOR_SEAT, FIELD_LEARNING_DECIDED_BY,
+    FIELD_LEARNING_PATTERN, FIELD_LEARNING_TEAM_REF, append_context_receipt_fields,
+    append_pack_attribution_fields, append_pack_manifest_fields, append_task_type_fields,
+    append_team_receipt_fields, memories_state_ref,
 };
 pub use self::grant::{
     StandingOutboundGrantLensRow, StandingOutboundGrantRevokeAction, StandingOutboundGrantsLens,
     StandingOutboundGrantsLensQuery,
 };
 pub use self::guest_revoke::{
-    GuestCopyState, GuestDeletionRequestStatus, GuestPactStanding, GuestRevokeDisclosure,
-    GuestRevokeOutcome, GuestRevokeResponse, NotRecallable, project_guest_revoke,
+    GuestCopyState, GuestDeletionRequestStatus, GuestPactStanding, GuestRevokeCourtesyTarget,
+    GuestRevokeCourtesyTargetView, GuestRevokeDisclosure, GuestRevokeOutcome, GuestRevokeResponse,
+    NotRecallable, project_guest_revoke,
 };
 pub use self::identity_kind::{proposal_outcome_amended_body, proposal_outcome_delta};
 pub use self::kernel::{
