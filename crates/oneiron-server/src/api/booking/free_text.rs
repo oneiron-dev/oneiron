@@ -21,7 +21,7 @@ use oneiron::{
     TierPrecedence, WriteActor,
 };
 
-use super::BookingTransportContext;
+use super::BookingAdmissionContext;
 use super::helpers::booking_error;
 use crate::config::models::{BookingParseSettings, role_key};
 use crate::error::ApiError;
@@ -34,7 +34,7 @@ use crate::server::SyncServer;
 /// refused, never forwarded.
 pub(super) async fn parse_free_text(
     server: &Arc<SyncServer>,
-    transport: &BookingTransportContext,
+    transport: &BookingAdmissionContext,
     free_text: String,
     visitor_tz: String,
     now: u64,

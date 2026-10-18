@@ -14042,6 +14042,94 @@ async fn vault_forget(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_booking_availability(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.booking.availability")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.booking.availability", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.booking.availability", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_booking_availability(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_booking_book(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.booking.book")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.booking.book", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.booking.book", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_booking_book(server, auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_booking_reschedule(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.booking.reschedule")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.booking.reschedule", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.booking.reschedule", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_booking_reschedule(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_booking_cancel(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.booking.cancel")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.booking.cancel", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.booking.cancel", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_booking_cancel(server, auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn vault_booking_constraint_turn(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -19404,6 +19492,10 @@ pub(crate) async fn call_verb(
         "vault.remember" => vault_remember(server, call, input).await,
         "vault.claims.retract" => vault_claims_retract(server, call, input).await,
         "vault.forget" => vault_forget(server, call, input).await,
+        "vault.booking.availability" => vault_booking_availability(server, call, input).await,
+        "vault.booking.book" => vault_booking_book(server, call, input).await,
+        "vault.booking.reschedule" => vault_booking_reschedule(server, call, input).await,
+        "vault.booking.cancel" => vault_booking_cancel(server, call, input).await,
         "vault.booking.constraint_turn" => vault_booking_constraint_turn(server, call, input).await,
         "vault.booking.page_token" => vault_booking_page_token(server, call, input).await,
         "calendar.invite" => calendar_invite(server, call, input).await,
