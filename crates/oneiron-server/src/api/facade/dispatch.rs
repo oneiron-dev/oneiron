@@ -7762,7 +7762,8 @@ pub(crate) async fn call_verb(
         | "self.desktop.windows"
         | "self.desktop.window"
         | "self.desktop.handover" => Err(context_required(verb, VerbContext::Browser)),
-        "vault.search"
+        "connector.answer"
+        | "vault.search"
         | "vault.claims.put"
         | "vault.claims.supersede"
         | "vault.edges.put"

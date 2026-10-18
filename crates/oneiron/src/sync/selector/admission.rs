@@ -12,7 +12,8 @@ use crate::authority::{
     genesis_vault_id, validate_authority_log_entry_body_bytes,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::{restamp_federated_claim_source, validate_claim_body_and_decode};
+use crate::claim::{ClaimSubject, restamp_federated_claim_source, validate_claim_body_and_decode};
+use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncEngineContext, SyncProtocolValidation};
 use crate::federation::{MembershipStanding, PactDelivery};
@@ -20,9 +21,10 @@ use crate::federation::{MembershipStanding, PactDelivery};
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::registry::{
     ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_WORLD,
 };
 use crate::sync::loro_support::{
-    map_for_each_tombstone_value, map_for_each_value_bytes, map_insert_bytes,
+    map_for_each_tombstone_value, map_for_each_value_bytes, map_get_bytes, map_insert_bytes,
 };
 use crate::sync::schema::create_window_doc;
 use crate::sync::types::WindowKey;
@@ -427,9 +429,10 @@ fn admit_window_update(
         .with_write_txn_grouped(|wtxn| crate::gate::resolve_policy_manifest(&vault.store, wtxn))?;
 
     reject_federated_tombstones(&remote)?;
-    let mut withheld_claims = crate::sync::quarantine::TerminalRejectionBatch::new(key.as_str());
+    // The withheld CLAIMs and the contained cross-world edges (FIX 3660).
+    let mut terminal = crate::sync::quarantine::TerminalRejectionBatch::new(key.as_str());
     let routes = match guest {
-        Some(source) => Routes::plan(vault, key, &remote, source, &mut withheld_claims)?,
+        Some(source) => Routes::plan(vault, key, &remote, source, &mut terminal)?,
         None => Routes::unrouted(key),
     };
     // Every part's rows and edges are copied before any birth is: a ref to a
@@ -454,7 +457,7 @@ fn admit_window_update(
         }
         copied.push((admitted, early));
     }
-    withheld_claims.commit(vault)?;
+    terminal.commit(vault)?;
 
     // The sender is another vault, as far as its rows' births go: a ref to a
     // row admission dropped is masked, under that lane's key.
@@ -465,7 +468,14 @@ fn admit_window_update(
         )?,
         None => crate::provenance::birth::WithheldKey::fresh(),
     };
-    let carried = (copied.len() > 1).then(|| {
+    // A row the copy lands under another id than the sender's, a guest's
+    // WORLD (FIX 3657), keeps the birth the sender carried for it.
+    let renamed = routes
+        .worlds
+        .iter()
+        .map(|(sender, here)| (*here, *sender))
+        .collect::<BTreeMap<_, _>>();
+    let carried = (copied.len() > 1 || !renamed.is_empty()).then(|| {
         copied
             .iter()
             .flat_map(|(admitted, _)| {
@@ -481,7 +491,7 @@ fn admit_window_update(
     for ((admitted, early), part_key) in copied.into_iter().zip(&routes.keys) {
         match &carried {
             Some(carried) => crate::sync::row_birth::copy_births_carried_to_other_vault(
-                &remote, &admitted, &withheld, carried,
+                &remote, &admitted, &withheld, carried, &renamed,
             )?,
             None => crate::sync::row_birth::copy_births_within(
                 &remote,
@@ -543,6 +553,13 @@ fn admit_window_update(
 /// proof binds is withheld whole with every edge naming it
 /// ([`crate::federation::guest_claim_withheld`]). An admission with no guest
 /// source, member content among them, routes nothing.
+///
+/// A WORLD row the guest sends lands under its foreign id, the one its CLAIMs
+/// in that world now name, in the window it came in (FIX 3657). Each InWorld
+/// or SetIn edge endpoint naming such a WORLD names that id, and so does a
+/// CLAIM about such an edge. An edge whose two endpoints are proven to sit in
+/// two different foreign WORLDs is quarantined alone
+/// ([`contains_cross_world_edge`], FIX 3660).
 #[cfg(feature = "sync")]
 struct Routes<'a> {
     /// The window each part imports into, part 0 first.
@@ -555,6 +572,20 @@ struct Routes<'a> {
     withheld: BTreeSet<EntityId>,
     /// The part each moved edge lands in, by its key; `None` drops it.
     edges: BTreeMap<String, Option<usize>>,
+    /// The guest's WORLDs that land under foreign ids here, by the sender's
+    /// id (FIX 3657).
+    worlds: BTreeMap<EntityId, EntityId>,
+    /// The key each edge naming one of those WORLDs lands under, by its own.
+    rekeyed: BTreeMap<String, String>,
+}
+
+/// A guest's update as its rows are copied: the source vault its pact names
+/// and the WORLDs that land under foreign ids here ([`Routes::worlds`]).
+#[cfg(feature = "sync")]
+#[derive(Clone, Copy)]
+struct GuestCopy<'a> {
+    source: &'a [u8; 32],
+    worlds: &'a BTreeMap<EntityId, EntityId>,
 }
 
 #[cfg(feature = "sync")]
@@ -567,18 +598,21 @@ impl<'a> Routes<'a> {
             claims: BTreeMap::new(),
             withheld: BTreeSet::new(),
             edges: BTreeMap::new(),
+            worlds: BTreeMap::new(),
+            rekeyed: BTreeMap::new(),
         }
     }
 
     /// The routes of a guest's update from the source vault `guest`. Each
-    /// withheld CLAIM is recorded in `withheld_claims`. A row or edge whose
-    /// bytes do not read routes to part 0, where admission refuses it.
+    /// withheld CLAIM and each contained cross-world edge is recorded in
+    /// `terminal`. A row or edge whose bytes do not read routes to part 0,
+    /// where admission refuses it.
     fn plan(
         vault: &Vault,
         key: &WindowKey,
         remote: &LoroDoc,
         guest: &'a [u8; 32],
-        withheld_claims: &mut crate::sync::quarantine::TerminalRejectionBatch,
+        terminal: &mut crate::sync::quarantine::TerminalRejectionBatch,
     ) -> Result<Self> {
         let own = match key.world() {
             Some(world) => WindowKey::for_month_world(
@@ -592,7 +626,12 @@ impl<'a> Routes<'a> {
             guest: Some(guest),
             ..Self::unrouted(key)
         };
+        let mut placed = Placement::new(guest);
         let mut moved = Vec::new();
+        // The WORLD rows the update carries, and the ids an InWorld or SetIn
+        // edge, or a CLAIM about one, names: those that may be WORLDs.
+        let mut carried_worlds = Vec::new();
+        let mut named = BTreeSet::new();
         map_for_each_value_bytes(&remote.get_map("entities"), |raw, blob| {
             let (Some(blob), Ok(id)) = (blob, EntityId::from_hex(raw)) else {
                 return;
@@ -600,7 +639,14 @@ impl<'a> Routes<'a> {
             let Some(header) = EntityMetadataHeader::parse(blob) else {
                 return;
             };
-            if id.to_hex() != raw || header.entity_type != ENTITY_TYPE_CLAIM {
+            if id.to_hex() != raw {
+                return;
+            }
+            if header.entity_type == ENTITY_TYPE_WORLD {
+                carried_worlds.push(id);
+                return;
+            }
+            if header.entity_type != ENTITY_TYPE_CLAIM {
                 return;
             }
             let Ok(body) =
@@ -609,35 +655,60 @@ impl<'a> Routes<'a> {
                 return;
             };
             if crate::federation::guest_claim_withheld(&body) {
-                withheld_claims.push(
+                terminal.push(
                     crate::sync::quarantine::QuarantineContainer::Entities,
                     raw,
                     &Error::Claim(crate::error::ClaimError::InvalidMachineClaimProof),
                     blob,
                 );
                 routes.withheld.insert(id);
-            } else if key.world().is_none() && body.world.is_none() {
+                return;
+            }
+            named.extend(world_edge_subject(&body.subject).into_iter().flatten());
+            placed.claims.insert(id, body.world);
+            if key.world().is_none() && body.world.is_none() {
                 moved.push((id, header.learned_at));
             }
         });
         if !moved.is_empty() {
-            let base = crate::federation::guest_claim_world(guest, None)?.entity_id();
+            let base = placed.foreign_of(None)?;
             for (id, learned_at) in moved {
                 let part = routes.part(WindowKey::for_world(learned_at, base));
                 routes.claims.insert(id, part);
             }
         }
+        let remote_edges = remote.get_map("edges");
         let mut edges = Vec::new();
-        map_for_each_value_bytes(&remote.get_map("edges"), |raw, _| {
-            if let Some((src, _, tgt)) = super::bridge::parse_edge_key(raw) {
-                edges.push((raw.to_owned(), src, tgt));
+        map_for_each_value_bytes(&remote_edges, |raw, _| {
+            if let Some((src, kind, tgt)) = super::bridge::parse_edge_key(raw) {
+                if is_world_edge(kind) {
+                    named.extend([src, tgt]);
+                }
+                edges.push((raw.to_owned(), (src, kind, tgt)));
             }
         });
-        for (raw, src, tgt) in edges {
+        routes.rename_worlds(vault, guest, carried_worlds, named)?;
+        for (raw, (src, kind, tgt)) in edges {
             if routes.withheld.contains(&src) || routes.withheld.contains(&tgt) {
                 routes.edges.insert(raw, None);
                 continue;
             }
+            let src_world = placed.foreign_world(vault, src)?;
+            let tgt_world = match src_world {
+                Some(_) => placed.foreign_world(vault, tgt)?,
+                None => None,
+            };
+            if contains_cross_world_edge(src_world, tgt_world) {
+                terminal.push(
+                    crate::sync::quarantine::QuarantineContainer::Edges,
+                    &raw,
+                    &cross_world_edge_refusal(),
+                    &map_get_bytes(&remote_edges, &raw).unwrap_or_default(),
+                );
+                routes.edges.insert(raw, None);
+                continue;
+            }
+            routes.rekey(&raw, (src, kind, tgt));
             if key.world().is_some() {
                 continue;
             }
@@ -647,7 +718,9 @@ impl<'a> Routes<'a> {
                 let moved = routes.claims.get(&end).copied();
                 let part = match moved {
                     Some(part) => Some(part),
-                    None => stored_foreign_window(vault, &end)?.map(|window| routes.part(window)),
+                    None => placed
+                        .stored_window(vault, end)?
+                        .map(|window| routes.part(window)),
                 };
                 if let Some(part) = part {
                     routes.edges.insert(raw, Some(part));
@@ -656,6 +729,62 @@ impl<'a> Routes<'a> {
             }
         }
         Ok(routes)
+    }
+
+    /// Names the guest's WORLDs that land under foreign ids here (FIX 3657):
+    /// each `carried` WORLD row, and each `named` id whose foreign copy this
+    /// vault already stores as a WORLD row, which only that WORLD's earlier
+    /// copy from `guest` puts there. Any other id keeps its own, PERSON and
+    /// CLAIM ids among them, and so does a WORLD whose row has not arrived.
+    fn rename_worlds(
+        &mut self,
+        vault: &Vault,
+        guest: &[u8; 32],
+        carried: Vec<EntityId>,
+        named: BTreeSet<EntityId>,
+    ) -> Result<()> {
+        for id in carried {
+            let here = crate::federation::foreign_world_for(guest, id)?.entity_id();
+            self.worlds.insert(id, here);
+        }
+        for id in named {
+            if self.worlds.contains_key(&id) {
+                continue;
+            }
+            let here = crate::federation::foreign_world_for(guest, id)?.entity_id();
+            let stored = vault.get_raw_unsealed(&here)?;
+            if stored
+                .as_deref()
+                .and_then(EntityMetadataHeader::parse)
+                .is_some_and(|header| header.entity_type == ENTITY_TYPE_WORLD)
+            {
+                self.worlds.insert(id, here);
+            }
+        }
+        Ok(())
+    }
+
+    /// Lands the edge keyed `raw` under the key its renamed WORLD endpoints
+    /// name, when it is an InWorld or SetIn edge naming one (FIX 3657).
+    fn rekey(&mut self, raw: &str, (src, kind, tgt): (EntityId, EdgeKind, EntityId)) {
+        if !is_world_edge(kind) {
+            return;
+        }
+        let here = |id: EntityId| self.worlds.get(&id).copied().unwrap_or(id);
+        let (to_src, to_tgt) = (here(src), here(tgt));
+        if (to_src, to_tgt) != (src, tgt) {
+            let key = super::bridge::format_edge_key(&to_src, kind, &to_tgt);
+            self.rekeyed.insert(raw.to_owned(), key);
+        }
+    }
+
+    /// The guest's update as its rows are copied; `None` with no guest
+    /// source.
+    fn guest_copy(&self) -> Option<GuestCopy<'_>> {
+        self.guest.map(|source| GuestCopy {
+            source,
+            worlds: &self.worlds,
+        })
     }
 
     /// The part landing in `window`, a new one when none does yet.
@@ -679,9 +808,14 @@ impl<'a> Routes<'a> {
         }
     }
 
-    /// The edges `part` copies, when they are not the whole update's.
+    /// The edges `part` copies, when they are not the whole update's, each
+    /// under the key it lands under.
     fn edges_of(&self, remote: &LoroDoc, part: usize) -> Result<Option<LoroDoc>> {
-        if self.withheld.is_empty() && self.edges.is_empty() && self.keys.len() == 1 {
+        if self.withheld.is_empty()
+            && self.edges.is_empty()
+            && self.rekeyed.is_empty()
+            && self.keys.len() == 1
+        {
             return Ok(None);
         }
         let routed = LoroDoc::new();
@@ -692,11 +826,131 @@ impl<'a> Routes<'a> {
                 && self.edges.get(raw).copied().unwrap_or(Some(0)) == Some(part)
                 && let Some(value) = value
             {
-                result = map_insert_bytes(&edges, raw, value);
+                let key = self.rekeyed.get(raw).map_or(raw, String::as_str);
+                result = map_insert_bytes(&edges, key, value);
             }
         });
         result.map(|()| Some(routed))
     }
+}
+
+/// Where the endpoints of a guest's edges sit here once its CLAIMs land in
+/// their foreign WORLDs (FIX 3660): a carried CLAIM in the foreign WORLD its
+/// sender's world maps to, any other in the foreign WORLD this vault stores
+/// it in. Each is read once.
+#[cfg(feature = "sync")]
+struct Placement<'a> {
+    guest: &'a [u8; 32],
+    /// Each carried CLAIM the update does not withhold, with its world as
+    /// the sender names it.
+    claims: BTreeMap<EntityId, Option<EntityId>>,
+    /// Each sender world's foreign WORLD, once derived.
+    foreign: BTreeMap<Option<EntityId>, EntityId>,
+    /// Each stored row's foreign window, once read.
+    stored: BTreeMap<EntityId, Option<WindowKey>>,
+}
+
+#[cfg(feature = "sync")]
+impl<'a> Placement<'a> {
+    const fn new(guest: &'a [u8; 32]) -> Self {
+        Self {
+            guest,
+            claims: BTreeMap::new(),
+            foreign: BTreeMap::new(),
+            stored: BTreeMap::new(),
+        }
+    }
+
+    /// The foreign WORLD the guest CLAIM in the sender's `world` lands in.
+    fn foreign_of(&mut self, world: Option<EntityId>) -> Result<EntityId> {
+        if let Some(here) = self.foreign.get(&world) {
+            return Ok(*here);
+        }
+        let here = crate::federation::guest_claim_world(self.guest, world)?.entity_id();
+        self.foreign.insert(world, here);
+        Ok(here)
+    }
+
+    /// The foreign WORLD `id` is proven to sit in here; `None` when it sits in
+    /// none, or nothing here proves where it sits.
+    fn foreign_world(&mut self, vault: &Vault, id: EntityId) -> Result<Option<EntityId>> {
+        if let Some(world) = self.claims.get(&id).copied() {
+            return self.foreign_of(world).map(Some);
+        }
+        Ok(self
+            .stored_window(vault, id)?
+            .and_then(|window| window.world()))
+    }
+
+    /// The window a CLAIM this vault stores in a foreign WORLD resides in.
+    fn stored_window(&mut self, vault: &Vault, id: EntityId) -> Result<Option<WindowKey>> {
+        if let Some(window) = self.stored.get(&id) {
+            return Ok(window.clone());
+        }
+        let window = stored_foreign_window(vault, &id)?;
+        self.stored.insert(id, window.clone());
+        Ok(window)
+    }
+}
+
+/// Whether an edge of `kind` places its endpoints in a world, one of them a
+/// WORLD.
+#[cfg(feature = "sync")]
+const fn is_world_edge(kind: EdgeKind) -> bool {
+    matches!(kind, EdgeKind::InWorld | EdgeKind::SetIn)
+}
+
+/// The endpoints of the InWorld or SetIn edge a CLAIM is about.
+#[cfg(feature = "sync")]
+const fn world_edge_subject(subject: &ClaimSubject) -> Option<[EntityId; 2]> {
+    match *subject {
+        ClaimSubject::Edge {
+            source,
+            kind,
+            target,
+        } if is_world_edge(kind) => Some([source, target]),
+        _ => None,
+    }
+}
+
+/// A guest CLAIM about an InWorld or SetIn edge names the edge by the ids
+/// its copy lands under (FIX 3657).
+#[cfg(feature = "sync")]
+fn rename_world_edge_subject(subject: &mut ClaimSubject, worlds: &BTreeMap<EntityId, EntityId>) {
+    if let ClaimSubject::Edge {
+        source,
+        kind,
+        target,
+    } = subject
+        && is_world_edge(*kind)
+    {
+        for end in [source, target] {
+            if let Some(here) = worlds.get(&*end) {
+                *end = *here;
+            }
+        }
+    }
+}
+
+/// The policy hook for a guest's edge whose endpoints sit in two different
+/// foreign WORLDs here (FIX 3660, CALLS "FIX 3660 cross-world edge
+/// containment"). Such an edge fits no window (`edge_worlds_match`), and the
+/// Engine keeps it refused (CALLS "FIX 3497 base-window guest split"). Given
+/// the foreign WORLD each endpoint is proven to sit in, this says whether the
+/// refusal stops at the edge: it is quarantined terminally before it enters
+/// the copied doc, so the rows and edges beside it still land, rather than
+/// left in its part for window residence to refuse the part whole. An
+/// endpoint nothing proves (`None`) is never taken as base or as any world.
+#[cfg(feature = "sync")]
+fn contains_cross_world_edge(src: Option<EntityId>, tgt: Option<EntityId>) -> bool {
+    matches!((src, tgt), (Some(src), Some(tgt)) if src != tgt)
+}
+
+/// The refusal a contained cross-world edge is quarantined under: the one
+/// window residence gives it (`check_edge_residence`).
+#[cfg(feature = "sync")]
+fn cross_world_edge_refusal() -> Error {
+    Error::InvalidConfig("edge outside window residence".into())
 }
 
 /// The window a CLAIM this vault stores in a foreign WORLD resides in.
@@ -886,7 +1140,8 @@ pub fn put_selector_test_federation_grant(
         .commit()
 }
 
-/// Copies the rows `routes` lands in `part` from `source` into `target`.
+/// Copies the rows `routes` lands in `part` from `source` into `target`, each
+/// under the id it lands under.
 #[cfg(feature = "sync")]
 fn copy_admitted_entities(
     vault: &Vault,
@@ -912,9 +1167,9 @@ fn copy_admitted_entities(
             key,
             value,
             grading,
-            routes.guest,
+            routes.guest_copy(),
         )
-        .and_then(|blob| map_insert_bytes(&target_entities, key, &blob));
+        .and_then(|(here, blob)| map_insert_bytes(&target_entities, &here.to_hex(), &blob));
     });
     result
 }
@@ -938,11 +1193,14 @@ pub(crate) fn admit_federated_entity_blob(
         },
         None,
     )
+    .map(|(_, blob)| blob)
 }
 
 /// [`admit_federated_entity_blob`] with the sending peer's `grading` for a
-/// CLAIM, TURN or CONVERSATION. A guest's CLAIM, from the source vault
-/// `guest`, lands in its foreign WORLD copy (FIX 3497).
+/// CLAIM, TURN or CONVERSATION, and the id the row lands under: the key it
+/// came under, but for a guest's WORLD. A guest's CLAIM lands in its foreign
+/// WORLD copy (FIX 3497), and a guest's WORLD row under that copy's id, its
+/// bytes as they came (FIX 3657).
 #[cfg(feature = "sync")]
 fn admit_federated_entity_blob_graded(
     vault: &Vault,
@@ -951,8 +1209,8 @@ fn admit_federated_entity_blob_graded(
     key: &str,
     value: Option<&[u8]>,
     grading: ImportGrading,
-    guest: Option<&[u8; 32]>,
-) -> Result<Vec<u8>> {
+    guest: Option<GuestCopy<'_>>,
+) -> Result<(EntityId, Vec<u8>)> {
     let blob = value.ok_or(Error::InvalidKey)?;
     let id = EntityId::from_hex(key).map_err(|_| Error::InvalidKey)?;
     if key != id.to_hex() {
@@ -963,13 +1221,26 @@ fn admit_federated_entity_blob_graded(
         EntityMetadataHeader::parse(blob).ok_or(Error::CorruptedIndex("entity metadata"))?;
     if crate::sync::pack_sync::is_pack_handle(header.entity_type) {
         validate_federated_pack(&vault.store, blob)?;
-        return Ok(blob.to_vec());
+        return Ok((id, blob.to_vec()));
     }
     if header.entity_type != ENTITY_TYPE_CLAIM {
         if header.entity_type == ENTITY_TYPE_AUTHORITY_LOG {
             admit_federated_authority_log(vault, &id, &blob[ENTITY_METADATA_HEADER_LEN..])?;
-            return Ok(blob.to_vec());
+            return Ok((id, blob.to_vec()));
         }
+        // A guest's WORLD row lands under the foreign id its CLAIMs in that
+        // world name here, in the window it came in: WORLD is no window's
+        // world carrier (`entity_world`). Its body is unsigned and kept as
+        // it came. No leaf in it is authority here: a world's privacy and
+        // owner come only from a signed `AuthorityOp::WorldPrivacy`, and none
+        // of the sender's names this id. The key was judged as it came; the
+        // checks bound to a row's id judge the id it lands under.
+        let here = match guest {
+            Some(guest) if header.entity_type == ENTITY_TYPE_WORLD => {
+                crate::federation::foreign_world_for(guest.source, id)?.entity_id()
+            }
+            _ => id,
+        };
         // The same registry classification decides writability and admission.
         // Unknown bytes cannot become peer-writable because they lie in a range.
         vault
@@ -983,20 +1254,20 @@ fn admit_federated_entity_blob_graded(
             return Err(Error::InvalidEntityType(header.entity_type));
         }
         validate_admitted_replicated_body(
-            &id,
+            &here,
             header.entity_type,
             &blob[ENTITY_METADATA_HEADER_LEN..],
         )?;
-        refuse_peer_agent_definition_widening(&vault.store, txn, &id, blob)?;
+        refuse_peer_agent_definition_widening(&vault.store, txn, &here, blob)?;
         if matches!(grading, ImportGrading::Imported { .. })
             && matches!(
                 header.entity_type,
                 ENTITY_TYPE_TURN | ENTITY_TYPE_CONVERSATION
             )
         {
-            return restamp_federated_transcript(blob);
+            return restamp_federated_transcript(blob).map(|blob| (here, blob));
         }
-        return Ok(blob.to_vec());
+        return Ok((here, blob.to_vec()));
     }
 
     let body = validate_claim_body_and_decode(&blob[ENTITY_METADATA_HEADER_LEN..], true)?;
@@ -1006,10 +1277,12 @@ fn admit_federated_entity_blob_graded(
         }
         ImportGrading::FirstParty => body,
     };
-    if let Some(source) = guest {
+    if let Some(guest) = guest {
         // Its world is the recipient's before the gate judges it, so the copy
         // the gate passes is the copy every later step sees.
-        body.world = Some(crate::federation::guest_claim_world(source, body.world)?.entity_id());
+        body.world =
+            Some(crate::federation::guest_claim_world(guest.source, body.world)?.entity_id());
+        rename_world_edge_subject(&mut body.subject, guest.worlds);
     }
     crate::gate::check_federated_claim_admission(&vault.store, &body, policy)?;
     let encoded = crate::claim::encode_claim_body(&body)?;
@@ -1017,7 +1290,7 @@ fn admit_federated_entity_blob_graded(
     let mut admitted = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + encoded.len());
     admitted.extend_from_slice(&blob[..ENTITY_METADATA_HEADER_LEN]);
     admitted.extend_from_slice(&encoded);
-    Ok(admitted)
+    Ok((id, admitted))
 }
 
 /// Refuses a peer's agent definition that turns the one stored at `id` back

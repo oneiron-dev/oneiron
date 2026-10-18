@@ -1818,6 +1818,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::note::NoteRefRequest>(),
             ),
             (
+                "connector.answer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ConnectorAnswerRequest,
+                >(),
+            ),
+            (
                 "vault.search",
                 crate::code_run::vault_read::request_schema::<crate::code_run::MemorySearchInput>(),
             ),

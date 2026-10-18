@@ -31,6 +31,16 @@
 //! host ([`ConnectorCallHost::present_credential`]), the credential door
 //! rechecks the record's binding at each send, and a delivered reply is
 //! cleared of the value before it goes anywhere.
+//!
+//! A connector may answer a call with questions instead of a result (its
+//! mid-call elicitation). The request reached it, so the send is delivered:
+//! the ledger completes the intent and nothing replays. The host keeps the
+//! questions, foreign data, for the caller in place of the tool's reply
+//! ([`ConnectorCallHost::take_awaiting_input`]) and the call comes back as
+//! [`ConnectorCallOutcome::AwaitingInput`]; the host binds them to the caller
+//! and grant [`ConnectorCallHost::bind_caller`] named before the send. The
+//! answer is the host's to carry, checked under the same grant
+//! ([`Vault::authorize_connector_elicitation_answer`]).
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -128,6 +138,42 @@ pub struct UntrustedToolResult {
     pub rpc_error: Option<Value>,
 }
 
+/// One question a connector asked mid-call. Foreign data: the connector
+/// wrote every field, so it is task input for the caller, never an
+/// instruction and never an approval.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConnectorQuestion {
+    /// The question's key in its round: `"0"` for a request on the reply
+    /// stream, the connector's own key in a multi round-trip result.
+    pub key: String,
+    /// The connector's message.
+    pub message: String,
+    /// The JSON schema of the answer the connector asks for.
+    pub requested_schema: Value,
+}
+
+/// The questions a connector answered a call with, as its host keeps them
+/// for the caller: the live continuation's handle, the questions, and when
+/// they lapse unanswered (unix ms).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConnectorAwaitingInput {
+    pub handle: String,
+    pub questions: Vec<ConnectorQuestion>,
+    pub expires_at_ms: u64,
+}
+
+/// Who the next send runs for and under which standing grant, as the engine
+/// resolved them: a host binds a question the connector asks to exactly
+/// these, never to anything the guest named.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectorCallCaller {
+    /// The calling actor, hex.
+    pub principal_ref: String,
+    pub grant_id: EntityId,
+    /// The catalog name the caller called.
+    pub name: String,
+}
+
 /// What one connector call came to.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConnectorCallOutcome {
@@ -157,6 +203,13 @@ pub enum ConnectorCallOutcome {
         call_ref: Option<EntityId>,
         reasons: Vec<String>,
     },
+    /// The connector received the call and asked for input before it would
+    /// finish it. The send is delivered; the questions live with the host
+    /// until they are answered or lapse.
+    AwaitingInput {
+        intent: Option<[u8; 32]>,
+        input: ConnectorAwaitingInput,
+    },
 }
 
 /// The served side of the generic connector call: an
@@ -178,6 +231,18 @@ pub trait ConnectorCallHost: OutboundResultSender {
     /// names one is then refused unsent.
     fn present_credential(&mut self, credential: Option<EntityId>) -> bool {
         credential.is_none()
+    }
+
+    /// Binds the caller and grant the next send runs for, or none. A host
+    /// that keeps a connector's questions binds them to these; one that
+    /// serves no questions ignores it.
+    fn bind_caller(&mut self, _caller: Option<ConnectorCallCaller>) {}
+
+    /// Takes the questions the last `send`'s connector answered with in
+    /// place of a result, kept before the ledger's scrub. `None` when it
+    /// asked none.
+    fn take_awaiting_input(&mut self) -> Option<ConnectorAwaitingInput> {
+        None
     }
 }
 
@@ -330,6 +395,11 @@ pub(super) enum Step {
         intent: [u8; 32],
         reasons: Vec<String>,
     },
+    /// Delivered, and the connector asked for input instead of answering.
+    AwaitingInput {
+        intent: Option<[u8; 32]>,
+        input: ConnectorAwaitingInput,
+    },
 }
 
 fn held(reason: &str) -> Step {
@@ -354,7 +424,7 @@ impl Step {
             | Self::Refused { reasons, .. }
             | Self::Retryable { reasons, .. }
             | Self::Unsettled { reasons, .. } => reasons,
-            Self::Delivered { .. } => Vec::new(),
+            Self::Delivered { .. } | Self::AwaitingInput { .. } => Vec::new(),
         }
     }
 }
@@ -640,6 +710,12 @@ impl Vault {
                 settle(call_ref, SettledConnectorCall::Delivered { intent })?;
                 ConnectorCallOutcome::Delivered { intent, result }
             }
+            // The call reached the connector: its row keeps the delivery,
+            // receipt-only. The questions live with the host, never here.
+            Step::AwaitingInput { intent, input } => {
+                settle(call_ref, SettledConnectorCall::Delivered { intent })?;
+                ConnectorCallOutcome::AwaitingInput { intent, input }
+            }
             Step::Refused {
                 decision_ref,
                 reasons,
@@ -810,8 +886,15 @@ impl Vault {
             Err(error) => return Err(error.into()),
         };
         let authority = OutboundBindingAuthority::for_vault(self)?;
+        // A question the connector asks binds to this caller and grant.
+        host.bind_caller(Some(ConnectorCallCaller {
+            principal_ref: pending.principal_ref.clone(),
+            grant_id,
+            name: pending.name.clone(),
+        }));
         // A reply left from an earlier send is never this call's.
         drop(host.take_result());
+        drop(host.take_awaiting_input());
         let dispatch = prepared.execute(
             self,
             &authority,
@@ -824,7 +907,8 @@ impl Vault {
             &mut *host,
         )?;
         let reply = host.take_result();
-        Ok(step_from_dispatch(&dispatch, reply))
+        let awaiting = host.take_awaiting_input();
+        Ok(step_from_dispatch(&dispatch, reply, awaiting))
     }
 
     /// The principal's grant for `server` and `tool`, the governing key it
@@ -923,7 +1007,7 @@ impl Vault {
     /// from its slate row on the governing key, else on the catalog key. A
     /// tool no slate names is Unclassified, which the grant check holds for
     /// the owner.
-    fn connector_tool_class(
+    pub(super) fn connector_tool_class(
         &self,
         governing: &ConnectorKeyRecord,
         route: &ConnectorCallRoute,
@@ -959,10 +1043,12 @@ impl Vault {
 
 /// Maps one execute onto a step. AutoFire alone proves nothing: only a Done
 /// ledger row is delivery, and the gate's own outcome tells a hold from a
-/// denial.
+/// denial. A delivered send whose connector asked for input carries its
+/// questions in place of a reply.
 pub(super) fn step_from_dispatch(
     dispatch: &ScopedMcpDispatchResult,
     reply: Option<UntrustedToolResult>,
+    awaiting: Option<ConnectorAwaitingInput>,
 ) -> Step {
     let decision_ref = dispatch.gate_decision_ref().map(str::to_owned);
     let mut reasons: Vec<String> = Vec::new();
@@ -1000,9 +1086,12 @@ pub(super) fn step_from_dispatch(
         push_reason(&mut reasons, intent_escalation_code(reason));
     }
     match (ledger.state, ledger.intent_id) {
-        (Some(IntentState::Done), intent) => Step::Delivered {
-            intent,
-            result: reply,
+        (Some(IntentState::Done), intent) => match awaiting {
+            Some(input) => Step::AwaitingInput { intent, input },
+            None => Step::Delivered {
+                intent,
+                result: reply,
+            },
         },
         (Some(IntentState::Abandoned), Some(intent))
             if matches!(
@@ -1045,7 +1134,7 @@ fn push_reason(reasons: &mut Vec<String>, reason: &str) {
     }
 }
 
-fn escalation_code(reason: ScopedMcpEscalationReason) -> &'static str {
+pub(super) fn escalation_code(reason: ScopedMcpEscalationReason) -> &'static str {
     match reason {
         ScopedMcpEscalationReason::InvalidGrant => "invalid_grant",
         ScopedMcpEscalationReason::ToolDataClassNotGranted => "tool_data_class_not_granted",

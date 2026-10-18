@@ -644,6 +644,7 @@ pub(super) fn resolve_answer_in(
         &route.offer,
         &route.digest,
         choice,
+        None,
         result.settlement.at,
         Some(&id),
     )?;
