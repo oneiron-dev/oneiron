@@ -106,6 +106,10 @@ impl FederationPeer {
                 hash.update(b"ask");
                 hash.update(ask_ref.as_bytes());
             }
+            FederationGrantScope::Connect { peer_vault_id } => {
+                hash.update(b"connect");
+                hash.update(&peer_vault_id);
+            }
         }
         *hash.finalize().as_bytes()
     }

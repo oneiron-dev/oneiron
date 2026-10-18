@@ -17,9 +17,8 @@ use crate::{EntityId, Result};
 /// that a pact with a retained ask registered: a CLAIM by its body, a TASK or
 /// SUMMARY by where its birth stamp settled it
 /// ([`crate::federation::record_scope::record_world_in`]); every other
-/// record sits in base reality. The ask's own world list names the
-/// requester's ids, which this vault does not map, and no row records its
-/// delivery epoch, so every world of that pact is withheld.
+/// record sits in base reality. Every world registered to that pact is
+/// withheld, whatever worlds or epoch cutoff the ask names.
 pub(crate) fn clamp_admits(
     ctx: &DisclosureContext,
     store: &Store,

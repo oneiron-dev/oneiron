@@ -139,6 +139,35 @@ fn copy_masked_births(src: &LoroDoc, dst: &LoroDoc, key: &WithheldKey) -> Result
     Ok(())
 }
 
+/// [`copy_births_within`] to another vault for one window of a delivery the
+/// federation door lands across several (FIX 3497): a ref ships unmasked when
+/// any window of the delivery carries its row (`carried`), so a guest CLAIM
+/// moved into its foreign WORLD window keeps its refs to the rows the same
+/// update brought into its own window.
+pub(in crate::sync) fn copy_births_carried_to_other_vault(
+    src: &LoroDoc,
+    dst: &LoroDoc,
+    key: &WithheldKey,
+    carried: &std::collections::BTreeSet<EntityId>,
+) -> Result<()> {
+    let here: Vec<EntityId> = dst
+        .get_map("entities")
+        .keys()
+        .filter_map(|key| owner(&key))
+        .collect();
+    let from = births(src);
+    let to = births(dst);
+    for id in &here {
+        let hex = id.to_hex();
+        let Some(birth) = map_get_bytes(&from, &hex).and_then(|bytes| decode(&bytes)) else {
+            continue;
+        };
+        let masked = birth.masked(|row| carried.contains(row), key);
+        map_insert_bytes(&to, &hex, &encode(&masked)?)?;
+    }
+    Ok(())
+}
+
 /// Copies the births `src` carries for every entity `dst` holds.
 fn copy_births_for_entities(src: &LoroDoc, dst: &LoroDoc) -> Result<()> {
     let owners: Vec<EntityId> = dst

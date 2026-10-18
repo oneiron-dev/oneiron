@@ -9,6 +9,12 @@
 // kinds, the shared map/entity-ref helpers) are defined in `oneiron-authority`. The module
 // aliases keep every `federation::<module>::` path this crate uses.
 pub(crate) use oneiron_authority::federation::{codec, pact_scope, scope_codec};
+mod connect_grant;
+pub use connect_grant::ConnectGrantMinted;
+pub(crate) use connect_grant::{
+    grant_serves_selector, is_guest_slice, pact_admits_grant, require_connect_grant_in_txn,
+    require_one_connect_per_peer,
+};
 mod content_write;
 pub(crate) use content_write::{ActorContentTxn, actor_for_txn};
 mod coreference;
@@ -53,6 +59,13 @@ pub use shared_act::{
     shared_act_outcome_transcript,
 };
 pub use shared_creation::{InitialSharedMember, SharedVaultCreation, SharedVaultPreset};
+mod foreign_world;
+pub(crate) use foreign_world::PactDelivery;
+pub use foreign_world::pact_foreign_world;
+#[cfg(feature = "sync")]
+pub(crate) use foreign_world::{
+    courtesy_ask_worlds_here, foreign_world_for, guest_claim_withheld, guest_claim_world,
+};
 mod guest;
 mod peer_authority;
 pub mod record_scope;
