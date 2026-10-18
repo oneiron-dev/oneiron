@@ -1228,6 +1228,10 @@ fn mcp_agent_verb_input(
         "vault.remember" => a.spec.clone().ok_or_else(invalid),
         "vault.claims.retract" => a.spec.clone().ok_or_else(invalid),
         "vault.forget" => a.spec.clone().ok_or_else(invalid),
+        "vault.booking.page_token" => a.spec.clone().ok_or_else(invalid),
+        "vault.calendar.read" => a.spec.clone().ok_or_else(invalid),
+        "vault.calendar.search" => a.spec.clone().ok_or_else(invalid),
+        "vault.calendar.freebusy" => a.spec.clone().ok_or_else(invalid),
         "vault.claims.list" => a.spec.clone().ok_or_else(invalid),
         "vault.claims.history" => a.spec.clone().ok_or_else(invalid),
         "vault.delete" => a.spec.clone().ok_or_else(invalid),
@@ -2285,6 +2289,18 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.forget" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.booking.page_token" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.calendar.read" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.calendar.search" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.calendar.freebusy" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.claims.list" => {
@@ -6890,6 +6906,43 @@ async fn execute_agent_verb_row(
             let output =
                 oneiron::task_verb::sdk::vault_forget(&memory, input).map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.booking.page_token" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.booking.page_token", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::BookingPageTokenRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_booking_page_token(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.calendar.read" => {
+            let input: oneiron::calendar::CalendarReadRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_calendar_read(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.calendar.search" => {
+            let input: oneiron::calendar::CalendarSearchRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_calendar_search(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.calendar.freebusy" => {
+            let input: oneiron::task_verb::sdk::CalendarFreebusyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_calendar_freebusy(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
         "vault.claims.list" => {

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 371 facade rows, 1465 declarations.
-Inputs: 328 of 371 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 328 of 371 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 375 facade rows, 1476 declarations.
+Inputs: 332 of 375 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 332 of 375 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 75; unread shapes: 0.
 """
 
@@ -5050,6 +5050,7 @@ class ProjectProposalCard(TypedDict):
     starting_skill_refs: list[str]
 class ProjectConversationRequest(TypedDict):
     conversation_ref: str
+RosterActor = str
 class ProjectCardStateMintedBody(TypedDict):
     project: EntityId
 class ProjectCardStateMinted(TypedDict):
@@ -5059,7 +5060,7 @@ class ProjectCardRecord(TypedDict):
     card: ProjectProposalCard
     conversation: EntityId
     detection: EntityId
-    drafted_by: EntityId
+    drafted_by: RosterActor
     state: ProjectCardState
     at: int
 class ProjectCardRequest(TypedDict):
@@ -5183,7 +5184,7 @@ class ConsentNeed(TypedDict):
     party: RequiredParty
 class JoinRefusalDeniedBody(TypedDict):
     part: ConsentPart
-    party: EntityId
+    party: RosterActor
     answer_ref: str
 class JoinRefusalDenied(TypedDict):
     denied: JoinRefusalDeniedBody
@@ -5208,7 +5209,7 @@ class JoinDecisionRefuse(TypedDict):
     refuse: JoinRefusal
 JoinDecision = Literal["ready"] | JoinDecisionHold | JoinDecisionRefuse
 class ConsentDenial(TypedDict):
-    party: EntityId
+    party: RosterActor
     answer_ref: str
 class ConsentStateMissing(TypedDict):
     missing: ConsentNeed
@@ -5219,7 +5220,7 @@ class ConsentStateDenied(TypedDict):
 ConsentState = ConsentStateMissing | ConsentStateGranted[T] | ConsentStateDenied
 class SpendConsentPaidBody(TypedDict):
     payer: EntityId
-    granted_by: EntityId
+    granted_by: RosterActor
     scope: SpendScopeId
     unit: LeaseUnit
     cap_units: int
@@ -5265,10 +5266,10 @@ class AdmissionConsent(TypedDict):
     room: EntityId
     branch: NotRequired[EntityId | None]
     subject: JoinSubject
-    granted_by: EntityId
+    granted_by: RosterActor
     basis: AdmissionBasis
 class ConsentSet(TypedDict):
-    subject: ConsentState[EntityId]
+    subject: ConsentState[RosterActor]
     spend: ConsentState[SpendConsent]
     membership: ConsentState[MembershipConsent]
     admission: ConsentState[AdmissionConsent]
@@ -5424,7 +5425,7 @@ class RoomHostRequest(TypedDict):
 HostPinKind = Literal["pinned", "handed_off"]
 class HostPin(TypedDict):
     agent: EntityId
-    by: EntityId
+    by: RosterActor
     kind: HostPinKind
     at: int
 class RoomHosting(TypedDict):
@@ -5980,6 +5981,37 @@ class ForgetPredicateRequest(TypedDict):
     subject_ref: str
     predicate: str
 ForgetRequest = ClaimRefRequest | ForgetPredicateRequest
+class BookingPageTokenRequest(TypedDict):
+    page_ref: str
+class BookingPageTokenResponse(TypedDict):
+    page_token: str
+class CalendarReadRequest(TypedDict):
+    event_ref: str
+class CalendarEventView(TypedDict):
+    origin: str
+    event_ref: str
+    name: NotRequired[str | None]
+    start_utc: NotRequired[int | None]
+    end_utc: NotRequired[int | None]
+    calendar_systems: list[str]
+    blocks_time: bool
+class CalendarSel(TypedDict):
+    system: NotRequired[str | None]
+class CalendarRangeDto(TypedDict):
+    start: int
+    end: int
+class CalendarSearchRequest(TypedDict):
+    calendars: list[CalendarSel]
+    range: NotRequired[CalendarRangeDto | None]
+    text: NotRequired[str | None]
+    limit: int
+class CalendarFreebusyRequest(TypedDict):
+    calendars: list[CalendarSel]
+    range: CalendarRangeDto
+class CalendarFreebusyIntervalDto(TypedDict):
+    start_utc: int
+    end_utc: int
+CalendarFreebusyDto = list[CalendarFreebusyIntervalDto]
 class ClaimListFilter(TypedDict):
     subject_ref: NotRequired[str | None]
     predicate: NotRequired[str | None]

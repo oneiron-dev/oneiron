@@ -40109,7 +40109,7 @@
      "purpose": "The found-key notice (OF-560; owner ruling G04 binary = C2): a write whose mask lifts a key out of a record…",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 2,
       "re-export": 1,
@@ -40208,10 +40208,25 @@
      "purpose": "A secret's value by its handle (OF-560; ARCH-0069 #reveal-check and #handle-verbs, DEC-0006 #model-connection)",
      "surface": {
       "const": 7,
-      "crate-vis": 16,
+      "crate-vis": 18,
       "enum": 5,
       "fn": 3,
+      "re-export": 1,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RevealAskErase"
+     ],
+     "path": "src/secret_custody/reveal/actor_erase.rs",
+     "purpose": "An erased actor out of the reveal rows (FIX 3520)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "enum": 1
      }
     },
     {
@@ -41485,9 +41500,24 @@
      "path": "src/share.rs",
      "purpose": "Revocable brief read grants",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 15,
       "fn": 6,
+      "re-export": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ShareAdmissionErase"
+     ],
+     "path": "src/share/actor_erase.rs",
+     "purpose": "An erased actor out of the share admissions (FIX 3520)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 1
      }
     },
     {
@@ -48593,7 +48623,7 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 30,
+      "re-export": 31,
       "struct": 36
      }
     },
@@ -48619,6 +48649,20 @@
       "enum": 3,
       "fn": 3,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BookingPageTokenRequest",
+      "BookingPageTokenResponse",
+      "CalendarFreebusyRequest"
+     ],
+     "path": "src/task_verb/sdk_calendar.rs",
+     "purpose": "Typed booking-page discovery and calendar occupancy inputs",
+     "surface": {
+      "struct": 3
      }
     },
     {
@@ -48805,7 +48849,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 420
+      "fn": 424
      }
     },
     {
@@ -51778,7 +51822,7 @@
      "path": "src/workspace_roster/join_consent.rs",
      "purpose": "One consent per party (OF-531): one typed decision that joins the subject's own yes, a payer's spend, a…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 7,
       "fn": 7,
       "re-export": 1,
@@ -51808,14 +51852,17 @@
       "JoinParticipation",
       "JoinReceipt",
       "JoinReceiptRef",
-      "RecordedAnswer"
+      "RecordedAnswer",
+      "RosterActor",
+      "RosterErase"
      ],
      "path": "src/workspace_roster/join_receipt.rs",
      "purpose": "The join receipt (OF-531): one typed record per join intent",
      "surface": {
-      "crate-vis": 12,
-      "enum": 1,
-      "fn": 5,
+      "const": 1,
+      "crate-vis": 16,
+      "enum": 3,
+      "fn": 7,
       "struct": 3
      }
     },
@@ -51826,7 +51873,7 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 23,
       "re-export": 17
      }
     },
@@ -52190,7 +52237,8 @@
      "path": "src/workspace_roster/project/proposal.rs",
      "purpose": "The project card a conversation proposes (OF-501, ARCH-0067)",
      "surface": {
-      "crate-vis": 12,
+      "const": 1,
+      "crate-vis": 14,
       "enum": 1,
       "fn": 7,
       "struct": 3
@@ -52552,7 +52600,8 @@
      "path": "src/workspace_roster/rooms/hosting.rs",
      "purpose": "Room hosting: the speaking duty, kept apart from the engine's upkeep",
      "surface": {
-      "crate-vis": 8,
+      "const": 1,
+      "crate-vis": 9,
       "enum": 2,
       "fn": 3,
       "struct": 5
@@ -52594,7 +52643,7 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 30,
       "enum": 2,
       "fn": 6,
       "re-export": 9,
@@ -52613,6 +52662,16 @@
       "crate-vis": 5,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/rooms/offer_erase.rs",
+     "purpose": "An erased actor out of the offer cards (FIX 3520)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -55170,7 +55229,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 20,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55240,7 +55299,7 @@
      "purpose": "Persisted customization settings and client-visible change events"
     },
     "share": {
-     "files": 4,
+     "files": 5,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -55380,7 +55439,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 140,
+     "files": 141,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -55527,7 +55586,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
     },
     "workspace_roster": {
-     "files": 90,
+     "files": 91,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55550,7 +55609,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3381,
+   "source_files": 3385,
    "test_files": 902
   },
   "oneiron-android": {
@@ -63945,7 +64004,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 371
+      "fn": 375
      }
     },
     {
@@ -64993,7 +65052,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 372
+      "fn": 376
      }
     },
     {
@@ -67860,6 +67919,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/booking_doors.rs",
+     "purpose": "Owner discovery of the opaque address of an existing booking page",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -68026,7 +68095,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 74
+      "crate-vis": 75
      }
     },
     {
@@ -75301,7 +75370,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 328,
+     "files": 329,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -75716,7 +75785,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 650,
+   "source_files": 651,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -76010,6 +76079,8 @@
       "BodyConflict",
       "BodyFormat",
       "BodyName",
+      "BookingPageTokenRequest",
+      "BookingPageTokenResponse",
       "BornFromArtifact",
       "BornFromRequest",
       "BornFromSource",
@@ -76026,6 +76097,13 @@
       "BundleVerdict",
       "BundledSkillPermissions",
       "ButtonControl",
+      "CalendarEventView",
+      "CalendarFreebusyIntervalDto",
+      "CalendarFreebusyRequest",
+      "CalendarRangeDto",
+      "CalendarReadRequest",
+      "CalendarSearchRequest",
+      "CalendarSel",
       "CalibrationPair",
       "CallOutcome",
       "CallReceipt",
@@ -76156,8 +76234,8 @@
       "ConsentPart",
       "ConsentSet",
       "ConsentStateAdmissionConsent",
-      "ConsentStateEntityId",
       "ConsentStateMembershipConsent",
+      "ConsentStateRosterActor",
       "ConsentStateSpendConsent",
       "ConsultPayloadRef",
       "ContextDefault",
@@ -76956,7 +77034,10 @@
       "ScopedExportRecord",
       "ScopedExportRequest",
       "ScopedReadReceipt",
+      "ScopedReadResultCalendarEventViewList",
+      "ScopedReadResultCalendarFreebusyDto",
       "ScopedReadResultLensFrameCard",
+      "ScopedReadResultOptionalCalendarEventView",
       "ScopedReadResultOptionalNoteEditorBinding",
       "ScopedReadResultOptionalNoteHistoryView",
       "ScopedReadResultOptionalNoteReadView",
@@ -77293,7 +77374,7 @@
      "purpose": "—",
      "surface": {
       "enum": 396,
-      "struct": 983
+      "struct": 995
      }
     },
     {
