@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 828 facade rows, 2836 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 784.
+// UniFFI census: 831 facade rows, 2842 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 787.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -15031,6 +15031,94 @@ pub struct TrustedContactDeliveryReceipt {
     pub provider_ref: Option<String>,
     #[serde(rename = "delivery_may_have_occurred")]
     pub delivery_may_have_occurred: bool,
+}
+
+/// `oneiron::task_verb::sdk_guest_document::GuestDocumentShareRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GuestDocumentShareRequest {
+    #[serde(rename = "grant_ref")]
+    pub grant_ref: String,
+    #[serde(rename = "world_ref")]
+    pub world_ref: String,
+    #[serde(rename = "window_key")]
+    pub window_key: String,
+    #[serde(rename = "facets", default, skip_serializing_if = "Option::is_none")]
+    pub facets: Option<Vec<String>>,
+    #[serde(rename = "bands", default, skip_serializing_if = "Option::is_none")]
+    pub bands: Option<Vec<SelectorRange>>,
+}
+
+/// `oneiron::task_verb::sdk_guest_document::GuestDocumentContext`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GuestDocumentContext {
+    #[serde(rename = "pact")]
+    pub pact: String,
+    #[serde(rename = "epoch")]
+    pub epoch: u64,
+    #[serde(rename = "ceiling")]
+    pub ceiling: Scope,
+    #[serde(rename = "effective_scope")]
+    pub effective_scope: FederationDirectionScope,
+}
+
+/// `oneiron::federation::grant::FederationGrantScope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum FederationGrantScope {
+    #[serde(rename = "Vault")]
+    Vault {
+        #[serde(rename = "vault_id")]
+        vault_id: u64,
+    },
+    #[serde(rename = "Ask")]
+    Ask {
+        #[serde(rename = "ask_ref")]
+        ask_ref: String,
+    },
+    #[serde(rename = "Connect")]
+    Connect {
+        #[serde(rename = "peer_vault_id")]
+        peer_vault_id: Vec<u8>,
+    },
+}
+
+/// `oneiron::federation::guest::GuestShareEnvelopeBody`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct GuestShareEnvelopeBody {
+    #[serde(rename = "scope")]
+    pub scope: FederationGrantScope,
+    #[serde(rename = "member_ref")]
+    pub member_ref: String,
+    #[serde(rename = "selector")]
+    pub selector: Vec<u8>,
+    #[serde(rename = "window_key")]
+    pub window_key: String,
+    #[serde(rename = "update")]
+    pub update: Vec<u8>,
+}
+
+/// `oneiron::federation::guest::GuestShareEnvelope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct GuestShareEnvelope {
+    #[serde(rename = "body")]
+    pub body: GuestShareEnvelopeBody,
+    #[serde(rename = "signature")]
+    pub signature: Vec<u8>,
+}
+
+/// `oneiron::task_verb::sdk_guest_document::GuestDocumentEnvelope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GuestDocumentEnvelope {
+    #[serde(rename = "context")]
+    pub context: GuestDocumentContext,
+    #[serde(rename = "envelope")]
+    pub envelope: GuestShareEnvelope,
+    #[serde(rename = "signer")]
+    pub signer: String,
+    #[serde(rename = "signature")]
+    pub signature: Vec<u8>,
 }
 
 /// `oneiron::task_verb::sdk_guest_revoke::GuestRevokeRequest`.

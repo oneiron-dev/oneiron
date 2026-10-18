@@ -285,6 +285,9 @@ vaultTrustedContactsConcernAsks(input: unknown): unknown
 vaultTrustedContactsConcernAuthorize(input: unknown): unknown
 vaultTrustedContactsConcernPropose(input: unknown): unknown
 vaultTrustedContactsConcernDeliver(input: unknown): unknown
+vaultGuestsShare(input: unknown): unknown
+vaultGuestsExportEnvelope(input: unknown): unknown
+vaultGuestsReshare(input: unknown): unknown
 vaultGuestsRevoke(input: unknown): unknown
 vaultGuestsMintSlip(input: unknown): unknown
 vaultSupportGrantsMint(input: unknown): unknown

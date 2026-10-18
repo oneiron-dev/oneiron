@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 828 facade rows, 2870 declarations.
-Inputs: 776 of 828 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 745 of 828 fully typed, 83 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 831 facade rows, 2877 declarations.
+Inputs: 779 of 831 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 748 of 831 fully typed, 83 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 100; unread shapes: 0.
 """
 
@@ -4982,6 +4982,45 @@ class TrustedContactDeliveryReceipt(TypedDict):
     occurred_at: int
     provider_ref: NotRequired[str | None]
     delivery_may_have_occurred: bool
+class GuestDocumentShareRequest(TypedDict):
+    grant_ref: EntityId
+    world_ref: EntityId
+    window_key: str
+    facets: NotRequired[list[EntityId]]
+    bands: NotRequired[list[SelectorRange]]
+class GuestDocumentContext(TypedDict):
+    pact: str
+    epoch: int
+    ceiling: Scope
+    effective_scope: FederationDirectionScope
+AuthorityVaultId = list[int]
+class FederationGrantScopeVaultBody(TypedDict):
+    vault_id: int
+class FederationGrantScopeVault(TypedDict):
+    Vault: FederationGrantScopeVaultBody
+class FederationGrantScopeAskBody(TypedDict):
+    ask_ref: EntityId
+class FederationGrantScopeAsk(TypedDict):
+    Ask: FederationGrantScopeAskBody
+class FederationGrantScopeConnectBody(TypedDict):
+    peer_vault_id: AuthorityVaultId
+class FederationGrantScopeConnect(TypedDict):
+    Connect: FederationGrantScopeConnectBody
+FederationGrantScope = FederationGrantScopeVault | FederationGrantScopeAsk | FederationGrantScopeConnect
+class GuestShareEnvelopeBody(TypedDict):
+    scope: FederationGrantScope
+    member_ref: EntityId
+    selector: list[int]
+    window_key: str
+    update: list[int]
+class GuestShareEnvelope(TypedDict):
+    body: GuestShareEnvelopeBody
+    signature: list[int]
+class GuestDocumentEnvelope(TypedDict):
+    context: GuestDocumentContext
+    envelope: GuestShareEnvelope
+    signer: str
+    signature: list[int]
 class GuestRevokeRequest(TypedDict):
     grant_ref: EntityId
     peer: NotRequired[str | None]
