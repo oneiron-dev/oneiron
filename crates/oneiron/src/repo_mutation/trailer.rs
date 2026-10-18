@@ -54,8 +54,34 @@ pub(super) fn validate_repo_provenance_request(
     }
 }
 
+pub(super) fn validate_repo_provenance_request_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    request: &RepoMutationRequest,
+) -> Result<()> {
+    let Some(id) = request.provenance_claim_id else { return Ok(()); };
+    if !matches!(request.operation,
+        RepoMutationOperation::CommitFile { .. } | RepoMutationOperation::ResolveConflictFile { .. })
+    {
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
+            "provenance claim id only applies to commit-producing repo mutations",
+        )));
+    }
+    require_repo_provenance_claim_in_txn(vault, txn, &id)
+}
+
 fn require_repo_provenance_claim(vault: &Vault, claim_id: &EntityId) -> Result<()> {
-    let raw = vault.get_raw(claim_id)?.ok_or(Error::EntityNotFound)?;
+    let txn = vault.store.env.read_txn()?;
+    require_repo_provenance_claim_in_txn(vault, &txn, claim_id)
+}
+
+fn require_repo_provenance_claim_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    claim_id: &EntityId,
+) -> Result<()> {
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, claim_id)?
+        .ok_or(Error::EntityNotFound)?;
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
     if header.entity_type != ENTITY_TYPE_CLAIM {
         return Err(Error::Code(CodeError::InvalidRepoMutationRecord(

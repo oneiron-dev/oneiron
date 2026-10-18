@@ -22,7 +22,7 @@ pub const ROOT_TYPE_NODE: &str = "root";
 const MAX_QUALIFIER_BYTES: usize = 256;
 
 /// The four members of the family.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LearningPredicate {
     /// How often a thing worked: any skill role, or an actor.
@@ -142,7 +142,7 @@ impl TypeRef {
 }
 
 /// One cell's key.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LearningCell {
     pub predicate: LearningPredicate,
     pub subject: EntityId,

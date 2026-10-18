@@ -5616,7 +5616,98 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.conflict_record",
+      "description": "Record a real Git overlap between two stored one-file proposals at the same retained base, with both trees, paths and a linked reconciliation task. Owner only; neither branch moves.",
+      "input": "crate::memory::code_doors::CodeConflictRecordRequest",
+      "output": "crate::memory::code_doors::CodeConflictView",
+      "call": "memory.code_conflict_record_as(&memory.embedded_owner(\"vault.code.conflict_record\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.conflict_view",
+      "description": "Read open repository conflicts and their durable resolution claims, including each reconciliation task. Owner only.",
+      "input": "crate::memory::code_doors::CodeConflictViewRequest",
+      "output": "crate::memory::code_doors::CodeConflictHistory",
+      "call": "memory.code_conflict_history_as(&memory.embedded_owner(\"vault.code.conflict_view\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.proposal_resolve",
+      "description": "Stage a one-file resolution of an active repository conflict as another Proposed proposal, preserving its original proposals and reconciliation task. Owner only; nothing lands.",
+      "input": "crate::memory::code_doors::CodeProposalResolveRequest",
+      "output": "crate::memory::code_doors::CodeProposalSubmitted",
+      "call": "memory.code_proposal_resolve_as(&memory.embedded_owner(\"vault.code.proposal_resolve\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.proposal_review",
+      "description": "Record the authenticated owner's immutable critic opinion on one proposal lens. Independent reviewers only; this is no contract-check execution receipt.",
+      "input": "crate::memory::code_doors::CodeProposalReviewRequest",
+      "output": "crate::memory::code_doors::CodeProposalSettlementView",
+      "call": "memory.code_proposal_review_as(&memory.embedded_owner(\"vault.code.proposal_review\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.proposal_settle",
+      "description": "Approve or reject one reviewed code proposal as an independent owner, retaining a decision receipt. Approval still needs unanimous critics and never advances head; only the tested merge queue lands it.",
+      "input": "crate::memory::code_doors::CodeProposalSettleRequest",
+      "output": "crate::memory::code_doors::CodeProposalSettlementView",
+      "call": "memory.code_proposal_settle_as(&memory.embedded_owner(\"vault.code.proposal_settle\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.proposal_settlement",
+      "description": "Read a code proposal's review decision receipt and execution lineage, including its conflict, original proposals, reconciliation task and resolution claim. Owner only.",
+      "input": "crate::memory::code_doors::CodeProposalSettlementRequest",
+      "output": "crate::memory::code_doors::CodeProposalSettlementView",
+      "call": "memory.code_proposal_settlement_as(&memory.embedded_owner(\"vault.code.proposal_settlement\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.code.oplog",
