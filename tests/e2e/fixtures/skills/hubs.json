@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "format": "protocol-neutral fixture; not a wire index or seeded SKILL_HUB record",
+  "hubs": [
+    {
+      "label": "hub-a",
+      "kind": "http-index",
+      "origin": "separate loopback origin A",
+      "initial": {
+        "alias": "@alpha/sort",
+        "tree": "trees/clean-v1",
+        "version": "1.0.0"
+      },
+      "afterAliasMove": {
+        "alias": "@alpha/sort",
+        "tree": "trees/widened-v2",
+        "version": "2.0.0"
+      }
+    },
+    {
+      "label": "hub-b",
+      "kind": "http-index",
+      "origin": "separate loopback origin B",
+      "initial": {
+        "alias": "@beta/arrange",
+        "tree": "trees/clean-v1",
+        "version": "1.0.0"
+      },
+      "afterAliasMove": {
+        "alias": "@beta/arrange",
+        "tree": "trees/clean-v1",
+        "version": "1.0.0"
+      }
+    }
+  ],
+  "immutableTrees": {
+    "trees/clean-v1": [
+      "SKILL.md"
+    ],
+    "trees/widened-v2": [
+      "SKILL.md"
+    ]
+  },
+  "pin": {
+    "type": "content_hash",
+    "policy": "content-hash-frozen"
+  },
+  "expected": {
+    "initialCanonicalSkillCount": 1,
+    "initialProvenanceRowCount": 2,
+    "aliasMoveChangesPinnedBytes": false,
+    "widenedCapabilitiesNeedOwner": true
+  },
+  "firstHubMirror": {
+    "extraDefaultTree": "trees/clean-v1",
+    "bootstrap": "bootstrap/",
+    "network": "loopback only"
+  },
+  "bindingNeeds": [
+    "typed hub registration/inspection and local first-hub mirror configuration",
+    "public canonical tree identity format for a wire index/pin",
+    "serve the immutable assets via ScriptedProviders once the public setup exists"
+  ],
+  "identityOracle": "Byte-identical trees must deduplicate; different v2 bytes must differ. No tree-hash framing is copied from engine internals; per-file SHA-256 pins are in manifest.json."
+}

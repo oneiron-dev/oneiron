@@ -1,0 +1,676 @@
+{
+  "version": 1,
+  "area": "Skills and improvement",
+  "bindingHead": "3a829fe65a7282da4a5e44733ba35cc36fa36b80",
+  "ownerRulings": {
+    "G01": "Typed HTTP and SDK call or wait; no generic escape hatch."
+  },
+  "oracle": "Authored inputs and canon facts, never engine output. Symbolic labels must be replaced only by refs returned from named public setup calls.",
+  "canonPins": [
+    {
+      "page": "/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1/",
+      "sha256": "dcfa341d856a48d1c5f4f02de932d3af6ff573890c53b8f7b5ea5c7506e02f76"
+    },
+    {
+      "page": "/oneiron/agents/oneiron-arch-0056-edit-distance-feedback-loop-v1/",
+      "sha256": "382445cd743733f6688fa64febfb296398817db4cbcbc85c708148d698103ea4"
+    },
+    {
+      "page": "/oneiron/agents/oneiron-arch-0076-typed-judgments-v1/",
+      "sha256": "64141618862fc84368b429aa3f6745d34f048ed1a35b33232af96cb0220b2574"
+    },
+    {
+      "page": "/oneiron/core/oneiron-arch-0003-semantic-memory/",
+      "sha256": "195a3a6bae7a44dd6ab6b1353268513176531abcee5b47ceaed5fb8664c588ed"
+    },
+    {
+      "page": "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/",
+      "sha256": "6b960493c722c1182a81a5c168d63a9be3d8a669559addf3a749f556c4628050"
+    }
+  ],
+  "registryRows": [
+    "OF-184",
+    "OF-206",
+    "OF-213",
+    "OF-214",
+    "OF-215",
+    "OF-379",
+    "OF-394",
+    "OF-395",
+    "OF-396",
+    "OF-397",
+    "OF-399",
+    "OF-400",
+    "OF-518"
+  ],
+  "assumptionsAndConstants": {
+    "policyAndJudgmentValues": "fixture inputs only, not product defaults",
+    "engineConstantsChanged": false,
+    "modelDownloads": 0,
+    "outsideNetwork": false,
+    "writerValidation": "source and digest readback only; Linux execution pending"
+  },
+  "scenarios": [
+    {
+      "id": "SKILLS-01",
+      "name": "Message to reusable skill should work",
+      "surface": "HTTP + MCP",
+      "rows": [
+        "OF-206",
+        "OF-215"
+      ],
+      "source": [
+        "/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1/#r4-lifecycle",
+        "/registry/oneiron/#OF-206",
+        "/registry/oneiron/#OF-215"
+      ],
+      "steps": [
+        "convert to skill",
+        "repeat conversion",
+        "retrieve and execute",
+        "delete source",
+        "retrieve lifecycle"
+      ],
+      "inputs": {
+        "messages": [
+          {
+            "label": "owner-procedure-1",
+            "actor": "owner",
+            "text": "Read the supplied finite list of integers. Sort ascending and preserve duplicates."
+          },
+          {
+            "label": "owner-procedure-2",
+            "actor": "owner",
+            "text": "Return the sorted list and its item count. Do not call external tools."
+          }
+        ],
+        "conversionOutput": "trees/clean-v1/SKILL.md",
+        "execute": {
+          "values": [
+            3,
+            1,
+            2
+          ]
+        },
+        "deleteSource": "owner-procedure-1"
+      },
+      "expectedFacts": {
+        "canonicalSkillCountAfterRepeat": 1,
+        "sourceMessages": [
+          "owner-procedure-1",
+          "owner-procedure-2"
+        ],
+        "output": {
+          "values": [
+            1,
+            2,
+            3
+          ],
+          "count": 3
+        },
+        "afterSourceDelete": {
+          "lifecycle": "stale",
+          "trustedLoadable": false,
+          "provenanceRetained": true
+        }
+      },
+      "waitsOn": [
+        "typed selected-message conversion",
+        "typed skill identity/provenance/lifecycle reads",
+        "typed MCP workflow execution and used-version receipt"
+      ]
+    },
+    {
+      "id": "SKILLS-02",
+      "name": "Hub content identity and pinned update should work",
+      "surface": "HTTP",
+      "rows": [
+        "OF-213",
+        "OF-396"
+      ],
+      "source": [
+        "/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1/#r4b-hubs",
+        "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#mcp-actor-ceilings",
+        "/registry/oneiron/#OF-213",
+        "/registry/oneiron/#OF-396",
+        "/oneiron/agents/oneiron-arch-0076-typed-judgments-v1/#escalation-doors-built"
+      ],
+      "steps": [
+        "install both",
+        "inspect identity/origins",
+        "move alias",
+        "sync pinned ref",
+        "propose changed grant update",
+        "Use a supported model decision pin for useful-upstream review and inspect provider-bound paired evidence"
+      ],
+      "inputs": {
+        "hubs": "hubs.json",
+        "v1": "trees/clean-v1/SKILL.md",
+        "v2": "trees/widened-v2/SKILL.md",
+        "review": {
+          "question": "useful_upstream",
+          "supportedFirstPins": [
+            "system_one",
+            "escalation"
+          ],
+          "provider": {
+            "rung": "escalation",
+            "model": "fixture-decision",
+            "version": "skills-review-v1"
+          },
+          "auxiliaryQuestion": "needs_more_thinking",
+          "auxiliaryVersion": 1,
+          "probability": 0.9,
+          "auxiliaryProbability": 0.2
+        }
+      },
+      "expectedFacts": {
+        "canonicalIdentityCount": 1,
+        "provenanceRows": 2,
+        "v1RemainsPinnedAfterAliasMove": true,
+        "wideningEffectiveBeforeConsent": false,
+        "pairedRowsBindOwnProviders": true,
+        "noDuplicateProviders": true,
+        "pairedQuestionDiffersFromAnswered": true,
+        "heldOutRequiredAfterUsefulYes": true,
+        "usefulNoDeletesFork": false
+      },
+      "waitsOn": [
+        "typed SKILL_HUB registration/inspection",
+        "skill import/sync SDK calls",
+        "typed useful-upstream review and provider-bound paired evidence"
+      ]
+    },
+    {
+      "id": "SKILLS-03",
+      "name": "Skill admission and soft retirement should work",
+      "surface": "HTTP",
+      "rows": [
+        "OF-213",
+        "OF-215"
+      ],
+      "source": [
+        "/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1/#r4-lifecycle",
+        "/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1/#r4b-hubs",
+        "/registry/oneiron/#OF-213",
+        "/registry/oneiron/#OF-215"
+      ],
+      "steps": [
+        "import all",
+        "inspect candidate/active state",
+        "archive active",
+        "restore",
+        "replace via fork"
+      ],
+      "inputs": {
+        "clean": "trees/clean-v1/SKILL.md",
+        "suspicious": "trees/suspicious/SKILL.md",
+        "codePack": [
+          "trees/code-pack/PACK.md",
+          "trees/code-pack/scripts/helper.js"
+        ],
+        "codeAutoInstall": false,
+        "replacement": "trees/custom/SKILL.md",
+        "rulePolicyIntent": "owner configures a known-bad hash rule for the suspicious immutable tree through a named public policy door; no private scan injection"
+      },
+      "expectedFacts": {
+        "afterFit": {
+          "clean": "active",
+          "suspicious": "candidate",
+          "codePack": "candidate"
+        },
+        "archive": {
+          "loadable": false,
+          "evidenceRetained": true,
+          "restorable": true
+        },
+        "replacement": {
+          "sameForkLaw": true,
+          "parentDocumentAndFrontierRetained": true,
+          "upstreamUpdatesProposed": true,
+          "oldVersion": "superseded"
+        }
+      },
+      "waitsOn": [
+        "typed owner rule-policy setup",
+        "typed skill admission/lifecycle reads",
+        "skill archive/restore",
+        "typed fork parent/frontier read"
+      ]
+    },
+    {
+      "id": "SKILLS-04",
+      "name": "Bootstrap skills and restore defaults should work",
+      "surface": "CLI + HTTP",
+      "rows": [
+        "OF-518"
+      ],
+      "source": [
+        "/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1/#r4b-hubs",
+        "/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1/#r4-lifecycle",
+        "/registry/oneiron/#OF-518"
+      ],
+      "steps": [
+        "inspect bootstrap four and hub row",
+        "customize then delete a default",
+        "invoke restore defaults"
+      ],
+      "inputs": {
+        "requiredBootstrapNames": [
+          "skill-optimize",
+          "judge",
+          "goal-intake",
+          "wake"
+        ],
+        "bootstrapSourceSnapshots": [
+          "bootstrap/skill-optimize/SKILL.md",
+          "bootstrap/judge/SKILL.md",
+          "bootstrap/goal-intake/SKILL.md",
+          "bootstrap/wake/SKILL.md"
+        ],
+        "firstHub": "hubs.json",
+        "default": "trees/clean-v1/SKILL.md",
+        "customFork": "trees/custom/SKILL.md",
+        "network": "loopback-only"
+      },
+      "expectedFacts": {
+        "bootstrapWithoutNetwork": true,
+        "otherDefaultsViaPinnedFirstHub": true,
+        "implicitRestoreAllowed": false,
+        "explicitRestore": {
+          "freshImportReceipt": true,
+          "sameOriginalContentIdentity": true,
+          "customForkOverwritten": false,
+          "otherDefaultsOverwritten": false
+        },
+        "survivesRestart": true
+      },
+      "waitsOn": [
+        "public pinned first-hub mirror setup",
+        "typed bootstrap/hub/library reads",
+        "vault.skills.restoreDefaults SDK call"
+      ]
+    },
+    {
+      "id": "SKILLS-05",
+      "name": "Skill receipt attribution and reliability should work",
+      "surface": "MCP + HTTP",
+      "rows": [
+        "OF-184",
+        "OF-395",
+        "OF-397",
+        "OF-394"
+      ],
+      "source": [
+        "/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1/#r4-lifecycle",
+        "/oneiron/core/oneiron-arch-0003-semantic-memory/#learning",
+        "/registry/oneiron/#OF-184",
+        "/registry/oneiron/#OF-395",
+        "/registry/oneiron/#OF-397",
+        "/registry/oneiron/#OF-394"
+      ],
+      "steps": [
+        "execute under different actors",
+        "settle outcomes",
+        "query learning view and next retrieval"
+      ],
+      "inputs": {
+        "skillVersions": [
+          "v1",
+          "v2"
+        ],
+        "actors": [
+          "executor-a",
+          "executor-b"
+        ],
+        "typeRef": "required runtime-created task type with node_id/tree_version; no fabricated entity id",
+        "runs": [
+          {
+            "label": "anchored-win",
+            "version": "v1",
+            "actor": "executor-a",
+            "used": true,
+            "outcome": "won",
+            "anchor": "owner verdict"
+          },
+          {
+            "label": "anchored-defect",
+            "version": "v2",
+            "actor": "executor-b",
+            "used": true,
+            "outcome": "failed",
+            "attribution": "skill_defect"
+          },
+          {
+            "label": "anchored-lapse",
+            "version": "v1",
+            "actor": "executor-b",
+            "used": true,
+            "outcome": "failed",
+            "attribution": "execution_lapse"
+          },
+          {
+            "label": "loaded-only",
+            "version": "v2",
+            "actor": "executor-a",
+            "used": false,
+            "outcome": "won"
+          },
+          {
+            "label": "self-report-only",
+            "version": "v2",
+            "actor": "executor-a",
+            "used": true,
+            "outcome": "claimed_won",
+            "anchor": null
+          },
+          {
+            "label": "environment-control",
+            "version": "v1",
+            "actor": "executor-b",
+            "used": true,
+            "outcome": "failed",
+            "attribution": "environment"
+          },
+          {
+            "label": "unclear-control",
+            "version": "v2",
+            "actor": "executor-b",
+            "used": true,
+            "outcome": "failed",
+            "attribution": "unclear"
+          }
+        ]
+      },
+      "expectedFacts": {
+        "skillEvidence": {
+          "anchored-win": "win",
+          "anchored-defect": "loss",
+          "anchored-lapse": "none",
+          "loaded-only": "none",
+          "self-report-only": "none",
+          "environment-control": "none",
+          "unclear-control": "none"
+        },
+        "lapseRoutesToActor": true,
+        "cellQualifiers": [
+          "subject",
+          "executor",
+          "typeRef",
+          "axis"
+        ],
+        "judgeIsCellKey": false,
+        "manifestAppendOnly": true,
+        "receiptDistinguishesLoadedAndUsed": true,
+        "providerReliabilityUsesSameFamily": true,
+        "nextRetrievalShowsReliabilityEvidence": true,
+        "fixedRankExpected": false
+      },
+      "waitsOn": [
+        "typed MCP skill execution and pack outcome settlement",
+        "typed learning projection and completion observation",
+        "retrieval attribution evidence"
+      ]
+    },
+    {
+      "id": "SKILLS-06",
+      "name": "Held-out skill optimization should work",
+      "surface": "HTTP + MCP",
+      "rows": [
+        "OF-214",
+        "OF-379"
+      ],
+      "source": [
+        "/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1/#r4-lifecycle",
+        "/oneiron/core/oneiron-arch-0003-semantic-memory/#learning",
+        "/registry/oneiron/#OF-214",
+        "/registry/oneiron/#OF-379"
+      ],
+      "steps": [
+        "run optimize",
+        "inspect admission",
+        "run independently superior candidate",
+        "request identity/alignment edit"
+      ],
+      "inputs": {
+        "cases": {
+          "training": [
+            "train-a",
+            "train-b",
+            "train-c",
+            "train-d"
+          ],
+          "sealed": [
+            "holdout-e",
+            "holdout-f",
+            "holdout-g",
+            "holdout-h"
+          ]
+        },
+        "externalJudgeCorrectness": {
+          "incumbent": {
+            "training": [
+              true,
+              true,
+              true,
+              false
+            ],
+            "sealed": [
+              true,
+              true,
+              true,
+              false
+            ]
+          },
+          "overfit": {
+            "training": [
+              true,
+              true,
+              true,
+              true
+            ],
+            "sealed": [
+              true,
+              true,
+              false,
+              false
+            ]
+          },
+          "independentWinner": {
+            "training": [
+              true,
+              true,
+              true,
+              true
+            ],
+            "sealed": [
+              true,
+              true,
+              true,
+              true
+            ]
+          }
+        },
+        "sameFloorAndCostValues": true,
+        "excludedTiers": [
+          "identity",
+          "alignment"
+        ]
+      },
+      "expectedFacts": {
+        "trainingFamiliesDisjointFromSealed": true,
+        "overfitAdmitted": false,
+        "incumbentAfterOverfit": "unchanged active",
+        "rejectionRationaleRetained": true,
+        "independentWinnerAdmitted": true,
+        "winnerPreservesParentLineage": true,
+        "identityAutoEdited": false,
+        "alignmentAutoEdited": false,
+        "goalOrGrantAutoEdited": false
+      },
+      "waitsOn": [
+        "typed skill_optimize start/result",
+        "public governed-tier setup/read",
+        "sealed cohort/exposure and admission receipts"
+      ]
+    },
+    {
+      "id": "SKILLS-07",
+      "name": "Edit-delta attribution split should work",
+      "surface": "HTTP",
+      "rows": [
+        "OF-400",
+        "OF-379"
+      ],
+      "source": [
+        "/oneiron/core/oneiron-arch-0003-semantic-memory/#learning",
+        "/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1/#r4-lifecycle",
+        "/oneiron/agents/oneiron-arch-0056-edit-distance-feedback-loop-v1/#attribution-split",
+        "/registry/oneiron/#OF-400",
+        "/registry/oneiron/#OF-379"
+      ],
+      "steps": [
+        "settle edited artifact",
+        "inspect hunks and attribution",
+        "read learning and preference outputs"
+      ],
+      "inputs": {
+        "draft": {
+          "requiredCode": "AAAAAAA",
+          "displayCode": "BBB"
+        },
+        "ownerFinal": {
+          "requiredCode": "CCCCCCC",
+          "displayCode": "DDD"
+        },
+        "recordedReplacements": [
+          {
+            "field": "requiredCode",
+            "before": "AAAAAAA",
+            "after": "CCCCCCC",
+            "editMassUnits": 7,
+            "label": "skill_defect"
+          },
+          {
+            "field": "displayCode",
+            "before": "BBB",
+            "after": "DDD",
+            "editMassUnits": 3,
+            "label": "preference_shift"
+          }
+        ],
+        "judgeShares": {
+          "skill_defect": 0.7,
+          "execution_lapse": 0,
+          "discovery": 0,
+          "environment": 0,
+          "preference_shift": 0.3,
+          "unclear": 0
+        },
+        "unclearControl": {
+          "unclear": 1,
+          "note": "No reliable cause can be assigned to this amendment."
+        },
+        "malformedShares": {
+          "skill_defect": 0.7,
+          "preference_shift": 0.2
+        },
+        "whitespaceOnly": {
+          "before": "a b",
+          "after": "a  b"
+        }
+      },
+      "expectedFacts": {
+        "totalShare": 1,
+        "skillChargedShare": 0.7,
+        "preferenceShare": 0.3,
+        "preferenceEditCostCharge": 0,
+        "unclearReliabilityUpdate": 0,
+        "malformedSplitRejected": true,
+        "whitespaceOnlyEditMass": 0,
+        "recordedHunksRetained": true,
+        "consumerOutputsCiteSettledDelta": true
+      },
+      "waitsOn": [
+        "typed proposal recorded-op/hunk settlement",
+        "typed attribution judgment/projector result",
+        "typed evidence-bearing learning and preference views"
+      ]
+    },
+    {
+      "id": "SKILLS-08",
+      "name": "Consent graduation is an offer should work",
+      "surface": "HTTP",
+      "rows": [
+        "OF-399"
+      ],
+      "source": [
+        "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#mcp-actor-ceilings",
+        "/oneiron/core/oneiron-arch-0003-semantic-memory/#learning",
+        "/registry/oneiron/#OF-399"
+      ],
+      "steps": [
+        "settle streak",
+        "read offer",
+        "decline",
+        "settle again",
+        "owner accepts",
+        "accumulate undo signals"
+      ],
+      "inputs": {
+        "policyIntent": {
+          "streakUntouched": 4,
+          "minimumSamples": 4,
+          "untouchedProbabilityGuard": 0.5,
+          "maximumMeanEditCost": 0.1,
+          "snoozeBackoffSeconds": 0,
+          "undoSignalsForDemotion": 2
+        },
+        "policyIntentIsWireDto": false,
+        "initialEvidence": [
+          "approved_amended",
+          "rejected",
+          "approved_untouched",
+          "approved_untouched",
+          "approved_untouched",
+          "approved_untouched"
+        ],
+        "decline": "not-now",
+        "reEarnedEvidence": [
+          "approved_untouched",
+          "approved_untouched",
+          "approved_untouched",
+          "approved_untouched"
+        ],
+        "acceptBy": "owner",
+        "demotionEvidence": [
+          "undo",
+          "undo"
+        ],
+        "scope": [
+          "operation kind",
+          "target class",
+          "skill/agent"
+        ]
+      },
+      "expectedFacts": {
+        "offerCreatesGrant": false,
+        "declineCreatesGrant": false,
+        "streakMustBeReEarned": true,
+        "grantCountAfterOwnerAccept": 1,
+        "agentMayAccept": false,
+        "grantPersistsAfterRestart": true,
+        "offerLinkedToGrantReceipt": true,
+        "demotionReceipted": true,
+        "demotionErasesEvidence": false,
+        "ownerCanReverseDemotion": true
+      },
+      "waitsOn": [
+        "typed owner-configured graduation policy accepting a short backoff",
+        "typed outcome settlement and trust-table read",
+        "typed offer/answer with existing standing grant",
+        "typed undo evidence and demotion receipt"
+      ]
+    }
+  ]
+}

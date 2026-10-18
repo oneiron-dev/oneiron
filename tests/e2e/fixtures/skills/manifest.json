@@ -1,0 +1,307 @@
+{
+  "version": 1,
+  "area": "skills",
+  "assets": [
+    {
+      "id": "skills-clean-v1",
+      "path": "trees/clean-v1/SKILL.md",
+      "source": {
+        "uri": "independent-oracle:skills-e2e-20261018/trees/clean-v1/SKILL.md",
+        "revision": "6c539dad69d30438f8e729123e179e6c15ceb25596cfc868883486b48525740a"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "6c539dad69d30438f8e729123e179e6c15ceb25596cfc868883486b48525740a",
+      "expectedFacts": {
+        "skillName": "normalize-numbers",
+        "version": "1.0.0",
+        "code": false,
+        "network": false,
+        "allowedTools": []
+      },
+      "scenarios": [
+        "SKILLS-01",
+        "SKILLS-02",
+        "SKILLS-03",
+        "SKILLS-04",
+        "SKILLS-05",
+        "SKILLS-06"
+      ],
+      "requires": []
+    },
+    {
+      "id": "skills-widened-v2",
+      "path": "trees/widened-v2/SKILL.md",
+      "source": {
+        "uri": "independent-oracle:skills-e2e-20261018/trees/widened-v2/SKILL.md",
+        "revision": "089a58f78e4ee67f1863c4491dcc04d476b3e227fcb374dc92d717a3568dc22c"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "089a58f78e4ee67f1863c4491dcc04d476b3e227fcb374dc92d717a3568dc22c",
+      "expectedFacts": {
+        "skillName": "normalize-numbers",
+        "version": "2.0.0",
+        "newAllowedTools": [
+          "fixture-mcp:lookup"
+        ],
+        "requiresOwnerReconsent": true
+      },
+      "scenarios": [
+        "SKILLS-02"
+      ],
+      "requires": []
+    },
+    {
+      "id": "skills-suspicious",
+      "path": "trees/suspicious/SKILL.md",
+      "source": {
+        "uri": "independent-oracle:skills-e2e-20261018/trees/suspicious/SKILL.md",
+        "revision": "2d8aa162a7ef03027d6656016faa5705e793bfd798b1894000a9b4b89e6e66c8"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "2d8aa162a7ef03027d6656016faa5705e793bfd798b1894000a9b4b89e6e66c8",
+      "expectedFacts": {
+        "inert": true,
+        "purpose": "sandbox-escape rule-hit admission input; never execute",
+        "expectedLoadable": false
+      },
+      "scenarios": [
+        "SKILLS-03"
+      ],
+      "requires": []
+    },
+    {
+      "id": "skills-code-pack",
+      "path": "trees/code-pack/PACK.md",
+      "source": {
+        "uri": "independent-oracle:skills-e2e-20261018/trees/code-pack/PACK.md",
+        "revision": "f9cff3ae23408d881cbcf9cb892c3b4c6ffdb61d5aa8df05c8c46d024c90127e"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "f9cff3ae23408d881cbcf9cb892c3b4c6ffdb61d5aa8df05c8c46d024c90127e",
+      "expectedFacts": {
+        "kind": "capability",
+        "codeBearing": true,
+        "withCodeAutoInstallOff": "candidate"
+      },
+      "scenarios": [
+        "SKILLS-03"
+      ],
+      "requires": []
+    },
+    {
+      "id": "skills-code-pack-helper",
+      "path": "trees/code-pack/scripts/helper.js",
+      "source": {
+        "uri": "independent-oracle:skills-e2e-20261018/trees/code-pack/scripts/helper.js",
+        "revision": "a1d05566aefd3ac89d781662774169ad73b9b37f16336fa869c5638b75953b45"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "a1d05566aefd3ac89d781662774169ad73b9b37f16336fa869c5638b75953b45",
+      "expectedFacts": {
+        "network": false,
+        "hostFiles": false,
+        "executionDuringAdmission": false
+      },
+      "scenarios": [
+        "SKILLS-03"
+      ],
+      "requires": []
+    },
+    {
+      "id": "skills-custom-fork",
+      "path": "trees/custom/SKILL.md",
+      "source": {
+        "uri": "independent-oracle:skills-e2e-20261018/trees/custom/SKILL.md",
+        "revision": "9f8912295178add3313bc987a4cf188f499761d5202415c3380b3a0f0b2c46e3"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "9f8912295178add3313bc987a4cf188f499761d5202415c3380b3a0f0b2c46e3",
+      "expectedFacts": {
+        "ownerAuthored": true,
+        "mustSurviveRestoreDefaults": true
+      },
+      "scenarios": [
+        "SKILLS-03",
+        "SKILLS-04"
+      ],
+      "requires": []
+    },
+    {
+      "id": "skills-bootstrap-improver",
+      "path": "bootstrap/skill-optimize/SKILL.md",
+      "source": {
+        "uri": "https://github.com/oneiron-dev/oneiron/blob/3a829fe65a7282da4a5e44733ba35cc36fa36b80/skills/skill-optimize/SKILL.md",
+        "revision": "3a829fe65a7282da4a5e44733ba35cc36fa36b80"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "a291eac6d8db05fc03e9f4d5b97a3b7c5c7054c617345d8c7345935fd99c8143",
+      "expectedFacts": {
+        "requiredBootstrapName": "skill-optimize",
+        "copy": "unmodified source; not vault data"
+      },
+      "scenarios": [
+        "SKILLS-04"
+      ],
+      "requires": []
+    },
+    {
+      "id": "skills-bootstrap-judge",
+      "path": "bootstrap/judge/SKILL.md",
+      "source": {
+        "uri": "https://github.com/oneiron-dev/oneiron/blob/3a829fe65a7282da4a5e44733ba35cc36fa36b80/skills/judge/SKILL.md",
+        "revision": "3a829fe65a7282da4a5e44733ba35cc36fa36b80"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "34d7470f7dfeaeb76ef9bf781ee82337737933f4fc626996e0388f4ab288ba23",
+      "expectedFacts": {
+        "requiredBootstrapName": "judge",
+        "copy": "unmodified source; not vault data"
+      },
+      "scenarios": [
+        "SKILLS-04"
+      ],
+      "requires": []
+    },
+    {
+      "id": "skills-bootstrap-goal-intake",
+      "path": "bootstrap/goal-intake/SKILL.md",
+      "source": {
+        "uri": "https://github.com/oneiron-dev/oneiron/blob/3a829fe65a7282da4a5e44733ba35cc36fa36b80/skills/goal-intake/SKILL.md",
+        "revision": "3a829fe65a7282da4a5e44733ba35cc36fa36b80"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "622e200fe97b54fbd4941bfdf4a402e29e64a96a19e811ccef6f967b696e533f",
+      "expectedFacts": {
+        "requiredBootstrapName": "goal-intake",
+        "copy": "unmodified source; not vault data"
+      },
+      "scenarios": [
+        "SKILLS-04"
+      ],
+      "requires": []
+    },
+    {
+      "id": "skills-bootstrap-wake",
+      "path": "bootstrap/wake/SKILL.md",
+      "source": {
+        "uri": "https://github.com/oneiron-dev/oneiron/blob/3a829fe65a7282da4a5e44733ba35cc36fa36b80/skills/wake/SKILL.md",
+        "revision": "3a829fe65a7282da4a5e44733ba35cc36fa36b80"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "56173e99efeca62ae68c2c52b5f00e5b3457fb636565b5c4b5c9bff958054378",
+      "expectedFacts": {
+        "requiredBootstrapName": "wake",
+        "copy": "unmodified source; not vault data"
+      },
+      "scenarios": [
+        "SKILLS-04"
+      ],
+      "requires": []
+    },
+    {
+      "id": "skills-bootstrap-licence",
+      "path": "bootstrap/LICENSE",
+      "source": {
+        "uri": "https://github.com/oneiron-dev/oneiron/blob/3a829fe65a7282da4a5e44733ba35cc36fa36b80/LICENSE",
+        "revision": "3a829fe65a7282da4a5e44733ba35cc36fa36b80"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "592bd401935bdd8d1ceef2efc2d295aadf8b519cc4e54012e85332ae14be4a8e",
+      "expectedFacts": {
+        "covers": "four unmodified bootstrap source snapshots"
+      },
+      "scenarios": [
+        "SKILLS-04"
+      ],
+      "requires": []
+    },
+    {
+      "id": "skills-hub-aliases",
+      "path": "hubs.json",
+      "source": {
+        "uri": "independent-oracle:skills-e2e-20261018/hubs.json",
+        "revision": "11f757770b471c8c1593bf7c417c7a501b25fce1ee21c00f49547d8bc86c7bbf"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "11f757770b471c8c1593bf7c417c7a501b25fce1ee21c00f49547d8bc86c7bbf",
+      "expectedFacts": {
+        "twoDistinctOrigins": true,
+        "sameInitialTree": true,
+        "immutableAssetBytes": true,
+        "wireReady": false
+      },
+      "scenarios": [
+        "SKILLS-02",
+        "SKILLS-04"
+      ],
+      "requires": []
+    },
+    {
+      "id": "skills-scenarios",
+      "path": "scenarios.json",
+      "source": {
+        "uri": "independent-oracle:skills-e2e-20261018/scenarios.json",
+        "revision": "8cd0daf48367d81dc245349b0d987a7eb10a34ad8f0995f78c5cd9c469b60286"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "8cd0daf48367d81dc245349b0d987a7eb10a34ad8f0995f78c5cd9c469b60286",
+      "expectedFacts": {
+        "scenarioCount": 8,
+        "registryRows": [
+          "OF-184",
+          "OF-206",
+          "OF-213",
+          "OF-214",
+          "OF-215",
+          "OF-379",
+          "OF-394",
+          "OF-395",
+          "OF-396",
+          "OF-397",
+          "OF-399",
+          "OF-400",
+          "OF-518"
+        ],
+        "oracle": "Canon-pinned design plus independently authored inputs; all flows blocked pending named typed doors."
+      },
+      "scenarios": [
+        "SKILLS-01",
+        "SKILLS-02",
+        "SKILLS-03",
+        "SKILLS-04",
+        "SKILLS-05",
+        "SKILLS-06",
+        "SKILLS-07",
+        "SKILLS-08"
+      ],
+      "requires": [
+        "public governed-tier setup/read",
+        "public pinned first-hub mirror setup",
+        "retrieval attribution evidence",
+        "sealed cohort/exposure and admission receipts",
+        "skill archive/restore",
+        "skill import/sync SDK calls",
+        "typed MCP skill execution and pack outcome settlement",
+        "typed MCP workflow execution and used-version receipt",
+        "typed SKILL_HUB registration/inspection",
+        "typed attribution judgment/projector result",
+        "typed bootstrap/hub/library reads",
+        "typed evidence-bearing learning and preference views",
+        "typed fork parent/frontier read",
+        "typed learning projection and completion observation",
+        "typed offer/answer with existing standing grant",
+        "typed outcome settlement and trust-table read",
+        "typed owner rule-policy setup",
+        "typed owner-configured graduation policy accepting a short backoff",
+        "typed proposal recorded-op/hunk settlement",
+        "typed selected-message conversion",
+        "typed skill admission/lifecycle reads",
+        "typed skill identity/provenance/lifecycle reads",
+        "typed skill_optimize start/result",
+        "typed undo evidence and demotion receipt",
+        "typed useful-upstream review and provider-bound paired evidence",
+        "vault.skills.restoreDefaults SDK call"
+      ]
+    }
+  ]
+}
