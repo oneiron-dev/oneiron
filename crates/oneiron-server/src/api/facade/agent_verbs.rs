@@ -77,6 +77,16 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.tagging.history", post(facade_route))
         .route("/vault.tagging.mentions", post(facade_route))
         .route("/vault.affect.claims.consolidate", post(facade_route))
+        .route("/vault.affect.coping.record", post(facade_route))
+        .route("/vault.affect.coping.update", post(facade_route))
+        .route("/vault.affect.coping.aggregate", post(facade_route))
+        .route("/vault.affect.wellness.policy.get", post(facade_route))
+        .route(
+            "/vault.affect.wellness.policy.configure",
+            post(facade_route),
+        )
+        .route("/vault.affect.wellness.derive", post(facade_route))
+        .route("/vault.affect.wellness.get", post(facade_route))
         .route("/vault.retrieval.recall", post(facade_route))
         .route("/vault.retrieval.runs", post(facade_route))
         .route("/vault.retrieval.run", post(facade_route))
@@ -368,6 +378,20 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.consent.create_standing_grant", post(facade_route))
         .route("/vault.consent.registry", post(facade_route))
         .route("/vault.consent.revoke", post(facade_route))
+        .route("/vault.consent.graduation.policy", post(facade_route))
+        .route("/vault.consent.graduation.policy.set", post(facade_route))
+        .route("/vault.consent.graduation.policy.clear", post(facade_route))
+        .route("/vault.consent.graduation.stats", post(facade_route))
+        .route("/vault.consent.graduation.outcome", post(facade_route))
+        .route("/vault.consent.graduation.offers", post(facade_route))
+        .route("/vault.consent.graduation.answer", post(facade_route))
+        .route("/vault.consent.graduation.trust_table", post(facade_route))
+        .route(
+            "/vault.consent.graduation.settings.unpin",
+            post(facade_route),
+        )
+        .route("/vault.consent.graduation.demote", post(facade_route))
+        .route("/self.consent.graduation.demote", post(facade_route))
         .route("/vault.gate.policy.get", post(facade_route))
         .route("/vault.gate.policy.put", post(facade_route))
         .route("/vault.gate.policy.propose", post(facade_route))
@@ -641,6 +665,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.remember", post(facade_route))
         .route("/vault.claims.retract", post(facade_route))
         .route("/vault.forget", post(facade_route))
+        .route("/vault.booking.availability", post(facade_route))
+        .route("/vault.booking.book", post(facade_route))
+        .route("/vault.booking.reschedule", post(facade_route))
+        .route("/vault.booking.cancel", post(facade_route))
         .route("/vault.booking.constraint_turn", post(facade_route))
         .route("/vault.booking.page_token", post(facade_route))
         .route("/calendar.invite", post(facade_route))

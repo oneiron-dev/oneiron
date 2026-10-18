@@ -571,6 +571,69 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_affect_coping_record(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.affect.coping.record", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_affect_coping_update(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.affect.coping.update", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_affect_coping_aggregate(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.affect.coping.aggregate", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_affect_wellness_policy_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.affect.wellness.policy.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_affect_wellness_policy_configure(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.affect.wellness.policy.configure", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_affect_wellness_derive(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.affect.wellness.derive", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_affect_wellness_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.affect.wellness.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_retrieval_recall(
         &self,
         input: serde_json::Value,
@@ -2851,6 +2914,105 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.consent.revoke", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_graduation_policy(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.graduation.policy", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_graduation_policy_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.graduation.policy.set", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_graduation_policy_clear(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.graduation.policy.clear", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_graduation_stats(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.graduation.stats", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_graduation_outcome(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.graduation.outcome", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_graduation_offers(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.graduation.offers", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_graduation_answer(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.graduation.answer", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_graduation_trust_table(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.graduation.trust_table", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_graduation_settings_unpin(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.graduation.settings.unpin", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_graduation_demote(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.graduation.demote", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_consent_graduation_demote(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.consent.graduation.demote", input)
             .map_err(facade_error)
     }
     #[napi]
@@ -5192,6 +5354,39 @@ impl NativeClient {
     pub fn vault_forget(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.forget", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_booking_availability(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.booking.availability", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_booking_book(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.booking.book", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_booking_reschedule(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.booking.reschedule", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_booking_cancel(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.booking.cancel", input)
             .map_err(facade_error)
     }
     #[napi]

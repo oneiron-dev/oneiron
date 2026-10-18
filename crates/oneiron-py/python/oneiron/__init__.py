@@ -985,6 +985,12 @@ class Oneiron:
         @property
         def claims(self) -> "Oneiron._VaultAffectClaimsVerbs":
             return Oneiron._VaultAffectClaimsVerbs(self._client)
+        @property
+        def coping(self) -> "Oneiron._VaultAffectCopingVerbs":
+            return Oneiron._VaultAffectCopingVerbs(self._client)
+        @property
+        def wellness(self) -> "Oneiron._VaultAffectWellnessVerbs":
+            return Oneiron._VaultAffectWellnessVerbs(self._client)
     class _VaultAffectAnnotationsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -997,6 +1003,39 @@ class Oneiron:
         def consolidate(self, spec):
             """The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction."""
             return json.loads(_translate(lambda: self._client.vault_affect_claims_consolidate(json.dumps(spec))))
+    class _VaultAffectCopingVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def record(self, spec):
+            """Records a first coping outcome from two stored VAD-annotated turns for one person, with scoped claim admission and caller attribution; no factual claim is superseded."""
+            return json.loads(_translate(lambda: self._client.vault_affect_coping_record(json.dumps(spec))))
+        def update(self, spec):
+            """Updates an active coping aggregate from its strategy turn and a later annotated turn through the existing engine transaction, preserving scope and both evidence refs."""
+            return json.loads(_translate(lambda: self._client.vault_affect_coping_update(json.dumps(spec))))
+        def aggregate(self, spec):
+            """Reads all admitted active coping aggregates for one person and optional exact scope, including unsuccessful outcomes and their attribution and evidence refs."""
+            return json.loads(_translate(lambda: self._client.vault_affect_coping_aggregate(json.dumps(spec))))
+    class _VaultAffectWellnessVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def policy(self) -> "Oneiron._VaultAffectWellnessPolicyVerbs":
+            return Oneiron._VaultAffectWellnessPolicyVerbs(self._client)
+        def derive(self, spec):
+            """Derives one person's non-clinical wellness projection using the existing state measurements and configured mode bands, with a routed receipt and source refs."""
+            return json.loads(_translate(lambda: self._client.vault_affect_wellness_derive(json.dumps(spec))))
+        def get(self, spec):
+            """Reads one person's measured wellness state, configured advisory mode and coping aggregates with source refs, without refreshing or revising factual claims."""
+            return json.loads(_translate(lambda: self._client.vault_affect_wellness_get(json.dumps(spec))))
+    class _VaultAffectWellnessPolicyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec=None):
+            """Reads the configured non-clinical wellness window, targets and advisory mode bands as the owner; absent policy stays absent."""
+            return json.loads(_translate(lambda: self._client.vault_affect_wellness_policy_get(json.dumps({} if spec is None else spec))))
+        def configure(self, spec):
+            """Configures or clears the existing action-mode policy as the owner; no universal wellness cutoff or diagnostic label is supplied by the engine."""
+            return json.loads(_translate(lambda: self._client.vault_affect_wellness_policy_configure(json.dumps(spec))))
     class _VaultTaggingVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2082,6 +2121,54 @@ class Oneiron:
         def revoke(self, spec):
             """The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted."""
             return json.loads(_translate(lambda: self._client.vault_consent_revoke(json.dumps(spec))))
+        @property
+        def graduation(self) -> "Oneiron._VaultConsentGraduationVerbs":
+            return Oneiron._VaultConsentGraduationVerbs(self._client)
+    class _VaultConsentGraduationVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def policy(self) -> "Oneiron._VaultConsentGraduationPolicyVerbs":
+            return Oneiron._VaultConsentGraduationPolicyVerbs(self._client)
+        def stats(self, spec):
+            """Reads one exact graduation scope outcome history and current consent posture."""
+            return json.loads(_translate(lambda: self._client.vault_consent_graduation_stats(json.dumps(spec))))
+        def outcome(self, spec):
+            """The owner records an untouched, amended or rejected proposal ruling, receipted and folded through the existing ramp."""
+            return json.loads(_translate(lambda: self._client.vault_consent_graduation_outcome(json.dumps(spec))))
+        def offers(self, spec):
+            """Reads earned, unsuppressed graduation offers with thresholds, streaks and before/after reach; reading grants nothing."""
+            return json.loads(_translate(lambda: self._client.vault_consent_graduation_offers(json.dumps(spec))))
+        def answer(self, spec):
+            """The owner answers auto, not-now or manual_pinned; only auto mints the existing standing grant, and not-now resets the streak."""
+            return json.loads(_translate(lambda: self._client.vault_consent_graduation_answer(json.dumps(spec))))
+        def trust_table(self, spec):
+            """Reads the owner trust table: scope, counts, effective threshold, snooze or manual pin, live grant and offer reach."""
+            return json.loads(_translate(lambda: self._client.vault_consent_graduation_trust_table(json.dumps(spec))))
+        @property
+        def settings(self) -> "Oneiron._VaultConsentGraduationSettingsVerbs":
+            return Oneiron._VaultConsentGraduationSettingsVerbs(self._client)
+        def demote(self, spec):
+            """The owner demotes an exact scope to propose, revoking its live grant and recording the existing durable demotion receipt."""
+            return json.loads(_translate(lambda: self._client.vault_consent_graduation_demote(json.dumps(spec))))
+    class _VaultConsentGraduationPolicyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Reads runtime consent-graduation policy rows and the effective row for an optional exact scope."""
+            return json.loads(_translate(lambda: self._client.vault_consent_graduation_policy(json.dumps(spec))))
+        def set(self, spec):
+            """The owner sets a scope-pattern streak, posterior guard and two snooze backoffs; zero-second backoff is supported."""
+            return json.loads(_translate(lambda: self._client.vault_consent_graduation_policy_set(json.dumps(spec))))
+        def clear(self, spec):
+            """The owner clears one runtime graduation policy row; scopes fall back to the next matching policy."""
+            return json.loads(_translate(lambda: self._client.vault_consent_graduation_policy_clear(json.dumps(spec))))
+    class _VaultConsentGraduationSettingsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def unpin(self, spec):
+            """The owner reopens a pinned or snoozed graduation scope in settings; no grant is created."""
+            return json.loads(_translate(lambda: self._client.vault_consent_graduation_settings_unpin(json.dumps(spec))))
     class _VaultGateVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3103,6 +3190,18 @@ class Oneiron:
     class _VaultBookingVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def availability(self, spec):
+            """Lists ranked public slots on a live published booking page as the caller, through the shared booking admission and solver without exposing busy sources."""
+            return json.loads(_translate(lambda: self._client.vault_booking_availability(json.dumps(spec))))
+        def book(self, spec):
+            """Holds or confirms a real slot on a live published booking page as the caller, through the shared admission and home-node lifecycle with opaque session-bound tokens."""
+            return json.loads(_translate(lambda: self._client.vault_booking_book(json.dumps(spec))))
+        def reschedule(self, spec):
+            """Moves a booking on a live published page using its reschedule token, preserving EVENT and UID and replaying without another passport revision."""
+            return json.loads(_translate(lambda: self._client.vault_booking_reschedule(json.dumps(spec))))
+        def cancel(self, spec):
+            """Cancels a booking on a live published page using its cancel token, preserving EVENT and UID and replaying without another passport revision."""
+            return json.loads(_translate(lambda: self._client.vault_booking_cancel(json.dumps(spec))))
         def constraint_turn(self, spec):
             """Parses one scheduling constraint on a live published booking page as the caller, returning public slot controls, an email continuation or a deflect; this never holds or confirms a booking."""
             return json.loads(_translate(lambda: self._client.vault_booking_constraint_turn(json.dumps(spec))))
@@ -3556,6 +3655,9 @@ class Oneiron:
         @property
         def off_record(self) -> "Oneiron._SelfOffRecordVerbs":
             return Oneiron._SelfOffRecordVerbs(self._client)
+        @property
+        def consent(self) -> "Oneiron._SelfConsentVerbs":
+            return Oneiron._SelfConsentVerbs(self._client)
         def use(self, spec):
             """Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value."""
             return json.loads(_translate(lambda: self._client.self_use(json.dumps(spec))))
@@ -3718,6 +3820,18 @@ class Oneiron:
         def execute(self, spec):
             """The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""
             return json.loads(_translate(lambda: self._client.self_off_record_execute(json.dumps(spec))))
+    class _SelfConsentVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def graduation(self) -> "Oneiron._SelfConsentGraduationVerbs":
+            return Oneiron._SelfConsentGraduationVerbs(self._client)
+    class _SelfConsentGraduationVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def demote(self, spec):
+            """The bound actor transparently gives up only its own ramp scope authority, with the existing durable demotion receipt."""
+            return json.loads(_translate(lambda: self._client.self_consent_graduation_demote(json.dumps(spec))))
     class _SelfSecretsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

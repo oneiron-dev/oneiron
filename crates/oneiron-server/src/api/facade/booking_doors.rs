@@ -1,17 +1,20 @@
-//! Typed booking-page discovery and the published constraint front.
+//! Typed booking-page discovery, published lifecycle and constraint front.
 use std::sync::Arc;
 
 use oneiron::EntityId;
+use oneiron::booking::agent_api::{BookingOperationRequest, BookingOperationResponse};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{
+    BookingAvailabilityRequest, BookingBookRequest, BookingCancelRequest,
     BookingConstraintTurnRequest, BookingConstraintTurnResponse, BookingPageTokenRequest,
-    BookingPageTokenResponse,
+    BookingPageTokenResponse, BookingRescheduleRequest,
 };
 
 use super::FacadeApiError;
 use super::host_doors::{Listed, internal, refused};
 use crate::api::booking::{
-    booking_page_token, credential_transport_context, resolve_booking_page_listing,
+    booking_page_token, credential_transport_context, execute_booking_operation,
+    resolve_booking_page_listing,
     resolve_public_booking_page, run_public_constraint_turn,
 };
 use crate::auth::CoreAuth;
@@ -68,4 +71,68 @@ pub(crate) async fn vault_booking_constraint_turn(
     run_public_constraint_turn(server, authority, input.turn, &transport)
         .await
         .map_err(|error| FacadeApiError::from(error).into_memory_error())
+}
+
+/// All lifecycle calls use the caller's own credential and the existing
+/// executor. It binds the live public page, admits once, checks action-token
+/// scope and runs the home-node writer; no transport invents a peer address.
+async fn booking_operation(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    page_token: String,
+    operation: BookingOperationRequest,
+) -> MemoryResult<BookingOperationResponse> {
+    let transport = credential_transport_context(server, auth)
+        .map_err(|error| FacadeApiError::from(error).into_memory_error())?;
+    execute_booking_operation(server, &page_token, operation, &transport)
+        .await
+        .map_err(|error| FacadeApiError::from(error).into_memory_error())
+}
+
+pub(crate) async fn vault_booking_availability(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    request: BookingAvailabilityRequest,
+) -> MemoryResult<BookingOperationResponse> {
+    let BookingAvailabilityRequest::Availability { page_token, input } = request;
+    booking_operation(
+        server,
+        auth,
+        page_token,
+        BookingOperationRequest::Availability(input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_booking_book(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    request: BookingBookRequest,
+) -> MemoryResult<BookingOperationResponse> {
+    let BookingBookRequest::Book { page_token, input } = request;
+    booking_operation(server, auth, page_token, BookingOperationRequest::Book(input)).await
+}
+
+pub(crate) async fn vault_booking_reschedule(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    request: BookingRescheduleRequest,
+) -> MemoryResult<BookingOperationResponse> {
+    let BookingRescheduleRequest::Reschedule { page_token, input } = request;
+    booking_operation(
+        server,
+        auth,
+        page_token,
+        BookingOperationRequest::Reschedule(input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_booking_cancel(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    request: BookingCancelRequest,
+) -> MemoryResult<BookingOperationResponse> {
+    let BookingCancelRequest::Cancel { page_token, input } = request;
+    booking_operation(server, auth, page_token, BookingOperationRequest::Cancel(input)).await
 }

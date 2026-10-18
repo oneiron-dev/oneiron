@@ -14,12 +14,13 @@
 //!    are a rebuildable projection (CID-7): every input is a durable,
 //!    receipt-visible act, and [`Vault::rebuild_ramp_stats_from_receipts`](crate::Vault::rebuild_ramp_stats_from_receipts)
 //!    drops the whole table and refolds those acts, landing byte-identically
-//!    on what incremental maintenance produced. There are exactly two input
-//!    families, and NOTHING moves a counter outside them:
+//!    on what incremental maintenance produced. Outcomes, demotions and
+//!    graduation-answer streak resets all have durable witnesses:
 //!    - identity-topology **resolution events** (the type-76 ledger, which the
 //!      ARCH-0055 r7 proposal-outcome receipts project), and
 //!    - this module's own append-only rows — door-recorded outcomes and
-//!      demotions — which project as `Gate` receipts (surface 4 below).
+//!      demotions — which project as `Gate` receipts (surface 4 below), and
+//!    - graduation answers that reset the streak, also `Gate` receipts.
 //!
 //!    The refold reads the LEDGER for the first family rather than its receipt
 //!    projection: `identity_topology_events_in_txn` is documented as the one
@@ -76,10 +77,11 @@
 //!   [`Vault::set_ramp_streak_floor`](crate::Vault::set_ramp_streak_floor) survives unchanged as the per-scope
 //!   override, and is the most specific statement in that resolution.
 //! * **Whether to ASK.** Snooze and manual-pin are ED-05 state, consulted by
-//!   [`Vault::graduation_offers`](crate::Vault::graduation_offers) alone. [`RampState`] is untouched by them on
-//!   purpose: it answers what authority is live, and an offer the owner
-//!   snoozed is still an offer they may accept.
+//!   [`Vault::graduation_offers`](crate::Vault::graduation_offers). A decline
+//!   resets the streak, so backoff expiry alone never re-earns an offer.
+//!   A manual pin must be cleared in settings before acceptance.
 
+pub mod api;
 mod doors;
 mod fold;
 mod receipts;
@@ -94,7 +96,7 @@ pub use self::state::{DemotionReason, RampState, ScopeOutcomeStats};
 pub(crate) use self::doors::accept_graduation_offer_in_txn;
 pub(crate) use self::fold::{
     active_grant_ref_in_txn, offer_is_standing_in_txn, ramp_floor_override_in_txn,
-    ramp_stats_in_txn, record_ramp_outcome_in_txn,
+    ramp_stats_in_txn, record_ramp_outcome_in_txn, reset_ramp_streak_in_txn,
 };
 pub(crate) use self::receipts::ramp_receipts;
 

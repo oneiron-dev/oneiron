@@ -9,8 +9,8 @@ use super::alloc::{
 use super::guard::{ffi_guard, with_optional_slice, with_required_slice, with_vault, write_out};
 use super::parse::{
     convert_query_vector, created_at_to_i64, engine, id_array, memory_result, parse_edge_kind,
-    parse_entity_id, parse_pack_format, parse_search_limit, parse_u8, string_from_optional,
-    string_from_required, validate_query_len,
+    parse_entity_id, parse_pack_format, parse_search_limit, parse_u8, refuse_unserved_media,
+    string_from_optional, string_from_required, validate_query_len,
 };
 use super::types::{
     DEFAULT_FFI_SEARCH_LIMIT, OneironBuffer, OneironEdgeInfo, OneironEdgeInfoArray,
@@ -257,10 +257,18 @@ pub unsafe extern "C" fn oneiron_vault_put_vector(
 
 /// Run a context-pack query and return UTF-8 bytes.
 ///
-/// `query_text_ptr`, `query_vector_ptr`, and `format_ptr` are optional: pass a
-/// null pointer with length 0 to omit. If `limit_is_set == 0`, the default
-/// limit of 10 is used; otherwise `limit` must be at most 1000. The returned
-/// buffer must be released with `oneiron_buffer_free`.
+/// `query_text_ptr`, `query_vector_ptr`, `format_ptr` and `media_json_ptr`
+/// are optional: pass a null pointer with length 0 to omit. If
+/// `limit_is_set == 0`, the default limit of 10 is used; otherwise `limit`
+/// must be at most 1000. The returned buffer must be released with
+/// `oneiron_buffer_free`.
+///
+/// `media_json_ptr` is UTF-8 JSON of the served context pack's media query
+/// (OF-370): `{"space": "<ai.embed rung id>@<provider>", "mime": "image/png",
+/// "bytes_b64": "<standard base64>", "kinds": ["image"]}`, `kinds` optional.
+/// JSON of another shape is `InvalidArg`. This library serves no `ai.embed`
+/// rung, so once every input validates a pack naming media is refused
+/// `ModelUnavailable` and nothing is packed: the media is never dropped.
 ///
 /// # Safety
 ///
@@ -278,6 +286,8 @@ pub unsafe extern "C" fn oneiron_vault_context_pack(
     limit_is_set: u8,
     format_ptr: *const u8,
     format_len: usize,
+    media_json_ptr: *const u8,
+    media_json_len: usize,
     out_buffer: *mut OneironBuffer,
 ) -> OneironStatus {
     ffi_guard(|| {
@@ -301,6 +311,7 @@ pub unsafe extern "C" fn oneiron_vault_context_pack(
             };
             let format = string_from_optional(format_ptr, format_len)?;
             let pack_format = parse_pack_format(format.as_deref());
+            refuse_unserved_media(media_json_ptr, media_json_len)?;
             // The limit caps the pack itself: the channels fetch their
             // fusion list length whatever they are asked for.
             let mut builder = handle.vault.context_pack().format(pack_format).limit(limit);

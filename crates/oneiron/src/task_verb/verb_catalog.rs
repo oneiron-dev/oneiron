@@ -76,6 +76,13 @@ pub enum AgentVerb {
     VaultTaggingHistory,
     VaultTaggingMentions,
     VaultAffectClaimsConsolidate,
+    VaultAffectCopingRecord,
+    VaultAffectCopingUpdate,
+    VaultAffectCopingAggregate,
+    VaultAffectWellnessPolicyGet,
+    VaultAffectWellnessPolicyConfigure,
+    VaultAffectWellnessDerive,
+    VaultAffectWellnessGet,
     VaultRetrievalRecall,
     VaultRetrievalRuns,
     VaultRetrievalRun,
@@ -331,6 +338,17 @@ pub enum AgentVerb {
     VaultConsentCreateStandingGrant,
     VaultConsentRegistry,
     VaultConsentRevoke,
+    VaultConsentGraduationPolicy,
+    VaultConsentGraduationPolicySet,
+    VaultConsentGraduationPolicyClear,
+    VaultConsentGraduationStats,
+    VaultConsentGraduationOutcome,
+    VaultConsentGraduationOffers,
+    VaultConsentGraduationAnswer,
+    VaultConsentGraduationTrustTable,
+    VaultConsentGraduationSettingsUnpin,
+    VaultConsentGraduationDemote,
+    SelfConsentGraduationDemote,
     VaultGatePolicyGet,
     VaultGatePolicyPut,
     VaultGatePolicyPropose,
@@ -613,6 +631,10 @@ pub enum AgentVerb {
     VaultRemember,
     VaultClaimsRetract,
     VaultForget,
+    VaultBookingAvailability,
+    VaultBookingBook,
+    VaultBookingReschedule,
+    VaultBookingCancel,
     VaultBookingConstraintTurn,
     VaultBookingPageToken,
     CalendarInvite,
@@ -873,6 +895,13 @@ impl AgentVerb {
         Self::VaultTaggingHistory,
         Self::VaultTaggingMentions,
         Self::VaultAffectClaimsConsolidate,
+        Self::VaultAffectCopingRecord,
+        Self::VaultAffectCopingUpdate,
+        Self::VaultAffectCopingAggregate,
+        Self::VaultAffectWellnessPolicyGet,
+        Self::VaultAffectWellnessPolicyConfigure,
+        Self::VaultAffectWellnessDerive,
+        Self::VaultAffectWellnessGet,
         Self::VaultRetrievalRecall,
         Self::VaultRetrievalRuns,
         Self::VaultRetrievalRun,
@@ -1128,6 +1157,17 @@ impl AgentVerb {
         Self::VaultConsentCreateStandingGrant,
         Self::VaultConsentRegistry,
         Self::VaultConsentRevoke,
+        Self::VaultConsentGraduationPolicy,
+        Self::VaultConsentGraduationPolicySet,
+        Self::VaultConsentGraduationPolicyClear,
+        Self::VaultConsentGraduationStats,
+        Self::VaultConsentGraduationOutcome,
+        Self::VaultConsentGraduationOffers,
+        Self::VaultConsentGraduationAnswer,
+        Self::VaultConsentGraduationTrustTable,
+        Self::VaultConsentGraduationSettingsUnpin,
+        Self::VaultConsentGraduationDemote,
+        Self::SelfConsentGraduationDemote,
         Self::VaultGatePolicyGet,
         Self::VaultGatePolicyPut,
         Self::VaultGatePolicyPropose,
@@ -1410,6 +1450,10 @@ impl AgentVerb {
         Self::VaultRemember,
         Self::VaultClaimsRetract,
         Self::VaultForget,
+        Self::VaultBookingAvailability,
+        Self::VaultBookingBook,
+        Self::VaultBookingReschedule,
+        Self::VaultBookingCancel,
         Self::VaultBookingConstraintTurn,
         Self::VaultBookingPageToken,
         Self::CalendarInvite,
@@ -1673,6 +1717,13 @@ impl AgentVerb {
             Self::VaultTaggingHistory => "vault.tagging.history",
             Self::VaultTaggingMentions => "vault.tagging.mentions",
             Self::VaultAffectClaimsConsolidate => "vault.affect.claims.consolidate",
+            Self::VaultAffectCopingRecord => "vault.affect.coping.record",
+            Self::VaultAffectCopingUpdate => "vault.affect.coping.update",
+            Self::VaultAffectCopingAggregate => "vault.affect.coping.aggregate",
+            Self::VaultAffectWellnessPolicyGet => "vault.affect.wellness.policy.get",
+            Self::VaultAffectWellnessPolicyConfigure => "vault.affect.wellness.policy.configure",
+            Self::VaultAffectWellnessDerive => "vault.affect.wellness.derive",
+            Self::VaultAffectWellnessGet => "vault.affect.wellness.get",
             Self::VaultRetrievalRecall => "vault.retrieval.recall",
             Self::VaultRetrievalRuns => "vault.retrieval.runs",
             Self::VaultRetrievalRun => "vault.retrieval.run",
@@ -1940,6 +1991,17 @@ impl AgentVerb {
             Self::VaultConsentCreateStandingGrant => "vault.consent.create_standing_grant",
             Self::VaultConsentRegistry => "vault.consent.registry",
             Self::VaultConsentRevoke => "vault.consent.revoke",
+            Self::VaultConsentGraduationPolicy => "vault.consent.graduation.policy",
+            Self::VaultConsentGraduationPolicySet => "vault.consent.graduation.policy.set",
+            Self::VaultConsentGraduationPolicyClear => "vault.consent.graduation.policy.clear",
+            Self::VaultConsentGraduationStats => "vault.consent.graduation.stats",
+            Self::VaultConsentGraduationOutcome => "vault.consent.graduation.outcome",
+            Self::VaultConsentGraduationOffers => "vault.consent.graduation.offers",
+            Self::VaultConsentGraduationAnswer => "vault.consent.graduation.answer",
+            Self::VaultConsentGraduationTrustTable => "vault.consent.graduation.trust_table",
+            Self::VaultConsentGraduationSettingsUnpin => "vault.consent.graduation.settings.unpin",
+            Self::VaultConsentGraduationDemote => "vault.consent.graduation.demote",
+            Self::SelfConsentGraduationDemote => "self.consent.graduation.demote",
             Self::VaultGatePolicyGet => "vault.gate.policy.get",
             Self::VaultGatePolicyPut => "vault.gate.policy.put",
             Self::VaultGatePolicyPropose => "vault.gate.policy.propose",
@@ -2228,6 +2290,10 @@ impl AgentVerb {
             Self::VaultRemember => "vault.remember",
             Self::VaultClaimsRetract => "vault.claims.retract",
             Self::VaultForget => "vault.forget",
+            Self::VaultBookingAvailability => "vault.booking.availability",
+            Self::VaultBookingBook => "vault.booking.book",
+            Self::VaultBookingReschedule => "vault.booking.reschedule",
+            Self::VaultBookingCancel => "vault.booking.cancel",
             Self::VaultBookingConstraintTurn => "vault.booking.constraint_turn",
             Self::VaultBookingPageToken => "vault.booking.page_token",
             Self::CalendarInvite => "calendar.invite",
@@ -2491,6 +2557,13 @@ impl AgentVerb {
                 | Self::VaultTaggingHistory
                 | Self::VaultTaggingMentions
                 | Self::VaultAffectClaimsConsolidate
+                | Self::VaultAffectCopingRecord
+                | Self::VaultAffectCopingUpdate
+                | Self::VaultAffectCopingAggregate
+                | Self::VaultAffectWellnessPolicyGet
+                | Self::VaultAffectWellnessPolicyConfigure
+                | Self::VaultAffectWellnessDerive
+                | Self::VaultAffectWellnessGet
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
                 | Self::VaultRetrievalRun
@@ -2746,6 +2819,17 @@ impl AgentVerb {
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRegistry
                 | Self::VaultConsentRevoke
+                | Self::VaultConsentGraduationPolicy
+                | Self::VaultConsentGraduationPolicySet
+                | Self::VaultConsentGraduationPolicyClear
+                | Self::VaultConsentGraduationStats
+                | Self::VaultConsentGraduationOutcome
+                | Self::VaultConsentGraduationOffers
+                | Self::VaultConsentGraduationAnswer
+                | Self::VaultConsentGraduationTrustTable
+                | Self::VaultConsentGraduationSettingsUnpin
+                | Self::VaultConsentGraduationDemote
+                | Self::SelfConsentGraduationDemote
                 | Self::VaultGatePolicyGet
                 | Self::VaultGatePolicyPut
                 | Self::VaultGatePolicyPropose
@@ -3008,6 +3092,10 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultBookingAvailability
+                | Self::VaultBookingBook
+                | Self::VaultBookingReschedule
+                | Self::VaultBookingCancel
                 | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
                 | Self::CalendarInvite
@@ -3315,6 +3403,13 @@ impl AgentVerb {
                 | Self::VaultTaggingHistory
                 | Self::VaultTaggingMentions
                 | Self::VaultAffectClaimsConsolidate
+                | Self::VaultAffectCopingRecord
+                | Self::VaultAffectCopingUpdate
+                | Self::VaultAffectCopingAggregate
+                | Self::VaultAffectWellnessPolicyGet
+                | Self::VaultAffectWellnessPolicyConfigure
+                | Self::VaultAffectWellnessDerive
+                | Self::VaultAffectWellnessGet
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
                 | Self::VaultRetrievalRun
@@ -3570,6 +3665,17 @@ impl AgentVerb {
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRegistry
                 | Self::VaultConsentRevoke
+                | Self::VaultConsentGraduationPolicy
+                | Self::VaultConsentGraduationPolicySet
+                | Self::VaultConsentGraduationPolicyClear
+                | Self::VaultConsentGraduationStats
+                | Self::VaultConsentGraduationOutcome
+                | Self::VaultConsentGraduationOffers
+                | Self::VaultConsentGraduationAnswer
+                | Self::VaultConsentGraduationTrustTable
+                | Self::VaultConsentGraduationSettingsUnpin
+                | Self::VaultConsentGraduationDemote
+                | Self::SelfConsentGraduationDemote
                 | Self::VaultGatePolicyGet
                 | Self::VaultGatePolicyPut
                 | Self::VaultGatePolicyPropose
@@ -3832,6 +3938,10 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultBookingAvailability
+                | Self::VaultBookingBook
+                | Self::VaultBookingReschedule
+                | Self::VaultBookingCancel
                 | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
                 | Self::CalendarInvite
@@ -4068,6 +4178,8 @@ impl AgentVerb {
                 | Self::VaultLegalHoldsLog
                 | Self::VaultCourtesyDeleteSent
                 | Self::VaultCourtesyDeleteIncoming
+                | Self::VaultConsentGraduationOffers
+                | Self::VaultConsentGraduationTrustTable
                 | Self::VaultSealPending
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
@@ -4212,6 +4324,13 @@ impl AgentVerb {
                 | Self::VaultTaggingHistory
                 | Self::VaultTaggingMentions
                 | Self::VaultAffectClaimsConsolidate
+                | Self::VaultAffectCopingRecord
+                | Self::VaultAffectCopingUpdate
+                | Self::VaultAffectCopingAggregate
+                | Self::VaultAffectWellnessPolicyGet
+                | Self::VaultAffectWellnessPolicyConfigure
+                | Self::VaultAffectWellnessDerive
+                | Self::VaultAffectWellnessGet
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
                 | Self::VaultRetrievalRun
@@ -4463,6 +4582,17 @@ impl AgentVerb {
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRegistry
                 | Self::VaultConsentRevoke
+                | Self::VaultConsentGraduationPolicy
+                | Self::VaultConsentGraduationPolicySet
+                | Self::VaultConsentGraduationPolicyClear
+                | Self::VaultConsentGraduationStats
+                | Self::VaultConsentGraduationOutcome
+                | Self::VaultConsentGraduationOffers
+                | Self::VaultConsentGraduationAnswer
+                | Self::VaultConsentGraduationTrustTable
+                | Self::VaultConsentGraduationSettingsUnpin
+                | Self::VaultConsentGraduationDemote
+                | Self::SelfConsentGraduationDemote
                 | Self::VaultGatePolicyGet
                 | Self::VaultGatePolicyPut
                 | Self::VaultGatePolicyPropose
@@ -4744,6 +4874,10 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultBookingAvailability
+                | Self::VaultBookingBook
+                | Self::VaultBookingReschedule
+                | Self::VaultBookingCancel
                 | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
                 | Self::CalendarInvite
@@ -4946,6 +5080,10 @@ impl AgentVerb {
                 | Self::VaultRetrievalWeightsConfigure
                 | Self::VaultAffectAnnotationsPut
                 | Self::VaultAffectClaimsConsolidate
+                | Self::VaultAffectCopingRecord
+                | Self::VaultAffectCopingUpdate
+                | Self::VaultAffectWellnessPolicyConfigure
+                | Self::VaultAffectWellnessDerive
                 | Self::VaultRetrievalOutcomesPut
                 | Self::VaultRetrievalOutcomesEnd
                 | Self::VaultKvPut
@@ -5112,6 +5250,13 @@ impl AgentVerb {
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRevoke
+                | Self::VaultConsentGraduationPolicySet
+                | Self::VaultConsentGraduationPolicyClear
+                | Self::VaultConsentGraduationOutcome
+                | Self::VaultConsentGraduationAnswer
+                | Self::VaultConsentGraduationSettingsUnpin
+                | Self::VaultConsentGraduationDemote
+                | Self::SelfConsentGraduationDemote
                 | Self::VaultGatePolicyPut
                 | Self::VaultGatePolicyPropose
                 | Self::VaultGateCheckerSet
@@ -5274,6 +5419,9 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultBookingBook
+                | Self::VaultBookingReschedule
+                | Self::VaultBookingCancel
                 | Self::CalendarInvite
                 | Self::CalendarConnectorConfigure
                 | Self::CalendarConnectorPull
@@ -5493,6 +5641,13 @@ impl AgentVerb {
             Self::VaultTaggingHistory => &["spec"],
             Self::VaultTaggingMentions => &["spec"],
             Self::VaultAffectClaimsConsolidate => &["spec"],
+            Self::VaultAffectCopingRecord => &["spec"],
+            Self::VaultAffectCopingUpdate => &["spec"],
+            Self::VaultAffectCopingAggregate => &["spec"],
+            Self::VaultAffectWellnessPolicyGet => &["spec"],
+            Self::VaultAffectWellnessPolicyConfigure => &["spec"],
+            Self::VaultAffectWellnessDerive => &["spec"],
+            Self::VaultAffectWellnessGet => &["spec"],
             Self::VaultRetrievalRecall => &["spec"],
             Self::VaultRetrievalRuns => &["spec"],
             Self::VaultRetrievalRun => &["spec"],
@@ -5748,6 +5903,17 @@ impl AgentVerb {
             Self::VaultConsentCreateStandingGrant => &["spec"],
             Self::VaultConsentRegistry => &["spec"],
             Self::VaultConsentRevoke => &["spec"],
+            Self::VaultConsentGraduationPolicy => &["spec"],
+            Self::VaultConsentGraduationPolicySet => &["spec"],
+            Self::VaultConsentGraduationPolicyClear => &["spec"],
+            Self::VaultConsentGraduationStats => &["spec"],
+            Self::VaultConsentGraduationOutcome => &["spec"],
+            Self::VaultConsentGraduationOffers => &["spec"],
+            Self::VaultConsentGraduationAnswer => &["spec"],
+            Self::VaultConsentGraduationTrustTable => &["spec"],
+            Self::VaultConsentGraduationSettingsUnpin => &["spec"],
+            Self::VaultConsentGraduationDemote => &["spec"],
+            Self::SelfConsentGraduationDemote => &["spec"],
             Self::VaultGatePolicyGet => &["spec"],
             Self::VaultGatePolicyPut => &["spec"],
             Self::VaultGatePolicyPropose => &["spec"],
@@ -6030,6 +6196,10 @@ impl AgentVerb {
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
             Self::VaultForget => &["spec"],
+            Self::VaultBookingAvailability => &["spec"],
+            Self::VaultBookingBook => &["spec"],
+            Self::VaultBookingReschedule => &["spec"],
+            Self::VaultBookingCancel => &["spec"],
             Self::VaultBookingConstraintTurn => &["spec"],
             Self::VaultBookingPageToken => &["spec"],
             Self::CalendarInvite => &["spec"],
@@ -6291,6 +6461,13 @@ impl AgentVerb {
             Self::VaultTaggingHistory => &["spec"],
             Self::VaultTaggingMentions => &["spec"],
             Self::VaultAffectClaimsConsolidate => &["spec"],
+            Self::VaultAffectCopingRecord => &["spec"],
+            Self::VaultAffectCopingUpdate => &["spec"],
+            Self::VaultAffectCopingAggregate => &["spec"],
+            Self::VaultAffectWellnessPolicyGet => &["spec"],
+            Self::VaultAffectWellnessPolicyConfigure => &["spec"],
+            Self::VaultAffectWellnessDerive => &["spec"],
+            Self::VaultAffectWellnessGet => &["spec"],
             Self::VaultRetrievalRecall => &["spec"],
             Self::VaultRetrievalRuns => &["spec"],
             Self::VaultRetrievalRun => &["spec"],
@@ -6546,6 +6723,17 @@ impl AgentVerb {
             Self::VaultConsentCreateStandingGrant => &["spec"],
             Self::VaultConsentRegistry => &["spec"],
             Self::VaultConsentRevoke => &["spec"],
+            Self::VaultConsentGraduationPolicy => &["spec"],
+            Self::VaultConsentGraduationPolicySet => &["spec"],
+            Self::VaultConsentGraduationPolicyClear => &["spec"],
+            Self::VaultConsentGraduationStats => &["spec"],
+            Self::VaultConsentGraduationOutcome => &["spec"],
+            Self::VaultConsentGraduationOffers => &["spec"],
+            Self::VaultConsentGraduationAnswer => &["spec"],
+            Self::VaultConsentGraduationTrustTable => &["spec"],
+            Self::VaultConsentGraduationSettingsUnpin => &["spec"],
+            Self::VaultConsentGraduationDemote => &["spec"],
+            Self::SelfConsentGraduationDemote => &["spec"],
             Self::VaultGatePolicyGet => &["spec"],
             Self::VaultGatePolicyPut => &["spec"],
             Self::VaultGatePolicyPropose => &["spec"],
@@ -6828,6 +7016,10 @@ impl AgentVerb {
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
             Self::VaultForget => &["spec"],
+            Self::VaultBookingAvailability => &["spec"],
+            Self::VaultBookingBook => &["spec"],
+            Self::VaultBookingReschedule => &["spec"],
+            Self::VaultBookingCancel => &["spec"],
             Self::VaultBookingConstraintTurn => &["spec"],
             Self::VaultBookingPageToken => &["spec"],
             Self::CalendarInvite => &["spec"],
@@ -7227,6 +7419,27 @@ impl AgentVerb {
             }
             Self::VaultAffectClaimsConsolidate => {
                 "The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction."
+            }
+            Self::VaultAffectCopingRecord => {
+                "Records a first coping outcome from two stored VAD-annotated turns for one person, with scoped claim admission and caller attribution; no factual claim is superseded."
+            }
+            Self::VaultAffectCopingUpdate => {
+                "Updates an active coping aggregate from its strategy turn and a later annotated turn through the existing engine transaction, preserving scope and both evidence refs."
+            }
+            Self::VaultAffectCopingAggregate => {
+                "Reads all admitted active coping aggregates for one person and optional exact scope, including unsuccessful outcomes and their attribution and evidence refs."
+            }
+            Self::VaultAffectWellnessPolicyGet => {
+                "Reads the configured non-clinical wellness window, targets and advisory mode bands as the owner; absent policy stays absent."
+            }
+            Self::VaultAffectWellnessPolicyConfigure => {
+                "Configures or clears the existing action-mode policy as the owner; no universal wellness cutoff or diagnostic label is supplied by the engine."
+            }
+            Self::VaultAffectWellnessDerive => {
+                "Derives one person's non-clinical wellness projection using the existing state measurements and configured mode bands, with a routed receipt and source refs."
+            }
+            Self::VaultAffectWellnessGet => {
+                "Reads one person's measured wellness state, configured advisory mode and coping aggregates with source refs, without refreshing or revising factual claims."
             }
             Self::VaultRetrievalRecall => {
                 "Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle."
@@ -7970,6 +8183,39 @@ impl AgentVerb {
             }
             Self::VaultConsentRevoke => {
                 "The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted."
+            }
+            Self::VaultConsentGraduationPolicy => {
+                "Reads runtime consent-graduation policy rows and the effective row for an optional exact scope."
+            }
+            Self::VaultConsentGraduationPolicySet => {
+                "The owner sets a scope-pattern streak, posterior guard and two snooze backoffs; zero-second backoff is supported."
+            }
+            Self::VaultConsentGraduationPolicyClear => {
+                "The owner clears one runtime graduation policy row; scopes fall back to the next matching policy."
+            }
+            Self::VaultConsentGraduationStats => {
+                "Reads one exact graduation scope outcome history and current consent posture."
+            }
+            Self::VaultConsentGraduationOutcome => {
+                "The owner records an untouched, amended or rejected proposal ruling, receipted and folded through the existing ramp."
+            }
+            Self::VaultConsentGraduationOffers => {
+                "Reads earned, unsuppressed graduation offers with thresholds, streaks and before/after reach; reading grants nothing."
+            }
+            Self::VaultConsentGraduationAnswer => {
+                "The owner answers auto, not-now or manual_pinned; only auto mints the existing standing grant, and not-now resets the streak."
+            }
+            Self::VaultConsentGraduationTrustTable => {
+                "Reads the owner trust table: scope, counts, effective threshold, snooze or manual pin, live grant and offer reach."
+            }
+            Self::VaultConsentGraduationSettingsUnpin => {
+                "The owner reopens a pinned or snoozed graduation scope in settings; no grant is created."
+            }
+            Self::VaultConsentGraduationDemote => {
+                "The owner demotes an exact scope to propose, revoking its live grant and recording the existing durable demotion receipt."
+            }
+            Self::SelfConsentGraduationDemote => {
+                "The bound actor transparently gives up only its own ramp scope authority, with the existing durable demotion receipt."
             }
             Self::VaultGatePolicyGet => {
                 "The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions."
@@ -8760,6 +9006,18 @@ impl AgentVerb {
             }
             Self::VaultForget => {
                 "Retracts claims by exact claim or by subject and predicate; never a hard delete."
+            }
+            Self::VaultBookingAvailability => {
+                "Lists ranked public slots on a live published booking page as the caller, through the shared booking admission and solver without exposing busy sources."
+            }
+            Self::VaultBookingBook => {
+                "Holds or confirms a real slot on a live published booking page as the caller, through the shared admission and home-node lifecycle with opaque session-bound tokens."
+            }
+            Self::VaultBookingReschedule => {
+                "Moves a booking on a live published page using its reschedule token, preserving EVENT and UID and replaying without another passport revision."
+            }
+            Self::VaultBookingCancel => {
+                "Cancels a booking on a live published page using its cancel token, preserving EVENT and UID and replaying without another passport revision."
             }
             Self::VaultBookingConstraintTurn => {
                 "Parses one scheduling constraint on a live published booking page as the caller, returning public slot controls, an email continuation or a deflect; this never holds or confirms a booking."
