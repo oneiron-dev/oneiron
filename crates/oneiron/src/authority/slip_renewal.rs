@@ -110,7 +110,10 @@ fn renewal_ttl_secs(
 /// [`AuthorityFold::machine_proof_key`] reads its key: its trusted identity
 /// under this install's pin, else its live roster revision. A removed,
 /// conflicted, stale or held chain gives none.
-fn accepted_machine_profile(fold: &AuthorityFold, machine: EntityId) -> Option<&MachineProfile> {
+pub(super) fn accepted_machine_profile(
+    fold: &AuthorityFold,
+    machine: EntityId,
+) -> Option<&MachineProfile> {
     match fold.trusted_machine(machine) {
         Some(trusted) => Some(trusted.profile),
         None => fold
