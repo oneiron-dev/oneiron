@@ -48,8 +48,10 @@ pub(crate) const LIVE_RUN_INVALID: &str = "live_run_invalid";
 pub(crate) const LIVE_RUN_UNAVAILABLE: &str = "live_run_unavailable";
 /// The run's lease moved on.
 pub(crate) const LIVE_RUN_STALE: &str = "live_run_stale";
-/// The run is mid-entry or mid-action.
-pub(crate) const CODE_RUN_BUSY: &str = "code_run_busy";
+/// The run stayed mid-entry or mid-action for the whole guard wait. Its
+/// own code, apart from `execute_code`'s `code_run_busy` (FIX 3456), so
+/// each door states only its own hints.
+pub(crate) const LIVE_RUN_BUSY: &str = "live_run_busy";
 /// Another credential is attached to this lease generation, and the attach
 /// did not ask to rebind.
 pub(crate) const LIVE_RUN_ATTACHED: &str = "live_run_attached";
@@ -58,7 +60,7 @@ pub(crate) const LIVE_RUN_ATTACHED: &str = "live_run_attached";
 const HANDLE_TAG: &str = "lr1";
 
 /// How long an attach or action waits for the run's guard while an entry or
-/// another action holds it, before it answers [`CODE_RUN_BUSY`].
+/// another action holds it, before it answers [`LIVE_RUN_BUSY`].
 const LIVE_RUN_GUARD_WAIT: Duration = Duration::from_secs(5);
 
 /// Why a live-run attach or action was refused.
@@ -95,7 +97,7 @@ impl LiveRunRefusal {
             Self::Invalid => LIVE_RUN_INVALID,
             Self::Unavailable => LIVE_RUN_UNAVAILABLE,
             Self::Stale => LIVE_RUN_STALE,
-            Self::Busy => CODE_RUN_BUSY,
+            Self::Busy => LIVE_RUN_BUSY,
             Self::Attached => LIVE_RUN_ATTACHED,
         }
     }
