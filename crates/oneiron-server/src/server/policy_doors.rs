@@ -2,8 +2,8 @@
 use std::sync::Arc;
 
 use oneiron::policy_model::{
-    AttestedRelayDomain, AuthenticatedConnectionIdentity, EdgeServiceRegistry,
-    PolicyModelConfig, VaultSideVerdictSource,
+    AttestedRelayDomain, AuthenticatedConnectionIdentity, EdgeServiceRegistry, PolicyModelConfig,
+    VaultSideVerdictSource,
 };
 
 use super::SyncServer;
@@ -36,12 +36,21 @@ impl HostedPolicyRelay {
     ) -> oneiron::Result<Self> {
         let domain = AttestedRelayDomain::from_connection_identity(identity);
         oneiron::policy_model::doors::validate_hosted_relay_notice(&config, &unavailable_notice)?;
-        if registry.hosted_legal_policy(domain.service_identity()).is_none() {
+        if registry
+            .hosted_legal_policy(domain.service_identity())
+            .is_none()
+        {
             return Err(oneiron::Error::InvalidConfig(
                 "no hosted policy is bound to the attested relay".to_owned(),
             ));
         }
-        Ok(Self { domain, registry, config, verdicts, unavailable_notice })
+        Ok(Self {
+            domain,
+            registry,
+            config,
+            verdicts,
+            unavailable_notice,
+        })
     }
 }
 

@@ -520,6 +520,8 @@ class Oneiron:
         def claims(self) -> "Oneiron._VaultClaimsVerbs": ...
         def recall(self, query: str, *, effort: Effort = 'medium', scope: RecallScope | None = None, limit: int = 10, format: PackFormat | None = None, as_of: int | None = None, deadline_ms: int | None = None, media: RecallMedia | None = None, query_affect: QueryAffect | None = None) -> MemoryPack: ...
         @property
+        def retrieval(self) -> "Oneiron._VaultRetrievalVerbs": ...
+        @property
         def export(self) -> "Oneiron._VaultExportVerbs": ...
         @property
         def scope(self) -> "Oneiron._VaultScopeVerbs": ...
@@ -744,6 +746,28 @@ class Oneiron:
             """Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt."""
         def supersede(self, spec: Facade.LiveRunRequest[Facade.MemorySupersedeInput]) -> Facade.MemoryWriteOutput:
             """Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override."""
+    class _VaultRetrievalVerbs:
+        def recall(self, spec: Facade.RecallRequest) -> Facade.MemoryPack:
+            """Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle."""
+        def runs(self, spec: Facade.RetrievalRunsRequest) -> list[Facade.RetrievalRunEvidence]:
+            """The owner reads finalized local retrieval runs and their independent outcome sidecars, newest first."""
+        def run(self, spec: Facade.RetrievalRunRequest) -> Facade.RetrievalRunEvidence | None:
+            """The owner reads one finalized local serving run, its turn, policy state, trace and explicit outcomes; an unknown run reads as none."""
+        def turn(self, spec: Facade.RetrievalTurnRequest) -> list[Facade.RetrievalRunEvidence]:
+            """The owner reads the independent finalized retrieval runs linked to one exact turn, in recorded order."""
+        @property
+        def outcomes(self) -> "Oneiron._VaultRetrievalOutcomesVerbs": ...
+        def trace(self, spec: Facade.RetrievalTraceRequest) -> Facade.RetrievalTrace | None:
+            """The owner reads an opt-in trace by its vault-local keyed fork hash; hashes are never comparable across vaults."""
+        def export(self, spec: Facade.RetrievalDiagnosticRequest) -> Facade.RetrievalDiagnosticExport:
+            """The owner exports finalized run evidence without query or pack text, raw frontier samples, trace keys or free-form outcome metadata."""
+        def replay(self, spec: Facade.RetrievalDiagnosticRequest) -> Facade.RetrievalDiagnosticReplay:
+            """The owner replays recorded state, ordered pack scores and trace from exact finalized runs; no fresh search, clock or outcome-derived feature is used."""
+    class _VaultRetrievalOutcomesVerbs:
+        def put(self, spec: Facade.RetrievalOutcome) -> list[Facade.RetrievalOutcomeRecord]:
+            """The owner attaches an explicit observation to one local serving run; raw reward stays telemetry, never a gated training label."""
+        def end(self, spec: Facade.RetrievalEndOutcome) -> list[Facade.RetrievalRunEvidence]:
+            """The owner records a gate-attributed turn outcome for its exact contributing retrievalRunIds; the engine validates the links and shapes the reward."""
     class _VaultExportVerbs:
         def __call__(self, format: PackFormat | None = None) -> dict[str, Any]: ...
         def scoped(self, spec: Facade.ScopedExportRequest) -> Facade.ScopedExport:
@@ -1453,7 +1477,12 @@ class Oneiron:
             """The owner reads one saved agent composition and its version and approval state."""
         def update(self, spec: Facade.AgentDefinitionUpdateRequest) -> Facade.AgentDefinitionView:
             """The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision."""
+        @property
+        def spawn(self) -> "Oneiron._VaultAgentsSpawnVerbs": ...
         def export_pack(self, request: Facade.AgentPackExportRequest) -> Facade.AgentPackExport: ...
+    class _VaultAgentsSpawnVerbs:
+        def get(self, spec: Facade.PlannedSpawnRead) -> Facade.PlannedSpawnObservation:
+            """The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning."""
     class _VaultWorkflowsVerbs:
         def save(self, spec: Facade.WorkflowSaveRequest) -> Facade.WorkflowView:
             """The owner saves an ordered composition of live AGENT_DEF steps at a new WORKFLOW id at revision 1; an occupied id is refused and no attempt is dispatched."""

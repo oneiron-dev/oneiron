@@ -133,6 +133,8 @@ pub struct CodeMutationEntry {
     pub seq: u64,
     pub operation_kind: String,
     pub operation_subject: Option<String>,
+    /// None when the engine recorded no actor, or once that actor was erased
+    /// (FIX 3520).
     pub actor: Option<EntityId>,
     pub session: Option<EntityId>,
     pub started_at_ms: u64,

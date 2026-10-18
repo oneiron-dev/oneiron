@@ -2,7 +2,7 @@
 //! between a seed and the vault, one item per declared name that differs.
 //! Plan writes nothing; apply re-reads the same frontier and refuses a plan
 //! whose frontier has moved, so what the owner approved is what they saw.
-use super::live::LiveShape;
+use super::live::{LiveShape, ShapeSources};
 use super::reach::{ShapePlanReach, reach_projection};
 use super::seed::{hex, seed_digest};
 use super::{ShapeCeiling, ShapeMemberRole, ShapeRead, ShapeRow, ShapeSeed, ShapeTarget, invalid};
@@ -317,6 +317,21 @@ impl Vault {
         seed: Option<&ShapeSeed>,
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
     ) -> Result<ShapePlan> {
+        self.plan_shape_into(seed, visible, &mut ShapeSources::off())
+    }
+
+    /// [`Self::plan_shape_visible`], listing in `sources` the rows its
+    /// items, frontier and reach stand on, as
+    /// [`Self::read_live_shape_into`] lists them, and each person a reach
+    /// line is named from. Its manifest projection re-reads the stored
+    /// manifests the frontier folds and the sending identities' heads, both
+    /// listed there; the bytes it projects are the caller's.
+    pub(super) fn plan_shape_into(
+        &self,
+        seed: Option<&ShapeSeed>,
+        visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
+        sources: &mut ShapeSources,
+    ) -> Result<ShapePlan> {
         let stored = self.shape_seed()?;
         let (seed, seed_id) = match (seed, stored) {
             (Some(seed), stored) => {
@@ -329,7 +344,7 @@ impl Vault {
             (None, None) => (ShapeSeed::default(), None),
         };
         seed.validate()?;
-        let live = self.read_live_shape(visible)?;
+        let live = self.read_live_shape_into(visible, sources)?;
         let frontier = frontier(&seed, &live)?;
         let by_target: BTreeMap<ShapeTarget, &ShapeRow> = live
             .rows
@@ -395,7 +410,15 @@ impl Vault {
             .with_plan(&items, sends.as_ref(), &mut unresolved);
         // Both sides named in one read, so a name reads the same on each.
         let txn = self.store.env.read_txn()?;
-        let mut name = |reference: &str| self.reach_name_in(&txn, reference);
+        let mut name = |reference: &str| -> Result<Option<String>> {
+            let found = self.reach_name_in(&txn, reference)?;
+            if found.is_some()
+                && let Ok(id) = EntityId::from_hex(reference)
+            {
+                sources.list(id);
+            }
+            Ok(found)
+        };
         let reach = ShapePlanReach::of(
             reach_projection(&live.reach)
                 .visible(visible)?

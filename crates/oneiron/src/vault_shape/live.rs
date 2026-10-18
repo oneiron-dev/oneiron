@@ -6,19 +6,80 @@ use super::seed::hex;
 use super::{ShapeGrantBound, ShapeMemberRole, ShapeRow, invalid};
 use crate::agent_def::decode_agent_definition;
 use crate::channel_identity::{
-    ChannelIdentityState, channel_identity_send_holder_in_txn, decode_channel_identity_body,
+    ChannelIdentityState, channel_identity_fact_head_ids_in_txn,
+    channel_identity_send_holder_in_txn, decode_channel_identity_body,
 };
 use crate::edge::EdgeKind;
 use crate::error::Result;
 use crate::gate::manifest_authenticity::manifest_is_quarantined;
 use crate::ports::{EdgeDirection, EntityStoreRead};
 use crate::registry::{
-    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON,
-    ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SKILL, ENTITY_TYPE_WORLD,
+    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CONNECTOR_KEY,
+    ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SKILL,
+    ENTITY_TYPE_WORLD,
 };
 use crate::skill::{SkillLifecycle, decode_skill_record};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
+use std::collections::BTreeSet;
+
+/// The rows an answer read off the setup plane stands on, gathered as its
+/// reads run, for a listing door (`host_door_lists`). Local to one call and
+/// off for every caller that lists nothing. Once a read runs that it cannot
+/// follow, the rows are unknown: it answers `None`, never a part of them.
+pub(super) struct ShapeSources {
+    rows: Option<BTreeSet<EntityId>>,
+}
+
+impl ShapeSources {
+    /// Gathers nothing: an outcome-only call.
+    pub(super) const fn off() -> Self {
+        Self { rows: None }
+    }
+
+    /// Gathers each row the reads list.
+    pub(super) const fn on() -> Self {
+        Self {
+            rows: Some(BTreeSet::new()),
+        }
+    }
+
+    /// Whether rows are still gathered, so a read made only to list them
+    /// runs; an outcome-only call never makes one.
+    pub(super) const fn listing(&self) -> bool {
+        self.rows.is_some()
+    }
+
+    /// Lists `id`.
+    pub(super) fn list(&mut self, id: EntityId) {
+        if let Some(rows) = &mut self.rows {
+            rows.insert(id);
+        }
+    }
+
+    /// Lists what a read made only to list found. Its failure leaves the
+    /// rows unknown and never reaches the call's outcome.
+    pub(super) fn list_read<I: IntoIterator<Item = EntityId>>(&mut self, read: Result<I>) {
+        match read {
+            Ok(ids) => {
+                for id in ids {
+                    self.list(id);
+                }
+            }
+            Err(_) => self.unknown(),
+        }
+    }
+
+    /// A read ran whose rows are not listed: the rows are unknown.
+    pub(super) fn unknown(&mut self) {
+        self.rows = None;
+    }
+
+    /// The rows, or `None` when they are unknown.
+    pub(super) fn into_rows(self) -> Option<Vec<EntityId>> {
+        self.rows.map(|rows| rows.into_iter().collect())
+    }
+}
 
 /// The setup plane as it stands.
 pub(super) struct LiveShape {
@@ -134,12 +195,31 @@ impl Vault {
         &self,
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
     ) -> Result<LiveShape> {
+        self.read_live_shape_into(visible, &mut ShapeSources::off())
+    }
+
+    /// [`Self::read_live_shape`], listing in `sources` the rows it stands
+    /// on: each entity a kept row is read from once `visible` admits it (a
+    /// name's later duplicates too), each installed pack's source beside its
+    /// load, and, whatever `visible` admits, every row the policy frontier
+    /// and the reach line are read from (the stored manifests the frontier
+    /// folds, every roster actor, each sending identity with its fact heads,
+    /// every connector key the join reads). Grants, the shared vault and its
+    /// members are authority state, so they list no row of their own.
+    pub(super) fn read_live_shape_into(
+        &self,
+        visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
+        sources: &mut ShapeSources,
+    ) -> Result<LiveShape> {
         let mut rows = Vec::new();
         let mut reach = ReachRows::default();
         let policy_frontier = {
             let txn = self.store.env.read_txn()?;
             let policy_frontier =
                 crate::gate::resolve_policy_manifest(&self.store, &txn)?.read_frontier_hash()?;
+            if sources.listing() {
+                sources.list_read(crate::gate::policy_manifest_contributors(&self.store, &txn));
+            }
             let base = crate::claim::base_world_id();
             for (id, body) in self.shape_bodies_in_txn(&txn, ENTITY_TYPE_WORLD)? {
                 if id == base || crate::entity_id::is_foreign_world_id_range(id) {
@@ -193,6 +273,8 @@ impl Vault {
             }
             for (id, body) in self.shape_bodies_in_txn(&txn, ENTITY_TYPE_AGENT_DEF)? {
                 let def = decode_agent_definition(&body)?;
+                // The reach joins every actor, whatever `visible` admits.
+                sources.list(id);
                 reach.actors.push(ReachActor {
                     entity: id,
                     agent_id: def.agent_id.clone(),
@@ -233,6 +315,15 @@ impl Vault {
                         | ChannelIdentityState::Tombstone
                 ) {
                     continue;
+                }
+                // The reach reads each identity's heads, hidden or not.
+                sources.list(id);
+                if sources.listing() {
+                    sources.list_read(channel_identity_fact_head_ids_in_txn(
+                        &self.store,
+                        &txn,
+                        &id,
+                    ));
                 }
                 if let Some((actor, may_send)) =
                     channel_identity_send_holder_in_txn(&self.store, &txn, &id)?
@@ -278,6 +369,14 @@ impl Vault {
                 ));
             }
             reach.connectors = self.reach_connectors_in_txn(&txn, None)?;
+            if sources.listing() {
+                // Every key the join reads: an actor's own key on a connector
+                // takes it out of a key bound to none (catalog keys are keys).
+                sources.list_read(
+                    self.shape_bodies_in_txn(&txn, ENTITY_TYPE_CONNECTOR_KEY)
+                        .map(|keys| keys.into_iter().map(|(id, _)| id)),
+                );
+            }
             policy_frontier
         };
         // The pack catalog checks each install against its live source in a
@@ -285,6 +384,8 @@ impl Vault {
         for receipt in self.installed_packs()? {
             let source = EntityId::from_hex(&receipt.source_id)
                 .map_err(|_| invalid("installed pack source id"))?;
+            // Listed beside its load: `visible` never filtered a pack.
+            sources.list(source);
             let version = self
                 .get_pack_source(&source)?
                 .map(|source| source.manifest().version.clone());
@@ -299,6 +400,9 @@ impl Vault {
         let mut kept = Vec::with_capacity(rows.len());
         for (row, entity) in rows {
             if entity.map_or(Ok(true), |id| visible(&id))? {
+                if let Some(id) = entity {
+                    sources.list(id);
+                }
                 kept.push((row, entity));
             }
         }
