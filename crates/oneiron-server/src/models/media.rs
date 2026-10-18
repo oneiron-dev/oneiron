@@ -772,10 +772,30 @@ impl MediaRuntime {
         request: MediaRequest,
         voices: Option<&RungVoices>,
     ) -> LlmResult<MediaResponse> {
+        let meter = self.meter.clone().ok_or(FatalLlmError::InvalidRequest)?;
+        let run = undeclared_run(
+            MEDIA_RUN,
+            meter,
+            self.host.clone(),
+            Arc::clone(&self.receipts),
+        );
+        self.run_admitted(&run, request, voices).await
+    }
+
+    /// One call to its answer on `run`, the line its caller admitted it on
+    /// (FIX 3194): a pumped agent run's own, which it spends on as it does
+    /// its other model calls, never the media meter.
+    pub(crate) async fn run_admitted(
+        &self,
+        run: &RunAdmission,
+        request: MediaRequest,
+        voices: Option<&RungVoices>,
+    ) -> LlmResult<MediaResponse> {
         if request.operation.is_job() {
             return Err(FatalLlmError::InvalidRequest.into());
         }
-        match self.walk(request, voices)?.await? {
+        let ladder = self.ladder(&request)?;
+        match ladder.media(run, request, None, voices).await? {
             MediaAnswer::Done(response) => Ok(response),
             // Only a job operation is submitted.
             MediaAnswer::Job(mut job) => {
