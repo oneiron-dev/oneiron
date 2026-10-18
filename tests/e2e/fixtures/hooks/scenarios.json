@@ -1,0 +1,195 @@
+{
+  "version": 1,
+  "sourcePins": [
+    {
+      "page": "/oneiron/agents/oneiron-arch-0080-runtime-hooks-v1/",
+      "sha256": "e88a774544ab4d3f9eba764a331fee0f01be5a933165aa22dbd7b70500d41a6d"
+    },
+    {
+      "page": "/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1/",
+      "sha256": "dcfa341d856a48d1c5f4f02de932d3af6ff573890c53b8f7b5ea5c7506e02f76"
+    },
+    {
+      "page": "/oneiron/agents/oneiron-arch-0067-context-board-v1/",
+      "sha256": "4342ddebdeee0bc1ae71a6fe07a7d1da296170fd9141d5788c3f8faee17d0d12"
+    },
+    {
+      "page": "/oneiron/gate/oneiron-arch-0069-secret-custody-v1/",
+      "sha256": "a4c8df15efb88100eaaaef8ba4b90560074dd605bb5fa96a866d406f869d3b83"
+    }
+  ],
+  "registryRows": [
+    "OF-579",
+    "OF-580",
+    "OF-581"
+  ],
+  "bindingHead": "65529b62e07209d8faeb0c0fcde7812e3df9cc46",
+  "assumptions": [
+    "Fresh authenticated model-free real server per runnable ID; Linux execution only.",
+    "Only claim.landed from the first fact-hook slice is used; G09 later sources are not selected.",
+    "Claim ids below are authored caller-owned inputs, never forged author, grant, cursor or continuation ids.",
+    "Public pack folders contain body.js; serve embeds quickjs-hook.wasm. No alternate runtime or custom Wasm ABI is assumed.",
+    "Clock checks are pinned equality and coarse wall-clock bounds (dispatch may have second granularity), never a private tick.",
+    "Snapshot page bound 128 exceeds this tiny authored corpus; reaching it fails rather than truncating coverage."
+  ],
+  "pageBound": 128,
+  "replay": {
+    "checkpointId": "a1020000000000000000000000000001",
+    "anchorId": "a1020000000000000000000000000002",
+    "originalId": "a1020000000000000000000000000003",
+    "correctionId": "a1020000000000000000000000000004",
+    "triggerPredicate": "local.hooks.trigger",
+    "anchorPredicate": "local.hooks.anchor",
+    "outputPredicate": "local.hooks.observation",
+    "hookName": "replay-observer",
+    "hookVersion": "1.0.0",
+    "marker": "cobalt-hook-replay",
+    "anchor": "stable independent anchor",
+    "originalRevision": "original",
+    "laterRevision": "corrected",
+    "packFiles": {
+      "PACK.md": "hooks-replay-PACK-md",
+      "hooks/replay-observer/HOOK.md": "hooks-replay-hooks-replay-observer-HOOK-md",
+      "hooks/replay-observer/intent.md": "hooks-replay-hooks-replay-observer-intent-md",
+      "hooks/replay-observer/body.js": "hooks-replay-hooks-replay-observer-body-js"
+    }
+  },
+  "redaction": {
+    "claimId": "a1040000000000000000000000000001",
+    "predicate": "local.hooks.profile",
+    "value": {
+      "public": "public observatory schedule",
+      "private": "synthetic-private-roster"
+    },
+    "annotation": "private hidden before restore attempt",
+    "packFiles": {
+      "PACK.md": "hooks-redaction-PACK-md",
+      "hooks/hide-private/HOOK.md": "hooks-redaction-hooks-hide-private-HOOK-md",
+      "hooks/hide-private/intent.md": "hooks-redaction-hooks-hide-private-intent-md",
+      "hooks/hide-private/body.js": "hooks-redaction-hooks-hide-private-body-js",
+      "hooks/try-restore/HOOK.md": "hooks-redaction-hooks-try-restore-HOOK-md",
+      "hooks/try-restore/intent.md": "hooks-redaction-hooks-try-restore-intent-md",
+      "hooks/try-restore/body.js": "hooks-redaction-hooks-try-restore-body-js"
+    }
+  },
+  "blocked": {
+    "HOOKS-01": {
+      "name": "Fact hook commit and restart catchup should work",
+      "rows": [
+        "OF-579"
+      ],
+      "waitsOn": "typed hook grant assignment and effective-grant read",
+      "factKinds": [
+        "claim.landed"
+      ],
+      "nonmatches": [
+        "predicate",
+        "world",
+        "actor_class"
+      ],
+      "expected": {
+        "afterCommit": true,
+        "delivery": "at least once per source in commit order",
+        "landedEffectsPerEnvelope": 1,
+        "restartAuthority": "current"
+      }
+    },
+    "HOOKS-03": {
+      "name": "Before-hook rewrite and durable ask should work",
+      "rows": [
+        "OF-580"
+      ],
+      "waitsOn": "typed four-axis caller/session scope for Rewrite re-admission",
+      "beforeOutcomes": [
+        {
+          "kind": "rewrite",
+          "args": "typed original verb arguments with one changed scope axis"
+        },
+        {
+          "kind": "ask",
+          "question": "May this scoped write proceed?"
+        }
+      ],
+      "expected": {
+        "carriers": [
+          "HTTP",
+          "MCP"
+        ],
+        "runsPerLogicalInvocation": 1,
+        "revalidateRewrite": true,
+        "regateRewrite": true,
+        "resumesPerContinuation": 1,
+        "taskAnswerIsAuthority": false
+      }
+    },
+    "HOOKS-05": {
+      "name": "Hook sandbox and author scope should work",
+      "rows": [
+        "OF-579"
+      ],
+      "waitsOn": "typed MCP/SDK publisher admission, pinned pack install and author Grant revoke",
+      "attempts": [
+        "file",
+        "network",
+        "secret",
+        "typed Propose beyond author grant"
+      ],
+      "expected": {
+        "directCapabilities": [],
+        "source": "generated",
+        "actor": "foreign publisher, not installing owner",
+        "resumeAuthority": "current grant after revocation"
+      }
+    },
+    "HOOKS-06": {
+      "name": "Host compaction wake and budget hooks should work",
+      "rows": [
+        "OF-581"
+      ],
+      "waitsOn": "typed host.compact, host.wake and host.budget.hit trigger/results",
+      "inputs": {
+        "host.compact": [
+          "window",
+          "keep list",
+          "token ceiling"
+        ],
+        "host.wake": [
+          "wake kind",
+          "queue head"
+        ],
+        "host.budget.hit": [
+          "seat",
+          "policy"
+        ]
+      },
+      "pin": "Keep the safety instruction word for word.",
+      "quietReason": "quiet hours",
+      "expected": {
+        "compactMaySkip": false,
+        "keepList": "add only",
+        "wakeSkipReasonRequired": true,
+        "enqueuePreservesOriginalAccounting": true
+      }
+    },
+    "HOOKS-07": {
+      "name": "Pinned hook update and block scope should work",
+      "rows": [
+        "OF-581",
+        "OF-580"
+      ],
+      "waitsOn": "typed pinned hub-hook update/re-consent and hook-typed regeneration",
+      "sourceFamily": "claim.landed only; no extra G09 family required",
+      "expected": {
+        "widerCapabilities": "re-consent",
+        "blockScope": "recipient current scope",
+        "placement": "existing board sections, tail only",
+        "deliveries": 1,
+        "regen": [
+          "adopt identical fingerprint",
+          "human stamp on diff",
+          "rollback on failure, never blank"
+        ]
+      }
+    }
+  }
+}
