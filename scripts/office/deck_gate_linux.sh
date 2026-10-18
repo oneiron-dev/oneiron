@@ -23,8 +23,8 @@ cd "$here" || exit 9
 mkdir -p "$here/out" "$corpus"
 python3 -B src/scripts/office/deck_gate.py acquire src "$corpus"
 acquired=$?
-cargo run --locked --release -p oneiron-docedit --bin deck-gate-cases -- \
+cargo run --locked --release --manifest-path src/Cargo.toml -p oneiron-docedit --bin deck-gate-cases -- \
   --repo src --out "$out" --corpus "$corpus" --source "$sha"
 rc=$?
-echo "## DECK-GATE-ENGINE rc=$rc acquire=$acquired host=$(hostname) out=$out bytes=$(du -sb "$out" 2>/dev/null | cut -f1)"
+echo "## DECK-GATE-ENGINE rc=$rc acquire=$acquired host=$(uname -n) out=$out bytes=$(du -sb "$out" 2>/dev/null | cut -f1)"
 exit "$rc"
