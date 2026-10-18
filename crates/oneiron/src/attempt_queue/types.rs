@@ -34,7 +34,17 @@ pub(super) const ATTEMPT_QUEUE_RETRY_REASON_COUNT: usize = 2;
 
 /// Stable identifier for a queued attempt.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
 )]
 pub struct AttemptId {
     pub(super) bytes: [u8; 16],

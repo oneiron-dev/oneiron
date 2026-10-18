@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 877 facade rows, 3024 declarations.
-Inputs: 825 of 877 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 793 of 877 fully typed, 84 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 101; unread shapes: 0.
+Census: 898 facade rows, 3085 declarations.
+Inputs: 844 of 898 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 814 of 898 fully typed, 84 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 102; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -1877,10 +1877,122 @@ class TaskAccept(TypedDict):
     task_ref: EntityId
     intent_key: str
 WitnessAuthor = Literal["user", "companion", "system"]
+class WitnessAssertions(TypedDict):
+    cited: list[RecordRef]
+    created: list[RecordRef]
 class QuoteSpan(TypedDict):
     message: EntityId
     start: int
     end: int
+class MessageBirth(TypedDict):
+    conversation_ref: str
+    turn_ref: NotRequired[str | None]
+    author: WitnessAuthor
+    message_type: str
+    metadata: NotRequired[Any | None]
+    is_visible: bool
+    order: int
+    occurred_at: int
+    assertions: NotRequired[WitnessAssertions]
+    quote: NotRequired[QuoteSpan | None]
+class MessageCommitOptions(TypedDict):
+    register: NotRequired[str | None]
+class CommitMessageRequest(TypedDict):
+    message_id: str
+    content: str
+    birth: MessageBirth
+    options: NotRequired[MessageCommitOptions]
+StreamSyncVisibility = Literal["originator_only", "all_devices"]
+class StreamCadencePerWindowBody(TypedDict):
+    chars: int
+class StreamCadencePerWindow(TypedDict):
+    per_window: StreamCadencePerWindowBody
+StreamCadence = Literal["per_token", "per_sentence", "manual"] | StreamCadencePerWindow
+class MessageStreamModeAtomic(TypedDict):
+    kind: Literal["atomic"]
+class MessageStreamModeStreamed(TypedDict):
+    kind: Literal["streamed"]
+    syncVisibility: StreamSyncVisibility
+    cadence: StreamCadence
+MessageStreamMode = MessageStreamModeAtomic | MessageStreamModeStreamed
+class MessageStreamOptions(TypedDict):
+    mode: NotRequired[MessageStreamMode | None]
+    register: NotRequired[str | None]
+class BeginMessageStreamRequest(TypedDict):
+    message_id: str
+    birth: NotRequired[MessageBirth | None]
+    options: NotRequired[MessageStreamOptions]
+class MessageStreamHandle(TypedDict):
+    message: EntityId
+    generation: EntityId
+class AppendToStreamRequest(TypedDict):
+    handle: MessageStreamHandle
+    delta: str
+class MessageStreamRequest(TypedDict):
+    handle: MessageStreamHandle
+StreamFinality = Literal["final", "partial", "cancelled"]
+class StreamFinalityReasonIdleTimeoutBody(TypedDict):
+    timeout_ms: int
+class StreamFinalityReasonIdleTimeout(TypedDict):
+    idle_timeout: StreamFinalityReasonIdleTimeoutBody
+class StreamFinalityReasonCustom(TypedDict):
+    custom: str
+StreamFinalityReason = Literal["explicit_finalize", "idle_timeout30s", "process_crash_recovery", "user_interrupted", "agent_aborted", "external_signal"] | StreamFinalityReasonIdleTimeout | StreamFinalityReasonCustom
+class FinishReasonOtherBody(TypedDict):
+    name: str
+class FinishReasonOther(TypedDict):
+    other: FinishReasonOtherBody
+FinishReason = Literal["stop", "length", "tool_calls", "content_filtered", "cancelled"] | FinishReasonOther
+class MessageStreamReceipt(TypedDict):
+    message_id: EntityId
+    actor: EntityId
+    generation: EntityId
+    finality: StreamFinality
+    finality_reason: StreamFinalityReason
+    finish_reason: NotRequired[FinishReason | None]
+    bytes: int
+    recovered: bool
+    ephemeral_text_lost: bool
+    receipt_ref: str
+MessageCancelKind = Literal["user_interrupted", "agent_aborted", "external_signal"]
+MessageCustomCancelKind = Literal["custom"]
+class MessageCustomCancel(TypedDict):
+    kind: MessageCustomCancelKind
+    description: str
+MessageCancelReason = MessageCancelKind | MessageCustomCancel
+class CancelStreamRequest(TypedDict):
+    handle: MessageStreamHandle
+    reason: MessageCancelReason
+class MessageWriteModeStreamedBody(TypedDict):
+    visibility: StreamSyncVisibility
+    cadence: StreamCadence
+class MessageWriteModeStreamed(TypedDict):
+    streamed: MessageWriteModeStreamedBody
+MessageWriteMode = Literal["atomic"] | MessageWriteModeStreamed
+class MessageStreamPartial(TypedDict):
+    message_id: EntityId
+    text: str
+    sequence: int
+    mode: MessageWriteMode
+class MessageDurabilityRequest(TypedDict):
+    message_id: str
+    after_generation: NotRequired[str | None]
+    limit: NotRequired[int | None]
+class MessageCompletion(TypedDict):
+    incomplete: bool
+    generating: bool
+    finish_reason: NotRequired[FinishReason | None]
+class MessageDocumentState(TypedDict):
+    frontier: list[int]
+    content: str
+class MessageDurability(TypedDict):
+    message_id: str
+    completion: MessageCompletion
+    latest_receipt: NotRequired[MessageStreamReceipt | None]
+    receipts: list[MessageStreamReceipt]
+    next_after_generation: NotRequired[str | None]
+    document_exists: bool
+    document_history: list[MessageDocumentState]
 class WitnessMessage(TypedDict):
     id: NotRequired[str | None]
     author: WitnessAuthor
@@ -1890,9 +2002,6 @@ class WitnessMessage(TypedDict):
     is_visible: bool
     order: int
     quote: NotRequired[QuoteSpan | None]
-class WitnessAssertions(TypedDict):
-    cited: list[RecordRef]
-    created: list[RecordRef]
 class WitnessTurn(TypedDict):
     conversation_ref: str
     turn_ref: NotRequired[str | None]
@@ -4311,9 +4420,13 @@ class HubHookReplay(TypedDict):
 class HubHookQualificationReceipt(TypedDict):
     put: PackPutReceipt
     replays: list[HubHookReplay]
-class PackFileInput(TypedDict):
+class PackTextFile(TypedDict):
     path: str
     text: str
+class PackBytesFile(TypedDict):
+    path: str
+    content_base64: str
+PackFileInput = PackTextFile | PackBytesFile
 class PackPutRequest(TypedDict):
     files: list[PackFileInput]
 class SlatePackSource(TypedDict):
@@ -9076,6 +9189,88 @@ class CheckoutTornDownRetained(TypedDict):
     epoch: int
     reason: CheckoutRetention
 CheckoutTornDown = CheckoutTornDownCollected | CheckoutTornDownRetained
+class VisibleFilePolicy(TypedDict):
+    version: int
+    include_prefixes: list[str]
+    exclude_prefixes: list[str]
+class CodeViewMaterializeRequest(TypedDict):
+    repo: EntityId
+    tested: EntityId
+    account: EntityId
+    policy: VisibleFilePolicy
+class CodeDocumentFrontier(TypedDict):
+    document_id: list[int]
+    repo: str
+    path: str
+    version: list[tuple[int, int]]
+    op_fold: list[int]
+    text_hash: list[int]
+class CodeViewFile(TypedDict):
+    path: str
+    content_hash_blake3: str
+    frontier: CodeDocumentFrontier
+    text_sha256: str
+class CodeWorkingView(TypedDict):
+    view: EntityId
+    repo: EntityId
+    base: EntityId
+    account: EntityId
+    fork_hash: str
+    files: list[CodeViewFile]
+    receipt: EntityId
+    host_path: str
+class CodeViewRequest(TypedDict):
+    view: EntityId
+    repo: EntityId
+    tested: EntityId
+    account: EntityId
+class CodeViewReadRequest(TypedDict):
+    view: CodeViewRequest
+    path: str
+class CodeViewFileBytes(TypedDict):
+    path: str
+    bytes: list[int]
+    sha256: str
+class CodeSecretTaintRef(TypedDict):
+    secret_ref: str
+    rotation_generation: int
+CodeBuildClass = Literal["build", "verify"]
+CodeBuildSpec = TypedDict("CodeBuildSpec", {"argv": list[str], "env_allowlist": dict[str, str], "platform": dict[str, str], "declared_outputs": list[str], "secret_taint_refs": list[CodeSecretTaintRef], "class": CodeBuildClass})
+class CodeViewActionRequest(TypedDict):
+    view: CodeViewRequest
+    spec: CodeBuildSpec
+class CodeActionDigest(TypedDict):
+    hash: str
+    size_bytes: int
+class CodeViewAction(TypedDict):
+    action_digest: CodeActionDigest
+    command_bytes: list[int]
+    input_root_digest: CodeActionDigest
+class CodeViewBuildRequest(TypedDict):
+    view: CodeViewRequest
+    spec: CodeBuildSpec
+    action_digest: CodeActionDigest
+CodeCacheState = Literal["hit", "miss", "denied"]
+class CodeBuildOutput(TypedDict):
+    artifact_ref: str
+    output_sha256: str
+class CodeBuildEntry(TypedDict):
+    action_digest: CodeActionDigest
+    account: EntityId
+    exit_code: int
+    outputs: dict[str, CodeBuildOutput]
+    stdout_ref: NotRequired[str | None]
+    stderr_ref: NotRequired[str | None]
+    secret_taint_refs: list[CodeSecretTaintRef]
+    reusable: bool
+    receipt: str
+class CodeCacheOutcome(TypedDict):
+    state: CodeCacheState
+    entry: NotRequired[CodeBuildEntry | None]
+    receipt: NotRequired[str | None]
+class CodeCacheReadRequest(TypedDict):
+    account: EntityId
+    action_digest: CodeActionDigest
 class CodeRepoPointer(TypedDict):
     local_folder: str
     commit: str
@@ -11125,11 +11320,6 @@ class LlmUsage(TypedDict):
     input: LlmInputUsage
     output: LlmOutputUsage
     raw_provider: Any
-class FinishReasonOtherBody(TypedDict):
-    name: str
-class FinishReasonOther(TypedDict):
-    other: FinishReasonOtherBody
-FinishReason = Literal["stop", "length", "tool_calls", "content_filtered", "cancelled"] | FinishReasonOther
 class LlmResponse(TypedDict):
     message: LlmMessage
     usage: LlmUsage
@@ -11725,6 +11915,7 @@ class AiVerdict(TypedDict):
     outcome: NotRequired[RoutineOutcome | None]
     screenshot: NotRequired[bool]
     until_ms: NotRequired[int | None]
+    evidence_cut_at_bytes: NotRequired[int | None]
 DecisionClass = Literal["retrieval", "contradiction", "triage", "judgment", "useful_upstream", "preference", "provenance"]
 DecisionQuestion = TypedDict("DecisionQuestion", {"id": str, "version": int, "text": str, "class": DecisionClass, "contract": AnswerContract, "accept_type": bool})
 class GraphAskSelection(TypedDict):
@@ -12375,10 +12566,61 @@ class CalendarFreebusyIntervalDto(TypedDict):
     start_utc: int
     end_utc: int
 CalendarFreebusyDto = list[CalendarFreebusyIntervalDto]
+class CalendarMeetingRequest(TypedDict):
+    event_ref: str
+PrepSectionKind = Literal["prior_commitment", "attendee_thread", "dossier_delta"]
+class PrepItem(TypedDict):
+    kind: PrepSectionKind
+    text: str
+    source_refs: list[str]
+    observed_at: int
+class PrepSection(TypedDict):
+    kind: PrepSectionKind
+    items: list[PrepItem]
+class PrepPack(TypedDict):
+    event_ref: str
+    built_at: int
+    sections: list[PrepSection]
+    word_count: int
+EventOutcome = Literal["held", "no_show", "cancelled_pre_start", "unknown"]
+EventOutcomeBasis = Literal["machine", "owner_attested"]
+class EventOutcomeClaimValue(TypedDict):
+    outcome: EventOutcome
+    basis: EventOutcomeBasis
+    recorded_at: int
+class CalendarEventOutcome(TypedDict):
+    event_ref: str
+    outcome: EventOutcome
+    claim: NotRequired[EventOutcomeClaimValue | None]
+class CalendarCheckInDue(TypedDict):
+    event_ref: str
+    observed_at: int
+    grace_secs: int
+    due_at: NotRequired[int | None]
+    due: bool
+    outcome: NotRequired[EventOutcomeClaimValue | None]
+CalendarCheckInAnswer = Literal["held", "no_show", "rescheduled"]
+class CalendarCheckInRequest(TypedDict):
+    event_ref: str
+    answer: CalendarCheckInAnswer
+class CalendarCheckInReceiptOutcome(TypedDict):
+    disposition: Literal["outcome"]
+    event_ref: str
+    claim_ref: str
+    value: EventOutcomeClaimValue
+class CalendarCheckInReceiptRescheduleRequested(TypedDict):
+    disposition: Literal["reschedule_requested"]
+    event_ref: str
+    claim_ref: str
+    value: EventOutcomeClaimValue
+CalendarCheckInReceipt = CalendarCheckInReceiptOutcome | CalendarCheckInReceiptRescheduleRequested
+class CalendarOutcomePolicy(TypedDict):
+    grace_secs: int
 class TranscriptFileDropInput(TypedDict):
     source_blob_ref: str
     decoded_text: str
     arrived_at_ms: int
+    event_ref: NotRequired[str | None]
 class TranscriptIngestOutcomeSession(TypedDict):
     outcome: Literal["session"]
     session_ref: EntityId

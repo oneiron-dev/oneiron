@@ -369,6 +369,26 @@ export class Oneiron {
       /** The owner reads a served run's persisted physical-rung settlement receipts, with reservation, settled units and stamped cost when priced. */
       settlements: (input: Facade.RunSettlementsRequest): Facade.RunSettlementsView => this.#call(() => this.#client.vaultBudgetsSettlements(input) as Facade.RunSettlementsView),
     },
+    /** Writes one whole MESSAGE atomically through the witness gate; birth supplies its immutable conversation, turn and author axes. */
+    commit_message: (input: Facade.CommitMessageRequest): Facade.WitnessReceipt => this.#call(() => this.#client.vaultCommitMessage(input) as Facade.WitnessReceipt),
+    /** Opens one caller-owned MESSAGE stream, with birth axes for a new message or stored axes for a continuation. */
+    begin_message_stream: (input: Facade.BeginMessageStreamRequest): Facade.MessageStreamHandle => this.#call(() => this.#client.vaultBeginMessageStream(input) as Facade.MessageStreamHandle),
+    /** Appends one authored delta to this actor's generation-bound stream through its existing write gate. */
+    append_to_stream: (input: Facade.AppendToStreamRequest): null => this.#call(() => this.#client.vaultAppendToStream(input) as null),
+    /** Publishes the current partial at once when streamed visibility allows it; atomic mode stays private. */
+    flush_stream: (input: Facade.MessageStreamRequest): null => this.#call(() => this.#client.vaultFlushStream(input) as null),
+    /** Commits the stream as final and releases its handle, returning the immutable terminal receipt. */
+    finalize_stream: (input: Facade.MessageStreamRequest): Facade.MessageStreamReceipt => this.#call(() => this.#client.vaultFinalizeStream(input) as Facade.MessageStreamReceipt),
+    /** Keeps the stream's text as one incomplete MESSAGE with cancelled finality and the caller's explicit reason. */
+    cancel_stream: (input: Facade.CancelStreamRequest): Facade.MessageStreamReceipt => this.#call(() => this.#client.vaultCancelStream(input) as Facade.MessageStreamReceipt),
+    /** Reads only this actor's accepted in-memory partial using its generation-bound stream handle. */
+    message_stream_partial: (input: Facade.MessageStreamRequest): Facade.MessageStreamPartial => this.#call(() => this.#client.vaultMessageStreamPartial(input) as Facade.MessageStreamPartial),
+    messages: {
+      /** Reads a MESSAGE's completion, terminal-generation receipts and retained document history through the caller's own read lane. */
+      durability: (input: Facade.MessageDurabilityRequest): Facade.ScopedReadResult<Facade.MessageDurability | null> => this.#call(() => this.#client.vaultMessagesDurability(input) as Facade.ScopedReadResult<Facade.MessageDurability | null>),
+      /** Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress. */
+      react: (input: Facade.MessageReactionRequest): Facade.MessageReactionReceipt => this.#call(() => this.#client.vaultMessagesReact(input) as Facade.MessageReactionReceipt),
+    },
     /**
    * Witnesses one conversational turn.
    *
@@ -708,7 +728,7 @@ export class Oneiron {
         /** The owner qualifies a Candidate hub hook pack by real sandbox replay; qualification does not consent to wider hooks. */
         qualify: (input: Facade.HubHookQualifyRequest): Facade.HubHookQualificationReceipt => this.#call(() => this.#client.vaultPacksHooksQualify(input) as Facade.HubHookQualificationReceipt),
       },
-      /** The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks. */
+      /** The owner installs a pack folder, or replaces the pack installed under its name, each file sent as text or as content_base64 bytes; the put is the consent for its hooks. */
       put: (input: Facade.PackPutRequest): Facade.PackPutReceipt => this.#call(() => this.#client.vaultPacksPut(input) as Facade.PackPutReceipt),
       connector: {
         /** Prepares an immutable connector pack admission, comparing the resolved declaration with the installed transport and drafting an ungranted slate. */
@@ -1603,6 +1623,24 @@ export class Oneiron {
         /** Collect the caller's checkout only with a matching durable pushed-head receipt and clear custody; retain dirty or uncertain trees. */
         teardown: (input: Facade.CheckoutTeardownInput): Facade.CheckoutTornDown => this.#call(() => this.#client.vaultCodeCheckoutTeardown(input) as Facade.CheckoutTornDown),
       },
+      views: {
+        /** Materialize a private linked working view from verified tested file frontiers in the authenticated owner account. */
+        materialize: (input: Facade.CodeViewMaterializeRequest): Facade.CodeWorkingView => this.#call(() => this.#client.vaultCodeViewsMaterialize(input) as Facade.CodeWorkingView),
+        /** Read one working view and its immutable tested base under the authenticated owner account. */
+        get: (input: Facade.CodeViewRequest): Facade.CodeWorkingView => this.#call(() => this.#client.vaultCodeViewsGet(input) as Facade.CodeWorkingView),
+        /** Read the current bytes of one selected input in the authenticated owner working view. */
+        read: (input: Facade.CodeViewReadRequest): Facade.CodeViewFileBytes => this.#call(() => this.#client.vaultCodeViewsRead(input) as Facade.CodeViewFileBytes),
+        /** Freeze current view input identities and return the REAPI action digest with its exact command bytes and input root digest. */
+        action: (input: Facade.CodeViewActionRequest): Facade.CodeViewAction => this.#call(() => this.#client.vaultCodeViewsAction(input) as Facade.CodeViewAction),
+        /** Run a pinned native owner build or verify leg, reusing clean account-local results and retaining secret-consuming exhaust as tainted. */
+        build: (input: Facade.CodeViewBuildRequest): Facade.CodeCacheOutcome => this.#call(() => this.#client.vaultCodeViewsBuild(input) as Facade.CodeCacheOutcome),
+      },
+      cache: {
+        /** Read one clean immutable account-local build result by action key without executing a command. */
+        get: (input: Facade.CodeCacheReadRequest): Facade.CodeCacheOutcome => this.#call(() => this.#client.vaultCodeCacheGet(input) as Facade.CodeCacheOutcome),
+        /** Reuse an authorized clean action result into another matching working view without dispatching a cold build. */
+        reuse: (input: Facade.CodeViewBuildRequest): Facade.CodeCacheOutcome => this.#call(() => this.#client.vaultCodeCacheReuse(input) as Facade.CodeCacheOutcome),
+      },
       snapshots: {
         /** Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt. */
         ingest: (input: Facade.CodeSnapshotIngestRequest): Facade.CodeSnapshotView => this.#call(() => this.#client.vaultCodeSnapshotsIngest(input) as Facade.CodeSnapshotView),
@@ -1806,10 +1844,6 @@ export class Oneiron {
         append: (input: Facade.DagRecordAppendInput): Facade.DagRecordAppendReceipt => this.#call(() => this.#client.vaultConversationsRecordsAppend(input) as Facade.DagRecordAppendReceipt),
       },
     },
-    messages: {
-      /** Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress. */
-      react: (input: Facade.MessageReactionRequest): Facade.MessageReactionReceipt => this.#call(() => this.#client.vaultMessagesReact(input) as Facade.MessageReactionReceipt),
-    },
     voices: {
       packs: {
         /** The owner banks one immutable reference pack of their own voice: the first captured or designed pack makes its identity, a captured pack cites their current render grant, and a retry of the same pack is a no-op. */
@@ -1905,8 +1939,24 @@ export class Oneiron {
       search: (input: Facade.CalendarSearchRequest): Facade.ScopedReadResult<Facade.CalendarEventView[]> => this.#call(() => this.#client.vaultCalendarSearch(input) as Facade.ScopedReadResult<Facade.CalendarEventView[]>),
       /** Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt. */
       freebusy: (input: Facade.CalendarFreebusyRequest): Facade.ScopedReadResult<Facade.CalendarFreebusyDto> => this.#call(() => this.#client.vaultCalendarFreebusy(input) as Facade.ScopedReadResult<Facade.CalendarFreebusyDto>),
+      /** Builds a fresh caller-scoped meeting PrepPack with commitments first and a 250-word ceiling, or deliberately returns no pack. */
+      prep: (input: Facade.CalendarMeetingRequest): Facade.ScopedReadResult<Facade.PrepPack | null> => this.#call(() => this.#client.vaultCalendarPrep(input) as Facade.ScopedReadResult<Facade.PrepPack | null>),
+      /** Reads the caller-visible meeting outcome and its recorded basis; silence projects to unknown and never to held or no_show. */
+      event_outcome: (input: Facade.CalendarMeetingRequest): Facade.ScopedReadResult<Facade.CalendarEventOutcome | null> => this.#call(() => this.#client.vaultCalendarEventOutcome(input) as Facade.ScopedReadResult<Facade.CalendarEventOutcome | null>),
+      check_in: {
+        /** Observes whether a meeting check-in is due under owner proof, live evidence and the engine clock, without advancing time or recording an outcome. */
+        due: (input: Facade.CalendarMeetingRequest): Facade.ScopedReadResult<Facade.CalendarCheckInDue | null> => this.#call(() => this.#client.vaultCalendarCheckInDue(input) as Facade.ScopedReadResult<Facade.CalendarCheckInDue | null>),
+        /** The owner answers a due check-in as held, no_show or rescheduled; the caller cannot assert machine evidence or replace it. */
+        answer: (input: Facade.CalendarCheckInRequest): Facade.CalendarCheckInReceipt => this.#call(() => this.#client.vaultCalendarCheckInAnswer(input) as Facade.CalendarCheckInReceipt),
+      },
+      outcome_policy: {
+        /** Reads the owner-configured post-meeting grace policy, including the default 1800 seconds when no override exists. */
+        get: (input: Facade.EmptyRequest = {}): Facade.CalendarOutcomePolicy => this.#call(() => this.#client.vaultCalendarOutcomePolicyGet(input) as Facade.CalendarOutcomePolicy),
+        /** Sets the post-meeting grace in real seconds under owner proof, without changing event times or minting attendance evidence. */
+        set: (input: Facade.CalendarOutcomePolicy): Facade.CalendarOutcomePolicy => this.#call(() => this.#client.vaultCalendarOutcomePolicySet(input) as Facade.CalendarOutcomePolicy),
+      },
       transcript: {
-        /** Ingests an uploaded UTF-8 transcript as the caller, retaining source labels and atomically closing its SESSION with ordered TURNs and extraction wake receipts. */
+        /** Ingests verified uploaded UTF-8 transcript bytes as a closed SESSION with ordered TURNs; an optional meeting link earns a machine outcome through the caller gate. */
         ingest: (input: Facade.TranscriptFileDropInput): Facade.TranscriptIngestOutcome => this.#call(() => this.#client.vaultCalendarTranscriptIngest(input) as Facade.TranscriptIngestOutcome),
       },
     },
