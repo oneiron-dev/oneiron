@@ -495,6 +495,15 @@ Fetch Tier-1 first. It contains one endpoint block per route this pack covers an
   - "stop this client id attesting receipts"
 - safety: Mutating and terminal for the binding. Requires an owner-grade credential; scoped bearers are refused. Use an `Idempotency-Key` header when retrying after transport failure.
 
+#### recovery-sealed-bundle-part - `POST /v1/recovery/sealed-bundle/part`
+
+- when-to-use: Read one slice of the vault's sealed cloud bundle, or of its pad object, from the home with the recovery kit alone, to restore on an install that is no machine of the vault's. Read from offset 0 until a slice says `last`.
+- trigger phrases:
+  - "restore from the recovery kit"
+  - "fetch the sealed bundle with the kit"
+  - "read a sealed bundle slice"
+- safety: Serves ciphertext only, to the kit's recovery root. No bearer: each request is signed by that root's owner anchor, within 300 seconds of the home's clock, with a nonce the home takes once. A request that does not verify looks exactly like a missing generation (`404`).
+
 #### booking-agent-instructions - `GET /api/booking/{page_token}/agent-instructions`
 
 - when-to-use: Read the versioned machine-readable instructions document for one booking page before calling any booking operation.
@@ -1175,6 +1184,37 @@ Example response:
   "revoked": true
 }
 ```
+
+### Sealed Bundle Kit Fetch
+
+Method: `POST`
+
+Authentication: no bearer and no slip. The body's `signature` is the authentication: the Ed25519 signature of the owner anchor of the kit's recovery root, over `b"oneiron/kit-bundle-fetch/v1\0" || vault_id || root || authority || "POST" || "/v1/recovery/sealed-bundle/part" || object || generation || offset (u64 BE) || timestamp (u64 BE) || nonce`.
+
+- `authority`, `"POST"`, the path and `object` each go in as their byte length (u64 BE), then their UTF-8 bytes. `generation` is `0x01` and its 24 bytes, or `0x00` for the newest.
+- `authority` is the home's address as the request names it: the host, then `:port` when the address names a port, in lower case. The home reads it from the URI authority (HTTP/2) or the `Host` header, never from a forwarded host. A reverse proxy in front of the home must pass `Host` on unchanged, port included (`DEPLOYMENT.md`).
+- A home serves a generation only to the root its publisher named for it.
+
+Request body (JSON, at most 4 KiB; unknown fields are refused):
+
+- `vaultId` required: 64 lowercase hex.
+- `root` required: the kit's recovery root id, 64 lowercase hex.
+- `generation` optional: 48 lowercase hex. Absent or null asks for the newest generation kept for the root; name the generation the first slice returned on every later slice.
+- `object` required: `bundle` or `pads`.
+- `offset` required: the byte offset of the slice.
+- `timestamp` required: Unix seconds at signing, within 300 seconds of the home's clock.
+- `nonce` required: 32 fresh random bytes as 64 lowercase hex. The home takes each nonce once.
+- `signature` required: 128 lowercase hex.
+
+Response:
+
+- `generation`: the generation served, 48 hex. `object` and `offset` echo the request.
+- `total`: the object's whole length in bytes.
+- `digest`: the BLAKE3 digest of the whole object, 64 hex.
+- `last`: `true` when this slice ends the object.
+- `part`: the slice in standard base64, at most 16 MiB decoded.
+
+A malformed body or field, or a request that names no host, is `400 BAD_REQUEST`. A request that does not verify, a generation not kept for the root, and an offset at or past the object's end are all `404 NOT_FOUND`. A read that stopped is `500`.
 
 ### Booking Agent Surface
 

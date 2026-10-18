@@ -93,6 +93,16 @@ client, so list proxy hosts only, never a client network. An entry that does
 not parse, a `/0` block, or an address with bits set past its prefix stops
 startup. The default is empty: every caller is keyed by its own connection.
 
+A reverse proxy must pass on the client's `Host` (or HTTP/2 `:authority`)
+exactly as the client sent it, port included. A recovery kit signs each
+sealed-bundle fetch (`POST /v1/recovery/sealed-bundle/part`) over the home
+address it dialed, and the server checks the signature against the address
+the request names; it never reads `X-Forwarded-Host` for this. A proxy that
+rewrites the host, as nginx does by default (`$proxy_host`), makes every kit
+fetch look missing, so a restore with the kit alone finds nothing at that
+home. In nginx, set `proxy_set_header Host $http_host;` (not `$host`, which
+drops the port).
+
 `artifact_port` (flag `--artifact-port`, env `ONEIRON_ARTIFACT_PORT`) is the
 port of a second listener, on the same host, that serves hosted artifacts
 (`/a/...`) and nothing else. A code bundle runs its own scripts, so it gets

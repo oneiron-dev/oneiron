@@ -203,6 +203,7 @@ use utoipa::OpenApi;
         super::owner_routes::cooperative_deletion_routes::answer,
         super::cooperative_deletion::take_request,
         super::cooperative_deletion::take_reply,
+        super::recovery_bundle::part,
 
         lease_revoke
     ),
@@ -409,6 +410,8 @@ use utoipa::OpenApi;
         MemoryReasonCompositionRefusal,
         LeaseRevokeRequest,
         LeaseRevokeResponse,
+        super::recovery_bundle::KitBundlePartRequest,
+        super::recovery_bundle::KitBundlePartResponse,
 
         UsageEvent,
         UsageRecordResult,
