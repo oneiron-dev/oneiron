@@ -38,6 +38,8 @@ use super::{
 
 /// What a scoped pack run reports beside its pack.
 pub(crate) struct PackRunStatus {
+    /// Only the handle returned by successful post-filter finalization.
+    pub(crate) run_id: Option<crate::store::RetrievalRunId>,
     /// Whether the vector channel completed.
     pub(crate) vector_completed: bool,
     /// The query's temporal phrases and what the run did with each.
@@ -135,7 +137,8 @@ impl<'a> ContextPackBuilder<'a> {
         let run = self
             .caller_off_device(lane.off_device())
             .run_unfinalized()?;
-        let status = PackRunStatus {
+        let mut status = PackRunStatus {
+            run_id: None,
             vector_completed: run.vector_completed,
             temporal_hints: run.temporal_hints,
             cited_messages: run.cited_messages,
@@ -159,7 +162,9 @@ impl<'a> ContextPackBuilder<'a> {
         };
         // Counts exposed by recall refer only to rows admitted by this read.
         pending.value.stats.candidates_considered = pending.value.results.len();
-        let pack = pending.finish_post_filter()?.value;
+        let finalized = pending.finish_post_filter()?;
+        status.run_id = finalized.run_id;
+        let pack = finalized.value;
         Ok((
             crate::claim::ScopedReadResult {
                 value: pack,

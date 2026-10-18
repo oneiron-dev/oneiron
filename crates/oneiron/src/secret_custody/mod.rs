@@ -143,7 +143,7 @@ pub use self::use_handle::{
     SECRET_USE_REASON, SecretBindRequest, SecretBound, SecretUseDecision, SecretUseOperation,
     SecretUseOutcome, SecretUseReceipt, SecretUseSend,
 };
-pub(crate) use self::use_handle::{SecretUseConsumed, SecretUser};
+pub(crate) use self::use_handle::{SecretUseConsumed, SecretUser, handle_record_in_txn};
 
 #[cfg(test)]
 mod tests;

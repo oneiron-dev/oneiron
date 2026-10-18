@@ -35360,7 +35360,7 @@
      "purpose": "The generic connector call (ONE-2510): one tool on one catalogued connector, through the scoped-MCP prepare…",
      "surface": {
       "const": 1,
-      "crate-vis": 15,
+      "crate-vis": 16,
       "enum": 2,
       "fn": 7,
       "struct": 8,
@@ -41321,7 +41321,7 @@
      "purpose": "`self.use(handle)` (OF-560; ARCH-0069 \"One use(handle) call\"): an agent hands a secret to one trusted…",
      "surface": {
       "const": 3,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 2,
       "fn": 2,
       "re-export": 1,
@@ -41348,6 +41348,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/secret_custody/use_handle/lease.rs",
+     "purpose": "`self.use` under a secret grant (FIX 4313): the holder names a grant in place of a handle",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/secret_lease/admission.rs",
      "purpose": "The one cap-only admission rule, pure + door-side halves",
      "surface": {
@@ -41366,13 +41376,28 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NoSecretHostDelivery",
+      "SecretHostDelivery"
+     ],
+     "path": "src/secret_lease/delivery.rs",
+     "purpose": "The T1 host delivery adapter (FIX 4313): how a leased grant's bytes reach the run that holds it",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/secret_lease/doors.rs",
      "purpose": "T0/T1/T2 Vault doors: inject, materialize, register, revoke, expire",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 8
      }
     },
@@ -41387,14 +41412,62 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SecretCleanup",
+      "SecretGrantCaller",
+      "SecretGrantHandover",
+      "SecretGrantHolder",
+      "SecretGrantMinted",
+      "SecretGrantRedemption",
+      "SecretGrantRef",
+      "SecretGrantStatus",
+      "SecretGrantTarget",
+      "SecretGrantTeardown",
+      "SecretLeaseGrant"
+     ],
+     "path": "src/secret_lease/grant.rs",
+     "purpose": "FIX 4313: the value-free grant a secret lease's holder redeems",
+     "surface": {
+      "const": 5,
+      "crate-vis": 13,
+      "enum": 4,
+      "fn": 7,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_lease/grant_doors.rs",
+     "purpose": "FIX 4313: minting and renewing a secret grant",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_lease/grant_redeem.rs",
+     "purpose": "FIX 4313: redeeming, checking, reading and tearing down a secret grant",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 4
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/secret_lease/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-02 (ONE-1920): the T0/T1/T2 materialization rungs behind a single…",
      "surface": {
-      "crate-vis": 4,
-      "re-export": 2
+      "crate-vis": 5,
+      "re-export": 4
      }
     },
     {
@@ -49736,7 +49809,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 45,
+      "re-export": 46,
       "struct": 36
      }
     },
@@ -50060,7 +50133,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 590
+      "fn": 599
      }
     },
     {
@@ -50408,6 +50481,29 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "RecallTelemetry",
+      "RetrievalDiagnosticExport",
+      "RetrievalDiagnosticReplay",
+      "RetrievalDiagnosticRequest",
+      "RetrievalReplayRun",
+      "RetrievalRunEvidence",
+      "RetrievalRunRequest",
+      "RetrievalRunsRequest",
+      "RetrievalTraceRequest",
+      "RetrievalTurnRequest"
+     ],
+     "path": "src/task_verb/sdk_retrieval.rs",
+     "purpose": "Owner-only, tenant-local retrieval diagnostics over the existing finalized ledger",
+     "surface": {
+      "const": 1,
+      "fn": 9,
+      "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ScratchpadAppendRequest",
       "ScratchpadRecallMark",
       "ScratchpadRecallReply",
@@ -50448,7 +50544,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SecretUseAnswer",
@@ -50460,7 +50556,7 @@
      "purpose": "`self.use`: an agent hands a secret to one trusted operation by its handle, and reads the operation's…",
      "surface": {
       "enum": 1,
-      "fn": 2,
+      "fn": 4,
       "struct": 3
      }
     },
@@ -54430,9 +54526,19 @@
      "purpose": "The vault's one sealed cloud bundle (DEC-0005 \"Sealed copies\", FIX 922), and the sealed pad object beside it",
      "surface": {
       "const": 3,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 34,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/bundle/authority.rs",
+     "purpose": "A private world's authority inside the sealed bundle (FIX 4211): its signed settings and key wrap entries…",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -54511,7 +54617,7 @@
      "path": "src/world_keys/mod.rs",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 3,
       "re-export": 16,
       "struct": 2
@@ -56731,14 +56837,14 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 21,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…"
     },
     "secret_lease": {
-     "files": 8,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -56941,7 +57047,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 157,
+     "files": 158,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -57095,7 +57201,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 21,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -57111,7 +57217,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3479,
+   "source_files": 3486,
    "test_files": 902
   },
   "oneiron-android": {
@@ -65578,7 +65684,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 540
+      "fn": 549
      }
     },
     {
@@ -66627,7 +66733,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 541
+      "fn": 550
      }
     },
     {
@@ -69840,7 +69946,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 105
+      "crate-vis": 106
      }
     },
     {
@@ -70021,6 +70127,16 @@
      "purpose": "Owner-authenticated retained-result reads",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/retrieval_doors.rs",
+     "purpose": "Typed owner-only retrieval diagnostics",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -76886,7 +77002,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/voice_host/public_loop.rs",
@@ -77380,7 +77496,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 364,
+     "files": 365,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -77795,7 +77911,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 694,
+   "source_files": 695,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -78387,6 +78503,7 @@
       "ContextDefault",
       "ContextEmitReceipt",
       "ContextPackBudgetControls",
+      "ContextPackMediaQuery",
       "ContextPackRetrievalBudgetControls",
       "ContextReceiptFields",
       "ContextSpec",
@@ -78921,6 +79038,7 @@
       "MeasuredLearningView",
       "Measurement",
       "MediaAtom",
+      "MediaQueryKind",
       "MediaUsage",
       "MemberAnswer",
       "MemberOnboardingOutcome",
@@ -79301,6 +79419,9 @@
       "Reasoning",
       "ReasoningCause",
       "ReasoningEffort",
+      "RecallEffort",
+      "RecallRequest",
+      "RecallTelemetry",
       "RecallWorlds",
       "ReceiptAtom",
       "ReceiptKind",
@@ -79415,9 +79536,39 @@
       "ResultTaintState",
       "ResultWithheld",
       "RetentionDefault",
+      "RetrievalAction",
       "RetrievalBlendWeights",
+      "RetrievalDiagnosticExport",
+      "RetrievalDiagnosticReplay",
+      "RetrievalDiagnosticRequest",
+      "RetrievalEndOutcome",
+      "RetrievalOutcome",
+      "RetrievalOutcomeRecord",
+      "RetrievalPolicyAction",
+      "RetrievalPolicyDecision",
+      "RetrievalPolicyEnvelope",
+      "RetrievalPolicyIdentity",
+      "RetrievalPolicyTier",
+      "RetrievalPolicyTrace",
+      "RetrievalReplayInputs",
+      "RetrievalReplayRun",
+      "RetrievalRewardEvidence",
+      "RetrievalRunEvidence",
+      "RetrievalRunId",
+      "RetrievalRunRecord",
+      "RetrievalRunRequest",
+      "RetrievalRunsRequest",
+      "RetrievalScoreBreakdown",
       "RetrievalScoreComponent",
       "RetrievalSignal",
+      "RetrievalState",
+      "RetrievalTrace",
+      "RetrievalTraceChannelRecord",
+      "RetrievalTraceRequest",
+      "RetrievalTraceStage",
+      "RetrievalTraceStageRecord",
+      "RetrievalTurn",
+      "RetrievalTurnRequest",
       "RetryableLlmError",
       "RevealDecision",
       "RevealDescribeRequest",
@@ -79911,10 +80062,14 @@
       "WireDeleteReceipt",
       "WireEntityView",
       "WireMentionProvenance",
+      "WireQueryAffect",
       "WireQuoteSpan",
       "WireReadScope",
+      "WireRecallScope",
       "WireRecordRefusal",
       "WireRefusalReason",
+      "WireRetrievalDegradation",
+      "WireRetrievalQuality",
       "WireWitnessAuthor",
       "WireWitnessMessage",
       "WireWitnessReceipt",
@@ -79969,8 +80124,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 519,
-      "struct": 1457
+      "enum": 527,
+      "struct": 1488
      }
     },
     {

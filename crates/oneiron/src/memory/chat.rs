@@ -488,6 +488,7 @@ impl Memory<'_> {
                 pack_version: MEMORY_PACK_VERSION,
                 rendered,
                 narrowing: Box::new(narrowing),
+                retrieval_run_id: None,
             },
             gaps,
         ))

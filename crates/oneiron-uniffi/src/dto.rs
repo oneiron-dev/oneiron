@@ -845,6 +845,8 @@ pub struct MemoryPack {
     pub rendered: Option<String>,
     /// The actor-scoped read receipt.
     pub narrowing: ReadReceipt,
+    /// The finalized serving-run id as sixteen bytes; absent when capture is off.
+    pub retrieval_run_id: Option<Vec<u8>>,
 }
 
 // ── jobs and effects ────────────────────────────────────────────────────

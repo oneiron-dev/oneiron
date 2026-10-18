@@ -250,6 +250,55 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<RecallRequest>(),
             ),
             (
+                "vault.retrieval.recall",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::RecallRequest>(
+                ),
+            ),
+            (
+                "vault.retrieval.runs",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RetrievalRunsRequest,
+                >(),
+            ),
+            (
+                "vault.retrieval.run",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RetrievalRunRequest,
+                >(),
+            ),
+            (
+                "vault.retrieval.turn",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RetrievalTurnRequest,
+                >(),
+            ),
+            (
+                "vault.retrieval.outcomes.put",
+                crate::code_run::vault_read::request_schema::<crate::store::RetrievalOutcome>(),
+            ),
+            (
+                "vault.retrieval.outcomes.end",
+                crate::code_run::vault_read::request_schema::<crate::store::RetrievalEndOutcome>(),
+            ),
+            (
+                "vault.retrieval.trace",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RetrievalTraceRequest,
+                >(),
+            ),
+            (
+                "vault.retrieval.export",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RetrievalDiagnosticRequest,
+                >(),
+            ),
+            (
+                "vault.retrieval.replay",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RetrievalDiagnosticRequest,
+                >(),
+            ),
+            (
                 "vault.export",
                 crate::code_run::vault_read::request_schema::<crate::memory::ExportOptions>(),
             ),
@@ -3129,6 +3178,14 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.budgets.lease.top_up",
     "vault.budgets.local",
     "vault.budgets.settlements",
+    "vault.retrieval.runs",
+    "vault.retrieval.run",
+    "vault.retrieval.turn",
+    "vault.retrieval.outcomes.put",
+    "vault.retrieval.outcomes.end",
+    "vault.retrieval.trace",
+    "vault.retrieval.export",
+    "vault.retrieval.replay",
     "self.credential.attenuate",
     "vault.scope.ceiling",
     "vault.export.scoped",
@@ -3332,6 +3389,30 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.budgets.settlements" => crate::code_run::vault_read::request_schema::<
             crate::agent_dispatch::budget_doors::RunSettlementsView,
+        >(),
+        "vault.retrieval.runs" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::task_verb::sdk::RetrievalRunEvidence>,
+        >(),
+        "vault.retrieval.run" => crate::code_run::vault_read::request_schema::<
+            Option<crate::task_verb::sdk::RetrievalRunEvidence>,
+        >(),
+        "vault.retrieval.turn" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::task_verb::sdk::RetrievalRunEvidence>,
+        >(),
+        "vault.retrieval.outcomes.put" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::store::RetrievalOutcomeRecord>,
+        >(),
+        "vault.retrieval.outcomes.end" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::task_verb::sdk::RetrievalRunEvidence>,
+        >(),
+        "vault.retrieval.trace" => {
+            crate::code_run::vault_read::request_schema::<Option<crate::store::RetrievalTrace>>()
+        }
+        "vault.retrieval.export" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::RetrievalDiagnosticExport,
+        >(),
+        "vault.retrieval.replay" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::RetrievalDiagnosticReplay,
         >(),
         "self.credential.attenuate" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::CredentialAttenuated,
@@ -4302,6 +4383,69 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.recall" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.recall" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.runs" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.run" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.turn" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.outcomes.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.outcomes.end" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.trace" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.export" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.replay" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -7930,6 +8074,33 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             crate::memory::caps::check_as_of(input.as_of)?;
             crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
         }
+        "vault.retrieval.recall" => {
+            let _input: crate::task_verb::sdk::RecallRequest = decode(value.clone())?;
+        }
+        "vault.retrieval.runs" => {
+            let _input: crate::task_verb::sdk::RetrievalRunsRequest = decode(value.clone())?;
+        }
+        "vault.retrieval.run" => {
+            let _input: crate::task_verb::sdk::RetrievalRunRequest = decode(value.clone())?;
+        }
+        "vault.retrieval.turn" => {
+            let _input: crate::task_verb::sdk::RetrievalTurnRequest = decode(value.clone())?;
+        }
+        "vault.retrieval.outcomes.put" => {
+            let _input: crate::store::RetrievalOutcome = decode(value.clone())?;
+        }
+        "vault.retrieval.outcomes.end" => {
+            let _input: crate::store::RetrievalEndOutcome = decode(value.clone())?;
+        }
+        "vault.retrieval.trace" => {
+            let _input: crate::task_verb::sdk::RetrievalTraceRequest = decode(value.clone())?;
+        }
+        "vault.retrieval.export" => {
+            let _input: crate::task_verb::sdk::RetrievalDiagnosticRequest = decode(value.clone())?;
+        }
+        "vault.retrieval.replay" => {
+            let _input: crate::task_verb::sdk::RetrievalDiagnosticRequest = decode(value.clone())?;
+        }
         "vault.export" => {
             let _input: crate::memory::ExportOptions = decode(value.clone())?;
         }
@@ -9717,6 +9888,19 @@ pub fn invoke(
         "vault.witness" => encode(vault_witness(memory, decode(value)?)?),
         "vault.claims.upsert" => encode(vault_claims_upsert(memory, decode(value)?)?),
         "vault.recall" => encode(vault_recall(memory, decode(value)?)?),
+        "vault.retrieval.recall" => encode(vault_retrieval_recall(memory, decode(value)?)?),
+        "vault.retrieval.runs" => encode(vault_retrieval_runs(memory, decode(value)?)?),
+        "vault.retrieval.run" => encode(vault_retrieval_run(memory, decode(value)?)?),
+        "vault.retrieval.turn" => encode(vault_retrieval_turn(memory, decode(value)?)?),
+        "vault.retrieval.outcomes.put" => {
+            encode(vault_retrieval_outcomes_put(memory, decode(value)?)?)
+        }
+        "vault.retrieval.outcomes.end" => {
+            encode(vault_retrieval_outcomes_end(memory, decode(value)?)?)
+        }
+        "vault.retrieval.trace" => encode(vault_retrieval_trace(memory, decode(value)?)?),
+        "vault.retrieval.export" => encode(vault_retrieval_export(memory, decode(value)?)?),
+        "vault.retrieval.replay" => encode(vault_retrieval_replay(memory, decode(value)?)?),
         "vault.export" => encode(vault_export(memory, decode(value)?)?),
         "self.credential.attenuate" => encode(self_credential_attenuate(memory, decode(value)?)?),
         "vault.scope.ceiling" => encode(vault_scope_ceiling(memory, decode(value)?)?),
@@ -11184,6 +11368,96 @@ pub fn vault_recall(
     crate::memory::caps::check_as_of(input.as_of)?;
     crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
     crate::task_verb::sdk::recall_unembedded(memory, input)
+}
+pub fn vault_retrieval_recall(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RecallRequest,
+) -> MemoryResult<crate::memory::MemoryPack> {
+    crate::task_verb::sdk::retrieval_recall_as_owner(
+        memory,
+        &memory.embedded_owner("vault.retrieval.recall")?,
+        input,
+    )
+}
+pub fn vault_retrieval_runs(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RetrievalRunsRequest,
+) -> MemoryResult<Vec<crate::task_verb::sdk::RetrievalRunEvidence>> {
+    crate::task_verb::sdk::retrieval_runs_as_owner(
+        memory,
+        &memory.embedded_owner("vault.retrieval.runs")?,
+        input,
+    )
+}
+pub fn vault_retrieval_run(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RetrievalRunRequest,
+) -> MemoryResult<Option<crate::task_verb::sdk::RetrievalRunEvidence>> {
+    crate::task_verb::sdk::retrieval_run_as_owner(
+        memory,
+        &memory.embedded_owner("vault.retrieval.run")?,
+        input,
+    )
+}
+pub fn vault_retrieval_turn(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RetrievalTurnRequest,
+) -> MemoryResult<Vec<crate::task_verb::sdk::RetrievalRunEvidence>> {
+    crate::task_verb::sdk::retrieval_turn_as_owner(
+        memory,
+        &memory.embedded_owner("vault.retrieval.turn")?,
+        input,
+    )
+}
+pub fn vault_retrieval_outcomes_put(
+    memory: &Memory<'_>,
+    input: crate::store::RetrievalOutcome,
+) -> MemoryResult<Vec<crate::store::RetrievalOutcomeRecord>> {
+    crate::task_verb::sdk::retrieval_outcomes_put_as_owner(
+        memory,
+        &memory.embedded_owner("vault.retrieval.outcomes.put")?,
+        input,
+    )
+}
+pub fn vault_retrieval_outcomes_end(
+    memory: &Memory<'_>,
+    input: crate::store::RetrievalEndOutcome,
+) -> MemoryResult<Vec<crate::task_verb::sdk::RetrievalRunEvidence>> {
+    crate::task_verb::sdk::retrieval_outcomes_end_as_owner(
+        memory,
+        &memory.embedded_owner("vault.retrieval.outcomes.end")?,
+        input,
+    )
+}
+pub fn vault_retrieval_trace(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RetrievalTraceRequest,
+) -> MemoryResult<Option<crate::store::RetrievalTrace>> {
+    crate::task_verb::sdk::retrieval_trace_as_owner(
+        memory,
+        &memory.embedded_owner("vault.retrieval.trace")?,
+        input,
+    )
+}
+pub fn vault_retrieval_export(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RetrievalDiagnosticRequest,
+) -> MemoryResult<crate::task_verb::sdk::RetrievalDiagnosticExport> {
+    crate::task_verb::sdk::retrieval_export_as_owner(
+        memory,
+        &memory.embedded_owner("vault.retrieval.export")?,
+        input,
+    )
+}
+pub fn vault_retrieval_replay(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RetrievalDiagnosticRequest,
+) -> MemoryResult<crate::task_verb::sdk::RetrievalDiagnosticReplay> {
+    crate::task_verb::sdk::retrieval_replay_as_owner(
+        memory,
+        &memory.embedded_owner("vault.retrieval.replay")?,
+        input,
+    )
 }
 pub fn vault_export(
     memory: &Memory<'_>,
