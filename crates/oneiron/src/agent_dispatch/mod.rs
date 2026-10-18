@@ -31,6 +31,10 @@ pub(crate) use self::comm::{
     may_address_in_txn, target_admits_in_txn,
 };
 mod comm_widen;
+pub(crate) use self::comm_widen::{
+    CommWidenDecision, CommWidenQuestion, CommWidenRecipient, CommWidenRecord, CommWidenRequest,
+    CommWidenState, comm_widen_in, comm_widen_recipient_in_txn, put_comm_widen_in,
+};
 mod context;
 mod dispatch;
 mod fanout_statement;

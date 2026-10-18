@@ -31,7 +31,7 @@ use super::types::{AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, AgentDispatc
 use super::widen_record::invalid;
 
 /// Most dispatch hops a lineage walk follows before it refuses as a cycle.
-const MAX_LINEAGE_HOPS: usize = 256;
+pub(super) const MAX_LINEAGE_HOPS: usize = 256;
 
 /// Whom a dispatched agent may address. Declaration order is the narrowing
 /// order (CALLS C1): a child's reach is never wider than its parent's.
