@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 const BODY: &str = "body";
 const META: &str = "note";
-pub(super) const MAX_NOTE_BYTES: usize = 1024 * 1024;
+pub(crate) const MAX_NOTE_BYTES: usize = 1024 * 1024;
 
 /// Positions use Unicode scalar indices in the named base frontier. Batches
 /// are ordered, so each operation sees the preceding operations in its batch.
