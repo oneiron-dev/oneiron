@@ -936,9 +936,10 @@ impl Book {
         let mut areas = Vec::new();
         let mut seen = HashSet::new();
         // Each shared group's anchor (cell and text) by `si`, and every
-        // shared cell by its index in `cells`.
+        // shared cell by its index in `cells`, with whether it holds a rich
+        // value.
         let mut anchors: HashMap<u32, ((u32, u32), String)> = HashMap::new();
-        let mut sharing: Vec<(usize, u32)> = Vec::new();
+        let mut sharing: Vec<(usize, u32, bool)> = Vec::new();
         let rows = match tree.child(0, SML, "sheetData")? {
             Some((data, _)) => tree
                 .children(data)
