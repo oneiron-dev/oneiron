@@ -134,8 +134,13 @@ impl EngineNativeExecutor<'_> {
             expected_generation = Some(generation);
         }
         let mut steps_run = 0_u32;
+        // The loop's root (FIX 600): a hard queue control that committed for
+        // this run's attempt stops the step it is running, and the next.
+        let root = self.attempt_root();
+        let cancel = root.token();
 
         loop {
+            cancel.check()?;
             let completed_steps = completed_step_count(&record)?;
             if completed_steps >= u64::from(config.limits.hard_steps) {
                 return Ok(self.outcome(
@@ -190,6 +195,7 @@ impl EngineNativeExecutor<'_> {
                 ));
             }
             let request_hash = request.canonical_hash()?;
+            self.capture_first_step(config, completed_steps, &request);
             let response = self.backend.generate(request, self.lease).await?;
             self.post_turn_hooks(turn, &response)?;
             // The provider that answered is the one this turn's program
@@ -251,10 +257,12 @@ impl EngineNativeExecutor<'_> {
                 boundary,
                 determinism: config.determinism,
             };
-            let step_outcome = match self.runtime.run_step(step, &mut host) {
+            let step_outcome = match self.runtime.run_step_cancellable(step, &mut host, cancel) {
                 Ok(outcome) => outcome,
                 Err(err) => {
-                    let durable_wait = host.durable_wait;
+                    // A cancelled root fails the step: the bridge rows it
+                    // left stay recorded, and no wait it reached hides that.
+                    let durable_wait = host.durable_wait.filter(|_| !cancel.is_cancelled());
                     let bridge_calls = host.bridge_calls;
                     let captured = host.captured;
                     if !bridge_calls.is_empty()
@@ -277,6 +285,16 @@ impl EngineNativeExecutor<'_> {
                             shadow.ended(Some(&status));
                         }
                         return Ok(self.outcome(status, steps_run + 1, record));
+                    }
+                    // A step a provider outage ended stops on that outage,
+                    // which parks its run, however its guest took the
+                    // failure (FIX 3194).
+                    if let Some(outage) = host
+                        .hard_failure
+                        .take()
+                        .filter(|failure| matches!(failure, Error::ProviderUnavailable { .. }))
+                    {
+                        return Err(outage.into());
                     }
                     return Err(err.into());
                 }

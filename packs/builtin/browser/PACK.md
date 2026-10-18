@@ -20,5 +20,7 @@ Every effect lands a receipt naming the page it acted on.
 The pack covers the desktop too. A run's Linux desktop guest (`self.desktop.*`) is
 bound the same way, rides the same grant, and its sends, payments, account changes,
 publishes and destructive acts take the same `browser.*` effect classes and presses.
-The owner can take a run's desktop over, asked by the agent's `self.desktop.handover`
-or not, and hand it back; the takeover's record is its receipt.
+The owner can take a run's desktop or browser over, asked by the agent's
+`self.desktop.handover` or `self.browser.handover` or not, and hand it back; the
+takeover's record is its receipt. A browser takeover is how a person signs in or
+clicks pay inside the same page the agent filled.

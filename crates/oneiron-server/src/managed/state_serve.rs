@@ -139,6 +139,15 @@ pub struct ManagedState {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ManagedWidenHolder(pub(crate) oneiron::EntityId);
 
+/// The vault owner a supervisor-signed `ManagedOwnerAction` names for one
+/// facade request, verified at ingress; never the host root.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ManagedOwnerHolder(pub(crate) oneiron::EntityId);
+
+/// The facade's nest: the requests a `ManagedOwnerAction` may name the
+/// owner for.
+const FACADE_PREFIX: &str = "/v1/core/facade/";
+
 struct HttpMutation(Arc<ManagedState>);
 
 impl Drop for HttpMutation {
@@ -424,9 +433,55 @@ async fn refuse_frozen_writes(
                 }
             }
         }
+        // A facade request the supervisor attests is the vault owner's own
+        // (`ManagedOwnerAction`): verified the same way, over the method,
+        // path, placing headers and exact body. Only a verified one names
+        // the owner, as a request extension the credential reads.
+        if request.method() == Method::POST && request.uri().path().starts_with(FACADE_PREFIX) {
+            let assertion = request
+                .headers()
+                .get(oneiron_vault_contract::MANAGED_OWNER_ACTION_HEADER)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|text| {
+                    serde_json::from_str::<oneiron_vault_contract::ManagedOwnerAction>(text).ok()
+                });
+            if let Some(assertion) = assertion {
+                let (parts, body) = request.into_parts();
+                let Ok(bytes) =
+                    to_bytes(body, oneiron::memory::caps::MAX_REMOTE_REQUEST_BYTES).await
+                else {
+                    return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+                };
+                let header = |name: &'static str| {
+                    parts
+                        .headers
+                        .get(name)
+                        .and_then(|value| value.to_str().ok())
+                        .unwrap_or("")
+                };
+                let [room_turn, invocation, session] =
+                    oneiron_vault_contract::MANAGED_OWNER_BOUND_HEADERS.map(header);
+                let verified = state.ledger.verify_owner_action(
+                    &assertion,
+                    &oneiron_vault_contract::ManagedOwnerRequest {
+                        method: parts.method.as_str(),
+                        path: parts.uri.path(),
+                        headers: [room_turn, invocation, session],
+                        body: &bytes,
+                    },
+                );
+                request = Request::from_parts(parts, Body::from(bytes));
+                if verified && let Ok(holder) = oneiron::EntityId::from_hex(&assertion.holder_ref) {
+                    request.extensions_mut().insert(ManagedOwnerHolder(holder));
+                }
+            }
+        }
         request
             .headers_mut()
             .remove("x-oneiron-managed-widen-action");
+        request
+            .headers_mut()
+            .remove(oneiron_vault_contract::MANAGED_OWNER_ACTION_HEADER);
         // Bearer authentication terminated at the supervisor. Do not let a
         // forwarded legacy/dev claim select a principal on secondary routes.
         for header in [
@@ -890,9 +945,17 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let coach_host = crate::ai_host::coach_host::spawn(&sync_server, admitted());
     // Crossed thresholds ask the ladder whether everything is okay (OF-520).
     let mut ladder_workers = vec![crate::wire_health::spawn(&sync_server, admitted())];
+    // Sensitive imported topics ask the owner who sees their later imports (OF-492).
+    ladder_workers.push(crate::import_audience::spawn(&sync_server, admitted()));
     // Documents whose signing finished are sealed as a task (OF-415).
     #[cfg(unix)]
     ladder_workers.push(crate::api::spawn_esign_seal_worker_admitted(
+        Arc::clone(&sync_server),
+        admitted(),
+        managed.seal_config(),
+    ));
+    // Held automated sign acts are asked up their role chain (OF-415).
+    ladder_workers.push(crate::api::spawn_esign_hold_worker_admitted(
         Arc::clone(&sync_server),
         admitted(),
     ));

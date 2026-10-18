@@ -20,6 +20,7 @@ use std::sync::{Arc, Mutex};
 
 use futures_util::StreamExt;
 use oneiron::context_board::{BoardBlockHeader, BoardBudgetRequest};
+use oneiron::llm::run_admission::PayerPerson;
 use oneiron::llm::{DEFAULT_BUDGET_RESERVE_UNITS, FinishReason};
 use oneiron::store::GateSystemNoticeRecord;
 use oneiron::voice_cascade::{Brain, BrainEvent, BrainRequest, GenerationEpoch, TurnMemories};
@@ -70,6 +71,9 @@ pub struct ChatBrainBindings {
     pub instructions: Option<String>,
     /// The actor whose budget line each turn runs on.
     pub payer: WriteActor,
+    /// Who each turn bills when a room pays for the call (FIX 805), which
+    /// the host resolved at hello; `None` is the vault owner.
+    pub funding: Option<PayerPerson>,
     /// Where the turns' events go: the host's `brain_out`.
     pub out: mpsc::Sender<VoiceBrainOut>,
 }
@@ -148,6 +152,7 @@ impl ChatBrain {
             vault,
             instructions,
             payer,
+            funding,
             ..
         } = &self.bindings;
         let settings = ai.chat_settings();
@@ -187,7 +192,7 @@ impl ChatBrain {
             BudgetExhaustionPolicy::Suspend,
             payer.clone(),
         )?;
-        let run = ai.undeclared_run(line, meter);
+        let run = ai.model_runtime().funded_run(line, meter, funding.clone());
         let stream = admitted
             .ladder
             .stream(&run, admitted.request, None)

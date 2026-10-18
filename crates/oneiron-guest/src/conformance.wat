@@ -1,12 +1,20 @@
 (component
-  ;; This is a typed WAT fixture, not JavaScript and not QuickJS. It echoes
-  ;; source bytes (or a fixed marker) only after a secret-free credential receipt.
+  ;; This is a typed WAT fixture, not JavaScript and not QuickJS. It streams
+  ;; source bytes (or a fixed marker) as one proposed file, only after a
+  ;; secret-free credential receipt.
   (type $credential-record (record
     (field "operation" string) (field "credential-handle" string) (field "args" string)))
   (import "credential-input" (type $credential-input (eq $credential-record)))
   (type $credential-type (func (param "input" $credential-input)
     (result (result string (error string)))))
   (import "credential-call" (func $credential (type $credential-type)))
+  (type $open-type (func (param "path" string) (result (result u64 (error string)))))
+  (import "proposal-open" (func $open (type $open-type)))
+  (type $chunk-type (func (param "proposal" u64) (param "frame" (list u8))
+    (result (result u64 (error string)))))
+  (import "proposal-chunk" (func $chunk (type $chunk-type)))
+  (type $close-type (func (param "proposal" u64) (result (result u64 (error string)))))
+  (import "proposal-close" (func $close (type $close-type)))
 
   (type $time-shape (record (field "start" u64) (field "end" u64)))
   (import "time-range" (type $time (eq $time-shape)))
@@ -15,13 +23,11 @@
     (field "value" string) (field "confidence" (option f32))
     (field "occurred" (option $time)) (field "learned-at" (option u64))))
   (import "claim-input" (type $claim (eq $claim-shape)))
-  (type $file-shape (record (field "path" string) (field "bytes" (list u8))))
-  (import "file-proposal" (type $file (eq $file-shape)))
   (type $delete-shape (record (field "path" string)))
   (import "file-delete-proposal" (type $delete (eq $delete-shape)))
   (type $rename-shape (record (field "origin" string) (field "destination" string)))
   (import "file-rename-proposal" (type $rename (eq $rename-shape)))
-  (type $proposal-shape (variant (case "file-write" $file) (case "claim-candidate" $claim) (case "file-delete" $delete) (case "file-rename" $rename)))
+  (type $proposal-shape (variant (case "claim-candidate" $claim) (case "file-delete" $delete) (case "file-rename" $rename)))
   (import "proposal-delta" (type $proposal (eq $proposal-shape)))
   (type $step-shape (record (field "result-json" string) (field "proposals" (list $proposal))))
   (import "step-result" (type $step (eq $step-shape)))
@@ -52,39 +58,49 @@
   (alias core export $storage-instance "realloc" (core func $realloc))
   (core func $credential-lowered (canon lower (func $credential)
     (memory $memory) (realloc $realloc)))
+  (core func $open-lowered (canon lower (func $open) (memory $memory) (realloc $realloc)))
+  (core func $chunk-lowered (canon lower (func $chunk) (memory $memory) (realloc $realloc)))
+  (core func $close-lowered (canon lower (func $close) (memory $memory) (realloc $realloc)))
   (core module $runner
     (import "host" "memory" (memory 32 32))
     ;; Flattened credential-input = three strings; result<string,string>
     ;; is returned indirectly through the seventh (return-area) argument.
     (import "host" "credential" (func $credential
       (param i32 i32 i32 i32 i32 i32 i32)))
+    ;; result<u64,string> comes back through the last (return-area)
+    ;; argument: discriminant byte, then the payload at offset 8.
+    (import "host" "open" (func $open (param i32 i32 i32)))
+    (import "host" "chunk" (func $chunk (param i64 i32 i32 i32)))
+    (import "host" "close" (func $close (param i64 i32)))
     (func (export "run") (param $source i32) (param $length i32) (result i32)
+      (local $file i64)
       (call $credential
         (i32.const 4256) (i32.const 8) (i32.const 4288) (i32.const 18)
         (i32.const 4320) (i32.const 43) (i32.const 1536))
       (if (i32.load (i32.const 1536)) (then unreachable))
+      (call $open (i32.const 4128) (i32.const 25) (i32.const 1600))
+      (if (i32.load8_u (i32.const 1600)) (then unreachable))
+      (local.set $file (i64.load (i32.const 1608)))
+      (if (local.get $length)
+        (then (call $chunk (local.get $file) (local.get $source) (local.get $length) (i32.const 1600)))
+        (else (call $chunk (local.get $file) (i32.const 4192) (i32.const 28) (i32.const 1600))))
+      (if (i32.load8_u (i32.const 1600)) (then unreachable))
+      (call $close (local.get $file) (i32.const 1600))
+      (if (i32.load8_u (i32.const 1600)) (then unreachable))
       ;; result<step-result,string>: discriminant, then the 16-byte record.
       (i32.store (i32.const 1024) (i32.const 0))
       (i32.store (i32.const 1028) (i32.const 4096))
       (i32.store (i32.const 1032) (i32.const 4))
+      ;; The file already streamed; the step result proposes nothing else.
       (i32.store (i32.const 1036) (i32.const 2048))
-      (i32.store (i32.const 1040) (i32.const 1))
-      ;; proposal-delta has 8-byte alignment from claim-input's u64 fields.
-      ;; file-write payload starts 8 bytes after the variant discriminant.
-      (i32.store (i32.const 2048) (i32.const 0))
-      (i32.store (i32.const 2056) (i32.const 4128))
-      (i32.store (i32.const 2060) (i32.const 25))
-      (if (local.get $length)
-        (then
-          (i32.store (i32.const 2064) (local.get $source))
-          (i32.store (i32.const 2068) (local.get $length)))
-        (else
-          (i32.store (i32.const 2064) (i32.const 4192))
-          (i32.store (i32.const 2068) (i32.const 28))))
+      (i32.store (i32.const 1040) (i32.const 0))
       (i32.const 1024)))
   (core instance $runner-instance (instantiate $runner
     (with "host" (instance
       (export "memory" (memory $memory))
-      (export "credential" (func $credential-lowered))))))
+      (export "credential" (func $credential-lowered))
+      (export "open" (func $open-lowered))
+      (export "chunk" (func $chunk-lowered))
+      (export "close" (func $close-lowered))))))
   (func (export "run-step") (type $run-type)
     (canon lift (core func $runner-instance "run") (memory $memory) (realloc $realloc))))

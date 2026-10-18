@@ -10,7 +10,7 @@
 //! buffered: `stream: true` is refused, and `/v1/responses` is not served.
 mod wire;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use axum::{
@@ -23,6 +23,7 @@ use axum::{
 };
 use oneiron::claim::CallerLocality;
 use oneiron::connector_key::PROXY_CONNECTOR;
+use oneiron::federation::{ScopeAxis, ScopeId};
 use oneiron::memory::RecallEffort;
 use oneiron::task_verb::sdk::RecallRequest;
 use oneiron::{
@@ -97,13 +98,7 @@ async fn complete(
     };
     let query = chat.messages[newest].text();
     let completion_id = format!("chatcmpl-{}", EntityId::now().to_hex());
-    let actor = admit_connector(headers, locality, server, &completion_id).await?;
-    let landing = actor.landing.map_err(|_| {
-        forbidden(
-            "session_refused",
-            "the session this request names does not place this connector's writes",
-        )
-    })?;
+    let (actor, landing) = admit_connector(headers, locality, server, &completion_id).await?;
 
     let mut request = model_request(server, &chat)?;
     let (ladder, run) =
@@ -151,18 +146,20 @@ async fn complete(
     ))
 }
 
-/// The paired connector the request's credential names: it reads, and
-/// proposes or writes, over the whole record scope, and binds both verbs
+/// The paired connector the request's credential names, and the facet its
+/// writes land in. It reads, and proposes or writes, and binds both verbs
 /// when it binds verbs. The exchange lands Proposed whatever the ceiling,
-/// so either write grant serves. A narrowed credential's bounds are not
-/// projected here: it is refused, never widened. The actor also holds a live
-/// key on the proxy's own connector, its grant slate stamped.
+/// so either write grant serves. The exchange is born at the connector's
+/// world and that facet, so a credential narrowed to them carries its bounds
+/// into it (FIX 1400); one narrowed any other way, or by record or channel,
+/// is refused, never widened. The actor also holds a live key on the proxy's
+/// own connector, its grant slate stamped.
 async fn admit_connector(
     headers: &HeaderMap,
     locality: CallerLocality,
     server: &Arc<SyncServer>,
     request_id: &str,
-) -> Result<McpCallContext, Response> {
+) -> Result<(McpCallContext, Option<EntityId>), Response> {
     let actor = super::resolve_mcp_gateway_actor(
         McpSurfaceMode::Primary,
         request_id,
@@ -176,12 +173,28 @@ async fn admit_connector(
     if !auth.credential_is_live(&server.vault) {
         return Err(unauthorized());
     }
-    let proposes =
-        auth.require(CoreScope::Propose).is_ok() || auth.require(CoreScope::Write).is_ok();
-    if auth.require(CoreScope::Read).is_err() || !proposes {
+    let landing = actor.landing.map_err(|_| {
+        forbidden(
+            "session_refused",
+            "the session this request names does not place this connector's writes",
+        )
+    })?;
+    let axis = |id: Option<EntityId>| {
+        id.map_or(ScopeAxis::All, |id| {
+            ScopeAxis::Some(BTreeSet::from([ScopeId(id)]))
+        })
+    };
+    // The recall reads through the credential's own lane, so only the grant
+    // is left to check once the bounds are carried.
+    let carried = auth
+        .require_record_scope_carried(axis(actor.scope.world_ref), axis(landing))
+        .is_ok();
+    let proposes = auth.require_granted(CoreScope::Propose).is_ok()
+        || auth.require_granted(CoreScope::Write).is_ok();
+    if !carried || auth.require_granted(CoreScope::Read).is_err() || !proposes {
         return Err(forbidden(
             "scope_refused",
-            "the proxy reads and proposes: the credential needs Read and Propose (or Write) over the whole vault",
+            "the proxy reads and proposes: the credential needs Read and Propose (or Write), narrowed by no more than the connector's world and landing facet",
         ));
     }
     if !actor.admits_tool("vault.recall") || !actor.admits_tool("vault.remember") {
@@ -202,25 +215,28 @@ async fn admit_connector(
             "the paired actor holds no live openai_proxy connector key with a stamped grant slate; the owner admits it at POST /v1/owner/connectors/proxy",
         ));
     }
-    Ok(actor)
+    Ok((actor, landing))
 }
 
 /// The model call the body asks for, before the memory goes in. Only a
-/// model `[models]` configures is served, by its id or by an alias the
-/// owner names in `[models.aliases]`; no body field picks a route.
+/// model this host serves is served: one `[models]` configures, by its id
+/// or by an alias the owner names in `[models.aliases]`, or one a mesh
+/// catalog refresh discovered, by its id. No body field picks a route.
 fn model_request(
     server: &SyncServer,
     chat: &ChatCompletionRequest,
 ) -> Result<LlmRequest, Response> {
-    let aliased = server
-        .ai
-        .model_runtime()
-        .router()
+    let router = server.ai.model_runtime().router();
+    let aliased = router
+        .as_ref()
         .and_then(|router| router.aliased(&chat.model).cloned());
+    // A model the mesh discovered on the owner's other nodes is served as
+    // the raw routes serve it: its own-server row vouches for it at
+    // admission (FIX 3229).
     let (model, served_at) = aliased
         .or_else(|| chat.model.parse::<ModelId>().ok())
         .and_then(|model| {
-            let served_at = server.ai.model_locality(&model)?;
+            let (served_at, _) = router.as_ref()?.served(&model)?;
             Some((model, served_at))
         })
         .ok_or_else(|| {
@@ -229,7 +245,7 @@ fn model_request(
                 "invalid_request_error",
                 "model_not_found",
                 format!(
-                    "no model this vault configures has the id or alias {:?}",
+                    "no model this vault serves has the id or alias {:?}",
                     chat.model
                 ),
             )
@@ -322,8 +338,10 @@ async fn recall(
 
 /// Proposes the exchange, the newest user text and the settled answer, as
 /// the connector's own claim. It lands Proposed whatever the connector's
-/// ceiling. The answer was already paid for, so a refused proposal is
-/// reported in the reply, not raised.
+/// ceiling. A credential narrowed to the connector's world and landing facet
+/// proposes under those bounds, which the writer judges again (FIX 1400);
+/// any other proposes as it always did. The answer was already paid for, so
+/// a refused proposal is reported in the reply, not raised.
 fn remember(
     server: &SyncServer,
     actor: &McpCallContext,
@@ -360,11 +378,19 @@ fn remember(
         learned_at: None,
         salience: None,
     };
+    let narrowed = actor
+        .auth
+        .as_ref()
+        .is_some_and(|auth| auth.require_unrestricted_record_scope().is_err());
     // Past the claim payload cap the exchange is refused, as any proposal
     // is at the boundary.
-    match oneiron::memory::caps::check_claim_input(&input)
-        .and_then(|()| memory.claim_propose(&input))
-    {
+    match oneiron::memory::caps::check_claim_input(&input).and_then(|()| {
+        if narrowed {
+            memory.claim_propose_carried(&input)
+        } else {
+            memory.claim_propose(&input)
+        }
+    }) {
         Ok(receipt) => json!({"claim": receipt.claim_short_id, "approval": receipt.approval}),
         Err(refused) => json!({"error": {"code": refused.code, "message": refused.message}}),
     }

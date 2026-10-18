@@ -425,7 +425,11 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
         _ => None,
     };
     if let Some(kind) = kind {
-        return McpGatewayError::new(code, kind, error.message);
+        // A model that did not answer says when to call again (FIX 3194).
+        return McpGatewayError {
+            retry_after: error.retry_after,
+            ..McpGatewayError::new(code, kind, error.message)
+        };
     }
     // A facade refusal carrying a successor keeps the same stable kind and
     // typed data the engine-error path emits (ONE-1936) — one vocabulary for
@@ -542,6 +546,11 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
     {
         object.insert("hook".to_owned(), json!(*stop));
     }
+    if let Some(retry_after) = error.retry_after
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("retry_after".to_owned(), json!(retry_after));
+    }
     json!({
         "jsonrpc": "2.0",
         "id": id,
@@ -553,16 +562,34 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
     })
 }
 
+/// The code-mode run one call is made in (`execute_code`): the host origin
+/// its writes are made under, and the run itself, the creating run of the
+/// live lens cards the call renders (OF-181, FIX 2612 (a)).
+pub(crate) struct McpCodeRun {
+    pub(crate) origin: oneiron::memory::HostWriteOrigin,
+    pub(crate) run_id: oneiron::EntityId,
+}
+
 /// What one MCP row's credential surface is built from beside its call
 /// context: where its TASKs are born, the invocation its hooks cross under,
-/// and a code-mode call's host origin.
+/// and a code-mode call's run.
 struct McpRowSurface {
     position: oneiron::federation::record_scope::BirthPosition,
     invocation: oneiron::runtime_hooks::InvocationId,
-    origin: Option<oneiron::memory::HostWriteOrigin>,
+    run: Option<McpCodeRun>,
 }
 
 impl McpRowSurface {
+    /// Who owns the live lens card `verb` renders for `request` on this
+    /// row: a code-mode call's run, for that request's own subscription.
+    /// A direct tool call, or a hook's resumed one, carries no run, so its
+    /// card is held unowned (FIX 2612 (c)).
+    fn lens_owner(&self, verb: &str, request: &Value) -> Option<crate::lens_frames::CardOwner> {
+        self.run
+            .as_ref()
+            .map(|run| crate::lens_frames::CardOwner::run_request(run.run_id, verb, request))
+    }
+
     /// The caller's surface for one row: its credential at its locality,
     /// born at this position, under this invocation and host origin, in the
     /// off-record session the request named, its reads listed in `producers`.
@@ -572,7 +599,7 @@ impl McpRowSurface {
         actor: &McpCallContext,
         producers: &'a oneiron::memory::ProducerRows,
     ) -> oneiron::Memory<'a> {
-        let memory = crate::api::credential_memory(
+        let memory = crate::api::mcp_credential_memory(
             &server.vault,
             actor.auth.as_ref(),
             actor.actor_ref,
@@ -582,8 +609,8 @@ impl McpRowSurface {
         .with_birth_position(self.position)
         .listing_producers(producers)
         .with_invocation(self.invocation);
-        let memory = match self.origin.clone() {
-            Some(origin) => memory.with_host_origin(origin),
+        let memory = match &self.run {
+            Some(run) => memory.with_host_origin(run.origin.clone()),
             None => memory,
         };
         // OF-063: the off-record session the request named; inside an anonymous
@@ -1081,6 +1108,14 @@ fn mcp_agent_verb_input(
             }
             Ok(input)
         }
+        "vault.rooms.invite" => {
+            let mut input = a.spec.clone().ok_or_else(invalid)?;
+            let map = input.as_object_mut().ok_or_else(invalid)?;
+            if a.room_ref.as_deref() != map.get("room").and_then(Value::as_str) {
+                return Err(invalid());
+            }
+            Ok(input)
+        }
         "vault.rooms.consent" => a.spec.clone().ok_or_else(invalid),
         "vault.rooms.offer" => {
             let mut input = a.spec.clone().ok_or_else(invalid)?;
@@ -1169,6 +1204,11 @@ fn mcp_agent_verb_input(
         "vault.claims.admit" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.create" => a.spec.clone().ok_or_else(invalid),
         "vault.esign.create" => a.spec.clone().ok_or_else(invalid),
+        "vault.esign.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.esign.links.issue" => a.spec.clone().ok_or_else(invalid),
+        "vault.esign.send_for_signature" => a.spec.clone().ok_or_else(invalid),
+        "vault.esign.remind" => a.spec.clone().ok_or_else(invalid),
+        "vault.esign.void" => a.spec.clone().ok_or_else(invalid),
         "vault.conversations.create" => a.spec.clone().ok_or_else(invalid),
         "vault.conversations.turns.create" => a.spec.clone().ok_or_else(invalid),
         "vault.conversations.records.append" => a.spec.clone().ok_or_else(invalid),
@@ -1920,6 +1960,12 @@ pub(crate) fn mcp_agent_verb_arguments(
                 arguments.insert("room_ref".to_owned(), value.clone());
             }
         }
+        "vault.rooms.invite" => {
+            arguments.insert("spec".to_owned(), input.clone());
+            if let Some(value) = input.get("room") {
+                arguments.insert("room_ref".to_owned(), value.clone());
+            }
+        }
         "vault.rooms.consent" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -2127,6 +2173,21 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.esign.create" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.esign.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.esign.links.issue" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.esign.send_for_signature" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.esign.remind" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.esign.void" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.conversations.create" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -2242,7 +2303,8 @@ pub(crate) fn mcp_agent_verb_arguments(
 /// Runs one verb from its whole typed input, with the actor ceiling and
 /// gate every other door applies. Every MCP door reaches the verb table here.
 /// The input names only fields the verb's advertised closed schema lists, and
-/// a code-mode call's claims are written under its run's host `origin`.
+/// a code-mode call's claims are written under its `run`'s host origin, the
+/// live lens cards it renders held for that run.
 /// Every row the result was derived from is listed in `served`: those its
 /// input names, and those the verb's reads picked themselves. A board read
 /// leaves the hook blocks its answer shows in `board_hooks`; the caller spends
@@ -2252,7 +2314,7 @@ pub(crate) async fn execute_agent_verb_input(
     tool: &str,
     input: Value,
     actor: &McpCallContext,
-    origin: Option<oneiron::memory::HostWriteOrigin>,
+    run: Option<McpCodeRun>,
     served: &mut Vec<oneiron::EntityId>,
     board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
 ) -> Result<
@@ -2270,7 +2332,7 @@ pub(crate) async fn execute_agent_verb_input(
         tool,
         input,
         actor,
-        origin,
+        run,
         &producers,
         served,
         board_hooks,
@@ -2289,7 +2351,7 @@ async fn execute_agent_verb_listing(
     tool: &str,
     input: Value,
     actor: &McpCallContext,
-    origin: Option<oneiron::memory::HostWriteOrigin>,
+    run: Option<McpCodeRun>,
     producers: &oneiron::memory::ProducerRows,
     served: &mut Vec<oneiron::EntityId>,
     board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
@@ -2333,7 +2395,7 @@ async fn execute_agent_verb_listing(
     let surface = McpRowSurface {
         position,
         invocation,
-        origin,
+        run,
     };
     // The direct caller's own proof, on the rows whose HTTP door binds it
     // outside a room turn (OF-417, OF-365).
@@ -3065,10 +3127,11 @@ async fn execute_agent_verb_row(
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             oneiron::task_verb::sdk::validate_input("vault.weave.lens", &input)
                 .map_err(mcp_facade_error)?;
+            let owner = surface.lens_owner("vault.weave.lens", &input);
             let input: oneiron::claim::WeaveReportRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
-                crate::api::facade::host_doors::vault_weave_lens(server, auth, input).await;
+                crate::api::facade::host_doors::vault_weave_lens(server, auth, owner, input).await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)
@@ -4337,10 +4400,12 @@ async fn execute_agent_verb_row(
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             oneiron::task_verb::sdk::validate_input("vault.lenses.default", &input)
                 .map_err(mcp_facade_error)?;
+            let owner = surface.lens_owner("vault.lenses.default", &input);
             let input: oneiron::lens::LensDefaultRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
-                crate::api::facade::host_doors::vault_lenses_default(server, auth, input).await;
+                crate::api::facade::host_doors::vault_lenses_default(server, auth, owner, input)
+                    .await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)
@@ -4880,6 +4945,14 @@ async fn execute_agent_verb_row(
             let input: oneiron::workspace_roster::JoinRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_rooms_join(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.rooms.invite" => {
+            let input: oneiron::workspace_roster::JoinRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_rooms_invite(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -5548,6 +5621,46 @@ async fn execute_agent_verb_row(
             let input: oneiron::blob_artifact::esign::EsignCreateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_esign_create(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.esign.get" => {
+            let input: oneiron::blob_artifact::esign::EsignGetRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_esign_get(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.esign.links.issue" => {
+            let input: oneiron::blob_artifact::esign::EsignLinksIssueRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_esign_links_issue(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.esign.send_for_signature" => {
+            let input: oneiron::blob_artifact::esign::EsignDispatchRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_esign_send_for_signature(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.esign.remind" => {
+            let input: oneiron::blob_artifact::esign::EsignDispatchRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_esign_remind(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.esign.void" => {
+            let input: oneiron::blob_artifact::esign::EsignVoidRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_esign_void(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

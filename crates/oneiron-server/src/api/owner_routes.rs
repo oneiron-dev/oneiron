@@ -37,6 +37,7 @@ use crate::owner::{
     off_record, pack_drift, persona, runs, secrets,
 };
 use crate::server::SyncServer;
+mod browser_takeover_routes;
 mod budget_hold_routes;
 mod commitment_routes;
 mod concern_routes;
@@ -144,6 +145,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(federation_connect_routes::routes())
         .merge(decision_ask_routes::routes())
         .merge(desktop_takeover_routes::routes())
+        .merge(browser_takeover_routes::routes())
         .merge(peer_confidence_routes::routes())
         .merge(skill_judge_routes::routes())
         .merge(wire_health_routes::routes())
@@ -309,13 +311,17 @@ pub(super) async fn blocking<T: Send + 'static>(
 }
 
 /// `GET /v1/owner/status`: where the data lives, the embedder as this
-/// server serves it, and where feedback goes.
+/// server serves it, where feedback goes, and the bytes this process's sync
+/// links moved.
 #[derive(serde::Serialize)]
 struct OwnerStatus {
     #[serde(flatten)]
     location: location::Location,
     embedder: crate::owner::embedder::EmbedderReport,
     feedback: feedback::FeedbackStatus,
+    /// Every sync link since this process started, summed per inner frame
+    /// tag: raw bytes against the bytes on the wire, each way (OF-604).
+    link_bytes: Vec<oneiron::sync::transport::TagBytesRow>,
 }
 
 async fn status(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerReply<OwnerStatus> {
@@ -331,6 +337,7 @@ async fn status(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerR
             )?,
             embedder: server.embedder_report()?,
             feedback: feedback::status(server.feedback.as_deref(), &server.config.feedback_inbox),
+            link_bytes: oneiron::sync::transport::process_link_bytes(),
         })
     })
     .await?;

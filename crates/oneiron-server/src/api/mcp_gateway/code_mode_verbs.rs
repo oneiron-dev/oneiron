@@ -43,14 +43,15 @@ use super::actor_dispatch::{mcp_execute_code_gate, mcp_tool_validation_error, mc
 use super::admission::{
     mcp_admit_host_verb, mcp_admit_run_verb, mcp_admit_scoped_verb, mcp_admit_step_verb,
 };
-use super::tasks_response::{execute_agent_verb_input, mcp_agent_verb_arguments};
+use super::tasks_response::{McpCodeRun, execute_agent_verb_input, mcp_agent_verb_arguments};
 use super::{McpCallContext, McpGatewayError};
 use crate::decision_host::PLACEMENT_BUDGET;
 use crate::decision_verdict::{HELD_IMAGE, HELD_PREFIX, HeldImage};
 use crate::mcp::{McpEndpointTool, McpSurfaceMode, registered_surface};
 use crate::server::SyncServer;
 use oneiron::browser_library::{
-    Retired, WorkflowRecord, file_workflow, record_workflow_run, retire_workflow, site_workflows,
+    Retired, RetiredWorkflow, WorkflowRecord, file_workflow, record_workflow_run, retire_workflow,
+    retired_workflows, site_workflows,
 };
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::code_run::{
@@ -66,8 +67,8 @@ use oneiron::task_verb::sdk::{
 };
 use oneiron_browser::{
     BrowserDriver, BrowserError, BrowserGuest, BrowserSession, DesktopGuest, DesktopSession,
-    EFFECT_CLASSES, GuestLimits, LibraryCard, PressMode, RoutineAnswer, RoutineAsk, RoutineDecider,
-    RoutineReply, SendPolicy, WorkflowLibrary, WorkflowProgram, WorkflowProof,
+    EFFECT_CLASSES, GuestLimits, LibraryCard, PressMode, RetiredCard, RoutineAnswer, RoutineAsk,
+    RoutineDecider, RoutineReply, SendPolicy, WorkflowLibrary, WorkflowProgram, WorkflowProof,
 };
 use oneiron_container::{EgressRelay, SessionManifest, SessionTransport};
 use serde_json::Value;
@@ -83,6 +84,10 @@ pub(crate) struct McpCodeModeVerbs {
     /// The rows this run's verb calls listed as served during this call
     /// (DEC-0005); each answer carries its own into the run's record too.
     served: std::sync::Mutex<Vec<oneiron::EntityId>>,
+    /// The durable run this door serves, as `mcp_code_run_id` derived it:
+    /// each verb call is made in it, and it creates the live lens cards they
+    /// render (OF-181, FIX 2612 (a)).
+    run_id: oneiron::EntityId,
     /// This run's browser and desktop.
     guests: RunGuests,
 }
@@ -96,12 +101,42 @@ pub(crate) struct RunGuests {
 }
 
 /// One run's browser guest. It starts on the first call that needs it, is
-/// never shared with another run, and goes when the run's door drops.
+/// never shared with another run, and goes when the run's door drops. Its
+/// seat is in the server's registry while the door is bound, so the owner
+/// can take the browser over (CUA-001).
 struct RunBrowser {
     guest: BrowserGuest,
-    session: Mutex<Option<BrowserSession>>,
+    session: Arc<crate::server::BrowserSeat>,
+    seats: Arc<crate::server::BrowserSeats>,
     vault: Arc<oneiron::Vault>,
     run_id: oneiron::EntityId,
+}
+
+impl Drop for RunBrowser {
+    /// The browser goes with its door: a takeover still asked or held lands
+    /// its `abandoned` receipt with what it held so far, and the agent's
+    /// inbox Ask clears.
+    fn drop(&mut self) {
+        let cut = self
+            .session
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_mut()
+            .and_then(BrowserSession::abandon_takeover);
+        if let Some(cut) = cut {
+            let landed = serde_json::to_value(&cut)
+                .map_err(|error| error.to_string())
+                .and_then(|record| {
+                    self.vault
+                        .append_browser_takeover_abandoned_receipt(self.run_id, &record)
+                        .map_err(|error| error.to_string())
+                });
+            if let Err(error) = landed {
+                tracing::warn!(%error, run = %self.run_id.to_hex(), "an abandoned browser takeover landed no receipt");
+            }
+        }
+        self.seats.release(&self.vault, self.run_id, &self.session);
+    }
 }
 
 /// One run's desktop guest. Its seat is the run's own in the server's
@@ -323,8 +358,12 @@ impl RoutineDecider for LadderDecider {
         let origin = self.origin.clone();
         match self.asker.clone() {
             VerdictAsker::Connector(actor) => {
+                let run = McpCodeRun {
+                    origin,
+                    run_id: self.run_id,
+                };
                 self.runtime.spawn(HELD_IMAGE.scope(held, async move {
-                    let _ = sender.send(execute_step_verdict(&server, &actor, input, origin).await);
+                    let _ = sender.send(execute_step_verdict(&server, &actor, input, run).await);
                 }));
             }
             VerdictAsker::Agent(actor) => {
@@ -468,6 +507,14 @@ impl WorkflowLibrary for VaultLibrary {
             ))),
         }
     }
+
+    fn retired(&mut self, site: &str) -> Result<Vec<RetiredCard>, BrowserError> {
+        Ok(retired_workflows(&self.server.vault, site)
+            .map_err(library_failed)?
+            .iter()
+            .map(RetiredWorkflow::card)
+            .collect())
+    }
 }
 
 impl RunBrowser {
@@ -476,9 +523,12 @@ impl RunBrowser {
     fn new(server: &SyncServer, run_id: oneiron::EntityId) -> Option<Self> {
         let mut guest = server.browser_guest()?.clone();
         guest.policy = browser_send_policy(server);
+        let session = Arc::new(Mutex::new(None));
+        server.browser_seats.register(run_id, &session);
         Some(Self {
             guest,
-            session: Mutex::new(None),
+            session,
+            seats: Arc::clone(&server.browser_seats),
             vault: Arc::clone(&server.vault),
             run_id,
         })
@@ -510,7 +560,22 @@ impl RunBrowser {
         driver.set_decider(Box::new(decider));
         driver.set_library(Box::new(library));
         driver.set_receipt_sink(Box::new(writer));
-        drive_run_guest(&self.vault, self.run_id, driver, verb, input)
+        // While a person is asked or holds the browser, the session refuses
+        // the verb `browser_taken_over`; the first answer after they hand it
+        // back carries the takeover's record as `takeover`.
+        let mut output = drive_run_guest(&self.vault, self.run_id, driver, verb, input)?;
+        self.seats
+            .asked(&self.vault, self.run_id, driver.takeover());
+        if let Some(object) = output.as_object_mut()
+            && let Some(record) = driver.take_returned()
+        {
+            object.insert(
+                "takeover".into(),
+                serde_json::to_value(record)
+                    .map_err(|e| BrowserError::Unavailable(e.to_string()))?,
+            );
+        }
+        Ok(output)
     }
 }
 
@@ -746,6 +811,7 @@ impl McpCodeModeVerbs {
             actor: actor.clone(),
             runtime: tokio::runtime::Handle::current(),
             served: std::sync::Mutex::new(Vec::new()),
+            run_id,
             guests: RunGuests::new(server, run_id),
         }
     }
@@ -763,7 +829,7 @@ impl McpCodeModeVerbs {
         {
             return refused(error);
         }
-        let memory = crate::api::credential_memory(
+        let memory = crate::api::mcp_credential_memory(
             &self.server.vault,
             self.actor.auth.as_ref(),
             self.actor.actor_ref,
@@ -825,9 +891,12 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         };
         let verb = call.verb.as_str();
         let input = call.input.clone();
-        let origin = origin.clone();
+        let run = McpCodeRun {
+            origin: origin.clone(),
+            run_id: self.run_id,
+        };
         self.runtime.spawn(HELD_IMAGE.scope(held, async move {
-            let _ = sender.send(execute_code_mode_verb(&server, &actor, verb, input, origin).await);
+            let _ = sender.send(execute_code_mode_verb(&server, &actor, verb, input, run).await);
         }));
         let Ok(executed) = receiver.recv() else {
             return Ok(Err(AgentVerbRefusal {
@@ -987,9 +1056,13 @@ impl AgentVerbDoor for ReaderChildDoor {
 /// A refused call as the run takes it: a verb hook's stop as the typed stop,
 /// any other refusal as its stable code.
 fn refused<T>(error: McpGatewayError) -> oneiron::Result<Result<T, AgentVerbRefusal>> {
-    match error.hook {
-        Some(stop) => Err(oneiron::Error::from(*stop)),
-        None => Ok(Err(AgentVerbRefusal {
+    match (error.hook, error.retry_after) {
+        (Some(stop), _) => Err(oneiron::Error::from(*stop)),
+        // A model call no provider answered goes back to the run as the
+        // typed outage, which stops it until its caller enters it again
+        // (FIX 3194).
+        (None, Some(retry_after)) => Err(oneiron::Error::ProviderUnavailable { retry_after }),
+        (None, None) => Ok(Err(AgentVerbRefusal {
             code: error.kind.to_owned(),
         })),
     }
@@ -1000,9 +1073,9 @@ async fn execute_code_mode_verb(
     actor: &McpCallContext,
     verb: &str,
     input: Value,
-    origin: HostWriteOrigin,
+    run: McpCodeRun,
 ) -> Result<(Value, Vec<oneiron::EntityId>), McpGatewayError> {
-    run_code_mode_verb(server, actor, verb, input, origin, mcp_admit_scoped_verb).await
+    run_code_mode_verb(server, actor, verb, input, run, mcp_admit_scoped_verb).await
 }
 
 /// A browser batch's routine decision: the connector's `ai.verdict`, admitted
@@ -1012,17 +1085,9 @@ async fn execute_step_verdict(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
     input: Value,
-    origin: HostWriteOrigin,
+    run: McpCodeRun,
 ) -> Result<(Value, Vec<oneiron::EntityId>), McpGatewayError> {
-    run_code_mode_verb(
-        server,
-        actor,
-        "ai.verdict",
-        input,
-        origin,
-        mcp_admit_step_verb,
-    )
-    .await
+    run_code_mode_verb(server, actor, "ai.verdict", input, run, mcp_admit_step_verb).await
 }
 
 /// How one verb call's tool binding and scope are admitted.
@@ -1038,7 +1103,7 @@ async fn run_code_mode_verb(
     actor: &McpCallContext,
     verb: &str,
     input: Value,
-    origin: HostWriteOrigin,
+    run: McpCodeRun,
     admit: VerbAdmission,
 ) -> Result<(Value, Vec<oneiron::EntityId>), McpGatewayError> {
     let Some(McpEndpointTool::Verb(tool)) =
@@ -1067,7 +1132,7 @@ async fn run_code_mode_verb(
         tool.name,
         input,
         actor,
-        Some(origin),
+        Some(run),
         &mut served,
         &mut board_hooks,
     )

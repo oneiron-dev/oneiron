@@ -21,12 +21,13 @@ use super::disclosure_tier_a_marked_in;
 use super::scope_codec::{MAX_DISCLOSURE_SCOPE_TOPIC_BYTES, decode_disclosure_scope_value};
 
 /// Pinned `disclosure.*` claim predicates.
-pub const DISCLOSURE_CLAIM_PREDICATES: [&str; 5] = [
+pub const DISCLOSURE_CLAIM_PREDICATES: [&str; 6] = [
     "disclosure.scope",
     "disclosure.tier",
     "disclosure.topic",
     "disclosure.attendee_ask",
     "disclosure.attendee_identity",
+    "disclosure.import_audience",
 ];
 
 pub const PREDICATE_DISCLOSURE_SCOPE: &str = "disclosure.scope";
@@ -40,6 +41,9 @@ pub const PREDICATE_DISCLOSURE_ATTENDEE_ASK: &str = "disclosure.attendee_ask";
 
 /// The owner's answer to one unknown-attendee ask.
 pub const PREDICATE_DISCLOSURE_ATTENDEE_IDENTITY: &str = "disclosure.attendee_identity";
+
+/// The owner's standing audience for one imported topic's later imports (OF-492).
+pub const PREDICATE_DISCLOSURE_IMPORT_AUDIENCE: &str = "disclosure.import_audience";
 
 pub(super) const DISCLOSURE_TIER_VALUE_TIER_A: &str = "tier_a";
 
@@ -237,6 +241,9 @@ pub(crate) fn validate_disclosure_claim_structure(body: &ClaimBody) -> Result<()
         }
         PREDICATE_DISCLOSURE_ATTENDEE_IDENTITY => {
             super::attendee_ask::decode_attendee_identity_value(&body.value).map(|_| ())
+        }
+        PREDICATE_DISCLOSURE_IMPORT_AUDIENCE => {
+            super::import_audience::decode_import_audience_value(&body.value).map(|_| ())
         }
         _ => Err(Error::InvalidClaimBody(
             "unknown disclosure claim predicate",

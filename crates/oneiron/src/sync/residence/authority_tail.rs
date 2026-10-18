@@ -16,7 +16,7 @@
 //! them back through the same door, so an entry an opened machine wrote
 //! reaches the home without the window it rides.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::Vault;
 use crate::authority::{
@@ -32,7 +32,7 @@ use crate::sync::quarantine::remote_rejection_reason;
 /// The most entries one authority tail page carries.
 pub const AUTHORITY_TAIL_PAGE_MAX: usize = 512;
 
-/// The most image bytes one checkpoint part carries, as a sealed packet's
+/// The most image bytes one checkpoint part carries, as a sealed bundle
 /// part does: inside the RPC reply once base64 is added.
 pub const AUTHORITY_CHECKPOINT_PART_MAX: usize = 16 * 1024 * 1024;
 
@@ -64,6 +64,77 @@ pub fn held_authority_entries(vault: &Vault) -> Result<BTreeSet<AuthorityEntryHa
     Ok(held)
 }
 
+/// Every signed authority entry this replica holds, in its original bytes,
+/// parents first, ties by hash. A parent it does not hold counts as placed: on
+/// a vault that adopted a checkpoint image and is not yet hydrated, that is a
+/// covered row the image carries. So unlike the full export
+/// ([`Vault::export_signed_authority_history`]), it never refuses for the
+/// covered rows such a vault lacks (OF-469 slice E).
+///
+/// # Errors
+///
+/// A row that does not decode; storage errors.
+pub fn held_authority_history(vault: &Vault) -> Result<Vec<Vec<u8>>> {
+    let mut rows = BTreeMap::new();
+    {
+        let txn = vault.store.env.read_txn()?;
+        for id in vault
+            .store
+            .port_entity_ids_by_type(&txn, ENTITY_TYPE_AUTHORITY_LOG, None)?
+        {
+            let id = id?;
+            let Some(raw) = vault.store.port_entity_raw(&txn, &id)? else {
+                continue;
+            };
+            let body = raw
+                .get(ENTITY_METADATA_HEADER_LEN..)
+                .ok_or(Error::CorruptedIndex("authority row header"))?;
+            let entry = decode_authority_log_entry_body(body)?;
+            rows.insert(
+                authority_entry_hash(&entry)?,
+                (body.to_vec(), entry.parent_hashes),
+            );
+        }
+    }
+    let mut waiting: BTreeMap<AuthorityEntryHash, usize> = BTreeMap::new();
+    let mut children: BTreeMap<AuthorityEntryHash, Vec<AuthorityEntryHash>> = BTreeMap::new();
+    let mut ready = BTreeSet::new();
+    for (hash, (_, parents)) in &rows {
+        let held: BTreeSet<AuthorityEntryHash> = parents
+            .iter()
+            .filter(|parent| rows.contains_key(*parent))
+            .copied()
+            .collect();
+        for parent in &held {
+            children.entry(*parent).or_default().push(*hash);
+        }
+        if held.is_empty() {
+            ready.insert(*hash);
+        } else {
+            waiting.insert(*hash, held.len());
+        }
+    }
+    let mut history = Vec::with_capacity(rows.len());
+    while let Some(hash) = ready.pop_first() {
+        for child in children.get(&hash).into_iter().flatten() {
+            if let Some(count) = waiting.get_mut(child) {
+                *count -= 1;
+                if *count == 0 {
+                    waiting.remove(child);
+                    ready.insert(*child);
+                }
+            }
+        }
+        if let Some((bytes, _)) = rows.remove(&hash) {
+            history.push(bytes);
+        }
+    }
+    if !waiting.is_empty() {
+        return Err(Error::InvariantViolation("authority history order"));
+    }
+    Ok(history)
+}
+
 /// The signed entries this home holds and `held` lacks, parents first, at most
 /// `limit`, for a machine of the owner's whose proof stands here. Each entry's
 /// parents are in `held` or earlier in the page, so the page imports whole.
@@ -81,7 +152,7 @@ pub fn authority_tail_for(
     require_owner_machine(vault, peer)?;
     let limit = limit.clamp(1, AUTHORITY_TAIL_PAGE_MAX);
     let mut page = Vec::new();
-    for bytes in vault.export_signed_authority_history()? {
+    for bytes in held_authority_history(vault)? {
         let hash = authority_entry_hash(&decode_authority_log_entry_body(&bytes)?)?;
         if !held.contains(&hash) {
             page.push(bytes);

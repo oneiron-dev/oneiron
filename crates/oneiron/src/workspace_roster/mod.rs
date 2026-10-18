@@ -176,9 +176,10 @@ mod rooms;
 pub(crate) use rooms::RoomRegenerationPermit;
 pub(crate) use rooms::admit_witness as admit_room_witness;
 pub(crate) use rooms::{
-    ROOM_THREAD_KEY, ThreadBinding, ThreadPlace, names_actor_in, record_thread_admits_in,
-    require_thread_audience_in, stamp_thread, thread_audience_allows_in, thread_audience_in,
-    thread_binding, thread_members_in, thread_root_readable_in, validate_private_audience_in,
+    ROOM_THREAD_KEY, ThreadBinding, ThreadPlace, names_actor_in, overlay_thread_binding_in,
+    record_thread_admits_in, require_thread_audience_in, stamp_thread, thread_audience_allows_in,
+    thread_audience_in, thread_binding, thread_members_in, thread_root_readable_with_read_in,
+    validate_private_audience_in,
 };
 pub use rooms::{
     RoomClaimOutcome, RoomClaimReceipt, RoomHosting, RoomPage, RoomSpeakingRole, RoomStanding,
@@ -222,11 +223,14 @@ pub(crate) use join_consent::person_of_actor_in_txn;
 pub use join_consent::{
     AdmissionBasis, AdmissionConsent, ConsentDenial, ConsentNeed, ConsentPart, ConsentSet,
     ConsentState, JoinDecision, JoinRefusal, JoinRequest, JoinSubject, MembershipConsent,
-    RequiredParty, RoomJoinHold, RoomWork, SpendConsent, decide_join_in_txn,
-    require_actor_join_in_txn, require_join_for_branch_in_txn, require_join_in_txn,
+    RequiredParty, RoomFunding, RoomJoinHold, RoomSpend, RoomWork, SpendConsent,
+    decide_join_in_txn, require_actor_join_in_txn, require_join_for_branch_in_txn,
+    require_join_in_txn, room_funding_in_txn,
 };
 pub use join_door::{
     ConsentAnswer, JoinDecisionView, JoinOutcome, rooms_consent_in_txn, rooms_join_in_txn,
 };
-pub(crate) use join_door::{files_roster_joins_in_txn, roster_invitee_in_txn};
+pub(crate) use join_door::{
+    files_roster_joins_in_txn, invites_into_room_in_txn, roster_invitee_in_txn,
+};
 pub use join_receipt::{JoinParticipation, JoinReceipt, JoinReceiptRef, RecordedAnswer};

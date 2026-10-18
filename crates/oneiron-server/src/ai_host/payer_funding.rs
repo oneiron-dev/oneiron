@@ -21,6 +21,7 @@ use oneiron::llm::decision::{
     ProviderPin,
 };
 use oneiron::llm::run_admission::{PayerAccount, PayerPerson};
+use oneiron::workspace_roster::RoomSpend;
 use oneiron::{EntityId, Vault};
 
 /// The host-issued queue identity of a payer-needed ask.
@@ -129,6 +130,55 @@ pub(crate) fn scope_funding(
         root_scope: root,
         account,
     }))
+}
+
+/// How a launch that `agent` answers in `room`, or its thread `branch`, for
+/// `requester` is funded (FIX 805): a chat or voice turn, or a queued
+/// Continue or Retry. This is the one place that says which launch is
+/// room-bound (CALLS, FIX 805 room-bound predicate).
+///
+/// Its payer is the PERSON whose consent on the agent's Ready join funds the
+/// place (L02's join receipt, re-proved live), read through that consent's
+/// scope as [`scope_funding`] reads a room-bound call's. A join that
+/// launches no paid work, or that no longer covers the place (or cannot be
+/// read), is no funding consent: the launch holds on
+/// [`PayerFault::Missing`], never the vault owner's default, unless a live
+/// Owner of the vault is the turn's subject, the requester or the PERSON a
+/// person-anchored agent's join speaks for (Engine, 10-18). An Owner's turn
+/// bills the vault account, as it did before rooms were funded. An agent
+/// with no Ready join filed there answers no room launch but the owner's own
+/// conversation, which keeps the vault owner's default.
+pub(crate) fn room_launch_funding(
+    vault: &Vault,
+    room: EntityId,
+    branch: Option<EntityId>,
+    agent: EntityId,
+    requester: EntityId,
+) -> Result<Option<PayerPerson>, PayerFault> {
+    let (person, spend) = match vault.room_funding(room, branch, agent) {
+        Ok(funding) => (funding.person, funding.spend),
+        Err(error) => {
+            tracing::warn!(%error, room = %room.to_hex(), "a room launch's join could not be read");
+            (None, RoomSpend::Lapsed)
+        }
+    };
+    match spend {
+        RoomSpend::Paid { scope, .. } => scope_funding(vault, Some(&scope), true),
+        RoomSpend::NotJoined => Ok(None),
+        RoomSpend::NoPaidWork | RoomSpend::Lapsed => {
+            let owner = |person: EntityId| {
+                matches!(
+                    billing_account(vault, person),
+                    Some(PayerAccount::VaultOwner)
+                )
+            };
+            if owner(requester) || person.is_some_and(owner) {
+                Ok(None)
+            } else {
+                Err(PayerFault::Missing { scope: None })
+            }
+        }
+    }
 }
 
 /// The owners' yes to billing the vault for the launch under `root`, whose
