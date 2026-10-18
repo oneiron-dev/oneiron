@@ -22,10 +22,11 @@ use oneiron::actor_claims::{
 };
 use oneiron::autoreason_campaign::research::research_work_pending;
 use oneiron::dreamer_runner::maintenance::coach::{
-    COACH_ATTRIBUTION_AUDITS_FACET, COACH_JUDGE_SWAP_FACET, COACH_OFFER_CHECK_FACET,
-    COACH_PERSON_THRESHOLD_FACET, COACH_RESEARCH_RUN_FACET, COACH_SEAL_CHECKS_FACET,
-    COACH_SKILL_DISCOVERY_FACET, COACH_SKILL_DISTILL_FACET, COACH_TRADEOFF_ROUTE_FACET,
-    COACH_TRAINING_OFFER_FACET, COACH_TYPE_TREE_UPKEEP_FACET, PersonThresholdPolicy,
+    COACH_ATTRIBUTION_AUDITS_FACET, COACH_JUDGE_LABEL_RECHECKS_FACET, COACH_JUDGE_SWAP_FACET,
+    COACH_OFFER_CHECK_FACET, COACH_PERSON_THRESHOLD_FACET, COACH_RESEARCH_RUN_FACET,
+    COACH_SEAL_CHECKS_FACET, COACH_SKILL_DISCOVERY_FACET, COACH_SKILL_DISTILL_FACET,
+    COACH_TRADEOFF_ROUTE_FACET, COACH_TRAINING_OFFER_FACET, COACH_TYPE_TREE_UPKEEP_FACET,
+    PersonThresholdPolicy,
 };
 use oneiron::dreamer_runner::{
     AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerRunnerStore,
@@ -40,6 +41,7 @@ use super::code_fix::{HostModels, clip, message};
 use crate::server::SyncServer;
 
 mod attribution_audits;
+mod judge_label_rechecks;
 mod seal_checks;
 mod type_tree_upkeep;
 
@@ -157,6 +159,7 @@ fn run_one(
         COACH_OFFER_CHECK_FACET => super::training_offer::check(server, admitted, now),
         COACH_SEAL_CHECKS_FACET => seal_checks::run(server, admitted, now),
         COACH_ATTRIBUTION_AUDITS_FACET => attribution_audits::run(server, admitted, now),
+        COACH_JUDGE_LABEL_RECHECKS_FACET => judge_label_rechecks::run(server, admitted, now),
         COACH_TYPE_TREE_UPKEEP_FACET => type_tree_upkeep::run(server, admitted, now),
         COACH_RESEARCH_RUN_FACET => vault.run_coach_research(admitted, now),
         COACH_TRADEOFF_ROUTE_FACET => {

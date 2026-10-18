@@ -22,6 +22,7 @@ pub mod detectors;
 mod evaluation;
 pub mod honesty;
 pub mod identity;
+pub mod judge_label_rechecks;
 pub(crate) mod optimize;
 pub use optimize::{CoachLiveSlice, CoachSkillOptimizer};
 mod person_threshold;

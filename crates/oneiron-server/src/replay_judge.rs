@@ -36,8 +36,8 @@ use oneiron::skill_attribution::{AttributionVerdict, attribution_judgments};
 use oneiron::skill_optimize::{
     AxisArm, ConfidenceInterval, GoalAxisBandit, GoalAxisBandits, GoalAxisSpec, HeldOutReplayCase,
     HeldOutReplayNotes, HonestyReplay, OnlineAxisSample, PROVENANCE_OPTIMIZE_OF_ENTITY_KEY,
-    SkillOptimizeDecisions, SkillReplayPair, judge_incumbent, register_held_out_replay_scorer,
-    skill_edit_goal,
+    SkillOptimizeDecisions, SkillReplayPair, judge_incumbent, judge_rubric,
+    register_held_out_replay_scorer, skill_edit_goal,
 };
 use oneiron::skill_reliability::{SkillReliabilityPosterior, effective_skill_outcome};
 use oneiron::{EntityId, Error, ModelId, Result, Vault};
@@ -58,6 +58,9 @@ const MINUTES: &str = "skill:judge:v1:minutes:";
 const JUDGE_BUDGET: Duration = Duration::from_secs(600);
 /// The instructions' share of a replay state, in bytes.
 const MAX_INSTRUCTIONS: usize = 8_192;
+/// The judge rubric's share of a replay state, in bytes (the shipped rubric
+/// is about 1 KiB).
+const MAX_RUBRIC: usize = 4_096;
 /// The replays' share of a replay state, in bytes: the ladder takes at most
 /// 64 KiB of state.
 const MAX_REPLAY_TEXT: usize = 40_000;
@@ -86,7 +89,7 @@ const CONFIGURED_JUDGES_UNASKED_INCUMBENT: bool = true;
 const WORDING: &[(&str, &str)] = &[
     (
         "score",
-        "How well do these instructions carry out the skill's task on these replays? Answer from 0 to 1.",
+        "How well do these instructions carry out the skill's task on these replays, judged by the state's judge rubric when it gives one? Answer from 0 to 1.",
     ),
     (
         "structural",
@@ -484,7 +487,9 @@ impl HeldOutReplayNotes for ServeReplayJudge {
 
     /// Each reserved receipt's task and response, cut to share the state;
     /// never its status, verdict or success. The goal's own words ride
-    /// beside them when the skill's goal joins a project that states them.
+    /// beside them when the skill's goal joins a project that states them,
+    /// and the judge's rubric (the active shared `judge` skill's text) when
+    /// one is in force, so an edit of it changes what every case is judged by.
     fn replay_state(&self, case: &HeldOutReplayCase<'_>) -> Result<Value> {
         let receipts = case.held_out_receipts;
         let bytes = (MAX_REPLAY_TEXT / receipts.len().max(1) / 2).max(MIN_REPLAY_TEXT);
@@ -500,6 +505,9 @@ impl HeldOutReplayNotes for ServeReplayJudge {
         });
         if let Some(goal) = self.goal_brief(&case.skill)? {
             state["goal"] = goal;
+        }
+        if let Some(rubric) = judge_rubric(&self.vault)? {
+            state["judge_rubric"] = json!(cut(&rubric.text, MAX_RUBRIC));
         }
         Ok(state)
     }

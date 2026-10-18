@@ -101,6 +101,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         row: None,
     },
     OwnerRoute {
+        method: "post",
+        path: "/coach/judge-asks/regrade",
+        summary: "The caller's re-grade of a pick a judge rubric edit left waiting: kept, or its case asked again.",
+        row: None,
+    },
+    OwnerRoute {
         method: "get",
         path: "/coach/training-offers",
         summary: "The offers awaiting the owner.",

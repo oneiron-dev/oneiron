@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::error::ArtifactError;
+use crate::skill_optimize::labels::JUDGE_SKILL_ID;
 
 // ---------------------------------------------------------------------------
 // The gate
@@ -662,10 +663,6 @@ pub(super) fn accepted_in_cycle_in_txn(
     }
     Ok(u32::try_from(accepted.len()).unwrap_or(u32::MAX))
 }
-
-/// The bootstrap judge skill: its instructions are the rubric every skill edit
-/// is judged by (ARCH-0053: "The judge (the rubric) ... A skill").
-const JUDGE_SKILL_ID: &str = "judge";
 
 /// k: the fresh anchored labels a judge rubric revision needs since the last
 /// one (ARCH-0042 "Each rubric revision needs k fresh labels since the last

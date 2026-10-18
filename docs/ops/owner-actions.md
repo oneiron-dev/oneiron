@@ -970,6 +970,16 @@ period, by id in `judge_ask_ids`. `POST /v1/owner/coach/judge-asks/pick` with `{
 shadow pass sides with it, and a pick against a judge that already took over re-pins the old
 one, with a notice.
 
+The judge's rubric is the `judge` skill's text, and the replay judge reads it beside every case.
+When that text changes, the judge re-pins on it and every label in the anchor is marked for a
+re-check. A marked label stays in the anchor, its pick time unchanged. On its next nightly pass
+the Coach asks its model whether each marked pick still fits the new rubric. A pick that fits is
+unmarked. A pick that conflicts, or that the model cannot judge, leaves the anchor and comes back
+to you as a `rubric_recheck` ask in your digest. `POST /v1/owner/coach/judge-asks/regrade` with
+`{"ask", "still_fits": true | false}` answers it. `true` puts the pick back in the anchor. `false`
+drops it for good and asks the case again, as a `rubric_regrade` A/B ask in a later digest, which
+you pick like any other.
+
 ## Answer the decision ladder's asks
 
 When a typed decision climbs past every model rung (the dial reaches the

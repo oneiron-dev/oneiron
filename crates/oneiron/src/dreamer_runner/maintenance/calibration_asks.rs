@@ -128,6 +128,8 @@ pub(super) fn run(vault: &Vault) -> Result<u32> {
             let ask = match candidate.reason {
                 JudgeAskReason::RevisionDisagreement => skill_optimize::ask_judge_disagreement,
                 JudgeAskReason::Uncertainty => skill_optimize::ask_judge_uncertainty,
+                // A rubric re-grade is asked by the label re-check, never here.
+                JudgeAskReason::RubricRecheck | JudgeAskReason::RubricRegrade => continue,
             };
             match ask(
                 vault,
