@@ -4313,9 +4313,9 @@
       "ArchiveSideWithheldReason"
      ],
      "path": "src/batch/export/archive_side_tables.rs",
-     "purpose": "OF-222 (FIX 2768): the side tables a whole-vault archive carries beside the records they index",
+     "purpose": "OF-222 (FIX 2768, FIX 3681): the side tables an archive carries beside the records they index, in the…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 5,
       "struct": 3
      }
@@ -5982,7 +5982,7 @@
      "path": "src/blob_artifact/mod.rs",
      "purpose": "ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "mod": 1,
       "re-export": 8
      }
@@ -6008,7 +6008,7 @@
      "path": "src/blob_artifact/references.rs",
      "purpose": "Which artifacts hold which version bytes, on every vault (H125)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -10937,7 +10937,7 @@
      "path": "src/code_memory.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 1
      }
     },
@@ -11027,6 +11027,7 @@
      "purpose": "—",
      "surface": {
       "const": 7,
+      "crate-vis": 1,
       "enum": 3,
       "fn": 8,
       "struct": 7
@@ -21204,7 +21205,7 @@
      "path": "src/edit_roundtrip/deck.rs",
      "purpose": "Native deck edits (ARCH-0077, \"Edit in place with passthrough\"): one docedit deck transaction over the exact…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 3,
       "struct": 3
@@ -21629,7 +21630,7 @@
      "path": "src/edit_settle/codec.rs",
      "purpose": "Row and anchor codec",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -21650,7 +21651,7 @@
      "path": "src/edit_settle/mod.rs",
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 7
      }
     },
@@ -40823,7 +40824,7 @@
      "path": "src/serialize/vault_document.rs",
      "purpose": "Whole-vault export (OF-222), written row by row (FIX 2766, rule 5): each snapshot row becomes its typed…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
