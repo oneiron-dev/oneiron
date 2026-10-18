@@ -14,15 +14,21 @@ pub(in crate::sync) enum WorkKind {
     GuestUpdate,
 }
 
+/// The review evidence an isolated update keeps: each part its admission
+/// lands as, the window that part imports into and its admitted bytes, in
+/// import order (FIX 3662).
+pub(super) type IsolatedParts = Vec<(String, Vec<u8>)>;
+
 #[derive(Debug, Clone)]
 pub(in crate::sync) struct DeferredWork {
     pub(in crate::sync) id: [u8; 32],
+    /// The window the original request names: its replay address.
     pub(in crate::sync) window: String,
     pub(in crate::sync) kind: WorkKind,
     pub(in crate::sync) payload: Vec<u8>,
     pub(super) inputs: NormalizedBurstInputs,
     pub(super) peer: [u8; 32],
-    pub(super) isolated_update: Option<Vec<u8>>,
+    pub(super) isolated_update: Option<IsolatedParts>,
     pub(super) streak_ratio: f32,
     selector: Vec<u8>,
 }
@@ -38,7 +44,7 @@ struct StoredWork {
     rate_ratio: f32,
     streak: u32,
     streak_ratio: f32,
-    isolated_update: Option<Vec<u8>>,
+    isolated_update: Option<IsolatedParts>,
 }
 
 fn prefix(peer: &FederationPeer) -> Result<Vec<u8>> {
@@ -189,6 +195,12 @@ impl DeferredWork {
             || !row.streak_ratio.is_finite()
             || row.streak_ratio < 0.0
             || (row.kind == WorkKind::Selector && row.isolated_update.is_some())
+            || row.isolated_update.as_ref().is_some_and(|parts| {
+                parts.is_empty()
+                    || parts
+                        .iter()
+                        .any(|(window, _)| WindowKey::try_new(window).is_none())
+            })
         {
             return Err(corrupt());
         }

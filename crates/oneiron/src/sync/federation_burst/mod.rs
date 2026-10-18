@@ -20,6 +20,10 @@ use crate::{EntityId, Error, FederationGrantScope, Result, Vault};
 
 pub(in crate::sync) use queue::{DeferredWork, WorkKind};
 
+/// An admitted update as review evidence: each part it lands as, with the
+/// window that part imports into, in import order (FIX 3662).
+pub(in crate::sync) type AdmittedParts<'a> = &'a [(&'a str, &'a [u8])];
+
 /// Authenticated identity plus the grant that authorizes this federation lane.
 ///
 /// The embedding transport supplies the principal ONLY after authentication.
@@ -134,6 +138,10 @@ pub enum FederationBurstDecision {
     },
 }
 
+/// Observes the request `payload` in `key` from `peer`, and decides whether
+/// it runs now, defers, or is isolated for review. Isolation keeps
+/// `admitted_update`, every part, as the review's evidence; the work, its
+/// debit and its replay stay the original request's.
 pub(in crate::sync) fn admit_work(
     vault: &Vault,
     peer: &FederationPeer,
@@ -141,7 +149,7 @@ pub(in crate::sync) fn admit_work(
     kind: WorkKind,
     payload: &[u8],
     writes: u64,
-    admitted_update: Option<&[u8]>,
+    admitted_update: Option<AdmittedParts<'_>>,
 ) -> Result<(FederationBurstDecision, Option<DeferredWork>)> {
     admit_work_at(
         vault,
@@ -161,7 +169,7 @@ fn admit_work_at(
     kind: WorkKind,
     payload: &[u8],
     sample: (u64, u64),
-    admitted_update: Option<&[u8]>,
+    admitted_update: Option<AdmittedParts<'_>>,
 ) -> Result<(FederationBurstDecision, Option<DeferredWork>)> {
     let (writes, now) = sample;
     peer.revalidate(vault)?;
@@ -189,7 +197,12 @@ fn admit_work_at(
         }
         let mut work = work.with_inputs(health.inputs);
         let decision = if health.isolate() && admitted_update.is_some() {
-            work.isolated_update = admitted_update.map(<[u8]>::to_vec);
+            work.isolated_update = admitted_update.map(|parts| {
+                parts
+                    .iter()
+                    .map(|(window, bytes)| ((*window).to_owned(), bytes.to_vec()))
+                    .collect()
+            });
             work.streak_ratio = health.streak_ratio;
             FederationBurstDecision::IsolateAndPropose {
                 request_id: work.id,

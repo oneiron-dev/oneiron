@@ -140,15 +140,19 @@ fn copy_masked_births(src: &LoroDoc, dst: &LoroDoc, key: &WithheldKey) -> Result
 }
 
 /// [`copy_births_within`] to another vault for one window of a delivery the
-/// federation door lands across several (FIX 3497): a ref ships unmasked when
-/// any window of the delivery carries its row (`carried`), so a guest CLAIM
-/// moved into its foreign WORLD window keeps its refs to the rows the same
-/// update brought into its own window.
+/// federation door lands across several (FIX 3497), or lands a row of under
+/// another id than the sender's (FIX 3657): a ref ships unmasked when any
+/// window of the delivery carries its row (`carried`), so a guest CLAIM moved
+/// into its foreign WORLD window keeps its refs to the rows the same update
+/// brought into its own window. A row `renamed` names, by the id it lands
+/// under, takes the birth `src` carries under the sender's id, so a guest's
+/// WORLD keeps its envelope under its foreign id.
 pub(in crate::sync) fn copy_births_carried_to_other_vault(
     src: &LoroDoc,
     dst: &LoroDoc,
     key: &WithheldKey,
     carried: &std::collections::BTreeSet<EntityId>,
+    renamed: &std::collections::BTreeMap<EntityId, EntityId>,
 ) -> Result<()> {
     let here: Vec<EntityId> = dst
         .get_map("entities")
@@ -158,12 +162,12 @@ pub(in crate::sync) fn copy_births_carried_to_other_vault(
     let from = births(src);
     let to = births(dst);
     for id in &here {
-        let hex = id.to_hex();
-        let Some(birth) = map_get_bytes(&from, &hex).and_then(|bytes| decode(&bytes)) else {
+        let sent = renamed.get(id).unwrap_or(id).to_hex();
+        let Some(birth) = map_get_bytes(&from, &sent).and_then(|bytes| decode(&bytes)) else {
             continue;
         };
         let masked = birth.masked(|row| carried.contains(row), key);
-        map_insert_bytes(&to, &hex, &encode(&masked)?)?;
+        map_insert_bytes(&to, &id.to_hex(), &encode(&masked)?)?;
     }
     Ok(())
 }
