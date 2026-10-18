@@ -22,9 +22,11 @@
 //!
 //! A phone takes no generation in and uploads none, and no machine relays to a
 //! home it knows is a phone (FIX 3349, `holds_sealed_bundle`). A phone still
-//! sweeps its erases from the kept pad objects.
+//! sweeps its erases from the kept pad objects. The owner's own ask to publish
+//! runs first, on the install it names in any role (`publication`).
 
 mod access;
+mod publication;
 mod sweep;
 mod turn;
 
@@ -39,7 +41,7 @@ use serde_json::json;
 use super::kit_fetch::KitHome;
 use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
 use crate::Vault;
-use crate::authority::{Destination, PeerMachine};
+use crate::authority::{AuthorityEntryHash, Destination, PeerMachine};
 use crate::error::{Error, SecretError};
 use crate::side_table::{self, Raw, SideTable};
 use crate::sync::client::{SyncClientConfig, SyncResidenceMode};
@@ -146,6 +148,21 @@ struct BundleListReply {
 #[derive(Deserialize)]
 struct BundleListEntry {
     generation: String,
+}
+
+/// The entry a commit's reply names: what the home acknowledged.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BundleCommitReply {
+    generation: String,
+    bundle_digest: String,
+}
+
+/// A generation the home acknowledged committing, and its bundle's digest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CommittedBundle {
+    generation: SealedBundleGeneration,
+    bundle_digest: [u8; 32],
 }
 
 #[derive(Deserialize)]
@@ -277,6 +294,7 @@ pub(crate) async fn relay_sealed_bundle(
 ) -> Result<SealedBundleRelay, TransportError> {
     let vault = manager.vault();
     let mut relay = SealedBundleRelay::default();
+    publication::publish_asked(manager, config).await;
     if config.federation_peer.is_some()
         || !vault
             .local_machine()
@@ -341,8 +359,7 @@ struct SlotRelay<'a> {
     manager: &'a Arc<WindowManager>,
     slot: u64,
     /// The host's configured mode. An opened-item machine's take keeps
-    /// windows in their mirror; its assembly judges a machine the owner never
-    /// chose for by it (FIX 3364).
+    /// windows in their mirror.
     mode: SyncResidenceMode,
     publisher: bool,
 }
@@ -367,6 +384,7 @@ impl SlotRelay<'_> {
         relay: &mut SealedBundleRelay,
     ) -> Result<(), TransportError> {
         let vault = self.manager.vault();
+        let holder = holder_destination(vault, rpc.home);
         // The newest generation's objects, once fetched: an upload carries
         // what this machine cannot read from them.
         let mut held: Option<(SealedVaultBundle, SealedKeyPads)> = None;
@@ -383,7 +401,7 @@ impl SlotRelay<'_> {
                 let manager = Arc::clone(self.manager);
                 let opened = self.mode == SyncResidenceMode::Opened;
                 let (took, bundle, pads) = tokio::task::spawn_blocking(move || {
-                    let took = manager.take_sealed_bundle(&bundle, &pads, opened);
+                    let took = manager.take_sealed_bundle(&bundle, &pads, holder, opened);
                     (took, bundle, pads)
                 })
                 .await
@@ -443,14 +461,12 @@ impl SlotRelay<'_> {
             }
             let manager = Arc::clone(self.manager);
             let slot = self.slot;
-            let mode = self.mode;
-            let holder = holder_destination(vault, rpc.home);
             let (upload, back) = turn::renewing_turn(rpc, move || {
                 let upload = manager.assemble_sealed_bundle(
                     slot,
                     holder,
                     held.as_ref().map(|(bundle, pads)| (bundle, pads)),
-                    mode,
+                    None,
                 );
                 (upload, held)
             })
@@ -481,7 +497,9 @@ impl SlotRelay<'_> {
                     upload.pads.as_bytes(),
                 )
                 .await?
-                && commit_generation(rpc, &generation, latest, upload.kit_root).await?
+                && commit_generation(rpc, &generation, latest, upload.kit_root)
+                    .await?
+                    .is_some()
             {
                 cursor.taken = Some(generation);
                 relay.published = Some(generation);
@@ -514,7 +532,20 @@ impl SlotRelay<'_> {
 async fn list_generations(
     rpc: &mut ResidenceRpc,
 ) -> Result<Vec<SealedBundleGeneration>, TransportError> {
-    let reply = rpc.request("residence.bundle.list", json!({})).await?;
+    list_generations_for(rpc, None).await
+}
+
+/// [`list_generations`], naming the owner's `request` this install is asked
+/// to publish for, which the home admits it under in any role.
+async fn list_generations_for(
+    rpc: &mut ResidenceRpc,
+    request: Option<AuthorityEntryHash>,
+) -> Result<Vec<SealedBundleGeneration>, TransportError> {
+    let mut params = json!({});
+    if let Some(request) = request {
+        params["request"] = json!(sealed_digest_hex(&request));
+    }
+    let reply = rpc.request("residence.bundle.list", params).await?;
     let list: BundleListReply = serde_json::from_value(reply).map_err(|_| refused())?;
     if list.generations.len() > SEALED_BUNDLE_KEEP {
         return Err(refused());
@@ -534,6 +565,9 @@ async fn list_generations(
 /// home's kit door for a restore with the kit alone (`kit_fetch`).
 pub(super) enum PartSource<'a> {
     Machine(&'a mut ResidenceRpc),
+    /// The same socket, naming the owner's request this install is asked to
+    /// publish for, which the home admits it under in any role.
+    Asked(&'a mut ResidenceRpc, AuthorityEntryHash),
     Kit(&'a KitHome),
 }
 
@@ -547,20 +581,20 @@ impl PartSource<'_> {
         object: SealedBundleObject,
         offset: u64,
     ) -> Result<serde_json::Value, TransportError> {
-        match self {
-            Self::Machine(rpc) => {
-                rpc.request(
-                    "residence.bundle.get",
-                    json!({
-                        "generation": generation.as_ref().map(sealed_generation_hex),
-                        "object": object.name(),
-                        "offset": offset,
-                    }),
-                )
-                .await
-            }
-            Self::Kit(home) => home.part(generation, object, offset).await,
+        let (rpc, request) = match self {
+            Self::Machine(rpc) => (rpc, None),
+            Self::Asked(rpc, request) => (rpc, Some(*request)),
+            Self::Kit(home) => return home.part(generation, object, offset).await,
+        };
+        let mut params = json!({
+            "generation": generation.as_ref().map(sealed_generation_hex),
+            "object": object.name(),
+            "offset": offset,
+        });
+        if let Some(request) = request {
+            params["request"] = json!(sealed_digest_hex(&request));
         }
+        rpc.request("residence.bundle.get", params).await
     }
 }
 
@@ -672,15 +706,16 @@ async fn put_object(
 }
 
 /// Commits the generation staged here on `parent`, naming `root`, the
-/// recovery root whose kit may read it; `false` when the home refused it. A
-/// commit that did not reach the home is an error.
+/// recovery root whose kit may read it: the entry the home acknowledged, or
+/// `None` when the home refused it. A commit that did not reach the home, or
+/// a reply naming no entry, is an error.
 async fn commit_generation(
     rpc: &mut ResidenceRpc,
     generation: &SealedBundleGeneration,
     parent: Option<SealedBundleGeneration>,
     root: Option<RecoveryRootId>,
-) -> Result<bool, TransportError> {
-    Ok(rpc
+) -> Result<Option<CommittedBundle>, TransportError> {
+    let Ok(reply) = rpc
         .call(
             "residence.bundle.commit",
             json!({
@@ -690,7 +725,14 @@ async fn commit_generation(
             }),
         )
         .await?
-        .is_ok())
+    else {
+        return Ok(None);
+    };
+    let reply: BundleCommitReply = serde_json::from_value(reply).map_err(|_| refused())?;
+    Ok(Some(CommittedBundle {
+        generation: sealed_generation_from_hex(&reply.generation).ok_or_else(refused)?,
+        bundle_digest: sealed_digest_from_hex(&reply.bundle_digest).ok_or_else(refused)?,
+    }))
 }
 
 /// Replaces one kept pad object with its rewrite, on the digest of the object
