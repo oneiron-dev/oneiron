@@ -5961,7 +5961,6 @@
      "path": "src/blob_artifact/made_by.rs",
      "purpose": "The made_by receipt every blob version carries (ARCH-0078 \"The provenance receipt\", ARCH-0035 Rule A): what…",
      "surface": {
-      "const": 1,
       "crate-vis": 5
      }
     },
@@ -5974,7 +5973,7 @@
      "surface": {
       "crate-vis": 12,
       "mod": 1,
-      "re-export": 9
+      "re-export": 8
      }
     },
     {
