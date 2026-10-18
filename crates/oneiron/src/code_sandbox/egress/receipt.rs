@@ -143,7 +143,8 @@ impl Vault {
         digest: [u8; 32],
     ) -> Result<String> {
         let mut txn = self.store.env.write_txn()?;
-        let receipt = self.append_sandbox_gate_receipt_in_txn(&mut txn, run_id, kind, outcome, body, digest)?;
+        let receipt =
+            self.append_sandbox_gate_receipt_in_txn(&mut txn, run_id, kind, outcome, body, digest)?;
         txn.commit()?;
         Ok(receipt)
     }

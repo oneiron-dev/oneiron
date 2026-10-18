@@ -422,7 +422,10 @@ impl McpRegisteredSurface {
         // OF-181: one action door on both endpoints, interpreter or none.
         tools.push(McpEndpointTool::InvokeAction);
         if available {
-            if !tools.iter().any(|tool| tool.name() == MCP_EXECUTE_CODE_TOOL) {
+            if !tools
+                .iter()
+                .any(|tool| tool.name() == MCP_EXECUTE_CODE_TOOL)
+            {
                 tools.push(McpEndpointTool::ExecuteCode);
             }
             tools.push(McpEndpointTool::ReadResult);
