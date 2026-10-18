@@ -29,6 +29,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
+use crate::dreamer_runner::maintenance::agent_health::AgentHealthPromptInject;
 use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
 use crate::engine_executor::continuation::{
     ContinuationRefusal, ExecutorCheckpointRef, RunContinuation, checkpoint_ref,
@@ -183,6 +184,29 @@ pub(crate) fn continuation_checkpoint(
         }
         None => pre_fail_checkpoint(vault, EntityId::from_bytes(*predecessor.as_bytes())?),
     }
+}
+
+/// The applied prompt continuation of `predecessor`, as its agent-health
+/// card shows it.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn prompt_inject_application(
+    vault: &Vault,
+    predecessor: AttemptId,
+) -> Result<Option<AgentHealthPromptInject>> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(APPLICATIONS
+        .get(&vault.store, &txn, predecessor.as_bytes())?
+        .map(|application| AgentHealthPromptInject {
+            approval: application.approval.to_hex(),
+            successor: crate::entity_id::bytes_to_hex_lower(application.successor.as_bytes()),
+            ask: application.ask,
+            by: application.by,
+            at: application.at,
+            edited: application.edited,
+        }))
 }
 
 /// Applies `approval` in the apply door's write transaction: the TASK, the

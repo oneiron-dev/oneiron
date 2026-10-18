@@ -40,6 +40,7 @@ mod continuation;
 pub use self::continuation::{ConcernPromptInjectOutcome, ConcernPromptInjectRequest};
 pub(crate) use self::continuation::{
     PromptInjectApproval, apply_prompt_inject_in_txn, continuation_checkpoint,
+    prompt_inject_application,
 };
 mod dispatch;
 mod fanout_statement;
