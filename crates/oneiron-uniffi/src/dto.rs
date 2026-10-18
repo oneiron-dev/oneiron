@@ -327,7 +327,7 @@ pub struct PendingWrite {
 }
 
 /// One governance receipt: a gate decision, or a receipt of another family.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct FacadeReceipt {
     /// Stable ref (`gate:<decision-hex>`, or the family receipt's id).
     pub receipt_ref: String,
@@ -347,6 +347,9 @@ pub struct FacadeReceipt {
     pub content_kind: String,
     /// 32-hex id of the claim the decision covers, if any.
     pub claim_ref: Option<String>,
+    /// That claim as a typed record ref (OF-063), labelled with its kind and
+    /// id: the generated facade record.
+    pub claim: Option<crate::RecordRef>,
     /// A family receipt's own fields (a hook run's hook, CODE id, body hash
     /// and run key), with its trigger, job and principal refs. Empty on a
     /// gate-ledger row.
@@ -878,7 +881,7 @@ pub struct DreamerJobRef {
 }
 
 /// Poll view of one consolidation job.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct DreamerJobView {
     /// 32-hex job id.
     pub job_ref: String,
@@ -898,6 +901,10 @@ pub struct DreamerJobView {
     pub created_at: i64,
     /// Unix seconds.
     pub updated_at: i64,
+    /// The job's park, when the runner parked it (DOOR-144 A): its work
+    /// remains for a later resume. Absent when it holds no park row. The
+    /// generated facade record.
+    pub parked: Option<crate::DreamerParkedAttemptView>,
 }
 
 /// One outbound schedule request. Scheduling only; this surface never
