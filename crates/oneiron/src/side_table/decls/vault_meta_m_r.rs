@@ -70,6 +70,9 @@ side_tables! {
     /// PACK-registered NOTE kind descriptor (extraction/context/retention defaults). Key:
     /// string(kind).
     NOTE_KIND: VaultMeta b"note_kind:v1:" Named;
+    /// The extraction, context and retention defaults one NOTE overrides over its kind's
+    /// (ARCH-0032, FIX 2418). Key: id16(note).
+    NOTE_OVERRIDE: VaultMeta b"note_override:v1:" Named;
     /// Review bundle grouping several fork proposals under one shared explainer. Key: id16(bundle
     /// id).
     NOTE_PROPOSAL_BUNDLE: VaultMeta b"note_proposal:v1:" Named;

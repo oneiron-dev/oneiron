@@ -2913,6 +2913,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_notes_set_overrides(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.notes.set_overrides")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.notes.set_overrides", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_notes_defaults(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.notes.defaults")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.notes.defaults", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
 
     // END GENERATED AGENT VERBS
 }

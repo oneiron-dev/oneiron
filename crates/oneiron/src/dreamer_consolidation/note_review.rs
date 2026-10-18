@@ -26,7 +26,6 @@
 //! The first review to finish in a calendar month also runs the NOTE
 //! tombstone review (`note/tombstone_review.rs`, FIX 2419).
 
-use std::collections::BTreeSet;
 use std::ops::Range;
 
 use rmpv::Value;
@@ -140,19 +139,6 @@ impl ConsolidationExecutor<'_> {
             agent_actor: self.actor,
             now_ms: ctx.now_ms,
         };
-        // A kind whose extraction default is Allowed is read. An AfterSeal
-        // kind is read once its NOTE is sealed. A diary stays private
-        // strategy, and a Disabled kind is never read.
-        let kinds = ctx.vault.note_kind_descriptors()?;
-        let of = |default: ExtractionDefault| -> BTreeSet<String> {
-            kinds
-                .iter()
-                .filter(|kind| kind.extraction == default)
-                .map(|kind| kind.kind.clone())
-                .collect()
-        };
-        let allowed = of(ExtractionDefault::Allowed);
-        let after_seal = of(ExtractionDefault::AfterSeal);
         let read = super::turn_text::dreamer_read(ctx.vault)?;
         let mut charges = StepChargeTally::default();
         loop {
@@ -166,8 +152,7 @@ impl ConsolidationExecutor<'_> {
             let page = ctx
                 .vault
                 .entities_by_type_page(ENTITY_TYPE_NOTE, after.as_ref(), PAGE)?;
-            for note in readable_notes(ctx.vault, &read, &page, &allowed, &after_seal, attempt_id)?
-            {
+            for note in readable_notes(ctx.vault, &read, &page, attempt_id)? {
                 if let Some(stop) = self
                     .review_note(attempt, ctx, &run, &note, &mut charges)
                     .await?
@@ -385,7 +370,7 @@ impl ConsolidationExecutor<'_> {
 }
 
 /// The NOTEs on `page` the review reads: live and readable by the Dreamer,
-/// of an Allowed kind or a sealed NOTE of an AfterSeal kind (a sealed pad
+/// Allowed by its kind or its override, or sealed and AfterSeal (a sealed pad
 /// read through its line marks), changed since their last review, and with a
 /// birth facet and one project for their beliefs. Anything else is skipped,
 /// never widened. An unchanged sealed pad is read again only for the
@@ -395,8 +380,6 @@ fn readable_notes(
     vault: &Vault,
     read: &ScopedRead<'_>,
     page: &[EntityId],
-    allowed: &BTreeSet<String>,
-    after_seal: &BTreeSet<String>,
     attempt: AttemptId,
 ) -> Result<Vec<Note>> {
     let txn = super::turn_text::snapshot(vault)?;
@@ -414,10 +397,19 @@ fn readable_notes(
         let Ok(decoded) = crate::note::decode_note_body_in_txn(&vault.store, &txn, &body) else {
             continue;
         };
-        let kind_name = decoded.kind.as_str();
-        let (markdown, sealed_pad, keep) = if allowed.contains(kind_name.as_ref()) {
+        // A NOTE whose extraction default, its kind's or its own override,
+        // is Allowed is read. An AfterSeal NOTE is read once it is sealed. A
+        // diary stays private strategy, and a Disabled NOTE is never read.
+        let extraction = crate::note::note_defaults_in_txn(
+            &vault.store,
+            &txn,
+            id,
+            decoded.kind.as_str().as_ref(),
+        )?
+        .extraction;
+        let (markdown, sealed_pad, keep) = if extraction == ExtractionDefault::Allowed {
             (decoded.markdown.clone(), None, Vec::new())
-        } else if after_seal.contains(kind_name.as_ref())
+        } else if extraction == ExtractionDefault::AfterSeal
             && crate::note::note_sealed_in_txn(&vault.store, &txn, *id)?
         {
             if vault.scratchpad_sealed_in_txn(&txn, *id)? {

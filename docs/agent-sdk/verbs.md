@@ -322,3 +322,5 @@ both bindings and their export-census tests in one change.
 - `vault.notes.edit`
 - `vault.notes.seal`
 - `vault.notes.lifecycle`
+- `vault.notes.set_overrides`
+- `vault.notes.defaults`

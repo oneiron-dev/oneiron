@@ -11,7 +11,7 @@ use super::NoteKind;
 const NOTE_KIND: SideTable<String, NoteKindDescriptor, Named> =
     SideTable::new(&side_table::NOTE_KIND);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ExtractionDefault {
     Allowed,
@@ -19,7 +19,7 @@ pub enum ExtractionDefault {
     PrivateStrategyOnly,
     Disabled,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextDefault {
     OwnerOnly,
@@ -38,7 +38,7 @@ pub const DISSENT_NOTE_KIND: &str = "opinion/dissent";
 /// it as the prompt. Readable on an explicit read, kept out of default
 /// context and out of extraction.
 pub(crate) const COMPACTION_INTENT_NOTE_KIND: &str = "compaction/intent";
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RetentionDefault {
     Durable,

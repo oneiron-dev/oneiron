@@ -24,12 +24,12 @@ impl ScopedRead<'_> {
         let Ok(body) = crate::note::decode_note_body_in_txn(&self.vault.store, txn, bytes) else {
             return Ok(false);
         };
-        if body.kind == crate::note::NoteKind::OpinionTake
-            || crate::note::note_explicit_only_in_txn(&self.vault.store, txn, &body)?
-        {
+        // A take reads as its kind's relationship scope unless it overrides
+        // that, so it has no shortcut past an owner-only override.
+        if crate::note::note_explicit_only_in_txn(&self.vault.store, txn, id, &body)? {
             return Ok(true);
         }
-        if crate::note::note_body_readable(&self.vault.store, txn, bytes, None)? {
+        if crate::note::note_body_readable(&self.vault.store, txn, id, bytes, None)? {
             return Ok(true);
         }
         let Ok(actor) = EntityId::from_hex(self.actor_key.actor_ref()) else {
