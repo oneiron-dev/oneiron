@@ -771,7 +771,7 @@
      "path": "src/agent_dispatch/continuation.rs",
      "purpose": "The owner's prompt continuation of a failed agent run (FIX 3694, OF-568): the successor attempt an approved…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "struct": 2
      }
     },
@@ -19282,6 +19282,7 @@
       "AgentHealthCounter",
       "AgentHealthMove",
       "AgentHealthOutcome",
+      "AgentHealthPromptInject",
       "AgentHealthRunTree",
       "AgentHealthTone",
       "ConcernCardRequest",
@@ -19297,7 +19298,7 @@
       "enum": 6,
       "fn": 12,
       "re-export": 2,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -76105,6 +76106,7 @@
       "AgentHealthMove",
       "AgentHealthOutcome",
       "AgentHealthPadRead",
+      "AgentHealthPromptInject",
       "AgentHealthRunTree",
       "AgentHealthSignal",
       "AgentHealthTone",
@@ -77501,7 +77503,7 @@
      "purpose": "—",
      "surface": {
       "enum": 403,
-      "struct": 1013
+      "struct": 1014
      }
     },
     {
