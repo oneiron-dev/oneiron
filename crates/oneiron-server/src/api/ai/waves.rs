@@ -44,6 +44,10 @@ pub(super) async fn enqueue(
             "wave planning requires the owner",
         );
     }
+    // FIX 2222: an owner act; a hosted operator's root is refused, typed.
+    if let Err(error) = crate::api::host_action::require_host_owner_act(&server, &auth) {
+        return error.into_response();
+    }
     if server.ai.status().workflows.state == crate::ai_host::WorkState::Idle {
         return refusal(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -89,11 +93,18 @@ pub(super) async fn enqueue(
             "the epic must be a TASK and the planner must be dispatchable",
         );
     }
+    // The owner a self-hosted root or the dev mode acts as (FIX 2222); the
+    // owner-act admission above already refused a hosted operator's root.
     let actor = match auth.principal_ref() {
         Some(reference) => {
             EntityId::from_hex(reference).map_err(oneiron::memory::MemoryError::from)
         }
-        None => server.vault().ensure_embedded_owner_actor(),
+        None => match crate::api::host_action::host_action_of(server.vault(), &auth) {
+            Some(action) => action
+                .map(|action| action.actor().entity_ref())
+                .map_err(oneiron::memory::MemoryError::from),
+            None => Err(oneiron::Error::EntityNotFound.into()),
+        },
     };
     let Ok(actor) = actor else {
         return refusal(
@@ -163,6 +174,10 @@ pub(super) async fn status(
             "owner_required",
             "wave status requires the owner",
         );
+    }
+    // FIX 2222: an owner act; a hosted operator's root is refused, typed.
+    if let Err(error) = crate::api::host_action::require_host_owner_act(&server, &auth) {
+        return error.into_response();
     }
     let id = EntityId::from_hex(&reference).and_then(|id| AttemptId::from_bytes(id.as_bytes()));
     let Ok(id) = id else {

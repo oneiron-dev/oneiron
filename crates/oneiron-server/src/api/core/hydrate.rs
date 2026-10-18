@@ -567,8 +567,11 @@ fn hydrate_pick<'a>(
     let task = task.filter(|task| takes_images && !task.trim().is_empty())?;
     let principal = match auth.principal_ref() {
         Some(reference) => oneiron::EntityId::from_hex(reference).ok()?,
-        None if auth.is_owner_grade() => server.vault.ensure_embedded_owner_actor().ok()?,
-        None => return None,
+        // The owner a self-hosted root or the dev mode acts as (FIX 2222).
+        None => crate::api::host_action::host_action_of(&server.vault, auth)?
+            .ok()?
+            .actor()
+            .entity_ref(),
     };
     server.decision_host().image_pick(principal, task)
 }

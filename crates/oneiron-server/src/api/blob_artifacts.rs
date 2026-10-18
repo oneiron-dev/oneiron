@@ -414,6 +414,9 @@ async fn export(
     version: Option<u64>,
 ) -> Result<Response<Body>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
+    // A file's export is an owner act: a self-hosted root or the dev mode
+    // takes it as the owner, a hosted operator's root is refused (FIX 2222).
+    let host_action = super::host_action::require_host_owner_act(&server, &auth)?;
     let id = parse_entity_id_param(&artifact, "artifact")?;
     // Keys in a file reach the owner only; every other reader gets them
     // masked (OF-560).
@@ -423,20 +426,16 @@ async fn export(
         oneiron::secret_custody::SecretSight::Masked
     };
     // Who took the copy, for its travel receipt: the bound principal, else
-    // the vault owner an owner-grade secret speaks for.
+    // the owner a host credential acts as.
     let bound = auth
         .principal_ref()
         .map(|s| parse_entity_id_param(s, "principal_ref"))
         .transpose()?;
-    let owner_grade = auth.is_owner_grade();
+    let host_owner = host_action.map(|action| action.actor().entity_ref());
     let file = blocking("artifact export failed", move || {
         let vault = server.vault();
         let file = vault.export_blob_artifact_as(&id, version, sight)?;
-        let by = bound.or_else(|| {
-            owner_grade
-                .then(|| vault.ensure_embedded_owner_actor().ok())
-                .flatten()
-        });
+        let by = bound.or(host_owner);
         if let (Some(file), Some(by)) = (&file, by) {
             vault.record_blob_artifact_download(file, &by)?;
         }

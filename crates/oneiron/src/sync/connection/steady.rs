@@ -1,5 +1,7 @@
 //! Steady state: debounced multiplex loop over WS, local updates, shutdown.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant};
@@ -12,7 +14,10 @@ use crate::sync::types::parse_window_key_str;
 use crate::side_table::HexId;
 use crate::sync::documents::DS_E;
 
-use super::session::{EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS, SEALED_RELAY_INTERVAL_SECS};
+use super::session::{
+    EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS, MACHINE_HISTORY_FETCH_TASKS,
+    MACHINE_HISTORY_RETRY_INTERVAL_SECS, SEALED_RELAY_INTERVAL_SECS,
+};
 use super::{LocalUpdate, LoopExit, SyncConnection, flush_to_queue};
 
 impl SyncConnection {
@@ -49,6 +54,14 @@ impl SyncConnection {
             tokio::time::interval(Duration::from_secs(SEALED_RELAY_INTERVAL_SECS));
         sealed_relay.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut sealed_task: Option<tokio::task::JoinHandle<()>> = None;
+        // The machine-claim history this machine is owed (FIX 3820): rounds on
+        // their own sockets, off this loop, at connect, every retry interval,
+        // and once an import or a round lands rows it waits on.
+        let mut machine_history =
+            tokio::time::interval(Duration::from_secs(MACHINE_HISTORY_RETRY_INTERVAL_SECS));
+        machine_history.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let machine_history_due = std::sync::Arc::new(AtomicBool::new(false));
+        let mut machine_history_tasks = Vec::new();
         // A residence-mode switch closes this socket; the next connect sends
         // the new mode's hello. A live lane never changes mode.
         let mut mode_rx = self.mode.subscribe();
@@ -58,6 +71,7 @@ impl SyncConnection {
         let mut left_rx = self.left.subscribe();
 
         loop {
+            self.run_machine_history(&mut machine_history_tasks, &machine_history_due, event_tx);
             // Compute sleep future for debounce timer
             let debounce_sleep = match debounce_deadline {
                 Some(deadline) => tokio::time::sleep_until(deadline),
@@ -71,6 +85,9 @@ impl SyncConnection {
                         Some(Ok(Message::Binary(data))) => {
                             match client.handle_server_message(&data) {
                                 Ok(responses) => {
+                                    if crate::sync::machine_history::take_landed(&client.vault) {
+                                        machine_history_due.store(true, Ordering::Relaxed);
+                                    }
                                     // Judged per frame: a device-only flag may turn while an
                                     // earlier frame waits on the socket.
                                     for resp in responses
@@ -267,6 +284,7 @@ impl SyncConnection {
                         let config = self.client_config();
                         let events = event_tx.clone();
                         let directives = std::sync::Arc::clone(&self.directive_wake);
+                        let machine_history_due = std::sync::Arc::clone(&machine_history_due);
                         sealed_task = Some(tokio::spawn(async move {
                             // An opened machine's windows carry only the
                             // authority rows they hold: take the rest first
@@ -285,6 +303,14 @@ impl SyncConnection {
                                 && let Err(error) =
                                     crate::sync::client::catch_up_authority(manager.vault(), &config)
                                         .await
+                                        // Authority an owed machine history waits on
+                                        // may have landed: its exchange runs again
+                                        // (FIX 4293).
+                                        .inspect(|&taken| {
+                                            if taken > 0 {
+                                                machine_history_due.store(true, Ordering::Relaxed);
+                                            }
+                                        })
                                 && !matches!(error, crate::sync::TransportError::InvalidPayload(_))
                             {
                                 let _ = events.send(SyncEvent::Error(format!(
@@ -332,6 +358,10 @@ impl SyncConnection {
                             }
                         }));
                     }
+                }
+
+                _ = machine_history.tick() => {
+                    machine_history_due.store(true, Ordering::Relaxed);
                 }
 
                 // Loro's Rust EphemeralStore has no internal timer.
@@ -387,5 +417,39 @@ impl SyncConnection {
                 }
             }
         }
+    }
+
+    /// Starts an owed machine-history round off this loop once one is due and
+    /// a task is free (FIX 3820). Own residence only: the home answers it, a
+    /// federation peer does not. A round that lands rows asks for another,
+    /// since a row it released may owe more.
+    fn run_machine_history(
+        &self,
+        tasks: &mut Vec<tokio::task::JoinHandle<()>>,
+        due: &std::sync::Arc<AtomicBool>,
+        event_tx: &mpsc::UnboundedSender<SyncEvent>,
+    ) {
+        tasks.retain(|task| !task.is_finished());
+        if self.config.client_config.federation_peer.is_some()
+            || tasks.len() >= MACHINE_HISTORY_FETCH_TASKS
+            || !due.swap(false, Ordering::Relaxed)
+        {
+            return;
+        }
+        let manager = std::sync::Arc::clone(&self.manager);
+        let config = self.client_config();
+        let events = event_tx.clone();
+        let due = std::sync::Arc::clone(due);
+        tasks.push(tokio::spawn(async move {
+            match crate::sync::client::fetch_owed_machine_history(&manager, &config).await {
+                Ok(0) | Err(crate::sync::TransportError::InvalidPayload(_)) => {}
+                Ok(_) => due.store(true, Ordering::Relaxed),
+                Err(error) => {
+                    let _ = events.send(SyncEvent::Error(format!(
+                        "Machine history fetch failed: {error}"
+                    )));
+                }
+            }
+        }));
     }
 }
