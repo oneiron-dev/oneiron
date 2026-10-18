@@ -33,6 +33,7 @@ mod birth_position;
 mod booking;
 mod claim_admission;
 mod claim_conflict;
+mod claim_stale;
 mod conflict_settle;
 pub mod consolidation;
 mod diary_read;
@@ -43,12 +44,15 @@ pub(crate) use booking::booking_error;
 pub(crate) use outbound::facade_error_from_outbound_dispatch;
 pub(crate) mod booking_publication;
 mod campaign;
+mod campaign_actions;
 pub mod caps;
 pub mod channel_doors;
 mod chat;
+pub mod checkout_doors;
 mod claims;
 pub mod code_doors;
 pub mod code_run_doors;
+pub mod code_wait_doors;
 pub mod codebase_doors;
 mod conversation_list;
 mod credential_key;
@@ -121,6 +125,10 @@ pub(crate) use claim_conflict::claim_conflict_ruling_gate_refs_in_txn;
 pub use claim_conflict::{
     ClaimConflictBundle, ClaimConflictMember, ClaimConflictQuestion, ClaimConflictReceipt,
 };
+pub use claim_stale::{
+    ClaimDemoteActionInput, ClaimDemoteRequest, ClaimDemoteView, ClaimFilteredListRequest,
+    ClaimFilteredReadRequest, ReadFilterInput,
+};
 pub use claims::{
     ClaimChangeVerdict, ClaimInput, ClaimProposalReview, ClaimProposalReviewRequest,
     ClaimSettleDecision, ClaimSettleRequest, ClaimSettlement, ClaimSettlementAnswer,
@@ -135,7 +143,10 @@ pub use diary_read::{
     DiaryReadsView, DiaryReviewAnswer, DiaryReviewState,
 };
 pub use diary_read::{DiaryReader, DiaryReaderList, SealedPadReader};
-pub use dreamer::{ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptView};
+pub use dreamer::{
+    ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptView, DreamerParkCauseView,
+    DreamerParkedAttemptView,
+};
 pub use entity_erase::{
     EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome,
 };
@@ -201,9 +212,9 @@ pub use result_attachment::{
 };
 pub use room_turn::RoomTurnHandle;
 pub use scoped_export::{
-    ChannelCeiling, CredentialCeiling, ExportChannel, RecordPosition, RecordSelector,
-    ScopeAxisInput, ScopeSensitivityBand, ScopeSensitivityInput, ScopedExport, ScopedExportRecord,
-    ScopedExportRequest,
+    ChannelCeiling, CredentialCeiling, ExportChannel, RecordPosition, RecordPositionRequest,
+    RecordSelector, ScopeAxisInput, ScopeSensitivityBand, ScopeSensitivityInput, ScopedExport,
+    ScopedExportRecord, ScopedExportRequest,
 };
 pub use search_hybrid::{
     HybridPprQuery, HybridRankReplay, HybridSearchHit, HybridSearchRequest, HybridTemporalQuery,

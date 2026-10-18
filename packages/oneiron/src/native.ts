@@ -31,6 +31,11 @@ import type {
 export interface NativeClient {
 // BEGIN GENERATED AGENT VERBS
 report(input: unknown): unknown
+feedbackPreview(input: unknown): unknown
+feedbackSend(input: unknown): unknown
+vaultReportsDisclosure(input: unknown): unknown
+vaultReportsRoute(input: unknown): unknown
+vaultReportsOutbound(input: unknown): unknown
 selfFocusScratchpadRecall(input: unknown): unknown
 selfFocusScratchpadAppend(input: unknown): unknown
 selfFocusScratchpadSeal(input: unknown): unknown
@@ -80,6 +85,8 @@ tasksAccept(input: unknown): unknown
 vaultWitness(turn: WitnessTurn): WitnessReceipt
 vaultClaimsUpsert(input: unknown): unknown
 vaultRecall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined, as_of: number | undefined, deadline_ms: number | undefined, media: RecallMedia | undefined, query_affect: QueryAffect | undefined): MemoryPack
+vaultRetrievalAgingGet(input: unknown): unknown
+vaultRetrievalAgingConfigure(input: unknown): unknown
 vaultRetrievalWeightsGet(input: unknown): unknown
 vaultRetrievalWeightsConfigure(input: unknown): unknown
 vaultAffectAnnotationsPut(input: unknown): unknown
@@ -99,6 +106,7 @@ vaultRetrievalExport(input: unknown): unknown
 vaultRetrievalReplay(input: unknown): unknown
 vaultExport(input: unknown): unknown
 selfCredentialAttenuate(input: unknown): unknown
+vaultScopePosition(input: unknown): unknown
 vaultScopeCeiling(input: unknown): unknown
 vaultExportScoped(input: unknown): unknown
 vaultReceipts(limit: number | undefined, kinds: string[] | undefined): FacadeReceipt[]
@@ -111,6 +119,9 @@ vaultKvPut(requestJson: string): string
 vaultKvDelete(requestJson: string): string
 vaultKvSearch(requestJson: string): string
 vaultKvNamespaces(requestJson: string): string
+vaultCampaignEnroll(input: unknown): unknown
+vaultCampaignStageEvidence(input: unknown): unknown
+vaultCampaignUnsubscribe(input: unknown): unknown
 vaultCampaignProgramCreate(input: unknown): unknown
 vaultCampaignProgramRead(input: unknown): unknown
 vaultCampaignProgramUpdate(input: unknown): unknown
@@ -143,6 +154,10 @@ vaultSkillsFork(input: unknown): unknown
 vaultSkillsRulesSet(input: unknown): unknown
 vaultSkillsCodeAutoInstallSet(input: unknown): unknown
 vaultSkillsPermissionsApprove(input: unknown): unknown
+vaultSkillsOptimizeStart(input: unknown): unknown
+vaultSkillsOptimizeResult(input: unknown): unknown
+vaultSkillsGovernanceGet(input: unknown): unknown
+vaultSkillsGovernanceSet(input: unknown): unknown
 vaultPacksHooksBind(input: unknown): unknown
 vaultPacksHooksList(input: unknown): unknown
 vaultPacksHooksQualify(input: unknown): unknown
@@ -374,6 +389,8 @@ vaultCodeSymbolsRelease(input: unknown): unknown
 vaultCodeProposalSubmit(input: unknown): unknown
 vaultCodeOplog(input: unknown): unknown
 vaultCodeModelHealCount(input: unknown): unknown
+vaultCodeWaitsResolve(input: unknown): unknown
+vaultCodeWaitsReceipt(input: unknown): unknown
 vaultResultsStatus(input: unknown): unknown
 vaultResultsRecover(input: unknown): unknown
 vaultResultsRead(input: unknown): unknown
@@ -384,6 +401,14 @@ vaultCodeOriginAuthorityGet(input: unknown): unknown
 vaultCodeOriginAuthoritySet(input: unknown): unknown
 vaultCodeOriginPublications(input: unknown): unknown
 vaultCodeCheckoutBind(input: unknown): unknown
+vaultCodeCheckoutClaim(input: unknown): unknown
+vaultCodeCheckoutGet(input: unknown): unknown
+vaultCodeCheckoutRenew(input: unknown): unknown
+vaultCodeCheckoutReclaim(input: unknown): unknown
+vaultCodeCheckoutTakeover(input: unknown): unknown
+vaultCodeCheckoutPublish(input: unknown): unknown
+vaultCodeCheckoutSettle(input: unknown): unknown
+vaultCodeCheckoutTeardown(input: unknown): unknown
 vaultCodeSnapshotsIngest(input: unknown): unknown
 vaultCodeSnapshotsGet(input: unknown): unknown
 vaultCodeSnapshotsRead(input: unknown): unknown
@@ -413,6 +438,7 @@ vaultWorkflowsStatus(input: unknown): unknown
 vaultTaskTypesPin(input: unknown): unknown
 vaultTaskTypesGet(input: unknown): unknown
 vaultAgentsSpawnGet(input: unknown): unknown
+vaultAgentsSpawn(input: unknown): unknown
 vaultTasksCancelForce(input: unknown): unknown
 vaultRunsBranchesGet(input: unknown): unknown
 vaultConsultsGet(input: unknown): unknown
@@ -522,6 +548,9 @@ vaultQuestionsBackfill(input: unknown): unknown
 vaultQuestionsRead(input: unknown): unknown
 vaultQuestionsAnswers(input: unknown): unknown
 vaultQuestionsRefresh(input: unknown): unknown
+vaultQuestionsOutcomes(input: unknown): unknown
+vaultQuestionsOutcomesProject(input: unknown): unknown
+vaultQuestionsSchedule(input: unknown): unknown
 vaultDecisionsBandsRead(input: unknown): unknown
 vaultDecisionsBandsLearn(input: unknown): unknown
 vaultDecisionsBandsEnforce(input: unknown): unknown
@@ -539,6 +568,14 @@ vaultClaimsRetract(input: unknown): unknown
 vaultForget(input: unknown): unknown
 vaultBookingConstraintTurn(input: unknown): unknown
 vaultBookingPageToken(input: unknown): unknown
+calendarInvite(input: unknown): unknown
+calendarConnectorConfigure(input: unknown): unknown
+calendarConnectorGet(input: unknown): unknown
+calendarConnectorPull(input: unknown): unknown
+calendarConnectorWrite(input: unknown): unknown
+calendarConnectorKill(input: unknown): unknown
+calendarImipConfigure(input: unknown): unknown
+calendarImipGet(input: unknown): unknown
 vaultCalendarCreate(input: unknown): unknown
 vaultCalendarIcsImport(input: unknown): unknown
 vaultCalendarOccurrences(input: unknown): unknown
@@ -548,6 +585,9 @@ vaultCalendarSearch(input: unknown): unknown
 vaultCalendarFreebusy(input: unknown): unknown
 vaultCalendarTranscriptIngest(input: unknown): unknown
 vaultClaimsList(input: unknown): unknown
+vaultClaimsDemote(input: unknown): unknown
+vaultClaimsListFiltered(input: unknown): unknown
+vaultClaimsReadFiltered(input: unknown): unknown
 vaultClaimsHistory(input: unknown): unknown
 vaultDelete(input: unknown): unknown
 vaultWritesPending(input: unknown): unknown
@@ -600,6 +640,8 @@ vaultArtifactsAppend(input: unknown): unknown
 vaultArtifactsRead(input: unknown): unknown
 vaultConsolidationEnqueue(input: unknown): unknown
 vaultConsolidationStatus(input: unknown): unknown
+vaultRunsStep(input: unknown): unknown
+vaultRunsCheckpoint(input: unknown): unknown
 vaultConsolidationPromote(input: unknown): unknown
 vaultConsolidationEvidence(input: unknown): unknown
 vaultClaimsVet(input: unknown): unknown

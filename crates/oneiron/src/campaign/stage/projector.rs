@@ -103,37 +103,48 @@ pub(super) fn project_stage_transition(
     input: &StageProjectorInput,
     mode: PromotionMode,
 ) -> Result<StageProjectResult> {
-    // Defence in depth against the ONE law a stage cannot be written without:
-    // CA-01's decoder rejects an empty list at the write door too, but this door
-    // names the caller rather than the wire.
+    vault.with_write_txn_grouped(|txn| {
+        project_stage_transition_in_txn(vault, txn, input, mode, None)
+    })
+}
+
+/// The shared projector inside its caller's writer, optionally carrying that
+/// caller's authenticated provenance. Head checks and the write cannot tear.
+pub(super) fn project_stage_transition_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    input: &StageProjectorInput,
+    mode: PromotionMode,
+    envelope: Option<&crate::WriteEnvelope>,
+) -> Result<StageProjectResult> {
     if input.value.evidence_refs.is_empty() {
         return Err(invalid("crm.stage transition requires evidence"));
     }
-    let body = stage_claim_body(input, mode)?;
+    let mut body = stage_claim_body(input, mode)?;
+    if let Some(envelope) = envelope {
+        body.evidence = Some(crate::write_envelope::write_envelope_evidence(
+            envelope,
+            body.evidence.take(),
+        ));
+    }
     let new_id = vault.store.clock.entity_id()?;
     let recorded_at = input.value.recorded_at;
+    if mode == PromotionMode::Propose {
+        require_current_stage_head(vault, txn, input)?;
+    }
+    vault.put_claim_in_txn(txn, &new_id, &body, at(recorded_at), recorded_at)?;
     match mode {
-        PromotionMode::Propose => {
-            vault.with_write_txn_grouped(|wtxn| {
-                require_current_stage_head(vault, wtxn, input)?;
-                vault.put_claim_in_txn(wtxn, &new_id, &body, at(recorded_at), recorded_at)?;
-                Ok(())
-            })?;
-            Ok(StageProjectResult::Proposed {
-                proposed_claim_ref: new_id,
-            })
-        }
+        PromotionMode::Propose => Ok(StageProjectResult::Proposed {
+            proposed_claim_ref: new_id,
+        }),
         PromotionMode::Auto => {
-            vault.with_write_txn_grouped(|wtxn| {
-                vault.put_claim_in_txn(wtxn, &new_id, &body, at(recorded_at), recorded_at)?;
-                supersede_crm_stage_in_txn(
-                    vault,
-                    wtxn,
-                    &new_id,
-                    input.previous_stage_claim_ref.as_ref(),
-                    recorded_at,
-                )
-            })?;
+            supersede_crm_stage_in_txn(
+                vault,
+                txn,
+                &new_id,
+                input.previous_stage_claim_ref.as_ref(),
+                recorded_at,
+            )?;
             Ok(StageProjectResult::Advanced {
                 new_claim_ref: new_id,
             })

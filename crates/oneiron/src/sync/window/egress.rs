@@ -104,11 +104,13 @@ pub(super) fn scrub_local_only_carriers(
     let edges_map = doc.get_map("edges");
     let mut custody_ids = HashSet::new();
     let mut malformed_key_carriers: Vec<String> = Vec::new();
-    let mut pad_carriers: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut key_carriers: Vec<(String, Vec<u8>)> = Vec::new();
     map_for_each_value_bytes(&entities_map, |raw_key, maybe_blob| {
         let Some(blob) = maybe_blob else { return };
-        if crate::world_keys::pad_body_world(blob).is_some() {
-            pad_carriers.push((raw_key.to_owned(), blob.to_vec()));
+        if crate::world_keys::pad_body_world(blob).is_some()
+            || crate::sync::types::authority_wrap_world(blob).is_some()
+        {
+            key_carriers.push((raw_key.to_owned(), blob.to_vec()));
             return;
         }
         let lfs_chunk = EntityId::from_hex(raw_key)
@@ -132,11 +134,11 @@ pub(super) fn scrub_local_only_carriers(
         }
     });
     // A destroyed world's pad that landed late leaves the window whatever its
-    // key, and so does a pad misplaced outside its world's window of its month;
-    // a live world's pad replicates with its world's rows.
-    if !pad_carriers.is_empty() {
+    // key, and so does a pad or key wrap misplaced outside its world's window
+    // of its month; a live world's pad replicates with its world's rows.
+    if !key_carriers.is_empty() {
         let txn = vault.store.env.read_txn()?;
-        for (raw_key, blob) in pad_carriers {
+        for (raw_key, blob) in key_carriers {
             if crate::sync::types::entity_belongs_to_window(&blob, key)
                 && !crate::world_keys::late_pad_in_txn(&vault.store, &txn, &blob)?
             {
@@ -170,6 +172,8 @@ pub(super) fn scrub_local_only_carriers(
             Error::InvalidKey
         } else if crate::world_keys::pad_body_world(&blob).is_some() {
             Error::InvalidConfig("a key pad rides only its live world's own window".into())
+        } else if crate::sync::types::authority_wrap_world(&blob).is_some() {
+            Error::InvalidConfig("a key wrap rides only its world's own window".into())
         } else {
             crate::secret_custody::reject_secret_custody_byte()
         };

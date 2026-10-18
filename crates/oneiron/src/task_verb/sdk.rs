@@ -540,6 +540,7 @@ pub use super::sdk_asr::*;
 pub use super::sdk_authority_history::*;
 pub use super::sdk_browser::*;
 pub use super::sdk_calendar::*;
+pub use super::sdk_campaign_archive::*;
 pub use super::sdk_campaign_split::*;
 pub use super::sdk_catalog_fragment::{
     CATALOG_FRAGMENT_REVISION, CatalogFragment, code_mode_catalog_fragment,
@@ -557,6 +558,7 @@ pub use super::sdk_eval_cohort::*;
 pub use super::sdk_explain::*;
 pub use super::sdk_fanout_launch::*;
 pub use super::sdk_federation::*;
+pub use super::sdk_feedback::*;
 pub use super::sdk_guest_revoke::*;
 pub use super::sdk_host::*;
 pub use super::sdk_hub::*;
@@ -569,7 +571,6 @@ pub use super::sdk_off_record::*;
 pub use super::sdk_record_erase::*;
 pub use super::sdk_reply::*;
 pub use super::sdk_research::*;
-pub use super::sdk_campaign_archive::*;
 pub use super::sdk_residence::*;
 pub use super::sdk_retrieval::*;
 pub use super::sdk_scratchpad::*;

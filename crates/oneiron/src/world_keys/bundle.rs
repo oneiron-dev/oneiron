@@ -22,9 +22,9 @@
 //!   stays out everywhere.
 //! - The pads of every carried world's keys ride their own object (purpose
 //!   `SealedKeyPads`): same generation, same readers, padded to 64 KiB steps. A
-//!   world key is a root wrap from the base section's authority joined with its
-//!   pad, so the kit alone restores. The base section therefore carries no pad
-//!   row.
+//!   world key is a root wrap from the world's authority capsule joined with its
+//!   pad, so the kit alone restores. The base section carries no pad row and no
+//!   wrap.
 //! - The pad object also indexes each section's tag under the key it is sealed
 //!   under, where its publisher knew it (FIX 3359), so a publisher that cannot
 //!   read a world still knows which section is that world's and stops carrying
@@ -892,8 +892,8 @@ impl Vault {
         // A carried section's key keeps the pad the latest generation held for
         // it, unless the bundle no longer carries its world for this holder, or
         // the world was deleted or its keys destroyed here. A world whose
-        // settings are not here (they ride its own windows) rides blind with its
-        // section and capsule: unknown is not ineligible (FIX 4211).
+        // settings are not folded here yet rides blind with its section and
+        // capsule: unknown is not ineligible (FIX 4211).
         for (key, pad) in carry.latest.map_or(&[][..], |latest| &latest.entries[..]) {
             if (!fold.worlds.contains_key(&key.world) || bundle_carries(&fold, key.world, holder))
                 && !pads.iter().any(|(held, _)| held == key)
@@ -1041,7 +1041,7 @@ impl Vault {
     /// Kit restore: every section of `opened` whose key is wrapped to the kit's
     /// root, opened with that key's pad from `pads`, the pad object of the
     /// bundle's generation. This vault's authority must already hold the bundle's
-    /// base, which carries the root's wraps.
+    /// base and the world capsules the kit opens, which carry the root's wraps.
     pub fn open_vault_bundle_sections_with_kit(
         &self,
         opened: &OpenedVaultBundle,
@@ -1087,7 +1087,7 @@ impl Vault {
     /// every older one, without `world`'s pads, each opened with this machine's
     /// capsule, a grant of its outer key to this machine among `grants`, or
     /// else the kit's. A pad object holds pads only. The root wraps of
-    /// the world's keys stay in each kept bundle's base section, and with the pads
+    /// the world's keys stay in each kept bundle's world capsule, and with the pads
     /// gone from every kept object they open to nothing, for the kit too, so the
     /// world's section in every kept bundle stops opening. Every other world's
     /// pads stay, so every kept bundle still restores them. Each object is

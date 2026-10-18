@@ -2,6 +2,11 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentVerb {
     Report,
+    FeedbackPreview,
+    FeedbackSend,
+    VaultReportsDisclosure,
+    VaultReportsRoute,
+    VaultReportsOutbound,
     SelfFocusRefresh,
     SelfFocusSubscribe,
     SelfFocusUnsubscribe,
@@ -54,6 +59,8 @@ pub enum AgentVerb {
     VaultWitness,
     VaultClaimsUpsert,
     VaultRecall,
+    VaultRetrievalAgingGet,
+    VaultRetrievalAgingConfigure,
     VaultRetrievalWeightsGet,
     VaultRetrievalWeightsConfigure,
     VaultAffectAnnotationsPut,
@@ -73,6 +80,7 @@ pub enum AgentVerb {
     VaultRetrievalReplay,
     VaultExport,
     SelfCredentialAttenuate,
+    VaultScopePosition,
     VaultScopeCeiling,
     VaultExportScoped,
     VaultReceipts,
@@ -85,6 +93,9 @@ pub enum AgentVerb {
     VaultKvDelete,
     VaultKvSearch,
     VaultKvNamespaces,
+    VaultCampaignEnroll,
+    VaultCampaignStageEvidence,
+    VaultCampaignUnsubscribe,
     VaultCampaignProgramCreate,
     VaultCampaignProgramRead,
     VaultCampaignProgramUpdate,
@@ -117,6 +128,10 @@ pub enum AgentVerb {
     VaultSkillsRulesSet,
     VaultSkillsCodeAutoInstallSet,
     VaultSkillsPermissionsApprove,
+    VaultSkillsOptimizeStart,
+    VaultSkillsOptimizeResult,
+    VaultSkillsGovernanceGet,
+    VaultSkillsGovernanceSet,
     VaultPacksHooksBind,
     VaultPacksHooksList,
     VaultPacksHooksQualify,
@@ -348,6 +363,8 @@ pub enum AgentVerb {
     VaultCodeProposalSubmit,
     VaultCodeOplog,
     VaultCodeModelHealCount,
+    VaultCodeWaitsResolve,
+    VaultCodeWaitsReceipt,
     VaultResultsStatus,
     VaultResultsRecover,
     VaultResultsRead,
@@ -358,6 +375,14 @@ pub enum AgentVerb {
     VaultCodeOriginAuthoritySet,
     VaultCodeOriginPublications,
     VaultCodeCheckoutBind,
+    VaultCodeCheckoutClaim,
+    VaultCodeCheckoutGet,
+    VaultCodeCheckoutRenew,
+    VaultCodeCheckoutReclaim,
+    VaultCodeCheckoutTakeover,
+    VaultCodeCheckoutPublish,
+    VaultCodeCheckoutSettle,
+    VaultCodeCheckoutTeardown,
     VaultCodeSnapshotsIngest,
     VaultCodeSnapshotsGet,
     VaultCodeSnapshotsRead,
@@ -387,6 +412,7 @@ pub enum AgentVerb {
     VaultTaskTypesPin,
     VaultTaskTypesGet,
     VaultAgentsSpawnGet,
+    VaultAgentsSpawn,
     VaultTasksCancelForce,
     VaultRunsBranchesGet,
     VaultConsultsGet,
@@ -496,6 +522,9 @@ pub enum AgentVerb {
     VaultQuestionsRead,
     VaultQuestionsAnswers,
     VaultQuestionsRefresh,
+    VaultQuestionsOutcomes,
+    VaultQuestionsOutcomesProject,
+    VaultQuestionsSchedule,
     VaultDecisionsBandsRead,
     VaultDecisionsBandsLearn,
     VaultDecisionsBandsEnforce,
@@ -538,6 +567,14 @@ pub enum AgentVerb {
     VaultForget,
     VaultBookingConstraintTurn,
     VaultBookingPageToken,
+    CalendarInvite,
+    CalendarConnectorConfigure,
+    CalendarConnectorGet,
+    CalendarConnectorPull,
+    CalendarConnectorWrite,
+    CalendarConnectorKill,
+    CalendarImipConfigure,
+    CalendarImipGet,
     VaultCalendarCreate,
     VaultCalendarIcsImport,
     VaultCalendarOccurrences,
@@ -547,6 +584,9 @@ pub enum AgentVerb {
     VaultCalendarFreebusy,
     VaultCalendarTranscriptIngest,
     VaultClaimsList,
+    VaultClaimsDemote,
+    VaultClaimsListFiltered,
+    VaultClaimsReadFiltered,
     VaultClaimsHistory,
     VaultDelete,
     VaultWritesPending,
@@ -599,6 +639,8 @@ pub enum AgentVerb {
     VaultArtifactsRead,
     VaultConsolidationEnqueue,
     VaultConsolidationStatus,
+    VaultRunsStep,
+    VaultRunsCheckpoint,
     VaultConsolidationPromote,
     VaultConsolidationEvidence,
     VaultClaimsVet,
@@ -691,6 +733,11 @@ pub enum AgentVerb {
 impl AgentVerb {
     pub const ALL: &[Self] = &[
         Self::Report,
+        Self::FeedbackPreview,
+        Self::FeedbackSend,
+        Self::VaultReportsDisclosure,
+        Self::VaultReportsRoute,
+        Self::VaultReportsOutbound,
         Self::SelfFocusRefresh,
         Self::SelfFocusSubscribe,
         Self::SelfFocusUnsubscribe,
@@ -743,6 +790,8 @@ impl AgentVerb {
         Self::VaultWitness,
         Self::VaultClaimsUpsert,
         Self::VaultRecall,
+        Self::VaultRetrievalAgingGet,
+        Self::VaultRetrievalAgingConfigure,
         Self::VaultRetrievalWeightsGet,
         Self::VaultRetrievalWeightsConfigure,
         Self::VaultAffectAnnotationsPut,
@@ -762,6 +811,7 @@ impl AgentVerb {
         Self::VaultRetrievalReplay,
         Self::VaultExport,
         Self::SelfCredentialAttenuate,
+        Self::VaultScopePosition,
         Self::VaultScopeCeiling,
         Self::VaultExportScoped,
         Self::VaultReceipts,
@@ -774,6 +824,9 @@ impl AgentVerb {
         Self::VaultKvDelete,
         Self::VaultKvSearch,
         Self::VaultKvNamespaces,
+        Self::VaultCampaignEnroll,
+        Self::VaultCampaignStageEvidence,
+        Self::VaultCampaignUnsubscribe,
         Self::VaultCampaignProgramCreate,
         Self::VaultCampaignProgramRead,
         Self::VaultCampaignProgramUpdate,
@@ -806,6 +859,10 @@ impl AgentVerb {
         Self::VaultSkillsRulesSet,
         Self::VaultSkillsCodeAutoInstallSet,
         Self::VaultSkillsPermissionsApprove,
+        Self::VaultSkillsOptimizeStart,
+        Self::VaultSkillsOptimizeResult,
+        Self::VaultSkillsGovernanceGet,
+        Self::VaultSkillsGovernanceSet,
         Self::VaultPacksHooksBind,
         Self::VaultPacksHooksList,
         Self::VaultPacksHooksQualify,
@@ -1037,6 +1094,8 @@ impl AgentVerb {
         Self::VaultCodeProposalSubmit,
         Self::VaultCodeOplog,
         Self::VaultCodeModelHealCount,
+        Self::VaultCodeWaitsResolve,
+        Self::VaultCodeWaitsReceipt,
         Self::VaultResultsStatus,
         Self::VaultResultsRecover,
         Self::VaultResultsRead,
@@ -1047,6 +1106,14 @@ impl AgentVerb {
         Self::VaultCodeOriginAuthoritySet,
         Self::VaultCodeOriginPublications,
         Self::VaultCodeCheckoutBind,
+        Self::VaultCodeCheckoutClaim,
+        Self::VaultCodeCheckoutGet,
+        Self::VaultCodeCheckoutRenew,
+        Self::VaultCodeCheckoutReclaim,
+        Self::VaultCodeCheckoutTakeover,
+        Self::VaultCodeCheckoutPublish,
+        Self::VaultCodeCheckoutSettle,
+        Self::VaultCodeCheckoutTeardown,
         Self::VaultCodeSnapshotsIngest,
         Self::VaultCodeSnapshotsGet,
         Self::VaultCodeSnapshotsRead,
@@ -1076,6 +1143,7 @@ impl AgentVerb {
         Self::VaultTaskTypesPin,
         Self::VaultTaskTypesGet,
         Self::VaultAgentsSpawnGet,
+        Self::VaultAgentsSpawn,
         Self::VaultTasksCancelForce,
         Self::VaultRunsBranchesGet,
         Self::VaultConsultsGet,
@@ -1185,6 +1253,9 @@ impl AgentVerb {
         Self::VaultQuestionsRead,
         Self::VaultQuestionsAnswers,
         Self::VaultQuestionsRefresh,
+        Self::VaultQuestionsOutcomes,
+        Self::VaultQuestionsOutcomesProject,
+        Self::VaultQuestionsSchedule,
         Self::VaultDecisionsBandsRead,
         Self::VaultDecisionsBandsLearn,
         Self::VaultDecisionsBandsEnforce,
@@ -1227,6 +1298,14 @@ impl AgentVerb {
         Self::VaultForget,
         Self::VaultBookingConstraintTurn,
         Self::VaultBookingPageToken,
+        Self::CalendarInvite,
+        Self::CalendarConnectorConfigure,
+        Self::CalendarConnectorGet,
+        Self::CalendarConnectorPull,
+        Self::CalendarConnectorWrite,
+        Self::CalendarConnectorKill,
+        Self::CalendarImipConfigure,
+        Self::CalendarImipGet,
         Self::VaultCalendarCreate,
         Self::VaultCalendarIcsImport,
         Self::VaultCalendarOccurrences,
@@ -1236,6 +1315,9 @@ impl AgentVerb {
         Self::VaultCalendarFreebusy,
         Self::VaultCalendarTranscriptIngest,
         Self::VaultClaimsList,
+        Self::VaultClaimsDemote,
+        Self::VaultClaimsListFiltered,
+        Self::VaultClaimsReadFiltered,
         Self::VaultClaimsHistory,
         Self::VaultDelete,
         Self::VaultWritesPending,
@@ -1288,6 +1370,8 @@ impl AgentVerb {
         Self::VaultArtifactsRead,
         Self::VaultConsolidationEnqueue,
         Self::VaultConsolidationStatus,
+        Self::VaultRunsStep,
+        Self::VaultRunsCheckpoint,
         Self::VaultConsolidationPromote,
         Self::VaultConsolidationEvidence,
         Self::VaultClaimsVet,
@@ -1383,6 +1467,11 @@ impl AgentVerb {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Report => "report",
+            Self::FeedbackPreview => "feedback.preview",
+            Self::FeedbackSend => "feedback.send",
+            Self::VaultReportsDisclosure => "vault.reports.disclosure",
+            Self::VaultReportsRoute => "vault.reports.route",
+            Self::VaultReportsOutbound => "vault.reports.outbound",
             Self::SelfFocusRefresh => "self.focus.refresh",
             Self::SelfFocusSubscribe => "self.focus.subscribe",
             Self::SelfFocusUnsubscribe => "self.focus.unsubscribe",
@@ -1435,6 +1524,8 @@ impl AgentVerb {
             Self::VaultWitness => "vault.witness",
             Self::VaultClaimsUpsert => "vault.claims.upsert",
             Self::VaultRecall => "vault.recall",
+            Self::VaultRetrievalAgingGet => "vault.retrieval.aging.get",
+            Self::VaultRetrievalAgingConfigure => "vault.retrieval.aging.configure",
             Self::VaultRetrievalWeightsGet => "vault.retrieval.weights.get",
             Self::VaultRetrievalWeightsConfigure => "vault.retrieval.weights.configure",
             Self::VaultAffectAnnotationsPut => "vault.affect.annotations.put",
@@ -1454,6 +1545,7 @@ impl AgentVerb {
             Self::VaultRetrievalReplay => "vault.retrieval.replay",
             Self::VaultExport => "vault.export",
             Self::SelfCredentialAttenuate => "self.credential.attenuate",
+            Self::VaultScopePosition => "vault.scope.position",
             Self::VaultScopeCeiling => "vault.scope.ceiling",
             Self::VaultExportScoped => "vault.export.scoped",
             Self::VaultReceipts => "vault.receipts",
@@ -1466,6 +1558,9 @@ impl AgentVerb {
             Self::VaultKvDelete => "vault.kv.delete",
             Self::VaultKvSearch => "vault.kv.search",
             Self::VaultKvNamespaces => "vault.kv.namespaces",
+            Self::VaultCampaignEnroll => "vault.campaign.enroll",
+            Self::VaultCampaignStageEvidence => "vault.campaign.stage.evidence",
+            Self::VaultCampaignUnsubscribe => "vault.campaign.unsubscribe",
             Self::VaultCampaignProgramCreate => "vault.campaign.program.create",
             Self::VaultCampaignProgramRead => "vault.campaign.program.read",
             Self::VaultCampaignProgramUpdate => "vault.campaign.program.update",
@@ -1498,6 +1593,10 @@ impl AgentVerb {
             Self::VaultSkillsRulesSet => "vault.skills.rules.set",
             Self::VaultSkillsCodeAutoInstallSet => "vault.skills.code_auto_install.set",
             Self::VaultSkillsPermissionsApprove => "vault.skills.permissions.approve",
+            Self::VaultSkillsOptimizeStart => "vault.skills.optimize.start",
+            Self::VaultSkillsOptimizeResult => "vault.skills.optimize.result",
+            Self::VaultSkillsGovernanceGet => "vault.skills.governance.get",
+            Self::VaultSkillsGovernanceSet => "vault.skills.governance.set",
             Self::VaultPacksHooksBind => "vault.packs.hooks.bind",
             Self::VaultPacksHooksList => "vault.packs.hooks.list",
             Self::VaultPacksHooksQualify => "vault.packs.hooks.qualify",
@@ -1741,6 +1840,8 @@ impl AgentVerb {
             Self::VaultCodeProposalSubmit => "vault.code.proposal_submit",
             Self::VaultCodeOplog => "vault.code.oplog",
             Self::VaultCodeModelHealCount => "vault.code.model_heal_count",
+            Self::VaultCodeWaitsResolve => "vault.code.waits.resolve",
+            Self::VaultCodeWaitsReceipt => "vault.code.waits.receipt",
             Self::VaultResultsStatus => "vault.results.status",
             Self::VaultResultsRecover => "vault.results.recover",
             Self::VaultResultsRead => "vault.results.read",
@@ -1751,6 +1852,14 @@ impl AgentVerb {
             Self::VaultCodeOriginAuthoritySet => "vault.code.origin.authority.set",
             Self::VaultCodeOriginPublications => "vault.code.origin.publications",
             Self::VaultCodeCheckoutBind => "vault.code.checkout.bind",
+            Self::VaultCodeCheckoutClaim => "vault.code.checkout.claim",
+            Self::VaultCodeCheckoutGet => "vault.code.checkout.get",
+            Self::VaultCodeCheckoutRenew => "vault.code.checkout.renew",
+            Self::VaultCodeCheckoutReclaim => "vault.code.checkout.reclaim",
+            Self::VaultCodeCheckoutTakeover => "vault.code.checkout.takeover",
+            Self::VaultCodeCheckoutPublish => "vault.code.checkout.publish",
+            Self::VaultCodeCheckoutSettle => "vault.code.checkout.settle",
+            Self::VaultCodeCheckoutTeardown => "vault.code.checkout.teardown",
             Self::VaultCodeSnapshotsIngest => "vault.code.snapshots.ingest",
             Self::VaultCodeSnapshotsGet => "vault.code.snapshots.get",
             Self::VaultCodeSnapshotsRead => "vault.code.snapshots.read",
@@ -1780,6 +1889,7 @@ impl AgentVerb {
             Self::VaultTaskTypesPin => "vault.task_types.pin",
             Self::VaultTaskTypesGet => "vault.task_types.get",
             Self::VaultAgentsSpawnGet => "vault.agents.spawn.get",
+            Self::VaultAgentsSpawn => "vault.agents.spawn",
             Self::VaultTasksCancelForce => "vault.tasks.cancel_force",
             Self::VaultRunsBranchesGet => "vault.runs.branches.get",
             Self::VaultConsultsGet => "vault.consults.get",
@@ -1889,6 +1999,9 @@ impl AgentVerb {
             Self::VaultQuestionsRead => "vault.questions.read",
             Self::VaultQuestionsAnswers => "vault.questions.answers",
             Self::VaultQuestionsRefresh => "vault.questions.refresh",
+            Self::VaultQuestionsOutcomes => "vault.questions.outcomes",
+            Self::VaultQuestionsOutcomesProject => "vault.questions.outcomes.project",
+            Self::VaultQuestionsSchedule => "vault.questions.schedule",
             Self::VaultDecisionsBandsRead => "vault.decisions.bands.read",
             Self::VaultDecisionsBandsLearn => "vault.decisions.bands.learn",
             Self::VaultDecisionsBandsEnforce => "vault.decisions.bands.enforce",
@@ -1931,6 +2044,14 @@ impl AgentVerb {
             Self::VaultForget => "vault.forget",
             Self::VaultBookingConstraintTurn => "vault.booking.constraint_turn",
             Self::VaultBookingPageToken => "vault.booking.page_token",
+            Self::CalendarInvite => "calendar.invite",
+            Self::CalendarConnectorConfigure => "calendar.connector.configure",
+            Self::CalendarConnectorGet => "calendar.connector.get",
+            Self::CalendarConnectorPull => "calendar.connector.pull",
+            Self::CalendarConnectorWrite => "calendar.connector.write",
+            Self::CalendarConnectorKill => "calendar.connector.kill",
+            Self::CalendarImipConfigure => "calendar.imip.configure",
+            Self::CalendarImipGet => "calendar.imip.get",
             Self::VaultCalendarCreate => "vault.calendar.create",
             Self::VaultCalendarIcsImport => "vault.calendar.ics.import",
             Self::VaultCalendarOccurrences => "vault.calendar.occurrences",
@@ -1940,6 +2061,9 @@ impl AgentVerb {
             Self::VaultCalendarFreebusy => "vault.calendar.freebusy",
             Self::VaultCalendarTranscriptIngest => "vault.calendar.transcript.ingest",
             Self::VaultClaimsList => "vault.claims.list",
+            Self::VaultClaimsDemote => "vault.claims.demote",
+            Self::VaultClaimsListFiltered => "vault.claims.list_filtered",
+            Self::VaultClaimsReadFiltered => "vault.claims.read_filtered",
             Self::VaultClaimsHistory => "vault.claims.history",
             Self::VaultDelete => "vault.delete",
             Self::VaultWritesPending => "vault.writes.pending",
@@ -1992,6 +2116,8 @@ impl AgentVerb {
             Self::VaultArtifactsRead => "vault.artifacts.read",
             Self::VaultConsolidationEnqueue => "vault.consolidation.enqueue",
             Self::VaultConsolidationStatus => "vault.consolidation.status",
+            Self::VaultRunsStep => "vault.runs.step",
+            Self::VaultRunsCheckpoint => "vault.runs.checkpoint",
             Self::VaultConsolidationPromote => "vault.consolidation.promote",
             Self::VaultConsolidationEvidence => "vault.consolidation.evidence",
             Self::VaultClaimsVet => "vault.claims.vet",
@@ -2090,6 +2216,11 @@ impl AgentVerb {
         matches!(
             self,
             Self::Report
+                | Self::FeedbackPreview
+                | Self::FeedbackSend
+                | Self::VaultReportsDisclosure
+                | Self::VaultReportsRoute
+                | Self::VaultReportsOutbound
                 | Self::SelfFocusScratchpadRecall
                 | Self::SelfFocusScratchpadAppend
                 | Self::SelfFocusScratchpadSeal
@@ -2139,6 +2270,8 @@ impl AgentVerb {
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
+                | Self::VaultRetrievalAgingGet
+                | Self::VaultRetrievalAgingConfigure
                 | Self::VaultRetrievalWeightsGet
                 | Self::VaultRetrievalWeightsConfigure
                 | Self::VaultAffectAnnotationsPut
@@ -2158,6 +2291,7 @@ impl AgentVerb {
                 | Self::VaultRetrievalReplay
                 | Self::VaultExport
                 | Self::SelfCredentialAttenuate
+                | Self::VaultScopePosition
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
                 | Self::VaultReceipts
@@ -2170,6 +2304,9 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultCampaignEnroll
+                | Self::VaultCampaignStageEvidence
+                | Self::VaultCampaignUnsubscribe
                 | Self::VaultCampaignProgramCreate
                 | Self::VaultCampaignProgramRead
                 | Self::VaultCampaignProgramUpdate
@@ -2202,6 +2339,10 @@ impl AgentVerb {
                 | Self::VaultSkillsRulesSet
                 | Self::VaultSkillsCodeAutoInstallSet
                 | Self::VaultSkillsPermissionsApprove
+                | Self::VaultSkillsOptimizeStart
+                | Self::VaultSkillsOptimizeResult
+                | Self::VaultSkillsGovernanceGet
+                | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksList
                 | Self::VaultPacksHooksQualify
@@ -2433,6 +2574,8 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSubmit
                 | Self::VaultCodeOplog
                 | Self::VaultCodeModelHealCount
+                | Self::VaultCodeWaitsResolve
+                | Self::VaultCodeWaitsReceipt
                 | Self::VaultResultsStatus
                 | Self::VaultResultsRecover
                 | Self::VaultResultsRead
@@ -2443,6 +2586,14 @@ impl AgentVerb {
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
                 | Self::VaultCodeCheckoutBind
+                | Self::VaultCodeCheckoutClaim
+                | Self::VaultCodeCheckoutGet
+                | Self::VaultCodeCheckoutRenew
+                | Self::VaultCodeCheckoutReclaim
+                | Self::VaultCodeCheckoutTakeover
+                | Self::VaultCodeCheckoutPublish
+                | Self::VaultCodeCheckoutSettle
+                | Self::VaultCodeCheckoutTeardown
                 | Self::VaultCodeSnapshotsIngest
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
@@ -2472,6 +2623,7 @@ impl AgentVerb {
                 | Self::VaultTaskTypesPin
                 | Self::VaultTaskTypesGet
                 | Self::VaultAgentsSpawnGet
+                | Self::VaultAgentsSpawn
                 | Self::VaultTasksCancelForce
                 | Self::VaultRunsBranchesGet
                 | Self::VaultConsultsGet
@@ -2581,6 +2733,9 @@ impl AgentVerb {
                 | Self::VaultQuestionsRead
                 | Self::VaultQuestionsAnswers
                 | Self::VaultQuestionsRefresh
+                | Self::VaultQuestionsOutcomes
+                | Self::VaultQuestionsOutcomesProject
+                | Self::VaultQuestionsSchedule
                 | Self::VaultDecisionsBandsRead
                 | Self::VaultDecisionsBandsLearn
                 | Self::VaultDecisionsBandsEnforce
@@ -2598,6 +2753,14 @@ impl AgentVerb {
                 | Self::VaultForget
                 | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
+                | Self::CalendarInvite
+                | Self::CalendarConnectorConfigure
+                | Self::CalendarConnectorGet
+                | Self::CalendarConnectorPull
+                | Self::CalendarConnectorWrite
+                | Self::CalendarConnectorKill
+                | Self::CalendarImipConfigure
+                | Self::CalendarImipGet
                 | Self::VaultCalendarCreate
                 | Self::VaultCalendarIcsImport
                 | Self::VaultCalendarOccurrences
@@ -2607,6 +2770,9 @@ impl AgentVerb {
                 | Self::VaultCalendarFreebusy
                 | Self::VaultCalendarTranscriptIngest
                 | Self::VaultClaimsList
+                | Self::VaultClaimsDemote
+                | Self::VaultClaimsListFiltered
+                | Self::VaultClaimsReadFiltered
                 | Self::VaultClaimsHistory
                 | Self::VaultDelete
                 | Self::VaultWritesPending
@@ -2659,6 +2825,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultRunsStep
+                | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationEvidence
                 | Self::VaultClaimsVet
@@ -2798,6 +2966,11 @@ impl AgentVerb {
         matches!(
             self,
             Self::Report
+                | Self::FeedbackPreview
+                | Self::FeedbackSend
+                | Self::VaultReportsDisclosure
+                | Self::VaultReportsRoute
+                | Self::VaultReportsOutbound
                 | Self::SelfFocusRefresh
                 | Self::SelfFocusSubscribe
                 | Self::SelfFocusUnsubscribe
@@ -2850,6 +3023,8 @@ impl AgentVerb {
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
+                | Self::VaultRetrievalAgingGet
+                | Self::VaultRetrievalAgingConfigure
                 | Self::VaultRetrievalWeightsGet
                 | Self::VaultRetrievalWeightsConfigure
                 | Self::VaultAffectAnnotationsPut
@@ -2869,6 +3044,7 @@ impl AgentVerb {
                 | Self::VaultRetrievalReplay
                 | Self::VaultExport
                 | Self::SelfCredentialAttenuate
+                | Self::VaultScopePosition
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
                 | Self::VaultReceipts
@@ -2881,6 +3057,9 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultCampaignEnroll
+                | Self::VaultCampaignStageEvidence
+                | Self::VaultCampaignUnsubscribe
                 | Self::VaultCampaignProgramCreate
                 | Self::VaultCampaignProgramRead
                 | Self::VaultCampaignProgramUpdate
@@ -2913,6 +3092,10 @@ impl AgentVerb {
                 | Self::VaultSkillsRulesSet
                 | Self::VaultSkillsCodeAutoInstallSet
                 | Self::VaultSkillsPermissionsApprove
+                | Self::VaultSkillsOptimizeStart
+                | Self::VaultSkillsOptimizeResult
+                | Self::VaultSkillsGovernanceGet
+                | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksList
                 | Self::VaultPacksHooksQualify
@@ -3144,6 +3327,8 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSubmit
                 | Self::VaultCodeOplog
                 | Self::VaultCodeModelHealCount
+                | Self::VaultCodeWaitsResolve
+                | Self::VaultCodeWaitsReceipt
                 | Self::VaultResultsStatus
                 | Self::VaultResultsRecover
                 | Self::VaultResultsRead
@@ -3154,6 +3339,14 @@ impl AgentVerb {
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
                 | Self::VaultCodeCheckoutBind
+                | Self::VaultCodeCheckoutClaim
+                | Self::VaultCodeCheckoutGet
+                | Self::VaultCodeCheckoutRenew
+                | Self::VaultCodeCheckoutReclaim
+                | Self::VaultCodeCheckoutTakeover
+                | Self::VaultCodeCheckoutPublish
+                | Self::VaultCodeCheckoutSettle
+                | Self::VaultCodeCheckoutTeardown
                 | Self::VaultCodeSnapshotsIngest
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
@@ -3183,6 +3376,7 @@ impl AgentVerb {
                 | Self::VaultTaskTypesPin
                 | Self::VaultTaskTypesGet
                 | Self::VaultAgentsSpawnGet
+                | Self::VaultAgentsSpawn
                 | Self::VaultTasksCancelForce
                 | Self::VaultRunsBranchesGet
                 | Self::VaultConsultsGet
@@ -3292,6 +3486,9 @@ impl AgentVerb {
                 | Self::VaultQuestionsRead
                 | Self::VaultQuestionsAnswers
                 | Self::VaultQuestionsRefresh
+                | Self::VaultQuestionsOutcomes
+                | Self::VaultQuestionsOutcomesProject
+                | Self::VaultQuestionsSchedule
                 | Self::VaultDecisionsBandsRead
                 | Self::VaultDecisionsBandsLearn
                 | Self::VaultDecisionsBandsEnforce
@@ -3309,6 +3506,14 @@ impl AgentVerb {
                 | Self::VaultForget
                 | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
+                | Self::CalendarInvite
+                | Self::CalendarConnectorConfigure
+                | Self::CalendarConnectorGet
+                | Self::CalendarConnectorPull
+                | Self::CalendarConnectorWrite
+                | Self::CalendarConnectorKill
+                | Self::CalendarImipConfigure
+                | Self::CalendarImipGet
                 | Self::VaultCalendarCreate
                 | Self::VaultCalendarIcsImport
                 | Self::VaultCalendarOccurrences
@@ -3318,6 +3523,9 @@ impl AgentVerb {
                 | Self::VaultCalendarFreebusy
                 | Self::VaultCalendarTranscriptIngest
                 | Self::VaultClaimsList
+                | Self::VaultClaimsDemote
+                | Self::VaultClaimsListFiltered
+                | Self::VaultClaimsReadFiltered
                 | Self::VaultClaimsHistory
                 | Self::VaultDelete
                 | Self::VaultWritesPending
@@ -3370,6 +3578,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultRunsStep
+                | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationEvidence
                 | Self::VaultClaimsVet
@@ -3550,6 +3760,7 @@ impl AgentVerb {
                 | Self::VaultRecall
                 | Self::VaultAffectAnnotationsPut
                 | Self::SelfCredentialAttenuate
+                | Self::VaultScopePosition
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
                 | Self::VaultCommit
@@ -3558,6 +3769,8 @@ impl AgentVerb {
                 | Self::VaultCalendarSearch
                 | Self::VaultCalendarFreebusy
                 | Self::VaultClaimsList
+                | Self::VaultClaimsListFiltered
+                | Self::VaultClaimsReadFiltered
                 | Self::VaultClaimsHistory
                 | Self::VaultHydrate
                 | Self::VaultGet
@@ -3583,7 +3796,12 @@ impl AgentVerb {
     pub const fn requires_unscoped(self) -> bool {
         matches!(
             self,
-            Self::SelfFocusScratchpadRecall
+            Self::FeedbackPreview
+                | Self::FeedbackSend
+                | Self::VaultReportsDisclosure
+                | Self::VaultReportsRoute
+                | Self::VaultReportsOutbound
+                | Self::SelfFocusScratchpadRecall
                 | Self::SelfFocusScratchpadAppend
                 | Self::SelfFocusScratchpadSeal
                 | Self::SelfMemoryDiary
@@ -3623,6 +3841,8 @@ impl AgentVerb {
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
                 | Self::VaultWitness
+                | Self::VaultRetrievalAgingGet
+                | Self::VaultRetrievalAgingConfigure
                 | Self::VaultRetrievalWeightsGet
                 | Self::VaultRetrievalWeightsConfigure
                 | Self::VaultTaggingStatus
@@ -3650,6 +3870,9 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultCampaignEnroll
+                | Self::VaultCampaignStageEvidence
+                | Self::VaultCampaignUnsubscribe
                 | Self::VaultCampaignProgramCreate
                 | Self::VaultCampaignProgramRead
                 | Self::VaultCampaignProgramUpdate
@@ -3682,6 +3905,10 @@ impl AgentVerb {
                 | Self::VaultSkillsRulesSet
                 | Self::VaultSkillsCodeAutoInstallSet
                 | Self::VaultSkillsPermissionsApprove
+                | Self::VaultSkillsOptimizeStart
+                | Self::VaultSkillsOptimizeResult
+                | Self::VaultSkillsGovernanceGet
+                | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksList
                 | Self::VaultPacksHooksQualify
@@ -3913,6 +4140,8 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSubmit
                 | Self::VaultCodeOplog
                 | Self::VaultCodeModelHealCount
+                | Self::VaultCodeWaitsResolve
+                | Self::VaultCodeWaitsReceipt
                 | Self::VaultResultsStatus
                 | Self::VaultResultsRecover
                 | Self::VaultResultsRead
@@ -3923,6 +4152,14 @@ impl AgentVerb {
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
                 | Self::VaultCodeCheckoutBind
+                | Self::VaultCodeCheckoutClaim
+                | Self::VaultCodeCheckoutGet
+                | Self::VaultCodeCheckoutRenew
+                | Self::VaultCodeCheckoutReclaim
+                | Self::VaultCodeCheckoutTakeover
+                | Self::VaultCodeCheckoutPublish
+                | Self::VaultCodeCheckoutSettle
+                | Self::VaultCodeCheckoutTeardown
                 | Self::VaultCodeSnapshotsIngest
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
@@ -3952,6 +4189,7 @@ impl AgentVerb {
                 | Self::VaultTaskTypesPin
                 | Self::VaultTaskTypesGet
                 | Self::VaultAgentsSpawnGet
+                | Self::VaultAgentsSpawn
                 | Self::VaultTasksCancelForce
                 | Self::VaultRunsBranchesGet
                 | Self::VaultConsultsGet
@@ -4061,6 +4299,9 @@ impl AgentVerb {
                 | Self::VaultQuestionsRead
                 | Self::VaultQuestionsAnswers
                 | Self::VaultQuestionsRefresh
+                | Self::VaultQuestionsOutcomes
+                | Self::VaultQuestionsOutcomesProject
+                | Self::VaultQuestionsSchedule
                 | Self::VaultDecisionsBandsRead
                 | Self::VaultDecisionsBandsLearn
                 | Self::VaultDecisionsBandsEnforce
@@ -4102,10 +4343,19 @@ impl AgentVerb {
                 | Self::VaultForget
                 | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
+                | Self::CalendarInvite
+                | Self::CalendarConnectorConfigure
+                | Self::CalendarConnectorGet
+                | Self::CalendarConnectorPull
+                | Self::CalendarConnectorWrite
+                | Self::CalendarConnectorKill
+                | Self::CalendarImipConfigure
+                | Self::CalendarImipGet
                 | Self::VaultCalendarCreate
                 | Self::VaultCalendarIcsImport
                 | Self::VaultCalendarInstancesMove
                 | Self::VaultCalendarTranscriptIngest
+                | Self::VaultClaimsDemote
                 | Self::VaultDelete
                 | Self::VaultWritesPending
                 | Self::VaultStructuralPut
@@ -4148,6 +4398,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultRunsStep
+                | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationEvidence
                 | Self::VaultClaimsVet
@@ -4234,7 +4486,10 @@ impl AgentVerb {
     pub const fn writes(self) -> bool {
         matches!(
             self,
-            Self::SelfFocusScratchpadAppend
+            Self::FeedbackSend
+                | Self::VaultReportsDisclosure
+                | Self::VaultReportsRoute
+                | Self::SelfFocusScratchpadAppend
                 | Self::SelfFocusScratchpadSeal
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReview
@@ -4263,6 +4518,7 @@ impl AgentVerb {
                 | Self::TasksAccept
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
+                | Self::VaultRetrievalAgingConfigure
                 | Self::VaultRetrievalWeightsConfigure
                 | Self::VaultAffectAnnotationsPut
                 | Self::VaultAffectClaimsConsolidate
@@ -4270,6 +4526,9 @@ impl AgentVerb {
                 | Self::VaultRetrievalOutcomesEnd
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
+                | Self::VaultCampaignEnroll
+                | Self::VaultCampaignStageEvidence
+                | Self::VaultCampaignUnsubscribe
                 | Self::VaultCampaignProgramCreate
                 | Self::VaultCampaignProgramUpdate
                 | Self::VaultCampaignProgramArchive
@@ -4292,6 +4551,8 @@ impl AgentVerb {
                 | Self::VaultSkillsRulesSet
                 | Self::VaultSkillsCodeAutoInstallSet
                 | Self::VaultSkillsPermissionsApprove
+                | Self::VaultSkillsOptimizeStart
+                | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
@@ -4452,9 +4713,17 @@ impl AgentVerb {
                 | Self::VaultCodeSymbolsRenew
                 | Self::VaultCodeSymbolsRelease
                 | Self::VaultCodeProposalSubmit
+                | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeCheckoutBind
+                | Self::VaultCodeCheckoutClaim
+                | Self::VaultCodeCheckoutRenew
+                | Self::VaultCodeCheckoutReclaim
+                | Self::VaultCodeCheckoutTakeover
+                | Self::VaultCodeCheckoutPublish
+                | Self::VaultCodeCheckoutSettle
+                | Self::VaultCodeCheckoutTeardown
                 | Self::VaultCodeSnapshotsIngest
                 | Self::VaultCodeMergeQueueEnqueue
                 | Self::VaultCodeMergeQueueStage
@@ -4471,6 +4740,7 @@ impl AgentVerb {
                 | Self::VaultWorkflowsUpdate
                 | Self::VaultWorkflowsDispatch
                 | Self::VaultTaskTypesPin
+                | Self::VaultAgentsSpawn
                 | Self::VaultTasksCancelForce
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
@@ -4535,6 +4805,7 @@ impl AgentVerb {
                 | Self::VaultQuestionsPause
                 | Self::VaultQuestionsBackfill
                 | Self::VaultQuestionsRefresh
+                | Self::VaultQuestionsOutcomesProject
                 | Self::VaultDecisionsBandsLearn
                 | Self::VaultDecisionsBandsEnforce
                 | Self::VaultDecisionsAsksAnswer
@@ -4556,10 +4827,17 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::CalendarInvite
+                | Self::CalendarConnectorConfigure
+                | Self::CalendarConnectorPull
+                | Self::CalendarConnectorWrite
+                | Self::CalendarConnectorKill
+                | Self::CalendarImipConfigure
                 | Self::VaultCalendarCreate
                 | Self::VaultCalendarIcsImport
                 | Self::VaultCalendarInstancesMove
                 | Self::VaultCalendarTranscriptIngest
+                | Self::VaultClaimsDemote
                 | Self::VaultDelete
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
@@ -4668,6 +4946,11 @@ impl AgentVerb {
     pub const fn argument_fields(self) -> &'static [&'static str] {
         match self {
             Self::Report => &["spec"],
+            Self::FeedbackPreview => &["spec"],
+            Self::FeedbackSend => &["spec"],
+            Self::VaultReportsDisclosure => &["spec"],
+            Self::VaultReportsRoute => &["spec"],
+            Self::VaultReportsOutbound => &["spec"],
             Self::SelfFocusRefresh => &["frame_epoch"],
             Self::SelfFocusSubscribe => &["scopes"],
             Self::SelfFocusUnsubscribe => &["scopes"],
@@ -4737,6 +5020,8 @@ impl AgentVerb {
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
+            Self::VaultRetrievalAgingGet => &["spec"],
+            Self::VaultRetrievalAgingConfigure => &["spec"],
             Self::VaultRetrievalWeightsGet => &["spec"],
             Self::VaultRetrievalWeightsConfigure => &["spec"],
             Self::VaultAffectAnnotationsPut => &["spec"],
@@ -4756,6 +5041,7 @@ impl AgentVerb {
             Self::VaultRetrievalReplay => &["spec"],
             Self::VaultExport => &["spec"],
             Self::SelfCredentialAttenuate => &["spec"],
+            Self::VaultScopePosition => &["spec"],
             Self::VaultScopeCeiling => &["spec"],
             Self::VaultExportScoped => &["spec"],
             Self::VaultReceipts => &["spec"],
@@ -4768,6 +5054,9 @@ impl AgentVerb {
             Self::VaultKvDelete => &["spec"],
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
+            Self::VaultCampaignEnroll => &["spec"],
+            Self::VaultCampaignStageEvidence => &["spec"],
+            Self::VaultCampaignUnsubscribe => &["spec"],
             Self::VaultCampaignProgramCreate => &["spec"],
             Self::VaultCampaignProgramRead => &["spec"],
             Self::VaultCampaignProgramUpdate => &["spec"],
@@ -4800,6 +5089,10 @@ impl AgentVerb {
             Self::VaultSkillsRulesSet => &["spec"],
             Self::VaultSkillsCodeAutoInstallSet => &["spec"],
             Self::VaultSkillsPermissionsApprove => &["spec"],
+            Self::VaultSkillsOptimizeStart => &["spec"],
+            Self::VaultSkillsOptimizeResult => &["spec"],
+            Self::VaultSkillsGovernanceGet => &["spec"],
+            Self::VaultSkillsGovernanceSet => &["spec"],
             Self::VaultPacksHooksBind => &["spec"],
             Self::VaultPacksHooksList => &["spec"],
             Self::VaultPacksHooksQualify => &["spec"],
@@ -5031,6 +5324,8 @@ impl AgentVerb {
             Self::VaultCodeProposalSubmit => &["spec"],
             Self::VaultCodeOplog => &["spec"],
             Self::VaultCodeModelHealCount => &["spec"],
+            Self::VaultCodeWaitsResolve => &["spec"],
+            Self::VaultCodeWaitsReceipt => &["spec"],
             Self::VaultResultsStatus => &["spec"],
             Self::VaultResultsRecover => &["spec"],
             Self::VaultResultsRead => &["spec"],
@@ -5041,6 +5336,14 @@ impl AgentVerb {
             Self::VaultCodeOriginAuthoritySet => &["spec"],
             Self::VaultCodeOriginPublications => &["spec"],
             Self::VaultCodeCheckoutBind => &["spec"],
+            Self::VaultCodeCheckoutClaim => &["spec"],
+            Self::VaultCodeCheckoutGet => &["spec"],
+            Self::VaultCodeCheckoutRenew => &["spec"],
+            Self::VaultCodeCheckoutReclaim => &["spec"],
+            Self::VaultCodeCheckoutTakeover => &["spec"],
+            Self::VaultCodeCheckoutPublish => &["spec"],
+            Self::VaultCodeCheckoutSettle => &["spec"],
+            Self::VaultCodeCheckoutTeardown => &["spec"],
             Self::VaultCodeSnapshotsIngest => &["spec"],
             Self::VaultCodeSnapshotsGet => &["spec"],
             Self::VaultCodeSnapshotsRead => &["spec"],
@@ -5070,6 +5373,7 @@ impl AgentVerb {
             Self::VaultTaskTypesPin => &["spec"],
             Self::VaultTaskTypesGet => &["spec"],
             Self::VaultAgentsSpawnGet => &["spec"],
+            Self::VaultAgentsSpawn => &["spec"],
             Self::VaultTasksCancelForce => &["spec"],
             Self::VaultRunsBranchesGet => &["spec"],
             Self::VaultConsultsGet => &["spec"],
@@ -5179,6 +5483,9 @@ impl AgentVerb {
             Self::VaultQuestionsRead => &["spec"],
             Self::VaultQuestionsAnswers => &["spec"],
             Self::VaultQuestionsRefresh => &["spec"],
+            Self::VaultQuestionsOutcomes => &["spec"],
+            Self::VaultQuestionsOutcomesProject => &["spec"],
+            Self::VaultQuestionsSchedule => &["spec"],
             Self::VaultDecisionsBandsRead => &["spec"],
             Self::VaultDecisionsBandsLearn => &["spec"],
             Self::VaultDecisionsBandsEnforce => &["spec"],
@@ -5221,6 +5528,14 @@ impl AgentVerb {
             Self::VaultForget => &["spec"],
             Self::VaultBookingConstraintTurn => &["spec"],
             Self::VaultBookingPageToken => &["spec"],
+            Self::CalendarInvite => &["spec"],
+            Self::CalendarConnectorConfigure => &["spec"],
+            Self::CalendarConnectorGet => &["spec"],
+            Self::CalendarConnectorPull => &["spec"],
+            Self::CalendarConnectorWrite => &["spec"],
+            Self::CalendarConnectorKill => &["spec"],
+            Self::CalendarImipConfigure => &["spec"],
+            Self::CalendarImipGet => &["spec"],
             Self::VaultCalendarCreate => &["spec"],
             Self::VaultCalendarIcsImport => &["spec"],
             Self::VaultCalendarOccurrences => &["spec"],
@@ -5230,6 +5545,9 @@ impl AgentVerb {
             Self::VaultCalendarFreebusy => &["spec"],
             Self::VaultCalendarTranscriptIngest => &["spec"],
             Self::VaultClaimsList => &["spec"],
+            Self::VaultClaimsDemote => &["spec"],
+            Self::VaultClaimsListFiltered => &["spec"],
+            Self::VaultClaimsReadFiltered => &["spec"],
             Self::VaultClaimsHistory => &["spec"],
             Self::VaultDelete => &["spec"],
             Self::VaultWritesPending => &["spec"],
@@ -5282,6 +5600,8 @@ impl AgentVerb {
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
             Self::VaultConsolidationStatus => &["spec"],
+            Self::VaultRunsStep => &["spec"],
+            Self::VaultRunsCheckpoint => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
             Self::VaultConsolidationEvidence => &["spec"],
             Self::VaultClaimsVet => &["spec"],
@@ -5375,6 +5695,11 @@ impl AgentVerb {
     pub const fn required_fields(self) -> &'static [&'static str] {
         match self {
             Self::Report => &["spec"],
+            Self::FeedbackPreview => &["spec"],
+            Self::FeedbackSend => &["spec"],
+            Self::VaultReportsDisclosure => &["spec"],
+            Self::VaultReportsRoute => &["spec"],
+            Self::VaultReportsOutbound => &["spec"],
             Self::SelfFocusRefresh => &[],
             Self::SelfFocusSubscribe => &["scopes"],
             Self::SelfFocusUnsubscribe => &["scopes"],
@@ -5427,6 +5752,8 @@ impl AgentVerb {
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
+            Self::VaultRetrievalAgingGet => &["spec"],
+            Self::VaultRetrievalAgingConfigure => &["spec"],
             Self::VaultRetrievalWeightsGet => &["spec"],
             Self::VaultRetrievalWeightsConfigure => &["spec"],
             Self::VaultAffectAnnotationsPut => &["spec"],
@@ -5446,6 +5773,7 @@ impl AgentVerb {
             Self::VaultRetrievalReplay => &["spec"],
             Self::VaultExport => &["spec"],
             Self::SelfCredentialAttenuate => &["spec"],
+            Self::VaultScopePosition => &["spec"],
             Self::VaultScopeCeiling => &["spec"],
             Self::VaultExportScoped => &["spec"],
             Self::VaultReceipts => &["spec"],
@@ -5458,6 +5786,9 @@ impl AgentVerb {
             Self::VaultKvDelete => &["spec"],
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
+            Self::VaultCampaignEnroll => &["spec"],
+            Self::VaultCampaignStageEvidence => &["spec"],
+            Self::VaultCampaignUnsubscribe => &["spec"],
             Self::VaultCampaignProgramCreate => &["spec"],
             Self::VaultCampaignProgramRead => &["spec"],
             Self::VaultCampaignProgramUpdate => &["spec"],
@@ -5490,6 +5821,10 @@ impl AgentVerb {
             Self::VaultSkillsRulesSet => &["spec"],
             Self::VaultSkillsCodeAutoInstallSet => &["spec"],
             Self::VaultSkillsPermissionsApprove => &["spec"],
+            Self::VaultSkillsOptimizeStart => &["spec"],
+            Self::VaultSkillsOptimizeResult => &["spec"],
+            Self::VaultSkillsGovernanceGet => &["spec"],
+            Self::VaultSkillsGovernanceSet => &["spec"],
             Self::VaultPacksHooksBind => &["spec"],
             Self::VaultPacksHooksList => &["spec"],
             Self::VaultPacksHooksQualify => &["spec"],
@@ -5721,6 +6056,8 @@ impl AgentVerb {
             Self::VaultCodeProposalSubmit => &["spec"],
             Self::VaultCodeOplog => &["spec"],
             Self::VaultCodeModelHealCount => &["spec"],
+            Self::VaultCodeWaitsResolve => &["spec"],
+            Self::VaultCodeWaitsReceipt => &["spec"],
             Self::VaultResultsStatus => &["spec"],
             Self::VaultResultsRecover => &["spec"],
             Self::VaultResultsRead => &["spec"],
@@ -5731,6 +6068,14 @@ impl AgentVerb {
             Self::VaultCodeOriginAuthoritySet => &["spec"],
             Self::VaultCodeOriginPublications => &["spec"],
             Self::VaultCodeCheckoutBind => &["spec"],
+            Self::VaultCodeCheckoutClaim => &["spec"],
+            Self::VaultCodeCheckoutGet => &["spec"],
+            Self::VaultCodeCheckoutRenew => &["spec"],
+            Self::VaultCodeCheckoutReclaim => &["spec"],
+            Self::VaultCodeCheckoutTakeover => &["spec"],
+            Self::VaultCodeCheckoutPublish => &["spec"],
+            Self::VaultCodeCheckoutSettle => &["spec"],
+            Self::VaultCodeCheckoutTeardown => &["spec"],
             Self::VaultCodeSnapshotsIngest => &["spec"],
             Self::VaultCodeSnapshotsGet => &["spec"],
             Self::VaultCodeSnapshotsRead => &["spec"],
@@ -5760,6 +6105,7 @@ impl AgentVerb {
             Self::VaultTaskTypesPin => &["spec"],
             Self::VaultTaskTypesGet => &["spec"],
             Self::VaultAgentsSpawnGet => &["spec"],
+            Self::VaultAgentsSpawn => &["spec"],
             Self::VaultTasksCancelForce => &["spec"],
             Self::VaultRunsBranchesGet => &["spec"],
             Self::VaultConsultsGet => &["spec"],
@@ -5869,6 +6215,9 @@ impl AgentVerb {
             Self::VaultQuestionsRead => &["spec"],
             Self::VaultQuestionsAnswers => &["spec"],
             Self::VaultQuestionsRefresh => &["spec"],
+            Self::VaultQuestionsOutcomes => &["spec"],
+            Self::VaultQuestionsOutcomesProject => &["spec"],
+            Self::VaultQuestionsSchedule => &["spec"],
             Self::VaultDecisionsBandsRead => &["spec"],
             Self::VaultDecisionsBandsLearn => &["spec"],
             Self::VaultDecisionsBandsEnforce => &["spec"],
@@ -5911,6 +6260,14 @@ impl AgentVerb {
             Self::VaultForget => &["spec"],
             Self::VaultBookingConstraintTurn => &["spec"],
             Self::VaultBookingPageToken => &["spec"],
+            Self::CalendarInvite => &["spec"],
+            Self::CalendarConnectorConfigure => &["spec"],
+            Self::CalendarConnectorGet => &["spec"],
+            Self::CalendarConnectorPull => &["spec"],
+            Self::CalendarConnectorWrite => &["spec"],
+            Self::CalendarConnectorKill => &["spec"],
+            Self::CalendarImipConfigure => &["spec"],
+            Self::CalendarImipGet => &["spec"],
             Self::VaultCalendarCreate => &["spec"],
             Self::VaultCalendarIcsImport => &["spec"],
             Self::VaultCalendarOccurrences => &["spec"],
@@ -5920,6 +6277,9 @@ impl AgentVerb {
             Self::VaultCalendarFreebusy => &["spec"],
             Self::VaultCalendarTranscriptIngest => &["spec"],
             Self::VaultClaimsList => &["spec"],
+            Self::VaultClaimsDemote => &["spec"],
+            Self::VaultClaimsListFiltered => &["spec"],
+            Self::VaultClaimsReadFiltered => &["spec"],
             Self::VaultClaimsHistory => &["spec"],
             Self::VaultDelete => &["spec"],
             Self::VaultWritesPending => &["spec"],
@@ -5972,6 +6332,8 @@ impl AgentVerb {
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
             Self::VaultConsolidationStatus => &["spec"],
+            Self::VaultRunsStep => &["spec"],
+            Self::VaultRunsCheckpoint => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
             Self::VaultConsolidationEvidence => &["spec"],
             Self::VaultClaimsVet => &["spec"],
@@ -6067,6 +6429,21 @@ impl AgentVerb {
         match self {
             Self::Report => {
                 "Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor."
+            }
+            Self::FeedbackPreview => {
+                "The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval."
+            }
+            Self::FeedbackSend => {
+                "The owner sends exactly the previewed feedback bundle for one report issue to its publisher, once, through the ordinary outbound gate."
+            }
+            Self::VaultReportsDisclosure => {
+                "The owner decides whether one publisher-routed report's exact quoted text may cross to its publisher: approve once, stop asking, or deny."
+            }
+            Self::VaultReportsRoute => {
+                "The owner replaces one durable subject's maker route: the owner inbox, or one admitted publisher its feedback is delivered to."
+            }
+            Self::VaultReportsOutbound => {
+                "The owner reads the content-free payload a publisher delivery for one report issue would carry now, with its quoted text only when disclosure approved it."
             }
             Self::SelfFocusRefresh => {
                 "Re-renders the run's context board as one frame, at the frame epoch the caller last saw."
@@ -6212,6 +6589,12 @@ impl AgentVerb {
             Self::VaultRecall => {
                 "Recalls a memory pack for a query at an effort level: ranked items with provenance, scope honesty and retrieval accounting."
             }
+            Self::VaultRetrievalAgingGet => {
+                "The owner reads class-level exponential aging profiles and the trusted manifest hash; confidence never ages."
+            }
+            Self::VaultRetrievalAgingConfigure => {
+                "The owner edits all class-aging profiles against the current manifest hash without rewriting confidence, lifecycle or claim bodies."
+            }
             Self::VaultRetrievalWeightsGet => {
                 "The owner reads effective affect, arousal, community and semantic-edge VAD priors with the trusted manifest hash."
             }
@@ -6269,6 +6652,9 @@ impl AgentVerb {
             Self::SelfCredentialAttenuate => {
                 "Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted."
             }
+            Self::VaultScopePosition => {
+                "Reads a positively stamped record position through the caller credential and existing read gate, with its narrowing receipt."
+            }
             Self::VaultScopeCeiling => {
                 "Reads the caller credential ceiling as a typed ceiling, never as a record position."
             }
@@ -6304,6 +6690,15 @@ impl AgentVerb {
             }
             Self::VaultKvNamespaces => {
                 "The caller's distinct live namespaces, with exact segment prefix and suffix matching."
+            }
+            Self::VaultCampaignEnroll => {
+                "Enrolls a person in a campaign the caller owns, with evidence-backed channels and sticky senders. Writes no earned stage and sends nothing."
+            }
+            Self::VaultCampaignStageEvidence => {
+                "Records earned-stage evidence under an authored ladder transition, in AUTO or propose mode. Owner-attested evidence requires the request owner proof; elapsed time earns nothing."
+            }
+            Self::VaultCampaignUnsubscribe => {
+                "Immediately honors an unsubscribe with a channel-scoped enforcement claim and every suppressed membership head in one transaction."
             }
             Self::VaultCampaignProgramCreate => {
                 "Creates a campaign program (ordered steps and an optional saved-query audience) under a campaign the caller owns."
@@ -6398,6 +6793,18 @@ impl AgentVerb {
             }
             Self::VaultSkillsPermissionsApprove => {
                 "The owner answers one imported skill permission ask at its exact hub source."
+            }
+            Self::VaultSkillsOptimizeStart => {
+                "The owner starts one skill_optimize attempt on the Dreamer queue; a named identity or alignment skill is excluded and never enqueued."
+            }
+            Self::VaultSkillsOptimizeResult => {
+                "Reads a started skill_optimize job, its drafted proposal, the incumbent, its governance and every held-out verdict on the proposal."
+            }
+            Self::VaultSkillsGovernanceGet => {
+                "Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it."
+            }
+            Self::VaultSkillsGovernanceSet => {
+                "The owner marks or clears one skill governance tier; the mark changes no instruction content or version."
             }
             Self::VaultPacksHooksBind => {
                 "The owner consents to the installed pack hook capabilities, including a widening update; publisher identity stays foreign."
@@ -7068,6 +7475,12 @@ impl AgentVerb {
             Self::VaultCodeModelHealCount => {
                 "Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."
             }
+            Self::VaultCodeWaitsResolve => {
+                "Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken."
+            }
+            Self::VaultCodeWaitsReceipt => {
+                "Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait."
+            }
             Self::VaultResultsStatus => {
                 "The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run."
             }
@@ -7097,6 +7510,30 @@ impl AgentVerb {
             }
             Self::VaultCodeCheckoutBind => {
                 "Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential."
+            }
+            Self::VaultCodeCheckoutClaim => {
+                "Claim the caller's checkout on an assigned task, with a bounded TTL and declared idempotence."
+            }
+            Self::VaultCodeCheckoutGet => {
+                "Read checkout custody and vault-clock expiry as a task party, without claiming or renewing it."
+            }
+            Self::VaultCodeCheckoutRenew => {
+                "Renew the caller's still-live checkout under its exact holder and epoch fence."
+            }
+            Self::VaultCodeCheckoutReclaim => {
+                "Reclaim an expired declared-idempotent build or verify checkout as an authorized successor at the named epoch."
+            }
+            Self::VaultCodeCheckoutTakeover => {
+                "Explicitly take over a checkout as its task owner, including effect work, at the named epoch."
+            }
+            Self::VaultCodeCheckoutPublish => {
+                "Publish a stored candidate result for checkout settlement under the caller's live epoch; this does not export a Git head."
+            }
+            Self::VaultCodeCheckoutSettle => {
+                "Consume one published checkout result at its epoch as select, apply, release or discard; an identical retry returns its receipt."
+            }
+            Self::VaultCodeCheckoutTeardown => {
+                "Collect the caller's checkout only with a matching durable pushed-head receipt and clear custody; retain dirty or uncertain trees."
             }
             Self::VaultCodeSnapshotsIngest => {
                 "Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt."
@@ -7184,6 +7621,9 @@ impl AgentVerb {
             }
             Self::VaultAgentsSpawnGet => {
                 "The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning."
+            }
+            Self::VaultAgentsSpawn => {
+                "The owner launches one reserved planned agent or team under an intent key on this host's planner: the type placed, the plan frozen at the root, then queued; the same key answers what it kept."
             }
             Self::VaultTasksCancelForce => {
                 "The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts."
@@ -7476,6 +7916,15 @@ impl AgentVerb {
             Self::VaultQuestionsRefresh => {
                 "Refreshes the caller's standing question by hand, now, over every unit its current version covers, on the host's ladder as the standing pump answers it."
             }
+            Self::VaultQuestionsOutcomes => {
+                "Reads the caller's standing question outcome labels and calibration pairs, each pairing an answer prediction and probability with its mapped label."
+            }
+            Self::VaultQuestionsOutcomesProject => {
+                "Projects the caller's standing question bound outcomes over current facts, idempotently binding each admissible fact in an answer horizon as its label."
+            }
+            Self::VaultQuestionsSchedule => {
+                "Reads the caller's standing question scheduling head: its current version, paused state, last refresh and any failed-refresh hold."
+            }
             Self::VaultDecisionsBandsRead => {
                 "The owner reads a question version's effective band on the running host; an unlearned row stays shadow at the supplied seed and version zero."
             }
@@ -7586,6 +8035,30 @@ impl AgentVerb {
             Self::VaultBookingPageToken => {
                 "The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority."
             }
+            Self::CalendarInvite => {
+                "Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe."
+            }
+            Self::CalendarConnectorConfigure => {
+                "Installs one CalDAV seat under owner proof, with a custody reference, discovery endpoint and nonzero bounded poll cadence."
+            }
+            Self::CalendarConnectorGet => {
+                "Reads a configured CalDAV seat, its real provider cursor, kill switch and last sync observation under owner proof."
+            }
+            Self::CalendarConnectorPull => {
+                "Pulls the configured CalDAV seat through the existing import gate and echo law, returning the real cursor and sync counters under owner proof."
+            }
+            Self::CalendarConnectorWrite => {
+                "Writes a readable EVENT to the owner-installed CalDAV seat through the durable conditional-write outbox, never a blind overwrite."
+            }
+            Self::CalendarConnectorKill => {
+                "Kills a CalDAV seat under owner proof, revoking its advertised verbs and stopping further polling and writes without erasing calendar evidence."
+            }
+            Self::CalendarImipConfigure => {
+                "Installs the host iMIP mail submission endpoint and custody name under owner proof; this configuration grants no invite consent or sending identity."
+            }
+            Self::CalendarImipGet => {
+                "Reads the installed host iMIP submission endpoint and custody name under owner proof, never its credential value."
+            }
             Self::VaultCalendarCreate => {
                 "Creates a native or evidence-linked dreamer EVENT as the caller, with atomic projector-recorded origin and engine-stamped recorded time."
             }
@@ -7612,6 +8085,15 @@ impl AgentVerb {
             }
             Self::VaultClaimsList => {
                 "Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt."
+            }
+            Self::VaultClaimsDemote => {
+                "Demotes one active claim by one rung through the caller credential: decay its claim_of weight, weaken it to a successor at lower confidence, or mark it stale in place so retrieval stops surfacing it."
+            }
+            Self::VaultClaimsListFiltered => {
+                "Lists surfaceable claims by subject, predicate and lifecycle under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt."
+            }
+            Self::VaultClaimsReadFiltered => {
+                "Reads one claim as retrieval would surface it under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt."
             }
             Self::VaultClaimsHistory => {
                 "The supersession timeline of one claim, oldest first, with the read's narrowing receipt."
@@ -7762,6 +8244,12 @@ impl AgentVerb {
             }
             Self::VaultConsolidationStatus => {
                 "Reads the status of one consolidation attempt by its durable job reference."
+            }
+            Self::VaultRunsStep => {
+                "Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work."
+            }
+            Self::VaultRunsCheckpoint => {
+                "Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run."
             }
             Self::VaultConsolidationPromote => {
                 "Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals."

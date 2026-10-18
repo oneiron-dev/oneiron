@@ -51,6 +51,7 @@ pub(super) struct RetrievalBlendConfig<'a> {
     /// input seam only: borrowed for the run, validated fail-closed
     /// before any channel work, never persisted.
     pub(super) access_factor_overrides: Option<&'a HashMap<EntityId, f32>>,
+    pub(super) claim_aging_profiles: crate::claim::ClaimAgingProfiles,
     /// Whether this call is the run's single decay-applying blend.
     pub(super) access_factor_application: AccessFactorApplication,
     /// Arousal stretch and sensitivity floor over the read-side factor;
@@ -173,6 +174,7 @@ pub(super) fn blended_retrieval_scores(
             claim_gate,
             access_now_secs,
             config.access_factor_overrides,
+            config.claim_aging_profiles,
             &config.affect,
         )?;
     }
@@ -234,6 +236,7 @@ fn populate_access_factors(
     claim_gate: &mut ClaimStatusGateCache,
     now_secs: u64,
     overrides: Option<&HashMap<EntityId, f32>>,
+    profiles: crate::claim::ClaimAgingProfiles,
     affect: &AffectRetrievalPolicy,
 ) -> Result<()> {
     let mut manifest = None;
@@ -248,8 +251,14 @@ fn populate_access_factors(
             continue;
         };
         let override_factor = overrides.and_then(|overrides| overrides.get(&input.id).copied());
-        let derived =
-            crate::claim::claim_access_factor(body, meta.learned_at, now_secs, override_factor)?;
+        let aging = profiles.policy(crate::claim::claim_aging_class(&body.predicate));
+        let derived = crate::claim::claim_access_factor_with_policy(
+            body,
+            meta.learned_at,
+            now_secs,
+            override_factor,
+            aging,
+        )?;
         input.access_factor = if override_factor.is_none() && affect.shapes_access_factor() {
             let arousal = stored_claim_vad(store, rtxn, &input.id)?.map(|vad| vad.arousal);
             let critical = if affect.availability_floor.is_some() {
@@ -266,6 +275,7 @@ fn populate_access_factors(
             affect_access_factor(
                 affect,
                 derived,
+                aging,
                 meta.learned_at,
                 now_secs,
                 arousal,
