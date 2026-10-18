@@ -237,7 +237,8 @@ pub enum VaultReadAdapterKind {
     InProcess,
     /// Transport-injected adapter used by HTTP or MCP daemons.
     WireTransport,
-    /// Cloud placeholder exposing the identical Rust surface.
+    /// Cloud adapter: the wire contract over the host's authenticated
+    /// transport to a hosted engine.
     Cloud,
 }
 
