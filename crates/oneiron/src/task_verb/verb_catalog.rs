@@ -389,6 +389,8 @@ pub enum AgentVerb {
     VaultNotesLifecycle,
     VaultNotesSetOverrides,
     VaultNotesDefaults,
+    SelfAgentsSpawn,
+    SelfLeaderSplit,
 }
 impl AgentVerb {
     pub const ALL: &[Self] = &[
@@ -780,6 +782,8 @@ impl AgentVerb {
         Self::VaultNotesLifecycle,
         Self::VaultNotesSetOverrides,
         Self::VaultNotesDefaults,
+        Self::SelfAgentsSpawn,
+        Self::SelfLeaderSplit,
     ];
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|verb| verb.as_str() == name)
@@ -1182,6 +1186,8 @@ impl AgentVerb {
             Self::VaultNotesLifecycle => "vault.notes.lifecycle",
             Self::VaultNotesSetOverrides => "vault.notes.set_overrides",
             Self::VaultNotesDefaults => "vault.notes.defaults",
+            Self::SelfAgentsSpawn => "self.agents.spawn",
+            Self::SelfLeaderSplit => "self.leader.split",
         }
     }
     pub const fn is_facade(self) -> bool {
@@ -1532,6 +1538,8 @@ impl AgentVerb {
                 | Self::VaultNotesLifecycle
                 | Self::VaultNotesSetOverrides
                 | Self::VaultNotesDefaults
+                | Self::SelfAgentsSpawn
+                | Self::SelfLeaderSplit
         )
     }
     pub const fn is_browser(self) -> bool {
@@ -1930,6 +1938,8 @@ impl AgentVerb {
                 | Self::VaultNotesLifecycle
                 | Self::VaultNotesSetOverrides
                 | Self::VaultNotesDefaults
+                | Self::SelfAgentsSpawn
+                | Self::SelfLeaderSplit
         )
     }
     pub const fn is_section(self) -> bool {
@@ -2386,6 +2396,8 @@ impl AgentVerb {
                 | Self::VaultNotesLifecycle
                 | Self::VaultNotesSetOverrides
                 | Self::VaultNotesDefaults
+                | Self::SelfAgentsSpawn
+                | Self::SelfLeaderSplit
         )
     }
     pub const fn born_in_scope(self) -> bool {
@@ -2625,6 +2637,8 @@ impl AgentVerb {
                 | Self::VaultNotesEdit
                 | Self::VaultNotesSeal
                 | Self::VaultNotesSetOverrides
+                | Self::SelfAgentsSpawn
+                | Self::SelfLeaderSplit
         )
     }
     pub const fn proposes(self) -> bool {
@@ -3046,6 +3060,8 @@ impl AgentVerb {
             Self::VaultNotesLifecycle => &["spec"],
             Self::VaultNotesSetOverrides => &["spec"],
             Self::VaultNotesDefaults => &["spec"],
+            Self::SelfAgentsSpawn => &["spec"],
+            Self::SelfLeaderSplit => &["spec"],
         }
     }
     pub const fn required_fields(self) -> &'static [&'static str] {
@@ -3438,6 +3454,8 @@ impl AgentVerb {
             Self::VaultNotesLifecycle => &["spec"],
             Self::VaultNotesSetOverrides => &["spec"],
             Self::VaultNotesDefaults => &["spec"],
+            Self::SelfAgentsSpawn => &["spec"],
+            Self::SelfLeaderSplit => &["spec"],
         }
     }
     /// The row's one-line description, as the verb table states it.
@@ -4506,6 +4524,12 @@ impl AgentVerb {
             }
             Self::VaultNotesDefaults => {
                 "One NOTE's overrides and the extraction, context and retention defaults its gates read after them."
+            }
+            Self::SelfAgentsSpawn => {
+                "Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity."
+            }
+            Self::SelfLeaderSplit => {
+                "Splits the attached leader run into a subproject inside its own TASK wrapper; spec may name only the child leader and a narrower scope."
             }
         }
     }

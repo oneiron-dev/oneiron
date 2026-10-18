@@ -251,7 +251,7 @@ impl ActionRegistry {
         for verb in AgentVerb::ALL
             .iter()
             .copied()
-            .filter(|verb| verb.is_facade())
+            .filter(|verb| verb.is_facade() && !super::live_run::is_live_run_verb(verb.as_str()))
         {
             let Ok(id) = SelfUiActionId::new(verb.as_str()) else {
                 continue;

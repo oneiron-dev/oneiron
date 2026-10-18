@@ -300,6 +300,14 @@ export class Oneiron {
     decisions: {
       asks: (input: Facade.EmptyRequest = {}): Facade.DecisionAsk[] => this.#call(() => this.#client.selfDecisionsAsks(input) as Facade.DecisionAsk[]),
     },
+    agents: {
+      /** Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity. */
+      spawn: (input: Facade.LiveRunRequest<Facade.AgentSpawnInput>): Facade.AgentSpawnOutput => this.#call(() => this.#client.selfAgentsSpawn(input) as Facade.AgentSpawnOutput),
+    },
+    leader: {
+      /** Splits the attached leader run into a subproject inside its own TASK wrapper; spec may name only the child leader and a narrower scope. */
+      split: (input: Facade.LiveRunRequest<Facade.LeaderSplitInput>): Facade.LeaderSplitOutput => this.#call(() => this.#client.selfLeaderSplit(input) as Facade.LeaderSplitOutput),
+    },
   }
   readonly vault = {
     people: {

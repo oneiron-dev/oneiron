@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 345 facade rows, 1373 declarations.
-Inputs: 302 of 345 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 302 of 345 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 347 facade rows, 1387 declarations.
+Inputs: 304 of 347 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 304 of 347 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 74; unread shapes: 0.
 """
 
@@ -7200,6 +7200,91 @@ class NoteKindDescriptor(TypedDict):
 class NoteDefaultsView(TypedDict):
     overrides: NoteOverrides
     defaults: NoteKindDescriptor
+class LiveRunRequest(TypedDict, Generic[T]):
+    live_run: str
+    spec: T
+SpawnCare = Literal["light", "medium", "high", "xhigh", "max"]
+class SpawnKnobSeed(TypedDict, Generic[T]):
+    mode: Literal["seed"]
+    value: T
+    weight_runs: float
+class SpawnKnobPin(TypedDict, Generic[T]):
+    mode: Literal["pin"]
+    value: T
+SpawnKnob = SpawnKnobSeed[T] | SpawnKnobPin[T]
+SpawnPattern = Literal["solo", "ceo_decides", "committee", "vote", "market", "rotation"]
+class MemoryProjectionDefault(TypedDict):
+    mode: Literal["default"]
+class MemoryProjectionExclude(TypedDict):
+    mode: Literal["exclude"]
+class MemoryProjectionScoped(TypedDict):
+    mode: Literal["scoped"]
+    domains: list[str]
+    limit: int
+MemoryProjection = MemoryProjectionDefault | MemoryProjectionExclude | MemoryProjectionScoped
+class ChatProjectionDefault(TypedDict):
+    mode: Literal["default"]
+class ChatProjectionExclude(TypedDict):
+    mode: Literal["exclude"]
+class ChatProjectionRecent(TypedDict):
+    mode: Literal["recent"]
+    last_n: int
+ChatProjection = ChatProjectionDefault | ChatProjectionExclude | ChatProjectionRecent
+class ContextSpec(TypedDict):
+    layers: NotRequired[list[str]]
+    memory: NotRequired[MemoryProjection]
+    chat: NotRequired[ChatProjection]
+    briefing: NotRequired[str | None]
+    _annotation: NotRequired[str | None]
+CommReach = Literal["parent", "subtree", "project", "vault"]
+class AgentSpawnInput(TypedDict):
+    need: str
+    prompt: str
+    intent_key: str
+    agent: NotRequired[str | None]
+    care: NotRequired[SpawnCare | None]
+    notes: NotRequired[str | None]
+    model: NotRequired[SpawnKnob[str] | None]
+    width: NotRequired[SpawnKnob[int] | None]
+    pattern: NotRequired[SpawnKnob[SpawnPattern] | None]
+    budget: NotRequired[SpawnKnob[int] | None]
+    context: NotRequired[ContextSpec | None]
+    context_from: NotRequired[list[str] | None]
+    depth: NotRequired[int | None]
+    project: NotRequired[str | None]
+    objectives: NotRequired[list[str] | None]
+    comm: NotRequired[CommReach | None]
+AgentSpawnKind = Literal["agent_spawn"]
+class LaunchStatement(TypedDict):
+    agent_count: int
+    expected: ExpectedSpend
+    unit: LeaseUnit
+    cap_units: NotRequired[int | None]
+    available_units: NotRequired[int | None]
+    hard: bool
+    reserved_units: int
+    scope: NotRequired[SpendScopeId | None]
+    parent_scope: NotRequired[SpendScopeId | None]
+    stated_at: int
+class AgentSpawnOutputQueued(TypedDict):
+    state: Literal["queued"]
+    kind: AgentSpawnKind
+    attempt: str
+    launch: NotRequired[LaunchStatement | None]
+class AgentSpawnOutputProposedWiden(TypedDict):
+    state: Literal["proposed_widen"]
+    kind: AgentSpawnKind
+    proposal: str
+AgentSpawnOutput = AgentSpawnOutputQueued | AgentSpawnOutputProposedWiden
+class LeaderSplitInput(TypedDict):
+    leader: NotRequired[str | None]
+    slice: NotRequired[ScopeScope | None]
+class LeaderSplitOutput(TypedDict):
+    project: EntityId
+    task: EntityId
+    parent: EntityId
+    leader: EntityId
+    depth_remaining: int
 class GeneratedUiStatePatchAdd(TypedDict):
     op: Literal["add"]
     path: str

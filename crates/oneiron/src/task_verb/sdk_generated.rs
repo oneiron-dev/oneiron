@@ -1970,6 +1970,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::note::NoteRefRequest>(),
             ),
             (
+                "self.agents.spawn",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<crate::code_run::AgentSpawnInput>,
+                >(),
+            ),
+            (
+                "self.leader.split",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<crate::code_run::LeaderSplitInput>,
+                >(),
+            ),
+            (
                 "connector.answer",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ConnectorAnswerRequest,
@@ -2014,10 +2026,6 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::code_run::TaskRefuseInput>(),
             ),
             (
-                "self.agents.spawn",
-                crate::code_run::vault_read::request_schema::<crate::code_run::AgentSpawnInput>(),
-            ),
-            (
                 "self.leader.advice",
                 crate::code_run::vault_read::request_schema::<crate::code_run::LeaderAdviceInput>(),
             ),
@@ -2025,10 +2033,6 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "self.leader.pattern",
                 crate::code_run::vault_read::request_schema::<crate::code_run::LeaderPatternInput>(
                 ),
-            ),
-            (
-                "self.leader.split",
-                crate::code_run::vault_read::request_schema::<crate::code_run::LeaderSplitInput>(),
             ),
             (
                 "self.skills.call",
@@ -4536,6 +4540,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "self.agents.spawn" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.leader.split" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         _ => return None,
     };
     Some(
@@ -5795,6 +5813,14 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.notes.defaults" => {
             let _input: crate::note::NoteRefRequest = decode(value.clone())?;
         }
+        "self.agents.spawn" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::AgentSpawnInput> =
+                decode(value.clone())?;
+        }
+        "self.leader.split" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::LeaderSplitInput> =
+                decode(value.clone())?;
+        }
         _ => {
             return Err(wrong_root(verb)
                 .unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb")));
@@ -6381,6 +6407,8 @@ pub fn invoke(
         "vault.notes.lifecycle" => encode(vault_notes_lifecycle(memory, decode(value)?)?),
         "vault.notes.set_overrides" => encode(vault_notes_set_overrides(memory, decode(value)?)?),
         "vault.notes.defaults" => encode(vault_notes_defaults(memory, decode(value)?)?),
+        "self.agents.spawn" => encode(self_agents_spawn(memory, decode(value)?)?),
+        "self.leader.split" => encode(self_leader_split(memory, decode(value)?)?),
         _ => Err(MemoryError::bad_request("unknown SDK agent verb")),
     })
 }
@@ -9701,4 +9729,16 @@ pub fn vault_notes_defaults(
         &["/note_ref"],
     )?;
     memory.note_defaults(&input)
+}
+pub fn self_agents_spawn(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::AgentSpawnInput>,
+) -> MemoryResult<crate::code_run::AgentSpawnOutput> {
+    crate::task_verb::sdk::host_only(memory, "self.agents.spawn", &input)
+}
+pub fn self_leader_split(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::LeaderSplitInput>,
+) -> MemoryResult<crate::code_run::LeaderSplitOutput> {
+    crate::task_verb::sdk::host_only(memory, "self.leader.split", &input)
 }

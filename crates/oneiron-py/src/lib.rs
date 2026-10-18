@@ -3221,6 +3221,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn self_agents_spawn(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.agents.spawn")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.agents.spawn", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_leader_split(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.leader.split")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.leader.split", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
 
     // END GENERATED AGENT VERBS
 }

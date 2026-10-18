@@ -355,6 +355,12 @@ class Oneiron:
         @property
         def decisions(self) -> "Oneiron._SelfDecisionsVerbs":
             return Oneiron._SelfDecisionsVerbs(self._client)
+        @property
+        def agents(self) -> "Oneiron._SelfAgentsVerbs":
+            return Oneiron._SelfAgentsVerbs(self._client)
+        @property
+        def leader(self) -> "Oneiron._SelfLeaderVerbs":
+            return Oneiron._SelfLeaderVerbs(self._client)
     class _SelfFocusVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -447,6 +453,18 @@ class Oneiron:
             self._client = client
         def asks(self, spec=None):
             return json.loads(_translate(lambda: self._client.self_decisions_asks(json.dumps({} if spec is None else spec))))
+    class _SelfAgentsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def spawn(self, spec):
+            """Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity."""
+            return json.loads(_translate(lambda: self._client.self_agents_spawn(json.dumps(spec))))
+    class _SelfLeaderVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def split(self, spec):
+            """Splits the attached leader run into a subproject inside its own TASK wrapper; spec may name only the child leader and a narrower scope."""
+            return json.loads(_translate(lambda: self._client.self_leader_split(json.dumps(spec))))
     class _VaultVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

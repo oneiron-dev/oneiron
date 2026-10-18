@@ -368,4 +368,6 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.notes.lifecycle", post(facade_route))
         .route("/vault.notes.set_overrides", post(facade_route))
         .route("/vault.notes.defaults", post(facade_route))
+        .route("/self.agents.spawn", post(facade_route))
+        .route("/self.leader.split", post(facade_route))
 }

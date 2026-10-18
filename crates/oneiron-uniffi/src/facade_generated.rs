@@ -1726,4 +1726,14 @@ export_facade! {
     let output = client.vault_notes_defaults(&input)?;
     crate::codec::lift_record("vault.notes.defaults", &output)
 };
+"self.agents.spawn" => fn self_agents_spawn(&self, input: LiveRunRequestAgentSpawnInput) -> AgentSpawnOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::AgentSpawnInput> = crate::codec::lower_record("self.agents.spawn", input)?;
+    let output = client.self_agents_spawn(&input)?;
+    crate::codec::lift_record("self.agents.spawn", &output)
+};
+"self.leader.split" => fn self_leader_split(&self, input: LiveRunRequestLeaderSplitInput) -> LeaderSplitOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::LeaderSplitInput> = crate::codec::lower_record("self.leader.split", input)?;
+    let output = client.self_leader_split(&input)?;
+    crate::codec::lift_record("self.leader.split", &output)
+};
 }
