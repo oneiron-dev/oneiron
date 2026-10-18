@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 388 code-mode rows (367 host rows, 21 run rows), 1411 declarations.
-// Replies: 334 fully typed, 50 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 404 code-mode rows (383 host rows, 21 run rows), 1460 declarations.
+// Replies: 350 fully typed, 50 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 81; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1340,6 +1340,55 @@ declare namespace Sdk {
   type DreamerAttemptRef = { job_ref: string; state: string; existing: boolean };
   type ConsolidationStatusRequest = { job_ref: string };
   type DreamerAttemptView = { job_ref: string; state: string; kind: string; lease_owner?: string | null; attempt_count: number; run_id?: string | null; last_error?: string | null; created_at: number; updated_at: number };
+  type SelfHeldShape = "dedicated_address" | "dedicated_handle" | "shared_presence";
+  type ChannelIdentityBinding = { kind: "actor"; actor_ref: EntityId; facet_ref?: EntityId | null } | { kind: "vault"; vault_id: number };
+  type ChannelIdentityFulfillment = "api" | "manual" | "review";
+  type ChannelIdentityProvisionRequest = { channel: string; address_or_handle: string; shape: SelfHeldShape; binding: ChannelIdentityBinding; fulfillment_mode: ChannelIdentityFulfillment };
+  type ChannelIdentityShape = "dedicated_address" | "dedicated_handle" | "shared_presence" | "delegated_grant";
+  type ChannelIdentityCustody = "self_held" | "delegated";
+  type ChannelIdentityState = "requested" | "pending_fulfillment" | "active" | "rotating" | "released" | "quarantine" | "tombstone";
+  type ChannelIdentityView = { identity_ref: EntityId; channel: string; address_or_handle: string; shape: ChannelIdentityShape; binding: ChannelIdentityBinding; custody: ChannelIdentityCustody; state: ChannelIdentityState; pending_fulfillment?: string | null; state_changed_at: number; quarantine_until?: number | null; outbound_eligible: boolean; occupies_assignment_key: boolean };
+  type ChannelIdentityLifecycleReceipt = { identity_ref: EntityId; receipt_ref: string; gate_receipt_ref?: string | null; outcome: string; reason_codes: string[]; owner_visible_state: string; identity?: ChannelIdentityView | null; outbound_closed: boolean; identity_retiring: boolean };
+  type DelegatedGrantScope = "mail.read" | "mail.metadata" | "mail.send";
+  type DelegatedGrant = { custody_record_ref: string; scopes: DelegatedGrantScope[] };
+  type ChannelIdentityBindRequest = { kind: "existing"; identity_ref: EntityId; fulfillment_mode: ChannelIdentityFulfillment } | { kind: "delegated"; channel: string; address_or_handle: string; binding: ChannelIdentityBinding; grant: DelegatedGrant; fulfillment_mode: ChannelIdentityFulfillment };
+  type ChannelIdentityRequest = { identity_ref: EntityId };
+  type ChannelIdentityReleaseRequest = { identity_ref: EntityId; quarantine_until: number };
+  type RelationshipContext = "work_deal" | "scheduling_logistics" | "campaign_outreach" | "transactional_system" | "personal_friends" | "group_space";
+  type SelectionRuleScope = { kind: "vault_default" } | { kind: "world"; world_ref: EntityId } | { kind: "relationship"; relationship_ref: EntityId } | { kind: "brief"; brief_ref: string } | { kind: "space"; space_ref: string };
+  type ChannelIdentityFace = "delegated_owner_account" | "agent_named_address" | "side_domain_address" | "house_identity" | "companion_identity" | "named_group_participant";
+  type SelectionRuleWriterKind = "system_default" | "owner" | "agent";
+  type ChannelIdentitySelectionRule = { rule_id: string; relationship: RelationshipContext; scope: SelectionRuleScope; face: ChannelIdentityFace; pinned_identity_ref?: EntityId | null; priority: number; enabled: boolean; agent_amendable: boolean; updated_at: number; updated_by?: EntityId | null; writer_kind: SelectionRuleWriterKind };
+  type ChannelIdentitySelectionRuleSet = { schema_version: number; revision: number; rows: ChannelIdentitySelectionRule[] };
+  type ChannelSelectionRuleInput = { rule_id: string; relationship: RelationshipContext; scope: SelectionRuleScope; face: ChannelIdentityFace; pinned_identity_ref?: EntityId | null; priority: number; enabled: boolean; agent_amendable: boolean };
+  type ChannelSelectionPatchInput = { kind: "upsert"; rule: ChannelSelectionRuleInput } | { kind: "remove"; rule_id: string };
+  type ChannelSelectionUpdateRequest = { expected_revision: number; patch: ChannelSelectionPatchInput };
+  type ChannelSelectionCandidateInput = { identity_ref: EntityId; face: ChannelIdentityFace };
+  type ChannelSelectionRequest = { relationship: RelationshipContext; applicable_scopes?: SelectionRuleScope[]; candidates: ChannelSelectionCandidateInput[]; thread_ref?: string | null };
+  type ChannelIdentitySelectionDecision = { identity_ref: EntityId; facet_ref?: EntityId | null; face: ChannelIdentityFace; shape: ChannelIdentityShape; rule_id?: string | null; used_thread_pin: boolean };
+  type ThreadMaskView = { identity_ref: EntityId; actor_ref: EntityId; facet_ref?: EntityId | null };
+  type ChannelSelectionView = { revision: number; decision: ChannelIdentitySelectionDecision; mask: ThreadMaskView };
+  type ThreadPassportRequest = { identity_ref: EntityId; message_id: string };
+  type ThreadPassportView = { identity_ref: EntityId; message_id: string; thread_ref: string; mask: ThreadMaskView; observed_at: number };
+  type ThreadPassportLookup = { passport?: ThreadPassportView | null };
+  type ThreadPassportsRequest = { thread_ref: string };
+  type ThreadPassportsView = { canonical_thread_ref: string; passports: ThreadPassportView[]; pinned_mask?: ThreadMaskView | null };
+  type DeliveryWindowTimeWindow = { start_minute: number; end_minute: number };
+  type DeliveryWindowContextCondition = "calendar_busy" | "focus_on" | "driving" | "asleep";
+  type DeliveryWindowRule = { kind: "quiet"; window: DeliveryWindowTimeWindow } | { kind: "context"; when: DeliveryWindowContextCondition } | { kind: "channel"; channel: string; window?: DeliveryWindowTimeWindow | null };
+  type DeliveryWindowPolicyPutRequest = { subject_ref: EntityId; policy_key: string; rule: DeliveryWindowRule; reason?: string | null; valid_from?: number | null; valid_to?: number | null };
+  type DeliveryWindowPolicyRequest = { subject_ref: EntityId };
+  type DeliveryWindowPolicyRow = { claim_ref: EntityId; subject_ref: EntityId; policy_key?: string | null; rule: DeliveryWindowRule; reason: string; approval: string; lifecycle: string; source?: string | null; valid_from?: number | null; valid_to?: number | null; stale: boolean };
+  type DeliveryWindowPolicies = { rows: DeliveryWindowPolicyRow[] };
+  type DeliveryWindowPolicyRetractRequest = { claim_ref: EntityId };
+  type DeliveryWindowVerbClass = "ambient" | "interrupt";
+  type DeliveryWindowApnsInterruptionLevel = "Passive" | "Active" | "TimeSensitive" | "Critical";
+  type DeliveryWindowEvaluateRequest = { subject_refs: EntityId[]; delivery_epoch_secs: number; local_minute_of_day: number; verb_class: DeliveryWindowVerbClass; channel: string; active_contexts?: DeliveryWindowContextCondition[]; interrupt_surface?: string | null; degrade_to?: string | null; apns_interruption_level?: DeliveryWindowApnsInterruptionLevel | null };
+  type DeliveryWindowDecision = "DeliverNow" | { DeliverNowWithApnsCap: { reason: string; from: string; to: string } } | { Hold: { reason: string; retry_at?: number | null } } | { Degrade: { reason: string; from: string; to: string } } | { LetGo: { reason: string } };
+  type DeliveryWindowMatch = { predicate: string; reason: string; retry_at?: number | null };
+  type DeliveryWindowLadderRung = "HumanExplicitInstant" | "Ambient" | "InterruptDegraded" | "InterruptHeld" | "MissingLocalMinute";
+  type DeliveryWindowResolution = { observed: DeliveryWindowDecision; effective: DeliveryWindowDecision; matched: DeliveryWindowMatch[]; rung: DeliveryWindowLadderRung };
+  type DeliveryWindowPreview = { policy_refs: EntityId[]; resolution: DeliveryWindowResolution };
   type OutboundScheduleRequest = { verb: string; channel: string; target: string; on_behalf_of?: string | null; content_ref?: string | null; idempotency_key?: string | null; dedupe_key?: string | null; trigger: string; trigger_ref: string; job_ref?: string | null; occurred_at?: number | null; mention?: MentionProvenance | null };
   type OutboundIntentReceipt = { intent_ref: string; outcome: string; gate_outcome?: string | null; gate_decision_ref?: string | null; gate_reason_codes: string[]; deduped: boolean };
   type CreateNoteRequest = { kind: string; markdown: string };
@@ -1787,6 +1836,36 @@ declare const vault: Sdk.VaultHost & {
       update(input: Sdk.UpdateCampaignProgramRequest): Promise<Sdk.CampaignProgramRecord | StoredResult>;
     };
   };
+  channel_identities: {
+    /** Bind a requested identity or an existing delegated account with transaction-verified custody. */
+    bind(input: Sdk.ChannelIdentityBindRequest): Promise<Sdk.ChannelIdentityLifecycleReceipt | StoredResult>;
+    /** Record owner-confirmed fulfillment of a pending channel identity; delegated custody is revalidated. */
+    fulfill(input: Sdk.ChannelIdentityRequest): Promise<Sdk.ChannelIdentityLifecycleReceipt | StoredResult>;
+    /** Read live channel identity facts, custody, lifecycle and outbound capability without granting permission to send. */
+    get(input: Sdk.ChannelIdentityRequest): Promise<Sdk.ChannelIdentityView | StoredResult>;
+    passports: {
+      /** Read one receiving identity and Message-ID passport through the caller credential. */
+      get(input: Sdk.ThreadPassportRequest): Promise<Sdk.ThreadPassportLookup | StoredResult>;
+      /** Read canonical thread passports and the sticky identity, actor and facet mask. */
+      list(input: Sdk.ThreadPassportsRequest): Promise<Sdk.ThreadPassportsView | StoredResult>;
+    };
+    /** Provision an engine-held channel address, handle or shared presence through the existing lifecycle gate. */
+    provision(input: Sdk.ChannelIdentityProvisionRequest): Promise<Sdk.ChannelIdentityLifecycleReceipt | StoredResult>;
+    /** Release a channel identity through its lifecycle gate, retaining engine-held addresses under the never-recycle rule. */
+    release(input: Sdk.ChannelIdentityReleaseRequest): Promise<Sdk.ChannelIdentityLifecycleReceipt | StoredResult>;
+    /** Rotate an engine-held channel identity through its lifecycle gate; delegated accounts cannot rotate. */
+    rotate(input: Sdk.ChannelIdentityRequest): Promise<Sdk.ChannelIdentityLifecycleReceipt | StoredResult>;
+    /** Read and receipt the gated inbound routing disposition of a channel identity, including retirement holds. */
+    route_inbound(input: Sdk.ChannelIdentityRequest): Promise<Sdk.ChannelIdentityLifecycleReceipt | StoredResult>;
+    /** Select a live channel identity under relationship rules, retaining an existing thread passport mask. */
+    select(input: Sdk.ChannelSelectionRequest): Promise<Sdk.ChannelSelectionView | StoredResult>;
+    selection: {
+      /** Read the compiled relationship selection law and authenticated writer provenance. */
+      rules(input: Sdk.EmptyRequest): Promise<Sdk.ChannelIdentitySelectionRuleSet | StoredResult>;
+      /** Amend relationship selection rules at an expected revision as the authenticated owner or an authorized agent writer. */
+      update(input: Sdk.ChannelSelectionUpdateRequest): Promise<Sdk.ChannelIdentitySelectionRuleSet | StoredResult>;
+    };
+  };
   claims: {
     /** Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides. */
     admit(input: Sdk.AdmitImportedClaimInput): Promise<Sdk.CommitReceipt | StoredResult>;
@@ -1884,6 +1963,18 @@ declare const vault: Sdk.VaultHost & {
   };
   /** Deletes one entity under a named reason; an owner verb that only a verified human may call. */
   delete(input: Sdk.SafeDeleteRequest): Promise<Sdk.DeleteReceipt | StoredResult>;
+  delivery_window: {
+    /** Preview live delivery-window policy with the engine evaluator; the preview does not authorize or release an effect. */
+    evaluate(input: Sdk.DeliveryWindowEvaluateRequest): Promise<Sdk.DeliveryWindowPreview | StoredResult>;
+    policy: {
+      /** Read typed delivery-window policy rows with approval, source, lifecycle and validity provenance. */
+      list(input: Sdk.DeliveryWindowPolicyRequest): Promise<Sdk.DeliveryWindowPolicies | StoredResult>;
+      /** The owner writes one typed interrupt-only delivery-window policy through the gated claim writer. */
+      put(input: Sdk.DeliveryWindowPolicyPutRequest): Promise<Sdk.CommitReceipt | StoredResult>;
+      /** The owner retracts a delivery-window policy through the existing claim lifecycle door. */
+      retract(input: Sdk.DeliveryWindowPolicyRetractRequest): Promise<Sdk.CommitReceipt | StoredResult>;
+    };
+  };
   disclosure: {
     /** An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses. */
     offer(input: Sdk.DisclosureOfferRequest): Promise<Sdk.DisclosureOffered | StoredResult>;

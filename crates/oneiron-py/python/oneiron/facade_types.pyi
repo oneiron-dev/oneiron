@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 324 facade rows, 1298 declarations.
-Inputs: 281 of 324 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 281 of 324 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 340 facade rows, 1347 declarations.
+Inputs: 297 of 340 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 297 of 340 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 74; unread shapes: 0.
 """
 
@@ -6757,6 +6757,243 @@ class DreamerAttemptView(TypedDict):
     last_error: NotRequired[str | None]
     created_at: int
     updated_at: int
+SelfHeldShape = Literal["dedicated_address", "dedicated_handle", "shared_presence"]
+class ChannelIdentityBindingActor(TypedDict):
+    kind: Literal["actor"]
+    actor_ref: EntityId
+    facet_ref: NotRequired[EntityId | None]
+class ChannelIdentityBindingVault(TypedDict):
+    kind: Literal["vault"]
+    vault_id: int
+ChannelIdentityBinding = ChannelIdentityBindingActor | ChannelIdentityBindingVault
+ChannelIdentityFulfillment = Literal["api", "manual", "review"]
+class ChannelIdentityProvisionRequest(TypedDict):
+    channel: str
+    address_or_handle: str
+    shape: SelfHeldShape
+    binding: ChannelIdentityBinding
+    fulfillment_mode: ChannelIdentityFulfillment
+ChannelIdentityShape = Literal["dedicated_address", "dedicated_handle", "shared_presence", "delegated_grant"]
+ChannelIdentityCustody = Literal["self_held", "delegated"]
+ChannelIdentityState = Literal["requested", "pending_fulfillment", "active", "rotating", "released", "quarantine", "tombstone"]
+class ChannelIdentityView(TypedDict):
+    identity_ref: EntityId
+    channel: str
+    address_or_handle: str
+    shape: ChannelIdentityShape
+    binding: ChannelIdentityBinding
+    custody: ChannelIdentityCustody
+    state: ChannelIdentityState
+    pending_fulfillment: NotRequired[str | None]
+    state_changed_at: int
+    quarantine_until: NotRequired[int | None]
+    outbound_eligible: bool
+    occupies_assignment_key: bool
+class ChannelIdentityLifecycleReceipt(TypedDict):
+    identity_ref: EntityId
+    receipt_ref: str
+    gate_receipt_ref: NotRequired[str | None]
+    outcome: str
+    reason_codes: list[str]
+    owner_visible_state: str
+    identity: NotRequired[ChannelIdentityView | None]
+    outbound_closed: bool
+    identity_retiring: bool
+DelegatedGrantScope = Literal["mail.read", "mail.metadata", "mail.send"]
+class DelegatedGrant(TypedDict):
+    custody_record_ref: str
+    scopes: list[DelegatedGrantScope]
+class ChannelIdentityBindRequestExisting(TypedDict):
+    kind: Literal["existing"]
+    identity_ref: EntityId
+    fulfillment_mode: ChannelIdentityFulfillment
+class ChannelIdentityBindRequestDelegated(TypedDict):
+    kind: Literal["delegated"]
+    channel: str
+    address_or_handle: str
+    binding: ChannelIdentityBinding
+    grant: DelegatedGrant
+    fulfillment_mode: ChannelIdentityFulfillment
+ChannelIdentityBindRequest = ChannelIdentityBindRequestExisting | ChannelIdentityBindRequestDelegated
+class ChannelIdentityRequest(TypedDict):
+    identity_ref: EntityId
+class ChannelIdentityReleaseRequest(TypedDict):
+    identity_ref: EntityId
+    quarantine_until: int
+RelationshipContext = Literal["work_deal", "scheduling_logistics", "campaign_outreach", "transactional_system", "personal_friends", "group_space"]
+class SelectionRuleScopeVaultDefault(TypedDict):
+    kind: Literal["vault_default"]
+class SelectionRuleScopeWorld(TypedDict):
+    kind: Literal["world"]
+    world_ref: EntityId
+class SelectionRuleScopeRelationship(TypedDict):
+    kind: Literal["relationship"]
+    relationship_ref: EntityId
+class SelectionRuleScopeBrief(TypedDict):
+    kind: Literal["brief"]
+    brief_ref: str
+class SelectionRuleScopeSpace(TypedDict):
+    kind: Literal["space"]
+    space_ref: str
+SelectionRuleScope = SelectionRuleScopeVaultDefault | SelectionRuleScopeWorld | SelectionRuleScopeRelationship | SelectionRuleScopeBrief | SelectionRuleScopeSpace
+ChannelIdentityFace = Literal["delegated_owner_account", "agent_named_address", "side_domain_address", "house_identity", "companion_identity", "named_group_participant"]
+SelectionRuleWriterKind = Literal["system_default", "owner", "agent"]
+class ChannelIdentitySelectionRule(TypedDict):
+    rule_id: str
+    relationship: RelationshipContext
+    scope: SelectionRuleScope
+    face: ChannelIdentityFace
+    pinned_identity_ref: NotRequired[EntityId | None]
+    priority: int
+    enabled: bool
+    agent_amendable: bool
+    updated_at: int
+    updated_by: NotRequired[EntityId | None]
+    writer_kind: SelectionRuleWriterKind
+class ChannelIdentitySelectionRuleSet(TypedDict):
+    schema_version: int
+    revision: int
+    rows: list[ChannelIdentitySelectionRule]
+class ChannelSelectionRuleInput(TypedDict):
+    rule_id: str
+    relationship: RelationshipContext
+    scope: SelectionRuleScope
+    face: ChannelIdentityFace
+    pinned_identity_ref: NotRequired[EntityId | None]
+    priority: int
+    enabled: bool
+    agent_amendable: bool
+class ChannelSelectionPatchInputUpsert(TypedDict):
+    kind: Literal["upsert"]
+    rule: ChannelSelectionRuleInput
+class ChannelSelectionPatchInputRemove(TypedDict):
+    kind: Literal["remove"]
+    rule_id: str
+ChannelSelectionPatchInput = ChannelSelectionPatchInputUpsert | ChannelSelectionPatchInputRemove
+class ChannelSelectionUpdateRequest(TypedDict):
+    expected_revision: int
+    patch: ChannelSelectionPatchInput
+class ChannelSelectionCandidateInput(TypedDict):
+    identity_ref: EntityId
+    face: ChannelIdentityFace
+class ChannelSelectionRequest(TypedDict):
+    relationship: RelationshipContext
+    applicable_scopes: NotRequired[list[SelectionRuleScope]]
+    candidates: list[ChannelSelectionCandidateInput]
+    thread_ref: NotRequired[str | None]
+class ChannelIdentitySelectionDecision(TypedDict):
+    identity_ref: EntityId
+    facet_ref: NotRequired[EntityId | None]
+    face: ChannelIdentityFace
+    shape: ChannelIdentityShape
+    rule_id: NotRequired[str | None]
+    used_thread_pin: bool
+class ThreadMaskView(TypedDict):
+    identity_ref: EntityId
+    actor_ref: EntityId
+    facet_ref: NotRequired[EntityId | None]
+class ChannelSelectionView(TypedDict):
+    revision: int
+    decision: ChannelIdentitySelectionDecision
+    mask: ThreadMaskView
+class ThreadPassportRequest(TypedDict):
+    identity_ref: EntityId
+    message_id: str
+class ThreadPassportView(TypedDict):
+    identity_ref: EntityId
+    message_id: str
+    thread_ref: str
+    mask: ThreadMaskView
+    observed_at: int
+class ThreadPassportLookup(TypedDict):
+    passport: NotRequired[ThreadPassportView | None]
+class ThreadPassportsRequest(TypedDict):
+    thread_ref: str
+class ThreadPassportsView(TypedDict):
+    canonical_thread_ref: str
+    passports: list[ThreadPassportView]
+    pinned_mask: NotRequired[ThreadMaskView | None]
+class DeliveryWindowTimeWindow(TypedDict):
+    start_minute: int
+    end_minute: int
+DeliveryWindowContextCondition = Literal["calendar_busy", "focus_on", "driving", "asleep"]
+class DeliveryWindowRuleQuiet(TypedDict):
+    kind: Literal["quiet"]
+    window: DeliveryWindowTimeWindow
+class DeliveryWindowRuleContext(TypedDict):
+    kind: Literal["context"]
+    when: DeliveryWindowContextCondition
+class DeliveryWindowRuleChannel(TypedDict):
+    kind: Literal["channel"]
+    channel: str
+    window: NotRequired[DeliveryWindowTimeWindow | None]
+DeliveryWindowRule = DeliveryWindowRuleQuiet | DeliveryWindowRuleContext | DeliveryWindowRuleChannel
+class DeliveryWindowPolicyPutRequest(TypedDict):
+    subject_ref: EntityId
+    policy_key: str
+    rule: DeliveryWindowRule
+    reason: NotRequired[str | None]
+    valid_from: NotRequired[int | None]
+    valid_to: NotRequired[int | None]
+class DeliveryWindowPolicyRequest(TypedDict):
+    subject_ref: EntityId
+class DeliveryWindowPolicyRow(TypedDict):
+    claim_ref: EntityId
+    subject_ref: EntityId
+    policy_key: NotRequired[str | None]
+    rule: DeliveryWindowRule
+    reason: str
+    approval: str
+    lifecycle: str
+    source: NotRequired[str | None]
+    valid_from: NotRequired[int | None]
+    valid_to: NotRequired[int | None]
+    stale: bool
+class DeliveryWindowPolicies(TypedDict):
+    rows: list[DeliveryWindowPolicyRow]
+class DeliveryWindowPolicyRetractRequest(TypedDict):
+    claim_ref: EntityId
+DeliveryWindowVerbClass = Literal["ambient", "interrupt"]
+DeliveryWindowApnsInterruptionLevel = Literal["Passive", "Active", "TimeSensitive", "Critical"]
+class DeliveryWindowEvaluateRequest(TypedDict):
+    subject_refs: list[EntityId]
+    delivery_epoch_secs: int
+    local_minute_of_day: int
+    verb_class: DeliveryWindowVerbClass
+    channel: str
+    active_contexts: NotRequired[list[DeliveryWindowContextCondition]]
+    interrupt_surface: NotRequired[str | None]
+    degrade_to: NotRequired[str | None]
+    apns_interruption_level: NotRequired[DeliveryWindowApnsInterruptionLevel | None]
+DeliveryWindowDecisionDeliverNowWithApnsCapBody = TypedDict("DeliveryWindowDecisionDeliverNowWithApnsCapBody", {"reason": str, "from": str, "to": str})
+class DeliveryWindowDecisionDeliverNowWithApnsCap(TypedDict):
+    DeliverNowWithApnsCap: DeliveryWindowDecisionDeliverNowWithApnsCapBody
+class DeliveryWindowDecisionHoldBody(TypedDict):
+    reason: str
+    retry_at: NotRequired[int | None]
+class DeliveryWindowDecisionHold(TypedDict):
+    Hold: DeliveryWindowDecisionHoldBody
+DeliveryWindowDecisionDegradeBody = TypedDict("DeliveryWindowDecisionDegradeBody", {"reason": str, "from": str, "to": str})
+class DeliveryWindowDecisionDegrade(TypedDict):
+    Degrade: DeliveryWindowDecisionDegradeBody
+class DeliveryWindowDecisionLetGoBody(TypedDict):
+    reason: str
+class DeliveryWindowDecisionLetGo(TypedDict):
+    LetGo: DeliveryWindowDecisionLetGoBody
+DeliveryWindowDecision = Literal["DeliverNow"] | DeliveryWindowDecisionDeliverNowWithApnsCap | DeliveryWindowDecisionHold | DeliveryWindowDecisionDegrade | DeliveryWindowDecisionLetGo
+class DeliveryWindowMatch(TypedDict):
+    predicate: str
+    reason: str
+    retry_at: NotRequired[int | None]
+DeliveryWindowLadderRung = Literal["HumanExplicitInstant", "Ambient", "InterruptDegraded", "InterruptHeld", "MissingLocalMinute"]
+class DeliveryWindowResolution(TypedDict):
+    observed: DeliveryWindowDecision
+    effective: DeliveryWindowDecision
+    matched: list[DeliveryWindowMatch]
+    rung: DeliveryWindowLadderRung
+class DeliveryWindowPreview(TypedDict):
+    policy_refs: list[EntityId]
+    resolution: DeliveryWindowResolution
 class OutboundScheduleRequest(TypedDict):
     verb: str
     channel: str

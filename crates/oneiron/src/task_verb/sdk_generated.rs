@@ -1797,6 +1797,101 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<CommitRequest>(),
             ),
             (
+                "vault.channel_identities.provision",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::channel_doors::ChannelIdentityProvisionRequest,
+                >(),
+            ),
+            (
+                "vault.channel_identities.bind",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::channel_doors::ChannelIdentityBindRequest,
+                >(),
+            ),
+            (
+                "vault.channel_identities.fulfill",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::channel_doors::ChannelIdentityRequest,
+                >(),
+            ),
+            (
+                "vault.channel_identities.rotate",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::channel_doors::ChannelIdentityRequest,
+                >(),
+            ),
+            (
+                "vault.channel_identities.release",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::channel_doors::ChannelIdentityReleaseRequest,
+                >(),
+            ),
+            (
+                "vault.channel_identities.route_inbound",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::channel_doors::ChannelIdentityRequest,
+                >(),
+            ),
+            (
+                "vault.channel_identities.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::channel_doors::ChannelIdentityRequest,
+                >(),
+            ),
+            (
+                "vault.channel_identities.selection.rules",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
+                "vault.channel_identities.selection.update",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::channel_doors::ChannelSelectionUpdateRequest,
+                >(),
+            ),
+            (
+                "vault.channel_identities.select",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::channel_doors::ChannelSelectionRequest,
+                >(),
+            ),
+            (
+                "vault.channel_identities.passports.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::channel_doors::ThreadPassportRequest,
+                >(),
+            ),
+            (
+                "vault.channel_identities.passports.list",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::channel_doors::ThreadPassportsRequest,
+                >(),
+            ),
+            (
+                "vault.delivery_window.policy.put",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::channel_doors::DeliveryWindowPolicyPutRequest,
+                >(),
+            ),
+            (
+                "vault.delivery_window.policy.list",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::channel_doors::DeliveryWindowPolicyRequest,
+                >(),
+            ),
+            (
+                "vault.delivery_window.policy.retract",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::channel_doors::DeliveryWindowPolicyRetractRequest,
+                >(),
+            ),
+            (
+                "vault.delivery_window.evaluate",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::channel_doors::DeliveryWindowEvaluateRequest,
+                >(),
+            ),
+            (
                 "connector.outbound.schedule",
                 crate::code_run::vault_read::request_schema::<OutboundScheduleRequest>(),
             ),
@@ -4182,6 +4277,118 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.channel_identities.provision" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.channel_identities.bind" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.channel_identities.fulfill" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.channel_identities.rotate" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.channel_identities.release" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.channel_identities.route_inbound" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.channel_identities.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.channel_identities.selection.rules" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.channel_identities.selection.update" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.channel_identities.select" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.channel_identities.passports.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.channel_identities.passports.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.delivery_window.policy.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.delivery_window.policy.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.delivery_window.policy.retract" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.delivery_window.evaluate" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "connector.outbound.schedule" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -5410,6 +5617,69 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
                 crate::memory::caps::check_claim_input(claim)?;
             }
         }
+        "vault.channel_identities.provision" => {
+            let _input: crate::memory::channel_doors::ChannelIdentityProvisionRequest =
+                decode(value.clone())?;
+        }
+        "vault.channel_identities.bind" => {
+            let _input: crate::memory::channel_doors::ChannelIdentityBindRequest =
+                decode(value.clone())?;
+        }
+        "vault.channel_identities.fulfill" => {
+            let _input: crate::memory::channel_doors::ChannelIdentityRequest =
+                decode(value.clone())?;
+        }
+        "vault.channel_identities.rotate" => {
+            let _input: crate::memory::channel_doors::ChannelIdentityRequest =
+                decode(value.clone())?;
+        }
+        "vault.channel_identities.release" => {
+            let _input: crate::memory::channel_doors::ChannelIdentityReleaseRequest =
+                decode(value.clone())?;
+        }
+        "vault.channel_identities.route_inbound" => {
+            let _input: crate::memory::channel_doors::ChannelIdentityRequest =
+                decode(value.clone())?;
+        }
+        "vault.channel_identities.get" => {
+            let _input: crate::memory::channel_doors::ChannelIdentityRequest =
+                decode(value.clone())?;
+        }
+        "vault.channel_identities.selection.rules" => {
+            let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+        }
+        "vault.channel_identities.selection.update" => {
+            let _input: crate::memory::channel_doors::ChannelSelectionUpdateRequest =
+                decode(value.clone())?;
+        }
+        "vault.channel_identities.select" => {
+            let _input: crate::memory::channel_doors::ChannelSelectionRequest =
+                decode(value.clone())?;
+        }
+        "vault.channel_identities.passports.get" => {
+            let _input: crate::memory::channel_doors::ThreadPassportRequest =
+                decode(value.clone())?;
+        }
+        "vault.channel_identities.passports.list" => {
+            let _input: crate::memory::channel_doors::ThreadPassportsRequest =
+                decode(value.clone())?;
+        }
+        "vault.delivery_window.policy.put" => {
+            let _input: crate::memory::channel_doors::DeliveryWindowPolicyPutRequest =
+                decode(value.clone())?;
+        }
+        "vault.delivery_window.policy.list" => {
+            let _input: crate::memory::channel_doors::DeliveryWindowPolicyRequest =
+                decode(value.clone())?;
+        }
+        "vault.delivery_window.policy.retract" => {
+            let _input: crate::memory::channel_doors::DeliveryWindowPolicyRetractRequest =
+                decode(value.clone())?;
+        }
+        "vault.delivery_window.evaluate" => {
+            let _input: crate::memory::channel_doors::DeliveryWindowEvaluateRequest =
+                decode(value.clone())?;
+        }
         "connector.outbound.schedule" => {
             let _input: OutboundScheduleRequest = decode(value.clone())?;
         }
@@ -5962,6 +6232,57 @@ pub fn invoke(
         }
         "vault.consolidation.status" => encode(vault_consolidation_status(memory, decode(value)?)?),
         "vault.claims.seed" => encode(vault_claims_seed(memory, decode(value)?)?),
+        "vault.channel_identities.provision" => {
+            encode(vault_channel_identities_provision(memory, decode(value)?)?)
+        }
+        "vault.channel_identities.bind" => {
+            encode(vault_channel_identities_bind(memory, decode(value)?)?)
+        }
+        "vault.channel_identities.fulfill" => {
+            encode(vault_channel_identities_fulfill(memory, decode(value)?)?)
+        }
+        "vault.channel_identities.rotate" => {
+            encode(vault_channel_identities_rotate(memory, decode(value)?)?)
+        }
+        "vault.channel_identities.release" => {
+            encode(vault_channel_identities_release(memory, decode(value)?)?)
+        }
+        "vault.channel_identities.route_inbound" => encode(vault_channel_identities_route_inbound(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.channel_identities.get" => {
+            encode(vault_channel_identities_get(memory, decode(value)?)?)
+        }
+        "vault.channel_identities.selection.rules" => encode(
+            vault_channel_identities_selection_rules(memory, decode(value)?)?,
+        ),
+        "vault.channel_identities.selection.update" => encode(
+            vault_channel_identities_selection_update(memory, decode(value)?)?,
+        ),
+        "vault.channel_identities.select" => {
+            encode(vault_channel_identities_select(memory, decode(value)?)?)
+        }
+        "vault.channel_identities.passports.get" => encode(vault_channel_identities_passports_get(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.channel_identities.passports.list" => encode(
+            vault_channel_identities_passports_list(memory, decode(value)?)?,
+        ),
+        "vault.delivery_window.policy.put" => {
+            encode(vault_delivery_window_policy_put(memory, decode(value)?)?)
+        }
+        "vault.delivery_window.policy.list" => {
+            encode(vault_delivery_window_policy_list(memory, decode(value)?)?)
+        }
+        "vault.delivery_window.policy.retract" => encode(vault_delivery_window_policy_retract(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.delivery_window.evaluate" => {
+            encode(vault_delivery_window_evaluate(memory, decode(value)?)?)
+        }
         "connector.outbound.schedule" => {
             encode(connector_outbound_schedule(memory, decode(value)?)?)
         }
@@ -8997,6 +9318,126 @@ pub fn vault_claims_seed(
         ],
     )?;
     memory_requests::seed_claims(memory, input)
+}
+pub fn vault_channel_identities_provision(
+    memory: &Memory<'_>,
+    input: crate::memory::channel_doors::ChannelIdentityProvisionRequest,
+) -> MemoryResult<crate::memory::channel_doors::ChannelIdentityLifecycleReceipt> {
+    memory.channel_identity_provision_as(
+        &memory.embedded_owner("vault.channel_identities.provision")?,
+        input,
+    )
+}
+pub fn vault_channel_identities_bind(
+    memory: &Memory<'_>,
+    input: crate::memory::channel_doors::ChannelIdentityBindRequest,
+) -> MemoryResult<crate::memory::channel_doors::ChannelIdentityLifecycleReceipt> {
+    memory.channel_identity_bind_as(
+        &memory.embedded_owner("vault.channel_identities.bind")?,
+        input,
+    )
+}
+pub fn vault_channel_identities_fulfill(
+    memory: &Memory<'_>,
+    input: crate::memory::channel_doors::ChannelIdentityRequest,
+) -> MemoryResult<crate::memory::channel_doors::ChannelIdentityLifecycleReceipt> {
+    memory.channel_identity_fulfill_as(
+        &memory.embedded_owner("vault.channel_identities.fulfill")?,
+        input,
+    )
+}
+pub fn vault_channel_identities_rotate(
+    memory: &Memory<'_>,
+    input: crate::memory::channel_doors::ChannelIdentityRequest,
+) -> MemoryResult<crate::memory::channel_doors::ChannelIdentityLifecycleReceipt> {
+    memory.channel_identity_rotate_as(
+        &memory.embedded_owner("vault.channel_identities.rotate")?,
+        input,
+    )
+}
+pub fn vault_channel_identities_release(
+    memory: &Memory<'_>,
+    input: crate::memory::channel_doors::ChannelIdentityReleaseRequest,
+) -> MemoryResult<crate::memory::channel_doors::ChannelIdentityLifecycleReceipt> {
+    memory.channel_identity_release_as(
+        &memory.embedded_owner("vault.channel_identities.release")?,
+        input,
+    )
+}
+pub fn vault_channel_identities_route_inbound(
+    memory: &Memory<'_>,
+    input: crate::memory::channel_doors::ChannelIdentityRequest,
+) -> MemoryResult<crate::memory::channel_doors::ChannelIdentityLifecycleReceipt> {
+    memory.channel_identity_route_inbound_as(
+        &memory.embedded_owner("vault.channel_identities.route_inbound")?,
+        input,
+    )
+}
+pub fn vault_channel_identities_get(
+    memory: &Memory<'_>,
+    input: crate::memory::channel_doors::ChannelIdentityRequest,
+) -> MemoryResult<crate::memory::channel_doors::ChannelIdentityView> {
+    memory.channel_identity_get(input)
+}
+pub fn vault_channel_identities_selection_rules(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<crate::channel_identity_selection::ChannelIdentitySelectionRuleSet> {
+    memory.channel_selection_rules()
+}
+pub fn vault_channel_identities_selection_update(
+    memory: &Memory<'_>,
+    input: crate::memory::channel_doors::ChannelSelectionUpdateRequest,
+) -> MemoryResult<crate::channel_identity_selection::ChannelIdentitySelectionRuleSet> {
+    memory.channel_selection_update(input)
+}
+pub fn vault_channel_identities_select(
+    memory: &Memory<'_>,
+    input: crate::memory::channel_doors::ChannelSelectionRequest,
+) -> MemoryResult<crate::memory::channel_doors::ChannelSelectionView> {
+    memory.channel_identity_select(input)
+}
+pub fn vault_channel_identities_passports_get(
+    memory: &Memory<'_>,
+    input: crate::memory::channel_doors::ThreadPassportRequest,
+) -> MemoryResult<crate::memory::channel_doors::ThreadPassportLookup> {
+    memory.channel_thread_passport(input)
+}
+pub fn vault_channel_identities_passports_list(
+    memory: &Memory<'_>,
+    input: crate::memory::channel_doors::ThreadPassportsRequest,
+) -> MemoryResult<crate::memory::channel_doors::ThreadPassportsView> {
+    memory.channel_thread_passports(input)
+}
+pub fn vault_delivery_window_policy_put(
+    memory: &Memory<'_>,
+    input: crate::memory::channel_doors::DeliveryWindowPolicyPutRequest,
+) -> MemoryResult<crate::memory::CommitReceipt> {
+    memory.delivery_window_put_as(
+        &memory.embedded_owner("vault.delivery_window.policy.put")?,
+        input,
+    )
+}
+pub fn vault_delivery_window_policy_list(
+    memory: &Memory<'_>,
+    input: crate::memory::channel_doors::DeliveryWindowPolicyRequest,
+) -> MemoryResult<crate::memory::channel_doors::DeliveryWindowPolicies> {
+    memory.delivery_window_policies(input)
+}
+pub fn vault_delivery_window_policy_retract(
+    memory: &Memory<'_>,
+    input: crate::memory::channel_doors::DeliveryWindowPolicyRetractRequest,
+) -> MemoryResult<crate::memory::CommitReceipt> {
+    memory.delivery_window_retract_as(
+        &memory.embedded_owner("vault.delivery_window.policy.retract")?,
+        input,
+    )
+}
+pub fn vault_delivery_window_evaluate(
+    memory: &Memory<'_>,
+    input: crate::memory::channel_doors::DeliveryWindowEvaluateRequest,
+) -> MemoryResult<crate::memory::channel_doors::DeliveryWindowPreview> {
+    memory.delivery_window_evaluate(input)
 }
 pub fn connector_outbound_schedule(
     memory: &Memory<'_>,
