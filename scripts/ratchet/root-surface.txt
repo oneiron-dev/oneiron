@@ -470,6 +470,7 @@ PsychProfileSnapshotStatus
 PsychProfileStaleReason
 PsychProfileState
 REPO_PROVENANCE_NOTES_REF
+RawEntityPut
 ReaderTableShortfall
 RecallScope
 RelationshipContext
