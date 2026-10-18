@@ -72,6 +72,7 @@ mod fold_doors;
 mod gate_policy_doors;
 mod graph_ask_doors;
 mod guest_doors;
+mod hook_regen_doors;
 pub(super) mod host_doors;
 mod hub_doors;
 mod learning_doors;

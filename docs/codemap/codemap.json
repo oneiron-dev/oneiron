@@ -32276,6 +32276,31 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/hook_regen_doors/mod.rs",
+     "purpose": "Typed hook regeneration doors (DOOR-077): `vault.hooks.regen.due` lists the vault's own hook bindings whose…",
+     "surface": {
+      "fn": 3,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HookRegenAdoptRequest",
+      "HookRegenBindingRequest",
+      "HookRegenView"
+     ],
+     "path": "src/memory/hook_regen_doors/types.rs",
+     "purpose": "—",
+     "surface": {
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/inspection.rs",
      "purpose": "`vault.inspection.resolve` (OF-235): the bound actor reopens an inspection link through its own read lane",
      "surface": {
@@ -32433,7 +32458,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 13,
+      "mod": 14,
       "re-export": 46
      }
     },
@@ -33808,7 +33833,7 @@
       "crate-vis": 37,
       "enum": 3,
       "fn": 4,
-      "re-export": 14,
+      "re-export": 15,
       "struct": 2
      }
     },
@@ -33844,13 +33869,28 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AuthorBriefRequest",
+      "BriefClaimCitation",
+      "BriefKindStamp"
+     ],
+     "path": "src/note/brief_doors.rs",
+     "purpose": "Typed claim-citing brief authoring over the existing NOTE pin and write doors",
+     "surface": {
+      "fn": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "BriefCitationView",
       "BriefView"
      ],
      "path": "src/note/brief_view.rs",
      "purpose": "Fresh brief views: current ledger state, cursor drift, and one renderer",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 2
      }
     },
@@ -33950,7 +33990,7 @@
      "path": "src/note/document_store.rs",
      "purpose": "Actor-bound NOTE editor verbs and atomic entity-document persistence",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 9
      }
     },
@@ -34367,7 +34407,7 @@
      "path": "src/note/write_gate.rs",
      "purpose": "Stage 1 of the NOTE write gate (ARCH-0032 #write-gate): the cheap checks a NOTE write meets before it lands…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -41346,7 +41386,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 2,
-      "fn": 7,
+      "fn": 9,
       "struct": 6,
       "trait": 1
      }
@@ -51338,7 +51378,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 736
+      "fn": 742
      }
     },
     {
@@ -51808,9 +51848,10 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "BriefCitationFollowRequest",
       "ShareCreateRequest",
       "ShareCreated",
       "ShareRevokeRequest",
@@ -51820,8 +51861,8 @@
      "path": "src/task_verb/sdk_share.rs",
      "purpose": "`vault.shares.create`: the caller shares one stored brief with one recipient and chooses which born-with…",
      "surface": {
-      "fn": 3,
-      "struct": 5
+      "fn": 4,
+      "struct": 6
      }
     },
     {
@@ -58015,7 +58056,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 181,
+     "files": 183,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58036,7 +58077,7 @@
      "purpose": "A budget check of untrusted MessagePack before it is decoded"
     },
     "note": {
-     "files": 46,
+     "files": 47,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -58696,7 +58737,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3581,
+   "source_files": 3584,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67227,7 +67268,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 700
+      "fn": 706
      }
     },
     {
@@ -68276,7 +68317,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 701
+      "fn": 707
      }
     },
     {
@@ -71623,13 +71664,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/hook_regen_doors.rs",
+     "purpose": "Credential-bound host projections of the typed hook regeneration doors (DOOR-077): the due list, one…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 126
+      "crate-vis": 127
      }
     },
     {
@@ -71899,7 +71950,7 @@
      "path": "src/api/facade/share_doors.rs",
      "purpose": "The share doors past create (OF-491): the issuer or the vault's owner stops a share, and its recipient opens…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -79388,7 +79439,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 388,
+     "files": 389,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -79817,7 +79868,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 729,
+   "source_files": 730,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -80186,6 +80237,7 @@
       "AttemptResumePoint",
       "AttemptState",
       "AttemptView",
+      "AuthorBriefRequest",
       "AuthorTakeRequest",
       "AuthorTakeTarget",
       "AuthoringStrategyPin",
@@ -80225,9 +80277,12 @@
       "BorrowedCellView",
       "BranchBelief",
       "BranchSnapshot",
+      "BriefCitationFollowRequest",
+      "BriefClaimCitation",
       "BriefConstraints",
       "BriefContext",
       "BriefIntent",
+      "BriefKindStamp",
       "BriefStamp",
       "BudgetDenied",
       "BudgetHoldNotice",
@@ -80953,8 +81008,17 @@
       "HolderKind",
       "HookActorClass",
       "HookAuthor",
+      "HookContractStamp",
+      "HookGoldenDiff",
       "HookOutcomeKind",
       "HookPhase",
+      "HookRegenAdoptRequest",
+      "HookRegenBindingRequest",
+      "HookRegenFailure",
+      "HookRegenFailurePhase",
+      "HookRegenOutcome",
+      "HookRegenRecord",
+      "HookRegenView",
       "HookRenderClass",
       "HookReplayCase",
       "HookReplayCompare",
@@ -81268,12 +81332,14 @@
       "NoteAnchor",
       "NoteAnchoredSpan",
       "NoteAuthorship",
+      "NoteContextDefault",
       "NoteDefaultsView",
       "NoteEdit",
       "NoteEditOutcome",
       "NoteEditorBinding",
       "NoteEditorCloseRequest",
       "NoteEditorClosed",
+      "NoteExtractionDefault",
       "NoteForkReadRequest",
       "NoteForkRecordView",
       "NoteForkRequest",
@@ -81297,6 +81363,7 @@
       "NoteReadSpan",
       "NoteReadView",
       "NoteRefRequest",
+      "NoteRetentionDefault",
       "NoteSeal",
       "NoteVerdict",
       "NoteVersion",
@@ -81891,6 +81958,7 @@
       "ScopedReadResultOptionalNoteVersionTree",
       "ScopedReadResultOptionalProductivityTree",
       "ScopedReadResultOptionalRecordPosition",
+      "ScopedReadResultOptionalSharedBriefCitation",
       "ScopedReadResultOptionalSharedBriefView",
       "ScopedReadResultOptionalSummaryReadView",
       "ScopedReadResultRecordRefPreview",
@@ -82499,8 +82567,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 628,
-      "struct": 1856
+      "enum": 633,
+      "struct": 1868
      }
     },
     {

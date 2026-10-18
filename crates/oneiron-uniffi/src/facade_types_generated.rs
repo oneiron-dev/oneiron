@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 703 facade rows, 2492 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 659.
+// UniFFI census: 706 facade rows, 2501 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 662.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -20564,6 +20564,119 @@ pub struct HooksReplayRequest {
     pub since: Option<String>,
     #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u64>,
+}
+
+/// `oneiron::memory::hook_regen_doors::types::HookRegenBindingRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HookRegenBindingRequest {
+    #[serde(rename = "binding")]
+    pub binding: String,
+}
+
+/// `oneiron::runtime_hooks::regen::HookContractStamp`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HookContractStamp {
+    #[serde(rename = "verb_table")]
+    pub verb_table: String,
+    #[serde(rename = "sandbox")]
+    pub sandbox: String,
+}
+
+/// `oneiron::runtime_hooks::regen::HookGoldenDiff`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HookGoldenDiff {
+    #[serde(rename = "cases")]
+    pub cases: u64,
+    #[serde(rename = "changed")]
+    pub changed: Vec<String>,
+}
+
+/// `oneiron::runtime_hooks::regen::HookRegenFailurePhase`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum HookRegenFailurePhase {
+    #[serde(rename = "intent")]
+    Intent,
+    #[serde(rename = "generate")]
+    Generate,
+    #[serde(rename = "validate")]
+    Validate,
+    #[serde(rename = "golden_replay")]
+    GoldenReplay,
+}
+
+/// `oneiron::runtime_hooks::regen::HookRegenFailure`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HookRegenFailure {
+    #[serde(rename = "phase")]
+    pub phase: HookRegenFailurePhase,
+    #[serde(rename = "message")]
+    pub message: String,
+}
+
+/// `oneiron::runtime_hooks::regen::HookRegenOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "outcome")]
+pub enum HookRegenOutcome {
+    #[serde(rename = "auto_adopt")]
+    AutoAdopt {
+        #[serde(rename = "candidate")]
+        candidate: String,
+        #[serde(rename = "target")]
+        target: HookContractStamp,
+        #[serde(rename = "diff")]
+        diff: HookGoldenDiff,
+    },
+    #[serde(rename = "needs_human_stamp")]
+    NeedsHumanStamp {
+        #[serde(rename = "candidate")]
+        candidate: String,
+        #[serde(rename = "target")]
+        target: HookContractStamp,
+        #[serde(rename = "diff")]
+        diff: HookGoldenDiff,
+    },
+    #[serde(rename = "rolled_back")]
+    RolledBack {
+        #[serde(rename = "failure")]
+        failure: HookRegenFailure,
+    },
+}
+
+/// `oneiron::runtime_hooks::regen::HookRegenRecord`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HookRegenRecord {
+    #[serde(rename = "body_hash")]
+    pub body_hash: String,
+    #[serde(rename = "stamp")]
+    pub stamp: HookContractStamp,
+    #[serde(rename = "intent", default, skip_serializing_if = "Option::is_none")]
+    pub intent: Option<String>,
+    #[serde(rename = "pending", default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<HookRegenOutcome>,
+}
+
+/// `oneiron::memory::hook_regen_doors::types::HookRegenView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HookRegenView {
+    #[serde(rename = "record")]
+    pub record: HookRegenRecord,
+    #[serde(
+        rename = "candidate_hash",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub candidate_hash: Option<String>,
+}
+
+/// `oneiron::memory::hook_regen_doors::types::HookRegenAdoptRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HookRegenAdoptRequest {
+    #[serde(rename = "binding")]
+    pub binding: String,
+    #[serde(rename = "candidate_hash")]
+    pub candidate_hash: String,
 }
 
 /// `oneiron::artifact_hosting::ArtifactPointerChannel`.
