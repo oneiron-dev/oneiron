@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 318 facade rows, 1182 generated types.
+// UniFFI census: 318 facade rows, 1183 generated types.
 // Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 286.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -6782,6 +6782,18 @@ pub struct GuestRevokeDisclosure {
     pub deletion_request_status: GuestDeletionRequestStatus,
 }
 
+/// `oneiron::receipt::guest_revoke::GuestRevokeCourtesyTargetView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GuestRevokeCourtesyTargetView {
+    #[serde(rename = "pact")]
+    pub pact: String,
+    #[serde(rename = "peer_vault_id")]
+    pub peer_vault_id: String,
+    #[serde(rename = "epoch_cutoff")]
+    pub epoch_cutoff: u64,
+}
+
 /// `oneiron::receipt::guest_revoke::GuestRevokeResponse`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -6804,6 +6816,12 @@ pub struct GuestRevokeResponse {
     pub pact_standing: GuestPactStanding,
     #[serde(rename = "disclosure")]
     pub disclosure: GuestRevokeDisclosure,
+    #[serde(
+        rename = "courtesy_targets",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub courtesy_targets: Option<Vec<GuestRevokeCourtesyTargetView>>,
 }
 
 /// `oneiron::task_verb::sdk_shared_members::GuestSlipMintRequest`.
@@ -19029,6 +19047,8 @@ pub struct DeckExportView {
     pub noop: bool,
     #[serde(rename = "changed_parts")]
     pub changed_parts: Vec<String>,
+    #[serde(rename = "effects")]
+    pub effects: Vec<String>,
     #[serde(rename = "record", default, skip_serializing_if = "Option::is_none")]
     pub record: Option<OfficeBodyExportRecord>,
     #[serde(rename = "proposed", default, skip_serializing_if = "Option::is_none")]

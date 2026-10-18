@@ -18,7 +18,7 @@ use oneiron_docedit::edit::Preset;
 use oneiron_docedit::live::deck_export::PROJECTOR_VERSION;
 use oneiron_docedit::live::{
     ApproveScope, DeckDiff, ExportProfile, Gate, GeometryProps, Landing, LandingReceipt, NodeId,
-    NodeKind, NodePayload, OracleReceipt, TextBody,
+    NodeKind, NodePayload, OracleReceipt, TextBody, effect_receipt,
 };
 
 /// `vault.artifacts.body.deck.merge`: land a reviewed deck fork, naming the
@@ -126,6 +126,11 @@ pub struct DeckExportView {
     pub authoritative: bool,
     pub noop: bool,
     pub changed_parts: Vec<String>,
+    /// What the projection did beyond its writes, as its receipt names it:
+    /// a preset over custom or inherited geometry, and each edit done
+    /// PowerPoint's way where the deck once refused it (a chart type
+    /// change, data embedded, SmartArt text, held media, a fitted table).
+    pub effects: Vec<String>,
     pub record: Option<OfficeBodyExportRecord>,
     /// A closed-gate projection waiting beside the artifact for Keep under
     /// the request's run ref; `None` when it landed or changed nothing.
@@ -300,6 +305,7 @@ impl Memory<'_> {
             projector: export.outcome.key.projector,
             authoritative: export.authoritative,
             noop: export.outcome.noop,
+            effects: export.outcome.effects.iter().map(effect_receipt).collect(),
             changed_parts: export.outcome.changed_parts,
             record,
             proposed,

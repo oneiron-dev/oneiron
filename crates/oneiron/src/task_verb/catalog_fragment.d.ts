@@ -9,7 +9,7 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 381 code-mode rows (361 host rows, 20 run rows), 1386 declarations.
+// Census: 381 code-mode rows (361 host rows, 20 run rows), 1388 declarations.
 // Replies: 328 fully typed, 49 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 79; unread shapes: BoardVerbOutput.
@@ -493,7 +493,8 @@ declare namespace Sdk {
   type GuestCopyState = "unknown";
   type GuestDeletionRequestStatus = "not_requested" | "queued" | "sent";
   type GuestRevokeDisclosure = { copied_bytes_recallable: NotRecallable; recipient_copy_state: GuestCopyState; deletion_request_status: GuestDeletionRequestStatus };
-  type GuestRevokeResponse = { grant_ref: EntityId; guest_ref: EntityId; changed: boolean; revoked_at: number; revoked_slip_refs?: string[]; pact_standing: GuestPactStanding; disclosure: GuestRevokeDisclosure };
+  type GuestRevokeCourtesyTargetView = { pact: string; peer_vault_id: string; epoch_cutoff: number };
+  type GuestRevokeResponse = { grant_ref: EntityId; guest_ref: EntityId; changed: boolean; revoked_at: number; revoked_slip_refs?: string[]; pact_standing: GuestPactStanding; disclosure: GuestRevokeDisclosure; courtesy_targets?: GuestRevokeCourtesyTargetView[] };
   type GuestSlipMintRequest = { grant_ref: EntityId; holder_key: string; expires_at: number };
   type GuestSlipMinted = { slip_id: string; slip: string; expires_at: number };
   type ResidenceModeName = "opened" | "all";
@@ -1076,19 +1077,20 @@ declare namespace Sdk {
   type ReceiptEvidence = { state: "kept"; artifact_ref: string; version: number; content_hash: string } | { state: "not_kept"; code: string };
   type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; effect_class?: string | null; press: string; screenshot?: string | null; screenshot_evidence?: ReceiptEvidence | null };
   type LibraryCard = { workflow: string; site: string; subgoal: string; params: string[]; runs: number; failures: number };
-  type Observation = { seq: number; url: string; title: string; full: boolean; rows: Row[]; removed?: string[]; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean };
+  type PartialTree = { reason: string; visited: number; pending: number; walk_ms: number };
+  type Observation = { seq: number; url: string; title: string; full: boolean; rows: Row[]; removed?: string[]; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean; partial?: PartialTree | null };
   type ObservationPage = Observation & { next?: string | null };
   type ObserveInput = { since?: number | null; cursor?: string | null };
   type FindInput = { role?: string | null; name?: string | null; cursor?: string | null };
-  type FindOutput = { rows: Row[]; next?: string | null };
+  type FindOutput = { rows: Row[]; next?: string | null; partial?: PartialTree | null };
   type ClickInput = { ref: string };
   type PointInput = { image: string; x: number; y: number };
   type TypeInput = { ref: string; text: string; clear?: boolean };
   type SelectInput = { ref: string; option: string };
   type WaitForInput = { targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null; cursor?: string | null };
-  type WaitForOutput = { rows: Row[]; timed_out: boolean; waited_ms: number; next?: string | null };
+  type WaitForOutput = { rows: Row[]; timed_out: boolean; waited_ms: number; next?: string | null; partial?: PartialTree | null };
   type ExpectInput = { ref?: string | null; role?: string | null; name?: string | null; value?: string | null; absent?: boolean };
-  type ExpectOutput = { met: boolean; row?: Row | null };
+  type ExpectOutput = { met: boolean; row?: Row | null; partial?: PartialTree | null };
   type ScreenshotTrigger = "outline_thin" | "no_postcondition" | "decider_reobserve" | "no_accessibility_tree" | "effect_receipt";
   type ScreenshotInput = { trigger: ScreenshotTrigger };
   type ScreenshotOutput = { image: string; media_type: string; width: number; height: number; bytes: number; trigger: ScreenshotTrigger; url: string; title: string };
@@ -1308,7 +1310,7 @@ declare namespace Sdk {
   type DeckForkMergeRequest = { artifact_ref: string; fork_ref: string; reviewed_head: number[]; scope?: ApproveScope | null; landing?: Landing | null; made_by?: unknown | null };
   type LandingReceipt = { proposal: string; proposer: string; settler: string; scope: ApproveScope; landing: Landing; automatic: boolean; reviewed_version: number; landed_version: number; affected: NodeId[]; switched_away: NodeId[] };
   type DeckExportRequest = { artifact_ref: string; run_ref: string; made_by?: unknown | null };
-  type DeckExportView = { frontier: number[]; profile: string; projector: string; authoritative: boolean; noop: boolean; changed_parts: string[]; record?: OfficeBodyExportRecord | null; proposed?: PendingProposalView | null };
+  type DeckExportView = { frontier: number[]; profile: string; projector: string; authoritative: boolean; noop: boolean; changed_parts: string[]; effects: string[]; record?: OfficeBodyExportRecord | null; proposed?: PendingProposalView | null };
   type DeckGateRequest = { profile?: string | null };
   type StepOutcome = "passed" | { failed: string } | { inconclusive: string } | "not_run";
   type OracleReceipt = { profile: string; powerpoint_version: string; macos_version: string; font_versions: string[]; steps: StepOutcome[]; clean: boolean };
@@ -1491,7 +1493,7 @@ declare namespace self {
       /** Runs a replay library program live with its arguments; a missed postcondition goes back to the planner. */
       run(input: Sdk.LibraryRunInput): Promise<Sdk.LibraryRunOutput | StoredResult>;
     };
-    /** Observes the current page of the run's browser session, in pages: an answer with next goes on, and observe with that cursor reads the next page. */
+    /** Observes the current page of the run's browser session, in pages read on with observe and an answer's next cursor; the verbs follow a tab an act opens, or a closed tab's opener, and name the move as switched. */
     observe(input: Sdk.ObserveInput): Promise<Sdk.ObservationPage | StoredResult>;
     /** Opens a URL in the run's own browser session and observes the page; a long page's observation comes in pages, read on with observe and its next cursor. */
     open(input: Sdk.OpenInput): Promise<Sdk.ObservationPage | StoredResult>;
@@ -1531,7 +1533,7 @@ declare namespace self {
     hotkey(input: Sdk.HotkeyInput): Promise<Sdk.ObservationPage | StoredResult>;
     /** Presses one key, with modifiers, on a window target or the window's focus; a long window's observation comes in pages, read on with observe and its next cursor. */
     key(input: Sdk.KeyInput): Promise<Sdk.ObservationPage | StoredResult>;
-    /** Observes the current window of the run's desktop guest, in pages: an answer with next goes on, and observe with that cursor reads the next page. */
+    /** Observes the current window of the run's desktop guest, in pages read on with observe and an answer's next cursor; a tree walk cut short answers partial, and its last page's next walks the window again. */
     observe(input: Sdk.ObserveInput): Promise<Sdk.ObservationPage | StoredResult>;
     /** Opens an app of the run's own desktop guest by app:name and observes its window; a long window's observation comes in pages, read on with observe and its next cursor. */
     open(input: Sdk.OpenInput): Promise<Sdk.ObservationPage | StoredResult>;
