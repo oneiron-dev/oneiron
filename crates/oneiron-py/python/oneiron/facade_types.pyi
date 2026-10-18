@@ -5158,8 +5158,8 @@ class CodeUnitVersionView(TypedDict):
 class CodeOperationView(TypedDict):
     operation_ref: str
     sequence: int
-    session_ref: str
-    actor_ref: str
+    session_ref: NotRequired[str | None]
+    actor_ref: NotRequired[str | None]
     actor_class: str
     turn_ref: NotRequired[str | None]
     activity_ref: NotRequired[str | None]

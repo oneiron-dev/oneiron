@@ -9,7 +9,11 @@
 //! returned. The answer is evidence, never effect authority
 //! (`NotEvaluatedByAsk`): the verb's own gate runs on the resumed call. A
 //! credential caller's call saves a reference to its exact instrument and
-//! door, and only a retry presenting the same one reads it.
+//! door, and only a retry presenting the same one reads it. The ask and its
+//! reads run on the task-work turn the calling operation holds
+//! ([`author_memory`]).
+
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -20,6 +24,7 @@ use crate::task_verb::{
     ConsultPayloadRef, TaskAskDecision, TaskAskDefault, TaskAskHandle, TaskAskOptionId,
     TaskAskQuestion, TaskAskResult, TaskAskSettlementReason, TaskAskSpec, TaskAskStatus,
 };
+use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, Error, MemoryError, Result, Vault};
 
 use super::{InvocationId, VerbCall, VerbDomain, VerbHookStop, VerbResume, credential};
@@ -205,6 +210,25 @@ impl AskToken {
     }
 }
 
+/// The hook's author's surface for its ask, on the task-work turn the
+/// calling operation already holds, when it holds one: the ask is part of
+/// that operation, so it never waits in the line for a second turn, even
+/// when the author is not the caller. Only the turn rides along: the surface
+/// is the author's own, with none of the caller's authority, read or
+/// session. With no turn, the author's task door takes its own.
+fn author_memory(
+    vault: &Vault,
+    author: EntityId,
+    class: HookActorClass,
+    turn: Option<&Arc<TaskWorkTurn>>,
+) -> crate::Memory<'_> {
+    let memory = vault.memory(author, super::super::filter::edge_class(class));
+    match turn {
+        Some(turn) => memory.with_task_work_turn(Arc::clone(turn)),
+        None => memory,
+    }
+}
+
 /// Whether a stopped call is saved under `invocation`, in any state.
 pub(super) fn saved(vault: &Vault, invocation: InvocationId) -> Result<bool> {
     let rtxn = vault.store.env.read_txn()?;
@@ -215,8 +239,14 @@ pub(super) fn saved(vault: &Vault, invocation: InvocationId) -> Result<bool> {
 /// is how the caller could be resumed without it: only a caller whose call
 /// the drain would run the same way reads the drained outcome. A row saved
 /// with a resume target is this call's only when the call presents the same
-/// one; any other is a conflict, never a new call.
-pub(super) fn retry(vault: &Vault, call: &VerbCall, resume: Option<&VerbResume>) -> Result<Retry> {
+/// one; any other is a conflict, never a new call. The ask is read on `turn`,
+/// the calling operation's task-work turn.
+pub(super) fn retry(
+    vault: &Vault,
+    call: &VerbCall,
+    resume: Option<&VerbResume>,
+    turn: Option<&Arc<TaskWorkTurn>>,
+) -> Result<Retry> {
     let key = call.invocation.0;
     let row = {
         let rtxn = vault.store.env.read_txn()?;
@@ -248,11 +278,7 @@ pub(super) fn retry(vault: &Vault, call: &VerbCall, resume: Option<&VerbResume>)
             _ => skipped(USED),
         };
     }
-    let status = vault
-        .memory(
-            row.author,
-            super::super::filter::edge_class(row.author_class),
-        )
+    let status = author_memory(vault, row.author, row.author_class, turn)
         .tasks_ask_status(TaskAskHandle { group_ref: row.ask });
     let result = match status {
         Ok(TaskAskStatus::Pending { .. } | TaskAskStatus::Changed { .. }) => {
@@ -346,11 +372,11 @@ fn completed(invocation: InvocationId, outcome: &SavedOutcome) -> Result<VerbHoo
 /// one its pre chain carries on this thread, is pinned beside it. An ask the
 /// approval mode holds (ASK-3; never one to the owner alone) saves the same
 /// in its admission: a retry reads the hold's Pending, and the release mints
-/// the group the row names. `Err(reason)` when the ask door refused: nothing
-/// was saved.
+/// the group the row names. The ask opens on `turn`, the calling operation's
+/// task-work turn. `Err(reason)` when the ask door refused: nothing was saved.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the call, the hook, its place, the args, the label, the resume target and the chain's write"
+    reason = "the call, the hook, its place, the args, the label, the resume target, the call's turn and the chain's write"
 )]
 pub(super) fn open(
     vault: &Vault,
@@ -360,6 +386,7 @@ pub(super) fn open(
     args: &Value,
     label: &str,
     resume: Option<&VerbResume>,
+    turn: Option<&Arc<TaskWorkTurn>>,
     write: &dyn Fn(&mut heed::RwTxn<'_>) -> Result<()>,
 ) -> Result<std::result::Result<VerbHookStop, String>> {
     let (binding_id, binding) = hook;
@@ -415,11 +442,7 @@ pub(super) fn open(
         let resume = credential::retain_in_txn(vault, txn, key, ask, resume, witness.as_ref())?;
         ASKS.put(&vault.store, txn, &key, &row(ask, resume)?)
     };
-    let opened = vault
-        .memory(
-            binding.author_id(),
-            super::super::filter::edge_class(binding.author_class()),
-        )
+    let opened = author_memory(vault, binding.author_id(), binding.author_class(), turn)
         .tasks_ask_with_txn_effect(&spec, |txn, ask| {
             write(txn).map_err(MemoryError::from)?;
             save(txn, ask).map_err(MemoryError::from)
@@ -610,7 +633,8 @@ pub(super) fn unready(vault: &Vault, key: [u8; 16], group: EntityId) -> Result<(
 /// used ones used before it, and open ones opened before it whose ask
 /// settled without a proceed. An open one no settlement marked yet is read
 /// through its ask first, as its author: the read settles a lapsed ask, and
-/// settlement marks the row. Returns how many it deleted.
+/// settlement marks the row. The hook runner's pass holds no task-work turn,
+/// so each read takes the author's own. Returns how many it deleted.
 pub(super) fn prune(vault: &Vault, cutoff: u64, max: usize) -> Result<usize> {
     let mut old = Vec::new();
     let mut unsettled = Vec::new();
@@ -638,8 +662,7 @@ pub(super) fn prune(vault: &Vault, cutoff: u64, max: usize) -> Result<usize> {
         }
     }
     for (key, author, class, ask) in unsettled {
-        let status = vault
-            .memory(author, super::super::filter::edge_class(class))
+        let status = author_memory(vault, author, class, None)
             .tasks_ask_status(TaskAskHandle { group_ref: ask });
         if matches!(status, Ok(TaskAskStatus::Settled(_))) {
             old.push(key);
