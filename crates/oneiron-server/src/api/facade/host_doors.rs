@@ -82,6 +82,8 @@ pub(crate) use super::skill_execution_doors::*;
 pub(crate) use super::courtesy_delete_doors::*;
 // The owner's guest revoke door (OF-232) too.
 pub(crate) use super::coreference_doors::*;
+// The owner's subject-bound feedback and report doors, likewise.
+pub(crate) use super::feedback_doors::*;
 pub(crate) use super::federation_connect_doors::*;
 pub(crate) use super::guest_doors::*;
 pub(crate) use super::hub_doors::*;
@@ -1179,6 +1181,11 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.craft_candidates.answer"
         | "vault.memory.signal_extraction"
         | "vault.memory.signal_extraction.result"
+        | "feedback.preview"
+        | "feedback.send"
+        | "vault.reports.disclosure"
+        | "vault.reports.route"
+        | "vault.reports.outbound"
         | "vault.claims.review"
         | "vault.claims.settle"
         | "vault.claims.vet"
@@ -1203,6 +1210,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.task_types.pin"
         | "vault.task_types.get"
         | "vault.agents.spawn.get"
+        | "vault.agents.spawn"
         | "vault.tasks.cancel_force"
         | "vault.runs.branches.get"
         | "vault.consults.get"

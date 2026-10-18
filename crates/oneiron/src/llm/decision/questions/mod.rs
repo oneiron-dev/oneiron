@@ -32,7 +32,9 @@ pub use graph_ask::{
 pub use health_ask::{
     HEALTH_CROSSING_PREDICATE, HEALTH_OUTCOME_PREDICATE, HealthAnswer, HealthBound,
 };
-pub use outcomes::{calibration_pairs, person_changed_pairs, project_bound_outcomes};
+pub use outcomes::{
+    calibration_pairs, outcome_labels, person_changed_pairs, project_bound_outcomes,
+};
 pub(crate) use recipe::run_graph_question_with_proposals;
 pub use recipe::{GraphQuestionInput, GraphQuestionRef, run_graph_question};
 pub use records::*;
@@ -43,7 +45,9 @@ pub use refresh::{
     refresh_question_with, standing_ask_route,
 };
 pub use standing::{StandingAnswer, backfill_standing_answer, standing_source_frontier};
-pub use store::{create_question, edit_question, pause_question, read_question};
+pub use store::{
+    create_question, edit_question, pause_question, read_question, read_question_schedule,
+};
 pub(crate) use task_ask::{TaskAnswerBinding, bind_task_answer_in_txn, validate_task_answer_unit};
 pub use windows::{
     SILENCE_OUTCOME, close_due_outcome_windows, closed_outcome_windows,

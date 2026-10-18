@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 703 code-mode rows (682 host rows, 21 run rows), 2481 declarations.
-// Replies: 622 fully typed, 77 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 712 code-mode rows (691 host rows, 21 run rows), 2505 declarations.
+// Replies: 630 fully typed, 78 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 95; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 96; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -24,6 +24,21 @@ declare namespace Sdk {
   type ReportRoute = { destination: "owner_inbox" } | { destination: "publisher"; publisher_ref: string };
   type ReportDisclosure = "local" | "content_free" | "needs_approval" | "approved" | "denied";
   type ReportReceipt = { issue_ref: string; already_submitted: boolean; status: ReportStatus; quality_score?: number | null; duplicate_of?: string | null; route: ReportRoute; disclosure: ReportDisclosure };
+  type FeedbackCategory = "bug" | "papercut" | "confusion" | "feature-wish";
+  type FeedbackPreviewRequest = { issue_ref: string; category: FeedbackCategory; include_text?: boolean };
+  type FeedbackSubjectPreview = { issue_ref: string; subject_ref: string; publisher_ref: string; disclosure: ReportDisclosure; includes_text: boolean; digest: string; encoding: string; bundle: unknown; destination: string; approval: string; previewed_at: number };
+  type FeedbackSendSubjectRequest = { issue_ref: string; category: FeedbackCategory; include_text?: boolean; digest: string; approval: string; previewed_at: number };
+  type FeedbackSubjectSent = { issue_ref: string; subject_ref: string; publisher_ref: string; digest: string; outcome: string; gate_reasons: string[]; approval_receipt_ref: string; logical_send_ref: string };
+  type ReportDisclosureChoice = "approve_once" | "stop_asking_for_publisher" | "deny";
+  type ReportDisclosureRequest = { issue_ref: string; choice: ReportDisclosureChoice };
+  type ReportReview = { status: ReportStatus; quality_score?: number | null; duplicate_of?: string | null };
+  type ReportIssue = { issue_ref: string; actor_ref: string; request: ReportRequest; received_at: number; route: ReportRoute; review: ReportReview; disclosure: ReportDisclosure };
+  type ReportRouteRequest = { subject_ref: string; route: ReportRoute };
+  type ReportRouteReceipt = { subject_ref: string; route: ReportRoute; updated: boolean };
+  type ReportOutboundRequest = { issue_ref: string };
+  type ReportSignatureView = { issue_ref: string; subject_hash: string; category: IssueCategory; kind: ReportKind };
+  type ReportPayloadView = { route: ReportRoute; signature: ReportSignatureView; disclosed?: ReportRequest | null };
+  type ReportOutboundView = { issue_ref: string; payload?: ReportPayloadView | null };
   type BoardRefreshRequest = { frame_epoch?: number | null };
   type BoardVerbOutput = unknown;
   type SubscriptionScope = "my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts";
@@ -1538,6 +1553,9 @@ declare namespace Sdk {
   type LearningObservation = { cell: DoorsLearningCellView; mean: number; own: boolean; own_runs: number; prior_origin: string; prior_weight_runs: number; borrowed_from?: BorrowedCellView | null; untested: boolean; window_half_life_secs: number; estimator_version: number; evidence: DoorsLearningEvidenceView[] };
   type ObservationIssue = { kind: "stamp_mismatch"; consumer: string; reference: string; expected: TypeStamp; actual: TypeStamp } | { kind: "missing_binding"; reference: string } | { kind: "several_teams"; team_refs: string[] } | { kind: "team_mismatch"; member_ref: EntityId; expected: string; actual?: string | null } | { kind: "unavailable"; consumer: string; reason: string };
   type PlannedSpawnObservation = { spawn_ref: EntityId; phase: SpawnPhase; type_ref: TypeStamp; plan?: PlanObservation | null; launched: LaunchedMember[]; resolved?: ResolvedTeam | null; binding?: TeamBindingView | null; receipt?: TeamReceiptView | null; routes: RouteObservation[]; critics: CriticObservation[]; learning: LearningObservation[]; issues: ObservationIssue[] };
+  type SpawnAskKnob<T> = { mode: "seed"; value: T; weight_runs: number } | { mode: "pin"; value: T };
+  type SpawnIntentRequest = { intent_key: string; prompt: string; requested_type?: TypeStamp | null; need: string; care?: string | null; notes?: string | null; model?: SpawnAskKnob<string> | null; width?: SpawnAskKnob<number> | null; pattern?: SpawnAskKnob<string> | null; budget_cap_units?: SpawnAskKnob<number> | null };
+  type SpawnIntentReply = { intent_key: string; phase: SpawnPhase; placed?: TypeStamp | null; refusal?: string | null; root_attempt?: EntityId | null; member_attempts: EntityId[]; team_ref?: string | null; agent_def_ref?: EntityId | null; plan?: PlanObservation | null };
   type CancelForceRequest = { task_ref: EntityId; reason?: string | null };
   type AgentRunStatus = "spawned" | "working" | "needs_input" | "delivered" | "archived" | "failed" | "abandoned";
   type RunAskQuestion = { who: string; prompt: string; options: string[]; deadline?: number | null };
@@ -1936,6 +1954,12 @@ declare namespace Sdk {
   type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding };
   type QuestionAnswer = (AnswerRecord & { kind: "graph" }) | (ArtifactAskRecord & { kind: "artifact" });
   type QuestionRefreshRequest = { id: EntityId };
+  type QuestionOutcomesRequest = { id: EntityId };
+  type QuestionOutcomes = { labels: OutcomeLabel[]; calibration: CalibrationPair[] };
+  type QuestionOutcomesProjectRequest = { id: EntityId };
+  type QuestionOutcomesProjected = { id: EntityId; projected: number };
+  type QuestionScheduleRequest = { id: EntityId };
+  type QuestionScheduleHead = { id: string; version: number; paused: boolean; last_refresh?: number | null; retry_at?: number | null };
   type DecisionBandReadRequest = { question: DecisionQuestion; reversibility: Reversibility; seed: DecisionBand };
   type BandMode = "shadow" | "enforce";
   type LearnedBand = { band: DecisionBand; version: number; mode: BandMode };
@@ -2583,6 +2607,12 @@ declare const connector: { readonly [name: string]: { readonly [tool: string]: (
 /** Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), a task highway handle as its status (`after` polls it), or the whole TASKS section when nothing is named. */
 declare function describe(input: Sdk.DescribeRequest & { fold: NonNullable<Sdk.DescribeRequest["fold"]> }): Promise<Sdk.FoldReply<Sdk.FoldDescription> | StoredResult>;
 declare function describe(input: Sdk.DescribeRequest): Promise<Sdk.TaskDescription | StoredResult>;
+declare const feedback: {
+  /** The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval. */
+  preview(input: Sdk.FeedbackPreviewRequest): Promise<Sdk.FeedbackSubjectPreview | StoredResult>;
+  /** The owner sends exactly the previewed feedback bundle for one report issue to its publisher, once, through the ordinary outbound gate. */
+  send(input: Sdk.FeedbackSendSubjectRequest): Promise<Sdk.FeedbackSubjectSent | StoredResult>;
+};
 /** An ask's attributed partial words so far, then explicit unknowns at cutoff; reading it never settles the ask. */
 declare function peek(input: Sdk.TaskAskHandle): Promise<Sdk.TaskAskPersonEvidence[] | StoredResult>;
 /** Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor. */
@@ -2847,7 +2877,8 @@ declare const vault: Sdk.VaultHost & {
     export_pack(input: Sdk.AgentPackExportRequest): Promise<Sdk.AgentPackExport | StoredResult>;
     /** The owner reads one saved agent composition, including its declared refusal dial, version and approval state. */
     get(input: Sdk.AgentDefinitionRequest): Promise<Sdk.AgentDefinitionView | StoredResult>;
-    spawn: {
+    /** The owner launches one reserved planned agent or team under an intent key on this host's planner: the type placed, the plan frozen at the root, then queued; the same key answers what it kept. */
+    spawn: ((input: Sdk.SpawnIntentRequest) => Promise<Sdk.SpawnIntentReply | StoredResult>) & {
       /** The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning. */
       get(input: Sdk.PlannedSpawnRead): Promise<Sdk.PlannedSpawnObservation | StoredResult>;
     };
@@ -3748,10 +3779,17 @@ declare const vault: Sdk.VaultHost & {
     backfill(input: Sdk.QuestionBackfillRequest): Promise<Sdk.ScheduledBackfill | StoredResult>;
     create(input: Sdk.QuestionCreateRequest): Promise<Sdk.QuestionRecord | StoredResult>;
     edit(input: Sdk.QuestionEditRequest): Promise<Sdk.QuestionRecord | StoredResult>;
+    /** Reads the caller's standing question outcome labels and calibration pairs, each pairing an answer prediction and probability with its mapped label. */
+    outcomes: ((input: Sdk.QuestionOutcomesRequest) => Promise<Sdk.QuestionOutcomes | StoredResult>) & {
+      /** Projects the caller's standing question bound outcomes over current facts, idempotently binding each admissible fact in an answer horizon as its label. */
+      project(input: Sdk.QuestionOutcomesProjectRequest): Promise<Sdk.QuestionOutcomesProjected | StoredResult>;
+    };
     pause(input: Sdk.QuestionPauseRequest): Promise<Sdk.QuestionPaused | StoredResult>;
     read(input: Sdk.QuestionReadRequest): Promise<Sdk.QuestionRecord | null | StoredResult>;
     /** Refreshes the caller's standing question by hand, now, over every unit its current version covers, on the host's ladder as the standing pump answers it. */
     refresh(input: Sdk.QuestionRefreshRequest): Promise<Sdk.AnswerRecord[] | StoredResult>;
+    /** Reads the caller's standing question scheduling head: its current version, paused state, last refresh and any failed-refresh hold. */
+    schedule(input: Sdk.QuestionScheduleRequest): Promise<Sdk.QuestionScheduleHead | null | StoredResult>;
   };
   /** Recalls a memory pack for a query at an effort level: ranked items with provenance, scope honesty and retrieval accounting. */
   recall(input: Sdk.RecallRequest): Promise<Sdk.MemoryPack | StoredResult>;
@@ -3776,6 +3814,14 @@ declare const vault: Sdk.VaultHost & {
   };
   /** Commits one claim through the gate, the same as vault.claims.upsert. */
   remember(input: Sdk.ClaimInput): Promise<Sdk.CommitReceipt | StoredResult>;
+  reports: {
+    /** The owner decides whether one publisher-routed report's exact quoted text may cross to its publisher: approve once, stop asking, or deny. */
+    disclosure(input: Sdk.ReportDisclosureRequest): Promise<Sdk.ReportIssue | StoredResult>;
+    /** The owner reads the content-free payload a publisher delivery for one report issue would carry now, with its quoted text only when disclosure approved it. */
+    outbound(input: Sdk.ReportOutboundRequest): Promise<Sdk.ReportOutboundView | StoredResult>;
+    /** The owner replaces one durable subject's maker route: the owner inbox, or one admitted publisher its feedback is delivered to. */
+    route(input: Sdk.ReportRouteRequest): Promise<Sdk.ReportRouteReceipt | StoredResult>;
+  };
   research: {
     /** Reads the complete retained campaign record, including every pruned, buggy and woven candidate, original search and held-out evidence, selection rounds and promotion receipts, under the controller gate. */
     archive: ((input: Sdk.ResearchArchiveWire) => Promise<Sdk.ResearchArchive | StoredResult>) & {
