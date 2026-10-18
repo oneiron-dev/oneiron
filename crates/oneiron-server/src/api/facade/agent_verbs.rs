@@ -77,6 +77,16 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.tagging.history", post(facade_route))
         .route("/vault.tagging.mentions", post(facade_route))
         .route("/vault.affect.claims.consolidate", post(facade_route))
+        .route("/vault.affect.coping.record", post(facade_route))
+        .route("/vault.affect.coping.update", post(facade_route))
+        .route("/vault.affect.coping.aggregate", post(facade_route))
+        .route("/vault.affect.wellness.policy.get", post(facade_route))
+        .route(
+            "/vault.affect.wellness.policy.configure",
+            post(facade_route),
+        )
+        .route("/vault.affect.wellness.derive", post(facade_route))
+        .route("/vault.affect.wellness.get", post(facade_route))
         .route("/vault.retrieval.recall", post(facade_route))
         .route("/vault.retrieval.runs", post(facade_route))
         .route("/vault.retrieval.run", post(facade_route))
@@ -653,6 +663,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.remember", post(facade_route))
         .route("/vault.claims.retract", post(facade_route))
         .route("/vault.forget", post(facade_route))
+        .route("/vault.booking.availability", post(facade_route))
+        .route("/vault.booking.book", post(facade_route))
+        .route("/vault.booking.reschedule", post(facade_route))
+        .route("/vault.booking.cancel", post(facade_route))
         .route("/vault.booking.constraint_turn", post(facade_route))
         .route("/vault.booking.page_token", post(facade_route))
         .route("/calendar.invite", post(facade_route))

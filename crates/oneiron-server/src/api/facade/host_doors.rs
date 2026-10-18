@@ -1086,7 +1086,11 @@ fn owner_grade(auth: &CoreAuth, message: &str) -> MemoryResult<()> {
 /// proof it acts under. A row whose door has no such check passes.
 pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<()> {
     match verb {
-        "vault.booking.constraint_turn" => {
+        "vault.booking.constraint_turn"
+        | "vault.booking.availability"
+        | "vault.booking.book"
+        | "vault.booking.reschedule"
+        | "vault.booking.cancel" => {
             crate::api::host_action::require_host_owner_act(server, auth)
                 .map(drop)
                 .map_err(|error| super::FacadeApiError::from(error).into_memory_error())
@@ -1196,6 +1200,13 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.retrieval.weights.get"
         | "vault.retrieval.weights.configure"
         | "vault.affect.claims.consolidate"
+        | "vault.affect.coping.record"
+        | "vault.affect.coping.update"
+        | "vault.affect.coping.aggregate"
+        | "vault.affect.wellness.policy.get"
+        | "vault.affect.wellness.policy.configure"
+        | "vault.affect.wellness.derive"
+        | "vault.affect.wellness.get"
         | "vault.slim.policy"
         | "vault.slim.state"
         | "vault.slim.resume_step"

@@ -790,12 +790,35 @@ class Oneiron:
         def annotations(self) -> "Oneiron._VaultAffectAnnotationsVerbs": ...
         @property
         def claims(self) -> "Oneiron._VaultAffectClaimsVerbs": ...
+        @property
+        def coping(self) -> "Oneiron._VaultAffectCopingVerbs": ...
+        @property
+        def wellness(self) -> "Oneiron._VaultAffectWellnessVerbs": ...
     class _VaultAffectAnnotationsVerbs:
         def put(self, spec: Facade.AffectAnnotationPut) -> Facade.CommitReceipt:
             """Writes one sourced TURN VAD annotation through ordinary scoped claim admission and the caller credential; the receipt states its approval."""
     class _VaultAffectClaimsVerbs:
         def consolidate(self, spec: Facade.AffectClaimConsolidateRequest) -> Facade.AffectClaimConsolidation:
             """The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction."""
+    class _VaultAffectCopingVerbs:
+        def record(self, spec: Facade.CopingOutcomeRecordRequest) -> Facade.CopingOutcomeReceipt:
+            """Records a first coping outcome from two stored VAD-annotated turns for one person, with scoped claim admission and caller attribution; no factual claim is superseded."""
+        def update(self, spec: Facade.CopingOutcomeUpdateRequest) -> Facade.CopingOutcomeReceipt:
+            """Updates an active coping aggregate from its strategy turn and a later annotated turn through the existing engine transaction, preserving scope and both evidence refs."""
+        def aggregate(self, spec: Facade.CopingAggregateRequest) -> Facade.CopingAggregate:
+            """Reads all admitted active coping aggregates for one person and optional exact scope, including unsuccessful outcomes and their attribution and evidence refs."""
+    class _VaultAffectWellnessVerbs:
+        @property
+        def policy(self) -> "Oneiron._VaultAffectWellnessPolicyVerbs": ...
+        def derive(self, spec: Facade.WellnessPersonRequest) -> Facade.WellnessProjection:
+            """Derives one person's non-clinical wellness projection using the existing state measurements and configured mode bands, with a routed receipt and source refs."""
+        def get(self, spec: Facade.WellnessPersonRequest) -> Facade.WellnessProjection:
+            """Reads one person's measured wellness state, configured advisory mode and coping aggregates with source refs, without refreshing or revising factual claims."""
+    class _VaultAffectWellnessPolicyVerbs:
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.ActionModePolicy | None:
+            """Reads the configured non-clinical wellness window, targets and advisory mode bands as the owner; absent policy stays absent."""
+        def configure(self, spec: Facade.WellnessPolicyConfigureRequest) -> Facade.ActionModePolicy | None:
+            """Configures or clears the existing action-mode policy as the owner; no universal wellness cutoff or diagnostic label is supplied by the engine."""
     class _VaultTaggingVerbs:
         def status(self, spec: Facade.TaggingTurnRequest) -> Facade.TaggingStatusView:
             """Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker and failure reason."""
@@ -2029,6 +2052,14 @@ class Oneiron:
         def answer(self, spec: Facade.DecisionAskAnswerRequest) -> Facade.DecisionAsk: ...
         def climb(self, spec: Facade.DecisionAskClimbRequest) -> Facade.ResolvedRole | None: ...
     class _VaultBookingVerbs:
+        def availability(self, spec: Facade.BookingAvailabilityRequest) -> Facade.BookingOperationResponse:
+            """Lists ranked public slots on a live published booking page as the caller, through the shared booking admission and solver without exposing busy sources."""
+        def book(self, spec: Facade.BookingBookRequest) -> Facade.BookingOperationResponse:
+            """Holds or confirms a real slot on a live published booking page as the caller, through the shared admission and home-node lifecycle with opaque session-bound tokens."""
+        def reschedule(self, spec: Facade.BookingRescheduleRequest) -> Facade.BookingOperationResponse:
+            """Moves a booking on a live published page using its reschedule token, preserving EVENT and UID and replaying without another passport revision."""
+        def cancel(self, spec: Facade.BookingCancelRequest) -> Facade.BookingOperationResponse:
+            """Cancels a booking on a live published page using its cancel token, preserving EVENT and UID and replaying without another passport revision."""
         def constraint_turn(self, spec: Facade.BookingConstraintTurnRequest) -> Facade.BookingConstraintTurnResponse:
             """Parses one scheduling constraint on a live published booking page as the caller, returning public slot controls, an email continuation or a deflect; this never holds or confirms a booking."""
         def page_token(self, spec: Facade.BookingPageTokenRequest) -> Facade.BookingPageTokenResponse:

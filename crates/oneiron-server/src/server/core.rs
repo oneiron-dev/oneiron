@@ -273,12 +273,20 @@ impl SyncServer {
         // An empty configured secret mints nothing either: it carries no key
         // material, and every upgrade bearing it (or nothing) still 401s at
         // the auth door, so booting rootless here is fail-closed, not open.
-        if let Some(secret) = host_root_secret(&vault, &config) {
-            let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
-            vault.ensure_host_root_slip(&issuer)?;
-            // The engine's MACHINE writers sign with host-held keys (ONE-1634).
-            vault.provision_engine_machine_identities(&issuer)?;
-        }
+        let issuer = match host_root_secret(&vault, &config) {
+            Some(secret) => {
+                let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+                vault.ensure_host_root_slip(&issuer)?;
+                // The engine's MACHINE writers sign with host-held keys (ONE-1634).
+                vault.provision_engine_machine_identities(&issuer)?;
+                Some(issuer)
+            }
+            None => None,
+        };
+        // This install's own machine profile, before any request is admitted,
+        // so it carries the owner's acts from its first start (FIX 4648):
+        // self-hosted and embedded serving alike. A start goes on without it.
+        vault.ensure_serving_install_profile_at_start(issuer.as_ref(), "serve");
 
         let root_doc = match server_state::load_root_from_state(&vault)? {
             Some(doc) => doc,

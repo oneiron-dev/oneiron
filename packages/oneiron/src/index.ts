@@ -457,6 +457,26 @@ export class Oneiron {
         /** The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction. */
         consolidate: (input: Facade.AffectClaimConsolidateRequest): Facade.AffectClaimConsolidation => this.#call(() => this.#client.vaultAffectClaimsConsolidate(input) as Facade.AffectClaimConsolidation),
       },
+      coping: {
+        /** Records a first coping outcome from two stored VAD-annotated turns for one person, with scoped claim admission and caller attribution; no factual claim is superseded. */
+        record: (input: Facade.CopingOutcomeRecordRequest): Facade.CopingOutcomeReceipt => this.#call(() => this.#client.vaultAffectCopingRecord(input) as Facade.CopingOutcomeReceipt),
+        /** Updates an active coping aggregate from its strategy turn and a later annotated turn through the existing engine transaction, preserving scope and both evidence refs. */
+        update: (input: Facade.CopingOutcomeUpdateRequest): Facade.CopingOutcomeReceipt => this.#call(() => this.#client.vaultAffectCopingUpdate(input) as Facade.CopingOutcomeReceipt),
+        /** Reads all admitted active coping aggregates for one person and optional exact scope, including unsuccessful outcomes and their attribution and evidence refs. */
+        aggregate: (input: Facade.CopingAggregateRequest): Facade.CopingAggregate => this.#call(() => this.#client.vaultAffectCopingAggregate(input) as Facade.CopingAggregate),
+      },
+      wellness: {
+        policy: {
+          /** Reads the configured non-clinical wellness window, targets and advisory mode bands as the owner; absent policy stays absent. */
+          get: (input: Facade.EmptyRequest = {}): Facade.ActionModePolicy | null => this.#call(() => this.#client.vaultAffectWellnessPolicyGet(input) as Facade.ActionModePolicy | null),
+          /** Configures or clears the existing action-mode policy as the owner; no universal wellness cutoff or diagnostic label is supplied by the engine. */
+          configure: (input: Facade.WellnessPolicyConfigureRequest): Facade.ActionModePolicy | null => this.#call(() => this.#client.vaultAffectWellnessPolicyConfigure(input) as Facade.ActionModePolicy | null),
+        },
+        /** Derives one person's non-clinical wellness projection using the existing state measurements and configured mode bands, with a routed receipt and source refs. */
+        derive: (input: Facade.WellnessPersonRequest): Facade.WellnessProjection => this.#call(() => this.#client.vaultAffectWellnessDerive(input) as Facade.WellnessProjection),
+        /** Reads one person's measured wellness state, configured advisory mode and coping aggregates with source refs, without refreshing or revising factual claims. */
+        get: (input: Facade.WellnessPersonRequest): Facade.WellnessProjection => this.#call(() => this.#client.vaultAffectWellnessGet(input) as Facade.WellnessProjection),
+      },
     },
     tagging: {
       /** Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker and failure reason. */
@@ -1708,6 +1728,14 @@ export class Oneiron {
     /** Retracts claims by exact claim or by subject and predicate; never a hard delete. */
     forget: (input: Facade.ForgetRequest): Facade.CommitReceipt[] => this.#call(() => this.#client.vaultForget(input) as Facade.CommitReceipt[]),
     booking: {
+      /** Lists ranked public slots on a live published booking page as the caller, through the shared booking admission and solver without exposing busy sources. */
+      availability: (input: Facade.BookingAvailabilityRequest): Facade.BookingOperationResponse => this.#call(() => this.#client.vaultBookingAvailability(input) as Facade.BookingOperationResponse),
+      /** Holds or confirms a real slot on a live published booking page as the caller, through the shared admission and home-node lifecycle with opaque session-bound tokens. */
+      book: (input: Facade.BookingBookRequest): Facade.BookingOperationResponse => this.#call(() => this.#client.vaultBookingBook(input) as Facade.BookingOperationResponse),
+      /** Moves a booking on a live published page using its reschedule token, preserving EVENT and UID and replaying without another passport revision. */
+      reschedule: (input: Facade.BookingRescheduleRequest): Facade.BookingOperationResponse => this.#call(() => this.#client.vaultBookingReschedule(input) as Facade.BookingOperationResponse),
+      /** Cancels a booking on a live published page using its cancel token, preserving EVENT and UID and replaying without another passport revision. */
+      cancel: (input: Facade.BookingCancelRequest): Facade.BookingOperationResponse => this.#call(() => this.#client.vaultBookingCancel(input) as Facade.BookingOperationResponse),
       /** Parses one scheduling constraint on a live published booking page as the caller, returning public slot controls, an email continuation or a deflect; this never holds or confirms a booking. */
       constraint_turn: (input: Facade.BookingConstraintTurnRequest): Facade.BookingConstraintTurnResponse => this.#call(() => this.#client.vaultBookingConstraintTurn(input) as Facade.BookingConstraintTurnResponse),
       /** The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority. */

@@ -76,6 +76,13 @@ pub enum AgentVerb {
     VaultTaggingHistory,
     VaultTaggingMentions,
     VaultAffectClaimsConsolidate,
+    VaultAffectCopingRecord,
+    VaultAffectCopingUpdate,
+    VaultAffectCopingAggregate,
+    VaultAffectWellnessPolicyGet,
+    VaultAffectWellnessPolicyConfigure,
+    VaultAffectWellnessDerive,
+    VaultAffectWellnessGet,
     VaultRetrievalRecall,
     VaultRetrievalRuns,
     VaultRetrievalRun,
@@ -622,6 +629,10 @@ pub enum AgentVerb {
     VaultRemember,
     VaultClaimsRetract,
     VaultForget,
+    VaultBookingAvailability,
+    VaultBookingBook,
+    VaultBookingReschedule,
+    VaultBookingCancel,
     VaultBookingConstraintTurn,
     VaultBookingPageToken,
     CalendarInvite,
@@ -882,6 +893,13 @@ impl AgentVerb {
         Self::VaultTaggingHistory,
         Self::VaultTaggingMentions,
         Self::VaultAffectClaimsConsolidate,
+        Self::VaultAffectCopingRecord,
+        Self::VaultAffectCopingUpdate,
+        Self::VaultAffectCopingAggregate,
+        Self::VaultAffectWellnessPolicyGet,
+        Self::VaultAffectWellnessPolicyConfigure,
+        Self::VaultAffectWellnessDerive,
+        Self::VaultAffectWellnessGet,
         Self::VaultRetrievalRecall,
         Self::VaultRetrievalRuns,
         Self::VaultRetrievalRun,
@@ -1428,6 +1446,10 @@ impl AgentVerb {
         Self::VaultRemember,
         Self::VaultClaimsRetract,
         Self::VaultForget,
+        Self::VaultBookingAvailability,
+        Self::VaultBookingBook,
+        Self::VaultBookingReschedule,
+        Self::VaultBookingCancel,
         Self::VaultBookingConstraintTurn,
         Self::VaultBookingPageToken,
         Self::CalendarInvite,
@@ -1691,6 +1713,13 @@ impl AgentVerb {
             Self::VaultTaggingHistory => "vault.tagging.history",
             Self::VaultTaggingMentions => "vault.tagging.mentions",
             Self::VaultAffectClaimsConsolidate => "vault.affect.claims.consolidate",
+            Self::VaultAffectCopingRecord => "vault.affect.coping.record",
+            Self::VaultAffectCopingUpdate => "vault.affect.coping.update",
+            Self::VaultAffectCopingAggregate => "vault.affect.coping.aggregate",
+            Self::VaultAffectWellnessPolicyGet => "vault.affect.wellness.policy.get",
+            Self::VaultAffectWellnessPolicyConfigure => "vault.affect.wellness.policy.configure",
+            Self::VaultAffectWellnessDerive => "vault.affect.wellness.derive",
+            Self::VaultAffectWellnessGet => "vault.affect.wellness.get",
             Self::VaultRetrievalRecall => "vault.retrieval.recall",
             Self::VaultRetrievalRuns => "vault.retrieval.runs",
             Self::VaultRetrievalRun => "vault.retrieval.run",
@@ -2255,6 +2284,10 @@ impl AgentVerb {
             Self::VaultRemember => "vault.remember",
             Self::VaultClaimsRetract => "vault.claims.retract",
             Self::VaultForget => "vault.forget",
+            Self::VaultBookingAvailability => "vault.booking.availability",
+            Self::VaultBookingBook => "vault.booking.book",
+            Self::VaultBookingReschedule => "vault.booking.reschedule",
+            Self::VaultBookingCancel => "vault.booking.cancel",
             Self::VaultBookingConstraintTurn => "vault.booking.constraint_turn",
             Self::VaultBookingPageToken => "vault.booking.page_token",
             Self::CalendarInvite => "calendar.invite",
@@ -2518,6 +2551,13 @@ impl AgentVerb {
                 | Self::VaultTaggingHistory
                 | Self::VaultTaggingMentions
                 | Self::VaultAffectClaimsConsolidate
+                | Self::VaultAffectCopingRecord
+                | Self::VaultAffectCopingUpdate
+                | Self::VaultAffectCopingAggregate
+                | Self::VaultAffectWellnessPolicyGet
+                | Self::VaultAffectWellnessPolicyConfigure
+                | Self::VaultAffectWellnessDerive
+                | Self::VaultAffectWellnessGet
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
                 | Self::VaultRetrievalRun
@@ -3044,6 +3084,10 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultBookingAvailability
+                | Self::VaultBookingBook
+                | Self::VaultBookingReschedule
+                | Self::VaultBookingCancel
                 | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
                 | Self::CalendarInvite
@@ -3351,6 +3395,13 @@ impl AgentVerb {
                 | Self::VaultTaggingHistory
                 | Self::VaultTaggingMentions
                 | Self::VaultAffectClaimsConsolidate
+                | Self::VaultAffectCopingRecord
+                | Self::VaultAffectCopingUpdate
+                | Self::VaultAffectCopingAggregate
+                | Self::VaultAffectWellnessPolicyGet
+                | Self::VaultAffectWellnessPolicyConfigure
+                | Self::VaultAffectWellnessDerive
+                | Self::VaultAffectWellnessGet
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
                 | Self::VaultRetrievalRun
@@ -3877,6 +3928,10 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultBookingAvailability
+                | Self::VaultBookingBook
+                | Self::VaultBookingReschedule
+                | Self::VaultBookingCancel
                 | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
                 | Self::CalendarInvite
@@ -4258,6 +4313,13 @@ impl AgentVerb {
                 | Self::VaultTaggingHistory
                 | Self::VaultTaggingMentions
                 | Self::VaultAffectClaimsConsolidate
+                | Self::VaultAffectCopingRecord
+                | Self::VaultAffectCopingUpdate
+                | Self::VaultAffectCopingAggregate
+                | Self::VaultAffectWellnessPolicyGet
+                | Self::VaultAffectWellnessPolicyConfigure
+                | Self::VaultAffectWellnessDerive
+                | Self::VaultAffectWellnessGet
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
                 | Self::VaultRetrievalRun
@@ -4799,6 +4861,10 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultBookingAvailability
+                | Self::VaultBookingBook
+                | Self::VaultBookingReschedule
+                | Self::VaultBookingCancel
                 | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
                 | Self::CalendarInvite
@@ -5001,6 +5067,10 @@ impl AgentVerb {
                 | Self::VaultRetrievalWeightsConfigure
                 | Self::VaultAffectAnnotationsPut
                 | Self::VaultAffectClaimsConsolidate
+                | Self::VaultAffectCopingRecord
+                | Self::VaultAffectCopingUpdate
+                | Self::VaultAffectWellnessPolicyConfigure
+                | Self::VaultAffectWellnessDerive
                 | Self::VaultRetrievalOutcomesPut
                 | Self::VaultRetrievalOutcomesEnd
                 | Self::VaultKvPut
@@ -5336,6 +5406,9 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultBookingBook
+                | Self::VaultBookingReschedule
+                | Self::VaultBookingCancel
                 | Self::CalendarInvite
                 | Self::CalendarConnectorConfigure
                 | Self::CalendarConnectorPull
@@ -5555,6 +5628,13 @@ impl AgentVerb {
             Self::VaultTaggingHistory => &["spec"],
             Self::VaultTaggingMentions => &["spec"],
             Self::VaultAffectClaimsConsolidate => &["spec"],
+            Self::VaultAffectCopingRecord => &["spec"],
+            Self::VaultAffectCopingUpdate => &["spec"],
+            Self::VaultAffectCopingAggregate => &["spec"],
+            Self::VaultAffectWellnessPolicyGet => &["spec"],
+            Self::VaultAffectWellnessPolicyConfigure => &["spec"],
+            Self::VaultAffectWellnessDerive => &["spec"],
+            Self::VaultAffectWellnessGet => &["spec"],
             Self::VaultRetrievalRecall => &["spec"],
             Self::VaultRetrievalRuns => &["spec"],
             Self::VaultRetrievalRun => &["spec"],
@@ -6101,6 +6181,10 @@ impl AgentVerb {
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
             Self::VaultForget => &["spec"],
+            Self::VaultBookingAvailability => &["spec"],
+            Self::VaultBookingBook => &["spec"],
+            Self::VaultBookingReschedule => &["spec"],
+            Self::VaultBookingCancel => &["spec"],
             Self::VaultBookingConstraintTurn => &["spec"],
             Self::VaultBookingPageToken => &["spec"],
             Self::CalendarInvite => &["spec"],
@@ -6362,6 +6446,13 @@ impl AgentVerb {
             Self::VaultTaggingHistory => &["spec"],
             Self::VaultTaggingMentions => &["spec"],
             Self::VaultAffectClaimsConsolidate => &["spec"],
+            Self::VaultAffectCopingRecord => &["spec"],
+            Self::VaultAffectCopingUpdate => &["spec"],
+            Self::VaultAffectCopingAggregate => &["spec"],
+            Self::VaultAffectWellnessPolicyGet => &["spec"],
+            Self::VaultAffectWellnessPolicyConfigure => &["spec"],
+            Self::VaultAffectWellnessDerive => &["spec"],
+            Self::VaultAffectWellnessGet => &["spec"],
             Self::VaultRetrievalRecall => &["spec"],
             Self::VaultRetrievalRuns => &["spec"],
             Self::VaultRetrievalRun => &["spec"],
@@ -6908,6 +6999,10 @@ impl AgentVerb {
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
             Self::VaultForget => &["spec"],
+            Self::VaultBookingAvailability => &["spec"],
+            Self::VaultBookingBook => &["spec"],
+            Self::VaultBookingReschedule => &["spec"],
+            Self::VaultBookingCancel => &["spec"],
             Self::VaultBookingConstraintTurn => &["spec"],
             Self::VaultBookingPageToken => &["spec"],
             Self::CalendarInvite => &["spec"],
@@ -7307,6 +7402,27 @@ impl AgentVerb {
             }
             Self::VaultAffectClaimsConsolidate => {
                 "The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction."
+            }
+            Self::VaultAffectCopingRecord => {
+                "Records a first coping outcome from two stored VAD-annotated turns for one person, with scoped claim admission and caller attribution; no factual claim is superseded."
+            }
+            Self::VaultAffectCopingUpdate => {
+                "Updates an active coping aggregate from its strategy turn and a later annotated turn through the existing engine transaction, preserving scope and both evidence refs."
+            }
+            Self::VaultAffectCopingAggregate => {
+                "Reads all admitted active coping aggregates for one person and optional exact scope, including unsuccessful outcomes and their attribution and evidence refs."
+            }
+            Self::VaultAffectWellnessPolicyGet => {
+                "Reads the configured non-clinical wellness window, targets and advisory mode bands as the owner; absent policy stays absent."
+            }
+            Self::VaultAffectWellnessPolicyConfigure => {
+                "Configures or clears the existing action-mode policy as the owner; no universal wellness cutoff or diagnostic label is supplied by the engine."
+            }
+            Self::VaultAffectWellnessDerive => {
+                "Derives one person's non-clinical wellness projection using the existing state measurements and configured mode bands, with a routed receipt and source refs."
+            }
+            Self::VaultAffectWellnessGet => {
+                "Reads one person's measured wellness state, configured advisory mode and coping aggregates with source refs, without refreshing or revising factual claims."
             }
             Self::VaultRetrievalRecall => {
                 "Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle."
@@ -8867,6 +8983,18 @@ impl AgentVerb {
             }
             Self::VaultForget => {
                 "Retracts claims by exact claim or by subject and predicate; never a hard delete."
+            }
+            Self::VaultBookingAvailability => {
+                "Lists ranked public slots on a live published booking page as the caller, through the shared booking admission and solver without exposing busy sources."
+            }
+            Self::VaultBookingBook => {
+                "Holds or confirms a real slot on a live published booking page as the caller, through the shared admission and home-node lifecycle with opaque session-bound tokens."
+            }
+            Self::VaultBookingReschedule => {
+                "Moves a booking on a live published page using its reschedule token, preserving EVENT and UID and replaying without another passport revision."
+            }
+            Self::VaultBookingCancel => {
+                "Cancels a booking on a live published page using its cancel token, preserving EVENT and UID and replaying without another passport revision."
             }
             Self::VaultBookingConstraintTurn => {
                 "Parses one scheduling constraint on a live published booking page as the caller, returning public slot controls, an email continuation or a deflect; this never holds or confirms a booking."

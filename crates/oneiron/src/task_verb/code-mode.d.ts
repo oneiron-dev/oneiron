@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 816 code-mode rows (793 host rows, 23 run rows), 2766 declarations.
-// Replies: 729 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 827 code-mode rows (804 host rows, 23 run rows), 2799 declarations.
+// Replies: 740 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 101; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -421,6 +421,22 @@ declare namespace Sdk {
   type AffectClaimConsolidateRequest = { claim_ref: string };
   type AffectTurnEvidence = { turn_ref: string; vad: QueryAffect; source: VadAnnotationSource; annotated_at: number };
   type AffectClaimConsolidation = { claim_ref: string; vad?: QueryAffect | null; evidence_turns: AffectTurnEvidence[]; semantic_edges_updated: number; structural_edges_skipped: number; active_state_ref?: string | null; created_state_ref?: string | null; superseded_state_refs: string[] };
+  type CopingStrategy = "SitSel" | "SitMod" | "AttDep" | "CogChg" | "ResMod" | "ERFlex";
+  type CopingOutcomeRecordRequest = { affected_person_ref: string; baseline_turn_ref: string; later_turn_ref: string; strategy: CopingStrategy; confidence: number; scope: ClaimScope; sensitivity?: number | null };
+  type CopingVadDelta = { valence: number; arousal: number; dominance: number };
+  type CopingOutcomeView = { claim_ref: string; affected_person_ref: string; strategy_ref: string; strategy: CopingStrategy; vad_delta: CopingVadDelta; confidence: number; successful: boolean; observed_n: number; scope: ClaimScope; approval: string; source?: string | null; valid_from?: number | null; valid_to?: number | null; evidence_refs: string[]; made_by?: MadeBy | null };
+  type CopingOutcomeReceipt = { outcome: CopingOutcomeView; superseded_claim_refs: string[]; receipt_ref: string };
+  type CopingOutcomeUpdateRequest = { prior_claim_ref: string; baseline_turn_ref: string; later_turn_ref: string; confidence: number };
+  type CopingAggregateRequest = { affected_person_ref: string; scope?: ClaimScope | null };
+  type CopingAggregate = { affected_person_ref: string; outcomes: CopingOutcomeView[]; observed_n: number };
+  type StateWindow = { window_secs: number; expected_goal_completions: number; expected_engaged_days: number };
+  type ActionModeRule = { mode: string; min_index: number; max_index: number };
+  type ActionModePolicy = { window: StateWindow; rules: ActionModeRule[] };
+  type WellnessPolicyConfigureRequest = { policy?: ActionModePolicy | null };
+  type WellnessPersonRequest = { affected_person_ref: string };
+  type ModeGateInputs = { affect: number; goal_velocity: number; engagement: number };
+  type StateIndex = { value: number; inputs?: ModeGateInputs | null; claim?: string | null; observed_at?: number | null };
+  type WellnessProjection = { affected_person_ref: string; policy?: ActionModePolicy | null; state_index: StateIndex; mode?: ActionModeRule | null; coping: CopingAggregate; source_refs: string[]; receipt_ref?: string | null };
   type RetrievalRunsRequest = { limit?: number | null };
   type RetrievalAction = "pipeline" | "context_pack" | "vault_search" | "graph_fs_coreutils" | "speculative";
   type RetrievalState = { top_score_norm?: number; score_gap_ratio?: number; mean_score_norm?: number; entity_coverage?: number; novelty_vs_prior?: number; signal_agreement?: number; result_count?: number; iteration?: number; budget_remaining?: number; frontier_size?: number; avg_edge_weight?: number; graph_degree?: number; temporal_spread?: number; hops?: number; last_action?: number; intent_class?: number };
@@ -2247,14 +2263,31 @@ declare namespace Sdk {
   type ForgetPredicateRequest = { subject_ref: string; predicate: string };
   type ForgetRequest = ClaimRefRequest | ForgetPredicateRequest;
   type EventTypeKey = string;
+  type TimeRangeWire = { start: number; end: number };
+  type ConstraintWeekday = "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
+  type LocalMinuteWindow = { start_minute: number; end_minute: number };
+  type ConstraintTimeRangeWire = { start: number; end: number };
+  type ConstraintObject = { schema_version: number; weekdays?: ConstraintWeekday[]; local_time_windows?: LocalMinuteWindow[]; utc_window?: ConstraintTimeRangeWire | null; allow_flex_pool: boolean };
+  type BookingConstraintInput = { kind: "object"; value: ConstraintObject } | { kind: "free_text"; value: string };
+  type BookingAvailabilityInput = { event_type: EventTypeKey; window: TimeRangeWire; visitor_tz: string; constraint?: BookingConstraintInput | null; session_ref: string };
+  type BookingAvailabilityRequest = { op: "availability"; page_token: string; input: BookingAvailabilityInput };
+  type RankedSlot = { start_utc: number; end_utc: number; rank: number };
+  type SelectedSlot = { start_utc: number; end_utc: number };
+  type BookingBookResult = { stage: "held"; result: { hold_token: string; selected_slot: SelectedSlot; expires_at: number } } | { stage: "confirmed"; result: { reschedule_token: string; cancel_token: string } } | { stage: "slot_taken"; result: { alternatives: RankedSlot[] } };
+  type BookingOperationResponse = { op: "availability"; result: { slots: RankedSlot[]; flex_used: boolean } } | { op: "book"; result: BookingBookResult } | { op: "reschedule"; result: { reschedule_token: string } } | { op: "cancel"; result: { cancel_token: string } };
+  type BookingHoldInput = { event_type: EventTypeKey; selected_slot: SelectedSlot; visitor_tz: string; constraint?: ConstraintObject | null; session_ref: string; checkout_lease_token?: string | null; idempotency_key: string };
+  type BookingIntakeAnswer = { field_key: string; value: string };
+  type BookingConfirmInput = { hold_token: string; booker_email: string; intake: BookingIntakeAnswer[]; session_ref: string; idempotency_key: string };
+  type BookingBookInput = { stage: "hold"; input: BookingHoldInput } | { stage: "confirm"; input: BookingConfirmInput };
+  type BookingBookRequest = { op: "book"; page_token: string; input: BookingBookInput };
+  type BookingRescheduleInput = { reschedule_token: string; selected_slot: SelectedSlot; visitor_tz: string; idempotency_key: string };
+  type BookingRescheduleRequest = { op: "reschedule"; page_token: string; input: BookingRescheduleInput };
+  type BookingCancelInput = { cancel_token: string; idempotency_key: string };
+  type BookingCancelRequest = { op: "cancel"; page_token: string; input: BookingCancelInput };
   type BookingConstraintTurnWindow = { start: number; end: number };
   type BookingConstraintTurnInput = { event_type: EventTypeKey; window: BookingConstraintTurnWindow; visitor_tz: string; free_text: string; session_ref: string };
   type BookingConstraintTurnRequest = { page_token: string; turn: BookingConstraintTurnInput };
   type GeneratedUiCard = { protocolVersion: number; catalog: GeneratedUiCatalog; cardId: string; tree: GeneratedLens; actions: GeneratedUiActionDeclaration[]; $state: GeneratedUiStateSnapshot };
-  type ConstraintWeekday = "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
-  type LocalMinuteWindow = { start_minute: number; end_minute: number };
-  type TimeRangeWire = { start: number; end: number };
-  type ConstraintObject = { schema_version: number; weekdays?: ConstraintWeekday[]; local_time_windows?: LocalMinuteWindow[]; utc_window?: TimeRangeWire | null; allow_flex_pool: boolean };
   type BookingConstraintHoldContext = { event_type: EventTypeKey; visitor_tz: string; constraint: ConstraintObject; session_ref: string };
   type ConstraintContinuation = { event_type: EventTypeKey; visitor_tz: string; constraint: ConstraintObject; session_ref: string };
   type BookingConstraintTurnResponse = { outcome: "slots"; card: GeneratedUiCard; flex_used: boolean; hold: BookingConstraintHoldContext } | { outcome: "continue_by_email"; continuation: ConstraintContinuation } | { outcome: "deflect"; card: GeneratedUiCard };
@@ -3155,6 +3188,26 @@ declare const vault: Sdk.VaultHost & {
       /** The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction. */
       consolidate(input: Sdk.AffectClaimConsolidateRequest): Promise<Sdk.AffectClaimConsolidation | StoredResult>;
     };
+    coping: {
+      /** Reads all admitted active coping aggregates for one person and optional exact scope, including unsuccessful outcomes and their attribution and evidence refs. */
+      aggregate(input: Sdk.CopingAggregateRequest): Promise<Sdk.CopingAggregate | StoredResult>;
+      /** Records a first coping outcome from two stored VAD-annotated turns for one person, with scoped claim admission and caller attribution; no factual claim is superseded. */
+      record(input: Sdk.CopingOutcomeRecordRequest): Promise<Sdk.CopingOutcomeReceipt | StoredResult>;
+      /** Updates an active coping aggregate from its strategy turn and a later annotated turn through the existing engine transaction, preserving scope and both evidence refs. */
+      update(input: Sdk.CopingOutcomeUpdateRequest): Promise<Sdk.CopingOutcomeReceipt | StoredResult>;
+    };
+    wellness: {
+      /** Derives one person's non-clinical wellness projection using the existing state measurements and configured mode bands, with a routed receipt and source refs. */
+      derive(input: Sdk.WellnessPersonRequest): Promise<Sdk.WellnessProjection | StoredResult>;
+      /** Reads one person's measured wellness state, configured advisory mode and coping aggregates with source refs, without refreshing or revising factual claims. */
+      get(input: Sdk.WellnessPersonRequest): Promise<Sdk.WellnessProjection | StoredResult>;
+      policy: {
+        /** Configures or clears the existing action-mode policy as the owner; no universal wellness cutoff or diagnostic label is supplied by the engine. */
+        configure(input: Sdk.WellnessPolicyConfigureRequest): Promise<Sdk.ActionModePolicy | null | StoredResult>;
+        /** Reads the configured non-clinical wellness window, targets and advisory mode bands as the owner; absent policy stays absent. */
+        get(input: Sdk.EmptyRequest): Promise<Sdk.ActionModePolicy | null | StoredResult>;
+      };
+    };
   };
   agents: {
     /** The owner creates an inert custom agent composition with an optional per-domain refusal dial, caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched. */
@@ -3329,10 +3382,18 @@ declare const vault: Sdk.VaultHost & {
   /** Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade. */
   batch(input: Sdk.CoreBatchWriteInput): Promise<Sdk.CoreBatchWriteReceipt | StoredResult>;
   booking: {
+    /** Lists ranked public slots on a live published booking page as the caller, through the shared booking admission and solver without exposing busy sources. */
+    availability(input: Sdk.BookingAvailabilityRequest): Promise<Sdk.BookingOperationResponse | StoredResult>;
+    /** Holds or confirms a real slot on a live published booking page as the caller, through the shared admission and home-node lifecycle with opaque session-bound tokens. */
+    book(input: Sdk.BookingBookRequest): Promise<Sdk.BookingOperationResponse | StoredResult>;
+    /** Cancels a booking on a live published page using its cancel token, preserving EVENT and UID and replaying without another passport revision. */
+    cancel(input: Sdk.BookingCancelRequest): Promise<Sdk.BookingOperationResponse | StoredResult>;
     /** Parses one scheduling constraint on a live published booking page as the caller, returning public slot controls, an email continuation or a deflect; this never holds or confirms a booking. */
     constraint_turn(input: Sdk.BookingConstraintTurnRequest): Promise<Sdk.BookingConstraintTurnResponse | StoredResult>;
     /** The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority. */
     page_token(input: Sdk.BookingPageTokenRequest): Promise<Sdk.BookingPageTokenResponse | StoredResult>;
+    /** Moves a booking on a live published page using its reschedule token, preserving EVENT and UID and replaying without another passport revision. */
+    reschedule(input: Sdk.BookingRescheduleRequest): Promise<Sdk.BookingOperationResponse | StoredResult>;
   };
   budgets: {
     /** The owner reads a held run's notice, saved partial results, exact checkpoints and whether its existing lease permits resume. */

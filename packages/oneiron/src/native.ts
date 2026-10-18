@@ -102,6 +102,13 @@ vaultTaggingTags(input: unknown): unknown
 vaultTaggingHistory(input: unknown): unknown
 vaultTaggingMentions(input: unknown): unknown
 vaultAffectClaimsConsolidate(input: unknown): unknown
+vaultAffectCopingRecord(input: unknown): unknown
+vaultAffectCopingUpdate(input: unknown): unknown
+vaultAffectCopingAggregate(input: unknown): unknown
+vaultAffectWellnessPolicyGet(input: unknown): unknown
+vaultAffectWellnessPolicyConfigure(input: unknown): unknown
+vaultAffectWellnessDerive(input: unknown): unknown
+vaultAffectWellnessGet(input: unknown): unknown
 vaultRetrievalRecall(input: unknown): unknown
 vaultRetrievalRuns(input: unknown): unknown
 vaultRetrievalRun(input: unknown): unknown
@@ -628,6 +635,10 @@ vaultCommit(input: unknown): unknown
 vaultRemember(input: unknown): unknown
 vaultClaimsRetract(input: unknown): unknown
 vaultForget(input: unknown): unknown
+vaultBookingAvailability(input: unknown): unknown
+vaultBookingBook(input: unknown): unknown
+vaultBookingReschedule(input: unknown): unknown
+vaultBookingCancel(input: unknown): unknown
 vaultBookingConstraintTurn(input: unknown): unknown
 vaultBookingPageToken(input: unknown): unknown
 calendarInvite(input: unknown): unknown
