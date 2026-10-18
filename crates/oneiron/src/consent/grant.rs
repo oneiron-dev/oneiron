@@ -1,6 +1,6 @@
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::store::GateDecisionId;
+use crate::store::{GateDecisionId, GateDecisionRecord};
 
 use super::bound::{ConsentDomain, GrantBound};
 use super::effect::{EffectDigest, EffectFacts};
@@ -313,6 +313,48 @@ impl CodeWaitReceiptLinks {
         handle.extend_from_slice(&self.prior_receipt.map_or([0; 16], GateDecisionId::as_bytes));
         handle.extend_from_slice(&self.facts_digest);
         handle
+    }
+
+    /// The code wait receipt a consent Gate record holds, read back from its
+    /// `diff_handle`: the typed inverse of the encoder above, for these two
+    /// variants only (FIX 4608). `None` for any other record: another
+    /// content kind or receipt, a kind byte its outcome and reason code do
+    /// not name, or bytes this encoder would not write exactly.
+    pub(crate) fn from_gate_record(record: &GateDecisionRecord) -> Option<ConsentReceipt> {
+        let (&kind, rest) = record.diff_handle.split_first()?;
+        let (&flags, rest) = rest.split_first()?;
+        let slot = |at: usize| -> Option<[u8; 16]> { rest.get(at..at + 16)?.try_into().ok() };
+        let links = Self {
+            wait_id: EntityId::from_bytes(slot(0)?).ok()?,
+            word_ref: if flags & 1 == 0 {
+                None
+            } else {
+                Some(EntityId::from_bytes(slot(16)?).ok()?)
+            },
+            prior_receipt: if flags & 2 == 0 {
+                None
+            } else {
+                Some(GateDecisionId::from_bytes(slot(32)?))
+            },
+            facts_digest: rest.get(48..80)?.try_into().ok()?,
+        };
+        let receipt = if kind == CODE_WAIT_CONSUMED_KIND {
+            ConsentReceipt::CodeWaitConsumed {
+                decision_id: record.decision_id,
+                links,
+            }
+        } else {
+            ConsentReceipt::CodeWaitSettled {
+                decision_id: record.decision_id,
+                links,
+                outcome: crate::code_run::CodeConsentSettleOutcome::from_tag(kind & 0x0f)?,
+            }
+        };
+        (record.content_kind == CONSENT_CONTENT_KIND
+            && record.outcome == receipt.gate_outcome()
+            && record.reason_codes.first().map(String::as_str) == Some(receipt.reason_code())
+            && receipt.diff_handle() == record.diff_handle)
+            .then_some(receipt)
     }
 }
 
