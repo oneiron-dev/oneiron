@@ -155,6 +155,10 @@ both bindings and their export-census tests in one change.
 - `self.off_record.execute`
 - `vault.records.erase_preview`
 - `vault.records.erase_confirm`
+- `vault.research.create_child`
+- `vault.research.archive`
+- `vault.evals.inventory`
+- `vault.evals.cohorts.setup`
 - `vault.research.bind`
 - `vault.research.fork`
 - `vault.research.weave`

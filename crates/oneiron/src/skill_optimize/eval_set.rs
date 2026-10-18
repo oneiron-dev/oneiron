@@ -61,13 +61,14 @@ pub use authoring::{
     CandidateLabel, CaseDecision, CohortSummary, CutDecision, EvalAuthoringInventory,
     EvalAuthoringPlan, EvalAuthoringReport, EvalAuthoringSkip, EvalCandidate, EvalCohortDecision,
     EvalSourceGroup, FamilyDecision, PurposeCounts, SeatInventory, UncutFamily,
-    apply_eval_authoring_plan, eval_authoring_inventory,
+    EvalCohortSetup, apply_eval_authoring_plan, eval_authoring_inventory, setup_eval_cohorts,
 };
 pub use cohort::{
     CohortRetirement, EvalCohort, EvalExposure, EvalExposureCounts, EvalExposureKind, EvalRelease,
 };
 pub use cut_audit::{
     AuditCase, AuditCoverage, AuditMethodPin, CoverageGap, EvalCutAudit, EvalCutAuditDraft,
+    EvalCutAuthor,
     NearCopyFlag,
 };
 pub use sufficiency::{
@@ -91,7 +92,7 @@ const MAX_NAME_BYTES: usize = 64;
 /// companion, a decision seat, the extraction tagger, the embedder and the
 /// router." A seat outlives its checkpoint; the model is a pin on what was
 /// measured, never the key.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EvalSeat {
     Companion,
@@ -127,7 +128,7 @@ impl EvalSeat {
 }
 
 /// What a source family is for, fixed when it is assigned.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FamilyPurpose {
     /// Search, candidate authoring and rubric fitting read these rows.

@@ -512,6 +512,7 @@ pub use super::sdk_diary::*;
 pub use super::sdk_disclosure::*;
 pub use super::sdk_embedding_space::*;
 pub use super::sdk_explain::*;
+pub use super::sdk_eval_cohort::*;
 pub use super::sdk_fanout_launch::*;
 pub use super::sdk_guest_revoke::*;
 pub use super::sdk_host::*;

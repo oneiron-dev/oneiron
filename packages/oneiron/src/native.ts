@@ -179,6 +179,10 @@ vaultOffRecordClaimsUpsert(input: unknown): unknown
 selfOffRecordExecute(input: unknown): unknown
 vaultRecordsErasePreview(input: unknown): unknown
 vaultRecordsEraseConfirm(input: unknown): unknown
+vaultResearchCreateChild(input: unknown): unknown
+vaultResearchArchive(input: unknown): unknown
+vaultEvalsInventory(input: unknown): unknown
+vaultEvalsCohortsSetup(input: unknown): unknown
 vaultResearchBind(input: unknown): unknown
 vaultResearchFork(input: unknown): unknown
 vaultResearchWeave(input: unknown): unknown
