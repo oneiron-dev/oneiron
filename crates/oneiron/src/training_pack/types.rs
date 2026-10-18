@@ -156,6 +156,8 @@ pub struct ComputePin {
 #[serde(rename_all = "snake_case")]
 pub enum TrainingState {
     Prepared,
+    /// The owner authorized this exact spec; the host dispatches it once.
+    Authorized,
     Running,
     ConnectorFailed,
     Returned,
@@ -169,6 +171,54 @@ pub struct TrainingDispatch {
     pub budget: BudgetLine,
     pub permit: Value,
     pub dispatched: bool,
+}
+
+/// The teachers a run declaration names, as the owner authorized them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrainingTeachersPin {
+    pub models: Vec<ModelId>,
+    pub target: String,
+    pub purpose: String,
+}
+
+/// The facts of a declared run the dispatch checks, frozen when the owner
+/// authorizes; a changed declaration refuses the dispatch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrainingDeclarationPin {
+    pub teachers: Option<TrainingTeachersPin>,
+    pub budget: BudgetLine,
+}
+
+/// Where an authorization came from: the owner's own door, or their yes on
+/// a training offer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TrainingAuthorizationSource {
+    Direct,
+    Offer {
+        offer: EntityId,
+        offer_digest: String,
+    },
+}
+
+/// The owner's yes on one prepared spec and declaration. It holds no
+/// credential, key, lease or permit; the host takes a fresh permit at dispatch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrainingAuthorization {
+    pub owner: EntityId,
+    pub at: u64,
+    pub spec_blake3: [u8; 32],
+    pub declaration: TrainingDeclarationPin,
+    pub source: TrainingAuthorizationSource,
+}
+
+/// Why the host cannot advance an authorized or returned run yet, for the
+/// owner to read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrainingHold {
+    pub code: String,
+    pub detail: String,
+    pub at: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -232,6 +282,9 @@ pub struct TrainingRun {
     pub result: Option<TrainingResult>,
     pub evaluation: Option<HeldOutResult>,
     pub eval_exposure: Option<EvalExposure>,
+    pub authorization: Option<TrainingAuthorization>,
+    /// Read while the run waits on the host; dispatch clears it.
+    pub hold: Option<TrainingHold>,
 }
 
 /// The owner picks the recipe, a sealed source-family cohort and compute per run.

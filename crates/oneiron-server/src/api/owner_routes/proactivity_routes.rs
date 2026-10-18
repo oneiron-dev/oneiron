@@ -2,7 +2,9 @@
 //! `/v1/owner/representation` (OF-194): the owner's read of a delivered
 //! digest, their keep-in-touch rules, and the review of a drafted follow-up.
 //! `/v1/owner/coach/training-offers` (OF-577) answers the Coach's offers the
-//! inbox and digest deliver; an answer records an intent and applies nothing.
+//! inbox and digest deliver; an answer records an intent, a switch binds its
+//! stock model, and a train approval may authorize the run the owner prepared
+//! for it (`training_runs`).
 //! `/v1/owner/identity/asks` (OF-123) is the needs-you strip's identity asks,
 //! each with its one-tap choice card, and their answers.
 //! `/v1/owner/proactivity/action-mode` (OF-335) is the owner's action-mode
@@ -57,6 +59,8 @@ use crate::owner::stamp::now_unix_ms;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
+mod training_runs;
+
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/proactivity/digest", get(read_digest))
@@ -75,6 +79,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             "/coach/training-offers/undo",
             post(undo_training_offer_switch),
         )
+        .merge(training_runs::routes())
         .route("/coach/code-fixes", get(code_fixes))
         .route(
             "/coach/judge-asks/minutes",
@@ -403,6 +408,9 @@ struct AnswerTrainingOffer {
     /// The offer's `digest`: the answer binds the snapshot shown.
     digest: String,
     answer: OfferAnswer,
+    /// A train approval's prepared run and the spec the owner saw; without
+    /// it the approval records its intent alone.
+    training: Option<training_runs::TrainingChoiceRequest>,
 }
 
 /// `POST /v1/owner/coach/training-offers/answer`: the owner's answer to the
@@ -416,12 +424,18 @@ async fn answer_training_offer(
     let request = json_payload(payload)?;
     let record = blocking(move || -> OwnerResult<OfferAnswerRecord> {
         let offer = entity_id("offer", &request.offer)?;
+        let training = request
+            .training
+            .as_ref()
+            .map(|choice| training_runs::training_choice(&server, &choice.run, &choice.spec))
+            .transpose()?;
         Ok(oneiron::skill_optimize::settle_training_offer(
             server.vault(),
             &owner,
             &offer,
             &request.digest,
             request.answer,
+            training.as_ref(),
             now_secs(),
         )?)
     })

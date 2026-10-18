@@ -15,8 +15,8 @@ use crate::llm::run_admission::{CallOutcome, PaidConnector, RunAdmission};
 use super::custody::{keep_checkpoint, read_pin};
 use super::{
     CheckpointUpload, ComputePin, ExportCheck, PinnedCheckpoint, ProbeMeasurement, RUNS, SourcePin,
-    TrainingDispatch, TrainingPlan, TrainingResult, TrainingRun, TrainingState, hash_json, invalid,
-    json_value, run_in_txn,
+    TrainingDeclarationPin, TrainingDispatch, TrainingPlan, TrainingResult, TrainingRun,
+    TrainingState, hash_json, invalid, json_value, run_in_txn,
 };
 
 #[derive(Debug)]
@@ -140,8 +140,9 @@ fn check_export(
 }
 
 impl Vault {
-    /// Start only after the owner's per-run compute choice. Admission reserves
-    /// the declared service cost before the connector can send anything.
+    /// Start only after the owner's per-run compute choice: authorizes the
+    /// run at its prepared spec under this admission's declaration, then
+    /// executes it, for a caller that holds the owner's proof throughout.
     pub async fn run_training_pack(
         &self,
         owner: &AuthenticatedOwner,
@@ -153,15 +154,36 @@ impl Vault {
         let run = self
             .training_run(id)?
             .ok_or_else(|| invalid("training run not found"))?;
+        let declaration = TrainingDeclarationPin::of(&admission.declaration())?;
+        let at = self.store.clock.now_recorded_at();
+        self.authorize_training_pack(owner, id, &run.spec_blake3, declaration, at)?;
+        self.execute_authorized_training_pack(id, admission, binding, connector)
+            .await
+    }
+
+    /// The host half of a run, with no owner proof: it dispatches only a run
+    /// the owner authorized at this spec and declaration. Admission reserves
+    /// the declared service cost before the connector can send anything.
+    pub async fn execute_authorized_training_pack(
+        &self,
+        id: &EntityId,
+        admission: &RunAdmission,
+        binding: &PaidConnector,
+        connector: &dyn TrainingConnector,
+    ) -> Result<TrainingRun> {
+        let run = self
+            .training_run(id)?
+            .ok_or_else(|| invalid("training run not found"))?;
+        let declaration = admission.declaration();
+        let pin = TrainingDeclarationPin::of(&declaration)?;
         if admission.run() != run.admission_ref()
-            || !admission.declaration().is_declared()
             || run.compute.binding_blake3 != hash_json(binding)?
         {
             return Err(invalid(
                 "training admission or compute binding differs from the owner-pinned run",
             ));
         }
-        if let Some(teachers) = admission.declaration().teachers()
+        if let Some(teachers) = declaration.teachers()
             && (teachers.target() != run.plan.output_binding.model.as_str()
                 || teachers.purpose() != run.plan.purpose)
         {
@@ -174,18 +196,25 @@ impl Vault {
             .admit_paid(binding, run.compute.quantity)
             .map_err(|e| invalid(&e.to_string()))?;
         self.with_write_txn_grouped(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
             let mut current = run_in_txn(self, txn, id)?;
-            if current.state != TrainingState::Prepared {
+            if current.state != TrainingState::Authorized {
                 return Err(invalid(
-                    "a training run dispatches once; a late result uses completion",
+                    "a training run dispatches once, after the owner's authorization",
+                ));
+            }
+            if !current.authorization.as_ref().is_some_and(|authorization| {
+                authorization.spec_blake3 == current.spec_blake3 && authorization.declaration == pin
+            }) {
+                return Err(invalid(
+                    "the run declaration changed since the owner authorized this run",
                 ));
             }
             current.plan.starting_checkpoint.verify(self, txn)?;
             current.state = TrainingState::Running;
+            current.hold = None;
             current.dispatch = Some(TrainingDispatch {
                 declaration_revision: permit.revision(),
-                budget: admission.declaration().budget().clone(),
+                budget: declaration.budget().clone(),
                 permit: json_value(permit.facts())?,
                 dispatched: false,
             });

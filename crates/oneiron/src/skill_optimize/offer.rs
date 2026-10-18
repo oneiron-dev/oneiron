@@ -16,14 +16,14 @@
 //!   later as a new offer with fresh numbers that says what changed.
 //! - A switch approval binds the stock model in the owner's own answer
 //!   transaction and keeps the replaced binding for undo (`offer_switch`). A
-//!   train approval records an intent, and a trained model still needs its
-//!   own swap choice.
+//!   train approval records an intent and may hand off a prepared run
+//!   (`offer_training`); a trained model still needs its own swap choice.
 //! - Each offer's prediction is checked against later receipts on or after
 //!   its check date, which feeds the offer skill's own record.
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::{EvalSeat, SufficiencyCard};
+use super::{EvalSeat, SufficiencyCard, TrainingChoice};
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::authority::{BaseAgent, base_agent_for_facet};
@@ -581,33 +581,19 @@ pub(crate) fn pending_training_offer_in_txn(
     OFFER.get(&vault.store, txn, offer)
 }
 
-/// The vault owner's answer to the exact offer they saw. A switch approval
-/// needs a stock candidate and binds it to the seat's role in this
+/// The vault owner's answer to the exact offer they saw, in `txn`. A switch
+/// approval needs a stock candidate and binds it to the seat's role in this
 /// transaction, keeping the old binding for undo; a train approval needs a
-/// recipe and records its intent. An answer closes the offer's open asks.
+/// recipe and records its intent, and a `training` choice with it hands
+/// that prepared run off in the same commit (`offer_training`). An answer
+/// closes the offer's open asks: `settling_ask` is the ask group whose own
+/// settlement carries it, if any, and every other one is cut stale.
 /// # Errors
 /// A caller who is not the vault owner, an unknown offer, a digest for
 /// another snapshot, an answered or repeated offer, an approval of the wrong
-/// kind, a switch the seat's binding or the registry no longer admits, or
-/// storage errors. An error writes nothing.
-pub fn settle_training_offer(
-    vault: &Vault,
-    owner: &AuthenticatedOwner,
-    offer: &EntityId,
-    expected_digest: &str,
-    answer: OfferAnswer,
-    at: u64,
-) -> Result<OfferAnswerRecord> {
-    vault.with_write_txn_grouped(|txn| {
-        settle_training_offer_in_txn(vault, txn, owner, offer, expected_digest, answer, at, None)
-    })
-}
-
-/// [`settle_training_offer`] inside `txn`. `settling_ask` is the ask group
-/// whose own settlement carries this answer, if any; every other open ask
-/// for the offer is cut stale in the same commit.
-/// # Errors
-/// As [`settle_training_offer`], and a failed cut of an open ask.
+/// kind, a switch the seat's binding or the registry no longer admits, a
+/// training choice on another answer or one the handoff refuses, a failed
+/// cut of an open ask, or storage errors.
 #[expect(
     clippy::too_many_arguments,
     reason = "the settlement door's arguments, its writer and the settling ask"
@@ -619,6 +605,7 @@ pub(crate) fn settle_training_offer_in_txn(
     offer: &EntityId,
     expected_digest: &str,
     answer: OfferAnswer,
+    training: Option<&TrainingChoice>,
     at: u64,
     settling_ask: Option<&EntityId>,
 ) -> Result<OfferAnswerRecord> {
@@ -674,6 +661,9 @@ pub(crate) fn settle_training_offer_in_txn(
         at,
     };
     ANSWER.put(&vault.store, txn, offer, &record)?;
+    if let Some(choice) = training {
+        super::offer_training::hand_off_in_txn(vault, txn, owner, &record, choice, at)?;
+    }
     crate::task_verb::void_training_offer_asks_in(vault, txn, offer, settling_ask, at)?;
     Ok(record)
 }

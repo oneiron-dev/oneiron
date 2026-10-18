@@ -179,6 +179,8 @@ impl Vault {
                 result: None,
                 evaluation: None,
                 eval_exposure: None,
+                authorization: None,
+                hold: None,
             };
             RUNS.put(&self.store, txn, &id, &run)?;
             Ok(run)
