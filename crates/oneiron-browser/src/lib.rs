@@ -48,7 +48,7 @@ pub use receipt_evidence::{ReceiptEvidence, ReceiptEvidenceSink};
 pub use session::{BrowserGuest, BrowserSession};
 
 /// One element a program can read or act on.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Row {
     #[serde(rename = "ref")]
     pub target: String,
@@ -63,7 +63,7 @@ pub struct Row {
 
 /// The page as rows. With `full` false it is a diff against the observation
 /// `since` named: `rows` are new or changed, `removed` are refs now gone.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Observation {
     pub seq: u64,
     pub url: String,
@@ -99,7 +99,7 @@ pub struct Observation {
 /// budget, and a walk cut at the longest one a read asks for answers what
 /// it reached. Every row it carries is real; rows after the cut are
 /// missing until a walk on reads them.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PartialTree {
     /// Why the walk stopped, as cua-driver names it: `timeout`,
     /// `app_unresponsive`, `app_lookup_timeout` or `huge_container`.
@@ -143,7 +143,7 @@ pub enum TabSwitchCause {
 /// One effect's receipt: what acted, on which page, under which press, and
 /// the screenshot taken as its evidence when one could be captured, with
 /// where the host kept it when the session has a receipt sink.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EffectReceipt {
     pub seq: u64,
     pub verb: String,
@@ -179,7 +179,7 @@ pub struct ObserveInput {
 /// rows, then its removed refs, as fit one answer. A long outline is never
 /// cut: `next` names where the rest goes on, and `observe({cursor: next})`
 /// reads it. Every page of one observation has its `seq`.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ObservationPage {
     #[serde(flatten)]
     pub observation: Observation,
@@ -222,7 +222,7 @@ pub struct FindInput {
 /// One page of matching rows (Rule 5): as many as fit one answer. Many
 /// rows are never cut: `next` names where the rest goes on, and
 /// `find({cursor: next})` reads it.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FindOutput {
     pub rows: Vec<Row>,
     /// The cursor of the next page; absent on the last.
@@ -295,7 +295,7 @@ pub struct WaitForInput {
 }
 
 /// The rows a wait found, in pages as a `find` answer is.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct WaitForOutput {
     pub rows: Vec<Row>,
     pub timed_out: bool,
@@ -328,7 +328,7 @@ pub struct ExpectInput {
     pub absent: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ExpectOutput {
     pub met: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -377,7 +377,7 @@ pub struct ScreenshotInput {
 
 /// A screenshot the session holds. It is never captioned: `image` names the
 /// bytes for a later image read, and nothing else describes them.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScreenshotOutput {
     pub image: String,
     pub media_type: String,
@@ -423,7 +423,7 @@ pub struct ZoomInput {
 
 /// A held image, or one derived from it by crop or zoom. `source` is the ref
 /// it was derived from; a view names itself.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ImageOutput {
     pub image: String,
     pub media_type: String,
@@ -532,7 +532,7 @@ pub struct HandoverInput {
 }
 
 /// The "Needs you" ask as the run's desktop or browser holds it.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HandoverOutput {
     pub reason: String,
     pub asked_at_ms: u64,
@@ -789,7 +789,7 @@ pub struct BatchInput {
 /// How a batched subgoal program ended. The big model is the fallback only:
 /// it takes over on `NEEDS_AGENT`, and a person presses, or has the
 /// desktop, on `NEEDS_YOU`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum SubgoalStatus {
     #[serde(rename = "done")]
     Done,
@@ -799,7 +799,7 @@ pub enum SubgoalStatus {
     NeedsYou,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BatchOutput {
     pub status: SubgoalStatus,
     pub completed: usize,

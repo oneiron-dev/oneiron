@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 636 facade rows, 2363 declarations.
-Inputs: 584 of 636 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 567 of 636 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 92; unread shapes: 0.
+Census: 652 facade rows, 2398 declarations.
+Inputs: 600 of 652 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 582 of 652 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 93; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -5625,10 +5625,12 @@ class ConsentActReceipt(TypedDict):
     reason_code: str
     grant_ref: NotRequired[str | None]
     diff_handle: list[int]
+class DenyConsentRequest(TypedDict):
+    effect_digest: str
 class ActionEnvelopeRequest(TypedDict):
     project: str
     audience: list[str]
-    budget: int
+    budget: NotRequired[int | None]
 ActionBoundRequest = TypedDict("ActionBoundRequest", {"actor": str, "class": str, "envelope": ActionEnvelopeRequest})
 class DisclosureEnvelopeRequest(TypedDict):
     selectors: list[str]
@@ -12080,6 +12082,218 @@ class FoldHistory(TypedDict):
     epochs: list[FoldHistoryEpoch]
     steps: list[FoldHistoryStep]
     next: NotRequired[int | None]
+class OpenInput(TypedDict):
+    url: str
+class Row(TypedDict):
+    ref: str
+    role: str
+    name: str
+    value: NotRequired[str | None]
+    states: NotRequired[list[str]]
+    depth: int
+class ReceiptEvidenceKept(TypedDict):
+    state: Literal["kept"]
+    artifact_ref: str
+    version: int
+    content_hash: str
+class ReceiptEvidenceNotKept(TypedDict):
+    state: Literal["not_kept"]
+    code: str
+ReceiptEvidence = ReceiptEvidenceKept | ReceiptEvidenceNotKept
+class EffectReceipt(TypedDict):
+    seq: int
+    verb: str
+    url: str
+    title: str
+    target: NotRequired[str | None]
+    target_name: NotRequired[str | None]
+    effect_class: NotRequired[str | None]
+    press: str
+    screenshot: NotRequired[str | None]
+    screenshot_evidence: NotRequired[ReceiptEvidence | None]
+class LibraryCard(TypedDict):
+    workflow: str
+    site: str
+    subgoal: str
+    params: list[str]
+    runs: int
+    failures: int
+class PartialTree(TypedDict):
+    reason: str
+    visited: int
+    pending: int
+    walk_ms: int
+class Observation2(TypedDict):
+    seq: int
+    url: str
+    title: str
+    full: bool
+    rows: list[Row]
+    removed: NotRequired[list[str]]
+    receipt: NotRequired[EffectReceipt | None]
+    library: NotRequired[list[LibraryCard]]
+    no_tree: NotRequired[bool]
+    partial: NotRequired[PartialTree | None]
+class ObservationPage(Observation2):
+    next: NotRequired[str | None]
+class ObserveInput(TypedDict):
+    since: NotRequired[int | None]
+    cursor: NotRequired[str | None]
+class FindInput(TypedDict):
+    role: NotRequired[str | None]
+    name: NotRequired[str | None]
+    cursor: NotRequired[str | None]
+class FindOutput(TypedDict):
+    rows: list[Row]
+    next: NotRequired[str | None]
+    partial: NotRequired[PartialTree | None]
+class ClickInput(TypedDict):
+    ref: str
+class PointInput(TypedDict):
+    image: str
+    x: float
+    y: float
+class TypeInput(TypedDict):
+    ref: str
+    text: str
+    clear: NotRequired[bool]
+class SelectInput(TypedDict):
+    ref: str
+    option: str
+class WaitForInput(TypedDict):
+    targets: NotRequired[list[str]]
+    role: NotRequired[str | None]
+    name: NotRequired[str | None]
+    timeout_ms: NotRequired[int | None]
+    cursor: NotRequired[str | None]
+class WaitForOutput(TypedDict):
+    rows: list[Row]
+    timed_out: bool
+    waited_ms: int
+    next: NotRequired[str | None]
+    partial: NotRequired[PartialTree | None]
+class ExpectInput(TypedDict):
+    ref: NotRequired[str | None]
+    role: NotRequired[str | None]
+    name: NotRequired[str | None]
+    value: NotRequired[str | None]
+    absent: NotRequired[bool]
+class ExpectOutput(TypedDict):
+    met: bool
+    row: NotRequired[Row | None]
+    partial: NotRequired[PartialTree | None]
+ScreenshotTrigger = Literal["outline_thin", "no_postcondition", "decider_reobserve", "no_accessibility_tree", "effect_receipt"]
+class ScreenshotInput(TypedDict):
+    trigger: ScreenshotTrigger
+class ScreenshotOutput(TypedDict):
+    image: str
+    media_type: str
+    width: int
+    height: int
+    bytes: int
+    trigger: ScreenshotTrigger
+    url: str
+    title: str
+class ViewInput(TypedDict):
+    image: str
+class ImageOutput(TypedDict):
+    image: str
+    media_type: str
+    width: int
+    height: int
+    bytes: int
+    source: str
+class CropInput(TypedDict):
+    image: str
+    x: int
+    y: int
+    width: int
+    height: int
+class ZoomInput(TypedDict):
+    image: str
+    x: int
+    y: int
+    width: int
+    height: int
+    scale: NotRequired[float | None]
+ScrollDirection = Literal["up", "down", "left", "right"]
+class DecideStep(TypedDict):
+    question: str
+    targets: NotRequired[list[str]]
+    role: NotRequired[str | None]
+    name: NotRequired[str | None]
+    locate: NotRequired[bool]
+    text: NotRequired[str | None]
+    clear: NotRequired[bool]
+    option: NotRequired[str | None]
+class BatchStepOpen(TypedDict):
+    step: Literal["open"]
+    url: str
+class BatchStepClick(TypedDict):
+    step: Literal["click"]
+    ref: str
+class BatchStepType(TypedDict):
+    step: Literal["type"]
+    ref: str
+    text: str
+    clear: NotRequired[bool]
+class BatchStepSelect(TypedDict):
+    step: Literal["select"]
+    ref: str
+    option: str
+class BatchStepWaitFor(TypedDict):
+    step: Literal["wait_for"]
+    targets: NotRequired[list[str]]
+    role: NotRequired[str | None]
+    name: NotRequired[str | None]
+    timeout_ms: NotRequired[int | None]
+class BatchStepExpect(TypedDict):
+    step: Literal["expect"]
+    ref: NotRequired[str | None]
+    role: NotRequired[str | None]
+    name: NotRequired[str | None]
+    value: NotRequired[str | None]
+    absent: NotRequired[bool]
+class BatchStepScreenshot(TypedDict):
+    step: Literal["screenshot"]
+    trigger: ScreenshotTrigger
+class BatchStepKey(TypedDict):
+    step: Literal["key"]
+    key: str
+    modifiers: NotRequired[list[str]]
+    ref: NotRequired[str | None]
+class BatchStepHotkey(TypedDict):
+    step: Literal["hotkey"]
+    keys: list[str]
+class BatchStepScroll(TypedDict):
+    step: Literal["scroll"]
+    direction: ScrollDirection
+    amount: NotRequired[int | None]
+    ref: NotRequired[str | None]
+class BatchStepDecide(DecideStep):
+    step: Literal["decide"]
+BatchStep = BatchStepOpen | BatchStepClick | BatchStepType | BatchStepSelect | BatchStepWaitFor | BatchStepExpect | BatchStepScreenshot | BatchStepKey | BatchStepHotkey | BatchStepScroll | BatchStepDecide
+class BatchInput(TypedDict):
+    subgoal: NotRequired[str | None]
+    steps: list[BatchStep]
+    until_ms: NotRequired[int | None]
+    no_model: NotRequired[bool]
+SubgoalStatus = Literal["done", "NEEDS_AGENT", "NEEDS_YOU"]
+class BatchOutput(TypedDict):
+    status: SubgoalStatus
+    completed: int
+    failed_step: NotRequired[int | None]
+    error: NotRequired[str | None]
+    observation: NotRequired[Observation2 | None]
+    receipts: NotRequired[list[EffectReceipt]]
+    decisions: NotRequired[list[Any]]
+    until_ms: NotRequired[int | None]
+    next: NotRequired[str | None]
+class HandoverInput(TypedDict):
+    reason: str
+class HandoverOutput(TypedDict):
+    reason: str
+    asked_at_ms: int
 class MemorySupersedeInput(TypedDict):
     newId: str
     oldId: str

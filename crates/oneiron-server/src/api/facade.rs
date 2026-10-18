@@ -32,6 +32,7 @@ mod artifact_hosting_doors;
 mod asr_doors;
 mod authority_history_doors;
 mod booking_doors;
+mod browser_doors;
 mod budget_doors;
 mod calendar_doors;
 mod call_context;

@@ -165,6 +165,9 @@ pub(crate) struct LiveRunEntry {
     planner: Option<PlannerSettings>,
     executor: String,
     attached: Mutex<Option<CodeRunLiveRunBinding>>,
+    /// Public browser calls share one door so a new HTTP request does not
+    /// refill a reviewed batch. Dropped with this registered lease.
+    browser: OnceLock<Arc<crate::api::RunGuests>>,
     serial: Arc<tokio::sync::Mutex<()>>,
 }
 
@@ -233,6 +236,7 @@ impl LiveRuns {
             planner,
             executor,
             attached: Mutex::new(attached),
+            browser: OnceLock::new(),
             serial: Arc::default(),
         });
         self.map().insert(run, Arc::clone(&entry));
@@ -459,6 +463,13 @@ impl ResolvedLiveRun {
     /// The executor whose lease and credential this handle resolved.
     pub(crate) fn run_id(&self) -> EntityId {
         self.entry.run
+    }
+
+    /// The browser door this registered run's public calls share.
+    pub(crate) fn browser_guests(&self, server: &super::SyncServer) -> Arc<crate::api::RunGuests> {
+        Arc::clone(self.entry.browser.get_or_init(|| {
+            Arc::new(crate::api::RunGuests::browser(server, self.entry.run))
+        }))
     }
 
     /// The `[models.planner]` the run's runner plans under, and the model it

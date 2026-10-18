@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::EffectReceipt;
 
 /// Where a receipt's screenshot was kept, or why it was not.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum ReceiptEvidence {
     /// One blob artifact version holds the pixels.

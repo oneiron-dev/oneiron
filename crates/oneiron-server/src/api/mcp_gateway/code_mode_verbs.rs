@@ -309,6 +309,9 @@ pub(crate) enum VerdictAsker {
     /// that credential, under a fresh invocation. The browser batch it is
     /// bound for carries it, so `ai.verdict` need not be bound itself.
     Connector(McpCallContext),
+    /// A public browser call keeps the request's own credential for both
+    /// routine verdicts and screenshot writes, with no agent-only fallback.
+    Credential(crate::auth::CoreAuth, oneiron::WriteActor),
     /// A pumped run's own agent, which holds no credential: each decision is
     /// the agent's `ai.verdict` through its run's host door, under a fresh
     /// invocation, on the run's own line when its entry bound one (so a
@@ -360,6 +363,17 @@ impl RoutineDecider for LadderDecider {
                 };
                 self.runtime.spawn(HELD_IMAGE.scope(held, async move {
                     let _ = sender.send(execute_step_verdict(&server, &actor, input, run).await);
+                }));
+            }
+            VerdictAsker::Credential(auth, _) => {
+                self.runtime.spawn(HELD_IMAGE.scope(held, async move {
+                    let id = InvocationId::mint().to_hex();
+                    let call = crate::api::facade::FacadeCall::bound(&auth, None, Some(&id), None);
+                    let answer = crate::api::facade::call_verb(&server, &call, "ai.verdict", Ok(input))
+                        .await
+                        .map(|answer| (answer.value, answer.rows.unwrap_or_default()))
+                        .map_err(|error| super::mcp_facade_error(error.into_memory_error()));
+                    let _ = sender.send(answer);
                 }));
             }
             VerdictAsker::Agent(actor, line) => {
@@ -659,15 +673,13 @@ impl RunGuests {
         }
     }
 
-    /// A browser or desktop row its door admitted: the row's verb hooks on
-    /// `memory` around the run's guest, each routine decision asked for
-    /// `asker`, and what the browser files named for `by`. The browser runs
-    /// as its connector pack, once its setup connection is checked. Its
-    /// answer derives from no vault row.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "each argument is one axis of the door the call came through"
-    )]
+    /// Binds only this attached run's browser for a public host call.
+    pub(crate) fn browser(server: &SyncServer, run_id: oneiron::EntityId) -> Self {
+        Self { browser: RunBrowser::new(server, run_id), desktop: None }
+    }
+
+    /// A code-mode call fires the row's hooks once around the shared guest door.
+    #[expect(clippy::too_many_arguments, reason = "each argument is one axis of the caller's door")]
     pub(crate) fn call(
         &self,
         server: &Arc<SyncServer>,
@@ -678,50 +690,52 @@ impl RunGuests {
         asker: VerdictAsker,
         by: oneiron::EntityId,
     ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
-        // The browser runs as its connector pack: no installed pack, no browser.
-        if server
-            .vault
-            .require_builtin_channel_pack("browser")
-            .is_err()
-        {
-            return Ok(Err(AgentVerbRefusal {
-                code: "browser_pack_not_installed".to_owned(),
-            }));
+        if let Err(refusal) = self.admits(call.verb, server) {
+            return Ok(Err(refusal));
         }
-        let browser_refused = |error: BrowserError| {
-            tracing::debug!(verb = call.verb.as_str(), %error, "code run browser call refused");
-            AgentVerbRefusal {
-                code: error.code().to_owned(),
-            }
+        let hooks = match oneiron::task_verb::verb_hook_boundary::browser_row_pre(
+            memory, call.verb.as_str(), call.input.clone(),
+        ) {
+            Ok(hooks) => hooks,
+            Err(error) => return refused(super::mcp_facade_error(error)),
         };
-        // A desktop row drives the run's desktop; every other row its browser.
-        let desktop = call.verb.as_str().starts_with("self.desktop.");
-        // The browser guest runs only once its setup connection is checked.
-        if !desktop
-            && server
-                .vault
-                .require_pack_connection_verified("oneiron.browser", "browser-guest")
-                .is_err()
-        {
-            return Ok(Err(AgentVerbRefusal {
-                code: "browser_connection_unchecked".to_owned(),
-            }));
+        let admitted = SelfAgentVerbCall { verb: call.verb, input: hooks.args.clone() };
+        let answer = match self.call_admitted(server, runtime, &admitted, origin, memory, asker, by)? {
+            Ok(answer) => answer,
+            Err(refusal) => return Ok(Err(refusal)),
+        };
+        match oneiron::task_verb::verb_hook_boundary::row_post(&server.vault, hooks, answer.output) {
+            Ok(output) => Ok(Ok(AgentVerbAnswer { output, rows: answer.rows })),
+            Err(error) => refused(super::mcp_facade_error(error)),
         }
-        let run_id = if desktop {
-            self.desktop.as_ref().map(|desktop| desktop.run_id)
-        } else {
-            self.browser.as_ref().map(|browser| browser.run_id)
-        };
-        let Some(run_id) = run_id else {
-            return Ok(Err(browser_refused(BrowserError::Unbound)));
-        };
+    }
+
+    /// The facade and MCP host doors already crossed the row's hooks. They
+    /// take this same guest admission and driver without firing hooks twice.
+    #[expect(clippy::too_many_arguments, reason = "the admitted caller and run are separate axes")]
+    pub(crate) fn call_admitted(
+        &self,
+        server: &Arc<SyncServer>,
+        runtime: &tokio::runtime::Handle,
+        call: &SelfAgentVerbCall,
+        origin: &HostWriteOrigin,
+        memory: &Memory<'_>,
+        asker: VerdictAsker,
+        by: oneiron::EntityId,
+    ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        if let Err(refusal) = self.admits(call.verb, server) {
+            return Ok(Err(refusal));
+        }
         let verb = call.verb.as_str();
-        let hooks =
-            match oneiron::task_verb::verb_hook_boundary::row_pre(memory, verb, call.input.clone())
-            {
-                Ok(hooks) => hooks,
-                Err(error) => return refused(super::mcp_facade_error(error)),
-            };
+        let desktop = verb.starts_with("self.desktop.");
+        let run_id = if desktop {
+            self.desktop.as_ref().map(|guest| guest.run_id)
+        } else {
+            self.browser.as_ref().map(|guest| guest.run_id)
+        }.ok_or(oneiron::Error::InvariantViolation("admitted guest has no run"))?;
+        let browser_refused = |error: BrowserError| AgentVerbRefusal {
+            code: error.code().to_owned(),
+        };
         let writer = ReceiptWriter::new(server, asker.clone(), origin, memory.invocation(), run_id);
         let decider = LadderDecider {
             server: Arc::clone(server),
@@ -731,13 +745,13 @@ impl RunGuests {
             run_id,
         };
         let called = match (&self.desktop, &self.browser) {
-            (Some(run), _) if desktop => run.call(call.verb, hooks.args.clone(), decider, writer),
+            (Some(run), _) if desktop => run.call(call.verb, call.input.clone(), decider, writer),
             (_, Some(run)) if !desktop => {
                 let library = VaultLibrary {
                     server: Arc::clone(server),
                     by,
                 };
-                run.call(call.verb, hooks.args.clone(), decider, library, writer)
+                run.call(call.verb, call.input.clone(), decider, library, writer)
             }
             _ => Err(BrowserError::Unbound),
         };
@@ -752,13 +766,42 @@ impl RunGuests {
         if let Some(receipts) = output.get("receipts") {
             tracing::info!(verb, ?receipts, "browser batch receipts");
         }
-        match oneiron::task_verb::verb_hook_boundary::row_post(&server.vault, hooks, output) {
-            Ok(output) => Ok(Ok(AgentVerbAnswer {
-                output,
-                rows: Some(Vec::new()),
-            })),
-            Err(error) => refused(super::mcp_facade_error(error)),
+        Ok(Ok(AgentVerbAnswer { output, rows: Some(Vec::new()) }))
+    }
+
+    fn admits(&self, verb: AgentVerb, server: &SyncServer) -> Result<(), AgentVerbRefusal> {
+        // The browser runs as its connector pack: no installed pack, no browser.
+        if server
+            .vault
+            .require_builtin_channel_pack("browser")
+            .is_err()
+        {
+            return Err(AgentVerbRefusal {
+                code: "browser_pack_not_installed".to_owned(),
+            });
         }
+        // A desktop row drives the run's desktop; every other row its browser.
+        let desktop = verb.as_str().starts_with("self.desktop.");
+        // The browser guest runs only once its setup connection is checked.
+        if !desktop
+            && server
+                .vault
+                .require_pack_connection_verified("oneiron.browser", "browser-guest")
+                .is_err()
+        {
+            return Err(AgentVerbRefusal {
+                code: "browser_connection_unchecked".to_owned(),
+            });
+        }
+        let run_id = if desktop {
+            self.desktop.as_ref().map(|desktop| desktop.run_id)
+        } else {
+            self.browser.as_ref().map(|browser| browser.run_id)
+        };
+        if run_id.is_none() {
+            return Err(AgentVerbRefusal { code: BrowserError::Unbound.code().to_owned() });
+        }
+        Ok(())
     }
 
     /// The screenshot this run's browser or desktop holds under the

@@ -425,6 +425,8 @@ class Oneiron:
         def folds(self) -> "Oneiron._SelfFoldsVerbs": ...
         def history(self, spec: Facade.FoldHistoryRequest) -> Facade.FoldHistory:
             """Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled."""
+        @property
+        def browser(self) -> "Oneiron._SelfBrowserVerbs": ...
         def fold(self, spec: Facade.FoldMarkRequest) -> Facade.FoldReply[Facade.FoldMarked]:
             """Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands."""
         def compact(self, spec: Facade.FoldCompactRequest) -> Facade.FoldReply[Facade.FoldCompactAsked]:
@@ -522,6 +524,37 @@ class Oneiron:
             """Lists the attached run's landed folds, pending marks and outstanding compact ask."""
         def describe(self, spec: Facade.FoldUnfoldRequest) -> Facade.FoldReply[Facade.FoldDescription]:
             """Reads one pending mark or landed fold of the attached run, with its Generated stub, source ids and retained result handles."""
+    class _SelfBrowserVerbs:
+        def open(self, spec: Facade.LiveRunRequest[Facade.OpenInput]) -> Facade.ObservationPage:
+            """Opens a URL in the attached run's own browser session and observes the page; a long page's observation comes in pages, read on with observe and its next cursor."""
+        def observe(self, spec: Facade.LiveRunRequest[Facade.ObserveInput]) -> Facade.ObservationPage:
+            """Observes the current page of the attached run's browser session, in pages read on with observe and an answer's next cursor; the verbs follow a tab an act opens, or a closed tab's opener, and name the move as switched."""
+        def find(self, spec: Facade.LiveRunRequest[Facade.FindInput]) -> Facade.FindOutput:
+            """Finds the page rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page."""
+        def click(self, spec: Facade.LiveRunRequest[Facade.ClickInput]) -> Facade.ObservationPage:
+            """Clicks one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor."""
+        def click_at(self, spec: Facade.LiveRunRequest[Facade.PointInput]) -> Facade.ObservationPage:
+            """Clicks a point of a held screenshot, mapped onto the viewport; a long page's observation comes in pages, read on with observe and its next cursor."""
+        def type(self, spec: Facade.LiveRunRequest[Facade.TypeInput]) -> Facade.ObservationPage:
+            """Types text into one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor."""
+        def select(self, spec: Facade.LiveRunRequest[Facade.SelectInput]) -> Facade.ObservationPage:
+            """Picks the option of a select element by its label, text or value; a long page's observation comes in pages, read on with observe and its next cursor."""
+        def wait_for(self, spec: Facade.LiveRunRequest[Facade.WaitForInput]) -> Facade.WaitForOutput:
+            """Waits until a page row its refs name, or else some row matching a role and name, is there; many rows come in pages, read on with find and its next cursor."""
+        def expect(self, spec: Facade.LiveRunRequest[Facade.ExpectInput]) -> Facade.ExpectOutput:
+            """Checks that a page row is present or absent, and holds a given value."""
+        def screenshot(self, spec: Facade.LiveRunRequest[Facade.ScreenshotInput]) -> Facade.ScreenshotOutput:
+            """Takes a screenshot the session holds, by image ref and never captioned."""
+        def view(self, spec: Facade.LiveRunRequest[Facade.ViewInput]) -> Facade.ImageOutput:
+            """Reads back a held image by its ref."""
+        def crop(self, spec: Facade.LiveRunRequest[Facade.CropInput]) -> Facade.ImageOutput:
+            """Crops a held image to a rectangle."""
+        def zoom(self, spec: Facade.LiveRunRequest[Facade.ZoomInput]) -> Facade.ImageOutput:
+            """Zooms into a rectangle of a held image."""
+        def batch(self, spec: Facade.LiveRunRequest[Facade.BatchInput]) -> Facade.BatchOutput:
+            """Runs one batched program of browser steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor."""
+        def handover(self, spec: Facade.LiveRunRequest[Facade.HandoverInput]) -> Facade.HandoverOutput:
+            """Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record."""
     class _SelfAgentsVerbs:
         def spawn(self, spec: Facade.LiveRunRequest[Facade.AgentSpawnInput]) -> Facade.AgentSpawnOutput:
             """Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity."""
@@ -1369,6 +1402,8 @@ class Oneiron:
     class _VaultConsentVerbs:
         def approve_once(self, spec: Facade.ApproveOnceRequest) -> Facade.ConsentActReceipt:
             """The owner approves exactly one engine-emitted effect digest; no standing grant is created."""
+        def deny(self, spec: Facade.DenyConsentRequest) -> Facade.ConsentActReceipt:
+            """The owner denies exactly one engine-emitted effect digest and records the refusal without granting authority."""
         def create_standing_grant(self, spec: Facade.CreateStandingGrantRequest) -> Facade.ConsentActReceipt:
             """The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision."""
         def registry(self, spec: Facade.ConsentRegistryQuery) -> Facade.ConsentRegistry:

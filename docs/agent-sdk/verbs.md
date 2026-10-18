@@ -270,6 +270,7 @@ both bindings and their export-census tests in one change.
 - `vault.policy.outbound.decide`
 - `vault.policy.relay.decide`
 - `vault.consent.approve_once`
+- `vault.consent.deny`
 - `vault.consent.create_standing_grant`
 - `vault.consent.registry`
 - `vault.consent.revoke`

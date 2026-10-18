@@ -380,6 +380,9 @@ class Oneiron:
         def history(self, spec):
             """Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled."""
             return json.loads(_translate(lambda: self._client.self_history(json.dumps(spec))))
+        @property
+        def browser(self) -> "Oneiron._SelfBrowserVerbs":
+            return Oneiron._SelfBrowserVerbs(self._client)
         def fold(self, spec):
             """Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands."""
             return json.loads(_translate(lambda: self._client.self_fold(json.dumps(spec))))
@@ -553,6 +556,54 @@ class Oneiron:
         def describe(self, spec):
             """Reads one pending mark or landed fold of the attached run, with its Generated stub, source ids and retained result handles."""
             return json.loads(_translate(lambda: self._client.self_folds_describe(json.dumps(spec))))
+    class _SelfBrowserVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def open(self, spec):
+            """Opens a URL in the attached run's own browser session and observes the page; a long page's observation comes in pages, read on with observe and its next cursor."""
+            return json.loads(_translate(lambda: self._client.self_browser_open(json.dumps(spec))))
+        def observe(self, spec):
+            """Observes the current page of the attached run's browser session, in pages read on with observe and an answer's next cursor; the verbs follow a tab an act opens, or a closed tab's opener, and name the move as switched."""
+            return json.loads(_translate(lambda: self._client.self_browser_observe(json.dumps(spec))))
+        def find(self, spec):
+            """Finds the page rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page."""
+            return json.loads(_translate(lambda: self._client.self_browser_find(json.dumps(spec))))
+        def click(self, spec):
+            """Clicks one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor."""
+            return json.loads(_translate(lambda: self._client.self_browser_click(json.dumps(spec))))
+        def click_at(self, spec):
+            """Clicks a point of a held screenshot, mapped onto the viewport; a long page's observation comes in pages, read on with observe and its next cursor."""
+            return json.loads(_translate(lambda: self._client.self_browser_click_at(json.dumps(spec))))
+        def type(self, spec):
+            """Types text into one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor."""
+            return json.loads(_translate(lambda: self._client.self_browser_type(json.dumps(spec))))
+        def select(self, spec):
+            """Picks the option of a select element by its label, text or value; a long page's observation comes in pages, read on with observe and its next cursor."""
+            return json.loads(_translate(lambda: self._client.self_browser_select(json.dumps(spec))))
+        def wait_for(self, spec):
+            """Waits until a page row its refs name, or else some row matching a role and name, is there; many rows come in pages, read on with find and its next cursor."""
+            return json.loads(_translate(lambda: self._client.self_browser_wait_for(json.dumps(spec))))
+        def expect(self, spec):
+            """Checks that a page row is present or absent, and holds a given value."""
+            return json.loads(_translate(lambda: self._client.self_browser_expect(json.dumps(spec))))
+        def screenshot(self, spec):
+            """Takes a screenshot the session holds, by image ref and never captioned."""
+            return json.loads(_translate(lambda: self._client.self_browser_screenshot(json.dumps(spec))))
+        def view(self, spec):
+            """Reads back a held image by its ref."""
+            return json.loads(_translate(lambda: self._client.self_browser_view(json.dumps(spec))))
+        def crop(self, spec):
+            """Crops a held image to a rectangle."""
+            return json.loads(_translate(lambda: self._client.self_browser_crop(json.dumps(spec))))
+        def zoom(self, spec):
+            """Zooms into a rectangle of a held image."""
+            return json.loads(_translate(lambda: self._client.self_browser_zoom(json.dumps(spec))))
+        def batch(self, spec):
+            """Runs one batched program of browser steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor."""
+            return json.loads(_translate(lambda: self._client.self_browser_batch(json.dumps(spec))))
+        def handover(self, spec):
+            """Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record."""
+            return json.loads(_translate(lambda: self._client.self_browser_handover(json.dumps(spec))))
     class _SelfAgentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1988,6 +2039,9 @@ class Oneiron:
         def approve_once(self, spec):
             """The owner approves exactly one engine-emitted effect digest; no standing grant is created."""
             return json.loads(_translate(lambda: self._client.vault_consent_approve_once(json.dumps(spec))))
+        def deny(self, spec):
+            """The owner denies exactly one engine-emitted effect digest and records the refusal without granting authority."""
+            return json.loads(_translate(lambda: self._client.vault_consent_deny(json.dumps(spec))))
         def create_standing_grant(self, spec):
             """The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision."""
             return json.loads(_translate(lambda: self._client.vault_consent_create_standing_grant(json.dumps(spec))))

@@ -19,6 +19,13 @@ pub struct ApproveOnceRequest {
     pub effect_digest: String,
 }
 
+/// Deny the exact effect the engine emitted, with the same digest grammar as approval.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DenyConsentRequest {
+    pub effect_digest: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateStandingGrantRequest {
@@ -48,7 +55,10 @@ pub struct ActionBoundRequest {
 pub struct ActionEnvelopeRequest {
     pub project: String,
     pub audience: Vec<String>,
-    pub budget: u64,
+    /// A reviewed batch's count; absent for a standing no-press grant.
+    /// Zero leaves every send needing the person's press.
+    #[serde(default)]
+    pub budget: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -75,12 +85,14 @@ impl StandingGrantBound {
                     let member = normalized_ref("action audience member", member)?;
                     selectors.push(format!("audience:{member}"));
                 }
+                let mut envelope = ActionEnvelope::new(selectors)?.with_target(project)?;
+                if let Some(budget) = bound.envelope.budget {
+                    envelope = envelope.with_budget(budget);
+                }
                 GrantBound::action(
                     ActorBound::new(bound.actor)?,
                     ActionClass::new(bound.class)?,
-                    ActionEnvelope::new(selectors)?
-                        .with_target(project)?
-                        .with_budget(bound.envelope.budget),
+                    envelope,
                 )
             }
             Self::Disclosure(bound) => GrantBound::disclosure(
@@ -130,6 +142,15 @@ pub fn approve_once(
 ) -> MemoryResult<ConsentActReceipt> {
     let digest = parse_digest(&input.effect_digest, "effect_digest")?;
     Ok(vault.approve_once(owner, digest)?.into())
+}
+
+pub fn deny(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: DenyConsentRequest,
+) -> MemoryResult<ConsentActReceipt> {
+    let digest = parse_digest(&input.effect_digest, "effect_digest")?;
+    Ok(vault.deny_consent(owner, digest)?.into())
 }
 
 pub fn create_standing_grant(

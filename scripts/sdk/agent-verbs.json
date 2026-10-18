@@ -4137,6 +4137,21 @@
       "openapi": true
     },
     {
+      "name": "vault.consent.deny",
+      "description": "The owner denies exactly one engine-emitted effect digest and records the refusal without granting authority.",
+      "input": "crate::consent::lifecycle::DenyConsentRequest",
+      "output": "crate::consent::lifecycle::ConsentActReceipt",
+      "call": "crate::consent::lifecycle::deny(memory.vault(), &memory.embedded_owner(\"vault.consent.deny\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.consent.create_standing_grant",
       "description": "The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision.",
       "input": "crate::consent::lifecycle::CreateStandingGrantRequest",
@@ -7931,156 +7946,240 @@
     {
       "name": "self.browser.open",
       "description": "Opens a URL in the run's own browser session and observes the page; a long page's observation comes in pages, read on with observe and its next cursor.",
-      "input": "oneiron_browser::OpenInput",
-      "output": "oneiron_browser::ObservationPage",
+      "input": "crate::task_verb::sdk::BrowserOpenInput",
+      "output": "crate::task_verb::sdk::BrowserObservationPage",
       "call": "oneiron_browser::paged(driver, |driver| driver.open(input))?",
       "scope": "Write",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserOpenInput>",
+        "description": "Opens a URL in the attached run's own browser session and observes the page; a long page's observation comes in pages, read on with observe and its next cursor.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.observe",
       "description": "Observes the current page of the run's browser session, in pages read on with observe and an answer's next cursor; the verbs follow a tab an act opens, or a closed tab's opener, and name the move as switched.",
-      "input": "oneiron_browser::ObserveInput",
-      "output": "oneiron_browser::ObservationPage",
+      "input": "crate::task_verb::sdk::BrowserObserveInput",
+      "output": "crate::task_verb::sdk::BrowserObservationPage",
       "call": "driver.observe_page(input)?",
       "scope": "Read",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserObserveInput>",
+        "description": "Observes the current page of the attached run's browser session, in pages read on with observe and an answer's next cursor; the verbs follow a tab an act opens, or a closed tab's opener, and name the move as switched.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.find",
       "description": "Finds the page rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page.",
-      "input": "oneiron_browser::FindInput",
-      "output": "oneiron_browser::FindOutput",
+      "input": "crate::task_verb::sdk::BrowserFindInput",
+      "output": "crate::task_verb::sdk::BrowserFindOutput",
       "call": "driver.find(input)?",
       "scope": "Read",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserFindInput>",
+        "description": "Finds the page rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.click",
       "description": "Clicks one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor.",
-      "input": "oneiron_browser::ClickInput",
-      "output": "oneiron_browser::ObservationPage",
+      "input": "crate::task_verb::sdk::BrowserClickInput",
+      "output": "crate::task_verb::sdk::BrowserObservationPage",
       "call": "oneiron_browser::paged(driver, |driver| driver.click(input))?",
       "scope": "Write",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserClickInput>",
+        "description": "Clicks one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.click_at",
       "description": "Clicks a point of a held screenshot, mapped onto the viewport; a long page's observation comes in pages, read on with observe and its next cursor.",
-      "input": "oneiron_browser::PointInput",
-      "output": "oneiron_browser::ObservationPage",
+      "input": "crate::task_verb::sdk::BrowserPointInput",
+      "output": "crate::task_verb::sdk::BrowserObservationPage",
       "call": "oneiron_browser::paged(driver, |driver| driver.click_at(input))?",
       "scope": "Write",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserPointInput>",
+        "description": "Clicks a point of a held screenshot, mapped onto the viewport; a long page's observation comes in pages, read on with observe and its next cursor.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.type",
       "description": "Types text into one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor.",
-      "input": "oneiron_browser::TypeInput",
-      "output": "oneiron_browser::ObservationPage",
+      "input": "crate::task_verb::sdk::BrowserTypeInput",
+      "output": "crate::task_verb::sdk::BrowserObservationPage",
       "call": "oneiron_browser::paged(driver, |driver| driver.type_text(input))?",
       "scope": "Write",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserTypeInput>",
+        "description": "Types text into one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.select",
       "description": "Picks the option of a select element by its label, text or value; a long page's observation comes in pages, read on with observe and its next cursor.",
-      "input": "oneiron_browser::SelectInput",
-      "output": "oneiron_browser::ObservationPage",
+      "input": "crate::task_verb::sdk::BrowserSelectInput",
+      "output": "crate::task_verb::sdk::BrowserObservationPage",
       "call": "oneiron_browser::paged(driver, |driver| driver.select(input))?",
       "scope": "Write",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserSelectInput>",
+        "description": "Picks the option of a select element by its label, text or value; a long page's observation comes in pages, read on with observe and its next cursor.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.wait_for",
       "description": "Waits until a page row its refs name, or else some row matching a role and name, is there; many rows come in pages, read on with find and its next cursor.",
-      "input": "oneiron_browser::WaitForInput",
-      "output": "oneiron_browser::WaitForOutput",
+      "input": "crate::task_verb::sdk::BrowserWaitForInput",
+      "output": "crate::task_verb::sdk::BrowserWaitForOutput",
       "call": "driver.wait_for(input)?",
       "scope": "Read",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserWaitForInput>",
+        "description": "Waits until a page row its refs name, or else some row matching a role and name, is there; many rows come in pages, read on with find and its next cursor.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.expect",
       "description": "Checks that a page row is present or absent, and holds a given value.",
-      "input": "oneiron_browser::ExpectInput",
-      "output": "oneiron_browser::ExpectOutput",
+      "input": "crate::task_verb::sdk::BrowserExpectInput",
+      "output": "crate::task_verb::sdk::BrowserExpectOutput",
       "call": "driver.expect(input)?",
       "scope": "Read",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserExpectInput>",
+        "description": "Checks that a page row is present or absent, and holds a given value.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.screenshot",
       "description": "Takes a screenshot the session holds, by image ref and never captioned.",
-      "input": "oneiron_browser::ScreenshotInput",
-      "output": "oneiron_browser::ScreenshotOutput",
+      "input": "crate::task_verb::sdk::BrowserScreenshotInput",
+      "output": "crate::task_verb::sdk::BrowserScreenshotOutput",
       "call": "driver.screenshot(input)?",
       "scope": "Read",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserScreenshotInput>",
+        "description": "Takes a screenshot the session holds, by image ref and never captioned.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.view",
       "description": "Reads back a held image by its ref.",
-      "input": "oneiron_browser::ViewInput",
-      "output": "oneiron_browser::ImageOutput",
+      "input": "crate::task_verb::sdk::BrowserViewInput",
+      "output": "crate::task_verb::sdk::BrowserImageOutput",
       "call": "driver.view(input)?",
       "scope": "Read",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserViewInput>",
+        "description": "Reads back a held image by its ref.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.crop",
       "description": "Crops a held image to a rectangle.",
-      "input": "oneiron_browser::CropInput",
-      "output": "oneiron_browser::ImageOutput",
+      "input": "crate::task_verb::sdk::BrowserCropInput",
+      "output": "crate::task_verb::sdk::BrowserImageOutput",
       "call": "driver.crop(input)?",
       "scope": "Read",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserCropInput>",
+        "description": "Crops a held image to a rectangle.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.zoom",
       "description": "Zooms into a rectangle of a held image.",
-      "input": "oneiron_browser::ZoomInput",
-      "output": "oneiron_browser::ImageOutput",
+      "input": "crate::task_verb::sdk::BrowserZoomInput",
+      "output": "crate::task_verb::sdk::BrowserImageOutput",
       "call": "driver.zoom(input)?",
       "scope": "Read",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserZoomInput>",
+        "description": "Zooms into a rectangle of a held image.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.batch",
       "description": "Runs one batched program of browser steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor.",
-      "input": "oneiron_browser::BatchInput",
-      "output": "oneiron_browser::BatchOutput",
+      "input": "crate::task_verb::sdk::BrowserBatchInput",
+      "output": "crate::task_verb::sdk::BrowserBatchOutput",
       "call": "driver.batch(input)?",
       "scope": "Write",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserBatchInput>",
+        "description": "Runs one batched program of browser steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.library.find",
@@ -8140,13 +8239,19 @@
     {
       "name": "self.browser.handover",
       "description": "Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record.",
-      "input": "oneiron_browser::HandoverInput",
-      "output": "oneiron_browser::HandoverOutput",
+      "input": "crate::task_verb::sdk::BrowserHandoverInput",
+      "output": "crate::task_verb::sdk::BrowserHandoverOutput",
       "call": "driver.handover(input)?",
       "scope": "Write",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserHandoverInput>",
+        "description": "Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.desktop.open",

@@ -21,6 +21,21 @@ impl<'a> HostSelfDispatcher<'a> {
         Self::for_leased_agent_attempt(vault, actor, &leased)
     }
 
+    /// The write origin of a browser call admitted on this live run. Its
+    /// envelope and parent binding come from the run, never the HTTP input.
+    pub fn browser_origin_from_host(
+        &self,
+        verb: crate::task_verb::sdk::AgentVerb,
+    ) -> MemoryResult<crate::memory::HostWriteOrigin> {
+        self.live_parent()?;
+        if !verb.is_browser() {
+            return Err(MemoryError::bad_request("a browser verb is required"));
+        }
+        Ok(crate::memory::HostWriteOrigin::new(self.agent_verb_envelope(verb, None)?)
+            .with_task_host(self.task_host_binding()?)
+            .with_model_provider(self.model_provider()))
+    }
+
     /// The host door's `self.agents.spawn`, after its credential and hooks
     /// admitted the call. Runs the same planner and child admission as code
     /// mode, under this dispatcher's acquired parent lease.

@@ -2594,6 +2594,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_consent_deny(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.consent.deny")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.consent.deny", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_consent_create_standing_grant(
         &self,
         py: Python<'_>,
@@ -5647,6 +5654,111 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "self.history")?;
         let output = py
             .detach(|| self.inner.agent_verb("self.history", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_open(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.open")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.open", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_observe(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.observe")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.observe", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_find(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.find")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.find", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_click(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.click")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.click", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_click_at(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.click_at")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.click_at", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_type(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.type")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.type", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_select(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.select")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.select", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_wait_for(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.wait_for")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.wait_for", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_expect(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.expect")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.expect", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_screenshot(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.screenshot")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.screenshot", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_view(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.view")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.view", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_crop(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.crop")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.crop", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_zoom(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.zoom")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.zoom", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_batch(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.batch")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.batch", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_browser_handover(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.browser.handover")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.browser.handover", input))
             .map_err(raise)?;
         encode(&output)
     }
