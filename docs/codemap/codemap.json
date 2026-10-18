@@ -11260,6 +11260,27 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ContributionForkModel",
+      "ContributionForkReceipt",
+      "ContributionForkScorer",
+      "ContributionReplayUnavailable",
+      "ForkTreatment",
+      "ReplayAnchor",
+      "ScoredFork"
+     ],
+     "path": "src/code_run/contribution.rs",
+     "purpose": "The matched-fork contribution runner (FIX 3028, ARCH-0037 #lineage-credit, ARCH-0053): one sampled credited…",
+     "surface": {
+      "enum": 2,
+      "fn": 4,
+      "struct": 3,
+      "trait": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -11365,8 +11386,8 @@
      "path": "src/code_run/dispatcher/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 16,
-      "fn": 8,
+      "crate-vis": 17,
+      "fn": 9,
       "re-export": 2,
       "struct": 1,
       "type": 1
@@ -11465,9 +11486,9 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "mod": 5,
-      "re-export": 14
+      "re-export": 17
      }
     },
     {
@@ -11562,6 +11583,26 @@
       "enum": 1,
       "fn": 24,
       "struct": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CapsuleHost",
+      "CapsuleRungBinding",
+      "ExposureKind",
+      "ExposureSlot",
+      "StepReplayCapsule",
+      "TaskExposure"
+     ],
+     "path": "src/code_run/replay_capsule.rs",
+     "purpose": "Step replay capsules (FIX 3028, ARCH-0037 #lineage-credit, ARCH-0053): the exact model input of a canonical…",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 2,
+      "fn": 4,
+      "struct": 4
      }
     },
     {
@@ -11727,8 +11768,8 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 12,
-      "re-export": 3
+      "crate-vis": 13,
+      "re-export": 4
      }
     },
     {
@@ -11771,6 +11812,17 @@
       "crate-vis": 31,
       "fn": 11,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/replay_capsule.rs",
+     "purpose": "The step replay capsule and contribution fork rows (FIX 3028): each capsule's metadata keyed by its attempt…",
+     "surface": {
+      "crate-vis": 10,
+      "fn": 1
      }
     },
     {
@@ -21855,6 +21907,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/attempt_cancels.rs",
+     "purpose": "The step loops leased attempts are running in this vault (FIX 600), each under its attempt's root token, so…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "StepCancellation"
      ],
@@ -21864,6 +21926,16 @@
       "const": 1,
       "fn": 6,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/capture.rs",
+     "purpose": "The executor's step replay capture (FIX 3028): the first step of a leased attempt's canonical run, captured…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -21936,7 +22008,7 @@
      "path": "src/engine_executor/mod.rs",
      "purpose": "Engine-native JS code-mode executor",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 4
      }
     },
@@ -53287,7 +53359,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 70,
+     "files": 73,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53609,7 +53681,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 21,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -54570,7 +54642,7 @@
    },
    "over_bar": 189,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3318,
+   "source_files": 3323,
    "test_files": 902
   },
   "oneiron-android": {
@@ -65277,6 +65349,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/contribution.rs",
+     "purpose": "The host's replay capsule for the Coach's contribution checks (FIX 3028): the concrete…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -71865,7 +71947,7 @@
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
       "crate-vis": 18,
-      "fn": 11,
+      "fn": 12,
       "struct": 1
      }
     },
@@ -73822,7 +73904,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 39,
+     "files": 40,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -74237,7 +74319,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 629,
+   "source_files": 630,
    "test_files": 182
   },
   "oneiron-spawn": {
