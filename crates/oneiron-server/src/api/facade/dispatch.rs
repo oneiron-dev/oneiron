@@ -6165,6 +6165,27 @@ async fn vault_consent_approve_once(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_consent_deny(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.consent.deny")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.consent.deny", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.consent.deny", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_consent_deny(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_consent_create_standing_grant(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -14642,6 +14663,426 @@ async fn self_history(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn self_browser_open(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.browser.open")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.browser.open", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.browser.open", value).await?;
+    let (output, listed) = super::host_doors::self_browser_open(
+        server,
+        auth,
+        call.session()?,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn self_browser_observe(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.browser.observe")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.browser.observe", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.browser.observe", value).await?;
+    let (output, listed) = super::host_doors::self_browser_observe(
+        server,
+        auth,
+        call.session()?,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn self_browser_find(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.browser.find")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.browser.find", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.browser.find", value).await?;
+    let (output, listed) = super::host_doors::self_browser_find(
+        server,
+        auth,
+        call.session()?,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn self_browser_click(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.browser.click")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.browser.click", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.browser.click", value).await?;
+    let (output, listed) = super::host_doors::self_browser_click(
+        server,
+        auth,
+        call.session()?,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn self_browser_click_at(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.browser.click_at")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.browser.click_at", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.browser.click_at", value).await?;
+    let (output, listed) = super::host_doors::self_browser_click_at(
+        server,
+        auth,
+        call.session()?,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn self_browser_type(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.browser.type")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.browser.type", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.browser.type", value).await?;
+    let (output, listed) = super::host_doors::self_browser_type(
+        server,
+        auth,
+        call.session()?,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn self_browser_select(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.browser.select")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.browser.select", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.browser.select", value).await?;
+    let (output, listed) = super::host_doors::self_browser_select(
+        server,
+        auth,
+        call.session()?,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn self_browser_wait_for(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.browser.wait_for")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.browser.wait_for", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.browser.wait_for", value).await?;
+    let (output, listed) = super::host_doors::self_browser_wait_for(
+        server,
+        auth,
+        call.session()?,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn self_browser_expect(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.browser.expect")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.browser.expect", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.browser.expect", value).await?;
+    let (output, listed) = super::host_doors::self_browser_expect(
+        server,
+        auth,
+        call.session()?,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn self_browser_screenshot(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.browser.screenshot")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.browser.screenshot", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.browser.screenshot", value).await?;
+    let (output, listed) = super::host_doors::self_browser_screenshot(
+        server,
+        auth,
+        call.session()?,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn self_browser_view(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.browser.view")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.browser.view", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.browser.view", value).await?;
+    let (output, listed) = super::host_doors::self_browser_view(
+        server,
+        auth,
+        call.session()?,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn self_browser_crop(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.browser.crop")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.browser.crop", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.browser.crop", value).await?;
+    let (output, listed) = super::host_doors::self_browser_crop(
+        server,
+        auth,
+        call.session()?,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn self_browser_zoom(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.browser.zoom")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.browser.zoom", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.browser.zoom", value).await?;
+    let (output, listed) = super::host_doors::self_browser_zoom(
+        server,
+        auth,
+        call.session()?,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn self_browser_batch(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.browser.batch")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.browser.batch", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.browser.batch", value).await?;
+    let (output, listed) = super::host_doors::self_browser_batch(
+        server,
+        auth,
+        call.session()?,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn self_browser_handover(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.browser.handover")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.browser.handover", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.browser.handover", value).await?;
+    let (output, listed) = super::host_doors::self_browser_handover(
+        server,
+        auth,
+        call.session()?,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_claims_supersede(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -15263,6 +15704,7 @@ pub(crate) async fn call_verb(
         "vault.policy.outbound.decide" => vault_policy_outbound_decide(server, call, input).await,
         "vault.policy.relay.decide" => vault_policy_relay_decide(server, call, input).await,
         "vault.consent.approve_once" => vault_consent_approve_once(server, call, input).await,
+        "vault.consent.deny" => vault_consent_deny(server, call, input).await,
         "vault.consent.create_standing_grant" => {
             vault_consent_create_standing_grant(server, call, input).await
         }
@@ -15772,6 +16214,21 @@ pub(crate) async fn call_verb(
         "self.run.attach" => self_run_attach(server, call, input).await,
         "self.folds.describe" => self_folds_describe(server, call, input).await,
         "self.history" => self_history(server, call, input).await,
+        "self.browser.open" => self_browser_open(server, call, input).await,
+        "self.browser.observe" => self_browser_observe(server, call, input).await,
+        "self.browser.find" => self_browser_find(server, call, input).await,
+        "self.browser.click" => self_browser_click(server, call, input).await,
+        "self.browser.click_at" => self_browser_click_at(server, call, input).await,
+        "self.browser.type" => self_browser_type(server, call, input).await,
+        "self.browser.select" => self_browser_select(server, call, input).await,
+        "self.browser.wait_for" => self_browser_wait_for(server, call, input).await,
+        "self.browser.expect" => self_browser_expect(server, call, input).await,
+        "self.browser.screenshot" => self_browser_screenshot(server, call, input).await,
+        "self.browser.view" => self_browser_view(server, call, input).await,
+        "self.browser.crop" => self_browser_crop(server, call, input).await,
+        "self.browser.zoom" => self_browser_zoom(server, call, input).await,
+        "self.browser.batch" => self_browser_batch(server, call, input).await,
+        "self.browser.handover" => self_browser_handover(server, call, input).await,
         "vault.claims.supersede" => vault_claims_supersede(server, call, input).await,
         "self.fold" => self_fold(server, call, input).await,
         "self.compact" => self_compact(server, call, input).await,
@@ -15784,26 +16241,11 @@ pub(crate) async fn call_verb(
         "self.focus.refresh" | "self.focus.subscribe" | "self.focus.unsubscribe" => {
             Err(context_required(verb, VerbContext::Board))
         }
-        "self.browser.open"
-        | "self.browser.observe"
-        | "self.browser.find"
-        | "self.browser.click"
-        | "self.browser.click_at"
-        | "self.browser.type"
-        | "self.browser.select"
-        | "self.browser.wait_for"
-        | "self.browser.expect"
-        | "self.browser.screenshot"
-        | "self.browser.view"
-        | "self.browser.crop"
-        | "self.browser.zoom"
-        | "self.browser.batch"
-        | "self.browser.library.find"
+        "self.browser.library.find"
         | "self.browser.library.propose"
         | "self.browser.library.retire"
         | "self.browser.library.retired"
         | "self.browser.library.run"
-        | "self.browser.handover"
         | "self.desktop.open"
         | "self.desktop.observe"
         | "self.desktop.find"
