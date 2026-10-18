@@ -2627,6 +2627,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "HostActionAuthority"
+     ],
+     "path": "src/authority/host_action.rs",
+     "purpose": "Who a host credential acts as inside its vault (FIX 2222, owner ruling \"A + support\", 2026-10-18)",
+     "surface": {
+      "crate-vis": 9,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/authority/host_actor.rs",
      "purpose": "The owner a self-hosted root binds (H149)",
@@ -2857,8 +2871,8 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 23,
-      "re-export": 39
+      "crate-vis": 24,
+      "re-export": 40
      }
     },
     {
@@ -10482,7 +10496,7 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 36,
       "enum": 1,
       "fn": 9,
       "struct": 1
@@ -14827,7 +14841,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 28,
-      "fn": 24,
+      "fn": 25,
       "struct": 2
      }
     },
@@ -31361,7 +31375,7 @@
      "surface": {
       "crate-vis": 15,
       "mod": 6,
-      "re-export": 41
+      "re-export": 42
      }
     },
     {
@@ -31567,7 +31581,7 @@
      "purpose": "The bound actor's one read lane",
      "surface": {
       "crate-vis": 15,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -54900,7 +54914,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 141,
+     "files": 142,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56358,7 +56372,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3434,
+   "source_files": 3435,
    "test_files": 902
   },
   "oneiron-android": {
@@ -59405,6 +59419,7 @@
      "path": "src/error/mod.rs",
      "purpose": "—",
      "surface": {
+      "const": 1,
       "enum": 2,
       "fn": 7,
       "re-export": 14,
@@ -59590,7 +59605,7 @@
      "path": "src/memory.rs",
      "purpose": "The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one…",
      "surface": {
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -59606,7 +59621,7 @@
      "path": "src/memory/error.rs",
      "purpose": "Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error…",
      "surface": {
-      "const": 15,
+      "const": 16,
       "fn": 7,
       "struct": 5,
       "type": 1
