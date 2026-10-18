@@ -353,3 +353,17 @@ The bridge must return non-2xx on transport or authority failure, not an empty
 success page. The pass reads one page at a time and stores its cursor only
 following successful application. Host deployments without a bridge do not
 start any mirror or make a tracker request.
+
+The direct mode's `ONEIRON_LINEAR_CONFIG` file may name `graphql_endpoint`
+(default `https://api.linear.app/graphql`), checked as the bridge URL is:
+HTTPS, or HTTP on a loopback host only, with no credentials, query or fragment.
+
+`POST /v1/hooks/linear` takes signed Linear webhooks (keyless, beside the
+Slack and LINE hooks). `Linear-Signature` must be the hex HMAC-SHA256 of the
+raw body under the custody secret `linear.webhook_signing_secret` (effector
+`connector:linear`); `Linear-Delivery` names the delivery, and a replay of
+the same id and body answers its stored receipt. The webhook's tracker mapping
+is the direct config's in direct mode; otherwise `ONEIRON_LINEAR_WEBHOOK_CONFIG`
+names a JSON file of `team_id`, `status_ids` and `assignee_ids`, checked at
+startup (an invalid file stops it). With neither, the route answers 404
+`linear_webhook_not_configured`.

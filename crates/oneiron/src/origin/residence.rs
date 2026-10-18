@@ -19,7 +19,7 @@ const AUTHORITY: SideTable<EntityId, OriginAuthority, Named> =
 /// current authority epoch. Key: publication id.
 const AUTHORITY_PERMIT: SideTable<EntityId, u64, Raw> =
     SideTable::new(&side_table::ORIGIN_AUTHORITY_PERMIT);
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum OriginResidence {
     LocalVault,

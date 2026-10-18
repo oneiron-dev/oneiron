@@ -150,6 +150,14 @@ struct SearchHit {
     window: String,
 }
 
+/// The home answered a residence RPC and refused it (FIX 3353), apart from a
+/// call that failed: a socket that broke or timed out, or a reply that did not
+/// parse.
+struct HomeRefused {
+    /// The code the home gave.
+    code: Option<String>,
+}
+
 struct ResidenceRpc {
     socket: Socket,
     next_id: u64,
@@ -257,6 +265,22 @@ impl ResidenceRpc {
     }
 
     async fn request(&mut self, method: &str, params: Value) -> Result<Value, TransportError> {
+        self.call(method, params).await?.map_err(|refusal| {
+            if refusal.code.as_deref() == Some("INDEX_REVISION_CHANGED") {
+                TransportError::IndexRevisionChanged
+            } else {
+                TransportError::InvalidPayload("home refused residence RPC")
+            }
+        })
+    }
+
+    /// [`Self::request`], with the home's refusal kept apart from a call that
+    /// failed: `Ok(Err(_))` when the home answered no.
+    async fn call(
+        &mut self,
+        method: &str,
+        params: Value,
+    ) -> Result<Result<Value, HomeRefused>, TransportError> {
         let id = self.next_id;
         self.next_id = self.next_id.checked_add(1).ok_or_else(refused)?;
         let request = RequestEnvelope {
@@ -301,11 +325,9 @@ impl ResidenceRpc {
                         .find(|(key, _)| key.as_str() == Some("code"))
                         .and_then(|(_, value)| value.as_str())
                 });
-                return Err(if code == Some("INDEX_REVISION_CHANGED") {
-                    TransportError::IndexRevisionChanged
-                } else {
-                    TransportError::InvalidPayload("home refused residence RPC")
-                });
+                return Ok(Err(HomeRefused {
+                    code: code.map(str::to_owned),
+                }));
             }
             if reply.kind != "rpc.res" {
                 return Err(refused());
@@ -316,7 +338,9 @@ impl ResidenceRpc {
             }
             assembled.extend_from_slice(chunk);
             if reply.last {
-                return rmp_serde::from_slice(&assembled).map_err(|_| refused());
+                return rmp_serde::from_slice(&assembled)
+                    .map(Ok)
+                    .map_err(|_| refused());
             }
         }
         Err(refused())
