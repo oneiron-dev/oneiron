@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 474 code-mode rows (453 host rows, 21 run rows), 1689 declarations.
-// Replies: 418 fully typed, 52 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 489 code-mode rows (468 host rows, 21 run rows), 1739 declarations.
+// Replies: 428 fully typed, 57 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 80; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 82; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -528,6 +528,39 @@ declare namespace Sdk {
   type HubHookQualificationReceipt = { put: PackPutReceipt; replays: HubHookReplay[] };
   type PackFileInput = { path: string; text: string };
   type PackPutRequest = { files: PackFileInput[] };
+  type SlatePackSource = { source_ref: string; content_hash: string };
+  type SlateDataClass = "public" | "personal" | "secret" | "header";
+  type SlateToolManifest = { name: string; data_class: SlateDataClass; header_parameters: string[]; resolved_input_schema?: unknown | null; trigger?: string | null; destroys: boolean; spends: boolean; sends_outward: boolean; legacy_ask: boolean; read_only?: boolean; idempotent?: boolean };
+  type SlateElicitationManifest = { legacy_ask_tools: string[] };
+  type SlateManifest = { pack_source?: SlatePackSource | null; tools: SlateToolManifest[]; elicitation?: SlateElicitationManifest | null };
+  type ConnectorPackPrepareRequest = { connector: string; source: SlatePackSource; summary: string; secret_ref?: string | null; protocol_revision: string; manifest: SlateManifest };
+  type ConnectorPackBasis = { connector: string; source: SlatePackSource; key_ref: string; slate_ref: string; slate_revision: number; manifest_hash: string; grant_hash: string; advisory_hash: string; protocol_revision: string };
+  type SlateDisposition = "always_allow" | "auto" | "always_ask" | "never_allow";
+  type SlateDraftRow = { tool: string; disposition: SlateDisposition; data_class: SlateDataClass; rationale: string };
+  type SlateOwnerOverride = { disposition: SlateDisposition };
+  type SlateHolderNarrow = { disposition: SlateDisposition; actor: string; at: number };
+  type SlateRow = { draft: SlateDraftRow; owner_override?: SlateOwnerOverride | null; holder_narrow?: SlateHolderNarrow | null };
+  type ConnectorPackAdvisory = { contentHash: string; provider: string; scannedAt: number; verdict: string; riskLevel: string; completeness: string; governance: string; scannedAtDeclared?: number | null };
+  type ConnectorPackView = { basis: ConnectorPackBasis; status: string; consent_required: boolean; stamped: boolean; manifest: SlateManifest; rows: SlateRow[]; qualification?: ConnectorQualificationReceipt | null; pack?: PackInstallReceipt | null; advisories: ConnectorPackAdvisory[] };
+  type ConnectorPackGetRequest = { connector: string };
+  type ProbeRequest = { id: string; name: string; arguments: unknown };
+  type QualificationCase = { call: ProbeRequest; in_scope: boolean; allowed_predicates: string[] };
+  type QualificationInjectionSurface = "FetchedContent" | "ToolResult" | "ForeignAsk";
+  type QualificationInjection = { surface: QualificationInjectionSurface; baseline: QualificationCase; injected: QualificationCase };
+  type QualificationLimits = { tokens: number; latency_ms: number; budget_units: number };
+  type QualificationPlan = { reads: QualificationCase[]; unanswerable: QualificationCase; injections: QualificationInjection[]; scope_escape: QualificationCase[]; write?: QualificationCase | null; timeout_retry?: QualificationCase | null; handled_result_types: string[]; limits: QualificationLimits };
+  type ConnectorQualificationKit = { plan: QualificationPlan; sources?: Record<string, string>; claims?: Record<string, string[]>; effect_state_uri: string };
+  type ConnectorPackQualifyRequest = { basis: ConnectorPackBasis; kit: ConnectorQualificationKit; runtime?: PackRuntimeRecipe | null };
+  type ConnectorPackAcceptRequest = { basis: ConnectorPackBasis; rows?: Record<string, SlateDisposition>; facets?: string[] | null; all_manual?: boolean };
+  type ConnectorPackUpdateRequest = { prior: ConnectorPackBasis; source: SlatePackSource; protocol_revision: string; manifest: SlateManifest };
+  type ConnectorPackDelta = { prior: ConnectorPackBasis; current: ConnectorPackView; changed: boolean; reask: string[]; carried: string[]; dropped: string[] };
+  type ConnectorPackGrantsGetRequest = { basis: ConnectorPackBasis; actor?: string | null };
+  type DataClass = "public" | "personal" | "secret" | "unclassified";
+  type ConnectorConsentRowView = { tool: string; data_class: SlateDataClass; setting: SlateDisposition; header_parameters: string[]; destroys: boolean; grant_id?: string | null; grant_ceiling?: DataClass | null };
+  type ConnectorConsentView = { connector: string; actor: string; status: string; protocol_revision?: string | null; ready: boolean; rows: ConnectorConsentRowView[]; elicitation?: SlateDisposition | null };
+  type ConnectorPackGrants = { basis: ConnectorPackBasis; endpoint?: string | null; authority: ConnectorConsentView };
+  type ConnectorPackGrantRow = { tool: string; ceiling: DataClass; headers?: boolean };
+  type ConnectorPackGrantsPutRequest = { basis: ConnectorPackBasis; endpoint: string; actor?: string | null; rows: ConnectorPackGrantRow[] };
   type PackRemoveRequest = { pack: string };
   type ChannelSubscriptionRequest = { agent: string; channel: string };
   type ChannelMessageSubscription = { subscription: string; connector_key: string; connector: string; agent: string; existing: boolean };
@@ -939,6 +972,23 @@ declare namespace Sdk {
   type BornFromSource = { trigger: MadeByTrigger } | { agent_run: string };
   type ArtifactVersionView = { version: number; content_hash: string; parent_version?: number | null; fork_of_version?: number | null; provenance: string; run_ref?: string | null; created_at: number; export_name: string; export_media_type: string; made_by: MadeBy; born_from: BornFromSource[] };
   type ArtifactView = { artifact_id: EntityId; kind: ArtifactKind; name: string; media_type: string; head?: number | null; versions: ArtifactVersionView[] };
+  type ArtifactUnitsRequest = { artifact_ref: string; version?: number | null };
+  type AnnotationLocator = { format: "xlsx"; sheet: string; range: string } | { format: "docx"; para_path: string; char_start: number; char_end: number } | { format: "pptx"; slide: number; shape_id: string };
+  type ArtifactUnitView = { locator: AnnotationLocator; quote?: string | null };
+  type ArtifactUnitsView = { status: "supported"; artifact_id: EntityId; version: number; content_hash: string; kind: ArtifactKind; units: ArtifactUnitView[] } | { status: "unsupported"; artifact_id: EntityId; kind: ArtifactKind; reason: string };
+  type AnnotationPinRequest = { artifact_ref: string; version?: number | null; locator: AnnotationLocator };
+  type AnnotationAnchorView = { artifact_id: EntityId; version: number; locator: AnnotationLocator; quote?: string | null };
+  type AnnotationThreadOpenRequest = { artifact_ref: string; version: number; locator: AnnotationLocator; text: string };
+  type AnnotationResolution = "pinned" | "mapped" | "drifted";
+  type AnnotationDriftView = { drifted_at_version: number; pinned_version: number };
+  type AnnotationThreadState = "open" | "resolved";
+  type AnnotationCommentView = { thread_id: EntityId; author: EntityId; text: string; at: number; claim_id: EntityId };
+  type AnnotationBriefView = { brief_ref: string; task_id: EntityId; thread_id: EntityId; anchor: AnnotationAnchorView; artifact_version: number; thread_text: string; assignee?: EntityId | null };
+  type AnnotationThreadView = { thread_id: EntityId; origin: AnnotationAnchorView; anchor: AnnotationAnchorView; resolution: AnnotationResolution; drift?: AnnotationDriftView | null; state: AnnotationThreadState; head_claim_id: EntityId; comments: AnnotationCommentView[]; brief?: AnnotationBriefView | null };
+  type AnnotationCommentRequest = { artifact_ref: string; thread_ref: string; text: string };
+  type AnnotationThreadRequest = { artifact_ref: string; thread_ref: string };
+  type AnnotationAssignRequest = { artifact_ref: string; thread_ref: string; assignee_ref?: string | null };
+  type AnnotationStateRequest = { artifact_ref: string; thread_ref: string; state: AnnotationThreadState };
   type CodeStateRequest = { repo: string; path: string; revision_ref?: string | null };
   type CodeDiffRequest = { before: CodeStateRequest; after: CodeStateRequest };
   type CodeStateView = { document_ref: string; repo: string; path: string; revision_ref?: string | null; text_hash: string };
@@ -1983,6 +2033,10 @@ declare const vault: Sdk.VaultHost & {
     update(input: Sdk.AgentDefinitionUpdateRequest): Promise<Sdk.AgentDefinitionView | StoredResult>;
   };
   artifacts: {
+    anchors: {
+      /** Pins an exact readable locator and quote in an artifact version; opening a thread makes the pin durable. */
+      pin(input: Sdk.AnnotationPinRequest): Promise<Sdk.AnnotationAnchorView | StoredResult>;
+    };
     /** Appends one version of bytes to a blob artifact's append-only chain. */
     append(input: Sdk.AppendBlobVersionRequest): Promise<Sdk.BlobVersionView | StoredResult>;
     /** Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard. */
@@ -2059,8 +2113,24 @@ declare const vault: Sdk.VaultHost & {
     release_wait(input: Sdk.ProposalSettleRequest): Promise<Sdk.ReleasedWait | StoredResult>;
     /** Reviews an artifact's head slides through the host's decision ladder and holds the result as a proposal for Keep or Discard. */
     review_slides(input: Sdk.SlideReviewSubmit): Promise<Sdk.SlideReviewOutcome | StoredResult>;
+    threads: {
+      /** Assigns an anchored thread into a durable task brief with its anchor and transcript; an agent-definition assignee dispatches through the engine. */
+      assign(input: Sdk.AnnotationAssignRequest): Promise<Sdk.AnnotationBriefView | StoredResult>;
+      /** Appends a comment as the caller; returns its first stored part, with every part available through threads.read. */
+      comment(input: Sdk.AnnotationCommentRequest): Promise<Sdk.AnnotationCommentView | StoredResult>;
+      /** Lists an artifact's readable threads with their opening pins, current anchors, drift, comments and assignments. */
+      list(input: Sdk.ArtifactRefRequest): Promise<Sdk.AnnotationThreadView[] | StoredResult>;
+      /** Opens an anchored thread with its first comment as the caller, retaining its exact version, locator and quote. */
+      open(input: Sdk.AnnotationThreadOpenRequest): Promise<Sdk.AnnotationThreadView | StoredResult>;
+      /** Reads a thread, its opening quote, current anchor, explicit pinned, mapped or drifted disposition, comments and assignment. */
+      read(input: Sdk.AnnotationThreadRequest): Promise<Sdk.AnnotationThreadView | null | StoredResult>;
+      /** Opens or resolves a thread through its existing claim gate, preserving its anchor, comments and drift. */
+      state(input: Sdk.AnnotationStateRequest): Promise<Sdk.AnnotationThreadView | StoredResult>;
+    };
     /** Undoes one Keep by appending a new version. */
     undo(input: Sdk.ProposalSettleRequest): Promise<Sdk.UndoneKeep | StoredResult>;
+    /** Inspects real DOCX blocks, XLSX cells and PPTX shapes in one version; other kinds explicitly report no annotation unit adapter. */
+    units(input: Sdk.ArtifactUnitsRequest): Promise<Sdk.ArtifactUnitsView | StoredResult>;
     /** One artifact: its kind, name, type, head and every version with its made_by and born-from. */
     view(input: Sdk.ArtifactRefRequest): Promise<Sdk.ArtifactView | null | StoredResult>;
     /** The organ calls held beside one artifact until one of the owner's nodes can run them, each with why it waits. */
@@ -2533,6 +2603,24 @@ declare const vault: Sdk.VaultHost & {
     witness(input: Sdk.OffRecordWitnessRequest): Promise<Sdk.WitnessReceipt | StoredResult>;
   };
   packs: {
+    connector: {
+      /** Stamps the exact connector pack manifest and grant rows once, or revokes a row; qualification stays independent. */
+      accept(input: Sdk.ConnectorPackAcceptRequest): Promise<Sdk.ConnectorPackView | StoredResult>;
+      /** Reads a connector pack source, resolved manifest, advisory evidence, qualification and owner-stampable capability rows. */
+      get(input: Sdk.ConnectorPackGetRequest): Promise<Sdk.ConnectorPackView | StoredResult>;
+      grants: {
+        /** Reads current per-capability authority for one actor on the reviewed connector pack source. */
+        get(input: Sdk.ConnectorPackGrantsGetRequest): Promise<Sdk.ConnectorPackGrants | StoredResult>;
+        /** Grants declared connector pack rows to one actor through the existing owner consent gate and installed endpoint. */
+        put(input: Sdk.ConnectorPackGrantsPutRequest): Promise<Sdk.ConnectorPackGrants | StoredResult>;
+      };
+      /** Prepares an immutable connector pack admission, comparing the resolved declaration with the installed transport and drafting an ungranted slate. */
+      prepare(input: Sdk.ConnectorPackPrepareRequest): Promise<Sdk.ConnectorPackView | StoredResult>;
+      /** Runs the real connector probes bound to the exact pack source and protocol; qualification grants nothing without the owner slate and actor grant. */
+      qualify(input: Sdk.ConnectorPackQualifyRequest): Promise<Sdk.ConnectorPackView | StoredResult>;
+      /** Holds a connector pack at its new immutable source and protocol, carrying narrow rows and re-asking only for expanded capabilities. */
+      update(input: Sdk.ConnectorPackUpdateRequest): Promise<Sdk.ConnectorPackDelta | StoredResult>;
+    };
     /** Reads an installed pack and its exact source, pin, publisher and requested powers as the owner. */
     get(input: Sdk.HubPackRequest): Promise<Sdk.PackInstallReceipt | null | StoredResult>;
     hooks: {

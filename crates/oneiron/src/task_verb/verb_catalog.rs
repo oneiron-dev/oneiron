@@ -90,6 +90,13 @@ pub enum AgentVerb {
     VaultPacksHooksList,
     VaultPacksHooksQualify,
     VaultPacksPut,
+    VaultPacksConnectorPrepare,
+    VaultPacksConnectorGet,
+    VaultPacksConnectorQualify,
+    VaultPacksConnectorAccept,
+    VaultPacksConnectorUpdate,
+    VaultPacksConnectorGrantsGet,
+    VaultPacksConnectorGrantsPut,
     VaultPacksRemove,
     VaultConnectorsSubscriptionsPut,
     VaultConnectorsSubscriptionsList,
@@ -216,6 +223,14 @@ pub enum AgentVerb {
     VaultSharesView,
     VaultHooksReplay,
     VaultArtifactsView,
+    VaultArtifactsUnits,
+    VaultArtifactsAnchorsPin,
+    VaultArtifactsThreadsOpen,
+    VaultArtifactsThreadsComment,
+    VaultArtifactsThreadsRead,
+    VaultArtifactsThreadsList,
+    VaultArtifactsThreadsAssign,
+    VaultArtifactsThreadsState,
     VaultCodeDiff,
     VaultCodeBlame,
     VaultCodeProposalView,
@@ -552,6 +567,13 @@ impl AgentVerb {
         Self::VaultPacksHooksList,
         Self::VaultPacksHooksQualify,
         Self::VaultPacksPut,
+        Self::VaultPacksConnectorPrepare,
+        Self::VaultPacksConnectorGet,
+        Self::VaultPacksConnectorQualify,
+        Self::VaultPacksConnectorAccept,
+        Self::VaultPacksConnectorUpdate,
+        Self::VaultPacksConnectorGrantsGet,
+        Self::VaultPacksConnectorGrantsPut,
         Self::VaultPacksRemove,
         Self::VaultConnectorsSubscriptionsPut,
         Self::VaultConnectorsSubscriptionsList,
@@ -678,6 +700,14 @@ impl AgentVerb {
         Self::VaultSharesView,
         Self::VaultHooksReplay,
         Self::VaultArtifactsView,
+        Self::VaultArtifactsUnits,
+        Self::VaultArtifactsAnchorsPin,
+        Self::VaultArtifactsThreadsOpen,
+        Self::VaultArtifactsThreadsComment,
+        Self::VaultArtifactsThreadsRead,
+        Self::VaultArtifactsThreadsList,
+        Self::VaultArtifactsThreadsAssign,
+        Self::VaultArtifactsThreadsState,
         Self::VaultCodeDiff,
         Self::VaultCodeBlame,
         Self::VaultCodeProposalView,
@@ -1017,6 +1047,13 @@ impl AgentVerb {
             Self::VaultPacksHooksList => "vault.packs.hooks.list",
             Self::VaultPacksHooksQualify => "vault.packs.hooks.qualify",
             Self::VaultPacksPut => "vault.packs.put",
+            Self::VaultPacksConnectorPrepare => "vault.packs.connector.prepare",
+            Self::VaultPacksConnectorGet => "vault.packs.connector.get",
+            Self::VaultPacksConnectorQualify => "vault.packs.connector.qualify",
+            Self::VaultPacksConnectorAccept => "vault.packs.connector.accept",
+            Self::VaultPacksConnectorUpdate => "vault.packs.connector.update",
+            Self::VaultPacksConnectorGrantsGet => "vault.packs.connector.grants.get",
+            Self::VaultPacksConnectorGrantsPut => "vault.packs.connector.grants.put",
             Self::VaultPacksRemove => "vault.packs.remove",
             Self::VaultConnectorsSubscriptionsPut => "vault.connectors.subscriptions.put",
             Self::VaultConnectorsSubscriptionsList => "vault.connectors.subscriptions.list",
@@ -1147,6 +1184,14 @@ impl AgentVerb {
             Self::VaultSharesView => "vault.shares.view",
             Self::VaultHooksReplay => "vault.hooks.replay",
             Self::VaultArtifactsView => "vault.artifacts.view",
+            Self::VaultArtifactsUnits => "vault.artifacts.units",
+            Self::VaultArtifactsAnchorsPin => "vault.artifacts.anchors.pin",
+            Self::VaultArtifactsThreadsOpen => "vault.artifacts.threads.open",
+            Self::VaultArtifactsThreadsComment => "vault.artifacts.threads.comment",
+            Self::VaultArtifactsThreadsRead => "vault.artifacts.threads.read",
+            Self::VaultArtifactsThreadsList => "vault.artifacts.threads.list",
+            Self::VaultArtifactsThreadsAssign => "vault.artifacts.threads.assign",
+            Self::VaultArtifactsThreadsState => "vault.artifacts.threads.state",
             Self::VaultCodeDiff => "vault.code.diff",
             Self::VaultCodeBlame => "vault.code.blame",
             Self::VaultCodeProposalView => "vault.code.proposal_view",
@@ -1486,6 +1531,13 @@ impl AgentVerb {
                 | Self::VaultPacksHooksList
                 | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
+                | Self::VaultPacksConnectorPrepare
+                | Self::VaultPacksConnectorGet
+                | Self::VaultPacksConnectorQualify
+                | Self::VaultPacksConnectorAccept
+                | Self::VaultPacksConnectorUpdate
+                | Self::VaultPacksConnectorGrantsGet
+                | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
                 | Self::VaultConnectorsSubscriptionsPut
                 | Self::VaultConnectorsSubscriptionsList
@@ -1612,6 +1664,14 @@ impl AgentVerb {
                 | Self::VaultSharesView
                 | Self::VaultHooksReplay
                 | Self::VaultArtifactsView
+                | Self::VaultArtifactsUnits
+                | Self::VaultArtifactsAnchorsPin
+                | Self::VaultArtifactsThreadsOpen
+                | Self::VaultArtifactsThreadsComment
+                | Self::VaultArtifactsThreadsRead
+                | Self::VaultArtifactsThreadsList
+                | Self::VaultArtifactsThreadsAssign
+                | Self::VaultArtifactsThreadsState
                 | Self::VaultCodeDiff
                 | Self::VaultCodeBlame
                 | Self::VaultCodeProposalView
@@ -1955,6 +2015,13 @@ impl AgentVerb {
                 | Self::VaultPacksHooksList
                 | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
+                | Self::VaultPacksConnectorPrepare
+                | Self::VaultPacksConnectorGet
+                | Self::VaultPacksConnectorQualify
+                | Self::VaultPacksConnectorAccept
+                | Self::VaultPacksConnectorUpdate
+                | Self::VaultPacksConnectorGrantsGet
+                | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
                 | Self::VaultConnectorsSubscriptionsPut
                 | Self::VaultConnectorsSubscriptionsList
@@ -2081,6 +2148,14 @@ impl AgentVerb {
                 | Self::VaultSharesView
                 | Self::VaultHooksReplay
                 | Self::VaultArtifactsView
+                | Self::VaultArtifactsUnits
+                | Self::VaultArtifactsAnchorsPin
+                | Self::VaultArtifactsThreadsOpen
+                | Self::VaultArtifactsThreadsComment
+                | Self::VaultArtifactsThreadsRead
+                | Self::VaultArtifactsThreadsList
+                | Self::VaultArtifactsThreadsAssign
+                | Self::VaultArtifactsThreadsState
                 | Self::VaultCodeDiff
                 | Self::VaultCodeBlame
                 | Self::VaultCodeProposalView
@@ -2326,6 +2401,7 @@ impl AgentVerb {
                 | Self::VaultCourtesyDeleteSent
                 | Self::VaultCourtesyDeleteIncoming
                 | Self::VaultHooksReplay
+                | Self::VaultArtifactsThreadsList
                 | Self::VaultWorkspaceRoster
                 | Self::VaultArtifactsProposals
                 | Self::VaultArtifactsWaits
@@ -2464,6 +2540,13 @@ impl AgentVerb {
                 | Self::VaultPacksHooksList
                 | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
+                | Self::VaultPacksConnectorPrepare
+                | Self::VaultPacksConnectorGet
+                | Self::VaultPacksConnectorQualify
+                | Self::VaultPacksConnectorAccept
+                | Self::VaultPacksConnectorUpdate
+                | Self::VaultPacksConnectorGrantsGet
+                | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
                 | Self::VaultConnectorsSubscriptionsPut
                 | Self::VaultConnectorsSubscriptionsList
@@ -2590,6 +2673,14 @@ impl AgentVerb {
                 | Self::VaultSharesView
                 | Self::VaultHooksReplay
                 | Self::VaultArtifactsView
+                | Self::VaultArtifactsUnits
+                | Self::VaultArtifactsAnchorsPin
+                | Self::VaultArtifactsThreadsOpen
+                | Self::VaultArtifactsThreadsComment
+                | Self::VaultArtifactsThreadsRead
+                | Self::VaultArtifactsThreadsList
+                | Self::VaultArtifactsThreadsAssign
+                | Self::VaultArtifactsThreadsState
                 | Self::VaultCodeDiff
                 | Self::VaultCodeBlame
                 | Self::VaultCodeProposalView
@@ -2872,6 +2963,11 @@ impl AgentVerb {
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
+                | Self::VaultPacksConnectorPrepare
+                | Self::VaultPacksConnectorQualify
+                | Self::VaultPacksConnectorAccept
+                | Self::VaultPacksConnectorUpdate
+                | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
                 | Self::VaultConnectorsSubscriptionsPut
                 | Self::VaultConnectorsSubscriptionsRevoke
@@ -2960,6 +3056,10 @@ impl AgentVerb {
                 | Self::SelfUse
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
+                | Self::VaultArtifactsThreadsOpen
+                | Self::VaultArtifactsThreadsComment
+                | Self::VaultArtifactsThreadsAssign
+                | Self::VaultArtifactsThreadsState
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeCheckoutBind
@@ -3218,6 +3318,13 @@ impl AgentVerb {
             Self::VaultPacksHooksList => &["spec"],
             Self::VaultPacksHooksQualify => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultPacksConnectorPrepare => &["spec"],
+            Self::VaultPacksConnectorGet => &["spec"],
+            Self::VaultPacksConnectorQualify => &["spec"],
+            Self::VaultPacksConnectorAccept => &["spec"],
+            Self::VaultPacksConnectorUpdate => &["spec"],
+            Self::VaultPacksConnectorGrantsGet => &["spec"],
+            Self::VaultPacksConnectorGrantsPut => &["spec"],
             Self::VaultPacksRemove => &["spec"],
             Self::VaultConnectorsSubscriptionsPut => &["spec"],
             Self::VaultConnectorsSubscriptionsList => &["spec"],
@@ -3344,6 +3451,14 @@ impl AgentVerb {
             Self::VaultSharesView => &["spec"],
             Self::VaultHooksReplay => &["spec"],
             Self::VaultArtifactsView => &["spec"],
+            Self::VaultArtifactsUnits => &["spec"],
+            Self::VaultArtifactsAnchorsPin => &["spec"],
+            Self::VaultArtifactsThreadsOpen => &["spec"],
+            Self::VaultArtifactsThreadsComment => &["spec"],
+            Self::VaultArtifactsThreadsRead => &["spec"],
+            Self::VaultArtifactsThreadsList => &["spec"],
+            Self::VaultArtifactsThreadsAssign => &["spec"],
+            Self::VaultArtifactsThreadsState => &["spec"],
             Self::VaultCodeDiff => &["spec"],
             Self::VaultCodeBlame => &["spec"],
             Self::VaultCodeProposalView => &["spec"],
@@ -3681,6 +3796,13 @@ impl AgentVerb {
             Self::VaultPacksHooksList => &["spec"],
             Self::VaultPacksHooksQualify => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultPacksConnectorPrepare => &["spec"],
+            Self::VaultPacksConnectorGet => &["spec"],
+            Self::VaultPacksConnectorQualify => &["spec"],
+            Self::VaultPacksConnectorAccept => &["spec"],
+            Self::VaultPacksConnectorUpdate => &["spec"],
+            Self::VaultPacksConnectorGrantsGet => &["spec"],
+            Self::VaultPacksConnectorGrantsPut => &["spec"],
             Self::VaultPacksRemove => &["spec"],
             Self::VaultConnectorsSubscriptionsPut => &["spec"],
             Self::VaultConnectorsSubscriptionsList => &["spec"],
@@ -3807,6 +3929,14 @@ impl AgentVerb {
             Self::VaultSharesView => &["spec"],
             Self::VaultHooksReplay => &["spec"],
             Self::VaultArtifactsView => &["spec"],
+            Self::VaultArtifactsUnits => &["spec"],
+            Self::VaultArtifactsAnchorsPin => &["spec"],
+            Self::VaultArtifactsThreadsOpen => &["spec"],
+            Self::VaultArtifactsThreadsComment => &["spec"],
+            Self::VaultArtifactsThreadsRead => &["spec"],
+            Self::VaultArtifactsThreadsList => &["spec"],
+            Self::VaultArtifactsThreadsAssign => &["spec"],
+            Self::VaultArtifactsThreadsState => &["spec"],
             Self::VaultCodeDiff => &["spec"],
             Self::VaultCodeBlame => &["spec"],
             Self::VaultCodeProposalView => &["spec"],
@@ -4309,6 +4439,27 @@ impl AgentVerb {
             Self::VaultPacksPut => {
                 "The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks."
             }
+            Self::VaultPacksConnectorPrepare => {
+                "Prepares an immutable connector pack admission, comparing the resolved declaration with the installed transport and drafting an ungranted slate."
+            }
+            Self::VaultPacksConnectorGet => {
+                "Reads a connector pack source, resolved manifest, advisory evidence, qualification and owner-stampable capability rows."
+            }
+            Self::VaultPacksConnectorQualify => {
+                "Runs the real connector probes bound to the exact pack source and protocol; qualification grants nothing without the owner slate and actor grant."
+            }
+            Self::VaultPacksConnectorAccept => {
+                "Stamps the exact connector pack manifest and grant rows once, or revokes a row; qualification stays independent."
+            }
+            Self::VaultPacksConnectorUpdate => {
+                "Holds a connector pack at its new immutable source and protocol, carrying narrow rows and re-asking only for expanded capabilities."
+            }
+            Self::VaultPacksConnectorGrantsGet => {
+                "Reads current per-capability authority for one actor on the reviewed connector pack source."
+            }
+            Self::VaultPacksConnectorGrantsPut => {
+                "Grants declared connector pack rows to one actor through the existing owner consent gate and installed endpoint."
+            }
             Self::VaultPacksRemove => {
                 "The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate."
             }
@@ -4662,6 +4813,30 @@ impl AgentVerb {
             }
             Self::VaultArtifactsView => {
                 "One artifact: its kind, name, type, head and every version with its made_by and born-from."
+            }
+            Self::VaultArtifactsUnits => {
+                "Inspects real DOCX blocks, XLSX cells and PPTX shapes in one version; other kinds explicitly report no annotation unit adapter."
+            }
+            Self::VaultArtifactsAnchorsPin => {
+                "Pins an exact readable locator and quote in an artifact version; opening a thread makes the pin durable."
+            }
+            Self::VaultArtifactsThreadsOpen => {
+                "Opens an anchored thread with its first comment as the caller, retaining its exact version, locator and quote."
+            }
+            Self::VaultArtifactsThreadsComment => {
+                "Appends a comment as the caller; returns its first stored part, with every part available through threads.read."
+            }
+            Self::VaultArtifactsThreadsRead => {
+                "Reads a thread, its opening quote, current anchor, explicit pinned, mapped or drifted disposition, comments and assignment."
+            }
+            Self::VaultArtifactsThreadsList => {
+                "Lists an artifact's readable threads with their opening pins, current anchors, drift, comments and assignments."
+            }
+            Self::VaultArtifactsThreadsAssign => {
+                "Assigns an anchored thread into a durable task brief with its anchor and transcript; an agent-definition assignee dispatches through the engine."
+            }
+            Self::VaultArtifactsThreadsState => {
+                "Opens or resolves a thread through its existing claim gate, preserving its anchor, comments and drift."
             }
             Self::VaultCodeDiff => {
                 "The semantic changes between two tested states of one code file, each unit with the operations that made it: actor, session, turn, activity, intent, model and effort."

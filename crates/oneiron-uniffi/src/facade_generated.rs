@@ -431,6 +431,41 @@ export_facade! {
     let output = client.vault_packs_put(&input)?;
     crate::codec::lift_record("vault.packs.put", &output)
 };
+"vault.packs.connector.prepare" => fn vault_packs_connector_prepare(&self, input: ConnectorPackPrepareRequest) -> ConnectorPackView = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorPackPrepareRequest = crate::codec::lower_record("vault.packs.connector.prepare", input)?;
+    let output = client.vault_packs_connector_prepare(&input)?;
+    crate::codec::lift_record("vault.packs.connector.prepare", &output)
+};
+"vault.packs.connector.get" => fn vault_packs_connector_get(&self, input: ConnectorPackGetRequest) -> ConnectorPackView = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorPackGetRequest = crate::codec::lower_record("vault.packs.connector.get", input)?;
+    let output = client.vault_packs_connector_get(&input)?;
+    crate::codec::lift_record("vault.packs.connector.get", &output)
+};
+"vault.packs.connector.qualify" => fn vault_packs_connector_qualify(&self, input: ConnectorPackQualifyRequest) -> ConnectorPackView = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorPackQualifyRequest = crate::codec::lower_record("vault.packs.connector.qualify", input)?;
+    let output = client.vault_packs_connector_qualify(&input)?;
+    crate::codec::lift_record("vault.packs.connector.qualify", &output)
+};
+"vault.packs.connector.accept" => fn vault_packs_connector_accept(&self, input: ConnectorPackAcceptRequest) -> ConnectorPackView = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorPackAcceptRequest = crate::codec::lower_record("vault.packs.connector.accept", input)?;
+    let output = client.vault_packs_connector_accept(&input)?;
+    crate::codec::lift_record("vault.packs.connector.accept", &output)
+};
+"vault.packs.connector.update" => fn vault_packs_connector_update(&self, input: ConnectorPackUpdateRequest) -> ConnectorPackDelta = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorPackUpdateRequest = crate::codec::lower_record("vault.packs.connector.update", input)?;
+    let output = client.vault_packs_connector_update(&input)?;
+    crate::codec::lift_record("vault.packs.connector.update", &output)
+};
+"vault.packs.connector.grants.get" => fn vault_packs_connector_grants_get(&self, input: ConnectorPackGrantsGetRequest) -> ConnectorPackGrants = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorPackGrantsGetRequest = crate::codec::lower_record("vault.packs.connector.grants.get", input)?;
+    let output = client.vault_packs_connector_grants_get(&input)?;
+    crate::codec::lift_record("vault.packs.connector.grants.get", &output)
+};
+"vault.packs.connector.grants.put" => fn vault_packs_connector_grants_put(&self, input: ConnectorPackGrantsPutRequest) -> ConnectorPackGrants = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorPackGrantsPutRequest = crate::codec::lower_record("vault.packs.connector.grants.put", input)?;
+    let output = client.vault_packs_connector_grants_put(&input)?;
+    crate::codec::lift_record("vault.packs.connector.grants.put", &output)
+};
 "vault.packs.remove" => fn vault_packs_remove(&self, input: PackRemoveRequest) -> PackInstallReceipt = |client| {
     let input: oneiron::task_verb::sdk::PackRemoveRequest = crate::codec::lower_record("vault.packs.remove", input)?;
     let output = client.vault_packs_remove(&input)?;
@@ -1060,6 +1095,46 @@ export_facade! {
     let input: oneiron::blob_artifact::ArtifactRefRequest = crate::codec::lower_record("vault.artifacts.view", input)?;
     let output = client.vault_artifacts_view(&input)?;
     crate::codec::lift_record("vault.artifacts.view", &output)
+};
+"vault.artifacts.units" => fn vault_artifacts_units(&self, input: ArtifactUnitsRequest) -> ArtifactUnitsView = |client| {
+    let input: oneiron::anchored_annotation::ArtifactUnitsRequest = crate::codec::lower_record("vault.artifacts.units", input)?;
+    let output = client.vault_artifacts_units(&input)?;
+    crate::codec::lift_record("vault.artifacts.units", &output)
+};
+"vault.artifacts.anchors.pin" => fn vault_artifacts_anchors_pin(&self, input: AnnotationPinRequest) -> AnnotationAnchorView = |client| {
+    let input: oneiron::anchored_annotation::AnnotationPinRequest = crate::codec::lower_record("vault.artifacts.anchors.pin", input)?;
+    let output = client.vault_artifacts_anchors_pin(&input)?;
+    crate::codec::lift_record("vault.artifacts.anchors.pin", &output)
+};
+"vault.artifacts.threads.open" => fn vault_artifacts_threads_open(&self, input: AnnotationThreadOpenRequest) -> AnnotationThreadView = |client| {
+    let input: oneiron::anchored_annotation::AnnotationThreadOpenRequest = crate::codec::lower_record("vault.artifacts.threads.open", input)?;
+    let output = client.vault_artifacts_threads_open(&input)?;
+    crate::codec::lift_record("vault.artifacts.threads.open", &output)
+};
+"vault.artifacts.threads.comment" => fn vault_artifacts_threads_comment(&self, input: AnnotationCommentRequest) -> AnnotationCommentView = |client| {
+    let input: oneiron::anchored_annotation::AnnotationCommentRequest = crate::codec::lower_record("vault.artifacts.threads.comment", input)?;
+    let output = client.vault_artifacts_threads_comment(&input)?;
+    crate::codec::lift_record("vault.artifacts.threads.comment", &output)
+};
+"vault.artifacts.threads.read" => fn vault_artifacts_threads_read(&self, input: AnnotationThreadRequest) -> Option<AnnotationThreadView> = |client| {
+    let input: oneiron::anchored_annotation::AnnotationThreadRequest = crate::codec::lower_record("vault.artifacts.threads.read", input)?;
+    let output = client.vault_artifacts_threads_read(&input)?;
+    crate::codec::lift_record("vault.artifacts.threads.read", &output)
+};
+"vault.artifacts.threads.list" => fn vault_artifacts_threads_list(&self, input: ArtifactRefRequest) -> Vec<AnnotationThreadView> = |client| {
+    let input: oneiron::blob_artifact::ArtifactRefRequest = crate::codec::lower_record("vault.artifacts.threads.list", input)?;
+    let output = client.vault_artifacts_threads_list(&input)?;
+    crate::codec::lift_record("vault.artifacts.threads.list", &output)
+};
+"vault.artifacts.threads.assign" => fn vault_artifacts_threads_assign(&self, input: AnnotationAssignRequest) -> AnnotationBriefView = |client| {
+    let input: oneiron::anchored_annotation::AnnotationAssignRequest = crate::codec::lower_record("vault.artifacts.threads.assign", input)?;
+    let output = client.vault_artifacts_threads_assign(&input)?;
+    crate::codec::lift_record("vault.artifacts.threads.assign", &output)
+};
+"vault.artifacts.threads.state" => fn vault_artifacts_threads_state(&self, input: AnnotationStateRequest) -> AnnotationThreadView = |client| {
+    let input: oneiron::anchored_annotation::AnnotationStateRequest = crate::codec::lower_record("vault.artifacts.threads.state", input)?;
+    let output = client.vault_artifacts_threads_state(&input)?;
+    crate::codec::lift_record("vault.artifacts.threads.state", &output)
 };
 "vault.code.diff" => fn vault_code_diff(&self, input: CodeDiffRequest) -> Option<CodeDiffView> = |client| {
     let input: oneiron::code_document::CodeDiffRequest = crate::codec::lower_record("vault.code.diff", input)?;

@@ -1407,7 +1407,7 @@
      "path": "src/anchored_annotation/anchor_text.rs",
      "purpose": "What an anchor says: the text under a locator in one version's bytes, the exact places those words occur in…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -1453,7 +1453,7 @@
      "purpose": "ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief…",
      "surface": {
       "crate-vis": 2,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -1561,6 +1561,45 @@
      "surface": {
       "crate-vis": 10,
       "fn": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/anchored_annotation/verbs.rs",
+     "purpose": "Credential-bound adapters over the engine's anchored annotation lifecycle",
+     "surface": {
+      "fn": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AnnotationAnchorView",
+      "AnnotationAssignRequest",
+      "AnnotationBriefView",
+      "AnnotationCommentRequest",
+      "AnnotationCommentView",
+      "AnnotationDriftView",
+      "AnnotationLocator",
+      "AnnotationPinRequest",
+      "AnnotationResolution",
+      "AnnotationStateRequest",
+      "AnnotationThreadOpenRequest",
+      "AnnotationThreadRequest",
+      "AnnotationThreadState",
+      "AnnotationThreadView",
+      "ArtifactUnitView",
+      "ArtifactUnitsRequest",
+      "ArtifactUnitsView"
+     ],
+     "path": "src/anchored_annotation/wire.rs",
+     "purpose": "Typed wire shapes for artifact units and anchored comment threads",
+     "surface": {
+      "enum": 4,
+      "struct": 13
      }
     },
     {
@@ -14430,6 +14469,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ConnectorQualificationKit",
       "GroundingOracle",
       "ProbeCitation",
       "ProbeDisposition",
@@ -14454,9 +14494,9 @@
      "surface": {
       "crate-vis": 2,
       "enum": 4,
-      "fn": 2,
+      "fn": 3,
       "re-export": 1,
-      "struct": 11,
+      "struct": 12,
       "trait": 3
      }
     },
@@ -14592,6 +14632,7 @@
       "SlateHolderNarrow",
       "SlateManifest",
       "SlateOwnerOverride",
+      "SlatePackSource",
       "SlateRow",
       "SlateToolManifest"
      ],
@@ -14602,7 +14643,7 @@
       "crate-vis": 12,
       "enum": 3,
       "fn": 36,
-      "struct": 9
+      "struct": 10
      }
     },
     {
@@ -46017,8 +46058,18 @@
      "purpose": "The vault's sealed cloud bundle through the home (DEC-0005 \"Sealed copies\", FIX 922)",
      "surface": {
       "crate-vis": 3,
-      "fn": 2,
+      "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/residence/bundle/turn.rs",
+     "purpose": "This machine's side of the home's publisher turn (FIX 3351): a publisher asks for the turn before it…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -46899,9 +46950,9 @@
      "purpose": "Grant-checked, per-item residence projections over a window document",
      "surface": {
       "const": 2,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 14,
-      "re-export": 10,
+      "re-export": 12,
       "struct": 2
      }
     },
@@ -46946,7 +46997,7 @@
      "purpose": "The home's custody of the vault's sealed cloud bundle (DEC-0005 \"Sealed copies\", FIX 922)",
      "surface": {
       "const": 2,
-      "crate-vis": 6,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 12,
       "struct": 3
@@ -46964,6 +47015,30 @@
      "surface": {
       "fn": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SealedBundleStaged"
+     ],
+     "path": "src/sync/residence/bundle_stage.rs",
+     "purpose": "The uploads the home stages, as its disk sees them (FIX 3354)",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/residence/bundle_turn.rs",
+     "purpose": "The publisher turn of the vault's sealed cloud bundle on the home (FIX 3351)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
      }
     },
     {
@@ -48948,7 +49023,7 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 32,
+      "re-export": 33,
       "struct": 36
      }
     },
@@ -49074,6 +49149,30 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ConnectorPackAcceptRequest",
+      "ConnectorPackAdvisory",
+      "ConnectorPackBasis",
+      "ConnectorPackDelta",
+      "ConnectorPackGetRequest",
+      "ConnectorPackGrantRow",
+      "ConnectorPackGrants",
+      "ConnectorPackGrantsGetRequest",
+      "ConnectorPackGrantsPutRequest",
+      "ConnectorPackPrepareRequest",
+      "ConnectorPackQualifyRequest",
+      "ConnectorPackUpdateRequest",
+      "ConnectorPackView"
+     ],
+     "path": "src/task_verb/sdk_connector_pack.rs",
+     "purpose": "Typed, source-bound connector-pack admission and delta re-consent",
+     "surface": {
+      "struct": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "CourtesyDeleteAnswerRequest",
       "CourtesyDeleteAskedWorld",
       "CourtesyDeleteChoice",
@@ -49188,7 +49287,7 @@
      "purpose": "—",
      "surface": {
       "const": 3,
-      "fn": 458
+      "fn": 473
      }
     },
     {
@@ -53277,7 +53376,7 @@
      "purpose": "The vault's one sealed cloud bundle (DEC-0005 \"Sealed copies\", FIX 922), and the sealed pad object beside it",
      "surface": {
       "const": 3,
-      "crate-vis": 6,
+      "crate-vis": 9,
       "fn": 34,
       "struct": 8
      }
@@ -54479,7 +54578,7 @@
      "purpose": "Multilingual analyzer subsystem"
     },
     "anchored_annotation": {
-     "files": 14,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -55760,7 +55859,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 172,
+     "files": 175,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -55788,7 +55887,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 144,
+     "files": 145,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -55958,7 +56057,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3408,
+   "source_files": 3414,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64371,7 +64470,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 408
+      "fn": 423
      }
     },
     {
@@ -65419,7 +65518,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 409
+      "fn": 424
      }
     },
     {
@@ -68376,6 +68475,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/connector_pack_doors.rs",
+     "purpose": "Source-bound connector packs over the existing owner, probe and slate doors",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -68512,7 +68621,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 82
+      "crate-vis": 83
      }
     },
     {
@@ -69372,7 +69481,7 @@
      "path": "src/api/owner_routes.rs",
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -69432,7 +69541,7 @@
      "path": "src/api/owner_routes/connector_admission_routes.rs",
      "purpose": "`/v1/owner/connectors/register`, `/setup`, `/slate/accept` and `/qualify`: the owner's first admission of a…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 9
      }
     },
     {
@@ -70504,7 +70613,7 @@
      "path": "src/api/transfer.rs",
      "purpose": "Bounded transfers between an HTTP body and a blocking worker, shared by the git smart-HTTP and LFS bridges",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 31
      }
     },
     {
@@ -71964,13 +72073,13 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/connector_admission_host.rs",
      "purpose": "The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 12
      }
     },
     {
@@ -75827,7 +75936,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 337,
+     "files": 338,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -75899,7 +76008,7 @@
     "connector_admission_host": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint…"
     },
@@ -76240,9 +76349,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 56,
+   "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 660,
+   "source_files": 661,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -76489,6 +76598,20 @@
       "AiVideoTicket",
       "AiVoice",
       "AllRelationships",
+      "AnnotationAnchorView",
+      "AnnotationAssignRequest",
+      "AnnotationBriefView",
+      "AnnotationCommentRequest",
+      "AnnotationCommentView",
+      "AnnotationDriftView",
+      "AnnotationLocator",
+      "AnnotationPinRequest",
+      "AnnotationResolution",
+      "AnnotationStateRequest",
+      "AnnotationThreadOpenRequest",
+      "AnnotationThreadRequest",
+      "AnnotationThreadState",
+      "AnnotationThreadView",
       "AnswerContract",
       "AnswerRecord",
       "AnswerSheetAtom",
@@ -76509,7 +76632,10 @@
       "ArtifactExportRequest",
       "ArtifactKind",
       "ArtifactRefRequest",
+      "ArtifactUnitView",
       "ArtifactUnits",
+      "ArtifactUnitsRequest",
+      "ArtifactUnitsView",
       "ArtifactVersionView",
       "ArtifactView",
       "AskAct",
@@ -76710,11 +76836,27 @@
       "ConnectorCallRequest",
       "ConnectorCallStatus",
       "ConnectorCallStatusRequest",
+      "ConnectorConsentRowView",
+      "ConnectorConsentView",
       "ConnectorEnd",
       "ConnectorEntry",
       "ConnectorListRequest",
       "ConnectorNameRequest",
+      "ConnectorPackAcceptRequest",
+      "ConnectorPackAdvisory",
+      "ConnectorPackBasis",
+      "ConnectorPackDelta",
+      "ConnectorPackGetRequest",
+      "ConnectorPackGrantRow",
+      "ConnectorPackGrants",
+      "ConnectorPackGrantsGetRequest",
+      "ConnectorPackGrantsPutRequest",
+      "ConnectorPackPrepareRequest",
+      "ConnectorPackQualifyRequest",
+      "ConnectorPackUpdateRequest",
+      "ConnectorPackView",
       "ConnectorPreset",
+      "ConnectorQualificationKit",
       "ConnectorQualificationReceipt",
       "ConnectorQuestion",
       "ConnectorSchemaReply",
@@ -76776,6 +76918,7 @@
       "CritiqueVerdict",
       "DagRecordAppendInput",
       "DagRecordAppendReceipt",
+      "DataClass",
       "DecideRules",
       "DecisionAnswer",
       "DecisionAsk",
@@ -77378,6 +77521,7 @@
       "Preset",
       "PriorRung",
       "PriorSeed",
+      "ProbeRequest",
       "ProjectBudgetShare",
       "ProjectCardConfirmRequest",
       "ProjectCardDismissal",
@@ -77416,6 +77560,11 @@
       "PruneReason",
       "PruneReceipt",
       "PulledImage",
+      "QualificationCase",
+      "QualificationInjection",
+      "QualificationInjectionSurface",
+      "QualificationLimits",
+      "QualificationPlan",
       "QuestionActivation",
       "QuestionAnswer",
       "QuestionAnswersRequest",
@@ -77726,6 +77875,16 @@
       "SkillPublisherRequest",
       "SkillSaveRequest",
       "SkillSourceFile",
+      "SlateDataClass",
+      "SlateDisposition",
+      "SlateDraftRow",
+      "SlateElicitationManifest",
+      "SlateHolderNarrow",
+      "SlateManifest",
+      "SlateOwnerOverride",
+      "SlatePackSource",
+      "SlateRow",
+      "SlateToolManifest",
       "SlideRender",
       "SlideReviewOutcome",
       "SlideReviewSubmit",
@@ -77943,8 +78102,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 422,
-      "struct": 1082
+      "enum": 430,
+      "struct": 1124
      }
     },
     {

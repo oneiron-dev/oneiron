@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 416 facade rows, 1598 declarations.
-Inputs: 371 of 416 fully typed, 45 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 371 of 416 fully typed, 45 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 75; unread shapes: 0.
+Census: 431 facade rows, 1648 declarations.
+Inputs: 383 of 431 fully typed, 48 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 381 of 431 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 77; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -2570,6 +2570,167 @@ class PackFileInput(TypedDict):
     text: str
 class PackPutRequest(TypedDict):
     files: list[PackFileInput]
+class SlatePackSource(TypedDict):
+    source_ref: str
+    content_hash: str
+SlateDataClass = Literal["public", "personal", "secret", "header"]
+class SlateToolManifest(TypedDict):
+    name: str
+    data_class: SlateDataClass
+    header_parameters: list[str]
+    resolved_input_schema: NotRequired[Any | None]
+    trigger: NotRequired[str | None]
+    destroys: bool
+    spends: bool
+    sends_outward: bool
+    legacy_ask: bool
+    read_only: NotRequired[bool]
+    idempotent: NotRequired[bool]
+class SlateElicitationManifest(TypedDict):
+    legacy_ask_tools: list[str]
+class SlateManifest(TypedDict):
+    pack_source: NotRequired[SlatePackSource | None]
+    tools: list[SlateToolManifest]
+    elicitation: NotRequired[SlateElicitationManifest | None]
+class ConnectorPackPrepareRequest(TypedDict):
+    connector: str
+    source: SlatePackSource
+    summary: str
+    secret_ref: NotRequired[str | None]
+    protocol_revision: str
+    manifest: SlateManifest
+class ConnectorPackBasis(TypedDict):
+    connector: str
+    source: SlatePackSource
+    key_ref: str
+    slate_ref: str
+    slate_revision: int
+    manifest_hash: str
+    grant_hash: str
+    advisory_hash: str
+    protocol_revision: str
+SlateDisposition = Literal["always_allow", "auto", "always_ask", "never_allow"]
+class SlateDraftRow(TypedDict):
+    tool: str
+    disposition: SlateDisposition
+    data_class: SlateDataClass
+    rationale: str
+class SlateOwnerOverride(TypedDict):
+    disposition: SlateDisposition
+class SlateHolderNarrow(TypedDict):
+    disposition: SlateDisposition
+    actor: str
+    at: int
+class SlateRow(TypedDict):
+    draft: SlateDraftRow
+    owner_override: NotRequired[SlateOwnerOverride | None]
+    holder_narrow: NotRequired[SlateHolderNarrow | None]
+class ConnectorPackAdvisory(TypedDict):
+    contentHash: str
+    provider: str
+    scannedAt: int
+    verdict: str
+    riskLevel: str
+    completeness: str
+    governance: str
+    scannedAtDeclared: NotRequired[int | None]
+class ConnectorPackView(TypedDict):
+    basis: ConnectorPackBasis
+    status: str
+    consent_required: bool
+    stamped: bool
+    manifest: SlateManifest
+    rows: list[SlateRow]
+    qualification: NotRequired[ConnectorQualificationReceipt | None]
+    pack: NotRequired[PackInstallReceipt | None]
+    advisories: list[ConnectorPackAdvisory]
+class ConnectorPackGetRequest(TypedDict):
+    connector: str
+class ProbeRequest(TypedDict):
+    id: str
+    name: str
+    arguments: Any
+class QualificationCase(TypedDict):
+    call: ProbeRequest
+    in_scope: bool
+    allowed_predicates: list[str]
+QualificationInjectionSurface = Literal["FetchedContent", "ToolResult", "ForeignAsk"]
+class QualificationInjection(TypedDict):
+    surface: QualificationInjectionSurface
+    baseline: QualificationCase
+    injected: QualificationCase
+class QualificationLimits(TypedDict):
+    tokens: int
+    latency_ms: int
+    budget_units: int
+class QualificationPlan(TypedDict):
+    reads: list[QualificationCase]
+    unanswerable: QualificationCase
+    injections: list[QualificationInjection]
+    scope_escape: list[QualificationCase]
+    write: NotRequired[QualificationCase | None]
+    timeout_retry: NotRequired[QualificationCase | None]
+    handled_result_types: list[str]
+    limits: QualificationLimits
+class ConnectorQualificationKit(TypedDict):
+    plan: QualificationPlan
+    sources: NotRequired[dict[str, str]]
+    claims: NotRequired[dict[str, list[str]]]
+    effect_state_uri: str
+class ConnectorPackQualifyRequest(TypedDict):
+    basis: ConnectorPackBasis
+    kit: ConnectorQualificationKit
+    runtime: NotRequired[PackRuntimeRecipe | None]
+class ConnectorPackAcceptRequest(TypedDict):
+    basis: ConnectorPackBasis
+    rows: NotRequired[dict[str, SlateDisposition]]
+    facets: NotRequired[list[str] | None]
+    all_manual: NotRequired[bool]
+class ConnectorPackUpdateRequest(TypedDict):
+    prior: ConnectorPackBasis
+    source: SlatePackSource
+    protocol_revision: str
+    manifest: SlateManifest
+class ConnectorPackDelta(TypedDict):
+    prior: ConnectorPackBasis
+    current: ConnectorPackView
+    changed: bool
+    reask: list[str]
+    carried: list[str]
+    dropped: list[str]
+class ConnectorPackGrantsGetRequest(TypedDict):
+    basis: ConnectorPackBasis
+    actor: NotRequired[str | None]
+DataClass = Literal["public", "personal", "secret", "unclassified"]
+class ConnectorConsentRowView(TypedDict):
+    tool: str
+    data_class: SlateDataClass
+    setting: SlateDisposition
+    header_parameters: list[str]
+    destroys: bool
+    grant_id: NotRequired[str | None]
+    grant_ceiling: NotRequired[DataClass | None]
+class ConnectorConsentView(TypedDict):
+    connector: str
+    actor: str
+    status: str
+    protocol_revision: NotRequired[str | None]
+    ready: bool
+    rows: list[ConnectorConsentRowView]
+    elicitation: NotRequired[SlateDisposition | None]
+class ConnectorPackGrants(TypedDict):
+    basis: ConnectorPackBasis
+    endpoint: NotRequired[str | None]
+    authority: ConnectorConsentView
+class ConnectorPackGrantRow(TypedDict):
+    tool: str
+    ceiling: DataClass
+    headers: NotRequired[bool]
+class ConnectorPackGrantsPutRequest(TypedDict):
+    basis: ConnectorPackBasis
+    endpoint: str
+    actor: NotRequired[str | None]
+    rows: list[ConnectorPackGrantRow]
 class PackRemoveRequest(TypedDict):
     pack: str
 class ChannelSubscriptionRequest(TypedDict):
@@ -4531,6 +4692,97 @@ class ArtifactView(TypedDict):
     media_type: str
     head: NotRequired[int | None]
     versions: list[ArtifactVersionView]
+class ArtifactUnitsRequest(TypedDict):
+    artifact_ref: str
+    version: NotRequired[int | None]
+class AnnotationLocatorXlsx(TypedDict):
+    format: Literal["xlsx"]
+    sheet: str
+    range: str
+class AnnotationLocatorDocx(TypedDict):
+    format: Literal["docx"]
+    para_path: str
+    char_start: int
+    char_end: int
+class AnnotationLocatorPptx(TypedDict):
+    format: Literal["pptx"]
+    slide: int
+    shape_id: str
+AnnotationLocator = AnnotationLocatorXlsx | AnnotationLocatorDocx | AnnotationLocatorPptx
+class ArtifactUnitView(TypedDict):
+    locator: AnnotationLocator
+    quote: NotRequired[str | None]
+class ArtifactUnitsViewSupported(TypedDict):
+    status: Literal["supported"]
+    artifact_id: EntityId
+    version: int
+    content_hash: str
+    kind: ArtifactKind
+    units: list[ArtifactUnitView]
+class ArtifactUnitsViewUnsupported(TypedDict):
+    status: Literal["unsupported"]
+    artifact_id: EntityId
+    kind: ArtifactKind
+    reason: str
+ArtifactUnitsView = ArtifactUnitsViewSupported | ArtifactUnitsViewUnsupported
+class AnnotationPinRequest(TypedDict):
+    artifact_ref: str
+    version: NotRequired[int | None]
+    locator: AnnotationLocator
+class AnnotationAnchorView(TypedDict):
+    artifact_id: EntityId
+    version: int
+    locator: AnnotationLocator
+    quote: NotRequired[str | None]
+class AnnotationThreadOpenRequest(TypedDict):
+    artifact_ref: str
+    version: int
+    locator: AnnotationLocator
+    text: str
+AnnotationResolution = Literal["pinned", "mapped", "drifted"]
+class AnnotationDriftView(TypedDict):
+    drifted_at_version: int
+    pinned_version: int
+AnnotationThreadState = Literal["open", "resolved"]
+class AnnotationCommentView(TypedDict):
+    thread_id: EntityId
+    author: EntityId
+    text: str
+    at: int
+    claim_id: EntityId
+class AnnotationBriefView(TypedDict):
+    brief_ref: str
+    task_id: EntityId
+    thread_id: EntityId
+    anchor: AnnotationAnchorView
+    artifact_version: int
+    thread_text: str
+    assignee: NotRequired[EntityId | None]
+class AnnotationThreadView(TypedDict):
+    thread_id: EntityId
+    origin: AnnotationAnchorView
+    anchor: AnnotationAnchorView
+    resolution: AnnotationResolution
+    drift: NotRequired[AnnotationDriftView | None]
+    state: AnnotationThreadState
+    head_claim_id: EntityId
+    comments: list[AnnotationCommentView]
+    brief: NotRequired[AnnotationBriefView | None]
+class AnnotationCommentRequest(TypedDict):
+    artifact_ref: str
+    thread_ref: str
+    text: str
+class AnnotationThreadRequest(TypedDict):
+    artifact_ref: str
+    thread_ref: str
+class AnnotationAssignRequest(TypedDict):
+    artifact_ref: str
+    thread_ref: str
+    assignee_ref: NotRequired[str | None]
+class AnnotationStateRequest(TypedDict):
+    artifact_ref: str
+    thread_ref: str
+    state: AnnotationThreadState
 class CodeStateRequest(TypedDict):
     repo: str
     path: str

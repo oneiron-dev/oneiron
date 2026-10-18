@@ -805,6 +805,8 @@ class Oneiron:
         def hooks(self) -> "Oneiron._VaultPacksHooksVerbs": ...
         def put(self, spec: Facade.PackPutRequest) -> Facade.PackPutReceipt:
             """The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks."""
+        @property
+        def connector(self) -> "Oneiron._VaultPacksConnectorVerbs": ...
         def remove(self, spec: Facade.PackRemoveRequest) -> Facade.PackInstallReceipt:
             """The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate."""
         @property
@@ -816,6 +818,24 @@ class Oneiron:
             """Reads live pack hook bindings as the owner, excluding revoked foreign publisher grants."""
         def qualify(self, spec: Facade.HubHookQualifyRequest) -> Facade.HubHookQualificationReceipt:
             """The owner qualifies a Candidate hub hook pack by real sandbox replay; qualification does not consent to wider hooks."""
+    class _VaultPacksConnectorVerbs:
+        def prepare(self, spec: Facade.ConnectorPackPrepareRequest) -> Facade.ConnectorPackView:
+            """Prepares an immutable connector pack admission, comparing the resolved declaration with the installed transport and drafting an ungranted slate."""
+        def get(self, spec: Facade.ConnectorPackGetRequest) -> Facade.ConnectorPackView:
+            """Reads a connector pack source, resolved manifest, advisory evidence, qualification and owner-stampable capability rows."""
+        def qualify(self, spec: Facade.ConnectorPackQualifyRequest) -> Facade.ConnectorPackView:
+            """Runs the real connector probes bound to the exact pack source and protocol; qualification grants nothing without the owner slate and actor grant."""
+        def accept(self, spec: Facade.ConnectorPackAcceptRequest) -> Facade.ConnectorPackView:
+            """Stamps the exact connector pack manifest and grant rows once, or revokes a row; qualification stays independent."""
+        def update(self, spec: Facade.ConnectorPackUpdateRequest) -> Facade.ConnectorPackDelta:
+            """Holds a connector pack at its new immutable source and protocol, carrying narrow rows and re-asking only for expanded capabilities."""
+        @property
+        def grants(self) -> "Oneiron._VaultPacksConnectorGrantsVerbs": ...
+    class _VaultPacksConnectorGrantsVerbs:
+        def get(self, spec: Facade.ConnectorPackGrantsGetRequest) -> Facade.ConnectorPackGrants:
+            """Reads current per-capability authority for one actor on the reviewed connector pack source."""
+        def put(self, spec: Facade.ConnectorPackGrantsPutRequest) -> Facade.ConnectorPackGrants:
+            """Grants declared connector pack rows to one actor through the existing owner consent gate and installed endpoint."""
     class _VaultPacksSetupVerbs:
         def prepare(self, spec: Facade.PackSetupRequest) -> Facade.PackSetupReceipt:
             """The owner opens, or resumes, a pack's guided setup; opening grants nothing."""
@@ -1118,6 +1138,12 @@ class Oneiron:
             """The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands."""
     class _VaultArtifactsVerbs:
         def view(self, request: Facade.ArtifactRefRequest) -> Facade.ArtifactView | None: ...
+        def units(self, spec: Facade.ArtifactUnitsRequest) -> Facade.ArtifactUnitsView:
+            """Inspects real DOCX blocks, XLSX cells and PPTX shapes in one version; other kinds explicitly report no annotation unit adapter."""
+        @property
+        def anchors(self) -> "Oneiron._VaultArtifactsAnchorsVerbs": ...
+        @property
+        def threads(self) -> "Oneiron._VaultArtifactsThreadsVerbs": ...
         def export(self, request: Facade.ArtifactExportRequest) -> Facade.ArtifactExportFile | None: ...
         def born_from(self, request: Facade.BornFromRequest) -> Facade.BornFromView: ...
         def proposals(self, request: Facade.ArtifactRefRequest) -> list[Facade.PendingProposalView]: ...
@@ -1141,6 +1167,22 @@ class Oneiron:
             """Appends one version of bytes to a blob artifact's append-only chain."""
         def read(self, input: Facade.ReadBlobVersionRequest) -> Facade.BlobContent | None:
             """Reads one version of a blob artifact's bytes."""
+    class _VaultArtifactsAnchorsVerbs:
+        def pin(self, spec: Facade.AnnotationPinRequest) -> Facade.AnnotationAnchorView:
+            """Pins an exact readable locator and quote in an artifact version; opening a thread makes the pin durable."""
+    class _VaultArtifactsThreadsVerbs:
+        def open(self, spec: Facade.AnnotationThreadOpenRequest) -> Facade.AnnotationThreadView:
+            """Opens an anchored thread with its first comment as the caller, retaining its exact version, locator and quote."""
+        def comment(self, spec: Facade.AnnotationCommentRequest) -> Facade.AnnotationCommentView:
+            """Appends a comment as the caller; returns its first stored part, with every part available through threads.read."""
+        def read(self, spec: Facade.AnnotationThreadRequest) -> Facade.AnnotationThreadView | None:
+            """Reads a thread, its opening quote, current anchor, explicit pinned, mapped or drifted disposition, comments and assignment."""
+        def list(self, spec: Facade.ArtifactRefRequest) -> list[Facade.AnnotationThreadView]:
+            """Lists an artifact's readable threads with their opening pins, current anchors, drift, comments and assignments."""
+        def assign(self, spec: Facade.AnnotationAssignRequest) -> Facade.AnnotationBriefView:
+            """Assigns an anchored thread into a durable task brief with its anchor and transcript; an agent-definition assignee dispatches through the engine."""
+        def state(self, spec: Facade.AnnotationStateRequest) -> Facade.AnnotationThreadView:
+            """Opens or resolves a thread through its existing claim gate, preserving its anchor, comments and drift."""
     class _VaultArtifactsBodyVerbs:
         def import_(self, request: Facade.OfficeBodyImportRequest) -> Facade.OfficeBodyHead: ...
         def head(self, request: Facade.OfficeBodyArtifactRequest) -> Facade.OfficeBodyHead | None: ...

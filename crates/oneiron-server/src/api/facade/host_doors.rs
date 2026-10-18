@@ -105,6 +105,7 @@ pub(crate) use super::policy_doors::*;
 pub(crate) use super::origin_doors::*;
 // The generic connector call's door (ONE-2510), likewise.
 pub(crate) use super::connector_call_doors::*;
+pub(crate) use super::connector_pack_doors::*;
 // The secret use door, whose connector.call sends (OF-560), likewise.
 pub(crate) use super::secret_use_doors::*;
 // The message reaction door (OF-181), likewise.
@@ -1016,6 +1017,13 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         "vault.calendar.ics.import"
         | "vault.calendar.instances.move"
         | "vault.packs.put"
+        | "vault.packs.connector.prepare"
+        | "vault.packs.connector.get"
+        | "vault.packs.connector.qualify"
+        | "vault.packs.connector.accept"
+        | "vault.packs.connector.update"
+        | "vault.packs.connector.grants.get"
+        | "vault.packs.connector.grants.put"
         | "vault.packs.remove"
         | "vault.skill_hubs.put"
         | "vault.skill_hubs.get"
@@ -1073,6 +1081,43 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.claims.review"
         | "vault.claims.settle"
         | "vault.settings.wake_policy.set"
+        | "vault.agents.create"
+        | "vault.agents.update"
+        | "vault.agents.get"
+        | "vault.workspace.roster"
+        | "vault.booking.page_token"
+        | "vault.channel_identities.provision"
+        | "vault.channel_identities.bind"
+        | "vault.channel_identities.fulfill"
+        | "vault.channel_identities.rotate"
+        | "vault.channel_identities.release"
+        | "vault.channel_identities.route_inbound"
+        | "vault.delivery_window.policy.put"
+        | "vault.delivery_window.policy.retract"
+        | "vault.gate.policy.get"
+        | "vault.gate.policy.put"
+        | "vault.gate.checker.get"
+        | "vault.gate.checker.set"
+        | "vault.embedding_spaces.list"
+        | "vault.embedding_spaces.declare"
+        | "vault.embedding_spaces.bind"
+        | "vault.embedding_spaces.one_space"
+        | "vault.embedding_spaces.retire"
+        | "vault.embedding_spaces.move"
+        | "vault.embedding_spaces.move_check"
+        | "vault.embedding_spaces.move_approve"
+        | "vault.embedding_spaces.move_undo"
+        | "vault.embedding_spaces.move_abandon"
+        | "vault.embedding_spaces.probes.list"
+        | "vault.embedding_spaces.probes.put"
+        | "vault.embedding_spaces.probes.delete"
+        | "vault.fanout.resume"
+        | "vault.fanout.ack"
+        | "vault.guests.revoke"
+        | "vault.guests.mint_slip"
+        | "vault.projects.confirm"
+        | "vault.weave.owner.link.wrong"
+        | "vault.weave.owner.item.wrong"
         | "vault.budgets.lease.open"
         | "vault.budgets.lease"
         | "vault.budgets.lease.top_up"
@@ -1117,15 +1162,18 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.shared.erase_asks"
         | "vault.shared.close_erase_ask"
         | "vault.records.erase_preview"
-        | "vault.records.erase_confirm" => {
+        | "vault.records.erase_confirm"
+        | "vault.workspace.establish"
+        | "vault.workspace.members.onboard" => {
             super::shared_act_doors::person(server, auth, verb).map(drop)
         }
         "vault.artifacts.review_slides" => slide_reviewer(auth).map(drop),
         "vault.artifacts.ask" => artifact_asker(auth).map(drop),
         "self.memory.diary.query" => diary_reader(auth).map(drop),
-        "vault.decisions.asks.answer" | "vault.decisions.asks.climb" | "self.decisions.asks" => {
-            super::decision_ask_doors::holder(auth, verb).map(drop)
-        }
+        "vault.decisions.asks.answer"
+        | "vault.decisions.asks.climb"
+        | "self.decisions.asks"
+        | "vault.fanout.resume_as" => super::decision_ask_doors::holder(auth, verb).map(drop),
         "ai.verdict" => asking(auth, server).map(drop),
         "ai.image" | "ai.speech" | "ai.transcribe" | "ai.embed" | "ai.video" => {
             owner_grade(auth, MEDIA_OWNERS)

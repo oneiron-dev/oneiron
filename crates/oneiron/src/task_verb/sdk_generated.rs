@@ -432,6 +432,34 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<PackPutRequest>(),
             ),
             (
+                "vault.packs.connector.prepare",
+                crate::code_run::vault_read::request_schema::<ConnectorPackPrepareRequest>(),
+            ),
+            (
+                "vault.packs.connector.get",
+                crate::code_run::vault_read::request_schema::<ConnectorPackGetRequest>(),
+            ),
+            (
+                "vault.packs.connector.qualify",
+                crate::code_run::vault_read::request_schema::<ConnectorPackQualifyRequest>(),
+            ),
+            (
+                "vault.packs.connector.accept",
+                crate::code_run::vault_read::request_schema::<ConnectorPackAcceptRequest>(),
+            ),
+            (
+                "vault.packs.connector.update",
+                crate::code_run::vault_read::request_schema::<ConnectorPackUpdateRequest>(),
+            ),
+            (
+                "vault.packs.connector.grants.get",
+                crate::code_run::vault_read::request_schema::<ConnectorPackGrantsGetRequest>(),
+            ),
+            (
+                "vault.packs.connector.grants.put",
+                crate::code_run::vault_read::request_schema::<ConnectorPackGrantsPutRequest>(),
+            ),
+            (
                 "vault.packs.remove",
                 crate::code_run::vault_read::request_schema::<PackRemoveRequest>(),
             ),
@@ -1131,6 +1159,54 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.artifacts.view",
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::ArtifactRefRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.units",
+                crate::code_run::vault_read::request_schema::<
+                    crate::anchored_annotation::ArtifactUnitsRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.anchors.pin",
+                crate::code_run::vault_read::request_schema::<
+                    crate::anchored_annotation::AnnotationPinRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.threads.open",
+                crate::code_run::vault_read::request_schema::<
+                    crate::anchored_annotation::AnnotationThreadOpenRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.threads.comment",
+                crate::code_run::vault_read::request_schema::<
+                    crate::anchored_annotation::AnnotationCommentRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.threads.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::anchored_annotation::AnnotationThreadRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.threads.list",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::ArtifactRefRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.threads.assign",
+                crate::code_run::vault_read::request_schema::<
+                    crate::anchored_annotation::AnnotationAssignRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.threads.state",
+                crate::code_run::vault_read::request_schema::<
+                    crate::anchored_annotation::AnnotationStateRequest,
                 >(),
             ),
             (
@@ -3161,6 +3237,55 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.packs.connector.prepare" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.connector.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.connector.qualify" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.connector.accept" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.connector.update" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.connector.grants.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.connector.grants.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.packs.remove" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -3977,6 +4102,62 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.artifacts.view" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.units" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.anchors.pin" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.threads.open" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.threads.comment" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.threads.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.threads.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.threads.assign" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.threads.state" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -5752,6 +5933,27 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.packs.put" => {
             let _input: PackPutRequest = decode(value.clone())?;
         }
+        "vault.packs.connector.prepare" => {
+            let _input: ConnectorPackPrepareRequest = decode(value.clone())?;
+        }
+        "vault.packs.connector.get" => {
+            let _input: ConnectorPackGetRequest = decode(value.clone())?;
+        }
+        "vault.packs.connector.qualify" => {
+            let _input: ConnectorPackQualifyRequest = decode(value.clone())?;
+        }
+        "vault.packs.connector.accept" => {
+            let _input: ConnectorPackAcceptRequest = decode(value.clone())?;
+        }
+        "vault.packs.connector.update" => {
+            let _input: ConnectorPackUpdateRequest = decode(value.clone())?;
+        }
+        "vault.packs.connector.grants.get" => {
+            let _input: ConnectorPackGrantsGetRequest = decode(value.clone())?;
+        }
+        "vault.packs.connector.grants.put" => {
+            let _input: ConnectorPackGrantsPutRequest = decode(value.clone())?;
+        }
         "vault.packs.remove" => {
             let _input: PackRemoveRequest = decode(value.clone())?;
         }
@@ -6146,6 +6348,34 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.artifacts.view" => {
             let _input: crate::blob_artifact::ArtifactRefRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.units" => {
+            let _input: crate::anchored_annotation::ArtifactUnitsRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.anchors.pin" => {
+            let _input: crate::anchored_annotation::AnnotationPinRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.threads.open" => {
+            let _input: crate::anchored_annotation::AnnotationThreadOpenRequest =
+                decode(value.clone())?;
+        }
+        "vault.artifacts.threads.comment" => {
+            let _input: crate::anchored_annotation::AnnotationCommentRequest =
+                decode(value.clone())?;
+        }
+        "vault.artifacts.threads.read" => {
+            let _input: crate::anchored_annotation::AnnotationThreadRequest =
+                decode(value.clone())?;
+        }
+        "vault.artifacts.threads.list" => {
+            let _input: crate::blob_artifact::ArtifactRefRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.threads.assign" => {
+            let _input: crate::anchored_annotation::AnnotationAssignRequest =
+                decode(value.clone())?;
+        }
+        "vault.artifacts.threads.state" => {
+            let _input: crate::anchored_annotation::AnnotationStateRequest = decode(value.clone())?;
         }
         "vault.code.diff" => {
             let _input: crate::code_document::CodeDiffRequest = decode(value.clone())?;
@@ -7055,6 +7285,25 @@ pub fn invoke(
         "vault.packs.hooks.list" => encode(vault_packs_hooks_list(memory, decode(value)?)?),
         "vault.packs.hooks.qualify" => encode(vault_packs_hooks_qualify(memory, decode(value)?)?),
         "vault.packs.put" => encode(vault_packs_put(memory, decode(value)?)?),
+        "vault.packs.connector.prepare" => {
+            encode(vault_packs_connector_prepare(memory, decode(value)?)?)
+        }
+        "vault.packs.connector.get" => encode(vault_packs_connector_get(memory, decode(value)?)?),
+        "vault.packs.connector.qualify" => {
+            encode(vault_packs_connector_qualify(memory, decode(value)?)?)
+        }
+        "vault.packs.connector.accept" => {
+            encode(vault_packs_connector_accept(memory, decode(value)?)?)
+        }
+        "vault.packs.connector.update" => {
+            encode(vault_packs_connector_update(memory, decode(value)?)?)
+        }
+        "vault.packs.connector.grants.get" => {
+            encode(vault_packs_connector_grants_get(memory, decode(value)?)?)
+        }
+        "vault.packs.connector.grants.put" => {
+            encode(vault_packs_connector_grants_put(memory, decode(value)?)?)
+        }
         "vault.packs.remove" => encode(vault_packs_remove(memory, decode(value)?)?),
         "vault.connectors.subscriptions.put" => {
             encode(vault_connectors_subscriptions_put(memory, decode(value)?)?)
@@ -7283,6 +7532,28 @@ pub fn invoke(
         "vault.shares.view" => encode(vault_shares_view(memory, decode(value)?)?),
         "vault.hooks.replay" => encode(vault_hooks_replay(memory, decode(value)?)?),
         "vault.artifacts.view" => encode(vault_artifacts_view(memory, decode(value)?)?),
+        "vault.artifacts.units" => encode(vault_artifacts_units(memory, decode(value)?)?),
+        "vault.artifacts.anchors.pin" => {
+            encode(vault_artifacts_anchors_pin(memory, decode(value)?)?)
+        }
+        "vault.artifacts.threads.open" => {
+            encode(vault_artifacts_threads_open(memory, decode(value)?)?)
+        }
+        "vault.artifacts.threads.comment" => {
+            encode(vault_artifacts_threads_comment(memory, decode(value)?)?)
+        }
+        "vault.artifacts.threads.read" => {
+            encode(vault_artifacts_threads_read(memory, decode(value)?)?)
+        }
+        "vault.artifacts.threads.list" => {
+            encode(vault_artifacts_threads_list(memory, decode(value)?)?)
+        }
+        "vault.artifacts.threads.assign" => {
+            encode(vault_artifacts_threads_assign(memory, decode(value)?)?)
+        }
+        "vault.artifacts.threads.state" => {
+            encode(vault_artifacts_threads_state(memory, decode(value)?)?)
+        }
         "vault.code.diff" => encode(vault_code_diff(memory, decode(value)?)?),
         "vault.code.blame" => encode(vault_code_blame(memory, decode(value)?)?),
         "vault.code.proposal_view" => encode(vault_code_proposal_view(memory, decode(value)?)?),
@@ -8532,6 +8803,48 @@ pub fn vault_packs_put(
 ) -> MemoryResult<crate::task_verb::sdk::PackPutReceipt> {
     crate::task_verb::sdk::put_pack_embedded(memory, input)
 }
+pub fn vault_packs_connector_prepare(
+    memory: &Memory<'_>,
+    input: ConnectorPackPrepareRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorPackView> {
+    crate::task_verb::sdk::host_only(memory, "vault.packs.connector.prepare", &input)
+}
+pub fn vault_packs_connector_get(
+    memory: &Memory<'_>,
+    input: ConnectorPackGetRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorPackView> {
+    crate::task_verb::sdk::host_only(memory, "vault.packs.connector.get", &input)
+}
+pub fn vault_packs_connector_qualify(
+    memory: &Memory<'_>,
+    input: ConnectorPackQualifyRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorPackView> {
+    crate::task_verb::sdk::host_only(memory, "vault.packs.connector.qualify", &input)
+}
+pub fn vault_packs_connector_accept(
+    memory: &Memory<'_>,
+    input: ConnectorPackAcceptRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorPackView> {
+    crate::task_verb::sdk::host_only(memory, "vault.packs.connector.accept", &input)
+}
+pub fn vault_packs_connector_update(
+    memory: &Memory<'_>,
+    input: ConnectorPackUpdateRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorPackDelta> {
+    crate::task_verb::sdk::host_only(memory, "vault.packs.connector.update", &input)
+}
+pub fn vault_packs_connector_grants_get(
+    memory: &Memory<'_>,
+    input: ConnectorPackGrantsGetRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorPackGrants> {
+    crate::task_verb::sdk::host_only(memory, "vault.packs.connector.grants.get", &input)
+}
+pub fn vault_packs_connector_grants_put(
+    memory: &Memory<'_>,
+    input: ConnectorPackGrantsPutRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorPackGrants> {
+    crate::task_verb::sdk::host_only(memory, "vault.packs.connector.grants.put", &input)
+}
 pub fn vault_packs_remove(
     memory: &Memory<'_>,
     input: PackRemoveRequest,
@@ -9527,6 +9840,118 @@ pub fn vault_artifacts_view(
     input: crate::blob_artifact::ArtifactRefRequest,
 ) -> MemoryResult<Option<crate::blob_artifact::ArtifactView>> {
     memory.artifacts_view(&input)
+}
+pub fn vault_artifacts_units(
+    memory: &Memory<'_>,
+    input: crate::anchored_annotation::ArtifactUnitsRequest,
+) -> MemoryResult<crate::anchored_annotation::ArtifactUnitsView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.units",
+        &input,
+        &["/artifact_ref"],
+    )?;
+    memory.artifacts_units(&input)
+}
+pub fn vault_artifacts_anchors_pin(
+    memory: &Memory<'_>,
+    input: crate::anchored_annotation::AnnotationPinRequest,
+) -> MemoryResult<crate::anchored_annotation::AnnotationAnchorView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.anchors.pin",
+        &input,
+        &["/artifact_ref"],
+    )?;
+    memory.artifacts_anchors_pin(&input)
+}
+pub fn vault_artifacts_threads_open(
+    memory: &Memory<'_>,
+    input: crate::anchored_annotation::AnnotationThreadOpenRequest,
+) -> MemoryResult<crate::anchored_annotation::AnnotationThreadView> {
+    let unlinked_prose = crate::gate::record_references::unlinked_prose_links(
+        memory,
+        "vault.artifacts.threads.open",
+        &input,
+        &["/text"],
+    )?;
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.threads.open",
+        &input,
+        &["/artifact_ref"],
+    )?;
+    let landed = memory.artifacts_threads_open(&input)?;
+    crate::gate::record_references::receipt_landed_prose(memory, &unlinked_prose);
+    Ok(landed)
+}
+pub fn vault_artifacts_threads_comment(
+    memory: &Memory<'_>,
+    input: crate::anchored_annotation::AnnotationCommentRequest,
+) -> MemoryResult<crate::anchored_annotation::AnnotationCommentView> {
+    let unlinked_prose = crate::gate::record_references::unlinked_prose_links(
+        memory,
+        "vault.artifacts.threads.comment",
+        &input,
+        &["/text"],
+    )?;
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.threads.comment",
+        &input,
+        &["/artifact_ref"],
+    )?;
+    let landed = memory.artifacts_threads_comment(&input)?;
+    crate::gate::record_references::receipt_landed_prose(memory, &unlinked_prose);
+    Ok(landed)
+}
+pub fn vault_artifacts_threads_read(
+    memory: &Memory<'_>,
+    input: crate::anchored_annotation::AnnotationThreadRequest,
+) -> MemoryResult<Option<crate::anchored_annotation::AnnotationThreadView>> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.threads.read",
+        &input,
+        &["/artifact_ref"],
+    )?;
+    memory.artifacts_threads_read(&input)
+}
+pub fn vault_artifacts_threads_list(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::ArtifactRefRequest,
+) -> MemoryResult<Vec<crate::anchored_annotation::AnnotationThreadView>> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.threads.list",
+        &input,
+        &["/artifact_ref"],
+    )?;
+    memory.artifacts_threads_list(&input)
+}
+pub fn vault_artifacts_threads_assign(
+    memory: &Memory<'_>,
+    input: crate::anchored_annotation::AnnotationAssignRequest,
+) -> MemoryResult<crate::anchored_annotation::AnnotationBriefView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.threads.assign",
+        &input,
+        &["/artifact_ref", "/assignee_ref"],
+    )?;
+    memory.artifacts_threads_assign(&input)
+}
+pub fn vault_artifacts_threads_state(
+    memory: &Memory<'_>,
+    input: crate::anchored_annotation::AnnotationStateRequest,
+) -> MemoryResult<crate::anchored_annotation::AnnotationThreadView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.threads.state",
+        &input,
+        &["/artifact_ref"],
+    )?;
+    memory.artifacts_threads_state(&input)
 }
 pub fn vault_code_diff(
     memory: &Memory<'_>,
