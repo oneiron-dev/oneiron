@@ -188,6 +188,17 @@ provider there names its key with `key_secret`; a `key_env` provider or a
 stops the vault at start. Without the flag a managed vault runs with no model
 seats: its ladder is the rule table and the owner's asks.
 
+Its embedder comes the same way, as `--embedder-file <path>`: an absolute path
+to a TOML file that holds only `[embedder]` and, optionally, `[gpu]` (§12),
+written as a config file writes them. The file is the section's one layer, and
+the `--embedder-*` flags stop a managed vault at start. Managed mode reads no
+environment, so an `api_key_env` in either table (the endpoint's, the remote
+rung's or the pods') stops the vault too, and a `local` provider names its files
+with an absolute `model_dir` or `models_dir`, because the XDG data root is never
+read. Each fill pass runs under the vault's write admission, so a vault frozen
+for reap fills nothing until it thaws. Without the flag a managed vault has no
+embedder: it answers lexical and graph recall only.
+
 The broker holds `<socket>.lock` while it serves, so a second broker on the same
 path refuses to start. `scripts/ci/broker-fixture.sh` runs the paid-leg fixture with
 the broker as a second OS user. It needs an `/etc/subuid` and `/etc/subgid` range
@@ -1506,6 +1517,13 @@ return; a front tab that closes gives way to the tab that opened it. `GET
 /v1/owner/browsers/stream?run=<hex>` streams the front tab as the desktop's
 stream does, with a `tabs` event when the tabs change.
 
+The agent's own verbs follow the tabs too. A tab the agent's click opens
+comes to the front once it loads, and the click's observation reads it
+whole; a tab opened between calls comes to the front at the next verb; and
+a front tab that closes while the agent drives it gives way to the tab that
+opened it, else the newest. The next answer names the move as `switched`
+(`{tab, url, title, from, why}`, `why` being `opened` or `closed`).
+
 A browser or desktop observation comes in pages: an answer whose outline
 does not fit one page (256 KiB of rows) carries `next`, and
 `observe({cursor: next})` reads the next page of the same observation. The
@@ -1513,7 +1531,15 @@ pages of the last 8 observations stay readable. `find` and `wait_for` page
 their rows the same way, read on with `find({cursor: next})`. A desktop
 window's tree is read whole: a walk cua-driver cuts at its node budget is
 read again with a larger one, and a walk cut at its time budget with a
-longer one, up to 12 s.
+longer one, up to 12 s. A walk still cut there answers what it reached,
+marked `partial` (`{reason, visited, pending, walk_ms}`), as a whole
+observation, never a diff; its last page still carries `next`, and that
+cursor walks the window again at four times the time, up to cua-driver's
+120 s ceiling, and reads on with the rows past those already answered.
+`find`, `wait_for` and `expect` carry the same `partial` when the tree
+they read was cut. A routine `decide` step with more than 61 candidates
+asks its decider in pages of 61, moving to the next page on NONE; a step
+is never refused for its count.
 
 ## 11. When a provider refuses for a limit
 

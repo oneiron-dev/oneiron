@@ -9,15 +9,20 @@
 //! The driver follows the guest's tabs for a person who holds the browser:
 //! a popup or a tab a link opens is attached to as it is found, so the
 //! person sees and drives it, and the tab they leave in front is the one
-//! the agent's verbs read after.
+//! the agent's verbs read after. It follows them for the agent's own verbs
+//! too: a tab the agent's act opens comes to the front and is the one the
+//! act's observation reads, and a front tab that closes while the agent
+//! drives it gives way to its opener. The agent's next answer names the
+//! switch (`switched`).
 
 use crate::cdp::Pipe;
 use crate::outline::{self, Line};
 use crate::{
     BrowserDriver, BrowserError, BrowserPersonInput, BrowserTab, ClickInput, CropInput,
     ExpectInput, ExpectOutput, FindInput, FindOutput, ImageOutput, Observation, ObservationPage,
-    ObserveInput, OpenInput, PointInput, Row, ScreenshotInput, ScreenshotOutput, SelectInput,
-    TypeInput, ViewInput, WaitForInput, WaitForOutput, ZoomInput,
+    ObserveInput, OpenInput, PartialTree, PointInput, Row, ScreenshotInput, ScreenshotOutput,
+    SelectInput, TabSwitch, TabSwitchCause, TypeInput, ViewInput, WaitForInput, WaitForOutput,
+    ZoomInput,
 };
 use base64::Engine as _;
 use serde_json::{Value, json};
@@ -72,6 +77,12 @@ pub(crate) struct CdpDriver {
     media: VecDeque<Held>,
     pages: Pages,
     wait_cap: Duration,
+    /// The agent's move to another tab since its last answer, for that
+    /// answer to name.
+    switched: Option<TabSwitch>,
+    /// The tabs the agent's verbs knew at their last look: a tab found
+    /// since is one opened for them, even when an owner's look attached it.
+    agent_known: HashSet<String>,
 }
 
 /// One page target the driver follows, with its session on it, and the
@@ -94,13 +105,15 @@ pub(crate) struct Pages {
 }
 
 /// An observation answered in pages: every row and removed ref it had, so
-/// a cursor reads on from where its page ended.
+/// a cursor reads on from where its page ended. A partial one (a desktop
+/// window's cut tree) is held whole or not, for its walk on.
 struct Paged {
     seq: u64,
     url: String,
     title: String,
     full: bool,
     no_tree: bool,
+    partial: Option<PartialTree>,
     rows: Vec<Row>,
     removed: Vec<String>,
 }
@@ -118,16 +131,29 @@ impl Paged {
             receipt: None,
             library: Vec::new(),
             no_tree: self.no_tree,
+            partial: self.partial.clone(),
         }
+    }
+
+    /// Where its rows and removed refs end: a partial observation's walk
+    /// on starts there.
+    fn end(&self) -> (usize, usize) {
+        (self.rows.len(), self.removed.len())
     }
 }
 
 impl Pages {
     /// `observation` as its first page; the rest is held for its cursor.
+    /// A partial observation is held even when it fits one page: its last
+    /// page's cursor walks on (Rule 5).
     pub(crate) fn first(&mut self, mut observation: Observation) -> ObservationPage {
-        let (rows, removed, Some(next)) = page_of(&observation.rows, &observation.removed, (0, 0))
-        else {
-            return ObservationPage::whole(observation);
+        let (rows, removed, next) = page_of(&observation.rows, &observation.removed, (0, 0));
+        let next = match next {
+            Some(next) => next,
+            None if observation.partial.is_some() => {
+                (observation.rows.len(), observation.removed.len())
+            }
+            None => return ObservationPage::whole(observation),
         };
         let seq = observation.seq;
         let held = Paged {
@@ -136,6 +162,7 @@ impl Pages {
             title: observation.title.clone(),
             full: observation.full,
             no_tree: observation.no_tree,
+            partial: observation.partial.clone(),
             rows: std::mem::replace(&mut observation.rows, rows),
             removed: std::mem::replace(&mut observation.removed, removed),
         };
@@ -150,14 +177,45 @@ impl Pages {
         }
     }
 
-    /// The page of a held observation that `cursor` starts.
+    /// The page of a held observation that `cursor` starts. The last page
+    /// of a partial one still names a cursor, at its end, to walk on.
     pub(crate) fn next(&self, cursor: &str) -> Result<ObservationPage, BrowserError> {
         let (held, from) = self.continued(cursor)?;
         let (rows, removed, next) = page_of(&held.rows, &held.removed, from);
+        let next = next.or_else(|| held.partial.is_some().then(|| held.end()));
         Ok(ObservationPage {
             observation: held.observation(rows, removed),
             next: next.map(|at| cursor_of(held.seq, at)),
         })
+    }
+
+    /// The held partial observation `cursor` walks on from: its seq, its
+    /// url and where its walk stopped, when the cursor is at its end, or,
+    /// with `anywhere`, at any place in it. `None` for any other cursor.
+    pub(crate) fn walk_on(
+        &self,
+        cursor: &str,
+        anywhere: bool,
+    ) -> Result<Option<(u64, String, PartialTree)>, BrowserError> {
+        let (held, from) = self.continued(cursor)?;
+        Ok(held
+            .partial
+            .clone()
+            .filter(|_| anywhere || from == held.end())
+            .map(|cut| (held.seq, held.url.clone(), cut)))
+    }
+
+    /// Joins the rows a walk on read, past those held observation `seq`
+    /// already has, to it, with the walk's own cut, or none once the walk
+    /// reached the tree's end.
+    pub(crate) fn walked_on(&mut self, seq: u64, rows: Vec<Row>, partial: Option<PartialTree>) {
+        let Some(held) = self.observations.iter_mut().find(|held| held.seq == seq) else {
+            return;
+        };
+        let known: HashSet<String> = held.rows.iter().map(|row| row.target.clone()).collect();
+        held.rows
+            .extend(rows.into_iter().filter(|row| !known.contains(&row.target)));
+        held.partial = partial;
     }
 
     /// The whole rest of a held observation from `cursor`, unpaged.
@@ -354,6 +412,8 @@ impl CdpDriver {
             media: VecDeque::new(),
             pages: Pages::default(),
             wait_cap,
+            switched: None,
+            agent_known: HashSet::from([target.clone()]),
         };
         if driver.pipe.mediated() {
             let deadline = Instant::now() + CALL;
@@ -431,6 +491,64 @@ impl CdpDriver {
                 }
             })
             .collect())
+    }
+
+    /// Follows the tabs for the agent's verbs (CUA-001): a front tab that
+    /// closed gives way, as [`Self::tabs`] has it, and the newest tab opened
+    /// since the agent's last look comes to the front, as a browser shows a
+    /// popup. A move to another tab is kept for the agent's next answer;
+    /// moves before that answer join into one, from the tab the agent drove
+    /// last it was told. Answers why the front moved, if it did.
+    pub(crate) fn follow(&mut self) -> Result<Option<TabSwitchCause>, BrowserError> {
+        let from = self.target.clone();
+        let tabs = self.tabs(false)?;
+        let opened = tabs
+            .iter()
+            .rev()
+            .find(|tab| !self.agent_known.contains(&tab.tab))
+            .map(|tab| tab.tab.clone());
+        self.agent_known = tabs.iter().map(|tab| tab.tab.clone()).collect();
+        if let Some(opened) = &opened {
+            self.bring_to_front(opened)?;
+        }
+        if self.target == from {
+            return Ok(None);
+        }
+        let why = if tabs.iter().any(|tab| tab.tab == from) {
+            TabSwitchCause::Opened
+        } else {
+            TabSwitchCause::Closed
+        };
+        let (url, title) = tabs
+            .into_iter()
+            .find(|tab| tab.tab == self.target)
+            .map_or_else(
+                || (String::new(), String::new()),
+                |tab| (tab.url, tab.title),
+            );
+        let from = self.switched.take().map_or(from, |earlier| earlier.from);
+        if from != self.target {
+            self.switched = Some(TabSwitch {
+                tab: self.target.clone(),
+                url,
+                title,
+                from,
+                why,
+            });
+        }
+        Ok(Some(why))
+    }
+
+    /// The agent's move to another tab since its last answer, once.
+    pub(crate) fn take_switched(&mut self) -> Option<TabSwitch> {
+        self.switched.take()
+    }
+
+    /// The agent takes the tabs as they stand, as a person hands the
+    /// browser back: none of them counts as opened for its next verb.
+    pub(crate) fn know_tabs(&mut self) {
+        self.agent_known = self.tabs.iter().map(|tab| tab.target.clone()).collect();
+        self.switched = None;
     }
 
     /// Brings followed tab `target` to the front.
@@ -583,6 +701,7 @@ impl CdpDriver {
             receipt: None,
             library: Vec::new(),
             no_tree: false,
+            partial: None,
         })
     }
 
@@ -787,6 +906,9 @@ impl CdpDriver {
     }
 
     /// Runs `act` on the page, then returns the settled page as a diff.
+    /// A tab the act opened comes to the front and is read whole once it
+    /// loads, as is the tab a front tab the act closed gave way to; the
+    /// agent's next answer names the switch.
     fn act(
         &mut self,
         act: impl FnOnce(&Self) -> Result<(), BrowserError>,
@@ -794,9 +916,51 @@ impl CdpDriver {
         let since = self.seq;
         let before = self.fingerprint()?;
         let start = Instant::now();
-        act(self)?;
-        self.settle(before, start)?;
+        // An act that closed its own tab can fail or stop settling as the
+        // tab goes; the tab it gave way to is then the act's result.
+        let acted = act(self);
+        let settled = match &acted {
+            Ok(()) => self.settle(before, start),
+            Err(_) => Ok(()),
+        };
+        // A look at the tabs that fails leaves the front where it was: the
+        // act's effect stands either way, and its receipt with it.
+        let moved = self.follow().unwrap_or_default();
+        match moved {
+            None => {
+                acted?;
+                settled?;
+            }
+            Some(TabSwitchCause::Opened) => acted?,
+            Some(TabSwitchCause::Closed) => {}
+        }
+        if moved.is_some() {
+            // The tab now in front settles before it is read; one still
+            // loading once its time is up reads as it stands.
+            let _ = self.loaded(Instant::now() + LOAD);
+            if let Ok(before) = self.fingerprint() {
+                let _ = self.settle(before, Instant::now());
+            }
+        }
         self.observation(Some(since))
+    }
+
+    /// Waits until the front tab's document has loaded, up to `deadline`:
+    /// whether it did.
+    fn loaded(&self, deadline: Instant) -> Result<bool, BrowserError> {
+        loop {
+            let state = self.page(
+                "Runtime.evaluate",
+                json!({"expression": "document.readyState", "returnByValue": true}),
+            )?;
+            if state.pointer("/result/value").and_then(Value::as_str) == Some("complete") {
+                return Ok(true);
+            }
+            if Instant::now() >= deadline {
+                return Ok(false);
+            }
+            std::thread::sleep(POLL);
+        }
     }
 
     fn matching(&self, keep: impl Fn(&Row) -> bool) -> Result<Vec<Row>, BrowserError> {
@@ -1170,19 +1334,8 @@ impl BrowserDriver for CdpDriver {
         if let Some(error) = navigated.get("errorText").and_then(Value::as_str) {
             return Err(BrowserError::Navigation(error.to_owned()));
         }
-        let deadline = Instant::now() + LOAD;
-        loop {
-            let state = self.page(
-                "Runtime.evaluate",
-                json!({"expression": "document.readyState", "returnByValue": true}),
-            )?;
-            if state.pointer("/result/value").and_then(Value::as_str) == Some("complete") {
-                break;
-            }
-            if Instant::now() >= deadline {
-                return Err(BrowserError::Timeout(format!("{} to load", input.url)));
-            }
-            std::thread::sleep(POLL);
+        if !self.loaded(Instant::now() + LOAD)? {
+            return Err(BrowserError::Timeout(format!("{} to load", input.url)));
         }
         let before = self.fingerprint()?;
         self.settle(before, Instant::now())?;
@@ -1222,7 +1375,11 @@ impl BrowserDriver for CdpDriver {
                 self.pages.first_rows(rows)
             }
         };
-        Ok(FindOutput { rows, next })
+        Ok(FindOutput {
+            rows,
+            next,
+            partial: None,
+        })
     }
 
     fn click(&mut self, input: ClickInput) -> Result<Observation, BrowserError> {
@@ -1307,6 +1464,7 @@ impl BrowserDriver for CdpDriver {
                 timed_out: false,
                 waited_ms: 0,
                 next,
+                partial: None,
             });
         }
         let wanted = input
@@ -1325,6 +1483,7 @@ impl BrowserDriver for CdpDriver {
                     timed_out,
                     waited_ms: u64::try_from(waited.as_millis()).unwrap_or(u64::MAX),
                     next,
+                    partial: None,
                 });
             }
             std::thread::sleep(POLL * 2);
@@ -1346,7 +1505,11 @@ impl BrowserDriver for CdpDriver {
                 .as_ref()
                 .is_none_or(|want| row.value.as_ref() == Some(want)),
         };
-        Ok(ExpectOutput { met, row })
+        Ok(ExpectOutput {
+            met,
+            row,
+            partial: None,
+        })
     }
 
     fn screenshot(&mut self, input: ScreenshotInput) -> Result<ScreenshotOutput, BrowserError> {

@@ -40,7 +40,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit/structure/born.rs` | src | s | 2 crate-vis | — | The live-deck projector's creation verbs for what a preset shape cannot carry: a picture over a new media… |
 | `src/edit/structure/check.rs` | src | m | 5 crate-vis | — | The independent check for structural edits |
 | `src/edit/structure/mod.rs` | src | m | 5 struct · 3 enum · 5 fn · 3 crate-vis | ConnectorPreset, NewConnector, NewGroup, NewPicture, NewShape, Preset, StructureEdit, StructureReport | Structural edits (ONE-2529; ARCH-0077, "Edit in place with passthrough"): `add_shape` from a preset… |
-| `src/edit/structure/slides/app_props.rs` | src | m | 9 crate-vis | — | The app properties (`docProps/app.xml`) a slide's addition, copy or removal would leave stale (FIX 2377, FIX… |
+| `src/edit/structure/slides/app_props.rs` | src | m | 10 crate-vis | — | The app properties (`docProps/app.xml`) a slide's addition, copy, removal or move, or an edit of its title… |
 | `src/edit/structure/slides/check.rs` | src | m | 2 crate-vis | — | The independent check for slide-level edits |
 | `src/edit/structure/slides/lifecycle.rs` | src | s | 2 crate-vis | — | A blank slide over a layout, and a slide's removal from the list: the live-deck projector's slide verbs |
 | `src/edit/structure/slides/mod.rs` | src | m | 8 crate-vis | — | Slide-level structural edits: `duplicate_slide`, with relationship-aware cloning under a tested policy, and… |
@@ -65,11 +65,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/graphic/svg.rs` | src | m | 1 crate-vis | — | The closed SVG subset compiled to native shapes |
 | `src/graphic/tests.rs` | test | L | — | — | ONE-2534 acceptance: one fixture per primitive and path command with exact EMU geometry, every refused… |
 | `src/lib.rs` | src | s | 1 struct · 1 enum · 9 fn · 15 mod · 5 re-export | DoceditError, DocxAnchorBlock | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… |
+| `src/live/convert.rs` | src | m | 1 enum · 2 fn · 7 crate-vis | Conversion | Deck edits PowerPoint performs, done its way where the live deck once refused them (OF-510; the Office… |
 | `src/live/deck_export.rs` | src | XL | 7 struct · 1 enum · 11 fn · 1 const | ExportKey, ExportOutcome, ExportProfile, Gate, HeldAssets, OracleReceipt, RoundtripReport, StepOutcome | The deterministic export projector and the eight-step gate (ARCH-0077, "Export is a deterministic projection") |
-| `src/live/held.rs` | src | m | 16 crate-vis | — | What a retained element is written as, in live-model terms: a shape's preset or custom geometry, a… |
-| `src/live/mod.rs` | src | s | 1 enum · 2 mod · 2 re-export | LiveError | The live deck body (ARCH-0077, "Multiplayer: the target body shape"; OF-510), built last in the deck chain |
-| `src/live/pptx.rs` | src | XL | 24 struct · 9 enum · 31 fn · 11 crate-vis | ApproveScope, AttributionIndex, ChangeKind, ChartKind, ChartSeries, ChartSource, Conflict, ConnectorEnd +25 | The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing… |
-| `src/live/reshape.rs` | src | L | 4 crate-vis | — | Shape changes to a written table or chart at export (OF-510) |
+| `src/live/held.rs` | src | m | 19 crate-vis | — | What a retained element is written as, in live-model terms: a shape's preset or custom geometry, a… |
+| `src/live/mod.rs` | src | s | 1 enum · 2 mod · 3 re-export | LiveError | The live deck body (ARCH-0077, "Multiplayer: the target body shape"; OF-510), built last in the deck chain |
+| `src/live/pptx.rs` | src | XL | 24 struct · 9 enum · 32 fn · 7 crate-vis | ApproveScope, AttributionIndex, ChangeKind, ChartKind, ChartSeries, ChartSource, Conflict, ConnectorEnd +25 | The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing… |
+| `src/live/reshape.rs` | src | L | 8 crate-vis | — | Shape changes to a written table or chart at export (OF-510) |
 | `src/native_patch/chart.rs` | src | m | 3 struct · 1 fn · 4 crate-vis | ChartData, Sequence, SeriesData | Classic chart parts: creation from a dataset, the series model read from `c:ser`, point-wise cache rebuilds… |
 | `src/native_patch/mod.rs` | src | s | 5 struct · 4 enum · 1 fn · 1 re-export · 3 crate-vis | CellWrite, ChartFamily, Frame, Merge, NativeEdit, NativeRefusal, NativeReport, Target +1 | Native tables and bounded classic charts (ARCH-0077 "Creation operation", "Chart and table edits") |
 | `src/native_patch/table.rs` | src | m | 6 crate-vis | — | Native `a:tbl` tables: creation with merge rectangles, and merge-aware cell text writes that refuse a… |
@@ -92,7 +93,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/retained_opc/xml/retained.rs` | src | m | 1 struct · 4 crate-vis | XmlLimits | One authoritative parse |
 | `src/xlfn.rs` | src | s | 2 fn | — | Excel's storage qualifiers for post-2007 worksheet functions |
 | `src/xlsx_body.rs` | src | XL | 10 struct · 5 enum · 16 fn · 2 const · 2 re-export | XlsxArea, XlsxBodyError, XlsxBook, XlsxCell, XlsxChange, XlsxLock, XlsxName, XlsxProjection +7 | The XLSX face of a live office body (ARCH-0075: "XLSX is a map keyed by sheet and address") |
-| `src/xlsx_shift.rs` | src | L | 1 struct · 2 enum · 7 fn · 2 crate-vis | SheetFate, XlsxAxis, XlsxAxisEdit | Moving a formula's relative references by a row and column offset: what a shared formula's member reads, its… |
+| `src/xlsx_shift.rs` | src | L | 1 struct · 2 enum · 8 fn · 2 crate-vis | SheetFate, XlsxAxis, XlsxAxisEdit | Moving a formula's relative references by a row and column offset: what a shared formula's member reads, its… |
 | `src/xlsx_styles.rs` | src | L | 7 struct · 2 enum · 1 fn · 1 crate-vis | XlsxAlignment, XlsxBorder, XlsxColor, XlsxEdge, XlsxFill, XlsxFont, XlsxFormat, XlsxNumberFormat +1 | Cell formats a body composes from the workbook's own: an imported cell format with its named cell style… |
 | `tests/adversarial.rs` | test | s | — | — | — |
 | `tests/breaker.rs` | test | s | — | — | — |
