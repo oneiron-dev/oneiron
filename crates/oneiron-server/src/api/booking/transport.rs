@@ -1,9 +1,10 @@
 use axum::http::HeaderMap;
+use oneiron::booking::anti_abuse::booking_ip_hash;
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 
 use super::{BookingTransport, BookingTransportContext};
 use crate::api::check_api_auth;
-use crate::auth::ClientAddress;
+use crate::auth::{ClientAddress, CoreAuth};
 use crate::error::ApiError;
 use crate::server::SyncServer;
 
@@ -26,17 +27,9 @@ pub(super) fn http_transport_context(
     let host_action = crate::api::host_action::require_host_owner_act(server, &auth)?;
     let source_ip = client
         .ok_or_else(|| ApiError::internal_server_error("booking peer context unavailable"))?;
-    let class = match auth.actor_class() {
-        Some("agent") => EdgeActorClass::Agent,
-        Some("system") => EdgeActorClass::System,
-        _ => EdgeActorClass::Human,
-    };
     let principal = match host_action {
         Some(action) => Some(action.actor()),
-        None => auth
-            .principal_ref()
-            .and_then(|reference| EntityId::from_hex(reference).ok())
-            .map(|actor| WriteActor::new(actor, class)),
+        None => credential_principal(&auth),
     };
     Ok(BookingTransportContext {
         source_ip,
@@ -46,4 +39,67 @@ pub(super) fn http_transport_context(
         principal,
         transport: BookingTransport::PublicHttp,
     })
+}
+
+/// Admission and spend identity after a transport has authenticated its caller.
+#[derive(Clone)]
+pub(crate) struct BookingAdmissionContext {
+    pub(super) ip_hash: [u8; 32],
+    pub(super) credential: Option<String>,
+    pub(super) owner_grade: bool,
+    pub(super) principal: Option<WriteActor>,
+    pub(super) transport: BookingTransport,
+}
+
+impl From<&BookingTransportContext> for BookingAdmissionContext {
+    fn from(transport: &BookingTransportContext) -> Self {
+        let mut material = transport.source_ip.to_string();
+        if let Some(actor) = transport.actor_key() {
+            material.push('\0');
+            material.push_str(&actor);
+        }
+        Self {
+            ip_hash: booking_ip_hash(&material),
+            credential: transport.credential.clone(),
+            owner_grade: transport.owner_grade,
+            principal: transport.principal,
+            transport: transport.transport,
+        }
+    }
+}
+
+impl From<&BookingAdmissionContext> for BookingAdmissionContext {
+    fn from(transport: &BookingAdmissionContext) -> Self {
+        transport.clone()
+    }
+}
+
+/// A generated host call has no HTTP peer. Its verified credential alone
+/// keys admission, and its own principal pays; no source address is invented.
+pub(crate) fn credential_transport_context(
+    server: &SyncServer,
+    auth: &CoreAuth,
+) -> Result<BookingAdmissionContext, ApiError> {
+    let host_action = crate::api::host_action::require_host_owner_act(server, auth)?;
+    let principal = host_action
+        .map(|action| action.actor())
+        .or_else(|| credential_principal(auth));
+    Ok(BookingAdmissionContext {
+        ip_hash: booking_ip_hash(&format!("credential\0{}", auth.principal())),
+        credential: Some(auth.principal().to_owned()),
+        owner_grade: auth.is_owner_grade(),
+        principal,
+        transport: BookingTransport::Credential,
+    })
+}
+
+fn credential_principal(auth: &CoreAuth) -> Option<WriteActor> {
+    let class = match auth.actor_class() {
+        Some("agent") => EdgeActorClass::Agent,
+        Some("system") => EdgeActorClass::System,
+        _ => EdgeActorClass::Human,
+    };
+    auth.principal_ref()
+        .and_then(|reference| EntityId::from_hex(reference).ok())
+        .map(|actor| WriteActor::new(actor, class))
 }

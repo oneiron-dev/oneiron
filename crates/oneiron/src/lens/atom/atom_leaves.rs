@@ -24,7 +24,7 @@ use crate::{Error, Result};
 /// back to name a row; it is never authority, and `label` is display data the host
 /// never parses. The reach a row can prove is `target_handle`, which the node itself
 /// has to advertise as one of its declared backing handles.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GeneratedUiResultSetRow {
     pub id: LensResultSetRowId,
@@ -36,7 +36,7 @@ pub struct GeneratedUiResultSetRow {
 /// predicate handle; there is no place to express a query, expression, `where`
 /// clause, entity id, or replacement handle, so a client can never widen the
 /// filter a select-all resolves against.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 pub enum GeneratedUiResultSetSelectAll {
     Disabled {},
@@ -47,7 +47,7 @@ pub enum GeneratedUiResultSetSelectAll {
 /// card-declared, `self.ui`-hosted, deterministic-tier action ids: the atom hosts no
 /// action of its own, so the landed one-action-per-element and
 /// declarations-name-a-self.ui-control gates keep deciding what is interactive.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GeneratedUiResultSetAtom {
     #[serde(deserialize_with = "deserialize_limited_vec")]
@@ -140,7 +140,7 @@ impl GeneratedUiResultSetAtom {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct TextBlockAtom {
     pub spans: Vec<LensTextSpan>,
 }
@@ -164,7 +164,7 @@ impl<'de> Deserialize<'de> for TextBlockAtom {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(
     tag = "type",
     content = "value",
@@ -179,14 +179,14 @@ pub enum LensTextSpan {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MediaAtom {
     pub handle: LensMediaHandle,
     pub alt: LensText,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LedgerRowAtom {
     #[serde(deserialize_with = "deserialize_limited_vec")]
@@ -197,14 +197,14 @@ pub struct LedgerRowAtom {
     pub seal: Option<SealAtom>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LedgerCell {
     pub label: LensText,
     pub value: LensText,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ClaimLineAtom {
     pub subject: LensText,
@@ -215,7 +215,7 @@ pub struct ClaimLineAtom {
     pub seal: Option<SealAtom>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct StatusDotAtom {
     pub status: LensStatus,
@@ -223,7 +223,7 @@ pub struct StatusDotAtom {
     pub label: Option<LensText>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LensStatus {
     Proposed,
@@ -252,14 +252,14 @@ impl LensStatus {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SealAtom {
     pub level: SealLevel,
     pub label: LensText,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SealLevel {
     None,
@@ -268,14 +268,14 @@ pub enum SealLevel {
     Authority,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MetaLineAtom {
     pub label: LensText,
     pub value: LensText,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SectionAtom {
     pub title: LensText,
@@ -283,7 +283,7 @@ pub struct SectionAtom {
     pub lines: Vec<LensText>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ThreadEntryAtom {
     pub author: LensText,
@@ -294,7 +294,7 @@ pub struct ThreadEntryAtom {
     pub seal: Option<SealAtom>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct CollectionAtom {
     pub title: LensText,
     #[serde(default, deserialize_with = "deserialize_limited_vec")]
@@ -327,7 +327,7 @@ impl<'de> Deserialize<'de> for CollectionAtom {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReceiptAtom {
     pub title: LensText,
@@ -337,14 +337,14 @@ pub struct ReceiptAtom {
     pub seal: Option<SealAtom>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PostmarkAtom {
     pub label: LensText,
     pub timestamp: LensText,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PackLineAtom {
     pub pack: LensText,
@@ -352,7 +352,7 @@ pub struct PackLineAtom {
     pub status: LensStatus,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AnswerSheetAtom {
     pub question: LensText,
@@ -361,14 +361,14 @@ pub struct AnswerSheetAtom {
     pub citations: Vec<LensHandleRef>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TwoClocksAtom {
     pub occurred_at: LensText,
     pub learned_at: LensText,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct NeighborhoodGraphAtom {
     #[serde(default, deserialize_with = "deserialize_limited_vec")]
     pub nodes: Vec<GraphNode>,
@@ -400,14 +400,14 @@ impl<'de> Deserialize<'de> for NeighborhoodGraphAtom {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GraphNode {
     pub id: LensHandleName,
     pub label: LensText,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GraphEdge {
     pub from: LensHandleName,
@@ -415,7 +415,7 @@ pub struct GraphEdge {
     pub label: LensText,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AsofScrubberAtom {
     pub value: LensText,
@@ -425,13 +425,13 @@ pub struct AsofScrubberAtom {
     pub max: Option<LensText>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ThrobberAtom {
     pub label: LensText,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct VoiceLineAtom {
     pub speaker: LensText,
@@ -440,7 +440,7 @@ pub struct VoiceLineAtom {
     pub vad: Option<VadBadge>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum VadBadge {
     Low,
@@ -448,7 +448,7 @@ pub enum VadBadge {
     High,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct QuickFilterAtom {
     pub id: SelfUiControlId,
     pub label: LensText,
@@ -492,7 +492,7 @@ impl<'de> Deserialize<'de> for QuickFilterAtom {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct InspectorAtom {
     pub title: LensText,
     #[serde(default, deserialize_with = "deserialize_limited_vec")]
