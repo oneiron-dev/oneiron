@@ -38,7 +38,9 @@ fn evidence_in_txn(
         .port_entity_record(txn, &turn)?
         .ok_or(Error::EntityNotFound)?;
     if row.entity_type != ENTITY_TYPE_TURN {
-        return Err(Error::InvalidConfig("sieve evidence must name a TURN".into()));
+        return Err(Error::InvalidConfig(
+            "sieve evidence must name a TURN".into(),
+        ));
     }
     if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &turn)?.is_live() {
         return Err(Error::EntityNotFound);
@@ -76,7 +78,9 @@ pub fn replay_as_owner(
         owner.revalidate_as_vault_owner_in_txn(vault, txn)?;
         evidence_in_txn(vault, txn, input.turn)?;
         if !sieved_turn_in_txn(vault, txn, &input.turn)? {
-            return Err(Error::InvalidConfig("TURN is not continuous-sieve evidence".into()));
+            return Err(Error::InvalidConfig(
+                "TURN is not continuous-sieve evidence".into(),
+            ));
         }
         owe_read_in_txn(&vault.store, txn, &input.turn)?;
         evidence_in_txn(vault, txn, input.turn)

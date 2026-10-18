@@ -208,8 +208,12 @@ fn recall_within_ceiling(
     let embedding = vectors.text_index.as_deref();
     let media = vectors.media_seeds();
     // Keep admitted evidence ready while the optional host expansion waits.
-    if effort.requires_rerank() && door.hyde.is_some() && deadline.is_some()
-        && !deadline.as_ref().is_some_and(crate::retrieval_depth::RetrievalDeadline::answer_due)
+    if effort.requires_rerank()
+        && door.hyde.is_some()
+        && deadline.is_some()
+        && !deadline
+            .as_ref()
+            .is_some_and(crate::retrieval_depth::RetrievalDeadline::answer_due)
     {
         let mut ready = memory.recall_with_execution(
             &input.query,
@@ -237,7 +241,9 @@ fn recall_within_ceiling(
         fallback = Some(ready);
     }
     let at_deadline = |answer: MemoryResult<crate::memory::MemoryPack>| {
-        if deadline.as_ref().is_some_and(crate::retrieval_depth::RetrievalDeadline::answer_due)
+        if deadline
+            .as_ref()
+            .is_some_and(crate::retrieval_depth::RetrievalDeadline::answer_due)
             && let Some(fallback) = fallback.as_ref()
         {
             return Ok(fallback.clone());
@@ -272,29 +278,31 @@ fn recall_within_ceiling(
             on_cut(pack);
         }
     });
-    let mut pack = at_deadline(memory.recall_with_execution(
-        &input.query,
-        effort,
-        &scope,
-        limit,
-        input.format.as_deref(),
-        None,
-        &crate::retrieval_depth::RecallExecution {
-            hyde: door.hyde,
-            deadline: deadline.as_ref(),
-            telemetry: input.telemetry.as_ref(),
-            embedding,
-            media: &media,
-            as_of: input.as_of,
-            query_affect,
-            on_cut: on_cut
-                .as_ref()
-                .map(|on_cut| on_cut as &(dyn Fn(crate::memory::MemoryPack) + Sync)),
-            door_fallback: fallback.as_ref(),
-            rerank_unavailable: unreranked,
-            ..Default::default()
-        },
-    ))?;
+    let mut pack = at_deadline(
+        memory.recall_with_execution(
+            &input.query,
+            effort,
+            &scope,
+            limit,
+            input.format.as_deref(),
+            None,
+            &crate::retrieval_depth::RecallExecution {
+                hyde: door.hyde,
+                deadline: deadline.as_ref(),
+                telemetry: input.telemetry.as_ref(),
+                embedding,
+                media: &media,
+                as_of: input.as_of,
+                query_affect,
+                on_cut: on_cut
+                    .as_ref()
+                    .map(|on_cut| on_cut as &(dyn Fn(crate::memory::MemoryPack) + Sync)),
+                door_fallback: fallback.as_ref(),
+                rerank_unavailable: unreranked,
+                ..Default::default()
+            },
+        ),
+    )?;
     skipped(&mut pack);
     Ok(pack)
 }
