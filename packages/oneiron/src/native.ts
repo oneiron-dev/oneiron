@@ -252,6 +252,17 @@ vaultResearchArchiveRepropose(input: unknown): unknown
 vaultResearchArchiveCoverage(input: unknown): unknown
 vaultEvalsInventory(input: unknown): unknown
 vaultEvalsCohortsSetup(input: unknown): unknown
+vaultCoachTrainingOffers(input: unknown): unknown
+vaultCoachTrainingOffersGet(input: unknown): unknown
+vaultCoachTrainingOffersTrigger(input: unknown): unknown
+vaultCoachTrainingOffersResult(input: unknown): unknown
+vaultCoachTrainingOffersAnswer(input: unknown): unknown
+vaultCoachTrainingOffersUndo(input: unknown): unknown
+vaultCoachTrainingOffersCandidates(input: unknown): unknown
+vaultCoachTrainingOffersCandidatesPrepare(input: unknown): unknown
+vaultCoachTrainingOffersPilotsPrepare(input: unknown): unknown
+vaultCoachTrainingOffersPilotsComplete(input: unknown): unknown
+vaultCoachTrainingOffersPilotsGet(input: unknown): unknown
 vaultResearchBind(input: unknown): unknown
 vaultResearchFork(input: unknown): unknown
 vaultResearchWeave(input: unknown): unknown

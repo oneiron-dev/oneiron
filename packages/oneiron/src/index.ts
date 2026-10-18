@@ -995,6 +995,34 @@ export class Oneiron {
         setup: (input: Facade.EvalCohortSetup): Facade.EvalAuthoringReport => this.#call(() => this.#client.vaultEvalsCohortsSetup(input) as Facade.EvalAuthoringReport),
       },
     },
+    coach: {
+      /** Read Coach offer snapshots, their exact owner answers and later promise checks; optionally select a seat or only pending offers. */
+      training_offers: Object.assign((input: Facade.OfferListRequest): Facade.OfferView[] => this.#call(() => this.#client.vaultCoachTrainingOffers(input) as Facade.OfferView[]), {
+        /** Read one Coach offer snapshot with its owner answer and receipt-backed promise checks. */
+        get: (input: Facade.OfferRef): Facade.OfferView | null => this.#call(() => this.#client.vaultCoachTrainingOffersGet(input) as Facade.OfferView | null),
+        /** Queue one production Coach training-offer pass under the owner proof; the offer skill decides what to raise and no caller supplies an offer body. */
+        trigger: (input: Facade.OfferPassRequest): Facade.OfferPassRef => this.#call(() => this.#client.vaultCoachTrainingOffersTrigger(input) as Facade.OfferPassRef),
+        /** Read the production Coach offer attempt state and the exact snapshots it raised; a completed pass may raise no offer. */
+        result: (input: Facade.OfferPassRef): Facade.OfferPassResult | null => this.#call(() => this.#client.vaultCoachTrainingOffersResult(input) as Facade.OfferPassResult | null),
+        /** Answer the exact shown Coach snapshot: keep baseline, decline, postpone, approve switch or approve train; training still needs its separate result-swap choice. */
+        answer: (input: Facade.OfferAnswerRequest): Facade.OfferAnswerRecord => this.#call(() => this.#client.vaultCoachTrainingOffersAnswer(input) as Facade.OfferAnswerRecord),
+        /** Undo an approved stock switch only while its own seat still holds the switched binding; restore the previous whole binding. */
+        undo: (input: Facade.OfferRef): Facade.OfferUndoReceipt => this.#call(() => this.#client.vaultCoachTrainingOffersUndo(input) as Facade.OfferUndoReceipt),
+        /** Read pinned own-seat stock or training-recipe candidates, including their incumbent and explicit compute destination. */
+        candidates: Object.assign((input: Facade.OfferCandidateQuery): Facade.OfferCandidateRecord[] => this.#call(() => this.#client.vaultCoachTrainingOffersCandidates(input) as Facade.OfferCandidateRecord[]), {
+          /** Pin an own-seat catalog stock candidate or existing training recipe and its destination; this nominates only and never switches, downloads or trains. */
+          prepare: (input: Facade.OfferCandidateSetup): Facade.OfferCandidateRecord => this.#call(() => this.#client.vaultCoachTrainingOffersCandidatesPrepare(input) as Facade.OfferCandidateRecord),
+        }),
+        pilots: {
+          /** Prepare an eval-only pilot of a pinned seat candidate, counting its sealed cohort exposure before releasing receipt-backed cases; launch no compute or egress. */
+          prepare: (input: Facade.OfferPilotPrepare): Facade.OfferPilotPrepared => this.#call(() => this.#client.vaultCoachTrainingOffersPilotsPrepare(input) as Facade.OfferPilotPrepared),
+          /** Record immutable owner-evaluator pilot measurements bound to counted own-seat families; fixed code derives sufficiency and preserves unknown cost and score. */
+          complete: (input: Facade.OfferPilotComplete): Facade.OfferPilot => this.#call(() => this.#client.vaultCoachTrainingOffersPilotsComplete(input) as Facade.OfferPilot),
+          /** Read one counted Coach pilot, its pins, measurement receipts, one-off cost and computed sufficiency card. */
+          get: (input: Facade.OfferPilotRef): Facade.OfferPilot | null => this.#call(() => this.#client.vaultCoachTrainingOffersPilotsGet(input) as Facade.OfferPilot | null),
+        },
+      }),
+    },
     cleanup: {
       /** The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing. */
       run: (input: Facade.CleanupRunRequest): Facade.CleanupRunView => this.#call(() => this.#client.vaultCleanupRun(input) as Facade.CleanupRunView),
@@ -1506,7 +1534,7 @@ export class Oneiron {
       /** Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card. */
       offer: Object.assign((input: Facade.OfferDraft): Facade.OfferCard => this.#call(() => this.#client.vaultRoomsOffer(input) as Facade.OfferCard), {
         /** The room's host answers an offer card: join, or not now. */
-        answer: (input: Facade.OfferAnswerRequest): Facade.OfferSettlement => this.#call(() => this.#client.vaultRoomsOfferAnswer(input) as Facade.OfferSettlement),
+        answer: (input: Facade.OfferSettleOfferAnswerRequest): Facade.OfferSettlement => this.#call(() => this.#client.vaultRoomsOfferAnswer(input) as Facade.OfferSettlement),
         /** Someone in the room casts an advisory join or not-now vote on an open room-wide offer card, which keeps it open; only the host's answer admits. */
         vote: (input: Facade.OfferVoteRequest): Facade.OfferCard => this.#call(() => this.#client.vaultRoomsOfferVote(input) as Facade.OfferCard),
         /** The room's owner or delegated host reopens its aged-out room-wide offer card. */

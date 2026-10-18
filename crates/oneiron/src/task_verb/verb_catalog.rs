@@ -226,6 +226,17 @@ pub enum AgentVerb {
     VaultResearchArchiveCoverage,
     VaultEvalsInventory,
     VaultEvalsCohortsSetup,
+    VaultCoachTrainingOffers,
+    VaultCoachTrainingOffersGet,
+    VaultCoachTrainingOffersTrigger,
+    VaultCoachTrainingOffersResult,
+    VaultCoachTrainingOffersAnswer,
+    VaultCoachTrainingOffersUndo,
+    VaultCoachTrainingOffersCandidates,
+    VaultCoachTrainingOffersCandidatesPrepare,
+    VaultCoachTrainingOffersPilotsPrepare,
+    VaultCoachTrainingOffersPilotsComplete,
+    VaultCoachTrainingOffersPilotsGet,
     VaultResearchBind,
     VaultResearchFork,
     VaultResearchWeave,
@@ -917,6 +928,17 @@ impl AgentVerb {
         Self::VaultResearchArchiveCoverage,
         Self::VaultEvalsInventory,
         Self::VaultEvalsCohortsSetup,
+        Self::VaultCoachTrainingOffers,
+        Self::VaultCoachTrainingOffersGet,
+        Self::VaultCoachTrainingOffersTrigger,
+        Self::VaultCoachTrainingOffersResult,
+        Self::VaultCoachTrainingOffersAnswer,
+        Self::VaultCoachTrainingOffersUndo,
+        Self::VaultCoachTrainingOffersCandidates,
+        Self::VaultCoachTrainingOffersCandidatesPrepare,
+        Self::VaultCoachTrainingOffersPilotsPrepare,
+        Self::VaultCoachTrainingOffersPilotsComplete,
+        Self::VaultCoachTrainingOffersPilotsGet,
         Self::VaultResearchBind,
         Self::VaultResearchFork,
         Self::VaultResearchWeave,
@@ -1615,6 +1637,23 @@ impl AgentVerb {
             Self::VaultResearchArchiveCoverage => "vault.research.archive.coverage",
             Self::VaultEvalsInventory => "vault.evals.inventory",
             Self::VaultEvalsCohortsSetup => "vault.evals.cohorts.setup",
+            Self::VaultCoachTrainingOffers => "vault.coach.training_offers",
+            Self::VaultCoachTrainingOffersGet => "vault.coach.training_offers.get",
+            Self::VaultCoachTrainingOffersTrigger => "vault.coach.training_offers.trigger",
+            Self::VaultCoachTrainingOffersResult => "vault.coach.training_offers.result",
+            Self::VaultCoachTrainingOffersAnswer => "vault.coach.training_offers.answer",
+            Self::VaultCoachTrainingOffersUndo => "vault.coach.training_offers.undo",
+            Self::VaultCoachTrainingOffersCandidates => "vault.coach.training_offers.candidates",
+            Self::VaultCoachTrainingOffersCandidatesPrepare => {
+                "vault.coach.training_offers.candidates.prepare"
+            }
+            Self::VaultCoachTrainingOffersPilotsPrepare => {
+                "vault.coach.training_offers.pilots.prepare"
+            }
+            Self::VaultCoachTrainingOffersPilotsComplete => {
+                "vault.coach.training_offers.pilots.complete"
+            }
+            Self::VaultCoachTrainingOffersPilotsGet => "vault.coach.training_offers.pilots.get",
             Self::VaultResearchBind => "vault.research.bind",
             Self::VaultResearchFork => "vault.research.fork",
             Self::VaultResearchWeave => "vault.research.weave",
@@ -2317,6 +2356,17 @@ impl AgentVerb {
                 | Self::VaultResearchArchiveCoverage
                 | Self::VaultEvalsInventory
                 | Self::VaultEvalsCohortsSetup
+                | Self::VaultCoachTrainingOffers
+                | Self::VaultCoachTrainingOffersGet
+                | Self::VaultCoachTrainingOffersTrigger
+                | Self::VaultCoachTrainingOffersResult
+                | Self::VaultCoachTrainingOffersAnswer
+                | Self::VaultCoachTrainingOffersUndo
+                | Self::VaultCoachTrainingOffersCandidates
+                | Self::VaultCoachTrainingOffersCandidatesPrepare
+                | Self::VaultCoachTrainingOffersPilotsPrepare
+                | Self::VaultCoachTrainingOffersPilotsComplete
+                | Self::VaultCoachTrainingOffersPilotsGet
                 | Self::VaultResearchBind
                 | Self::VaultResearchFork
                 | Self::VaultResearchWeave
@@ -3030,6 +3080,17 @@ impl AgentVerb {
                 | Self::VaultResearchArchiveCoverage
                 | Self::VaultEvalsInventory
                 | Self::VaultEvalsCohortsSetup
+                | Self::VaultCoachTrainingOffers
+                | Self::VaultCoachTrainingOffersGet
+                | Self::VaultCoachTrainingOffersTrigger
+                | Self::VaultCoachTrainingOffersResult
+                | Self::VaultCoachTrainingOffersAnswer
+                | Self::VaultCoachTrainingOffersUndo
+                | Self::VaultCoachTrainingOffersCandidates
+                | Self::VaultCoachTrainingOffersCandidatesPrepare
+                | Self::VaultCoachTrainingOffersPilotsPrepare
+                | Self::VaultCoachTrainingOffersPilotsComplete
+                | Self::VaultCoachTrainingOffersPilotsGet
                 | Self::VaultResearchBind
                 | Self::VaultResearchFork
                 | Self::VaultResearchWeave
@@ -3510,6 +3571,8 @@ impl AgentVerb {
                 | Self::VaultSharedEraseAsks
                 | Self::VaultTrustedContactsList
                 | Self::VaultTrustedContactsConcernAsks
+                | Self::VaultCoachTrainingOffers
+                | Self::VaultCoachTrainingOffersCandidates
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
@@ -3801,6 +3864,17 @@ impl AgentVerb {
                 | Self::VaultResearchArchiveCoverage
                 | Self::VaultEvalsInventory
                 | Self::VaultEvalsCohortsSetup
+                | Self::VaultCoachTrainingOffers
+                | Self::VaultCoachTrainingOffersGet
+                | Self::VaultCoachTrainingOffersTrigger
+                | Self::VaultCoachTrainingOffersResult
+                | Self::VaultCoachTrainingOffersAnswer
+                | Self::VaultCoachTrainingOffersUndo
+                | Self::VaultCoachTrainingOffersCandidates
+                | Self::VaultCoachTrainingOffersCandidatesPrepare
+                | Self::VaultCoachTrainingOffersPilotsPrepare
+                | Self::VaultCoachTrainingOffersPilotsComplete
+                | Self::VaultCoachTrainingOffersPilotsGet
                 | Self::VaultResearchBind
                 | Self::VaultResearchFork
                 | Self::VaultResearchWeave
@@ -4380,6 +4454,12 @@ impl AgentVerb {
                 | Self::VaultResearchArchiveRepropose
                 | Self::VaultResearchArchiveCoverage
                 | Self::VaultEvalsCohortsSetup
+                | Self::VaultCoachTrainingOffersTrigger
+                | Self::VaultCoachTrainingOffersAnswer
+                | Self::VaultCoachTrainingOffersUndo
+                | Self::VaultCoachTrainingOffersCandidatesPrepare
+                | Self::VaultCoachTrainingOffersPilotsPrepare
+                | Self::VaultCoachTrainingOffersPilotsComplete
                 | Self::VaultResearchBind
                 | Self::VaultResearchFork
                 | Self::VaultResearchWeave
@@ -4922,6 +5002,17 @@ impl AgentVerb {
             Self::VaultResearchArchiveCoverage => &["spec"],
             Self::VaultEvalsInventory => &["spec"],
             Self::VaultEvalsCohortsSetup => &["spec"],
+            Self::VaultCoachTrainingOffers => &["spec"],
+            Self::VaultCoachTrainingOffersGet => &["spec"],
+            Self::VaultCoachTrainingOffersTrigger => &["spec"],
+            Self::VaultCoachTrainingOffersResult => &["spec"],
+            Self::VaultCoachTrainingOffersAnswer => &["spec"],
+            Self::VaultCoachTrainingOffersUndo => &["spec"],
+            Self::VaultCoachTrainingOffersCandidates => &["spec"],
+            Self::VaultCoachTrainingOffersCandidatesPrepare => &["spec"],
+            Self::VaultCoachTrainingOffersPilotsPrepare => &["spec"],
+            Self::VaultCoachTrainingOffersPilotsComplete => &["spec"],
+            Self::VaultCoachTrainingOffersPilotsGet => &["spec"],
             Self::VaultResearchBind => &["spec"],
             Self::VaultResearchFork => &["spec"],
             Self::VaultResearchWeave => &["spec"],
@@ -5614,6 +5705,17 @@ impl AgentVerb {
             Self::VaultResearchArchiveCoverage => &["spec"],
             Self::VaultEvalsInventory => &["spec"],
             Self::VaultEvalsCohortsSetup => &["spec"],
+            Self::VaultCoachTrainingOffers => &["spec"],
+            Self::VaultCoachTrainingOffersGet => &["spec"],
+            Self::VaultCoachTrainingOffersTrigger => &["spec"],
+            Self::VaultCoachTrainingOffersResult => &["spec"],
+            Self::VaultCoachTrainingOffersAnswer => &["spec"],
+            Self::VaultCoachTrainingOffersUndo => &["spec"],
+            Self::VaultCoachTrainingOffersCandidates => &["spec"],
+            Self::VaultCoachTrainingOffersCandidatesPrepare => &["spec"],
+            Self::VaultCoachTrainingOffersPilotsPrepare => &["spec"],
+            Self::VaultCoachTrainingOffersPilotsComplete => &["spec"],
+            Self::VaultCoachTrainingOffersPilotsGet => &["spec"],
             Self::VaultResearchBind => &["spec"],
             Self::VaultResearchFork => &["spec"],
             Self::VaultResearchWeave => &["spec"],
@@ -6732,6 +6834,39 @@ impl AgentVerb {
             }
             Self::VaultEvalsCohortsSetup => {
                 "The owner sets up sealed cohorts from a pinned real inventory through the existing family, case and audited cut doors. Reports refused decisions; never serves sealed content or fabricates labels or skill provenance."
+            }
+            Self::VaultCoachTrainingOffers => {
+                "Read Coach offer snapshots, their exact owner answers and later promise checks; optionally select a seat or only pending offers."
+            }
+            Self::VaultCoachTrainingOffersGet => {
+                "Read one Coach offer snapshot with its owner answer and receipt-backed promise checks."
+            }
+            Self::VaultCoachTrainingOffersTrigger => {
+                "Queue one production Coach training-offer pass under the owner proof; the offer skill decides what to raise and no caller supplies an offer body."
+            }
+            Self::VaultCoachTrainingOffersResult => {
+                "Read the production Coach offer attempt state and the exact snapshots it raised; a completed pass may raise no offer."
+            }
+            Self::VaultCoachTrainingOffersAnswer => {
+                "Answer the exact shown Coach snapshot: keep baseline, decline, postpone, approve switch or approve train; training still needs its separate result-swap choice."
+            }
+            Self::VaultCoachTrainingOffersUndo => {
+                "Undo an approved stock switch only while its own seat still holds the switched binding; restore the previous whole binding."
+            }
+            Self::VaultCoachTrainingOffersCandidates => {
+                "Read pinned own-seat stock or training-recipe candidates, including their incumbent and explicit compute destination."
+            }
+            Self::VaultCoachTrainingOffersCandidatesPrepare => {
+                "Pin an own-seat catalog stock candidate or existing training recipe and its destination; this nominates only and never switches, downloads or trains."
+            }
+            Self::VaultCoachTrainingOffersPilotsPrepare => {
+                "Prepare an eval-only pilot of a pinned seat candidate, counting its sealed cohort exposure before releasing receipt-backed cases; launch no compute or egress."
+            }
+            Self::VaultCoachTrainingOffersPilotsComplete => {
+                "Record immutable owner-evaluator pilot measurements bound to counted own-seat families; fixed code derives sufficiency and preserves unknown cost and score."
+            }
+            Self::VaultCoachTrainingOffersPilotsGet => {
+                "Read one counted Coach pilot, its pins, measurement receipts, one-off cost and computed sufficiency card."
             }
             Self::VaultResearchBind => {
                 "Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it."

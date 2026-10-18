@@ -44,6 +44,7 @@
 
 mod authoring;
 mod cohort;
+pub(super) use cohort::cohort_in_txn as cohort_for_offer_in_txn;
 mod cut_audit;
 mod sufficiency;
 
@@ -157,7 +158,7 @@ pub struct SourceFamily {
 }
 
 /// How a case came from its sources.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DerivationKind {
     /// A past task picked from receipts as it ran.
@@ -174,7 +175,7 @@ pub enum DerivationKind {
 
 /// Where a case's label came from. Outcomes and the owner's picks anchor; a
 /// judge's verdict never does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EvalLabelKind {
     WorldOutcome,
@@ -192,7 +193,7 @@ impl EvalLabelKind {
 
 /// One dated, weighted label on a case. `reference` names the outcome fact,
 /// ask or audit it came from.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EvalLabel {
     pub kind: EvalLabelKind,
@@ -222,7 +223,7 @@ pub struct EvalCaseDraft {
 }
 
 /// A case in the derivation ledger.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EvalCase {
     pub id: EntityId,

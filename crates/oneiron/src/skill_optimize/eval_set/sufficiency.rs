@@ -34,7 +34,7 @@ const MAX_TEXT_BYTES: usize = 512;
 
 /// The measurements a card is read from. Every number is supplied by the
 /// measuring workflow; the card computes nothing it was not given.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SufficiencyInput {
     /// Independent source families in the set.
@@ -57,7 +57,7 @@ pub struct SufficiencyInput {
     pub canary_diverged: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum UnknownReason {
     NoRetestNoise,
@@ -79,7 +79,7 @@ impl UnknownReason {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SufficiencyVerdict {
     NotWorse,
@@ -87,7 +87,7 @@ pub enum SufficiencyVerdict {
     Unknown(Vec<UnknownReason>),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SufficiencyCard {
     pub input: SufficiencyInput,

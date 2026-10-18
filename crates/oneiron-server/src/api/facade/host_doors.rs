@@ -154,6 +154,7 @@ pub(crate) use super::critic_review_doors::*;
 pub(crate) use super::affect_doors::*;
 pub(crate) use super::campaign_split_doors::*;
 pub(crate) use super::research_doors::*;
+pub(crate) use super::coach_offer_doors::*;
 pub(crate) use super::retrieval_doors::*;
 // The owner's project-card tap door (OF-501), likewise.
 pub(crate) use super::project_card_doors::*;
@@ -1276,6 +1277,17 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.research.create_child"
         | "vault.evals.inventory"
         | "vault.evals.cohorts.setup"
+        | "vault.coach.training_offers"
+        | "vault.coach.training_offers.get"
+        | "vault.coach.training_offers.trigger"
+        | "vault.coach.training_offers.result"
+        | "vault.coach.training_offers.answer"
+        | "vault.coach.training_offers.undo"
+        | "vault.coach.training_offers.candidates"
+        | "vault.coach.training_offers.candidates.prepare"
+        | "vault.coach.training_offers.pilots.prepare"
+        | "vault.coach.training_offers.pilots.complete"
+        | "vault.coach.training_offers.pilots.get"
         | "vault.code.symbols.declare"
         | "vault.code.symbols.renew"
         | "vault.code.symbols.release"

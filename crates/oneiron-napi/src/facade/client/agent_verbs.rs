@@ -1948,6 +1948,105 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_coach_training_offers(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.coach.training_offers", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_coach_training_offers_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.coach.training_offers.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_coach_training_offers_trigger(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.coach.training_offers.trigger", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_coach_training_offers_result(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.coach.training_offers.result", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_coach_training_offers_answer(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.coach.training_offers.answer", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_coach_training_offers_undo(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.coach.training_offers.undo", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_coach_training_offers_candidates(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.coach.training_offers.candidates", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_coach_training_offers_candidates_prepare(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.coach.training_offers.candidates.prepare", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_coach_training_offers_pilots_prepare(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.coach.training_offers.pilots.prepare", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_coach_training_offers_pilots_complete(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.coach.training_offers.pilots.complete", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_coach_training_offers_pilots_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.coach.training_offers.pilots.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_research_bind(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.research.bind", input)

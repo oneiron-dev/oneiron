@@ -242,6 +242,32 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.research.archive.coverage", post(facade_route))
         .route("/vault.evals.inventory", post(facade_route))
         .route("/vault.evals.cohorts.setup", post(facade_route))
+        .route("/vault.coach.training_offers", post(facade_route))
+        .route("/vault.coach.training_offers.get", post(facade_route))
+        .route("/vault.coach.training_offers.trigger", post(facade_route))
+        .route("/vault.coach.training_offers.result", post(facade_route))
+        .route("/vault.coach.training_offers.answer", post(facade_route))
+        .route("/vault.coach.training_offers.undo", post(facade_route))
+        .route(
+            "/vault.coach.training_offers.candidates",
+            post(facade_route),
+        )
+        .route(
+            "/vault.coach.training_offers.candidates.prepare",
+            post(facade_route),
+        )
+        .route(
+            "/vault.coach.training_offers.pilots.prepare",
+            post(facade_route),
+        )
+        .route(
+            "/vault.coach.training_offers.pilots.complete",
+            post(facade_route),
+        )
+        .route(
+            "/vault.coach.training_offers.pilots.get",
+            post(facade_route),
+        )
         .route("/vault.research.bind", post(facade_route))
         .route("/vault.research.fork", post(facade_route))
         .route("/vault.research.weave", post(facade_route))
