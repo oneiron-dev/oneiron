@@ -49,7 +49,16 @@ pub const TEAM_SHAPE_LESSONS: [&str; 6] = [
 /// Whether a team converges on one answer or diverges into many is a
 /// setting of the pattern, not a pattern of its own.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
     schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]

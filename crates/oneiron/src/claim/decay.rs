@@ -67,7 +67,9 @@ impl ClaimAgingClass {
 }
 
 /// Decay policy of one aging class.
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct AccessFactorPolicy {
     /// Half-life of the exponential factor, in seconds.
     pub half_life_secs: f64,
@@ -185,7 +187,8 @@ pub fn claim_access_factor_with_policy(
     let access_factor = if closed {
         0.0
     } else {
-        override_factor.unwrap_or_else(|| decayed_access_factor_with_policy(policy, learned_at, now))
+        override_factor
+            .unwrap_or_else(|| decayed_access_factor_with_policy(policy, learned_at, now))
             * standalone_weight(&body.predicate)
     };
 

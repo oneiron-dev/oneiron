@@ -656,7 +656,8 @@ pub(crate) fn binding_in_txn(
     txn: &heed::RoTxn<'_>,
     root: AttemptId,
 ) -> Result<ResearchBinding> {
-    BINDING.get(&vault.store, txn, root.as_bytes())?
+    BINDING
+        .get(&vault.store, txn, root.as_bytes())?
         .ok_or(invalid("no campaign is bound to this root"))
 }
 
