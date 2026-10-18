@@ -47,7 +47,7 @@ pub(in crate::sync) use self::admission::{
     revalidate_admitted_federated_claims, staged_births,
 };
 pub use self::authorize::authorize_sync_selector;
-pub use self::born_with::GrantTravel;
+pub use crate::share_travel::GrantTravel;
 pub(crate) use self::born_with::{
     carried_born_with, carried_born_with_in_txn, erase_carried_born_with_in_txn,
 };
