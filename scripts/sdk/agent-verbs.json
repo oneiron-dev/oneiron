@@ -5058,6 +5058,51 @@
       "section": false
     },
     {
+      "name": "vault.hooks.regen.due",
+      "description": "List, as the authenticated owner, the hook bindings of the vault's own packs whose verb table or sandbox contract changed since their last good body passed, with no regen waiting. Runs no regen.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::EntityId>",
+      "call": "memory.hooks_regen_due_as(&memory.embedded_owner(\"vault.hooks.regen.due\")?)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.hooks.regen.get",
+      "description": "Read one hook binding's regen record as the authenticated owner: its last good body hash, contract stamp, intent and pending decision, with the candidate_hash an adoption names. Null for a binding bound under no record. Changes nothing.",
+      "input": "crate::memory::hook_regen_doors::HookRegenBindingRequest",
+      "output": "Option<crate::memory::hook_regen_doors::HookRegenView>",
+      "call": "memory.hooks_regen_record_as(&memory.embedded_owner(\"vault.hooks.regen.get\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.hooks.regen.adopt",
+      "description": "Adopt, as the authenticated owner and as their stamp, the regen candidate pending on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. Answers the pack put receipt; only an installed put advances the record.",
+      "input": "crate::memory::hook_regen_doors::HookRegenAdoptRequest",
+      "output": "crate::task_verb::sdk::PackPutReceipt",
+      "call": "memory.hooks_regen_adopt_as(&memory.embedded_owner(\"vault.hooks.regen.adopt\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.artifacts.publish_approval",
       "description": "Computes the exact publication approval digest for the existing owner approve-once door; it grants nothing.",
       "input": "crate::artifact_hosting::door_types::ArtifactPublishRequest",
