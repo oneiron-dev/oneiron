@@ -223,11 +223,73 @@ fn named(hex: &str) -> Option<EntityId> {
     EntityId::from_hex(hex).ok().filter(|id| id.to_hex() == hex)
 }
 
+/// Where a room turn sits, for the side rows that ride beside it (FIX 3094).
+enum TurnPlace {
+    /// A project room's turn, read from its turn row.
+    Row { room: EntityId, turn: RoomTurn },
+    /// An ordinary room's DAG TURN, which has no turn row: the room that owns
+    /// it, and the root its thread binding names, `None` for a trunk TURN.
+    Dag {
+        room: EntityId,
+        root: Option<EntityId>,
+    },
+}
+
+impl TurnPlace {
+    fn room(&self) -> EntityId {
+        match self {
+            Self::Row { room, .. } | Self::Dag { room, .. } => *room,
+        }
+    }
+
+    /// Whether turn `id`, placed here, roots its thread.
+    fn roots(&self, id: EntityId) -> bool {
+        match self {
+            Self::Row { turn, .. } => super::liveness::is_thread_root(turn),
+            Self::Dag { root, .. } => *root == Some(id),
+        }
+    }
+}
+
+/// Where room turn `id` sits (FIX 3094). A project room's turn is read from
+/// its turn row; an ordinary room's turn is a DAG TURN, placed by the room
+/// that owns it and its door-stamped thread binding, and no turn row is made
+/// for it. `None` for a turn of no room, or a DAG TURN whose owner or
+/// binding does not resolve, or whose binding names another room.
+fn turn_place_in(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<Option<TurnPlace>> {
+    let store = &vault.store;
+    if let Some(turn) = TURNS.get_lenient(store, txn, &id)? {
+        return Ok(named(&turn.room_id).map(|room| TurnPlace::Row { room, turn }));
+    }
+    let crate::vault::LiveEntityRow::Live {
+        entity_type: crate::registry::ENTITY_TYPE_TURN,
+        body,
+    } = crate::vault::live_entity_row_in_txn(store, txn, &id)?
+    else {
+        return Ok(None);
+    };
+    let Some(room) = crate::conversation_dag::room_turn_owner(store, txn, &id)
+        .ok()
+        .flatten()
+    else {
+        return Ok(None);
+    };
+    Ok(match thread_binding(&body) {
+        Ok(None) => Some(TurnPlace::Dag { room, root: None }),
+        Ok(Some(binding)) if binding.room == room => Some(TurnPlace::Dag {
+            room,
+            root: Some(binding.root),
+        }),
+        _ => None,
+    })
+}
+
 /// The side rows this vault holds that ride entity `id` of type
 /// `entity_type` (FIX 1794): a room's host pin, handles and room-wide facts,
 /// or a room turn's claim and response and the facts of the thread it roots,
 /// with the Ready joins and current offer cards of the room or that thread.
-/// A row that does not decode is left out.
+/// A turn is placed by [`turn_place_in`], a DAG TURN of an ordinary room too
+/// (FIX 3094). A row that does not decode is left out.
 pub(crate) fn replicated_side_rows_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -251,12 +313,10 @@ pub(crate) fn replicated_side_rows_in(
             (id, None, true)
         }
         crate::registry::ENTITY_TYPE_TURN => {
-            let Some(turn) = TURNS.get_lenient(store, txn, &id)? else {
+            let Some(place) = turn_place_in(vault, txn, id)? else {
                 return Ok(rows);
             };
-            let Some(room) = named(&turn.room_id) else {
-                return Ok(rows);
-            };
+            let room = place.room();
             if let Some(claim) = CLAIMS.get_lenient(store, txn, &id)? {
                 rows.push(RoomSideRow::Claim { claim });
             }
@@ -272,7 +332,7 @@ pub(crate) fn replicated_side_rows_in(
                     at: spoken.at,
                 });
             }
-            (room, Some(id), super::liveness::is_thread_root(&turn))
+            (room, Some(id), place.roots(id))
         }
         _ => return Ok(rows),
     };
@@ -956,27 +1016,30 @@ pub(crate) fn clear_replicated_side_cell_in_txn(
 
 /// The entities whose windows take the side rows a door wrote for room turn
 /// `turn` (FIX 1794), each with its type: its room, the turn, the turn it
-/// answers and the root of its thread. None for a turn this vault holds no
-/// room row of.
+/// answers and the root of its thread. A DAG TURN of an ordinary room is
+/// placed as [`turn_place_in`] places it, and answers no claimed turn (FIX
+/// 3094). None for a turn this vault places in no room.
 pub(crate) fn replicated_side_carriers_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     turn: EntityId,
 ) -> Result<Vec<(EntityId, u8)>> {
-    let Some(row) = TURNS.get_lenient(&vault.store, txn, &turn)? else {
-        return Ok(Vec::new());
-    };
-    let Some(room) = named(&row.room_id) else {
+    let Some(place) = turn_place_in(vault, txn, turn)? else {
         return Ok(Vec::new());
     };
     let mut carriers = vec![
-        (room, crate::registry::ENTITY_TYPE_CONVERSATION),
+        (place.room(), crate::registry::ENTITY_TYPE_CONVERSATION),
         (turn, crate::registry::ENTITY_TYPE_TURN),
     ];
-    let parent = row.reply_to.as_deref().and_then(named);
-    let root = participation::turn_root_in_txn(vault, txn, &row)
-        .ok()
-        .flatten();
+    let (parent, root) = match &place {
+        TurnPlace::Row { turn: row, .. } => (
+            row.reply_to.as_deref().and_then(named),
+            participation::turn_root_in_txn(vault, txn, row)
+                .ok()
+                .flatten(),
+        ),
+        TurnPlace::Dag { root, .. } => (None, *root),
+    };
     for id in [parent, root].into_iter().flatten() {
         if !carriers.iter().any(|(held, _)| *held == id) {
             carriers.push((id, crate::registry::ENTITY_TYPE_TURN));
