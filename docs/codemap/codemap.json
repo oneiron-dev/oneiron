@@ -21994,7 +21994,7 @@
       "const": 5,
       "crate-vis": 3,
       "enum": 4,
-      "fn": 8,
+      "fn": 9,
       "struct": 4,
       "trait": 1
      }
@@ -39297,7 +39297,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 3,
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -48655,7 +48655,7 @@
      "surface": {
       "const": 4,
       "enum": 6,
-      "fn": 24,
+      "fn": 25,
       "struct": 27
      }
     },
@@ -67562,7 +67562,7 @@
      "path": "src/api/facade/action_routes.rs",
      "purpose": "OF-181: the app's one action layer over HTTP, for both its callers",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -67726,13 +67726,13 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 68
+      "crate-vis": 69
      }
     },
     {
@@ -71915,7 +71915,7 @@
      "path": "src/lens_frames.rs",
      "purpose": "OF-181: the lens frames this server holds for the cards it rendered",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -74033,7 +74033,7 @@
      "path": "src/server/live_runs.rs",
      "purpose": "The live agent runs a harness may act for over HTTP (OF-181)",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 31
      }
     },
     {
@@ -74203,7 +74203,7 @@
      "path": "src/server/space_move.rs",
      "purpose": "The server's half of a kind slot version move (OF-370; ARCH-0004 `#swap-check-ruling`…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {

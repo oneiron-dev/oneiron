@@ -363,6 +363,29 @@ impl LiveRuns {
         caller: LiveRunCaller,
     ) -> Result<ResolvedLiveRun, LiveRunRefusal> {
         let (run, issued) = parse_handle(text).ok_or(LiveRunRefusal::Invalid)?;
+        self.attached_for(run, caller, Some(issued))
+    }
+
+    /// The live run `run`, by its id, for `caller` only, as a lens card's
+    /// event resolves the run that rendered the card (FIX 2652): the run's
+    /// own agent, with the credential attached to it now. The card holds no
+    /// handle, so any issue of that credential's attachment answers.
+    pub(crate) fn resolve_run(
+        &self,
+        run: EntityId,
+        caller: LiveRunCaller,
+    ) -> Result<ResolvedLiveRun, LiveRunRefusal> {
+        self.attached_for(run, caller, None)
+    }
+
+    /// The run `run` for `caller`, its own agent, while `caller`'s credential
+    /// holds its attachment, of the issue `issued` when one is named.
+    fn attached_for(
+        &self,
+        run: EntityId,
+        caller: LiveRunCaller,
+        issued: Option<[u8; LIVE_RUN_ISSUED_LEN]>,
+    ) -> Result<ResolvedLiveRun, LiveRunRefusal> {
         let entry = self
             .get(run)
             .filter(|entry| is_agent(entry.actor, caller.actor))
@@ -370,7 +393,8 @@ impl LiveRuns {
         let binding = lock(&entry.attached)
             .clone()
             .filter(|binding| {
-                binding.issued() == issued && binding.is_for_credential(&caller.credential)
+                issued.is_none_or(|issued| binding.issued() == issued)
+                    && binding.is_for_credential(&caller.credential)
             })
             .ok_or(LiveRunRefusal::Unavailable)?;
         Ok(ResolvedLiveRun { entry, binding })

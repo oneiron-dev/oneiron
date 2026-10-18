@@ -280,6 +280,20 @@ impl LensFrameStore {
             .map(|entry| Arc::clone(&entry.card))
     }
 
+    /// The run that created `held`, which `auth`'s caller holds, by the
+    /// `to_hex()` its owner names it by (FIX 2652): the run a live-run verb
+    /// on the card acts for. `None` for a card no run rendered, or one no
+    /// longer held as `held`.
+    pub(crate) fn creator_run(&self, auth: &CoreAuth, held: &Arc<HeldCard>) -> Option<String> {
+        let key = FrameKey::new(auth, held.render.card_id.clone());
+        self.lock()
+            .cards
+            .get(&key)
+            .filter(|entry| Arc::ptr_eq(&entry.card, held))
+            .and_then(|entry| entry.owner.as_ref())
+            .map(|owner| owner.creator_run.clone())
+    }
+
     /// Re-charges `held`, which `auth`'s caller holds, for its next `$state`
     /// before the caller moves it there. `false`: the card is no longer held,
     /// closed meanwhile or evicted, now too when the floor reached it as the
