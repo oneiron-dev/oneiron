@@ -4,10 +4,10 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::{ContextReceiptFields, ReceiptKind, ReceiptRecord, append_context_receipt_fields};
+use crate::EntityId;
 use crate::memory::{
     Memory, MemoryError, MemoryResult, actor_is_vault_owner_in_txn, verify_actor_binding_in_txn,
 };
-use crate::EntityId;
 
 /// A read of the context actually sent for an emit. No field is recompiled at read time.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -47,7 +47,10 @@ impl Memory<'_> {
                 ("conversation_id".to_owned(), conversation.to_hex()),
                 ("request_digest".to_owned(), request_digest),
                 ("result_digest".to_owned(), result_digest),
-                ("actor_class".to_owned(), self.actor_class().gate_actor_class().to_owned()),
+                (
+                    "actor_class".to_owned(),
+                    self.actor_class().gate_actor_class().to_owned(),
+                ),
             ]),
         };
         append_context_receipt_fields(&mut receipt, context)?;
@@ -56,7 +59,10 @@ impl Memory<'_> {
 
     /// The caller's own emit, or any emit for the vault's live owner. A missing
     /// ref and another actor's ref both read as none, as call receipts do.
-    pub fn context_emit_receipt(&self, receipt_ref: &str) -> MemoryResult<Option<ContextEmitReceipt>> {
+    pub fn context_emit_receipt(
+        &self,
+        receipt_ref: &str,
+    ) -> MemoryResult<Option<ContextEmitReceipt>> {
         if !receipt_ref.starts_with("emit:") {
             return Ok(None);
         }
@@ -76,9 +82,11 @@ impl Memory<'_> {
             if !own && !owner {
                 return Ok(None);
             }
-            let field = |name: &str| record.fields.get(name).cloned().ok_or_else(|| {
-                MemoryError::from(crate::Error::CorruptedIndex("context emit receipt field"))
-            });
+            let field = |name: &str| {
+                record.fields.get(name).cloned().ok_or_else(|| {
+                    MemoryError::from(crate::Error::CorruptedIndex("context emit receipt field"))
+                })
+            };
             return Ok(Some(ContextEmitReceipt {
                 receipt_ref: record.receipt_id.clone(),
                 occurred_at: record.occurred_at,

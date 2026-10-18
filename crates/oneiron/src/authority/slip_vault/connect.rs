@@ -92,7 +92,10 @@ fn connect_action(
 }
 
 /// This vault's id, once `issuer` is its live host root.
-pub(super) fn local_vault_id(fold: &AuthorityFold, issuer: &HostSlipIssuer) -> Result<AuthorityVaultId> {
+pub(super) fn local_vault_id(
+    fold: &AuthorityFold,
+    issuer: &HostSlipIssuer,
+) -> Result<AuthorityVaultId> {
     require_host(fold, issuer)?;
     fold.vault_id.ok_or_else(invalid_authority)
 }

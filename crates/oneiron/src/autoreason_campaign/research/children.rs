@@ -26,7 +26,9 @@ pub fn create_research_child(
     let txn = vault.store.env.read_txn()?;
     let nodes = nodes_in_txn(vault, &txn, root)?;
     if !nodes.contains_key(parent.as_bytes()) || pruned_lineage(&nodes, &parent) {
-        return Err(invalid("an experiment child needs an unpruned campaign parent"));
+        return Err(invalid(
+            "an experiment child needs an unpruned campaign parent",
+        ));
     }
     drop(txn);
     let outcome = AgentDispatcher::new(vault).dispatch_with_context(

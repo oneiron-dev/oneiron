@@ -62,13 +62,22 @@ impl Memory<'_> {
             let world = if entity_type == crate::registry::ENTITY_TYPE_WORLD {
                 Some(*id)
             } else if let Some(body) = body.as_deref() {
-                crate::federation::record_scope::record_world_in(&content, txn, *id, entity_type, body)?.flatten()
+                crate::federation::record_scope::record_world_in(
+                    &content,
+                    txn,
+                    *id,
+                    entity_type,
+                    body,
+                )?
+                .flatten()
             } else {
                 None
             };
             let stale = match world {
                 Some(world) => crate::federation::stale_stamped_worlds(&self.vault.store, txn)?
-                    .get(&world).copied().map(|stamp| MemoryStaleStamp::from_stamp(stamp, self.vault.now_recorded_at())),
+                    .get(&world)
+                    .copied()
+                    .map(|stamp| MemoryStaleStamp::from_stamp(stamp, self.vault.now_recorded_at())),
                 None => None,
             };
             let view = self.entity_view_of_in_txn(lane, txn, row, mode)?;

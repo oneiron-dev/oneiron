@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 
 use super::{LlmCapability, ModelId};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, thiserror::Error, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Serialize, Deserialize, thiserror::Error, schemars::JsonSchema,
+)]
 pub enum LlmError {
     #[error("retryable LLM error: {0}")]
     Retryable(#[from] RetryableLlmError),
@@ -34,7 +36,17 @@ impl LlmError {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, thiserror::Error, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    thiserror::Error,
+    schemars::JsonSchema,
+)]
 pub enum RetryableLlmError {
     /// A spent quota or a rate limit: a 429, or a 403 or 5xx whose body
     /// reads as one ([`super::limit`]).
@@ -99,7 +111,17 @@ impl SpentKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, thiserror::Error, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    thiserror::Error,
+    schemars::JsonSchema,
+)]
 pub enum FatalLlmError {
     #[error("invalid request")]
     InvalidRequest,
@@ -117,7 +139,18 @@ pub enum FatalLlmError {
 
 /// Why a decision read's answer cannot be read as its label probabilities. Each is checked on
 /// every call, and a read that fails one is refused, never taken as p = 0.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, thiserror::Error, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    thiserror::Error,
+    schemars::JsonSchema,
+)]
 pub enum LabelReadFailure {
     /// The read generated text: it scored nothing.
     #[error("emitted text")]
@@ -134,7 +167,17 @@ pub enum LabelReadFailure {
     Malformed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, thiserror::Error, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    thiserror::Error,
+    schemars::JsonSchema,
+)]
 pub enum BudgetDenied {
     #[error("budget exhausted")]
     Exhausted,

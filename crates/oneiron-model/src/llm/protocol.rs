@@ -281,7 +281,9 @@ impl LlmUsage {
 }
 
 /// Absolute per-attempt input token totals, never retry deltas.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct LlmInputUsage {
     pub total: u64,
     pub cache_read: u64,
@@ -289,7 +291,9 @@ pub struct LlmInputUsage {
 }
 
 /// Absolute per-attempt output token totals, never retry deltas.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct LlmOutputUsage {
     pub total: u64,
     pub text: u64,

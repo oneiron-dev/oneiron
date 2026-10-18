@@ -66,7 +66,9 @@ pub(crate) fn record_outputs(vault: &Vault, attempt: AttemptId, ids: &[EntityId]
 /// Outputs already accepted by the promotion sink for this attempt.
 pub(crate) fn extraction_outputs(vault: &Vault, attempt: AttemptId) -> Result<Vec<EntityId>> {
     let txn = vault.store.env.read_txn()?;
-    Ok(OUTPUT.get(&vault.store, &txn, &attempt)?.unwrap_or_default())
+    Ok(OUTPUT
+        .get(&vault.store, &txn, &attempt)?
+        .unwrap_or_default())
 }
 
 pub(crate) fn enqueue_in_txn(

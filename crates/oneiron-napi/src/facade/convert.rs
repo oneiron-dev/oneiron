@@ -12,10 +12,10 @@ use super::boundary::{
 use super::dtos::{
     NapiCalendarEventView, NapiCalendarRange, NapiCalendarSel, NapiCitedMessage, NapiClaimView,
     NapiCommitOutcome, NapiCommitReceipt, NapiEntityRefReceipt, NapiEntityView, NapiGateReceipt,
-    NapiMemoryItem, NapiMemoryPack, NapiMemoryProvenance, NapiMemoryStaleStamp, NapiQuoteSpan, NapiReadReceipt,
-    NapiReadScope, NapiRecallScope, NapiRecordRef, NapiRecordRefusal, NapiRetrievalMeta,
-    NapiScopeHonesty, NapiStructuralPutInput, NapiTemporalHint, NapiWitnessReceipt,
-    NapiWitnessTurn,
+    NapiMemoryItem, NapiMemoryPack, NapiMemoryProvenance, NapiMemoryStaleStamp, NapiQuoteSpan,
+    NapiReadReceipt, NapiReadScope, NapiRecallScope, NapiRecordRef, NapiRecordRefusal,
+    NapiRetrievalMeta, NapiScopeHonesty, NapiStructuralPutInput, NapiTemporalHint,
+    NapiWitnessReceipt, NapiWitnessTurn,
 };
 
 // ── conversions ─────────────────────────────────────────────────────────

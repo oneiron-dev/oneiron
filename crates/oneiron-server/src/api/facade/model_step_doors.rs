@@ -1,10 +1,18 @@
 //! Owner-proof model steps; HTTP, SDK and MCP reach the same typed door.
 use std::sync::Arc;
 
-use oneiron::llm::model_step::{self, ModelStepReceipt, ModelStepReceiptRequest, ModelStepResult, ModelStepSubmit};
+use oneiron::llm::model_step::{
+    self, ModelStepReceipt, ModelStepReceiptRequest, ModelStepResult, ModelStepSubmit,
+};
 use oneiron::llm::run_admission::RunAdmission;
-use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult};
-use oneiron::{BudgetGuard, BudgetLease, EntityId, FatalLlmError, LlmBackend, LlmCapability, LlmGenerateFuture, LlmRequest, LlmStreamResult, ModelId};
+use oneiron::memory::{
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError,
+    MemoryResult,
+};
+use oneiron::{
+    BudgetGuard, BudgetLease, EntityId, FatalLlmError, LlmBackend, LlmCapability,
+    LlmGenerateFuture, LlmRequest, LlmStreamResult, ModelId,
+};
 
 use super::host_doors::{Listed, internal, owner_proof};
 use crate::auth::CoreAuth;
@@ -28,33 +36,54 @@ async fn submit(
     let owner = owner_proof(auth, server, "ai.steps.submit")?;
     // Identical owner, inference policy, route-selector refusal, configured
     // model binding, and physical-call meter as the raw inference sibling.
-    let (ladder, run) = crate::api::llm::admit(server, auth, &mut input.request)
-        .map_err(|response| {
+    let (ladder, run) =
+        crate::api::llm::admit(server, auth, &mut input.request).map_err(|response| {
             let code = match response.status().as_u16() {
                 401 | 403 => MEMORY_CODE_FORBIDDEN,
                 503 => MEMORY_CODE_MODEL_UNAVAILABLE,
                 _ => MEMORY_CODE_BAD_REQUEST,
             };
-            MemoryError::new(code, "the inference door refused this model-step request", &[])
+            MemoryError::new(
+                code,
+                "the inference door refused this model-step request",
+                &[],
+            )
         })?;
     if ladder.exact_prompt().is_none() {
-        return Err(MemoryError::bad_request("a durable model step names one exact configured model, not a multi-offer seat"));
+        return Err(MemoryError::bad_request(
+            "a durable model step names one exact configured model, not a multi-offer seat",
+        ));
     }
-    let meter = server.llm.as_ref().ok_or_else(|| internal("ai.steps.submit"))?.meter();
+    let meter = server
+        .llm
+        .as_ref()
+        .ok_or_else(|| internal("ai.steps.submit"))?
+        .meter();
     let read = meter.read();
     // This logical-step allowance is bounded by the host's remaining raw
     // allowance. Physical calls still reserve and settle on the shared run
     // meter, so the engine's logical lease does not charge that meter twice.
     let guard = BudgetGuard::with_reserve_units(
-        "model-step", read.remaining_units, meter.reserve_units(), read.on_budget_exhausted,
+        "model-step",
+        read.remaining_units,
+        meter.reserve_units(),
+        read.on_budget_exhausted,
     );
     let backend = StepBackend { ladder, run };
     let runtime = tokio::runtime::Handle::current();
     let server = Arc::clone(server);
     let input = input.clone();
     tokio::task::spawn_blocking(move || {
-        runtime.block_on(model_step::submit_as_owner(server.vault(), &owner, input, &backend, &guard))
-    }).await.map_err(|_| internal("ai.steps.submit"))?
+        runtime.block_on(model_step::submit_as_owner(
+            server.vault(),
+            &owner,
+            input,
+            &backend,
+            &guard,
+        ))
+    })
+    .await
+    .map_err(|_| internal("ai.steps.submit"))?
 }
 
 pub(crate) async fn ai_steps_receipt(
@@ -69,14 +98,24 @@ pub(crate) async fn ai_steps_receipt(
     let server = Arc::clone(server);
     let answer = tokio::task::spawn_blocking(move || {
         model_step::receipt_as_owner(server.vault(), &owner, &input)
-    }).await.unwrap_or_else(|_| Err(internal("ai.steps.receipt")));
+    })
+    .await
+    .unwrap_or_else(|_| Err(internal("ai.steps.receipt")));
     listed(answer)
 }
 
 fn listed(answer: MemoryResult<ModelStepReceipt>) -> Listed<ModelStepReceipt> {
-    let refs = match answer.as_ref().ok().and_then(|receipt| receipt.result.as_ref()) {
-        Some(ModelStepResult::Finished { claim_ref, .. }) => EntityId::from_hex(claim_ref).ok().into_iter().collect(),
-        Some(ModelStepResult::BudgetDenied { trap_ref }) => EntityId::from_hex(trap_ref).ok().into_iter().collect(),
+    let refs = match answer
+        .as_ref()
+        .ok()
+        .and_then(|receipt| receipt.result.as_ref())
+    {
+        Some(ModelStepResult::Finished { claim_ref, .. }) => {
+            EntityId::from_hex(claim_ref).ok().into_iter().collect()
+        }
+        Some(ModelStepResult::BudgetDenied { trap_ref }) => {
+            EntityId::from_hex(trap_ref).ok().into_iter().collect()
+        }
         _ => Vec::new(),
     };
     (answer, refs)

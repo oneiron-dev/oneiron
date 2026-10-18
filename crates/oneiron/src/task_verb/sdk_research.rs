@@ -655,8 +655,7 @@ pub fn research_archive(
     let root = attempt(input.root)?;
     controller(memory, Some(root))?;
     let vault = memory.vault();
-    let binding = research::research_binding(vault, root)?
-        .ok_or(crate::Error::EntityNotFound)?;
+    let binding = research::research_binding(vault, root)?.ok_or(crate::Error::EntityNotFound)?;
     Ok(ResearchArchive {
         binding,
         experiments: research::research_nodes(vault, root)?,

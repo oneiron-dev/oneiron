@@ -187,11 +187,7 @@ pub struct ConnectRejoined {
 }
 
 /// Embedded vaults hold no host-root signer or served window manager.
-pub fn connect_host_only<T, I>(
-    memory: &Memory<'_>,
-    verb: &str,
-    _input: &I,
-) -> MemoryResult<T> {
+pub fn connect_host_only<T, I>(memory: &Memory<'_>, verb: &str, _input: &I) -> MemoryResult<T> {
     let _owner = memory.embedded_owner(verb)?;
     Err(MemoryError::new(
         MEMORY_CODE_INVALID_STATE,

@@ -10,7 +10,17 @@ use crate::registry::{
 /// A classification or one family within it. The historical type name does
 /// not imply a numeric range: a relocated kind keeps exactly the same scope.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
 )]
 pub enum SelectorRange {
     Semantic,

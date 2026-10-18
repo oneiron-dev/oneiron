@@ -520,13 +520,16 @@ impl Vault {
         scope: &super::FederationPactScope,
     ) -> Result<()> {
         scope.validate()?;
-        let LiveEntityRow::Live { entity_type: ENTITY_TYPE_FEDERATION_GRANT, body } =
-            live_entity_row_in_txn(&self.store, txn, &state.grant_ref)?
+        let LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+            body,
+        } = live_entity_row_in_txn(&self.store, txn, &state.grant_ref)?
         else {
             return Err(Error::EntityNotFound);
         };
         let grant = super::decode_federation_grant_body(&body)?;
-        let ceiling = connect_direction_projection(&grant.authority_scope).ok_or_else(invalid_grant)?;
+        let ceiling =
+            connect_direction_projection(&grant.authority_scope).ok_or_else(invalid_grant)?;
         require_connect_grant_in_txn(self, txn, &state.grant_ref, &state.peer_vault_id, &ceiling)?;
         let (outbound, inbound) = if *local <= state.peer_vault_id {
             (&scope.lo_to_hi, &scope.hi_to_lo)
@@ -536,7 +539,9 @@ impl Vault {
         if !super::Ceiling::new(outbound.clone()).is_within(&super::Ceiling::new(ceiling))
             || !is_guest_slice(inbound)
         {
-            return Err(refused("a Connect re-scope stays inside the guest grant and names peer worlds"));
+            return Err(refused(
+                "a Connect re-scope stays inside the guest grant and names peer worlds",
+            ));
         }
         Ok(())
     }

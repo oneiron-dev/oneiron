@@ -1,7 +1,20 @@
 //! Owner-submitted durable model steps over the engine's existing step executor.
 use serde::{Deserialize, Serialize};
 
-use crate::attempt_queue::{AttemptId, AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt, FailAttempt};
+use super::super::{
+    BudgetGuard, ContentPart, FallbackRegistry, FatalLlmError, LlmBackend, LlmError, LlmRequest,
+    LlmResponse, LlmUsage, ResponseFormat,
+};
+use super::step_claim::step_index_lookup;
+use super::step_state::step_state_read;
+use super::{
+    DREAMER_STEP_RETRY_BACKOFF_MS, DurableStepContext, DurableStepError, StepOutcome,
+    StepProgression,
+};
+use crate::attempt_queue::{
+    AttemptId, AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt,
+    FailAttempt,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::{DreamerAttemptPayload, encode_dreamer_attempt_payload};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -11,10 +24,6 @@ use crate::runtime_hooks::InvocationId;
 use crate::runtime_hooks::verb::InvocationEntry;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EdgeActorClass, Vault, WriteActor};
-use super::super::{BudgetGuard, ContentPart, FallbackRegistry, FatalLlmError, LlmBackend, LlmError, LlmRequest, LlmResponse, LlmUsage, ResponseFormat};
-use super::{DREAMER_STEP_RETRY_BACKOFF_MS, DurableStepContext, DurableStepError, StepOutcome, StepProgression};
-use super::step_claim::step_index_lookup;
-use super::step_state::step_state_read;
 
 pub(crate) const MODEL_STEP_ATTEMPT_KIND: &str = "model-step";
 const WORKER: &str = "model-step-door";
@@ -31,7 +40,9 @@ pub struct ModelStepRetryPolicy {
 
 impl Default for ModelStepRetryPolicy {
     fn default() -> Self {
-        Self { max_attempts: (DREAMER_STEP_RETRY_BACKOFF_MS.len() + 1) as u8 }
+        Self {
+            max_attempts: (DREAMER_STEP_RETRY_BACKOFF_MS.len() + 1) as u8,
+        }
     }
 }
 
@@ -86,9 +97,13 @@ pub enum ModelStepResult {
         fallback_source: Option<FatalLlmError>,
         claim_ref: String,
     },
-    Failed { failure: ModelStepFailure },
+    Failed {
+        failure: ModelStepFailure,
+    },
     /// The existing step executor parked this attempt on its budget trap.
-    BudgetDenied { trap_ref: String },
+    BudgetDenied {
+        trap_ref: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -124,14 +139,29 @@ pub async fn submit_as_owner(
     validate(&input)?;
     let actor = owner.revalidate(vault)?;
     let id = identity(actor, &input.step_key)?;
-    let digest = input.request.canonical_hash().map_err(|error| MemoryError::bad_request(error.to_string()))?;
+    let digest = input
+        .request
+        .canonical_hash()
+        .map_err(|error| MemoryError::bad_request(error.to_string()))?;
     let invocation = InvocationId::of_run_step(id.as_bytes(), 0);
     let call = super::super::canonical_json_bytes(&input)
         .map_err(|error| MemoryError::bad_request(error.to_string()))?;
     let _claim = match vault.claim_invocation(invocation, *blake3::hash(&call).as_bytes()) {
         InvocationEntry::Claimed(claim) => claim,
-        InvocationEntry::Busy(_) => return receipt_as_owner(vault, owner, &ModelStepReceiptRequest { step_key: input.step_key.clone() }),
-        InvocationEntry::Conflict => return Err(MemoryError::bad_request("model-step key is already running another request")),
+        InvocationEntry::Busy(_) => {
+            return receipt_as_owner(
+                vault,
+                owner,
+                &ModelStepReceiptRequest {
+                    step_key: input.step_key.clone(),
+                },
+            );
+        }
+        InvocationEntry::Conflict => {
+            return Err(MemoryError::bad_request(
+                "model-step key is already running another request",
+            ));
+        }
     };
     let (mut row, attempt) = vault.with_write_txn(|txn| {
         owner.revalidate_in_txn(vault, txn)?;
@@ -139,19 +169,35 @@ pub async fn submit_as_owner(
         let row = match SUBMISSIONS.get(&vault.store, txn, &id)? {
             Some(row) => {
                 if row.actor != actor || row.input != input {
-                    return Err(Error::InvalidConfig("model-step key already names another request or retry policy".into()));
+                    return Err(Error::InvalidConfig(
+                        "model-step key already names another request or retry policy".into(),
+                    ));
                 }
                 row
             }
             None => {
-                let row = Submission { actor, input: input.clone(), step_hash: digest, result: None };
+                let row = Submission {
+                    actor,
+                    input: input.clone(),
+                    step_hash: digest,
+                    result: None,
+                };
                 let payload = encode_dreamer_attempt_payload(&DreamerAttemptPayload {
-                    attempt_type: MODEL_STEP_ATTEMPT_KIND.into(), input: rmpv::Value::Nil, parent_attempt: None,
+                    attempt_type: MODEL_STEP_ATTEMPT_KIND.into(),
+                    input: rmpv::Value::Nil,
+                    parent_attempt: None,
                 })?;
-                queue.enqueue_with_id_in_txn(txn, id, EnqueueAttempt {
-                    kind: MODEL_STEP_ATTEMPT_KIND.into(), payload, dedupe_key: None,
-                    run_id: Some(hex(id)), now: vault.now_recorded_at(),
-                })?;
+                queue.enqueue_with_id_in_txn(
+                    txn,
+                    id,
+                    EnqueueAttempt {
+                        kind: MODEL_STEP_ATTEMPT_KIND.into(),
+                        payload,
+                        dedupe_key: None,
+                        run_id: Some(hex(id)),
+                        now: vault.now_recorded_at(),
+                    },
+                )?;
                 SUBMISSIONS.put(vault, txn, &id, &row)?;
                 row
             }
@@ -162,11 +208,20 @@ pub async fn submit_as_owner(
         // A dropped or interrupted HTTP call may leave its lease. Only this
         // key's live invocation can re-enter, and it resumes the SAME attempt.
         queue.release_lease_in_txn(txn, id, WORKER, vault.now_recorded_at())?;
-        let attempt = match queue.claim_id_in_txn(txn, id, ClaimAttempt {
-            lease_owner: WORKER.into(), now: vault.now_recorded_at(),
-        })? {
+        let attempt = match queue.claim_id_in_txn(
+            txn,
+            id,
+            ClaimAttempt {
+                lease_owner: WORKER.into(),
+                now: vault.now_recorded_at(),
+            },
+        )? {
             ClaimOutcome::Claimed(attempt) => attempt,
-            _ => return Err(Error::InvalidConfig("model-step attempt is not runnable".into())),
+            _ => {
+                return Err(Error::InvalidConfig(
+                    "model-step attempt is not runnable".into(),
+                ));
+            }
         };
         Ok((row, Some(attempt)))
     })?;
@@ -177,33 +232,71 @@ pub async fn submit_as_owner(
         return view(vault, id, &row).map_err(MemoryError::from);
     };
     let context = DurableStepContext {
-        vault, attempt_id: id, run_id: attempt.run_id.clone(),
+        vault,
+        attempt_id: id,
+        run_id: attempt.run_id.clone(),
         envelope_actor: WriteActor::new(actor, EdgeActorClass::Human),
-        subject: actor, deadline: None, now_ms: vault.now_recorded_at().saturating_mul(1000),
+        subject: actor,
+        deadline: None,
+        now_ms: vault.now_recorded_at().saturating_mul(1000),
     };
     let outcome = super::execute::call_as_step_with_fallbacks_and_retries(
-        &context, backend, guard, row.input.request.clone(), &FallbackRegistry::standard(),
+        &context,
+        backend,
+        guard,
+        row.input.request.clone(),
+        &FallbackRegistry::standard(),
         usize::from(row.input.retry.max_attempts - 1),
-    ).await;
+    )
+    .await;
     row.result = Some(match outcome {
-        Ok(StepOutcome::Finished { response, memoized, .. }) => {
-            let claim = step_index_lookup(vault, id, &row.step_hash)?
-                .ok_or(Error::InvalidClaimBody("finished model step has no terminal claim"))?;
-            let json = if matches!(row.input.request.envelope.response_format, ResponseFormat::Json { .. }) {
-                let text: String = response.message.content.iter().filter_map(|part| match part {
-                    ContentPart::Text { text } => Some(text.as_str()), _ => None,
-                }).collect();
-                Some(serde_json::from_str(&text).map_err(|error| MemoryError::bad_request(error.to_string()))?)
-            } else { None };
+        Ok(StepOutcome::Finished {
+            response, memoized, ..
+        }) => {
+            let claim = step_index_lookup(vault, id, &row.step_hash)?.ok_or(
+                Error::InvalidClaimBody("finished model step has no terminal claim"),
+            )?;
+            let json = if matches!(
+                row.input.request.envelope.response_format,
+                ResponseFormat::Json { .. }
+            ) {
+                let text: String = response
+                    .message
+                    .content
+                    .iter()
+                    .filter_map(|part| match part {
+                        ContentPart::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                Some(
+                    serde_json::from_str(&text)
+                        .map_err(|error| MemoryError::bad_request(error.to_string()))?,
+                )
+            } else {
+                None
+            };
             let fallback_source = FallbackRegistry::source_of(&response);
-            ModelStepResult::Finished { response, json, memoized, fallback_source, claim_ref: claim.to_hex() }
+            ModelStepResult::Finished {
+                response,
+                json,
+                memoized,
+                fallback_source,
+                claim_ref: claim.to_hex(),
+            }
         }
-        Ok(StepOutcome::Trapped { trap, .. }) => ModelStepResult::BudgetDenied { trap_ref: trap.trap_claim_id.to_hex() },
+        Ok(StepOutcome::Trapped { trap, .. }) => ModelStepResult::BudgetDenied {
+            trap_ref: trap.trap_claim_id.to_hex(),
+        },
         // Persistence faults leave the engine's recoverable payload intact;
         // a later submission must be allowed to finish that write path.
         Err(DurableStepError::Engine(error)) => return Err(error.into()),
-        Err(DurableStepError::Canonical(error)) => return Err(MemoryError::bad_request(error.to_string())),
-        Err(error) => ModelStepResult::Failed { failure: failure(error) },
+        Err(DurableStepError::Canonical(error)) => {
+            return Err(MemoryError::bad_request(error.to_string()));
+        }
+        Err(error) => ModelStepResult::Failed {
+            failure: failure(error),
+        },
     });
     vault.with_write_txn(|txn| {
         owner.revalidate_in_txn(vault, txn)?;
@@ -212,10 +305,27 @@ pub async fn submit_as_owner(
         let now = vault.now_recorded_at();
         match row.result.as_ref() {
             Some(ModelStepResult::Finished { .. }) => {
-                queue.complete_in_txn(txn, CompleteAttempt { id, lease_owner: WORKER.into(), attempt_count: attempt.attempt_count, now })?;
+                queue.complete_in_txn(
+                    txn,
+                    CompleteAttempt {
+                        id,
+                        lease_owner: WORKER.into(),
+                        attempt_count: attempt.attempt_count,
+                        now,
+                    },
+                )?;
             }
             Some(ModelStepResult::Failed { failure }) => {
-                queue.fail_in_txn(txn, FailAttempt { id, lease_owner: WORKER.into(), attempt_count: attempt.attempt_count, reason: failure.message.clone(), now })?;
+                queue.fail_in_txn(
+                    txn,
+                    FailAttempt {
+                        id,
+                        lease_owner: WORKER.into(),
+                        attempt_count: attempt.attempt_count,
+                        reason: failure.message.clone(),
+                        now,
+                    },
+                )?;
             }
             _ => {}
         }
@@ -236,8 +346,10 @@ pub fn receipt_as_owner(
     }
     let id = identity(actor, &input.step_key)?;
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
-    let row = SUBMISSIONS.get(&vault.store, &txn, &id)?
-        .filter(|row| row.actor == actor).ok_or(Error::EntityNotFound)?;
+    let row = SUBMISSIONS
+        .get(&vault.store, &txn, &id)?
+        .filter(|row| row.actor == actor)
+        .ok_or(Error::EntityNotFound)?;
     drop(txn);
     view(vault, id, &row).map_err(MemoryError::from)
 }
@@ -248,9 +360,12 @@ fn view(vault: &Vault, id: AttemptId, row: &Submission) -> Result<ModelStepRecei
         _ => step_state_read(vault, id, &row.step_hash)?.map(|state| state.progression),
     };
     Ok(ModelStepReceipt {
-        step_ref: hex(id), step_hash: bytes_to_hex_lower(&row.step_hash),
-        model: row.input.request.model.clone(), retry: row.input.retry,
-        progression, result: row.result.clone(),
+        step_ref: hex(id),
+        step_hash: bytes_to_hex_lower(&row.step_hash),
+        model: row.input.request.model.clone(),
+        retry: row.input.retry,
+        progression,
+        result: row.result.clone(),
     })
 }
 
@@ -258,8 +373,12 @@ fn validate(input: &ModelStepSubmit) -> MemoryResult<()> {
     if input.step_key.trim().is_empty() {
         return Err(MemoryError::bad_request("step_key must not be empty"));
     }
-    if input.retry.max_attempts == 0 || usize::from(input.retry.max_attempts) > DREAMER_STEP_RETRY_BACKOFF_MS.len() + 1 {
-        return Err(MemoryError::bad_request("max_attempts must select a nonempty prefix of the engine retry schedule"));
+    if input.retry.max_attempts == 0
+        || usize::from(input.retry.max_attempts) > DREAMER_STEP_RETRY_BACKOFF_MS.len() + 1
+    {
+        return Err(MemoryError::bad_request(
+            "max_attempts must select a nonempty prefix of the engine retry schedule",
+        ));
     }
     Ok(())
 }
@@ -282,28 +401,43 @@ fn hex(id: AttemptId) -> String {
 fn failure(error: DurableStepError) -> ModelStepFailure {
     let message = error.to_string();
     let mut out = ModelStepFailure {
-        class: ModelStepFailureClass::Engine, message, llm: None,
-        validation_attempts: None, validation_errors: Vec::new(), spent_usage: None,
+        class: ModelStepFailureClass::Engine,
+        message,
+        llm: None,
+        validation_attempts: None,
+        validation_errors: Vec::new(),
+        spent_usage: None,
     };
     match error {
         DurableStepError::Llm(source) | DurableStepError::ClassifiedLlm { source, .. } => {
-            out.class = llm_class(&source); out.llm = Some(source);
+            out.class = llm_class(&source);
+            out.llm = Some(source);
         }
         DurableStepError::SpentLlm { source, usage } => {
-            out.class = llm_class(&source); out.llm = Some(source); out.spent_usage = Some(*usage);
+            out.class = llm_class(&source);
+            out.llm = Some(source);
+            out.spent_usage = Some(*usage);
         }
         DurableStepError::SchemaValidation { attempts, errors } => {
             out.class = ModelStepFailureClass::SchemaValidation;
-            out.validation_attempts = Some(attempts); out.validation_errors = errors;
+            out.validation_attempts = Some(attempts);
+            out.validation_errors = errors;
         }
-        DurableStepError::SpentSchemaValidation { attempts, errors, usage } => {
+        DurableStepError::SpentSchemaValidation {
+            attempts,
+            errors,
+            usage,
+        } => {
             out.class = ModelStepFailureClass::SchemaValidation;
-            out.validation_attempts = Some(attempts); out.validation_errors = errors; out.spent_usage = Some(*usage);
+            out.validation_attempts = Some(attempts);
+            out.validation_errors = errors;
+            out.spent_usage = Some(*usage);
         }
         DurableStepError::Fallback(_) => out.class = ModelStepFailureClass::Fallback,
         DurableStepError::FinalizeRefused => out.class = ModelStepFailureClass::FinalizeRefused,
         DurableStepError::SpentFinalizeRefused { usage } => {
-            out.class = ModelStepFailureClass::FinalizeRefused; out.spent_usage = Some(*usage);
+            out.class = ModelStepFailureClass::FinalizeRefused;
+            out.spent_usage = Some(*usage);
         }
         DurableStepError::DeadlineHardCut => out.class = ModelStepFailureClass::DeadlineHardCut,
         DurableStepError::Engine(_) | DurableStepError::Canonical(_) => {}

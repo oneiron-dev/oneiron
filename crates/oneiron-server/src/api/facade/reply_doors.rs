@@ -22,8 +22,11 @@ pub(crate) async fn ai_reply(
         return refused(error);
     }
     if session.is_some() {
-        return refused(MemoryError::new(MEMORY_CODE_OFF_RECORD_SESSION_DOOR,
-            "ai.reply retains its emit receipt in canonical storage", &[]));
+        return refused(MemoryError::new(
+            MEMORY_CODE_OFF_RECORD_SESSION_DOOR,
+            "ai.reply retains its emit receipt in canonical storage",
+            &[],
+        ));
     }
     crate::api::context_board::generate_reply(server, auth, caller, input).await
 }
