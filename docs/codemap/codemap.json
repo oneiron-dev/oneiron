@@ -13228,6 +13228,7 @@
      "path": "src/code_sandbox/egress/receipt.rs",
      "purpose": "Proxy receipts use the existing owner-local gate ledger",
      "surface": {
+      "crate-vis": 1,
       "fn": 7,
       "struct": 1
      }
@@ -13334,6 +13335,21 @@
      "path": "src/code_sandbox/firecracker/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ForeignCodeArtifact",
+      "ForeignCodeOutcome"
+     ],
+     "path": "src/code_sandbox/foreign.rs",
+     "purpose": "A finite foreign program on the existing propose-only isolation lane",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 2
+     }
     },
     {
      "bucket": "s",
@@ -13464,7 +13480,7 @@
      "path": "src/code_sandbox/mod.rs",
      "purpose": "Sandbox boundary contract for code-mode execution",
      "surface": {
-      "mod": 6,
+      "mod": 7,
       "re-export": 5
      }
     },
@@ -32524,6 +32540,29 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ForeignCodeApproval",
+      "ForeignCodeEffect",
+      "ForeignCodeIsolation",
+      "ForeignCodeOutput",
+      "ForeignCodeProposal",
+      "ForeignCodeRead",
+      "ForeignCodeRunRequest",
+      "ForeignCodeRunResult",
+      "ForeignCodeSource",
+      "ForeignCodeTier"
+     ],
+     "path": "src/memory/foreign_code.rs",
+     "purpose": "Typed foreign code admission",
+     "surface": {
+      "enum": 4,
+      "fn": 1,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/memory/hook_regen_doors/mod.rs",
      "purpose": "Typed hook regeneration doors (DOOR-077): `vault.hooks.regen.due` lists the vault's own hook bindings whose…",
@@ -32707,7 +32746,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 17,
+      "mod": 18,
       "re-export": 47
      }
     },
@@ -51982,7 +52021,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 830
+      "fn": 831
      }
     },
     {
@@ -58164,7 +58203,7 @@
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls"
     },
     "code_sandbox": {
-     "files": 41,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58759,7 +58798,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 194,
+     "files": 195,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59440,7 +59479,7 @@
    },
    "over_bar": 197,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3628,
+   "source_files": 3630,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67973,7 +68012,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 799
+      "fn": 800
      }
     },
     {
@@ -69022,7 +69061,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 800
+      "fn": 801
      }
     },
     {
@@ -72392,6 +72431,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/foreign_code_doors.rs",
+     "purpose": "The foreign `execute_code` projection",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/gate_policy_doors.rs",
      "purpose": "Owner policy and checker host doors",
      "surface": {
@@ -72445,7 +72494,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 135
+      "crate-vis": 136
      }
     },
     {
@@ -76458,7 +76507,7 @@
      "path": "src/embedded.rs",
      "purpose": "The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 6,
       "fn": 1,
       "re-export": 2
      }
@@ -76898,7 +76947,7 @@
      "path": "src/handler/mesh.rs",
      "purpose": "The paired-machine mesh listener (OF-535)",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 22
      }
     },
     {
@@ -76934,6 +76983,16 @@
      "path": "src/handler/residence_socket_tests.rs",
      "purpose": "A real enrol: root + thin index, one opened item, remote search and offline honesty",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/socket_stop.rs",
+     "purpose": "An upgraded socket's transport under its embedded engine's stop (OF-237)",
+     "surface": {
+      "crate-vis": 5
+     }
     },
     {
      "bucket": "XL",
@@ -80275,7 +80334,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 399,
+     "files": 400,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -80471,7 +80530,7 @@
      "purpose": "Deployment-selected feedback transport"
     },
     "handler": {
-     "files": 21,
+     "files": 22,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -80704,7 +80763,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 743,
+   "source_files": 745,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -81349,6 +81408,7 @@
       "CodeExportResult",
       "CodeFileChange",
       "CodeFileDiffView",
+      "CodeFileEdit",
       "CodeMutationEntry",
       "CodeMutationLog",
       "CodeMutationState",
@@ -81870,6 +81930,16 @@
       "FoldUnfolded",
       "FolderItemInput",
       "ForceCancelGrounds",
+      "ForeignCodeApproval",
+      "ForeignCodeEffect",
+      "ForeignCodeIsolation",
+      "ForeignCodeOutput",
+      "ForeignCodeProposal",
+      "ForeignCodeRead",
+      "ForeignCodeRunRequest",
+      "ForeignCodeRunResult",
+      "ForeignCodeSource",
+      "ForeignCodeTier",
       "ForkKind",
       "ForkRecord",
       "ForkState",
@@ -83581,6 +83651,7 @@
       "WidenProposalsRequest",
       "WidenProposalsView",
       "WidthCheckClass",
+      "WireClaimInput",
       "WireClaimView",
       "WireCommitOutcome",
       "WireCommitReceipt",
@@ -83651,8 +83722,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 683,
-      "struct": 2066
+      "enum": 687,
+      "struct": 2074
      }
     },
     {
