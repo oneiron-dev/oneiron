@@ -90,9 +90,11 @@ pub(crate) use super::coreference_doors::*;
 // The owner's subject-bound feedback and report doors, likewise.
 pub(crate) use super::federation_connect_doors::*;
 pub(crate) use super::feedback_doors::*;
+pub(crate) use super::guest_document_doors::*;
 pub(crate) use super::guest_doors::*;
 pub(crate) use super::hub_doors::*;
 pub(crate) use super::skill_doors::*;
+pub(crate) use super::goal_optimize_doors::*;
 // The owner's support grant doors (OF-606), as the guest ones are.
 pub(crate) use super::support_grant_doors::*;
 // The owner's residence doors (OF-534), likewise.
@@ -1156,6 +1158,18 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.skills.permissions.approve"
         | "vault.skills.optimize.start"
         | "vault.skills.optimize.result"
+        | "vault.projects.goal.intake.complete"
+        | "vault.projects.goal.get"
+        | "vault.skills.optimize.propose"
+        | "vault.skills.optimize.measure"
+        | "vault.skills.optimize.score"
+        | "vault.skills.optimize.admit"
+        | "vault.skills.optimize.goal.get"
+        | "vault.skills.optimize.goal.bind"
+        | "vault.skills.optimize.preferences.get"
+        | "vault.skills.optimize.preferences.set"
+        | "vault.skills.optimize.tradeoff_asks"
+        | "vault.skills.optimize.tradeoff_asks.pick"
         | "vault.skills.governance.get"
         | "vault.skills.governance.set"
         | "vault.skills.pack_receipt"
@@ -1163,6 +1177,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.skills.outcomes.get"
         | "vault.packs.hooks.bind"
         | "vault.packs.hooks.list"
+        | "vault.packs.hooks.grant.set"
+        | "vault.packs.hooks.grant.get"
         | "vault.packs.hooks.qualify"
         | "vault.connectors.subscriptions.put"
         | "vault.connectors.subscriptions.list"
@@ -1183,6 +1199,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.packs.setup.verify"
         | "vault.authority.handoff_alarms"
         | "vault.authority.handoff_alarms.acknowledge"
+        | "vault.records.erase_sweep"
         | "vault.cleanup.run"
         | "vault.entities.mention"
         | "vault.legal_holds.place"
@@ -1349,6 +1366,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.federation.connect.disconnect"
         | "vault.federation.connect.export"
         | "vault.federation.connect.rejoin"
+        | "vault.guests.share"
+        | "vault.guests.reshare"
         | "vault.guests.revoke"
         | "vault.guests.mint_slip"
         | "vault.support_grants.mint"
@@ -1518,6 +1537,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.off_record.claims.upsert"
         | "self.off_record.execute" => {
             super::off_record_doors::off_record_admits(server, auth, verb)
+        }
+        "vault.guests.export_envelope" => {
+            super::guest_document_doors::guest_document_reader(server, auth).map(drop)
         }
         "execute_code" => super::foreign_code_doors::foreign_code_admits(server, auth),
         "self.credential.attenuate" => super::credential_doors::holder(auth).map(drop),
