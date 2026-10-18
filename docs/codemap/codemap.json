@@ -4003,7 +4003,7 @@
       "crate-vis": 9,
       "enum": 6,
       "fn": 15,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 16
      }
     },
@@ -4022,6 +4022,16 @@
       "enum": 1,
       "fn": 6,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/autoreason_campaign/research/children.rs",
+     "purpose": "Owner-requested experiment work, through the ordinary attenuating dispatcher",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -43914,13 +43924,14 @@
       "EvalAuthoringReport",
       "EvalAuthoringSkip",
       "EvalCohortDecision",
+      "EvalCohortSetup",
       "FamilyDecision"
      ],
      "path": "src/skill_optimize/eval_set/authoring/apply.rs",
      "purpose": "The plan the eval-authoring skill answers with, checked whole against its inventory and applied in order…",
      "surface": {
-      "fn": 1,
-      "struct": 7
+      "fn": 2,
+      "struct": 8
      }
     },
     {
@@ -43963,12 +43974,14 @@
       "CoverageGap",
       "EvalCutAudit",
       "EvalCutAuditDraft",
+      "EvalCutAuthor",
       "NearCopyFlag"
      ],
      "path": "src/skill_optimize/eval_set/cut_audit.rs",
      "purpose": "The near-copy audit every cohort cut commits with (ARCH-0053: \"At each cut, a near-copy audit runs across…",
      "surface": {
       "crate-vis": 7,
+      "enum": 1,
       "fn": 1,
       "struct": 7
      }
@@ -49099,7 +49112,7 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 36,
+      "re-export": 37,
       "struct": 36
      }
     },
@@ -49323,6 +49336,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "EvalInventoryWire"
+     ],
+     "path": "src/task_verb/sdk_eval_cohort.rs",
+     "purpose": "Owner setup of sealed cohorts through the eval-authoring mechanism",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ExplainGateNotice",
       "ExplainGateReply",
       "ExplainGateRequest",
@@ -49363,7 +49389,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 492
+      "fn": 496
      }
     },
     {
@@ -49603,10 +49629,14 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ResearchArchive",
+      "ResearchArchiveWire",
       "ResearchBasisWire",
       "ResearchBenchmarkWire",
       "ResearchBindWire",
       "ResearchCandidateWire",
+      "ResearchChildReceipt",
+      "ResearchChildWire",
       "ResearchForkWire",
       "ResearchHeldOutWire",
       "ResearchInvalidWire",
@@ -49625,8 +49655,8 @@
      "purpose": "`vault.research.*` (OF-351): the autoresearch workflow skill's verbs over the campaign record…",
      "surface": {
       "enum": 1,
-      "fn": 15,
-      "struct": 16
+      "fn": 17,
+      "struct": 20
      }
     },
     {
@@ -54740,7 +54770,7 @@
      "purpose": "AUTHORITY_LOG record substrate"
     },
     "autoreason_campaign": {
-     "files": 18,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -56021,7 +56051,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 148,
+     "files": 149,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -56191,7 +56221,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3422,
+   "source_files": 3424,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64604,7 +64634,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 442
+      "fn": 446
      }
     },
     {
@@ -65652,7 +65682,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 443
+      "fn": 447
      }
     },
     {
@@ -68775,7 +68805,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 88
+      "crate-vis": 89
      }
     },
     {
@@ -68896,6 +68926,16 @@
      "purpose": "The generated context-bearing reply door, under the existing owner's inference authority",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/research_doors.rs",
+     "purpose": "Owner-authenticated child admission and sealed-cohort setup",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -76150,7 +76190,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 344,
+     "files": 345,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -76565,7 +76605,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 669,
+   "source_files": 670,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -76962,9 +77002,11 @@
       "CampaignTaste",
       "CancelRejectionPathology",
       "CancelStanding",
+      "CandidateLabel",
       "CandidateRef",
       "Care",
       "CareLevel",
+      "CaseDecision",
       "CellTypeRef",
       "ChangeKind",
       "ChannelCeiling",
@@ -77036,6 +77078,7 @@
       "CodeTreeRequest",
       "CodeUnitBlameView",
       "CodeUnitVersionView",
+      "CohortSummary",
       "ColdAuthorityAuditRow",
       "CollectionAtom",
       "CommReach",
@@ -77145,6 +77188,7 @@
       "CritiqueTriage",
       "CritiqueTriageScores",
       "CritiqueVerdict",
+      "CutDecision",
       "DagRecordAppendInput",
       "DagRecordAppendReceipt",
       "DataClass",
@@ -77266,13 +77310,21 @@
       "EsignNoticeSwitches",
       "EsignRecipient",
       "EsignVoidRequest",
+      "EvalAuthoringInventory",
+      "EvalAuthoringReport",
+      "EvalAuthoringSkip",
+      "EvalCandidate",
       "EvalCase",
+      "EvalCohortSetup",
       "EvalExposure",
+      "EvalExposureCounts",
       "EvalExposureKind",
+      "EvalInventoryWire",
       "EvalLabel",
       "EvalLabelKind",
       "EvalRelease",
       "EvalSeat",
+      "EvalSourceGroup",
       "EvidenceFloors",
       "EvidenceVersion",
       "ExceptionalWidthCheck",
@@ -77290,6 +77342,8 @@
       "ExtractionDefault",
       "FactKind",
       "FactSource",
+      "FamilyDecision",
+      "FamilyPurpose",
       "FanoutAckRequest",
       "FanoutCheckChoice",
       "FanoutLaunchHold",
@@ -77826,6 +77880,7 @@
       "PruneReason",
       "PruneReceipt",
       "PulledImage",
+      "PurposeCounts",
       "QualificationCase",
       "QualificationInjection",
       "QualificationInjectionSurface",
@@ -77888,12 +77943,16 @@
       "ReportRoute",
       "ReportStatus",
       "RequiredParty",
+      "ResearchArchive",
+      "ResearchArchiveWire",
       "ResearchBasisWire",
       "ResearchBenchmarkWire",
       "ResearchBindWire",
       "ResearchBinding",
       "ResearchBudgetRead",
       "ResearchCandidateWire",
+      "ResearchChildReceipt",
+      "ResearchChildWire",
       "ResearchConfirmationSeat",
       "ResearchExecution",
       "ResearchForkWire",
@@ -78026,6 +78085,7 @@
       "SealLevel",
       "SearchAxis",
       "SearchEvidence",
+      "SeatInventory",
       "SecretLiftClose",
       "SecretLiftHistoryProposal",
       "SecretLiftProgress",
@@ -78298,6 +78358,7 @@
       "TwoClocksAtom",
       "TypeRef",
       "TypedDecision",
+      "UncutFamily",
       "UndoneKeep",
       "UnitAbstention",
       "UnitRefusal",
@@ -78384,8 +78445,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 449,
-      "struct": 1173
+      "enum": 450,
+      "struct": 1193
      }
     },
     {
