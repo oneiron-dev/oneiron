@@ -1329,6 +1329,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/anchored_annotation/comment_parts.rs",
+     "purpose": "Comment text past one stored comment's codec bound lands whole, as linked parts on its thread: part 1 is the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "AnnotationCollaborationState",
       "AnnotationConversationNode"
@@ -11260,6 +11270,27 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ContributionForkModel",
+      "ContributionForkReceipt",
+      "ContributionForkScorer",
+      "ContributionReplayUnavailable",
+      "ForkTreatment",
+      "ReplayAnchor",
+      "ScoredFork"
+     ],
+     "path": "src/code_run/contribution.rs",
+     "purpose": "The matched-fork contribution runner (FIX 3028, ARCH-0037 #lineage-credit, ARCH-0053): one sampled credited…",
+     "surface": {
+      "enum": 2,
+      "fn": 4,
+      "struct": 3,
+      "trait": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -11365,8 +11396,8 @@
      "path": "src/code_run/dispatcher/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 16,
-      "fn": 8,
+      "crate-vis": 17,
+      "fn": 9,
       "re-export": 2,
       "struct": 1,
       "type": 1
@@ -11465,9 +11496,9 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "mod": 5,
-      "re-export": 14
+      "re-export": 17
      }
     },
     {
@@ -11562,6 +11593,26 @@
       "enum": 1,
       "fn": 24,
       "struct": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CapsuleHost",
+      "CapsuleRungBinding",
+      "ExposureKind",
+      "ExposureSlot",
+      "StepReplayCapsule",
+      "TaskExposure"
+     ],
+     "path": "src/code_run/replay_capsule.rs",
+     "purpose": "Step replay capsules (FIX 3028, ARCH-0037 #lineage-credit, ARCH-0053): the exact model input of a canonical…",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 2,
+      "fn": 4,
+      "struct": 4
      }
     },
     {
@@ -11727,8 +11778,8 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 12,
-      "re-export": 3
+      "crate-vis": 13,
+      "re-export": 4
      }
     },
     {
@@ -11771,6 +11822,17 @@
       "crate-vis": 31,
       "fn": 11,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/replay_capsule.rs",
+     "purpose": "The step replay capsule and contribution fork rows (FIX 3028): each capsule's metadata keyed by its attempt…",
+     "surface": {
+      "crate-vis": 10,
+      "fn": 1
      }
     },
     {
@@ -17510,7 +17572,7 @@
      "path": "src/disclosure/import_audience.rs",
      "purpose": "The standing import audience rule (OF-492): the owner's answer to one sensitive-topic ask, kept as a private…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3
      }
     },
@@ -21264,31 +21326,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/edit_roundtrip/pptx/archive.rs",
-     "purpose": "Retained ZIP records: unchanged entries keep compression, metadata and local bytes",
-     "surface": {
-      "crate-vis": 6
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
      "path": "src/edit_roundtrip/pptx/comments.rs",
-     "purpose": "Modern threaded comments using retained XML surgery and a derived part allowlist",
+     "purpose": "The engine door onto the docedit organ's modern-comment writer: engine identities become Office GUIDs, and…",
      "surface": {
       "crate-vis": 4,
       "fn": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/edit_roundtrip/pptx/identities.rs",
-     "purpose": "Imported slide/shape identities and conservative creation-ID re-binding",
+     "purpose": "The engine door onto the docedit organ's slide and shape identities, and the annotation locator re-binding…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 1,
       "fn": 2
      }
     },
@@ -21301,19 +21353,9 @@
      "path": "src/edit_roundtrip/pptx/limits.rs",
      "purpose": "Policy-manifest budgets for the modern-comment writer",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2,
       "struct": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/edit_roundtrip/pptx/links.rs",
-     "purpose": "OPC link additions and modern-comment part discovery; retained XML insertion only",
-     "surface": {
-      "crate-vis": 13
      }
     },
     {
@@ -21331,25 +21373,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "PptxAnchorOutcome",
-      "PptxAuthor",
-      "PptxCommentAction",
-      "PptxCommentEffects",
       "PptxCommentPatch",
-      "PptxCommentTarget",
-      "PptxDriftReason",
-      "PptxError",
-      "PptxInspection",
-      "PptxProposalError",
-      "PptxShapeIdentity",
-      "PptxSlideIdentity"
+      "PptxProposalError"
      ],
      "path": "src/edit_roundtrip/pptx/package.rs",
-     "purpose": "Public PowerPoint comment requests, inspection facts, and typed refusals",
+     "purpose": "Engine comment requests over the docedit organ's PowerPoint comment types",
      "surface": {
-      "crate-vis": 19,
-      "enum": 5,
-      "struct": 7
+      "crate-vis": 4,
+      "enum": 1,
+      "re-export": 1,
+      "struct": 1
      }
     },
     {
@@ -21359,7 +21392,7 @@
      "path": "src/edit_roundtrip/pptx/proposal.rs",
      "purpose": "Modern comments use the existing retained-output proposal and consume-once settle",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4
      }
     },
@@ -21381,16 +21414,6 @@
      "purpose": "Small OPC fixtures, not PowerPoint application-oracle evidence",
      "surface": {
       "crate-vis": 7
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/edit_roundtrip/pptx/xml.rs",
-     "purpose": "Namespace-aware XML spans for surgical edits",
-     "surface": {
-      "crate-vis": 19
      }
     },
     {
@@ -21855,6 +21878,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/attempt_cancels.rs",
+     "purpose": "The step loops leased attempts are running in this vault (FIX 600), each under its attempt's root token, so…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "StepCancellation"
      ],
@@ -21864,6 +21897,16 @@
       "const": 1,
       "fn": 6,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/capture.rs",
+     "purpose": "The executor's step replay capture (FIX 3028): the first step of a leased attempt's canonical run, captured…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -21936,7 +21979,7 @@
      "path": "src/engine_executor/mod.rs",
      "purpose": "Engine-native JS code-mode executor",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 4
      }
     },
@@ -23015,7 +23058,7 @@
      "path": "src/federation/record_scope.rs",
      "purpose": "Birth-facet-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -41055,7 +41098,22 @@
      "purpose": "Callable skill execution through the caller's existing sandbox runtime and host",
      "surface": {
       "crate-vis": 1,
-      "fn": 1
+      "fn": 1,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CallableSkillAnswer"
+     ],
+     "path": "src/skill/call/answer.rs",
+     "purpose": "A callable skill's answer, spooled as it streams and checked against its return contract as it is read, with…",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -50793,6 +50851,8 @@
       "JoinRefusal",
       "JoinRequest",
       "MembershipConsent",
+      "RoomFunding",
+      "RoomSpend",
       "RoomWork",
       "SpendConsent"
      ],
@@ -50800,10 +50860,10 @@
      "purpose": "One consent per party (OF-531): one typed decision that joins the subject's own yes, a payer's spend, a…",
      "surface": {
       "crate-vis": 5,
-      "enum": 6,
-      "fn": 5,
+      "enum": 7,
+      "fn": 7,
       "re-export": 1,
-      "struct": 5
+      "struct": 6
      }
     },
     {
@@ -53091,7 +53151,7 @@
      "purpose": "Multilingual analyzer subsystem"
     },
     "anchored_annotation": {
-     "files": 13,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -53287,7 +53347,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 70,
+     "files": 73,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53588,7 +53648,7 @@
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
     "edit_roundtrip": {
-     "files": 35,
+     "files": 32,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53609,7 +53669,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 21,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -54281,7 +54341,7 @@
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables"
     },
     "skill": {
-     "files": 18,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54570,7 +54630,7 @@
    },
    "over_bar": 189,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3318,
+   "source_files": 3322,
    "test_files": 902
   },
   "oneiron-android": {
@@ -58669,11 +58729,15 @@
       "OutputSpec",
       "PackageLimits",
       "Ports",
+      "PptxCommentsArgs",
+      "PptxCommentsInspectArgs",
       "RecalcClockArgs",
       "RecalcPort",
       "Recalculated",
       "Reply",
       "ShapeKind",
+      "SlideCreationId",
+      "ThreadAnchor",
       "UnverifiedUnit",
       "XlsxProjectArgs",
       "XlsxReadArgs",
@@ -58685,7 +58749,7 @@
       "const": 6,
       "enum": 7,
       "fn": 11,
-      "struct": 35,
+      "struct": 39,
       "trait": 1
      }
     },
@@ -59421,7 +59485,7 @@
      "surface": {
       "enum": 1,
       "fn": 9,
-      "mod": 14,
+      "mod": 15,
       "re-export": 5,
       "struct": 1
      }
@@ -59513,7 +59577,7 @@
      "path": "src/live/pptx.rs",
      "purpose": "The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 11,
       "enum": 9,
       "fn": 31,
       "struct": 24
@@ -59611,6 +59675,94 @@
       "const": 4,
       "fn": 9,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pptx_comments/archive.rs",
+     "purpose": "Retained ZIP records: unchanged entries keep compression, metadata and local bytes",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pptx_comments/comments.rs",
+     "purpose": "Modern threaded comments using retained XML surgery and a derived part allowlist",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pptx_comments/identities.rs",
+     "purpose": "Imported slide/shape identities and conservative creation-ID re-binding",
+     "surface": {
+      "crate-vis": 8,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pptx_comments/links.rs",
+     "purpose": "OPC link additions and modern-comment part discovery; retained XML insertion only",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pptx_comments/mod.rs",
+     "purpose": "Narrow, byte-preserving modern PowerPoint comment edits and the slide and shape identities they anchor to",
+     "surface": {
+      "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PptxAnchorOutcome",
+      "PptxAuthor",
+      "PptxCommentAction",
+      "PptxCommentEdit",
+      "PptxCommentEffects",
+      "PptxCommentLimits",
+      "PptxCommentTarget",
+      "PptxDriftReason",
+      "PptxError",
+      "PptxInspection",
+      "PptxShapeIdentity",
+      "PptxSlideIdentity",
+      "SlideMints"
+     ],
+     "path": "src/pptx_comments/model.rs",
+     "purpose": "PowerPoint comment requests, inspection facts, codec limits and typed refusals",
+     "surface": {
+      "crate-vis": 16,
+      "enum": 5,
+      "fn": 4,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pptx_comments/xml.rs",
+     "purpose": "Namespace-aware XML spans for surgical edits",
+     "surface": {
+      "crate-vis": 18
      }
     },
     {
@@ -59725,6 +59877,7 @@
       "XlsxName",
       "XlsxSheet",
       "XlsxSheetPlan",
+      "XlsxSheetVisibility",
       "XlsxStyle",
       "XlsxTable",
       "XlsxTableShift",
@@ -59734,8 +59887,8 @@
      "purpose": "The XLSX face of a live office body (ARCH-0075: \"XLSX is a map keyed by sheet and address\")",
      "surface": {
       "const": 2,
-      "enum": 4,
-      "fn": 14,
+      "enum": 5,
+      "fn": 16,
       "re-export": 2,
       "struct": 9
      }
@@ -59907,6 +60060,13 @@
      "layout": "file",
      "purpose": "Namespace-aware OOXML reader with byte offsets, for narrow retained edits and package checks"
     },
+    "pptx_comments": {
+     "files": 7,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Narrow, byte-preserving modern PowerPoint comment edits and the slide and shape identities they anchor to"
+    },
     "retained_opc": {
      "files": 7,
      "impl_vault": false,
@@ -59945,7 +60105,7 @@
    },
    "over_bar": 10,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 68,
+   "source_files": 75,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -65277,6 +65437,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/contribution.rs",
+     "purpose": "The host's replay capsule for the Coach's contribution checks (FIX 3028): the concrete…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -65333,7 +65503,7 @@
      "path": "src/ai_host/judge_swap.rs",
      "purpose": "The Coach's judge-swap upkeep on this server (OF-184)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -65379,7 +65549,7 @@
      "path": "src/ai_host/payer_funding.rs",
      "purpose": "Who pays for a model call that a room's spend scope bounds (OF-531, FIX 805)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -66223,13 +66393,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/context_pack/media_query.rs",
      "purpose": "The media query both retrieval doors take (OF-370): `POST /v1/core/context-pack` (and the Context Board's…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -68587,7 +68757,7 @@
      "path": "src/auth.rs",
      "purpose": "HTTP authentication for log-backed version-two capability slips",
      "surface": {
-      "crate-vis": 41
+      "crate-vis": 43
      }
     },
     {
@@ -71154,7 +71324,7 @@
      "purpose": "Managed wake ledger: entries, revision, and supervisor pushes",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 7,
       "struct": 1
      }
@@ -71287,7 +71457,7 @@
      "purpose": "Managed runtime state, the reap freeze gate, and the supervised serve loop",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 20,
       "struct": 3,
       "type": 1
@@ -71865,7 +72035,7 @@
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
       "crate-vis": 18,
-      "fn": 11,
+      "fn": 12,
       "struct": 1
      }
     },
@@ -72918,7 +73088,7 @@
      "path": "src/server/media_embedding.rs",
      "purpose": "The media embedder (OF-370; ARCH-0036 `#media-embedder`): one adapter over the `ai.embed` seat, the same…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -73822,7 +73992,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 39,
+     "files": 40,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -74237,7 +74407,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 629,
+   "source_files": 630,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -75566,6 +75736,7 @@
       "XlsxProtection",
       "XlsxSheet",
       "XlsxSheetView",
+      "XlsxSheetVisibility",
       "XlsxStyle",
       "XlsxTable",
       "XlsxValue"
@@ -75573,7 +75744,7 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 312,
+      "enum": 313,
       "struct": 827
      }
     },
@@ -75841,13 +76012,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ManagedOwnerAction",
+      "ManagedOwnerRequest",
       "ManagedWidenAction"
      ],
      "path": "src/lib/managed_holder.rs",
-     "purpose": "Host-attested account action for one managed widen request",
+     "purpose": "Host-attested account actions: one managed widen request, and one facade request the vault owner makes in…",
      "surface": {
-      "fn": 2,
-      "struct": 1
+      "const": 2,
+      "fn": 4,
+      "struct": 3
      }
     },
     {
