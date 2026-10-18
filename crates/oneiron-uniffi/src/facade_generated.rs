@@ -1866,6 +1866,41 @@ export_facade! {
     let output = client.vault_notes_defaults(&input)?;
     crate::codec::lift_record("vault.notes.defaults", &output)
 };
+"self.run.attach" => fn self_run_attach(&self, input: RunAttachRequest) -> RunAttached = |client| {
+    let input: oneiron::code_run::fold_api::RunAttachRequest = crate::codec::lower_record("self.run.attach", input)?;
+    let output = client.self_run_attach(&input)?;
+    crate::codec::lift_record("self.run.attach", &output)
+};
+"self.folds.describe" => fn self_folds_describe(&self, input: FoldUnfoldRequest) -> FoldReplyFoldDescription = |client| {
+    let input: oneiron::code_run::fold_api::FoldUnfoldRequest = crate::codec::lower_record("self.folds.describe", input)?;
+    let output = client.self_folds_describe(&input)?;
+    crate::codec::lift_record("self.folds.describe", &output)
+};
+"self.history" => fn self_history(&self, input: FoldHistoryRequest) -> FoldHistory = |client| {
+    let input: oneiron::code_run::fold_api::FoldHistoryRequest = crate::codec::lower_record("self.history", input)?;
+    let output = client.self_history(&input)?;
+    crate::codec::lift_record("self.history", &output)
+};
+"self.fold" => fn self_fold(&self, input: FoldMarkRequest) -> FoldReplyFoldMarked = |client| {
+    let input: oneiron::code_run::fold_api::FoldMarkRequest = crate::codec::lower_record("self.fold", input)?;
+    let output = client.self_fold(&input)?;
+    crate::codec::lift_record("self.fold", &output)
+};
+"self.compact" => fn self_compact(&self, input: FoldCompactRequest) -> FoldReplyFoldCompactAsked = |client| {
+    let input: oneiron::code_run::fold_api::FoldCompactRequest = crate::codec::lower_record("self.compact", input)?;
+    let output = client.self_compact(&input)?;
+    crate::codec::lift_record("self.compact", &output)
+};
+"self.unfold" => fn self_unfold(&self, input: FoldUnfoldRequest) -> FoldReplyFoldUnfolded = |client| {
+    let input: oneiron::code_run::fold_api::FoldUnfoldRequest = crate::codec::lower_record("self.unfold", input)?;
+    let output = client.self_unfold(&input)?;
+    crate::codec::lift_record("self.unfold", &output)
+};
+"self.folds" => fn self_folds(&self, input: FoldRunRequest) -> FoldReplyFoldList = |client| {
+    let input: oneiron::code_run::fold_api::FoldRunRequest = crate::codec::lower_record("self.folds", input)?;
+    let output = client.self_folds(&input)?;
+    crate::codec::lift_record("self.folds", &output)
+};
 "self.agents.spawn" => fn self_agents_spawn(&self, input: LiveRunRequestAgentSpawnInput) -> AgentSpawnOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::AgentSpawnInput> = crate::codec::lower_record("self.agents.spawn", input)?;
     let output = client.self_agents_spawn(&input)?;

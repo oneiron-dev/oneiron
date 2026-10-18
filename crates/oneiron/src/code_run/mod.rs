@@ -8,6 +8,7 @@
 pub mod actions;
 pub mod blocked;
 pub mod consent;
+pub mod fold_api;
 pub mod live_run;
 pub mod vault_read;
 

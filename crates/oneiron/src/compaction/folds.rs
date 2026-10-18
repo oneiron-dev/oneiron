@@ -89,7 +89,7 @@ pub struct FoldsInput {}
 
 /// One fold verb call. Run and step come from the host binding, never from
 /// the guest.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "verb", rename_all = "snake_case")]
 pub enum SelfFoldCall {
     Mark {
@@ -112,7 +112,7 @@ pub enum SelfFoldCall {
 
 /// What a fold verb answers under `output`: its typed answer, or the
 /// ledger's refusal, which changes nothing and which the agent can act on.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum FoldReply<T> {
     Answer(T),
@@ -120,7 +120,7 @@ pub enum FoldReply<T> {
 }
 
 /// `self.fold`'s answer: the pending mark it made.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FoldMarked {
     pub fold: String,
     pub from: u64,
@@ -130,7 +130,7 @@ pub struct FoldMarked {
 }
 
 /// `self.compact`'s answer: the marks its batch folds, and when.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FoldCompactAsked {
     pub pending: Vec<String>,
     pub applies: String,
@@ -138,7 +138,7 @@ pub struct FoldCompactAsked {
 
 /// `self.unfold`'s answer: the fold whose raw turns come back after this
 /// step.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FoldUnfolded {
     pub fold: String,
     pub from: u64,
@@ -148,7 +148,7 @@ pub struct FoldUnfolded {
 
 /// `self.folds`' answer: the run's folds, its pending marks, and whether a
 /// compact is asked.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FoldList {
     pub folds: Vec<FoldSpan>,
     pub pending: Vec<FoldPending>,
@@ -156,7 +156,7 @@ pub struct FoldList {
 }
 
 /// One fold in [`FoldList`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FoldSpan {
     pub fold: String,
     pub from: u64,
@@ -164,7 +164,7 @@ pub struct FoldSpan {
 }
 
 /// One pending mark in [`FoldList`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FoldPending {
     pub fold: String,
     pub from: u64,
@@ -175,7 +175,7 @@ pub struct FoldPending {
 }
 
 /// `describe({fold})`'s answer: a fold whole, or a mark still pending.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum FoldDescription {
     Folded {

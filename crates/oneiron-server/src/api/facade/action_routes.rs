@@ -127,6 +127,23 @@ pub(crate) async fn invoke_action(
     verb: String,
     request: ActionRequest,
 ) -> Result<serde_json::Value, FacadeApiError> {
+    let dispatch = invoke_action_dispatch(server, auth, headers, extensions, verb, request).await?;
+    Ok(serde_json::json!({
+        "outcome": dispatch.outcome_value().map_err(engine)?,
+        "readReceipt": dispatch.read_receipt,
+    }))
+}
+
+/// The same action admission and execution, retaining the typed outcome for
+/// the generated public run doors.
+pub(super) async fn invoke_action_dispatch(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    headers: HeaderMap,
+    extensions: Extensions,
+    verb: String,
+    request: ActionRequest,
+) -> Result<ActionDispatch, FacadeApiError> {
     require_action_scope(auth, &verb)?;
     let verb_id = SelfUiActionId::new(verb).map_err(|_| {
         FacadeApiError::new(
@@ -167,11 +184,7 @@ pub(crate) async fn invoke_action(
         args: request.args,
         idempotency_key,
     };
-    let dispatch = execute(server, headers, extensions, bound, call).await?;
-    Ok(serde_json::json!({
-        "outcome": dispatch.outcome_value().map_err(engine)?,
-        "readReceipt": dispatch.read_receipt,
-    }))
+    execute(server, headers, extensions, bound, call).await
 }
 
 /// The scope and record admission an action of `verb` meets, wherever its
@@ -422,14 +435,27 @@ async fn attach_live_run(
         .map(facade_json)
         .transpose()?
         .is_some_and(|request| request.rebind);
-    let bound = action_bound(&server, &auth)?.ok_or_else(|| {
+    let handle = attach_run_as(&server, &auth, &run, rebind).await?;
+    Ok(Json(serde_json::json!({ "liveRun": handle })))
+}
+
+/// The attach operation shared by the REST route and its verb-table door.
+pub(super) async fn attach_run_as(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    run: &str,
+    rebind: bool,
+) -> Result<String, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    facade_actor(auth)?;
+    let bound = action_bound(server, auth)?.ok_or_else(|| {
         FacadeApiError::forbidden(
             "a live run attaches the credential's own read key",
             ["Present a verified slip paired to the run's agent."],
         )
     })?;
-    let run = EntityId::from_hex(&run).map_err(|_| refused(LiveRunRefusal::Invalid))?;
-    let caller = live_run_caller(&bound, &auth);
+    let run = EntityId::from_hex(run).map_err(|_| refused(LiveRunRefusal::Invalid))?;
+    let caller = live_run_caller(&bound, auth);
     // OF-181: the run's guard, waited for briefly while an entry or an
     // action holds it, then held through the attach.
     let attaching = server
@@ -444,7 +470,7 @@ async fn attach_live_run(
         .map_err(|_| internal())?
         .map_err(engine)?
         .map_err(refused)?;
-    Ok(Json(serde_json::json!({ "liveRun": handle })))
+    Ok(handle)
 }
 
 /// Binds `bound` to the live run that rendered a lens card, for an event on

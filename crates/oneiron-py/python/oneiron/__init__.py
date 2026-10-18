@@ -356,6 +356,24 @@ class Oneiron:
         def decisions(self) -> "Oneiron._SelfDecisionsVerbs":
             return Oneiron._SelfDecisionsVerbs(self._client)
         @property
+        def run(self) -> "Oneiron._SelfRunVerbs":
+            return Oneiron._SelfRunVerbs(self._client)
+        @property
+        def folds(self) -> "Oneiron._SelfFoldsVerbs":
+            return Oneiron._SelfFoldsVerbs(self._client)
+        def history(self, spec):
+            """Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled."""
+            return json.loads(_translate(lambda: self._client.self_history(json.dumps(spec))))
+        def fold(self, spec):
+            """Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands."""
+            return json.loads(_translate(lambda: self._client.self_fold(json.dumps(spec))))
+        def compact(self, spec):
+            """Asks the attached run to fold its pending marks in one batch at its next step boundary; read self.history for landed folds and epochs."""
+            return json.loads(_translate(lambda: self._client.self_compact(json.dumps(spec))))
+        def unfold(self, spec):
+            """Appends a fold of the attached run after its current tail, without replacing the earlier stub."""
+            return json.loads(_translate(lambda: self._client.self_unfold(json.dumps(spec))))
+        @property
         def agents(self) -> "Oneiron._SelfAgentsVerbs":
             return Oneiron._SelfAgentsVerbs(self._client)
         @property
@@ -453,6 +471,21 @@ class Oneiron:
             self._client = client
         def asks(self, spec=None):
             return json.loads(_translate(lambda: self._client.self_decisions_asks(json.dumps({} if spec is None else spec))))
+    class _SelfRunVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def attach(self, spec):
+            """Attaches the caller's own credential to its leased live run and returns the handle required by the public fold and history calls."""
+            return json.loads(_translate(lambda: self._client.self_run_attach(json.dumps(spec))))
+    class _SelfFoldsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Lists the attached run's landed folds, pending marks and outstanding compact ask."""
+            return json.loads(_translate(lambda: self._client.self_folds(json.dumps(spec))))
+        def describe(self, spec):
+            """Reads one pending mark or landed fold of the attached run, with its Generated stub, source ids and retained result handles."""
+            return json.loads(_translate(lambda: self._client.self_folds_describe(json.dumps(spec))))
     class _SelfAgentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
