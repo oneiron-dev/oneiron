@@ -371,6 +371,9 @@ impl OneironClient {
                 "vault.research.measure_held_out" => remote_agent_verb_output::<
                     oneiron::autoreason_campaign::research::ExperimentNode,
                 >(client, verb, &input),
+                "vault.research.evaluate_split" => remote_agent_verb_output::<
+                    oneiron::autoreason_campaign::CampaignSplitReport,
+                >(client, verb, &input),
                 "vault.research.mark_invalid" => remote_agent_verb_output::<
                     oneiron::autoreason_campaign::research::ExperimentNode,
                 >(client, verb, &input),
@@ -2393,6 +2396,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.research.measure_held_out", value)
+    }
+    pub fn vault_research_evaluate_split(
+        &self,
+        input: &oneiron::task_verb::sdk::CampaignSplitWire,
+    ) -> Result<oneiron::autoreason_campaign::CampaignSplitReport, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.research.evaluate_split", value)
     }
     pub fn vault_research_mark_invalid(
         &self,
