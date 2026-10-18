@@ -1805,6 +1805,16 @@ export class Oneiron {
     /** Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs. */
     reply: (input: Facade.AiReplyRequest): Facade.AiReply => this.#call(() => this.#client.aiReply(input) as Facade.AiReply),
     voice: {
+      asr: {
+        /** Opens one credential-bound utterance for host-enriched ASR speculative recall, with fixed scope, at most four fires and a call-mode deadline. */
+        open: (input: Facade.AsrOpenRequest): Facade.AsrSession => this.#call(() => this.#client.aiVoiceAsrOpen(input) as Facade.AsrSession),
+        /** Observes an ASR hypothesis and host enrichment; returns the engine signature-change decision, actual fire budget, scoped candidates and a per-fire receipt. */
+        hypothesis: (input: Facade.AsrHypothesisRequest): Facade.AsrHypothesisReceipt => this.#call(() => this.#client.aiVoiceAsrHypothesis(input) as Facade.AsrHypothesisReceipt),
+        /** Consumes an ASR utterance, promoting its compatible last fire with receipt linkage or running one full finalize pass with warm-fill and honest partial reporting. */
+        finalize: (input: Facade.AsrHypothesisRequest): Facade.AsrFinalReceipt => this.#call(() => this.#client.aiVoiceAsrFinalize(input) as Facade.AsrFinalReceipt),
+        /** Closes an unfinished ASR utterance under its opening credential and releases its warm candidates without a final retrieval. */
+        close: (input: Facade.AsrCloseRequest): Facade.AsrClosed => this.#call(() => this.#client.aiVoiceAsrClose(input) as Facade.AsrClosed),
+      },
       /** Opens an owner-bound live media session on the configured voice routes, using the caller credential, room audience and existing budget gates. */
       start: (input: Facade.LiveVoiceStartRequest): Facade.LiveVoiceSession => this.#call(() => this.#client.aiVoiceStart(input) as Facade.LiveVoiceSession),
       /** Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech retires old output through the shared cancellation path. */
