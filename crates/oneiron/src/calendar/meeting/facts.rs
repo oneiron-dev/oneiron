@@ -1,10 +1,10 @@
 //! Hydration under the caller's lane, shared by prep, check-in and transcript linking.
-use crate::calendar::claims::{
-    CalendarStatus, CalendarTimeKind, PREDICATE_CALENDAR_ATTENDEE,
-    PREDICATE_CALENDAR_STATUS, PREDICATE_CALENDAR_TIME_KIND,
-    decode_attendee_value, decode_status_value, decode_time_kind_value,
-};
 use crate::calendar::PrepEvent;
+use crate::calendar::claims::{
+    CalendarStatus, CalendarTimeKind, PREDICATE_CALENDAR_ATTENDEE, PREDICATE_CALENDAR_STATUS,
+    PREDICATE_CALENDAR_TIME_KIND, decode_attendee_value, decode_status_value,
+    decode_time_kind_value,
+};
 use crate::claim::{ScopedRead, claim_surfaceable};
 use crate::ports::TombstoneStore;
 use crate::{EntityId, Result, Vault};
@@ -25,13 +25,18 @@ pub(super) fn readable_event_in_txn(
     // A withheld deciding claim never turns into an absent/default fact.
     let mut claims = Vec::new();
     for id in vault.claims_for_subject_in_txn(txn, &event)? {
-        if vault.get_claim_in_txn(txn, &id)?
+        if vault
+            .get_claim_in_txn(txn, &id)?
             .is_some_and(|body| body.lifecycle == crate::claim::ClaimLifecycleStatus::Active)
         {
             claims.push(id);
         }
     }
-    if !lane.entities_readable_in_txn(txn, &claims)?.into_iter().all(|readable| readable) {
+    if !lane
+        .entities_readable_in_txn(txn, &claims)?
+        .into_iter()
+        .all(|readable| readable)
+    {
         return Ok(false);
     }
     Ok(crate::calendar::origin::live_origin(&vault.store, txn, event)?.is_some())
@@ -46,14 +51,20 @@ pub(in crate::calendar) fn meeting_event_in_txn(
     if !readable_event_in_txn(vault, txn, lane, event)? {
         return Ok(None);
     }
-    let header = vault.entity_header_in_txn(txn, &event)?.ok_or(crate::Error::EntityNotFound)?;
+    let header = vault
+        .entity_header_in_txn(txn, &event)?
+        .ok_or(crate::Error::EntityNotFound)?;
     if header.occurred_start == 0 || header.occurred_end < header.occurred_start {
         return Ok(None);
     }
     let mut result = PrepEvent {
-        event_ref: event, start_utc: header.occurred_start, end_utc: header.occurred_end,
-        attendee_refs: Vec::new(), external_attendee_count: 0,
-        has_campaign_linkage: false, has_commitment_linkage: false,
+        event_ref: event,
+        start_utc: header.occurred_start,
+        end_utc: header.occurred_end,
+        attendee_refs: Vec::new(),
+        external_attendee_count: 0,
+        has_campaign_linkage: false,
+        has_commitment_linkage: false,
         internal_meeting_opt_in: false,
     };
     for id in vault.claims_for_subject_in_txn(txn, &event)? {
@@ -66,7 +77,10 @@ pub(in crate::calendar) fn meeting_event_in_txn(
             return Ok(None);
         }
         if body.predicate == PREDICATE_CALENDAR_TIME_KIND
-            && !matches!(decode_time_kind_value(&body.value)?.kind, CalendarTimeKind::Absolute | CalendarTimeKind::Zoned)
+            && !matches!(
+                decode_time_kind_value(&body.value)?.kind,
+                CalendarTimeKind::Absolute | CalendarTimeKind::Zoned
+            )
         {
             return Ok(None);
         }

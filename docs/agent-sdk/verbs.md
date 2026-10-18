@@ -224,6 +224,9 @@ both bindings and their export-census tests in one change.
 - `vault.packs.connector.grants.get`
 - `vault.packs.connector.grants.put`
 - `vault.packs.remove`
+- `ai.chat.completions`
+- `vault.connectors.proxy.admit`
+- `vault.connectors.proxy.revoke_write`
 - `vault.connectors.subscriptions.put`
 - `vault.connectors.subscriptions.list`
 - `vault.connectors.subscriptions.revoke`

@@ -275,6 +275,13 @@ pub(crate) fn settle_team_outcome_in_txn(
     Ok(receipt)
 }
 
+/// Whether a team's outcome teaches its pattern skill's cell: a team that
+/// ran below its pattern's floor did not run that pattern, so its outcome
+/// stays on its receipt and teaches no pattern prior.
+const fn teaches_pattern(receipt: &TeamReceipt) -> bool {
+    !receipt.below_floor()
+}
+
 fn feed_pattern_payoff_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -282,6 +289,9 @@ fn feed_pattern_payoff_in_txn(
     skill: EntityId,
     outcome: &TeamOutcome,
 ) -> Result<()> {
+    if !teaches_pattern(receipt) {
+        return Ok(());
+    }
     let cell = pattern_cell(skill, &receipt.executor_mix(), &receipt.type_ref);
     // The planner card read this cell with parent/carried backoff; its first
     // own result keeps that borrowed prior (ARCH-0053 `#executor-swaps`).

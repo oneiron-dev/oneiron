@@ -5146,6 +5146,81 @@ async fn vault_packs_remove(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn ai_chat_completions(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require_granted(CoreScope::Write)
+        .or_else(|_| auth.require_granted(CoreScope::Propose))?;
+    facade_scoped_credential(auth)?;
+    facade_outside_room_turn(call, "ai.chat.completions")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("ai.chat.completions", &value)?;
+    let hooks = facade_hooks_pre(server, call, "ai.chat.completions", value).await?;
+    let (output, listed) = super::host_doors::ai_chat_completions(
+        server,
+        auth,
+        call.session()?,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_connectors_proxy_admit(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.connectors.proxy.admit")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.connectors.proxy.admit", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.connectors.proxy.admit", value).await?;
+    let (output, listed) = super::host_doors::vault_connectors_proxy_admit(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_connectors_proxy_revoke_write(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.connectors.proxy.revoke_write")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.connectors.proxy.revoke_write", &value)?;
+    let hooks =
+        facade_hooks_pre(server, call, "vault.connectors.proxy.revoke_write", value).await?;
+    let (output, listed) = super::host_doors::vault_connectors_proxy_revoke_write(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_connectors_subscriptions_put(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -21436,6 +21511,11 @@ pub(crate) async fn call_verb(
             vault_packs_connector_grants_put(server, call, input).await
         }
         "vault.packs.remove" => vault_packs_remove(server, call, input).await,
+        "ai.chat.completions" => ai_chat_completions(server, call, input).await,
+        "vault.connectors.proxy.admit" => vault_connectors_proxy_admit(server, call, input).await,
+        "vault.connectors.proxy.revoke_write" => {
+            vault_connectors_proxy_revoke_write(server, call, input).await
+        }
         "vault.connectors.subscriptions.put" => {
             vault_connectors_subscriptions_put(server, call, input).await
         }

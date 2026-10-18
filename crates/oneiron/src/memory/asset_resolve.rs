@@ -434,7 +434,10 @@ impl Memory<'_> {
         description: Option<&str>,
         occurred_at: u64,
     ) -> MemoryResult<(EntityId, Option<EntityId>)> {
-        let occurred = TimeRange { start: occurred_at, end: occurred_at };
+        let occurred = TimeRange {
+            start: occurred_at,
+            end: occurred_at,
+        };
         let weight = EdgeKind::DerivedFrom.default_weight().unwrap_or(1.0);
         self.vault.ensure_text_index_trusted()?;
         self.with_actor_content_write_txn(|content| {
@@ -442,17 +445,30 @@ impl Memory<'_> {
                 Some(asset) => asset,
                 None => self.vault.store.clock.entity_id()?,
             };
-            if self.vault.local_hard_delete_marker_exists_in_txn(content.read(), &asset)? {
+            if self
+                .vault
+                .local_hard_delete_marker_exists_in_txn(content.read(), &asset)?
+            {
                 return Err(super::support::hard_deleted_refusal(&asset));
             }
             super::structural::ensure_structural_create_in_txn(self.vault, content.read(), &asset)?;
-            let text = description.map(|_| self.vault.store.clock.entity_id()).transpose()?;
-            let mut batch = self.vault.batch_in()
-                .put(&asset, ENTITY_TYPE_ASSET, occurred, occurred_at, body);
+            let text = description
+                .map(|_| self.vault.store.clock.entity_id())
+                .transpose()?;
+            let mut batch =
+                self.vault
+                    .batch_in()
+                    .put(&asset, ENTITY_TYPE_ASSET, occurred, occurred_at, body);
             if let (Some(text), Some(description)) = (text, description) {
-                batch = batch.asset_text_birth(
-                    &text, occurred, occurred_at, description.as_bytes(), &[(asset, weight)],
-                ).text(&text, &[("text", description)]);
+                batch = batch
+                    .asset_text_birth(
+                        &text,
+                        occurred,
+                        occurred_at,
+                        description.as_bytes(),
+                        &[(asset, weight)],
+                    )
+                    .text(&text, &[("text", description)]);
             }
             content.apply_batch(batch)?;
             Ok((asset, text))
@@ -494,7 +510,8 @@ impl Memory<'_> {
         pick: Option<&ImagePick<'_>>,
         room: Option<u64>,
     ) -> MemoryResult<ScopedReadResult<Vec<ResolvedAsset>>> {
-        self.serve_assets_with_receipts(asset_refs, consumer, pick, room).map(|(served, _)| served)
+        self.serve_assets_with_receipts(asset_refs, consumer, pick, room)
+            .map(|(served, _)| served)
     }
 
     /// The same serving, beside the refs its committed served-form records carry.
@@ -552,7 +569,13 @@ impl Memory<'_> {
             return Err(MemoryError::bad_request("a serve names at least one asset"));
         };
         let refs = lane.commit_served_forms_listing(&forms)?;
-        Ok((ScopedReadResult { value: served, receipt }, refs))
+        Ok((
+            ScopedReadResult {
+                value: served,
+                receipt,
+            },
+            refs,
+        ))
     }
 
     /// `vault.images.view`: the full pixels behind an image's handle (the
@@ -722,10 +745,14 @@ fn audio_of(body: &[u8]) -> MemoryResult<Option<(Vec<u8>, String)>> {
         return Ok(None);
     };
     let field = |name: &str| {
-        entries.iter().find(|(key, _)| key.as_str() == Some(name)).map(|(_, value)| value)
+        entries
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(name))
+            .map(|(_, value)| value)
     };
     let (Some(Value::Binary(bytes)), Some(media_type)) = (
-        field(BODY_BYTES), field(BODY_MEDIA_TYPE).and_then(Value::as_str),
+        field(BODY_BYTES),
+        field(BODY_MEDIA_TYPE).and_then(Value::as_str),
     ) else {
         return Ok(None);
     };
@@ -1032,15 +1059,23 @@ impl AssetForms {
             && let Some((bytes, mime)) = &self.audio
             && admits(bytes.len())
         {
-            return Ok(Some((ResolvedAsset {
-                asset_ref,
-                form: ServedAssetForm::Audio,
-                image: None,
-                audio: Some((mime.clone(), bytes.clone())),
-                text: None,
-                asset_text_ref: None,
-                handle: Some(format!("{}@{}", self.asset.to_hex(), &blake3::hash(bytes).to_hex()[..HANDLE_HASH_HEX])),
-            }, ServedForm::audio(self.asset), None)));
+            return Ok(Some((
+                ResolvedAsset {
+                    asset_ref,
+                    form: ServedAssetForm::Audio,
+                    image: None,
+                    audio: Some((mime.clone(), bytes.clone())),
+                    text: None,
+                    asset_text_ref: None,
+                    handle: Some(format!(
+                        "{}@{}",
+                        self.asset.to_hex(),
+                        &blake3::hash(bytes).to_hex()[..HANDLE_HASH_HEX]
+                    )),
+                },
+                ServedForm::audio(self.asset),
+                None,
+            )));
         }
         let Some(image) = self.image.clone() else {
             return Ok(self.text.map(|(asset_text, text)| {
@@ -1052,9 +1087,13 @@ impl AssetForms {
                         audio: None,
                         text: Some(text),
                         asset_text_ref: Some(asset_text.to_hex()),
-                        handle: self.audio.as_ref().map(|(bytes, _)| format!(
-                            "{}@{}", self.asset.to_hex(), &blake3::hash(bytes).to_hex()[..HANDLE_HASH_HEX],
-                        )),
+                        handle: self.audio.as_ref().map(|(bytes, _)| {
+                            format!(
+                                "{}@{}",
+                                self.asset.to_hex(),
+                                &blake3::hash(bytes).to_hex()[..HANDLE_HASH_HEX],
+                            )
+                        }),
                     },
                     ServedForm::text(self.asset, asset_text),
                     None,
@@ -1127,7 +1166,9 @@ pub(crate) fn asset_audio_in_lane(
     else {
         return Ok(None);
     };
-    let Some(body) = row.body else { return Ok(None); };
+    let Some(body) = row.body else {
+        return Ok(None);
+    };
     Ok(audio_of(&body)?.map(|(bytes, mime)| (mime, bytes)))
 }
 
@@ -1308,7 +1349,13 @@ fn region_pixels(
 /// The ASSET body for generated bytes: the canon asset fields beside the
 /// bytes themselves. A plain memory read serves the fields and nulls the bytes.
 pub(crate) fn generated_asset_body(image: &ImageBytes, model: &ModelId) -> MemoryResult<Vec<u8>> {
-    asset_body(crate::embed::InputKind::Image, &image.media_type, &image.bytes, "generated", Some(model.as_str()))
+    asset_body(
+        crate::embed::InputKind::Image,
+        &image.media_type,
+        &image.bytes,
+        "generated",
+        Some(model.as_str()),
+    )
 }
 
 /// The one inline ASSET encoding read by the resolver and embedding backfill.
@@ -1327,9 +1374,11 @@ pub(super) fn asset_body(
     let mut fields = vec![
         (Value::from("kind"), Value::from(kind)),
         (Value::from(BODY_MEDIA_TYPE), Value::from(mime_type)),
-        (Value::from(BODY_BLAKE3), Value::from(blake3::hash(bytes).to_hex().as_str())),
+        (
+            Value::from(BODY_BLAKE3),
+            Value::from(blake3::hash(bytes).to_hex().as_str()),
+        ),
         (Value::from("byte_size"), Value::from(bytes.len() as u64)),
-
     ];
     if let Some(model) = model {
         fields.push((Value::from("model"), Value::from(model)));

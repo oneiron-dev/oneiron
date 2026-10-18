@@ -2094,6 +2094,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn ai_chat_completions(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "ai.chat.completions")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("ai.chat.completions", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_connectors_proxy_admit(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.connectors.proxy.admit")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.connectors.proxy.admit", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_connectors_proxy_revoke_write(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.connectors.proxy.revoke_write")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.connectors.proxy.revoke_write", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_connectors_subscriptions_put(
         &self,
         py: Python<'_>,
