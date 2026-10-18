@@ -3,20 +3,29 @@
 //!
 //! Each axis below has a restrict whose result is never wider than its left
 //! side, so `restrict(before, after) == after` proves `after` no wider on
-//! it. A row table that meets all its matching rows, whatever their order,
-//! counts when every row it held is still there and each row added only
-//! restricts. Every other field must be equal: any other row table, a fold
-//! that depends on order or provenance, and any field added later. A
-//! narrowing the comparator cannot prove reads as a widening and waits for
-//! the owner.
+//! it. A row table counts when every row it held is still there, in place
+//! where its readers run rows in order, and each row added only restricts.
+//! Source trust compares its folded slots. Every other field must be equal:
+//! the owner policy rows, a fold that depends on provenance, and any field
+//! added later. A narrowing the comparator cannot prove reads as a widening
+//! and waits for the owner.
 use super::{CommOptOutPosture, PolicyManifestResolution};
+use crate::EntityId;
+use crate::claim::ClaimSource;
 use crate::gate::ceiling::{
     ActorCeiling, PolicyApprovalCeiling, PolicyAxes, PolicyCriticality, PolicyPack,
-    PolicySensitivity,
+    PolicySensitivity, SourceTrustCeiling, SourceTrustRow,
 };
-use crate::gate::class_policy::{ActPolicyTable, ActPosture, ClassPolicyPrecedence};
-use crate::gate::fanout_policy::merge_controls;
+use crate::gate::class_policy::{
+    ActPolicyTable, ActPosture, ClassPolicyPrecedence, WaitPolicyRow, WaitPolicyTable,
+};
+use crate::gate::fanout_policy::{FanoutScopedRow, merge_controls};
+use crate::gate::grants::{PolicyScopedGrant, scoped_read_grant_has_read_effector};
+use crate::gate::mail_policy::MailPolicy;
 use crate::gate::policy_values::{PolicyPrecedence, PolicyRowScope, PolicyValue, PolicyValueRow};
+use crate::gate::room_policy::RoomPolicyRow;
+use crate::gate::weave_policy;
+use crate::llm::BudgetPolicyTable;
 
 /// `probe` takes `before`'s value where `narrower(before, after)` holds.
 fn settle<T: Clone>(probe: &mut T, before: &T, after: &T, narrower: impl FnOnce(&T, &T) -> bool) {
@@ -32,6 +41,15 @@ fn both<T>(before: &Option<T>, after: &Option<T>, narrower: impl FnOnce(&T, &T) 
         (Some(before), Some(after)) => narrower(before, after),
         _ => false,
     }
+}
+
+/// [`both`], or absent on both sides.
+fn both_or_neither<T>(
+    before: &Option<T>,
+    after: &Option<T>,
+    narrower: impl FnOnce(&T, &T) -> bool,
+) -> bool {
+    (before.is_none() && after.is_none()) || both(before, after, narrower)
 }
 
 /// Both present and `after` no greater: a lower depth or threshold.
@@ -62,6 +80,23 @@ fn adds_only<T: PartialEq>(before: &[T], after: &[T], narrow: impl Fn(&T) -> boo
         added.remove(at);
     }
     added.into_iter().all(narrow)
+}
+
+/// [`adds_only`], for a table whose readers run its rows in order: `before`
+/// is all of `after`'s front, as it was.
+fn appends_only<T: PartialEq>(before: &[T], after: &[T], narrow: impl Fn(&T) -> bool) -> bool {
+    after
+        .strip_prefix(before)
+        .is_some_and(|added| added.iter().all(narrow))
+}
+
+/// An optional cap, none unbounded, that appears or shrinks.
+fn cap_no_higher(before: Option<u64>, after: Option<u64>) -> bool {
+    match (before, after) {
+        (_, None) => before.is_none(),
+        (None, Some(_)) => true,
+        (Some(before), Some(after)) => after <= before,
+    }
 }
 
 /// Axes the meet leaves as they were, or at their restrictive pole. Normal
@@ -123,6 +158,117 @@ fn value_rows_narrow(before: &[PolicyValueRow], after: &[PolicyValueRow]) -> boo
             .any(|old| (old.key, old.scope) == (row.key, row.scope))
     };
     adds_only(before, after, |row| value_row_narrows(row) && !held(row))
+}
+
+/// A new wait row, appended: a holder's at the default precedence runs
+/// after every row before it and only raises the floor and lowers the
+/// ceiling inside the window it meets. A vault row can give a class its
+/// first bounds or make it vault-only.
+fn wait_row_narrows(row: &WaitPolicyRow) -> bool {
+    row.holder_ref.is_some() && matches!(row.precedence, ClassPolicyPrecedence::NestedNarrowing)
+}
+
+fn wait_rows_narrow(before: &WaitPolicyTable, after: &WaitPolicyTable) -> bool {
+    appends_only(before.rows(), after.rows(), wait_row_narrows)
+}
+
+/// A source-trust slot on the same binding, its cap no higher (none, the
+/// denial, sits below every band) and no restricted-source permit newly set.
+fn trust_row_narrows(before: &SourceTrustRow, after: &SourceTrustRow) -> bool {
+    after.actor_ref == before.actor_ref
+        && after.max_auto_sensitivity <= before.max_auto_sensitivity
+        && (before.receipted || !after.receipted)
+        && (before.warned || !after.warned)
+}
+
+/// Source trust on its folded slots: each slot stays and narrows, and a new
+/// actor slot only denies. A class slot appearing or rebinding moves every
+/// writer's baseline, and a new permitting actor slot admits a writer the
+/// class row did not.
+fn trust_narrows(before: &SourceTrustCeiling, after: &SourceTrustCeiling) -> bool {
+    use ClaimSource::{Generated, Imported, Inferred, Observed, ToolOutput, UserStated};
+    let sources = [
+        UserStated, Observed, Inferred, Imported, ToolOutput, Generated,
+    ];
+    let class_slots = sources
+        .into_iter()
+        .all(|source| both_or_neither(&before.row(source), &after.row(source), trust_row_narrows));
+    let (old, new) = (&before.additional_bound_rows, &after.additional_bound_rows);
+    let kept = old
+        .iter()
+        .all(|(key, row)| new.get(key).is_some_and(|now| trust_row_narrows(row, now)));
+    let denials = new
+        .iter()
+        .all(|(key, row)| old.contains_key(key) || row.max_auto_sensitivity.is_none());
+    class_slots
+        && kept
+        && denials
+        && before.malformed_manifest_seen == after.malformed_manifest_seen
+}
+
+/// A new scoped grant that grants nothing: it carries a budget and no read
+/// effector, so no read, effect or note door admits by it and no read
+/// fallback moves. A matching one can only veto a coach offer.
+fn grant_narrows(grant: &PolicyScopedGrant) -> bool {
+    grant.budget.is_some() && !scoped_read_grant_has_read_effector(grant)
+}
+
+/// Budget rows: each old row in its place, its selector and floor kept and
+/// its cap no higher, then rows that only cap. A floor reserves capacity
+/// for its matches out of everyone else's, so no floor moves either way and
+/// no added row reserves.
+fn budget_rows_narrow(before: &BudgetPolicyTable, after: &BudgetPolicyTable) -> bool {
+    let (before, after) = (before.rows(), after.rows());
+    let kept = before.iter().zip(after).all(|(before, after)| {
+        after.selector() == before.selector()
+            && after.floor_units() == before.floor_units()
+            && cap_no_higher(before.cap_units(), after.cap_units())
+    });
+    kept && after.get(before.len()..).is_some_and(|added| {
+        added
+            .iter()
+            .all(|row| matches!(row.floor_units(), None | Some(0)) && row.cap_units().is_some())
+    })
+}
+
+/// New mail rows beside a vault row the vault already had, each one that
+/// only meets. With no vault row there is no mail policy, and a first one
+/// can class a recipient cold and make a graduation grant usable.
+fn mail_rows_narrow(before: &[MailPolicy], after: &[MailPolicy]) -> bool {
+    before.iter().any(MailPolicy::is_vault_row)
+        && adds_only(before, after, MailPolicy::only_meets_beside_vault)
+}
+
+/// New weave rows, each for a role the vault already rows, where every
+/// matching row meets. A first row replaces the shipped table, a new role
+/// opens a reader, and under holder-required a row for a holder that had
+/// none turns it on.
+fn weave_rows_narrow(
+    before: &[weave_policy::Row],
+    after: &[weave_policy::Row],
+    precedence: weave_policy::Precedence,
+) -> bool {
+    let held = |role: &str, holder: Option<EntityId>| {
+        before
+            .iter()
+            .any(|old| old.role == role && old.holder == holder)
+    };
+    !before.is_empty()
+        && adds_only(before, after, |row| {
+            held(&row.role, None)
+                && (precedence == weave_policy::Precedence::NestedNarrowing
+                    || held(&row.role, row.holder))
+        })
+}
+
+fn room_rows_narrow(before: &[RoomPolicyRow], after: &[RoomPolicyRow]) -> bool {
+    appends_only(before, after, RoomPolicyRow::only_narrows_appended)
+}
+
+/// A new fan-out scope row with no holder meets what it matches; a holder
+/// row restarts from the vault under nested narrowing.
+fn fanout_rows_narrow(before: &[FanoutScopedRow], after: &[FanoutScopedRow]) -> bool {
+    adds_only(before, after, |row| row.holder_ref.is_none())
 }
 
 /// Whether `after` is no wider than `before` on every axis. A fail-closed
@@ -201,10 +347,22 @@ pub(crate) fn manifest_resolution_narrows(
     by_value_both!(dreamer_failure_precedence);
     in_place_both!(livequery_tracker_limits);
     in_place_both!(credential_lifetimes);
-    // A replaced or dropped row proves nothing here.
+    // A dropped row proves nothing here, and a replaced one only as a
+    // budget cap lowered in place.
     axis!(packs, |b, a| adds_only(b, a, pack_narrows));
     axis!(actor_ceilings, |b, a| adds_only(b, a, ceiling_narrows));
     axis!(act_policy, act_rows_narrow);
+    axis!(wait_policy, wait_rows_narrow);
+    axis!(source_trust, trust_narrows);
+    axis!(scoped_grants, |b, a| adds_only(b, a, grant_narrows));
+    axis!(budget_policy, budget_rows_narrow);
+    axis!(native_mail_policy, |b, a| mail_rows_narrow(b, a));
+    axis!(room_policy_rows, |b, a| room_rows_narrow(b, a));
+    axis!(consult_fanout_scope_rows, |b, a| fanout_rows_narrow(b, a));
+    // Weave rows read under the order the vault already had; the order
+    // itself only grows stricter, above.
+    let order = before.weave_report_precedence;
+    axis!(weave_report_policy, |b, a| weave_rows_narrow(b, a, order));
     // A new scoped row meets its parents only under nested narrowing; under
     // most-specific it can release one.
     let nested = [before, after]
