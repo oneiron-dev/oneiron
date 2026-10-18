@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use crate::attempt_queue::{AttemptRecord, AttemptState};
 use crate::claim::ClaimApprovalStatus;
 use crate::dreamer_runner::{
-    DreamerConsolidationScope, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
-    EnqueueDreamerConsolidationAttempt,
+    DreamerConsolidationScope, DreamerParkCause, DreamerParkedAttemptRecord, DreamerRunnerStore,
+    EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
 };
 
 /// One Dreamer consolidation enqueue (BRIDGE-03).
@@ -61,6 +61,56 @@ pub struct DreamerAttemptView {
     pub created_at: u64,
     /// Unix seconds.
     pub updated_at: u64,
+    /// The attempt's park, when the runner parked it (DOOR-144 A): the
+    /// durable fact that its work remains for a later resume. Absent when
+    /// the attempt holds no park row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parked: Option<DreamerParkedAttemptView>,
+}
+
+/// The public face of one parked Dreamer attempt: which attempt, why, and
+/// when. The park-owner token and the free-text reason stay private; this
+/// names no wake, continuation object or lease.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct DreamerParkedAttemptView {
+    /// 32-hex attempt id.
+    pub job_ref: String,
+    /// What code reads of the park: why it parked.
+    pub cause: DreamerParkCauseView,
+    /// Unix seconds.
+    pub parked_at: u64,
+}
+
+/// Why a Dreamer attempt parked, as [`DreamerParkCause`] spells it in its
+/// private row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DreamerParkCauseView {
+    /// Its model call failed because the provider is down.
+    ProviderUnavailable,
+    /// Its executor returned an error or panicked.
+    ExecutorError,
+    /// The wake pass hit its deadline and the attempt kept its progress.
+    Checkpoint,
+    /// The pass was cancelled.
+    Cancelled,
+    /// It waits on a signal: a budget approval, a seat login, a peer.
+    Signal,
+    /// Anything else.
+    Other,
+}
+
+impl From<DreamerParkCause> for DreamerParkCauseView {
+    fn from(cause: DreamerParkCause) -> Self {
+        match cause {
+            DreamerParkCause::ProviderUnavailable => Self::ProviderUnavailable,
+            DreamerParkCause::ExecutorError => Self::ExecutorError,
+            DreamerParkCause::Checkpoint => Self::Checkpoint,
+            DreamerParkCause::Cancelled => Self::Cancelled,
+            DreamerParkCause::Signal => Self::Signal,
+            DreamerParkCause::Other => Self::Other,
+        }
+    }
 }
 
 impl Memory<'_> {
@@ -123,7 +173,9 @@ impl Memory<'_> {
         let Some(status) = store.status(id)? else {
             return Ok(None);
         };
-        Ok(Some(attempt_view_from_record(&status.attempt)))
+        let mut view = attempt_view_from_record(&status.attempt);
+        view.parked = store.parked_attempt(id)?.as_ref().map(parked_view);
+        Ok(Some(view))
     }
 
     /// Seed-write entry point (EF-301 consumer): every element is FORCED
@@ -165,5 +217,14 @@ fn attempt_view_from_record(attempt: &AttemptRecord) -> DreamerAttemptView {
         last_error: attempt.last_error.clone(),
         created_at: attempt.created_at,
         updated_at: attempt.updated_at,
+        parked: None,
+    }
+}
+
+fn parked_view(park: &DreamerParkedAttemptRecord) -> DreamerParkedAttemptView {
+    DreamerParkedAttemptView {
+        job_ref: hex_string(park.attempt_id.as_bytes()),
+        cause: park.cause.into(),
+        parked_at: park.parked_at,
     }
 }

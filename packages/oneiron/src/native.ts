@@ -85,6 +85,8 @@ tasksAccept(input: unknown): unknown
 vaultWitness(turn: WitnessTurn): WitnessReceipt
 vaultClaimsUpsert(input: unknown): unknown
 vaultRecall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined, as_of: number | undefined, deadline_ms: number | undefined, media: RecallMedia | undefined, query_affect: QueryAffect | undefined): MemoryPack
+vaultRetrievalAgingGet(input: unknown): unknown
+vaultRetrievalAgingConfigure(input: unknown): unknown
 vaultRetrievalWeightsGet(input: unknown): unknown
 vaultRetrievalWeightsConfigure(input: unknown): unknown
 vaultAffectAnnotationsPut(input: unknown): unknown
@@ -104,6 +106,7 @@ vaultRetrievalExport(input: unknown): unknown
 vaultRetrievalReplay(input: unknown): unknown
 vaultExport(input: unknown): unknown
 selfCredentialAttenuate(input: unknown): unknown
+vaultScopePosition(input: unknown): unknown
 vaultScopeCeiling(input: unknown): unknown
 vaultExportScoped(input: unknown): unknown
 vaultReceipts(limit: number | undefined, kinds: string[] | undefined): FacadeReceipt[]
@@ -151,6 +154,10 @@ vaultSkillsFork(input: unknown): unknown
 vaultSkillsRulesSet(input: unknown): unknown
 vaultSkillsCodeAutoInstallSet(input: unknown): unknown
 vaultSkillsPermissionsApprove(input: unknown): unknown
+vaultSkillsOptimizeStart(input: unknown): unknown
+vaultSkillsOptimizeResult(input: unknown): unknown
+vaultSkillsGovernanceGet(input: unknown): unknown
+vaultSkillsGovernanceSet(input: unknown): unknown
 vaultPacksHooksBind(input: unknown): unknown
 vaultPacksHooksList(input: unknown): unknown
 vaultPacksHooksQualify(input: unknown): unknown
@@ -400,6 +407,14 @@ vaultCodeOriginAuthorityGet(input: unknown): unknown
 vaultCodeOriginAuthoritySet(input: unknown): unknown
 vaultCodeOriginPublications(input: unknown): unknown
 vaultCodeCheckoutBind(input: unknown): unknown
+vaultCodeCheckoutClaim(input: unknown): unknown
+vaultCodeCheckoutGet(input: unknown): unknown
+vaultCodeCheckoutRenew(input: unknown): unknown
+vaultCodeCheckoutReclaim(input: unknown): unknown
+vaultCodeCheckoutTakeover(input: unknown): unknown
+vaultCodeCheckoutPublish(input: unknown): unknown
+vaultCodeCheckoutSettle(input: unknown): unknown
+vaultCodeCheckoutTeardown(input: unknown): unknown
 vaultCodeSnapshotsIngest(input: unknown): unknown
 vaultCodeSnapshotsGet(input: unknown): unknown
 vaultCodeSnapshotsRead(input: unknown): unknown
@@ -559,6 +574,14 @@ vaultClaimsRetract(input: unknown): unknown
 vaultForget(input: unknown): unknown
 vaultBookingConstraintTurn(input: unknown): unknown
 vaultBookingPageToken(input: unknown): unknown
+calendarInvite(input: unknown): unknown
+calendarConnectorConfigure(input: unknown): unknown
+calendarConnectorGet(input: unknown): unknown
+calendarConnectorPull(input: unknown): unknown
+calendarConnectorWrite(input: unknown): unknown
+calendarConnectorKill(input: unknown): unknown
+calendarImipConfigure(input: unknown): unknown
+calendarImipGet(input: unknown): unknown
 vaultCalendarCreate(input: unknown): unknown
 vaultCalendarIcsImport(input: unknown): unknown
 vaultCalendarOccurrences(input: unknown): unknown
@@ -623,6 +646,8 @@ vaultArtifactsAppend(input: unknown): unknown
 vaultArtifactsRead(input: unknown): unknown
 vaultConsolidationEnqueue(input: unknown): unknown
 vaultConsolidationStatus(input: unknown): unknown
+vaultRunsStep(input: unknown): unknown
+vaultRunsCheckpoint(input: unknown): unknown
 vaultConsolidationPromote(input: unknown): unknown
 vaultConsolidationEvidence(input: unknown): unknown
 vaultClaimsVet(input: unknown): unknown
@@ -658,6 +683,9 @@ vaultSummariesProposalsRead(input: unknown): unknown
 vaultSummariesProposalsMerge(input: unknown): unknown
 vaultSummariesProposalsSwitch(input: unknown): unknown
 vaultSummariesProposalsReject(input: unknown): unknown
+vaultNotesBlessBriefKind(input: unknown): unknown
+vaultNotesAuthorBrief(input: unknown): unknown
+vaultNotesFollowCitation(input: unknown): unknown
 vaultNotesCreate(input: unknown): unknown
 vaultNotesAuthorTake(input: unknown): unknown
 vaultNotesFromEntity(input: unknown): unknown

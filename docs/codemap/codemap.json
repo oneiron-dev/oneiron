@@ -3085,7 +3085,7 @@
      "path": "src/authority/owner_work.rs",
      "purpose": "Folds the owner's work requests and their results: which install is to do the key, custody or root work an…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -7996,6 +7996,24 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CalendarConnectorConfigureRequest",
+      "CalendarConnectorKillRequest",
+      "CalendarConnectorRegistration",
+      "CalendarConnectorRequest",
+      "CalendarConnectorWriteRequest",
+      "CalendarImipTransportConfig"
+     ],
+     "path": "src/calendar/connectors/door.rs",
+     "purpose": "Owner-installed calendar seats and host iMIP submission, with custody names only",
+     "surface": {
+      "fn": 9,
+      "struct": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -8013,6 +8031,7 @@
      "path": "src/calendar/connectors/mod.rs",
      "purpose": "Shared calendar connector kernel (CAL-05, ONE-1787)",
      "surface": {
+      "mod": 1,
       "re-export": 4
      }
     },
@@ -8030,7 +8049,7 @@
      "surface": {
       "crate-vis": 12,
       "enum": 2,
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -9019,9 +9038,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/campaign/enrollment/manual.rs",
+     "purpose": "Manual enrollment beside the saved-query MACRO ingress",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/campaign/enrollment/mod.rs",
      "purpose": "CA-03 enrollment consequence writer: the leader-only MACRO job that turns a detected SAVED_QUERY membership…",
      "surface": {
+      "crate-vis": 1,
       "re-export": 8
      }
     },
@@ -9201,6 +9231,7 @@
      "path": "src/campaign/stage/external.rs",
      "purpose": "External-evidence hook ingress with the owner-attestation proposal-boundary gate",
      "surface": {
+      "crate-vis": 1,
       "fn": 1,
       "struct": 1
      }
@@ -9236,6 +9267,7 @@
      "path": "src/campaign/stage/mod.rs",
      "purpose": "CA-04 stage-ladder machinery: the mechanism, never the content",
      "surface": {
+      "crate-vis": 1,
       "re-export": 7
      }
     },
@@ -9265,7 +9297,7 @@
      "path": "src/campaign/stage/projector.rs",
      "purpose": "The single `crm.stage` writer plus shared claim-scan and error helpers",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 2,
       "struct": 1
      }
@@ -9300,6 +9332,29 @@
      "surface": {
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CampaignActionProvenance",
+      "CampaignEnrollRequest",
+      "CampaignEnrollmentReceipt",
+      "CampaignEnrollmentState",
+      "CampaignMemberChannelSpec",
+      "CampaignStageEvidence",
+      "CampaignStageEvidenceOutcome",
+      "CampaignStageEvidenceReceipt",
+      "CampaignStageEvidenceRequest",
+      "CampaignUnsubscribeReceipt",
+      "CampaignUnsubscribeRequest"
+     ],
+     "path": "src/campaign/surface/actions.rs",
+     "purpose": "Typed campaign enrollment, earned evidence and immediate unsubscribe",
+     "surface": {
+      "enum": 2,
+      "struct": 9
      }
     },
     {
@@ -9357,7 +9412,7 @@
      "purpose": "CA-07's SDK surface: one `self.*` verb vocabulary over the CRM pack",
      "surface": {
       "crate-vis": 2,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -10401,7 +10456,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "CheckoutLeaseService"
@@ -10420,8 +10475,28 @@
      "path": "src/checkout/lease/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/checkout/lease/teardown.rs",
+     "purpose": "Restartable teardown shared by the trusted service and credential doors",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/checkout/lease/transactions.rs",
+     "purpose": "Shared lease transitions",
+     "surface": {
+      "crate-vis": 12
      }
     },
     {
@@ -10472,6 +10547,20 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ClaimAgingProfiles"
+     ],
+     "path": "src/claim/aging_profiles.rs",
+     "purpose": "Class-level aging policy data; claim classification stays predicate-root metadata",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -10504,7 +10593,7 @@
       "const": 4,
       "crate-vis": 2,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -10670,7 +10759,7 @@
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)",
      "surface": {
       "crate-vis": 17,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -22844,6 +22933,23 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "CheckpointReadRequest",
+      "CheckpointResumeView",
+      "CheckpointStepView",
+      "CheckpointView"
+     ],
+     "path": "src/engine_executor/checkpoint_read.rs",
+     "purpose": "Checkpoint read (DOOR-141 B): one page of a code run's committed step checkpoints and the replies its parked…",
+     "surface": {
+      "const": 2,
+      "fn": 1,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/engine_executor/code_check.rs",
      "purpose": "Shadow mode: before a generated program runs, it is type-checked against the declarations its prompt teaches",
@@ -22945,7 +23051,7 @@
      "purpose": "Engine-native JS code-mode executor",
      "surface": {
       "crate-vis": 2,
-      "mod": 2,
+      "mod": 3,
       "re-export": 5
      }
     },
@@ -25149,6 +25255,22 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ClaimAgingProfilesConfigureRequest",
+      "ClaimAgingProfilesReceipt",
+      "ClaimAgingProfilesView"
+     ],
+     "path": "src/gate/policy_manifest_doors/claim_aging.rs",
+     "purpose": "Owner-configured class aging in the existing trusted default policy manifest",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "OwnerPolicyConfiguration",
       "OwnerPolicyConfigurationReceipt",
       "OwnerPolicyConfigurationView",
@@ -25168,9 +25290,9 @@
      "path": "src/gate/policy_manifest_doors/mod.rs",
      "purpose": "Typed policy reads, owner edits and inert untrusted contributions",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 5,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -31003,6 +31125,7 @@
       "crate-vis": 2,
       "enum": 2,
       "fn": 2,
+      "re-export": 1,
       "struct": 6
      }
     },
@@ -31035,6 +31158,20 @@
      "purpose": "Import-free, hash-pinned schema validator compartment (base mode)",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SettledStepRequest",
+      "SettledStepView"
+     ],
+     "path": "src/llm/step/settled.rs",
+     "purpose": "Settled-step point read (DOOR-141 A): one committed model step of a Dreamer attempt, as its terminal…",
+     "surface": {
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -31389,6 +31526,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/campaign_actions.rs",
+     "purpose": "Caller-bound campaign actions",
+     "surface": {
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/caps.rs",
      "purpose": "The boundary cap contract (ONE-1441 §Binding cap contract, I11)",
      "surface": {
@@ -31523,6 +31670,55 @@
      "path": "src/memory/chat/tests.rs",
      "purpose": "`.chat` acceptance tests: depth→effort mapping, composer call counts, the zero-model minimal tier, the typed…",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/checkout_doors/mod.rs",
+     "purpose": "Credential-bound CHECKOUT lease and result doors (ARCH-0068 RC1/RC2)",
+     "surface": {
+      "crate-vis": 1,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/checkout_doors/operations.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CheckoutAction",
+      "CheckoutClaimInput",
+      "CheckoutClass",
+      "CheckoutGetInput",
+      "CheckoutLeaseView",
+      "CheckoutPublishInput",
+      "CheckoutPublished",
+      "CheckoutReclaimInput",
+      "CheckoutRenewInput",
+      "CheckoutRetention",
+      "CheckoutSettleInput",
+      "CheckoutSettled",
+      "CheckoutState",
+      "CheckoutTakeoverInput",
+      "CheckoutTeardownInput",
+      "CheckoutTornDown"
+     ],
+     "path": "src/memory/checkout_doors/types.rs",
+     "purpose": "Typed checkout custody calls",
+     "surface": {
+      "enum": 5,
+      "struct": 11
+     }
     },
     {
      "bucket": "s",
@@ -31922,13 +32118,16 @@
      "notable": [
       "ConsolidationAttemptInput",
       "DreamerAttemptRef",
-      "DreamerAttemptView"
+      "DreamerAttemptView",
+      "DreamerParkCauseView",
+      "DreamerParkedAttemptView"
      ],
      "path": "src/memory/dreamer.rs",
      "purpose": "Consolidation enqueue, dreamer attempt status, and claim seeding",
      "surface": {
+      "enum": 1,
       "fn": 3,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -32234,7 +32433,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 12,
+      "mod": 13,
       "re-export": 46
      }
     },
@@ -32677,13 +32876,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ChannelCeiling",
       "CredentialCeiling",
       "ExportChannel",
       "RecordPosition",
+      "RecordPositionRequest",
       "RecordSelector",
       "ScopeAxisInput",
       "ScopeSensitivityBand",
@@ -32696,8 +32896,8 @@
      "purpose": "Scoped exports carry the caller's verified ceiling, never a caller-authored grant",
      "surface": {
       "enum": 5,
-      "fn": 2,
-      "struct": 6
+      "fn": 3,
+      "struct": 7
      }
     },
     {
@@ -33608,7 +33808,7 @@
       "crate-vis": 37,
       "enum": 3,
       "fn": 4,
-      "re-export": 14,
+      "re-export": 15,
       "struct": 2
      }
     },
@@ -33644,13 +33844,28 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AuthorBriefRequest",
+      "BriefClaimCitation",
+      "BriefKindStamp"
+     ],
+     "path": "src/note/brief_doors.rs",
+     "purpose": "Typed claim-citing brief authoring over the existing NOTE pin and write doors",
+     "surface": {
+      "fn": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "BriefCitationView",
       "BriefView"
      ],
      "path": "src/note/brief_view.rs",
      "purpose": "Fresh brief views: current ledger state, cursor drift, and one renderer",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 2
      }
     },
@@ -33750,7 +33965,7 @@
      "path": "src/note/document_store.rs",
      "purpose": "Actor-bound NOTE editor verbs and atomic entity-document persistence",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 9
      }
     },
@@ -34167,7 +34382,7 @@
      "path": "src/note/write_gate.rs",
      "purpose": "Stage 1 of the NOTE write gate (ARCH-0032 #write-gate): the cheap checks a NOTE write meets before it lands…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -34953,7 +35168,7 @@
      "path": "src/origin/publication/publication_protocol.rs",
      "purpose": "Public protocol surface: pin/unpin, publish_origin_ref, reconcile census driver, reads and advertisement…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 9
      }
     },
@@ -37508,7 +37723,7 @@
      "path": "src/policy_model/owner_rows/world_privacy_switch.rs",
      "purpose": "The owner's settings for one world: where it may be read, where its sealed copies may rest, and its model…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2,
       "struct": 1
      }
@@ -45664,7 +45879,7 @@
      "path": "src/skill_optimize/mod.rs",
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "re-export": 17
      }
     },
@@ -49925,6 +50140,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/task_verb/checkout_facts.rs",
+     "purpose": "Checkout ACTs and their synced TASK FACTs share the credential's transaction",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/task_verb/code_consent_word.rs",
      "purpose": "The person's word a code consent answer stands on (DOOR-079 1a)",
      "surface": {
@@ -50382,7 +50607,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 37,
+      "crate-vis": 38,
       "fn": 1,
       "mod": 3,
       "re-export": 25
@@ -50947,12 +51172,15 @@
      "kind": "src",
      "notable": [
       "CredentialAttenuated",
-      "CredentialAttenuationRequest"
+      "CredentialAttenuationRequest",
+      "CredentialCaveat",
+      "CredentialPactCeiling"
      ],
      "path": "src/task_verb/sdk_credential.rs",
      "purpose": "Holder-owned attenuation of the credential a transport admitted",
      "surface": {
-      "struct": 2
+      "fn": 1,
+      "struct": 4
      }
     },
     {
@@ -51125,7 +51353,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 708
+      "fn": 739
      }
     },
     {
@@ -51595,9 +51823,10 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "BriefCitationFollowRequest",
       "ShareCreateRequest",
       "ShareCreated",
       "ShareRevokeRequest",
@@ -51607,8 +51836,8 @@
      "path": "src/task_verb/sdk_share.rs",
      "purpose": "`vault.shares.create`: the caller shares one stored brief with one recipient and chooses which born-with…",
      "surface": {
-      "fn": 3,
-      "struct": 5
+      "fn": 4,
+      "struct": 6
      }
     },
     {
@@ -51689,7 +51918,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "SkillCapabilityView",
@@ -51697,6 +51926,8 @@
       "SkillConvertReceipt",
       "SkillConvertRequest",
       "SkillForkLineage",
+      "SkillGovernanceSetRequest",
+      "SkillGovernanceView",
       "SkillHashRuleRequest",
       "SkillLibraryCall",
       "SkillLibraryDependency",
@@ -51709,6 +51940,12 @@
       "SkillLibraryRestoreRequest",
       "SkillLibraryScan",
       "SkillLibraryView",
+      "SkillOptimizeAxisView",
+      "SkillOptimizeResultRequest",
+      "SkillOptimizeResultView",
+      "SkillOptimizeStartReceipt",
+      "SkillOptimizeStartRequest",
+      "SkillOptimizeVerdictView",
       "SkillRestoreAdmission",
       "SkillSourceEvidence",
       "SkillStaleView"
@@ -51717,8 +51954,8 @@
      "purpose": "Owner-bound library doors over the existing conversion, lifecycle and admission engines",
      "surface": {
       "enum": 3,
-      "fn": 10,
-      "struct": 17
+      "fn": 16,
+      "struct": 25
      }
     },
     {
@@ -55756,9 +55993,19 @@
      "path": "src/world_keys/doors.rs",
      "purpose": "The doors that mint, wrap and open a world's key (contract §5), and what every world-key door shares: this…",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 25,
       "enum": 1,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/doors/provenance.rs",
+     "purpose": "A key record's provenance, under its signature (CALLS WORLD_KEY_WRAP_AUTH): the owner work request it does…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -55899,7 +56146,18 @@
      "path": "src/world_keys/reassert.rs",
      "purpose": "The owner's re-assertion of one world after a pin change (contract §4)",
      "surface": {
+      "crate-vis": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/reassert/holder.rs",
+     "purpose": "A holder's re-assertion of one world's keys (contract §4): the step the re-assert door runs on a holder, and…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -57066,14 +57324,14 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 64,
+     "files": 65,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Calendar module home (CAL-00)"
     },
     "campaign": {
-     "files": 46,
+     "files": 48,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -57122,14 +57380,14 @@
      "purpose": "Relationship-context channel-identity selection law (ONE-1826)"
     },
     "checkout": {
-     "files": 10,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "—"
     },
     "claim": {
-     "files": 68,
+     "files": 69,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57493,7 +57751,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 27,
+     "files": 28,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -57570,7 +57828,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 140,
+     "files": 141,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57752,7 +58010,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 101,
+     "files": 102,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -57773,7 +58031,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 177,
+     "files": 181,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57794,7 +58052,7 @@
      "purpose": "A budget check of untrusted MessagePack before it is decoded"
     },
     "note": {
-     "files": 46,
+     "files": 47,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -58284,7 +58542,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 171,
+     "files": 172,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -58438,7 +58696,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 27,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -58452,9 +58710,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 195,
+   "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3565,
+   "source_files": 3582,
    "test_files": 902
   },
   "oneiron-android": {
@@ -58702,15 +58960,16 @@
       "OwnerWorkOutcome",
       "OwnerWorkRefusal",
       "OwnerWorkRequest",
-      "OwnerWorkResult"
+      "OwnerWorkResult",
+      "WorldKeyMode"
      ],
      "path": "src/authority/owner_work.rs",
      "purpose": "The owner's work requests and their results, and their wire codec: the key, custody or root work an owner…",
      "surface": {
       "const": 2,
       "crate-vis": 6,
-      "enum": 4,
-      "fn": 10,
+      "enum": 5,
+      "fn": 12,
       "struct": 2
      }
     },
@@ -58807,7 +59066,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PolicyRevision",
@@ -58821,7 +59080,7 @@
       "const": 7,
       "crate-vis": 3,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 3
      }
     },
@@ -61932,7 +62191,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConfidenceAdjustment",
@@ -62191,7 +62450,7 @@
     "retrieval_quality": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Shared retrieval execution quality, independent of result counts and ranking"
     },
@@ -66984,7 +67243,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 672
+      "fn": 703
      }
     },
     {
@@ -68033,7 +68292,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 673
+      "fn": 704
      }
     },
     {
@@ -70943,6 +71202,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/aging_doors.rs",
+     "purpose": "Class-aging profile reads and edits under the caller's own owner credential",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/artifact_hosting_doors.rs",
      "purpose": "Typed publication and private preview doors under each caller's own proof",
      "surface": {
@@ -70980,7 +71249,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/browser_doors.rs",
@@ -71006,7 +71275,7 @@
      "path": "src/api/facade/calendar_doors.rs",
      "purpose": "Owner-authorized calendar file imports through the credential's own handle",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 9
      }
     },
     {
@@ -71017,6 +71286,16 @@
      "purpose": "One facade call as every server transport hands it to the generated dispatch (OF-489): the credential it is…",
      "surface": {
       "crate-vis": 22
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/campaign_doors.rs",
+     "purpose": "The stage-evidence host door binds an owner attestation to the request's verified owner proof",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -71037,6 +71316,16 @@
      "purpose": "Credential-bound host projections of the typed channel setup verbs",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/checkout_doors.rs",
+     "purpose": "One credential-backed CHECKOUT door for HTTP, MCP and the generated SDK",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -71356,7 +71645,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 122
+      "crate-vis": 126
      }
     },
     {
@@ -71573,6 +71862,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/run_read_doors.rs",
+     "purpose": "Owner-only reads of committed run state (DOOR-141 A/B): a settled model step and a code run's checkpoints…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/secret_grant_doors.rs",
      "purpose": "The host doors of `self.secrets.*` (DOOR-124, e2e SECRETS-03): an agent run's secret grants, minted…",
      "surface": {
@@ -71616,7 +71915,7 @@
      "path": "src/api/facade/share_doors.rs",
      "purpose": "The share doors past create (OF-491): the issuer or the vault's owner stops a share, and its recipient opens…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -71656,7 +71955,7 @@
      "path": "src/api/facade/skill_doors.rs",
      "purpose": "Selected-message conversion and the owner's skill library, through the same facade and MCP doors",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 12
      }
     },
     {
@@ -73835,6 +74134,36 @@
      "purpose": "Bytes in memory the work under one row may hold at once: the embedder endpoint's request bodies or answers…",
      "surface": {
       "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar_host.rs",
+     "purpose": "The calendar host's real CalDAV wire and iMIP submission transport",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar_host/caldav.rs",
+     "purpose": "Real CalDAV discovery, sync-collection and conditional resource writes",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar_host/xml.rs",
+     "purpose": "Namespace-aware DAV multistatus decoding",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -79075,7 +79404,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 384,
+     "files": 388,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -79115,6 +79444,13 @@
      "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Bytes in memory the work under one row may hold at once: the embedder endpoint's request bodies or answers…"
+    },
+    "calendar_host": {
+     "files": 3,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
+     "purpose": "The calendar host's real CalDAV wire and iMIP submission transport"
     },
     "campaign_enrollment": {
      "files": 1,
@@ -79497,7 +79833,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 722,
+   "source_files": 729,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -79693,6 +80029,7 @@
      "notable": [
       "AcceptConnect",
       "AcceptRescopeConnect",
+      "AccessFactorPolicy",
       "AccessStatus",
       "ActExecution",
       "ActionBoundRequest",
@@ -79865,6 +80202,7 @@
       "AttemptResumePoint",
       "AttemptState",
       "AttemptView",
+      "AuthorBriefRequest",
       "AuthorTakeRequest",
       "AuthorTakeTarget",
       "AuthoringStrategyPin",
@@ -79904,9 +80242,12 @@
       "BorrowedCellView",
       "BranchBelief",
       "BranchSnapshot",
+      "BriefCitationFollowRequest",
+      "BriefClaimCitation",
       "BriefConstraints",
       "BriefContext",
       "BriefIntent",
+      "BriefKindStamp",
       "BriefStamp",
       "BudgetDenied",
       "BudgetHoldNotice",
@@ -79919,6 +80260,14 @@
       "ButtonControl",
       "BypassExtent",
       "BypassScope",
+      "CalendarConnectorConfigureRequest",
+      "CalendarConnectorKillRequest",
+      "CalendarConnectorKillSwitchState",
+      "CalendarConnectorRegistration",
+      "CalendarConnectorRequest",
+      "CalendarConnectorSeatConfig",
+      "CalendarConnectorSeatState",
+      "CalendarConnectorWriteRequest",
       "CalendarEventCreateRequest",
       "CalendarEventCreated",
       "CalendarEventView",
@@ -79926,15 +80275,19 @@
       "CalendarFreebusyRequest",
       "CalendarIcsImportReceipt",
       "CalendarIcsImportRequest",
+      "CalendarImipTransportConfig",
       "CalendarImportClaimReceipt",
       "CalendarImportedEvent",
       "CalendarInstanceMoveRequest",
+      "CalendarInviteSurfaceInput",
+      "CalendarInviteSurfaceMethod",
       "CalendarOccurrenceView",
       "CalendarOccurrencesRequest",
       "CalendarRangeDto",
       "CalendarReadRequest",
       "CalendarSearchRequest",
       "CalendarSel",
+      "CalendarSyncOutcome",
       "CalibrationPair",
       "CallClass",
       "CallEnvelope",
@@ -79944,6 +80297,7 @@
       "CallReceiptRequest",
       "CallTransport",
       "CallableCardView",
+      "CampaignActionProvenance",
       "CampaignArchiveAdmission",
       "CampaignArchiveBest",
       "CampaignArchiveCoverage",
@@ -79958,10 +80312,14 @@
       "CampaignConfig",
       "CampaignCost",
       "CampaignDatasetRef",
+      "CampaignEnrollRequest",
+      "CampaignEnrollmentReceipt",
+      "CampaignEnrollmentState",
       "CampaignEvaluationSplit",
       "CampaignExecutableArm",
       "CampaignGoldAnchor",
       "CampaignKnobs",
+      "CampaignMemberChannelSpec",
       "CampaignProgramAudienceSpec",
       "CampaignProgramDefinitionView",
       "CampaignProgramLifecycle",
@@ -79975,7 +80333,13 @@
       "CampaignSplitReport",
       "CampaignSplitWire",
       "CampaignSplits",
+      "CampaignStageEvidence",
+      "CampaignStageEvidenceOutcome",
+      "CampaignStageEvidenceReceipt",
+      "CampaignStageEvidenceRequest",
       "CampaignTaste",
+      "CampaignUnsubscribeReceipt",
+      "CampaignUnsubscribeRequest",
       "CancelForceReceipt",
       "CancelForceRequest",
       "CancelMode",
@@ -80021,8 +80385,32 @@
       "ChartSeries",
       "ChartSource",
       "ChatProjection",
+      "CheckoutAction",
+      "CheckoutClaimInput",
+      "CheckoutClass",
       "CheckoutDoorBindRequest",
       "CheckoutDoorBinding",
+      "CheckoutGetInput",
+      "CheckoutLeaseView",
+      "CheckoutPublishInput",
+      "CheckoutPublished",
+      "CheckoutReclaimInput",
+      "CheckoutRenewInput",
+      "CheckoutRetention",
+      "CheckoutSettleInput",
+      "CheckoutSettled",
+      "CheckoutState",
+      "CheckoutTakeoverInput",
+      "CheckoutTeardownInput",
+      "CheckoutTornDown",
+      "CheckpointReadRequest",
+      "CheckpointResumeView",
+      "CheckpointStepView",
+      "CheckpointView",
+      "ClaimAgingProfiles",
+      "ClaimAgingProfilesConfigureRequest",
+      "ClaimAgingProfilesReceipt",
+      "ClaimAgingProfilesView",
       "ClaimApprovalStatus",
       "ClaimChangeVerdict",
       "ClaimDemoteActionInput",
@@ -80252,7 +80640,9 @@
       "CreateStandingGrantRequest",
       "CredentialAttenuated",
       "CredentialAttenuationRequest",
+      "CredentialCaveat",
       "CredentialCeiling",
+      "CredentialPactCeiling",
       "CreditOptions",
       "Criterion",
       "CriticAssociation",
@@ -80380,6 +80770,8 @@
       "DoorsLearningCellView",
       "DoorsLearningEvidenceView",
       "DreamerAttemptView",
+      "DreamerParkCauseView",
+      "DreamerParkedAttemptView",
       "DreamingModeInput",
       "EditNoteRequest",
       "EffectReceipt",
@@ -80444,6 +80836,7 @@
       "EvalRelease",
       "EvalSeat",
       "EvalSourceGroup",
+      "EvidenceBasis",
       "EvidenceFloors",
       "EvidenceKind",
       "EvidenceRef",
@@ -80886,6 +81279,7 @@
       "NarrowConnect",
       "NativeOutputRequest",
       "NeighborhoodGraphAtom",
+      "NoShowRecoveryRule",
       "NodeKind",
       "NodeMove",
       "NodePayload",
@@ -80894,12 +81288,14 @@
       "NoteAnchor",
       "NoteAnchoredSpan",
       "NoteAuthorship",
+      "NoteContextDefault",
       "NoteDefaultsView",
       "NoteEdit",
       "NoteEditOutcome",
       "NoteEditorBinding",
       "NoteEditorCloseRequest",
       "NoteEditorClosed",
+      "NoteExtractionDefault",
       "NoteForkReadRequest",
       "NoteForkRecordView",
       "NoteForkRequest",
@@ -80923,6 +81319,7 @@
       "NoteReadSpan",
       "NoteReadView",
       "NoteRefRequest",
+      "NoteRetentionDefault",
       "NoteSeal",
       "NoteVerdict",
       "NoteVersion",
@@ -81184,6 +81581,7 @@
       "PromotionBasis",
       "PromotionDisposition",
       "PromotionEvidenceReason",
+      "PromotionMode",
       "ProposalAsk",
       "ProposalAskRefusal",
       "ProposalBundle",
@@ -81253,6 +81651,7 @@
       "RecordLinks",
       "RecordLinksRequest",
       "RecordPosition",
+      "RecordPositionRequest",
       "RecordRef",
       "RecordRefPreview",
       "RecordSelector",
@@ -81266,9 +81665,13 @@
       "RelayClassifierMode",
       "RelayResolution",
       "ReleasedWait",
+      "RemoteWriteReceipt",
       "RemovalExportDelivery",
       "RenderPair",
       "RenderSide",
+      "ReplyCode",
+      "ReplyDisposition",
+      "ReplyRouteRule",
       "ReplyStripsPage",
       "ReplyStripsRequest",
       "RepoProposalStatus",
@@ -81510,6 +81913,8 @@
       "ScopedReadResultOptionalNoteReadView",
       "ScopedReadResultOptionalNoteVersionTree",
       "ScopedReadResultOptionalProductivityTree",
+      "ScopedReadResultOptionalRecordPosition",
+      "ScopedReadResultOptionalSharedBriefCitation",
       "ScopedReadResultOptionalSharedBriefView",
       "ScopedReadResultOptionalSummaryReadView",
       "ScopedReadResultRecordRefPreview",
@@ -81581,6 +81986,8 @@
       "SetNoteOverridesRequest",
       "SettleVerb",
       "SettleVerdict",
+      "SettledStepRequest",
+      "SettledStepView",
       "ShapeApplyItem",
       "ShapeApplyReceipt",
       "ShapeApplyRequest",
@@ -81673,6 +82080,8 @@
       "SkillConvertRequest",
       "SkillForkLineage",
       "SkillForkRequest",
+      "SkillGovernanceSetRequest",
+      "SkillGovernanceView",
       "SkillHashRuleRequest",
       "SkillHubConfigured",
       "SkillHubKind",
@@ -81691,6 +82100,12 @@
       "SkillLibraryRestoreRequest",
       "SkillLibraryScan",
       "SkillLibraryView",
+      "SkillOptimizeAxisView",
+      "SkillOptimizeResultRequest",
+      "SkillOptimizeResultView",
+      "SkillOptimizeStartReceipt",
+      "SkillOptimizeStartRequest",
+      "SkillOptimizeVerdictView",
       "SkillPackCreditRequest",
       "SkillPackOutcomeProjection",
       "SkillPackOutcomeRequest",
@@ -81731,7 +82146,6 @@
       "SlimResumeStepRequest",
       "SlimStateSnapshot",
       "SlimStateView",
-      "SlipCaveat",
       "SmartArtNode",
       "SourceTrust",
       "SourceTrustRow",
@@ -81764,6 +82178,10 @@
       "SpendSignal",
       "SpendState",
       "SpentKind",
+      "StageDefinition",
+      "StageEvidenceClass",
+      "StageLadderDefinition",
+      "StageTransitionRule",
       "StandingBlockConfigureRequest",
       "StandingBlockEditReceipt",
       "StandingBlockEditRequest",
@@ -82105,8 +82523,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 613,
-      "struct": 1797
+      "enum": 631,
+      "struct": 1861
      }
     },
     {

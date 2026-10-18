@@ -295,6 +295,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "policy_values"
                 | crate::failure_signals::policy::POLICY_KEY
                 | "livequery_tracker_limits"
+                | crate::gate::policy_manifest_doors::CLAIM_AGING_PROFILES_KEY
                 | crate::gate::policy_manifest_doors::RETRIEVAL_WEIGHTS_KEY
                 | crate::gate::weave_policy::KEY
                 | crate::gate::weave_policy::PRECEDENCE_KEY
@@ -326,6 +327,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         }
     }
 
+    crate::gate::policy_manifest_doors::decode_claim_aging_profiles(&entries).ok()?;
     crate::gate::policy_manifest_doors::decode_retrieval_weights(&entries).ok()?;
     validate_owner_policy_notify(&entries)?;
 

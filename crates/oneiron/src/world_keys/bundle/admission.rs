@@ -540,8 +540,16 @@ impl Vault {
         let mine = fold.trusted_machine(secret.machine).is_some_and(|trusted| {
             trusted.profile.machine_key == signing.verifying_key().to_bytes()
         });
-        if !mine || fold.vault_id != Some(pads.vault_id) {
-            return Err(refused("this machine is not one of the owner's here"));
+        if fold.vault_id != Some(pads.vault_id) {
+            return Err(refused("the key pads were opened for another vault"));
+        }
+        // The owner's recipient choice: only a machine he marked "yours"
+        // grants the pads it opened, never a rule on who decides.
+        if !mine {
+            return Err(refused(
+                "the owner-selected world read policy excludes this destination; use an allowed \
+                 holder",
+            ));
         }
         let readers = self.grant_readers_in_txn(&txn, &fold, target, kit_root)?;
         seal_grant(

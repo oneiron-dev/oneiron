@@ -61,6 +61,8 @@ both bindings and their export-census tests in one change.
 - `vault.witness`
 - `vault.claims.upsert`
 - `vault.recall`
+- `vault.retrieval.aging.get`
+- `vault.retrieval.aging.configure`
 - `vault.retrieval.weights.get`
 - `vault.retrieval.weights.configure`
 - `vault.affect.annotations.put`
@@ -80,6 +82,7 @@ both bindings and their export-census tests in one change.
 - `vault.retrieval.replay`
 - `vault.export`
 - `self.credential.attenuate`
+- `vault.scope.position`
 - `vault.scope.ceiling`
 - `vault.export.scoped`
 - `vault.receipts`
@@ -127,6 +130,10 @@ both bindings and their export-census tests in one change.
 - `vault.skills.rules.set`
 - `vault.skills.code_auto_install.set`
 - `vault.skills.permissions.approve`
+- `vault.skills.optimize.start`
+- `vault.skills.optimize.result`
+- `vault.skills.governance.get`
+- `vault.skills.governance.set`
 - `vault.packs.hooks.bind`
 - `vault.packs.hooks.list`
 - `vault.packs.hooks.qualify`
@@ -370,6 +377,14 @@ both bindings and their export-census tests in one change.
 - `vault.code.origin.authority.set`
 - `vault.code.origin.publications`
 - `vault.code.checkout.bind`
+- `vault.code.checkout.claim`
+- `vault.code.checkout.get`
+- `vault.code.checkout.renew`
+- `vault.code.checkout.reclaim`
+- `vault.code.checkout.takeover`
+- `vault.code.checkout.publish`
+- `vault.code.checkout.settle`
+- `vault.code.checkout.teardown`
 - `vault.code.snapshots.ingest`
 - `vault.code.snapshots.get`
 - `vault.code.snapshots.read`
@@ -529,6 +544,14 @@ both bindings and their export-census tests in one change.
 - `vault.forget`
 - `vault.booking.constraint_turn`
 - `vault.booking.page_token`
+- `calendar.invite`
+- `calendar.connector.configure`
+- `calendar.connector.get`
+- `calendar.connector.pull`
+- `calendar.connector.write`
+- `calendar.connector.kill`
+- `calendar.imip.configure`
+- `calendar.imip.get`
 - `vault.calendar.create`
 - `vault.calendar.ics.import`
 - `vault.calendar.occurrences`
@@ -593,6 +616,8 @@ both bindings and their export-census tests in one change.
 - `vault.artifacts.read`
 - `vault.consolidation.enqueue`
 - `vault.consolidation.status`
+- `vault.runs.step`
+- `vault.runs.checkpoint`
 - `vault.consolidation.promote`
 - `vault.consolidation.evidence`
 - `vault.claims.vet`
@@ -628,6 +653,9 @@ both bindings and their export-census tests in one change.
 - `vault.summaries.proposals.merge`
 - `vault.summaries.proposals.switch`
 - `vault.summaries.proposals.reject`
+- `vault.notes.bless_brief_kind`
+- `vault.notes.author_brief`
+- `vault.notes.follow_citation`
 - `vault.notes.create`
 - `vault.notes.author_take`
 - `vault.notes.from_entity`

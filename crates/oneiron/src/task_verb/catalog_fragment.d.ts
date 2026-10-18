@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 721 code-mode rows (700 host rows, 21 run rows), 2539 declarations.
-// Replies: 639 fully typed, 78 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 749 code-mode rows (728 host rows, 21 run rows), 2598 declarations.
+// Replies: 665 fully typed, 80 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 96; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 97; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -356,6 +356,11 @@ declare namespace Sdk {
   type ScopedReadReceipt = { requested: ReadScope; actor_ceiling: ReadScope; applied: ReadScope; narrowed_axes: string[]; suppressed_count: number; replan_hint: string[] };
   type RetrievalRunId = { bytes: number[] };
   type MemoryPack = { items: MemoryItem[]; scope_honesty: ScopeHonesty; retrieval_meta: RetrievalMeta; pack_version: number; rendered?: string | null; narrowing: ScopedReadReceipt; retrieval_run_id?: RetrievalRunId | null };
+  type AccessFactorPolicy = { half_life_secs: number; floor: number };
+  type ClaimAgingProfiles = { durable: AccessFactorPolicy; standard: AccessFactorPolicy; ephemeral: AccessFactorPolicy };
+  type ClaimAgingProfilesView = { manifest_ref: string; body_hash: string; profiles: ClaimAgingProfiles };
+  type ClaimAgingProfilesConfigureRequest = { expected_body_hash: string; profiles: ClaimAgingProfiles };
+  type ClaimAgingProfilesReceipt = { configuration: ClaimAgingProfilesView; receipt_ref: string };
   type RetrievalWeights = { affect: number; arousal: number; community: number; vad: number };
   type RetrievalWeightsView = { manifest_ref: string; body_hash: string; weights: RetrievalWeights };
   type RetrievalWeightsConfigureRequest = { expected_body_hash: string; weights: RetrievalWeights };
@@ -423,10 +428,17 @@ declare namespace Sdk {
   type Sensitivity = "public" | "private" | "sensitive" | "restricted";
   type SensitivityCeiling = { kind: "bottom" } | { kind: "at_most"; value: Sensitivity };
   type Scope = { worlds?: ScopeAxis<ScopeId>; facets?: ScopeAxis<ScopeId>; bands?: ScopeAxis<number>; audience?: ScopeAxis<ScopeId>; verbs?: ScopeAxis<string>; sensitivity?: SensitivityCeiling };
-  type SlipCaveat = { scope?: Scope | null; expires_at?: number | null; ttl_secs?: number | null; single_use: boolean; records?: string[] | null; channels?: string[] | null; pact?: [ScopeId, number[]] | null };
-  type CredentialAttenuationRequest = { holder_seed: number[]; caveat: SlipCaveat; next_binding_key?: number[] | null };
-  type CredentialAttenuated = { token: string; binding_key: number[] };
   type CredentialCeiling = { kind: "ceiling"; scope: Scope };
+  type TypeByteFamily = "Conversation" | "People" | "World" | "Content" | "AgentsAndSurfacing" | "CoreOverflow" | "AuthorityPolicyCustody" | "AuditObservability" | "OutboundCommunicationConsent" | "RegistriesDerived" | "Productivity" | "Code" | "Documents" | "Companion" | "PackOverflow";
+  type SelectorRange = "Semantic" | "Core" | "Maintenance" | { Family: TypeByteFamily };
+  type FederationDirectionScope = { worlds: ScopeAxis<ScopeId>; facets: ScopeAxis<ScopeId>; bands: ScopeAxis<SelectorRange> };
+  type CredentialPactCeiling = { grant_ref: ScopeId; ceiling: FederationDirectionScope };
+  type CredentialCaveat = { scope?: CredentialCeiling | null; expires_at?: number | null; ttl_secs?: number | null; single_use?: boolean; records?: string[] | null; channels?: string[] | null; pact?: CredentialPactCeiling | null };
+  type CredentialAttenuationRequest = { holder_seed: number[]; caveat: CredentialCaveat; next_binding_key?: number[] | null };
+  type CredentialAttenuated = { token: string; binding_key: number[] };
+  type RecordPositionRequest = { record_ref: string };
+  type ScopedReadResult<T> = { value: T; narrowing: ScopedReadReceipt };
+  type RecordPosition = { kind: "position"; scope: Scope };
   type RecordSelector = { worlds?: RecallWorlds | null; facet_refs?: string[]; kinds?: string[]; project_refs?: string[] };
   type ScopeAxisInput<T> = { kind: "bottom" } | { kind: "all" } | { kind: "some"; values: T[] };
   type ScopeSensitivityBand = "public" | "private" | "sensitive" | "restricted";
@@ -434,7 +446,6 @@ declare namespace Sdk {
   type ChannelCeiling = { worlds?: ScopeAxisInput<string>; facets?: ScopeAxisInput<string>; bands?: ScopeAxisInput<number>; audience?: ScopeAxisInput<string>; verbs?: ScopeAxisInput<string>; sensitivity?: ScopeSensitivityInput };
   type ExportChannel = { channel_ref: string; scope: ChannelCeiling };
   type ScopedExportRequest = { selector: RecordSelector; channel: ExportChannel };
-  type RecordPosition = { kind: "position"; scope: Scope };
   type MadeByInputRole = "input" | "prompt";
   type MadeByInput = { row: string; role: MadeByInputRole };
   type MadeByClass = "stated" | "concluded";
@@ -644,6 +655,14 @@ declare namespace Sdk {
   type SkillHashRuleRequest = { content_hash: string; blocked: boolean };
   type SkillCodeAutoInstallRequest = { enabled: boolean };
   type HubSkillPermissionRequest = { entity: EntityId; hub_ref: HubRef };
+  type SkillOptimizeStartRequest = { skill?: EntityId | null; resident?: EntityId | null; run_id?: string | null; dedupe_key?: string | null; now?: number | null };
+  type SkillGovernanceView = { entity: EntityId; skill_id: string; version: string; lifecycle: SkillLibraryLifecycle; verdict: string; tier?: string | null; protected: boolean; optimizable: boolean };
+  type SkillOptimizeStartReceipt = { outcome: string; job_ref?: string | null; state?: string | null; skill?: EntityId | null; governance?: SkillGovernanceView | null };
+  type SkillOptimizeResultRequest = { job_ref?: string | null; proposal?: EntityId | null };
+  type SkillOptimizeAxisView = { axis: string; before: number; after: number };
+  type SkillOptimizeVerdictView = { id: EntityId; proposal: EntityId; skill: EntityId; disposition: string; accepted: boolean; before: number; after: number; goal_axes: SkillOptimizeAxisView[]; goal_revision: string; judge_revision?: string | null; cycle: string; held_out_receipts: string[]; held_out_count: number; held_out_digest: string; held_out_truncated: boolean; proposal_digest: string; target_digest: string; proposal_tier?: string | null; at: number };
+  type SkillOptimizeResultView = { job_ref?: string | null; state?: string | null; kind?: string | null; last_error?: string | null; skill?: EntityId | null; proposal?: EntityId | null; proposal_lifecycle?: SkillLibraryLifecycle | null; incumbent_lifecycle?: SkillLibraryLifecycle | null; governance?: SkillGovernanceView | null; verdict?: SkillOptimizeVerdictView | null; verdicts: SkillOptimizeVerdictView[] };
+  type SkillGovernanceSetRequest = { entity: EntityId; tier?: string | null };
   type HubHookBindRequest = { pack: string };
   type HookActorClass = "human" | "agent" | "system";
   type HookPhase = "pre" | "post" | "fact";
@@ -813,9 +832,6 @@ declare namespace Sdk {
   type ConnectIdentity = { vault: string; host_key: string };
   type MintConnectGrant = { peer_vault: string; authority_scope: Scope; expires_at?: number | null };
   type ConnectGrant = { grant: string; guest_actor: string; resolved_scope: Scope; expires_at?: number | null };
-  type TypeByteFamily = "Conversation" | "People" | "World" | "Content" | "AgentsAndSurfacing" | "CoreOverflow" | "AuthorityPolicyCustody" | "AuditObservability" | "OutboundCommunicationConsent" | "RegistriesDerived" | "Productivity" | "Code" | "Documents" | "Companion" | "PackOverflow";
-  type SelectorRange = "Semantic" | "Core" | "Maintenance" | { Family: TypeByteFamily };
-  type FederationDirectionScope = { worlds: ScopeAxis<ScopeId>; facets: ScopeAxis<ScopeId>; bands: ScopeAxis<SelectorRange> };
   type OfferConnect = { peer_vault: string; grant: string; outbound: FederationDirectionScope; inbound: FederationDirectionScope };
   type FederationPactScope = { lo_to_hi: FederationDirectionScope; hi_to_lo: FederationDirectionScope };
   type Offer = { pact: string; nonce: string; from: string; to: string; scope: FederationPactScope; signer: string; signature: string };
@@ -1323,7 +1339,6 @@ declare namespace Sdk {
   type LensListPage = { rows: LensListRow[]; next_after?: string | null };
   type LensDossierSource = { entity_ref: string; title: string };
   type LensDefaultRequest = { title: string; ledger?: string[]; dossiers?: LensDossierSource[]; threads?: string[]; as_of?: number | null };
-  type ScopedReadResult<T> = { value: T; narrowing: ScopedReadReceipt };
   type DisclosureOfferRequest = { contact: string; scope: Scope; purpose: string; channel: string; beneficiary: string; ask?: string | null; owner_ref: string; expires_at: number };
   type DisclosureOffered = { proposal_ref: string; owner_ref: string; created_at: number; expires_at: number };
   type RevealRequest = { handle: string; why: string };
@@ -1504,6 +1519,22 @@ declare namespace Sdk {
   type OriginPublicationsView = { repo: string; publications: OriginPublicationView[] };
   type CheckoutDoorBindRequest = { repo: string; checkout: string; epoch: number; endpoint: string };
   type CheckoutDoorBinding = { repo: string; checkout: string; epoch: number; checkout_path: string; remote_url: string };
+  type CheckoutClass = "edit" | "build" | "verify" | "effect";
+  type CheckoutClaimInput = { checkout: string; repo: EntityId; task: EntityId; task_class: CheckoutClass; ttl_seconds: number; declared_idempotent: boolean };
+  type CheckoutState = "active" | "settling" | "settled" | "retained";
+  type CheckoutLeaseView = { checkout: string; task: EntityId; repo_ref: string; holder: EntityId; epoch: number; task_class: CheckoutClass; state: CheckoutState; claimed_at: number; expires_at?: number | null; expired: boolean; ticket: string; receipt?: string | null };
+  type CheckoutGetInput = { checkout: string };
+  type CheckoutRenewInput = { checkout: string; epoch: number; ttl_seconds: number };
+  type CheckoutReclaimInput = { checkout: string; expired_epoch: number };
+  type CheckoutTakeoverInput = { checkout: string; expected_epoch: number };
+  type CheckoutPublishInput = { checkout: string; epoch: number; observed_ref: string; candidate: EntityId };
+  type CheckoutPublished = { checkout: string; epoch: number; observed_ref: string; candidate: EntityId; result_identity: string; receipt: string };
+  type CheckoutAction = "select" | "apply" | "release" | "discard";
+  type CheckoutSettleInput = { checkout: string; epoch: number; observed_ref: string; candidate: EntityId; action: CheckoutAction };
+  type CheckoutSettled = { checkout: string; epoch: number; observed_ref: string; candidate: EntityId; action: CheckoutAction; result_identity: string; receipt: string; settled_at: number };
+  type CheckoutTeardownInput = { checkout: string; epoch: number; pushed_head_receipt?: EntityId | null };
+  type CheckoutRetention = "missing_pushed_head_receipt" | "receipt_mismatch" | "live_occupant" | "dirty_or_uncertain";
+  type CheckoutTornDown = { status: "collected"; checkout: string; epoch: number } | { status: "retained"; checkout: string; epoch: number; reason: CheckoutRetention };
   type CodeRepoPointer = { local_folder: string; commit: string };
   type CodeSnapshotIngestRequest = { project_id: string; pointer: CodeRepoPointer };
   type CodeSnapshotFile = { path: string; content_hash_blake3: string; size_bytes: number };
@@ -2094,6 +2125,20 @@ declare namespace Sdk {
   type BookingConstraintTurnResponse = { outcome: "slots"; card: GeneratedUiCard; flex_used: boolean; hold: BookingConstraintHoldContext } | { outcome: "continue_by_email"; continuation: ConstraintContinuation } | { outcome: "deflect"; card: GeneratedUiCard };
   type BookingPageTokenRequest = { page_ref: string };
   type BookingPageTokenResponse = { page_token: string };
+  type CalendarInviteSurfaceMethod = "REQUEST" | "CANCEL";
+  type CalendarInviteSurfaceInput = { method: CalendarInviteSurfaceMethod; uid: string; sequence: number; ics_blob_ref: string; recipient: string; mention?: MentionProvenance | null };
+  type OutboundIntentReceipt = { intent_ref: string; outcome: string; gate_outcome?: string | null; gate_decision_ref?: string | null; gate_reason_codes: string[]; deduped: boolean };
+  type CalendarConnectorSeatConfig = { seat_ref: string; secret_ref: string; system: string; calendar_ref: string; cadence_jitter_min_seconds: number; cadence_jitter_max_seconds: number };
+  type CalendarConnectorConfigureRequest = { config: CalendarConnectorSeatConfig; endpoint: string };
+  type CalendarConnectorKillSwitchState = { killed_at: number; verbs_revoked: boolean; polling_stopped: boolean; reason_ref: string };
+  type CalendarConnectorSeatState = { config: CalendarConnectorSeatConfig; cursor?: string | null; kill_switch?: CalendarConnectorKillSwitchState | null };
+  type CalendarSyncOutcome = { Reenqueued: { next_cursor?: string | null; next_not_before: number; applied: number; acknowledged: number; source_absences: number; status_cancellations: number } } | "Killed";
+  type CalendarConnectorRegistration = { endpoint: string; seat: CalendarConnectorSeatState; last_sync?: CalendarSyncOutcome | null };
+  type CalendarConnectorRequest = { seat_ref: string };
+  type CalendarConnectorWriteRequest = { seat_ref: string; event_ref: string };
+  type RemoteWriteReceipt = { href: string; etag?: string | null; uid: string; sequence: number; content_hash: number[] };
+  type CalendarConnectorKillRequest = { seat_ref: string; reason_ref: string };
+  type CalendarImipTransportConfig = { endpoint: string; secret_ref: string };
   type CalendarRangeDto = { start: number; end: number };
   type CalendarEventCreateRequest = { origin: "native"; summary: string; occurredAt: CalendarRangeDto } | { origin: "dreamer"; summary: string; occurredAt: CalendarRangeDto; evidenceTurnIds: string[]; sourceFrontiers: string[] };
   type CalendarEventCreated = { event_ref: string; origin: string; recorded_at: number };
@@ -2328,7 +2373,15 @@ declare namespace Sdk {
   type ConsolidationEnqueueRequest = { scope: string; input: unknown; run_id?: string | null; dedupe_key?: string | null; now?: number | null };
   type DreamerAttemptRef = { job_ref: string; state: string; existing: boolean };
   type ConsolidationStatusRequest = { job_ref: string };
-  type DreamerAttemptView = { job_ref: string; state: string; kind: string; lease_owner?: string | null; attempt_count: number; run_id?: string | null; last_error?: string | null; created_at: number; updated_at: number };
+  type DreamerParkCauseView = "provider_unavailable" | "executor_error" | "checkpoint" | "cancelled" | "signal" | "other";
+  type DreamerParkedAttemptView = { job_ref: string; cause: DreamerParkCauseView; parked_at: number };
+  type DreamerAttemptView = { job_ref: string; state: string; kind: string; lease_owner?: string | null; attempt_count: number; run_id?: string | null; last_error?: string | null; created_at: number; updated_at: number; parked?: DreamerParkedAttemptView | null };
+  type SettledStepRequest = { job_ref: string; step_hash: string };
+  type SettledStepView = { job_ref: string; run_id?: string | null; claim_ref: string; step_hash: string; model: ModelId; purpose: string; params_hash: string; response: LlmResponse };
+  type CheckpointReadRequest = { run_ref: string; from_step?: number; limit?: number | null };
+  type CheckpointStepView = { step: number; label: string; state_hash: string; created_at_ms: number };
+  type CheckpointResumeView = { step: number; wait_ref: string; effect: string; output_handle: string; reply?: unknown | null };
+  type CheckpointView = { run_ref: string; completed_steps: number; steps: CheckpointStepView[]; resumed: CheckpointResumeView[]; next_step?: number | null };
   type EvidenceKind = "turn" | "message" | "note" | "asset_text" | "import_record";
   type CursorSpan = { start: number[]; end: number[] };
   type EvidenceRef = { kind: EvidenceKind; entity: string; doc: string; at: number[]; span?: CursorSpan | null; quote_sha256?: number[] | null };
@@ -2400,7 +2453,6 @@ declare namespace Sdk {
   type DeliveryWindowResolution = { observed: DeliveryWindowDecision; effective: DeliveryWindowDecision; matched: DeliveryWindowMatch[]; rung: DeliveryWindowLadderRung };
   type DeliveryWindowPreview = { policy_refs: EntityId[]; resolution: DeliveryWindowResolution };
   type OutboundScheduleRequest = { verb: string; channel: string; target: string; on_behalf_of?: string | null; content_ref?: string | null; idempotency_key?: string | null; dedupe_key?: string | null; trigger: string; trigger_ref: string; job_ref?: string | null; occurred_at?: number | null; mention?: MentionProvenance | null };
-  type OutboundIntentReceipt = { intent_ref: string; outcome: string; gate_outcome?: string | null; gate_decision_ref?: string | null; gate_reason_codes: string[]; deduped: boolean };
   type SummaryPath = "canonical" | { branch: string } | { branch_span: { after: string; through: string } } | { sub_session: string };
   type SummaryScope = { conversation_ref: string; path: SummaryPath; session?: string | null; include_forks?: boolean };
   type SummaryCreateRequest = { scope: SummaryScope; purpose?: string | null; land_on?: string | null; as_record?: boolean };
@@ -2433,6 +2485,13 @@ declare namespace Sdk {
   type SummaryMutationResult = { proposal: SummaryProposalView; read_refs: string[] };
   type SummaryRegenerateRequest = { summary_ref: string; base: number[]; keep: string; text: string; read_refs: string[] };
   type SummaryProposalRequest = { proposal_ref: string };
+  type NoteExtractionDefault = "disabled";
+  type NoteContextDefault = "relationship_scoped";
+  type NoteRetentionDefault = "durable";
+  type BriefKindStamp = { person_ref: string; extraction: NoteExtractionDefault; context: NoteContextDefault; retention: NoteRetentionDefault };
+  type BriefClaimCitation = { claim_ref: string; document_ref: string; start: number; end: number };
+  type AuthorBriefRequest = { markdown: string; citations: BriefClaimCitation[] };
+  type BriefCitationFollowRequest = { share_ref: string; claim_ref: string; narrowing?: ShareViewNarrowing | null };
   type AuthorTakeTarget = { subject: string } | { claim: string };
   type AuthorTakeRequest = { target: AuthorTakeTarget; markdown: string };
   type CreateNoteFromEntityRequest = { source_ref: string; kind: string };
@@ -2617,6 +2676,28 @@ declare const ai: {
 };
 /** Asks people or an authority a typed question and returns at admission with the ask's handle. */
 declare function ask(input: Sdk.TaskAskRequest): Promise<Sdk.TaskAskReceipt | StoredResult>;
+declare const calendar: {
+  connector: {
+    /** Installs one CalDAV seat under owner proof, with a custody reference, discovery endpoint and nonzero bounded poll cadence. */
+    configure(input: Sdk.CalendarConnectorConfigureRequest): Promise<Sdk.CalendarConnectorRegistration | StoredResult>;
+    /** Reads a configured CalDAV seat, its real provider cursor, kill switch and last sync observation under owner proof. */
+    get(input: Sdk.CalendarConnectorRequest): Promise<Sdk.CalendarConnectorRegistration | null | StoredResult>;
+    /** Kills a CalDAV seat under owner proof, revoking its advertised verbs and stopping further polling and writes without erasing calendar evidence. */
+    kill(input: Sdk.CalendarConnectorKillRequest): Promise<Sdk.CalendarConnectorRegistration | StoredResult>;
+    /** Pulls the configured CalDAV seat through the existing import gate and echo law, returning the real cursor and sync counters under owner proof. */
+    pull(input: Sdk.CalendarConnectorRequest): Promise<Sdk.CalendarSyncOutcome | StoredResult>;
+    /** Writes a readable EVENT to the owner-installed CalDAV seat through the durable conditional-write outbox, never a blind overwrite. */
+    write(input: Sdk.CalendarConnectorWriteRequest): Promise<Sdk.RemoteWriteReceipt | StoredResult>;
+  };
+  imip: {
+    /** Installs the host iMIP mail submission endpoint and custody name under owner proof; this configuration grants no invite consent or sending identity. */
+    configure(input: Sdk.CalendarImipTransportConfig): Promise<Sdk.CalendarImipTransportConfig | StoredResult>;
+    /** Reads the installed host iMIP submission endpoint and custody name under owner proof, never its credential value. */
+    get(input: Sdk.EmptyRequest): Promise<Sdk.CalendarImipTransportConfig | null | StoredResult>;
+  };
+  /** Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe. */
+  invite(input: Sdk.CalendarInviteSurfaceInput): Promise<Sdk.OutboundIntentReceipt | StoredResult>;
+};
 /** Read-only preflight of an ask: its recipients, faces and channels, without minting a TASK or scheduling anything. */
 declare function can(input: Sdk.TaskCanAskRequest): Promise<Sdk.TaskAskPreflight | StoredResult>;
 /** Cancels one TASK under the caller's own-scoped auto default, abandoning only unlanded work. */
@@ -3208,6 +3289,22 @@ declare const vault: Sdk.VaultHost & {
     checkout: {
       /** Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential. */
       bind(input: Sdk.CheckoutDoorBindRequest): Promise<Sdk.CheckoutDoorBinding | StoredResult>;
+      /** Claim the caller's checkout on an assigned task, with a bounded TTL and declared idempotence. */
+      claim(input: Sdk.CheckoutClaimInput): Promise<Sdk.CheckoutLeaseView | StoredResult>;
+      /** Read checkout custody and vault-clock expiry as a task party, without claiming or renewing it. */
+      get(input: Sdk.CheckoutGetInput): Promise<Sdk.CheckoutLeaseView | StoredResult>;
+      /** Publish a stored candidate result for checkout settlement under the caller's live epoch; this does not export a Git head. */
+      publish(input: Sdk.CheckoutPublishInput): Promise<Sdk.CheckoutPublished | StoredResult>;
+      /** Reclaim an expired declared-idempotent build or verify checkout as an authorized successor at the named epoch. */
+      reclaim(input: Sdk.CheckoutReclaimInput): Promise<Sdk.CheckoutLeaseView | StoredResult>;
+      /** Renew the caller's still-live checkout under its exact holder and epoch fence. */
+      renew(input: Sdk.CheckoutRenewInput): Promise<Sdk.CheckoutLeaseView | StoredResult>;
+      /** Consume one published checkout result at its epoch as select, apply, release or discard; an identical retry returns its receipt. */
+      settle(input: Sdk.CheckoutSettleInput): Promise<Sdk.CheckoutSettled | StoredResult>;
+      /** Explicitly take over a checkout as its task owner, including effect work, at the named epoch. */
+      takeover(input: Sdk.CheckoutTakeoverInput): Promise<Sdk.CheckoutLeaseView | StoredResult>;
+      /** Collect the caller's checkout only with a matching durable pushed-head receipt and clear custody; retain dirty or uncertain trees. */
+      teardown(input: Sdk.CheckoutTeardownInput): Promise<Sdk.CheckoutTornDown | StoredResult>;
     };
     /** Record a real Git overlap between two stored one-file proposals at the same retained base, with both trees, paths and a linked reconciliation task. Owner only; neither branch moves. */
     conflict_record(input: Sdk.CodeConflictRecordRequest): Promise<Sdk.CodeConflictView | StoredResult>;
@@ -3651,8 +3748,12 @@ declare const vault: Sdk.VaultHost & {
   /** The weighted-edge neighbourhood of one entity, filtered by edge kind and minimum weight. */
   neighbors(input: Sdk.NeighborsRequest): Promise<Sdk.ScopedReadResult<Sdk.NeighborHit[]> | StoredResult>;
   notes: {
+    /** Authors markdown with supporting claim citations, capturing source NOTE pins and rechecking their live read authority in the brief write transaction. */
+    author_brief(input: Sdk.AuthorBriefRequest): Promise<Sdk.EntityRefReceipt | StoredResult>;
     /** Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target. */
     author_take(input: Sdk.AuthorTakeRequest): Promise<Sdk.EntityRefReceipt | StoredResult>;
+    /** A verified person stamps the brief kind policy seed; it grants no sharing or extraction authority. */
+    bless_brief_kind(input: Sdk.EmptyRequest): Promise<Sdk.BriefKindStamp | StoredResult>;
     /** Creates a NOTE of a registered kind, its first authored text as its birth. */
     create(input: Sdk.CreateNoteRequest): Promise<Sdk.EntityRefReceipt | StoredResult>;
     /** One NOTE's overrides and the extraction, context and retention defaults its gates read after them. */
@@ -3665,6 +3766,8 @@ declare const vault: Sdk.VaultHost & {
       /** Closes one live NOTE editor held by this caller; a binding id alone grants no authority. */
       close(input: Sdk.NoteEditorCloseRequest): Promise<Sdk.NoteEditorClosed | StoredResult>;
     };
+    /** Follows returned share and claim references under the caller live read scope; revocation stops resolution and hidden citations disclose no quote or lifecycle. */
+    follow_citation(input: Sdk.BriefCitationFollowRequest): Promise<Sdk.ScopedReadResult<Sdk.SharedBriefCitation | null> | StoredResult>;
     /** Forks one NOTE at the exact live-head version the caller read, retaining its edits or rewrite without moving the live head. */
     fork(input: Sdk.NoteForkRequest): Promise<Sdk.NoteForkView | StoredResult>;
     forks: {
@@ -3948,6 +4051,12 @@ declare const vault: Sdk.VaultHost & {
     status(input: Sdk.ResultRunRequest): Promise<Sdk.ResultRunStatus | StoredResult>;
   };
   retrieval: {
+    aging: {
+      /** The owner edits all class-aging profiles against the current manifest hash without rewriting confidence, lifecycle or claim bodies. */
+      configure(input: Sdk.ClaimAgingProfilesConfigureRequest): Promise<Sdk.ClaimAgingProfilesReceipt | StoredResult>;
+      /** The owner reads class-level exponential aging profiles and the trusted manifest hash; confidence never ages. */
+      get(input: Sdk.EmptyRequest): Promise<Sdk.ClaimAgingProfilesView | StoredResult>;
+    };
     /** The owner exports finalized run evidence without query or pack text, raw frontier samples, trace keys or free-form outcome metadata. */
     export(input: Sdk.RetrievalDiagnosticRequest): Promise<Sdk.RetrievalDiagnosticExport | StoredResult>;
     outcomes: {
@@ -4028,10 +4137,16 @@ declare const vault: Sdk.VaultHost & {
       /** The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts. */
       get(input: Sdk.RunBranchesRequest): Promise<Sdk.RunBranchesView | StoredResult>;
     };
+    /** Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run. */
+    checkpoint(input: Sdk.CheckpointReadRequest): Promise<Sdk.CheckpointView | null | StoredResult>;
+    /** Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work. */
+    step(input: Sdk.SettledStepRequest): Promise<Sdk.SettledStepView | null | StoredResult>;
   };
   scope: {
     /** Reads the caller credential ceiling as a typed ceiling, never as a record position. */
     ceiling(input: Sdk.EmptyRequest): Promise<Sdk.CredentialCeiling | StoredResult>;
+    /** Reads a positively stamped record position through the caller credential and existing read gate, with its narrowing receipt. */
+    position(input: Sdk.RecordPositionRequest): Promise<Sdk.ScopedReadResult<Sdk.RecordPosition | null> | StoredResult>;
   };
   search: ((input: Sdk.MemorySearchInput) => Promise<Sdk.MemorySearchOutput | StoredResult>) & {
     /** BM25 text search over the engine index; surfaceable claims only. */
@@ -4148,10 +4263,22 @@ declare const vault: Sdk.VaultHost & {
     fork(input: Sdk.SkillLibraryForkRequest): Promise<Sdk.SkillLibraryView | StoredResult>;
     /** Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry. */
     get(input: Sdk.HubSkillRequest): Promise<Sdk.SkillLibraryView | StoredResult>;
+    governance: {
+      /** Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it. */
+      get(input: Sdk.HubSkillRequest): Promise<Sdk.SkillGovernanceView | StoredResult>;
+      /** The owner marks or clears one skill governance tier; the mark changes no instruction content or version. */
+      set(input: Sdk.SkillGovernanceSetRequest): Promise<Sdk.SkillGovernanceView | StoredResult>;
+    };
     /** The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask. */
     import(input: Sdk.HubImportRequest): Promise<Sdk.HubSkillImported | StoredResult>;
     /** Lists a page of the owner skill library, including inactive skills and their retained evidence. */
     list(input: Sdk.SkillLibraryListRequest): Promise<Sdk.SkillLibraryPage | StoredResult>;
+    optimize: {
+      /** Reads a started skill_optimize job, its drafted proposal, the incumbent, its governance and every held-out verdict on the proposal. */
+      result(input: Sdk.SkillOptimizeResultRequest): Promise<Sdk.SkillOptimizeResultView | StoredResult>;
+      /** The owner starts one skill_optimize attempt on the Dreamer queue; a named identity or alignment skill is excluded and never enqueued. */
+      start(input: Sdk.SkillOptimizeStartRequest): Promise<Sdk.SkillOptimizeStartReceipt | StoredResult>;
+    };
     outcomes: {
       /** Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner. */
       get(input: Sdk.SkillPackCreditRequest): Promise<Sdk.LateCreditReceipt | null | StoredResult>;
