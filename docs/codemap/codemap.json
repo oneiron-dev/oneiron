@@ -62134,7 +62134,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConfidenceAdjustment",
@@ -62393,7 +62393,7 @@
     "retrieval_quality": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Shared retrieval execution quality, independent of result counts and ranking"
     },

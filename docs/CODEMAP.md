@@ -384,7 +384,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `posterior` | file | 1 | s | Shared Beta posterior bandit seam; outcome admission stays with each estimator |
 | `record_layout` | file | 1 | s | Byte layout of the entity metadata header that starts every stored entity row: the type byte, the occurred… |
 | `registry` | dir | 8 | m | Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators |
-| `retrieval_quality` | file | 1 | s | Shared retrieval execution quality, independent of result counts and ranking |
+| `retrieval_quality` | file | 1 | m | Shared retrieval execution quality, independent of result counts and ranking |
 | `retrieval_telemetry` | file | 1 | s | The retrieval signal and blend-weight vocabulary: what retrieval's fusion scores with, what the retrieval… |
 | `room_join` | file | 1 | s | The consent vocabulary of a room join (OF-531): who asks, which consents a join collects, and the party each… |
 | `secret_custody` | file | 1 | s | ARCH-0069 S1 custody classes and tiers |
