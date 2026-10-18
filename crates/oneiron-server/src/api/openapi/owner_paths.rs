@@ -113,6 +113,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         row: None,
     },
     OwnerRoute {
+        method: "post",
+        path: "/coach/training-offers/undo",
+        summary: "The owner's undo of the stock switch an approved offer bound.",
+        row: None,
+    },
+    OwnerRoute {
         method: "get",
         path: "/commitments/reminder-route",
         summary: "Reminder route.",
@@ -302,6 +308,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         method: "post",
         path: "/desktops/screen",
         summary: "The whole display as a PNG, unmasked, for the owner only: never kept, never a receipt.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/desktops/stream",
+        summary: "The run desktop's whole display as server-sent events while the owner watches or holds it: state, frame (changed PNGs as base64, paced), error, ended and refused events.",
         row: None,
     },
     OwnerRoute {

@@ -496,6 +496,56 @@ pub(crate) fn stamp_leader_project(
     )?;
     Ok(())
 }
+/// Settles a BLOB_ARTIFACT's audience to `project` in the transaction that
+/// binds it to that project: a signing document drafted for a project, and
+/// the sealed copies and signature images it makes (OF-415). Like
+/// [`stamp_leader_project`], it only moves the record's own default birth
+/// stamp, or confirms the project stamp it already carries; any other prior
+/// position is refused.
+pub(crate) fn stamp_blob_project(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    project: EntityId,
+) -> Result<()> {
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?
+        .ok_or(Error::EntityNotFound)?;
+    let header =
+        EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("blob scope header"))?;
+    let kind = header.entity_type;
+    if kind != crate::registry::ENTITY_TYPE_BLOB_ARTIFACT {
+        return Err(Error::InvalidEntityType(kind));
+    }
+    let facet = crate::claim::substrate_facet_id(id)?;
+    let birth = default_stamp(kind, facet);
+    let mut scope = birth.clone();
+    scope.audience = singleton(ScopeId(project));
+    if let Some(prior) = SCOPE_RECORD.get(store, txn, &id)? {
+        if prior.version != 2
+            || prior.kind != kind
+            || prior.birth_facet != *facet.as_bytes()
+            || (prior.scope != birth && prior.scope != scope)
+        {
+            return Err(Error::InvalidClaimBody("record scope restamp refused"));
+        }
+        if prior.scope == scope {
+            return Ok(());
+        }
+    }
+    bump_scope_revision(store, txn)?;
+    SCOPE_RECORD.put(
+        store,
+        txn,
+        &id,
+        &Stamp {
+            version: 2,
+            kind,
+            birth_facet: *facet.as_bytes(),
+            scope,
+        },
+    )?;
+    Ok(())
+}
 fn stored_scope(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,

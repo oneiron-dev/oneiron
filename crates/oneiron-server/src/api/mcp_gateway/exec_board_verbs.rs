@@ -89,6 +89,11 @@ pub(crate) async fn execute_mcp_execute_code(
         outcome.status,
         oneiron::engine_executor::EngineExecutorStatus::Complete
     );
+    // A run that ended ends its desktop; any other entry leaves it parked
+    // for the run's next entry (CUA-001).
+    if terminal {
+        server.desktop_seats.end_run(run_id);
+    }
     // Non-continuable: the step log is a run's own, not a re-enumerable
     // producer set, so a non-terminal page here states
     // `continuation_unavailable` instead of minting a handle nothing consumes.

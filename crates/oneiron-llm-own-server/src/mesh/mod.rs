@@ -25,7 +25,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 pub use catalog::{COST_DECLARED, CatalogRefresh, MESH_PEER, advertises};
-pub use client::{LlmNodes, MeshLlmTransport, VaultLlmNodes};
+pub use client::{LlmNodes, MeshLlmTransport, MeshPeerTransport, VaultLlmNodes};
 pub use serve::{LlmMeshHandler, LlmMeshService};
 
 /// The mesh ALPN model calls ride.

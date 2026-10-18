@@ -719,11 +719,14 @@ fn within_standing_budget(response: &ContextBoardResponse) -> Result<(), crate::
 /// The authenticated SDK describe(self) path uses the same run snapshot and
 /// renderer as context-board assembly. It cannot accept authority in the body.
 /// The brief is rendered whole, so a record-narrowed credential is refused.
+/// Beside the card come the rows it is derived from
+/// ([`oneiron::context_board::SelfBrief::sources`]), the PEOPLE roster it
+/// read among them, which every served door releases it by (DEC-0005).
 pub(crate) async fn describe_self_for_auth(
     server: &SyncServer,
     auth: &CoreAuth,
     body: &serde_json::Value,
-) -> Result<serde_json::Value, crate::error::ApiError> {
+) -> Result<(serde_json::Value, Vec<oneiron::EntityId>), crate::error::ApiError> {
     auth.require_unrestricted_record_scope()?;
     oneiron::task_verb::sdk::validate_input("describe", body).map_err(|_| {
         crate::error::ApiError::bad_request("invalid describe(self) input", Some("self"))
@@ -774,13 +777,14 @@ pub(crate) async fn describe_self_for_auth(
         .await
         .session_reads(&actor.to_hex(), Some(session_id))
         .clone();
-    let card = run
+    let (card, sources) = run
         .render
-        .describe_self(&server.vault, &run.state, &read_set, Some(&people))
+        .describe_self_listing(&server.vault, &run.state, &read_set, Some(&people))
         .map_err(|error| super::core_engine_error("self brief failed", error))?;
     let tail = card.tail.ok_or_else(|| {
         crate::error::ApiError::internal_server_error("self brief tail is missing")
     })?;
-    serde_json::to_value(oneiron::task_verb::TaskDescription::SelfCard { tail })
-        .map_err(|_| crate::error::ApiError::internal_server_error("self brief encoding failed"))
+    let value = serde_json::to_value(oneiron::task_verb::TaskDescription::SelfCard { tail })
+        .map_err(|_| crate::error::ApiError::internal_server_error("self brief encoding failed"))?;
+    Ok((value, sources))
 }

@@ -12,6 +12,7 @@ mod exploration_trial;
 mod graph;
 pub mod helper;
 mod identity;
+mod invocation;
 mod lifecycle;
 mod pack_load;
 mod record;
@@ -23,6 +24,7 @@ mod validate;
 mod tests;
 
 pub use self::call::{CallableSkillAnswer, execute_callable_skill};
+pub(crate) use self::call::execute_callable_skill_cancellable;
 pub use self::codec::{decode_skill_record, encode_skill_record};
 pub(crate) use self::codec::{is_legacy_opaque_skill_body, validate_skill_record_bytes};
 pub(crate) use self::exploration_trial::{
@@ -38,6 +40,7 @@ pub use self::identity::{
     SKILL_CONTENT_HASH_HEX_LEN, SKILL_TREE_HASH_DOMAIN, SKILL_TREE_PATH_MAX_BYTES,
     SkillContentHash, canonical_skill_tree_hash, cross_check_declared_content_hash,
 };
+pub(crate) use self::invocation::SkillInvocations;
 pub use self::lifecycle::{SkillGovernanceTier, SkillLifecycle};
 pub use self::pack_load::LoadedSkillPack;
 pub(crate) use self::pack_load::skill_loadable;

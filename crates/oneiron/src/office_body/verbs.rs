@@ -15,7 +15,7 @@ use super::{
     OfficeBodyDiff, OfficeBodyEdit, OfficeBodyExportRecord, OfficeBodyExportRequest,
     OfficeBodyFork, OfficeBodyHead, OfficeBodyKind, OfficeBodyProposal, OfficeRecalcZone,
     ProposalSettleRequest, ReviewedFork, SettleVerdict, XlsxArea, XlsxBody, XlsxBodyOp,
-    XlsxPreview, XlsxStyle,
+    XlsxPreview, XlsxStyle, XlsxTable,
 };
 use crate::batch::secret_scan::LiftedKeys;
 use crate::edge::EdgeActorClass;
@@ -270,6 +270,8 @@ pub struct XlsxSheetView {
     pub name: String,
     pub cells: Vec<BodyCell>,
     pub locked: Vec<XlsxArea>,
+    /// Its tables, each with its header and totals rows.
+    pub tables: Vec<XlsxTable>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -335,6 +337,7 @@ impl From<XlsxBody> for XlsxBodyView {
                     name: sheet.name,
                     cells: sheet.cells.into_values().collect(),
                     locked: sheet.locked,
+                    tables: sheet.tables,
                 })
                 .collect(),
             names: body.names.into_values().collect(),
@@ -591,8 +594,8 @@ impl Memory<'_> {
         )? {
             Ok(diff) => diff,
             Err(proposal) => {
-                self.ask_office_holders(&artifact, &proposal);
-                return Err(super::fork_waits(&proposal).into());
+                let refused = self.ask_office_holders(&artifact, &proposal);
+                return Err(super::fork_waits(&proposal, refused.as_deref()).into());
             }
         };
         self.lifted_body_view(&artifact, diff)
@@ -613,7 +616,8 @@ impl Memory<'_> {
     }
 
     /// `vault.artifacts.body.proposal.settle`: the proposal after the answer.
-    /// An accept that leaves members waiting asks their holders.
+    /// An accept that leaves members waiting asks their holders; a refused
+    /// ask shows as the proposal's `ask_refused`.
     pub fn artifacts_body_proposal_settle(
         &self,
         input: &OfficeBodyProposalSettleRequest,

@@ -18,8 +18,8 @@ use crate::autoreason_campaign::general::{CampaignConfig, Measurement};
 use crate::autoreason_campaign::research::{
     self, CampaignPromotionReceipt, CandidateRef, ConfirmationOutcome, ExperimentNode, ForkInput,
     ForkKind, PriorSeed, PromotionBasis, PruneReason, ResearchBindRequest, ResearchBinding,
-    ResearchConfirmationSeat, ResearchReservation, ResearchTarget, SearchEvidence,
-    SelectionBenchmark, SelectionReceipt, WeaveInput,
+    ResearchConfirmationSeat, ResearchExecution, ResearchReservation, ResearchTarget,
+    SearchEvidence, SelectionBenchmark, SelectionReceipt, WeaveInput, WeaveWriter,
 };
 use crate::autoreason_campaign::selection::OracleSignal;
 use crate::entity_id::EntityId;
@@ -47,6 +47,11 @@ pub struct ResearchBindWire {
     #[serde(default)]
     #[schemars(with = "serde_json::Value")]
     pub prior_ladder: Vec<PriorSeed>,
+    /// The agents the Coach host drives the loop with; absent, the workflow
+    /// drives its own record.
+    #[serde(default)]
+    #[schemars(with = "serde_json::Value")]
+    pub execution: Option<ResearchExecution>,
 }
 
 /// `vault.research.fork`: a child the workflow enqueued under `parent`.
@@ -298,6 +303,7 @@ pub fn research_bind(
         share: input.share,
         incumbent: input.incumbent,
         prior_ladder: input.prior_ladder,
+        execution: input.execution,
     };
     Ok(research::bind_research(
         memory.vault(),
@@ -330,7 +336,12 @@ pub fn research_weave(
     input: ResearchWeaveWire,
 ) -> MemoryResult<ExperimentNode> {
     let root = attempt(input.root)?;
-    controller(memory, Some(root))?;
+    let writer = match controller(memory, Some(root))? {
+        Caller::Owner => WeaveWriter::Owner,
+        Caller::Controller => WeaveWriter::Controller {
+            actor: memory.actor(),
+        },
+    };
     let weave = WeaveInput {
         parents: input
             .parents
@@ -346,6 +357,7 @@ pub fn research_weave(
     Ok(research::record_weave(
         memory.vault(),
         root,
+        writer,
         weave,
         now(memory),
     )?)

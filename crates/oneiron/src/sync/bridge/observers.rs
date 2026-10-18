@@ -552,6 +552,26 @@ pub(crate) fn register_room_facts_observer(
     )
 }
 
+/// Observer B for the base window's document pin map (FIX 853): each pin
+/// an import brings is installed here.
+pub(crate) fn register_document_pins_observer(
+    doc: &LoroDoc,
+    vault: &Arc<Vault>,
+    materializer: &Arc<Materializer>,
+    window_key: &str,
+) -> Subscription {
+    let document_pins_map = doc.get_map(crate::sync::document_pins::DOCUMENT_PINS_MAP);
+    subscribe_map_observer(
+        doc,
+        &document_pins_map,
+        vault,
+        materializer,
+        window_key,
+        crate::sync::document_pins::materialize_document_pins_from_delta,
+        ("document_pins", None),
+    )
+}
+
 /// Subscribes to a map's changes, filtering out bridge-origin events and
 /// delegating to a materializer function under the materializer lock.
 fn subscribe_map_observer(
