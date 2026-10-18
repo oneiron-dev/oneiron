@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 938 code-mode rows (914 host rows, 24 run rows), 3153 declarations.
-// Replies: 845 fully typed, 89 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 945 code-mode rows (921 host rows, 24 run rows), 3167 declarations.
+// Replies: 852 fully typed, 89 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 103; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -376,6 +376,14 @@ declare namespace Sdk {
   type RunSettlementsRequest = { run: string };
   type RunRungSettlement = { instance: string; lease: string; revision: number; model?: string | null; offer: string; route: string; reserved_units: number; settled_units: number; unit: string; usage_reported: boolean; settlement_refused: boolean; occurred_at: number; cost_amount?: number | null; currency?: string | null; price_table_snapshot?: string | null };
   type RunSettlementsView = { run: string; metering_enabled: boolean; settlements: RunRungSettlement[] };
+  type RsiBudgetShare = { units: number; pinned: boolean };
+  type RsiBudgetConfig = { limit: number; exploration_exposure_limit: number; shares: Record<string, RsiBudgetShare> };
+  type RsiWorkLineView = { unit: string; limit: number; spent: number; reserved: number };
+  type RsiShareView = { label: string; units: number; pinned: boolean };
+  type RsiExposureLineView = { unit: string; limit: number; spent: number; reserved: number };
+  type RsiLineView = { work_line: RsiWorkLineView; shares: RsiShareView[]; exposure_line: RsiExposureLineView; suspended: boolean };
+  type RsiLineRequest = Record<string, never>;
+  type RsiTopUp = { line: "tokens"; units: number } | { line: "exploration"; units: number } | { line: "share"; share: string; units: number };
   type FanoutLaunchRuling = "approve_once" | "approve_and_remember" | "deny";
   type FanoutResumeRequest = { launch_ref: EntityId; plan_digest: string; ruling: FanoutLaunchRuling; remembered_cap?: number | null };
   type FanoutCheckChoice = "ack" | "ack_and_remember";
@@ -1419,6 +1427,12 @@ declare namespace Sdk {
   type RsiSettlement = { Spent: number } | { Exposure: number } | "Refunded";
   type ResearchReservation = { id: EntityId; line: ResearchReservationLine; units: number; attempt?: AttemptId | null; settlement?: RsiSettlement | null; reserved_at: number };
   type ResearchRefundWire = { root: EntityId; reservation: EntityId };
+  type ResearchExplorationWire = { root: EntityId; units: number; attempt?: EntityId | null };
+  type RsiOverdraftReceipt = { share: string; units: number };
+  type ResearchReservationWire = { id: EntityId; line: ResearchReservationLine; units: number; attempt?: EntityId | null; settlement?: RsiSettlement | null; overdraft?: RsiOverdraftReceipt | null; reserved_at: number };
+  type RsiBudgetRead = { limit: number; spent: number; reserved: number; suspended: boolean };
+  type RsiExplorationRead = { exposure_limit: number; spent_exposure: number; reserved_exposure: number; suspended: boolean };
+  type ResearchBudgetView = { budget: ResearchBudgetRead; reservations: ResearchReservationWire[]; rsi_work?: RsiBudgetRead | null; rsi_exploration?: RsiExplorationRead | null };
   type ResearchBenchmarkWire = { estimator_version: string; benchmark: CampaignDatasetRef; cases: number; dgm_score: number; estimator_score: number; receipt_refs: string[] };
   type SelectionBenchmark = { estimator_version: string; benchmark: CampaignDatasetRef; cases: number; dgm_score: number; estimator_score: number; receipt_refs: string[]; recorded_at: number };
   type AuthorityHandoffAlarmAck = { by: string; at: number };
@@ -3811,6 +3825,18 @@ declare const vault: Sdk.VaultHost & {
     };
     /** The owner observes a device-local runner budget counter without creating it, including absence after an owner restore. */
     local(input: Sdk.LocalRunnerBudgetRequest): Promise<Sdk.LocalRunnerBudgetView | StoredResult>;
+    /** The owner reads both RSI lines, every soft and pinned share, and whether new loop work is held. A hold reads as suspended, never as a terminal failure. */
+    rsi: ((input: Sdk.RsiLineRequest) => Promise<Sdk.RsiLineView | StoredResult>) & {
+      /** The owner creates the vault RSI line once: its token limit, its independent exploration exposure limit, and its soft and owner-pinned shares. Reconfiguration cannot erase receipts or spend. */
+      configure(input: Sdk.RsiBudgetConfig): Promise<Sdk.RsiLineView | StoredResult>;
+      /** The owner holds new RSI loop work rather than killing it; admitted reservations can still settle, and pending attempts, candidates and partial outputs stay. */
+      hold: ((input: Sdk.RsiLineRequest) => Promise<Sdk.RsiLineView | StoredResult>) & {
+        /** The owner releases the RSI hold on the same line and receipts, so the same pending try continues without a new experiment or a duplicate terminal receipt. */
+        resume(input: Sdk.RsiLineRequest): Promise<Sdk.RsiLineView | StoredResult>;
+      };
+      /** The owner raises one exact limiting RSI line by its units: the token limit, the exploration exposure limit, or one named share. A top-up never lowers a line and never resumes held work by itself. */
+      top_up(input: Sdk.RsiTopUp): Promise<Sdk.RsiLineView | StoredResult>;
+    };
     /** The owner reads a served run's persisted physical-rung settlement receipts, with reservation, settled units and stamped cost when priced. */
     settlements(input: Sdk.RunSettlementsRequest): Promise<Sdk.RunSettlementsView | StoredResult>;
   };
@@ -4910,6 +4936,8 @@ declare const vault: Sdk.VaultHost & {
     };
     /** Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it. */
     bind(input: Sdk.ResearchBindWire): Promise<Sdk.ResearchBinding | StoredResult>;
+    /** Reads the campaign's lease, every reservation it holds or held with its settlement and soft-share overdraft receipt, and the vault RSI lines behind them, including the observable hold state. */
+    budget(input: Sdk.ResearchArchiveWire): Promise<Sdk.ResearchBudgetView | StoredResult>;
     /** The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave. */
     create_child(input: Sdk.ResearchChildWire): Promise<Sdk.ResearchChildReceipt | StoredResult>;
     /** The owner scores one arm of a bound claim-authoring campaign on one split under its bound config; the blind taste questions go through the host's decision ladder, and the report is returned, not stored. */
@@ -4934,6 +4962,8 @@ declare const vault: Sdk.VaultHost & {
     refund_work(input: Sdk.ResearchRefundWire): Promise<Sdk.ResearchReservation | StoredResult>;
     /** Spends a Promote candidate's one sealed confirmation and releases the campaign's sealed cohort to the controller's referee, counted as a serving. */
     reserve_confirmation(input: Sdk.ResearchCandidateWire): Promise<Sdk.EvalRelease | StoredResult>;
+    /** Reserves exploration exposure for the campaign on its own exposure-denominated RSI line, independently of token work, and returns the reservation's id. Settle or refund it through settle_work and refund_work. */
+    reserve_exploration(input: Sdk.ResearchExplorationWire): Promise<Sdk.EntityId | StoredResult>;
     /** Reserves token work for the campaign on the RSI line under its share, and returns the reservation's id. */
     reserve_work(input: Sdk.ResearchWorkWire): Promise<Sdk.EntityId | StoredResult>;
     /** Runs one selection round through the trusted selection floor and records it; only the owner can say the goal is met. */

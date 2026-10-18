@@ -2,8 +2,9 @@
 //! issues are defined in `oneiron-model`.
 
 mod rsi;
+pub mod rsi_doors;
 
 pub use rsi::{
     RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiExplorationRead,
-    RsiOverdraftReceipt, RsiSettlement, RsiSpendPurpose,
+    RsiOverdraftReceipt, RsiSettlement, RsiSpendPurpose, RsiTopUp,
 };

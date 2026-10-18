@@ -368,6 +368,18 @@ export class Oneiron {
       local: (input: Facade.LocalRunnerBudgetRequest): Facade.LocalRunnerBudgetView => this.#call(() => this.#client.vaultBudgetsLocal(input) as Facade.LocalRunnerBudgetView),
       /** The owner reads a served run's persisted physical-rung settlement receipts, with reservation, settled units and stamped cost when priced. */
       settlements: (input: Facade.RunSettlementsRequest): Facade.RunSettlementsView => this.#call(() => this.#client.vaultBudgetsSettlements(input) as Facade.RunSettlementsView),
+      /** The owner reads both RSI lines, every soft and pinned share, and whether new loop work is held. A hold reads as suspended, never as a terminal failure. */
+      rsi: Object.assign((input: Facade.RsiLineRequest): Facade.RsiLineView => this.#call(() => this.#client.vaultBudgetsRsi(input) as Facade.RsiLineView), {
+        /** The owner creates the vault RSI line once: its token limit, its independent exploration exposure limit, and its soft and owner-pinned shares. Reconfiguration cannot erase receipts or spend. */
+        configure: (input: Facade.RsiBudgetConfig): Facade.RsiLineView => this.#call(() => this.#client.vaultBudgetsRsiConfigure(input) as Facade.RsiLineView),
+        /** The owner raises one exact limiting RSI line by its units: the token limit, the exploration exposure limit, or one named share. A top-up never lowers a line and never resumes held work by itself. */
+        top_up: (input: Facade.RsiTopUp): Facade.RsiLineView => this.#call(() => this.#client.vaultBudgetsRsiTopUp(input) as Facade.RsiLineView),
+        /** The owner holds new RSI loop work rather than killing it; admitted reservations can still settle, and pending attempts, candidates and partial outputs stay. */
+        hold: Object.assign((input: Facade.RsiLineRequest): Facade.RsiLineView => this.#call(() => this.#client.vaultBudgetsRsiHold(input) as Facade.RsiLineView), {
+          /** The owner releases the RSI hold on the same line and receipts, so the same pending try continues without a new experiment or a duplicate terminal receipt. */
+          resume: (input: Facade.RsiLineRequest): Facade.RsiLineView => this.#call(() => this.#client.vaultBudgetsRsiHoldResume(input) as Facade.RsiLineView),
+        }),
+      }),
     },
     /** Writes one whole MESSAGE atomically through the witness gate; birth supplies its immutable conversation, turn and author axes. */
     commit_message: (input: Facade.CommitMessageRequest): Facade.WitnessReceipt => this.#call(() => this.#client.vaultCommitMessage(input) as Facade.WitnessReceipt),
@@ -1151,6 +1163,10 @@ export class Oneiron {
       settle_work: (input: Facade.ResearchSettleWire): Facade.ResearchReservation => this.#call(() => this.#client.vaultResearchSettleWork(input) as Facade.ResearchReservation),
       /** Refunds a work reservation nothing was spent on. */
       refund_work: (input: Facade.ResearchRefundWire): Facade.ResearchReservation => this.#call(() => this.#client.vaultResearchRefundWork(input) as Facade.ResearchReservation),
+      /** Reserves exploration exposure for the campaign on its own exposure-denominated RSI line, independently of token work, and returns the reservation's id. Settle or refund it through settle_work and refund_work. */
+      reserve_exploration: (input: Facade.ResearchExplorationWire): Facade.EntityId => this.#call(() => this.#client.vaultResearchReserveExploration(input) as Facade.EntityId),
+      /** Reads the campaign's lease, every reservation it holds or held with its settlement and soft-share overdraft receipt, and the vault RSI lines behind them, including the observable hold state. */
+      budget: (input: Facade.ResearchArchiveWire): Facade.ResearchBudgetView => this.#call(() => this.#client.vaultResearchBudget(input) as Facade.ResearchBudgetView),
       /** Records an estimator version's held-out selection benchmark against the DGM parent formula, once per version; a win of at least 30 cases lets its information gain rank parents. */
       record_benchmark: (input: Facade.ResearchBenchmarkWire): Facade.SelectionBenchmark => this.#call(() => this.#client.vaultResearchRecordBenchmark(input) as Facade.SelectionBenchmark),
     },
