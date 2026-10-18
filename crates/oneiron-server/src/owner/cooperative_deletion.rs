@@ -168,13 +168,21 @@ fn incoming_ask(
             .collect(),
         _ => Vec::new(),
     };
+    // The ask names the requester's own world ids; a named world's stale stamp
+    // is the one on the foreign WORLD it lands in here (FIX 3497). The signed
+    // ask is never rewritten.
     let worlds = filed
         .worlds
         .iter()
         .map(|world| {
-            let stamp = oneiron::EntityId::from_hex(world)
-                .ok()
-                .map(|id| oneiron::federation::foreign_world_stale_stamp(vault, id))
+            let here = match (pact, oneiron::EntityId::from_hex(world)) {
+                (Some(pact), Ok(id)) => oneiron::federation::pact_foreign_world(fold, &pact, id)?,
+                _ => None,
+            };
+            let stamp = here
+                .map(|foreign| {
+                    oneiron::federation::foreign_world_stale_stamp(vault, foreign.entity_id())
+                })
                 .transpose()?
                 .flatten();
             Ok(CourtesyDeleteAskedWorld {

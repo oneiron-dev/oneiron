@@ -159,9 +159,11 @@ impl Vault {
     /// The records pact `pact_id` delivered here at a consent epoch at or
     /// before `epoch_cutoff`, that sit in one of `worlds`, or in any world
     /// the pact delivered when `worlds` is empty (FIX 321). Base reality is
-    /// named by the base world's id. Only records this vault still holds
-    /// and has not removed are named. The owner picks from them; this
-    /// deletes nothing.
+    /// named by the base world's id. `worlds` are the requester's own ids, as
+    /// its ask names them: each is matched as the foreign WORLD it lands in
+    /// here (FIX 3497), and one that lands nowhere matches nothing. Only
+    /// records this vault still holds and has not removed are named. The
+    /// owner picks from them; this deletes nothing.
     ///
     /// # Errors
     ///
@@ -173,6 +175,8 @@ impl Vault {
         epoch_cutoff: u64,
     ) -> Result<Vec<EntityId>> {
         let txn = self.store.env.read_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let worlds = crate::federation::courtesy_ask_worlds_here(&fold, pact_id, worlds)?;
         let prefix = format!("{}:", bytes_to_hex_lower(pact_id));
         let base = crate::claim::base_world_id();
         let mut candidates = BTreeSet::new();
@@ -195,7 +199,9 @@ impl Vault {
                 Err(_) => return Err(corrupt()),
             };
             if epoch > epoch_cutoff
-                || (!worlds.is_empty() && !worlds.contains(&world))
+                || worlds
+                    .as_ref()
+                    .is_some_and(|worlds| !worlds.contains(&world))
                 || candidates.contains(&record)
                 || !ports::EntityStoreRead::port_entity_present(&self.store, &txn, &record)?
                 || ports::removed_in_txn(&self.store, &txn, &record)?
