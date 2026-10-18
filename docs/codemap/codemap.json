@@ -19726,7 +19726,7 @@
      "path": "src/dreamer_runner/store.rs",
      "purpose": "The Dreamer runner store: queue lifecycle, park/resume, and readers",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "fn": 15,
       "struct": 1
      }
@@ -20362,6 +20362,7 @@
      "purpose": "ED-03 (ONE-1759, ARCH-0056 §5): the amendment JUDGE, and everything a judged amendment's shares earn",
      "surface": {
       "crate-vis": 2,
+      "fn": 1,
       "re-export": 4
      }
     },
@@ -24082,7 +24083,7 @@
      "path": "src/gate/mail_policy.rs",
      "purpose": "Vault-resident native-mail posture and CID-5 graduation policy rows",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -37270,9 +37271,9 @@
      "path": "src/receipt/field_set.rs",
      "purpose": "—",
      "surface": {
-      "const": 4,
+      "const": 5,
       "crate-vis": 1,
-      "fn": 19,
+      "fn": 20,
       "struct": 1
      }
     },
@@ -40099,7 +40100,7 @@
      "path": "src/self_heal/audit.rs",
      "purpose": "OF-544: immutable attempt confessions, directed rechecks and random audit draws",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 7,
       "struct": 8
@@ -69876,7 +69877,7 @@
      "path": "src/commands/serve.rs",
      "purpose": "The unmanaged serve path: open the vault, build the server and its workers, serve until a stop signal, then…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 1,
       "struct": 1
      }
@@ -70169,7 +70170,7 @@
      "path": "src/config/merge.rs",
      "purpose": "Layered merge: file, environment, and argv values into `ServeConfig`",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 6,
       "struct": 1
      }
@@ -71596,7 +71597,7 @@
       "const": 1,
       "crate-vis": 2,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -73339,7 +73340,7 @@
      "path": "src/server/embedding.rs",
      "purpose": "The embedding worker: the one thing that drives the engine's reconciler",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
