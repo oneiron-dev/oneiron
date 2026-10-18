@@ -183,12 +183,16 @@ impl Memory<'_> {
             AskThen::Typed(effect) => self.ask_launch_project_in(txn, input, effect.as_ref())?,
             AskThen::Now(_) => self.ask_launch_project_in(txn, input, None)?,
         };
-        if super::fanout_launch::ask_launch_needs_approval(
-            self.vault(),
-            txn,
-            &census.holders,
-            approval_project,
-        )? {
+        // A comm widen ask (proved above) asks the approver itself, so it
+        // never waits on a launch approval.
+        if !super::comm_widen::is_comm_widen_ask_intent(&input.intent_key)
+            && super::fanout_launch::ask_launch_needs_approval(
+                self.vault(),
+                txn,
+                &census.holders,
+                approval_project,
+            )?
+        {
             // Held: no guest grant, no member TASK and no group exist until
             // an approver releases it; a typed effect waits on the hold, and
             // a closure runs now.
@@ -303,15 +307,19 @@ impl Memory<'_> {
     }
 
     /// An actor that may not ask is refused before any census runs. A
-    /// training offer intent takes the Coach's scoped offer-ask reach and
-    /// nothing else (`gate::coach_offer_ask_ceiling_in_txn`), never the
-    /// generic ceiling; every other ask needs the actor's own Auto ceiling.
+    /// training offer or training swap intent takes the Coach's scoped
+    /// offer-ask reach and nothing else (`gate::coach_offer_ask_ceiling_in_txn`),
+    /// never the generic ceiling; a comm widen intent asks only as the run
+    /// that reserved it (FIX 1380); every other ask needs the actor's own Auto
+    /// ceiling.
     pub(super) fn require_ask_ceiling_in(
         &self,
         txn: &heed::RoTxn<'_>,
         input: &TaskAskSpec,
     ) -> MemoryResult<()> {
-        let auto = if super::training_offer_ask::is_training_offer_ask_intent(&input.intent_key) {
+        let coach_ask = super::training_offer_ask::is_training_offer_ask_intent(&input.intent_key)
+            || super::training_swap_ask::is_training_swap_ask_intent(&input.intent_key);
+        let auto = if coach_ask {
             crate::gate::coach_offer_ask_ceiling_in_txn(
                 self.vault(),
                 txn,
@@ -319,6 +327,8 @@ impl Memory<'_> {
                 self.actor_class(),
                 input,
             )?
+        } else if super::comm_widen::is_comm_widen_ask_intent(&input.intent_key) {
+            super::comm_widen::reserved_ask_in(self, txn, input)?
         } else {
             super::rate_limit::task_actor_ceiling(
                 self.vault(),

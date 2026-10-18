@@ -24,6 +24,17 @@ mod agent_run;
 mod attenuation;
 mod budget_hold;
 mod codec;
+mod comm;
+pub use self::comm::CommReach;
+pub(crate) use self::comm::{
+    AddressDecision, AddressRefusal, SenderDispatch, live_dispatch_projects_in_txn,
+    may_address_in_txn, target_admits_in_txn,
+};
+mod comm_widen;
+pub(crate) use self::comm_widen::{
+    CommWidenDecision, CommWidenQuestion, CommWidenRecipient, CommWidenRequest, CommWidenState,
+    comm_widen_in, comm_widen_recipient_in_txn, put_comm_widen_in,
+};
 mod context;
 mod dispatch;
 mod fanout_statement;

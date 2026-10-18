@@ -11,15 +11,11 @@ use rmpv::Value;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct HostedTtsLimits {
     pub max_text_bytes: usize,
-    pub max_pcm_fragment_bytes: usize,
 }
 impl HostedTtsLimits {
     fn restrict(self, other: Self) -> Self {
         Self {
             max_text_bytes: self.max_text_bytes.min(other.max_text_bytes),
-            max_pcm_fragment_bytes: self
-                .max_pcm_fragment_bytes
-                .min(other.max_pcm_fragment_bytes),
         }
     }
 }
@@ -131,7 +127,6 @@ fn parse_rows(value: &Value) -> Option<Vec<HostedTtsPolicyRow>> {
         let mut scope = None;
         let mut holder_ref = None;
         let mut max_text_bytes = None;
-        let mut max_pcm_fragment_bytes = None;
         for (key, value) in fields {
             match key.as_str()? {
                 "provider" => {
@@ -151,14 +146,6 @@ fn parse_rows(value: &Value) -> Option<Vec<HostedTtsPolicyRow>> {
                 }
                 "max_text_bytes" => {
                     if max_text_bytes
-                        .replace(usize::try_from(value.as_u64()?).ok()?)
-                        .is_some()
-                    {
-                        return None;
-                    }
-                }
-                "max_pcm_fragment_bytes" => {
-                    if max_pcm_fragment_bytes
                         .replace(usize::try_from(value.as_u64()?).ok()?)
                         .is_some()
                     {
@@ -185,9 +172,8 @@ fn parse_rows(value: &Value) -> Option<Vec<HostedTtsPolicyRow>> {
         };
         let limits = HostedTtsLimits {
             max_text_bytes: max_text_bytes?,
-            max_pcm_fragment_bytes: max_pcm_fragment_bytes?,
         };
-        if limits.max_text_bytes == 0 || limits.max_pcm_fragment_bytes == 0 {
+        if limits.max_text_bytes == 0 {
             return None;
         }
         if rows

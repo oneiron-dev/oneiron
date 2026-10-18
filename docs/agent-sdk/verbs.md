@@ -154,6 +154,8 @@ both bindings and their export-census tests in one change.
 - `vault.widen_proposals`
 - `vault.widen_proposals.approve`
 - `vault.widen_proposals.decline`
+- `vault.craft_candidates`
+- `vault.craft_candidates.answer`
 - `vault.settings.wake_policy.set`
 - `vault.settings.inference_defaults`
 - `vault.settings.inference_defaults.replace`
@@ -322,3 +324,5 @@ both bindings and their export-census tests in one change.
 - `vault.notes.edit`
 - `vault.notes.seal`
 - `vault.notes.lifecycle`
+- `vault.notes.set_overrides`
+- `vault.notes.defaults`

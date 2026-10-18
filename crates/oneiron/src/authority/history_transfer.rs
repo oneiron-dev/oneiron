@@ -699,3 +699,134 @@ pub(super) fn decode_page(blobs: &[Vec<u8>]) -> Result<Vec<DecodedRow>> {
     }
     Ok(decoded)
 }
+
+#[cfg(feature = "sync")]
+impl Vault {
+    /// This vault's folded roster carried on, in memory, by `handoff`: signed
+    /// ReRoot rows in chain order that hand the root on from where this
+    /// vault's fold stands (FIX 2053). Each row is judged as the fold judges
+    /// a ReRoot ([`handoff_row_stands`]) against the roster the rows before
+    /// it leave, and applied as the fold applies one: every key it stood on
+    /// is revoked and its successor stands. A row this fold already holds is
+    /// skipped while no new row has landed. Nothing is written, and the
+    /// folded roster is only ever extended, never replaced.
+    ///
+    /// The authority vault id and the roster; `None` when the fold is in
+    /// conflict or the handoff does not carry it on: a row out of chain, one
+    /// a key this fold retired signed (a fork), or any other refusal.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn roster_through_handoff(
+        &self,
+        handoff: &[Vec<u8>],
+    ) -> Result<Option<(AuthorityVaultId, BTreeMap<AuthorityKey, FoldedDevice>)>> {
+        let txn = self.store.env.read_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        drop(txn);
+        if fold.vault_root_is_conflicted() {
+            return Ok(None);
+        }
+        let Some(vault_id) = fold.vault_id else {
+            return Ok(None);
+        };
+        let mut roster = fold.roster.clone();
+        let mut landed = false;
+        for bytes in handoff {
+            let Ok(entry) = decode_authority_log_entry_body(bytes) else {
+                return Ok(None);
+            };
+            let Ok(hash) = authority_entry_hash(&entry) else {
+                return Ok(None);
+            };
+            if !landed && fold.valid_entries.contains(&hash) {
+                continue;
+            }
+            let AuthorityOp::ReRoot { new_device } = &entry.op else {
+                return Ok(None);
+            };
+            if !handoff_row_stands(&fold, &roster, vault_id, &entry, new_device) {
+                return Ok(None);
+            }
+            for device in roster.values_mut() {
+                device.revoked = true;
+            }
+            roster.insert(
+                new_device.key.clone(),
+                FoldedDevice {
+                    key: new_device.key.clone(),
+                    tier: new_device.tier,
+                    roles: new_device.roles,
+                    revoked: false,
+                },
+            );
+            landed = true;
+        }
+        Ok(Some((vault_id, roster)))
+    }
+}
+
+/// Whether `entry`, a ReRoot to `new_device`, stands on `roster` as the fold
+/// judges a ReRoot (FIX 2053): well formed and well signed, in this vault,
+/// signed by a live Owner key of `roster` that `fold` never retired, its
+/// cosigners live there too, with the quorum a roster of two or more active
+/// keys asks, a sequence past every row its signer signed in `fold`, and a
+/// successor no wider than its signer and new to the roster. The rows between
+/// `fold`'s heads and the handoff do not ride with it, so its signer's
+/// standing in `roster` is the ancestry it is judged on.
+#[cfg(feature = "sync")]
+fn handoff_row_stands(
+    fold: &AuthorityFold,
+    roster: &BTreeMap<AuthorityKey, FoldedDevice>,
+    vault_id: AuthorityVaultId,
+    entry: &AuthorityLogEntry,
+    new_device: &DeviceAuthority,
+) -> bool {
+    if entry.validate_shape().is_err()
+        || verify_entry_signatures(entry).is_err()
+        || entry.vault_id != Some(vault_id)
+    {
+        return false;
+    }
+    let signer = entry.signer_key();
+    let Some(old_root) = roster.get(signer).filter(|device| !device.revoked) else {
+        return false;
+    };
+    if old_root.roles & ROLE_OWNER == 0
+        || new_device.roles & !(old_root.roles | ROLE_CLOUD) != 0
+        || fold.retired_keys.contains(signer)
+        || roster.contains_key(&new_device.key)
+        || fold
+            .append_sequences
+            .get(signer)
+            .is_some_and(|prior| entry.seq <= *prior)
+    {
+        return false;
+    }
+    let live = |key: &AuthorityKey| {
+        roster
+            .get(key)
+            .is_some_and(|device| !device.revoked && device.roles != 0)
+    };
+    let participants: BTreeSet<&AuthorityKey> = std::iter::once(&entry.signer)
+        .chain(&entry.cosigns)
+        .map(|signature| &signature.public_key)
+        .collect();
+    if !participants.iter().all(|&key| live(key)) {
+        return false;
+    }
+    // A machine writer's key is no quorum peer.
+    let active = roster
+        .iter()
+        .filter(|(key, device)| {
+            live(*key)
+                && !(device.roles == ROLE_AGENT
+                    && fold
+                        .actor_bindings
+                        .get(*key)
+                        .is_some_and(|binding| binding.actor_class == "system"))
+        })
+        .count();
+    active < 2 || participants.len() >= 2
+}

@@ -16,13 +16,14 @@
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::dreamer_runner::maintenance::coach::coach_offer_check_target;
 use oneiron::learning::learning_estimate;
+use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::manifest::{MODEL_ROLES, ModelRole};
 use oneiron::llm::registry::ModelRegistryRow;
 use oneiron::skill_optimize::{
     ComputeDestination, EvalSeat, OfferCandidate, OfferCheckInput, OfferCost, OfferEvidence,
     OfferIntent, OfferModelPin, OfferOption, SeatWorkload, TrainingOffer, TrainingOfferDraft,
-    model_role_seat, offer_skill_cell, seat_model_role, training_offer, training_offer_checks,
-    training_offer_skill_id, training_offers,
+    model_role_seat, offer_skill_cell, offer_training_handoff, seat_model_role, training_offer,
+    training_offer_checks, training_offer_skill_id, training_offers,
 };
 use oneiron::training_pack::{ComputeChoice, TrainingRun, TrainingState};
 use oneiron::{EntityId, Error, LlmMessageRole, ModelLocality, Vault};
@@ -58,10 +59,12 @@ const COST_TOLERANCE: f64 = 0.10;
 const OFFER_CALL_PURPOSE: &str = "coach_training_offer";
 /// What one job's calls may spend.
 const BUDGET_UNITS: u64 = 1 << 20;
-/// Most bytes of an offer field the Coach writes, and losses one offer lists.
-const TEXT_BYTES: usize = 1024;
-const MAX_LOSSES: usize = 8;
-/// The offer's own limits on a pin, label or ref.
+/// The offer door's bound on one loss, risk, what-changed or check-note line
+/// (`skill_optimize::offer`): a longer line refuses the whole offer, so a
+/// line past it is clipped to it. Every loss the Coach names is kept.
+const LINE_BYTES: usize = 4096;
+/// The offer door's own limits on a pin, label or ref: past them it refuses
+/// the whole offer.
 const REF_BYTES: usize = 256;
 const MAX_REFS: usize = 64;
 /// What the offer says of its prices, beside the Coach's risk.
@@ -191,6 +194,10 @@ pub(super) fn draft(
         else {
             continue;
         };
+        let _ = vault.measure_limit(
+            EngineLimit::MaintenanceRowItems,
+            draft.evidence.losses.len() as u64,
+        );
         match vault.run_coach_training_offer(admitted, draft, now) {
             Ok(offer) => {
                 tracing::debug!(offer = %offer.id.to_hex(), "the Coach raised a training offer")
@@ -523,7 +530,7 @@ impl Brief {
             .as_deref()
             .map(str::trim)
             .filter(|text| !text.is_empty())
-            .map(|text| clip(text, TEXT_BYTES).to_owned());
+            .map(|text| clip(text, LINE_BYTES).to_owned());
         if self.previous.is_some() && what_changed.is_none() {
             return None;
         }
@@ -559,6 +566,8 @@ impl Brief {
                 evidence_refs: other.evidence_refs.clone(),
             })
             .collect();
+        // The risk line carries the price note after the Coach's words.
+        let room = LINE_BYTES.saturating_sub(note.len() + 1);
         let risk = answer
             .risk
             .as_deref()
@@ -566,7 +575,7 @@ impl Brief {
             .filter(|text| !text.is_empty())
             .map_or_else(
                 || note.to_owned(),
-                |risk| format!("{} {note}", clip(risk, TEXT_BYTES)),
+                |risk| format!("{} {note}", clip(risk, room)),
             );
         let mut evidence = self.evidence;
         evidence.losses = answer
@@ -574,8 +583,7 @@ impl Brief {
             .iter()
             .map(|loss| loss.trim())
             .filter(|loss| !loss.is_empty())
-            .take(MAX_LOSSES)
-            .map(|loss| clip(loss, TEXT_BYTES).to_owned())
+            .map(|loss| clip(loss, LINE_BYTES).to_owned())
             .collect();
         evidence.risk = Some(risk);
         Some(TrainingOfferDraft {
@@ -773,21 +781,17 @@ pub(super) fn check(
         return Ok(());
     };
     // The model the yes asked for: the stock model, or the custom one bound
-    // from a run for the seat after the yes.
+    // from the exact run the yes handed off.
     let approved = match intent {
         OfferIntent::Switch { to, .. } => to.model.clone(),
         OfferIntent::Train { .. } => {
-            let bound = vault
-                .training_runs()?
-                .into_iter()
-                .filter(|run| {
-                    run.plan.role == role
-                        && run.plan.seat == offer.seat
-                        && run.state == TrainingState::Bound
-                        && run.created_at >= answer.at
-                })
-                .max_by_key(|run| (run.created_at, run.id));
-            let Some(run) = bound else {
+            let Some(handoff) = offer_training_handoff(vault, &id)? else {
+                return Ok(());
+            };
+            let Some(run) = vault
+                .training_run(&handoff.run)?
+                .filter(|run| run.state == TrainingState::Bound)
+            else {
                 return Ok(());
             };
             run.plan.output_binding.model.as_str().to_owned()
@@ -855,7 +859,7 @@ pub(super) fn check(
             observed_monthly_cost: observed,
             observed_score: None,
             held,
-            note: Some(clip(&note, TEXT_BYTES).to_owned()),
+            note: Some(clip(&note, LINE_BYTES).to_owned()),
         },
         now,
     )?;

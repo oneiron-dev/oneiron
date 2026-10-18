@@ -1,0 +1,68 @@
+{
+  "owner": {
+    "query": "portability-owner-cobalt-orchid-20261018",
+    "afterBackup": "portability-after-backup-saffron-20261018: this acknowledged entry must survive a refused restore.",
+    "afterBackupQuery": "portability-after-backup-saffron-20261018"
+  },
+  "attachment": {
+    "name": "observatory-pixel.png",
+    "mediaType": "image/png",
+    "sha256": "a493331daf2cc95c9a92d5fd21c6076e5dc8abf111cbd393d97dac29bf02d54b",
+    "bytes": 70
+  },
+  "folder": {
+    "firstQuery": "portability-folder-amber-original",
+    "secondQuery": "portability-folder-cobalt-original",
+    "editedQuery": "portability-folder-cobalt-revised",
+    "thirdQuery": "portability-folder-indigo-new",
+    "trust": "imported",
+    "initialFiles": 2,
+    "finalFiles": 3,
+    "attach": {
+      "landed": 2,
+      "failed": 0
+    },
+    "add": {
+      "landed": 1,
+      "failed": 0
+    },
+    "edit": {
+      "superseded": 1,
+      "proposed": 0,
+      "failed": 0
+    },
+    "remove": {
+      "retracted": 1,
+      "failed": 0
+    },
+    "restore": {
+      "restored": 1,
+      "failed": 0
+    }
+  },
+  "export": {
+    "targets": [
+      "archive",
+      "okf"
+    ],
+    "completeTarget": "archive",
+    "readFormatsAreNotRequiredImportFormats": true,
+    "requiredFamilies": [
+      "evidence_ledger",
+      "claims",
+      "packs",
+      "skills",
+      "agent_packs",
+      "derivation_envelopes",
+      "run_results",
+      "attached_files"
+    ],
+    "credentialsAllowed": false,
+    "offRecordBodiesAllowed": false
+  },
+  "crawl": {
+    "pageBudget": 2,
+    "sameSiteDefault": true,
+    "trust": "imported"
+  }
+}

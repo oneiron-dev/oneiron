@@ -156,8 +156,38 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "post",
+        path: "/coach/training-offers/authorize",
+        summary: "The owner's yes on a prepared run after their train approval, at the exact spec they saw.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/coach/training-offers/prepare",
+        summary: "The owner's run for a Train offer's seat and base on a trainer connector this host names; nothing runs.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/coach/training-offers/training",
+        summary: "A Train offer's handed-off run: its state, why it waits, the owner's authorization, its held-out summary and the plan the recipe suggests.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
         path: "/coach/training-offers/undo",
         summary: "The owner's undo of the stock switch an approved offer bound.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/coach/training-runs/swap",
+        summary: "Binds the training result the owner viewed, named by its spec and checkpoint hashes, to its role; an embedder run is refused.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/coach/training-runs/view",
+        summary: "One training run's result: state, evaluation, checks, overlaps, swap receipts, swap questions and how it serves here.",
         row: None,
     },
     OwnerRoute {
@@ -302,6 +332,18 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         method: "get",
         path: "/courtesy-delete/sent",
         summary: "Sent.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/craft-candidates",
+        summary: "The candidates waiting on a verdict, newest first.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/craft-candidates/answer",
+        summary: "The owner's verdict on one candidate, bound to the content hash its card showed.",
         row: None,
     },
     OwnerRoute {

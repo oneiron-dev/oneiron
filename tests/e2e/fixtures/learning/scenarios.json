@@ -1,0 +1,885 @@
+{
+  "version": 1,
+  "oracle": "Independently authored synthetic examples and labels; no server output or private engine state. Numeric values are fixture choices, not product defaults.",
+  "reference_policy": "Symbolic labels are mapped to references returned by public setup; they must never be inserted as stored records.",
+  "scenarios": [
+    {
+      "id": "LEARNING-01",
+      "rows": [
+        "OF-495"
+      ],
+      "goal": {
+        "goal": "Raise independently verified completions without losing coverage or honesty.",
+        "why": "An apparent global gain is not useful if a required kind or truthful reporting is lost.",
+        "primary_axes": [
+          {
+            "key": "verified_completions",
+            "direction": "maximize"
+          }
+        ],
+        "floor_axes": [
+          {
+            "key": "quality",
+            "direction": "maximize"
+          },
+          {
+            "key": "coverage",
+            "direction": "maximize"
+          },
+          {
+            "key": "honesty",
+            "direction": "maximize"
+          }
+        ],
+        "cost_axes": [
+          {
+            "key": "tokens",
+            "direction": "minimize"
+          },
+          {
+            "key": "human_minutes",
+            "direction": "minimize"
+          }
+        ],
+        "preferences": [],
+        "exploration_budget": {
+          "unit": "exposures",
+          "limit": 2
+        }
+      },
+      "baseline": {
+        "verified_completions": 10,
+        "quality": 0.9,
+        "coverage": 2,
+        "honesty": 1,
+        "tokens": 100,
+        "human_minutes": 4
+      },
+      "candidates": [
+        {
+          "label": "dominates",
+          "values": {
+            "verified_completions": 12,
+            "quality": 0.9,
+            "coverage": 2,
+            "honesty": 1,
+            "tokens": 90,
+            "human_minutes": 4
+          },
+          "expected": "admit"
+        },
+        {
+          "label": "dominated",
+          "values": {
+            "verified_completions": 8,
+            "quality": 0.9,
+            "coverage": 2,
+            "honesty": 1,
+            "tokens": 110,
+            "human_minutes": 5
+          },
+          "expected": "reject"
+        },
+        {
+          "label": "floor-regression",
+          "values": {
+            "verified_completions": 20,
+            "quality": 0.8,
+            "coverage": 2,
+            "honesty": 1,
+            "tokens": 70,
+            "human_minutes": 3
+          },
+          "expected": "reject"
+        },
+        {
+          "label": "tradeoff",
+          "values": {
+            "verified_completions": 13,
+            "quality": 0.9,
+            "coverage": 2,
+            "honesty": 1,
+            "tokens": 120,
+            "human_minutes": 4
+          },
+          "expected": "escalate"
+        },
+        {
+          "label": "tie",
+          "values": {
+            "verified_completions": 10,
+            "quality": 0.9,
+            "coverage": 2,
+            "honesty": 1,
+            "tokens": 100,
+            "human_minutes": 4
+          },
+          "expected": "reject"
+        }
+      ],
+      "owner_pick": {
+        "preferred": "tradeoff",
+        "over": "baseline",
+        "reason": "Three more verified completions justify twenty more tokens here."
+      },
+      "loop_goal_proposal": {
+        "change": "remove quality floor",
+        "expected_effective_goal_changed": false
+      },
+      "expected": {
+        "comparison_baseline": "fixed-original",
+        "preference_receipt_from_owner_pick": true,
+        "pick_is_grant": false,
+        "human_intake_required_for_goal_edit": true
+      }
+    },
+    {
+      "id": "LEARNING-02",
+      "rows": [
+        "OF-542"
+      ],
+      "ordinary_note": "The synthetic observatory handoff needs two independent measurements.",
+      "cell": {
+        "subject": "fixture-skill",
+        "executor": "fixture-executor@revision-1",
+        "typeRef": {
+          "node_id": "fixture-check-task",
+          "tree_version": 1
+        },
+        "axis": "quality"
+      },
+      "anchored_outcomes": [
+        {
+          "label": "settled-success-a",
+          "success": true,
+          "anchor": "external-check-a",
+          "attribution": "skill_defect_or_contribution"
+        },
+        {
+          "label": "settled-success-b",
+          "success": true,
+          "anchor": "external-check-b",
+          "attribution": "skill_defect_or_contribution"
+        },
+        {
+          "label": "settled-loss-c",
+          "success": false,
+          "anchor": "external-check-c",
+          "attribution": "skill_defect"
+        }
+      ],
+      "excluded_as_own_evidence": [
+        "agent-agreement",
+        "self-report",
+        "confession"
+      ],
+      "forgery": {
+        "predicate": "learning.reliability",
+        "value": {
+          "form": "beta",
+          "value": {
+            "alpha": 999,
+            "beta": 1
+          },
+          "runs": 1000,
+          "prior": {
+            "origin": "seed",
+            "value": {
+              "alpha": 1,
+              "beta": 1
+            },
+            "weight_runs": 2
+          },
+          "untested": false,
+          "of": "anchored success",
+          "labels": {
+            "by_judge": {},
+            "converted": 0,
+            "on_judge_model": 0
+          },
+          "window": {
+            "half_life": 2592000
+          },
+          "ver": "fixture-estimator-v1"
+        },
+        "actors": [
+          "owner",
+          "admitted-foreign-actor"
+        ]
+      },
+      "expected": {
+        "predicates": [
+          "learning.reliability",
+          "learning.edit_cost",
+          "learning.retest_noise",
+          "learning.setting"
+        ],
+        "prior_fields": [
+          "origin",
+          "value",
+          "weight_runs"
+        ],
+        "allowed_prior_origins": [
+          "shipped",
+          "provenance",
+          "carried",
+          "parent",
+          "model",
+          "seed"
+        ],
+        "estimate_fields": [
+          "form",
+          "value",
+          "runs",
+          "prior",
+          "untested",
+          "of",
+          "labels",
+          "window",
+          "ver"
+        ],
+        "ordinary_writes_rejected": true,
+        "forgery_adds_own_runs": false,
+        "forgery_adds_head": false,
+        "ordinary_recall_contains_note": true,
+        "ordinary_recall_contains_learning": false,
+        "provenance_requires_anchored_outcomes": true,
+        "exact_posterior_asserted": false,
+        "refusal_must_identify_projector_only_policy": true
+      }
+    },
+    {
+      "id": "LEARNING-03",
+      "rows": [
+        "OF-351",
+        "OF-366"
+      ],
+      "metric": {
+        "key": "verified_quality",
+        "direction": "maximize"
+      },
+      "branches": [
+        {
+          "label": "incumbent",
+          "search": 0.5,
+          "held_out": 0.5,
+          "sealed": 0.5
+        },
+        {
+          "label": "winner",
+          "search": 0.8,
+          "held_out": 0.8,
+          "sealed": 0.8
+        },
+        {
+          "label": "loser",
+          "search": 0.3,
+          "held_out": 0.3,
+          "sealed": 0.3,
+          "failure_evidence": "missed-required-fact"
+        },
+        {
+          "label": "buggy",
+          "invalid_reason": "schema-check-failed",
+          "failure_evidence": "external-invalid-output"
+        }
+      ],
+      "crossover": {
+        "initially_enabled": false,
+        "qualifying_held_out_win_required": true,
+        "parents": [
+          "winner",
+          "incumbent"
+        ],
+        "woven_candidate": "woven-winner"
+      },
+      "prune": {
+        "attempt": "loser",
+        "cause": {
+          "kind": "dominated",
+          "by": "winner"
+        },
+        "evidence": [
+          "missed-required-fact"
+        ]
+      },
+      "expected": {
+        "best_candidate": "winner",
+        "archived_labels": [
+          "incumbent",
+          "winner",
+          "loser",
+          "buggy",
+          "woven-winner"
+        ],
+        "retained_failure_evidence": [
+          "missed-required-fact",
+          "external-invalid-output"
+        ],
+        "active_selection_excludes": [
+          "loser",
+          "buggy"
+        ],
+        "woven_claim_approval": "Proposed",
+        "ordinary_gate_required": true,
+        "diff_lineage_parents": [
+          "winner",
+          "incumbent"
+        ],
+        "archive_survives_restart": true,
+        "random_parent_order_asserted": false
+      }
+    },
+    {
+      "id": "LEARNING-04",
+      "rows": [
+        "OF-352",
+        "OF-544"
+      ],
+      "critics": [
+        {
+          "label": "anchored-critic",
+          "executor": "critic-family-a@revision-1",
+          "anchored_successes": 3,
+          "anchored_losses": 1
+        },
+        {
+          "label": "less-reliable-critic",
+          "executor": "critic-family-b@revision-1",
+          "anchored_successes": 1,
+          "anchored_losses": 3
+        }
+      ],
+      "findings": [
+        {
+          "critic": "anchored-critic",
+          "label": "required-fact-missing",
+          "evidence": [
+            "external-check-failed"
+          ],
+          "hard_check_passed": false
+        },
+        {
+          "critic": "less-reliable-critic",
+          "label": "required-fact-missing",
+          "evidence": [
+            "same-output-span"
+          ],
+          "duplicate_of": "required-fact-missing"
+        },
+        {
+          "critic": "less-reliable-critic",
+          "label": "unsupported-all-clear",
+          "evidence": []
+        }
+      ],
+      "confession": {
+        "attempt": "confessed-attempt",
+        "objective": "required-fact",
+        "met": false,
+        "uncertainty": "The output may omit the required fact."
+      },
+      "hidden_flaw": {
+        "attempt": "apparently-passing-attempt",
+        "evidence": "independent-hidden-failure"
+      },
+      "audit_policy": {
+        "expected_shipped_rate": 0.05,
+        "fixture_pinned_rate_at_draw": 1,
+        "pinned_rate_after_draw_before_findings": 0.5
+      },
+      "expected": {
+        "directed_recheck_required": true,
+        "confession_alone_changes_task_score": false,
+        "confession_alone_changes_reliability": false,
+        "hidden_finding_weight": 1,
+        "incorrect_current_rate_weight": 2,
+        "rate_read_from_draw_receipt": true,
+        "default_rate_nonzero": true,
+        "hard_check_veto_preserved": true,
+        "duplicates_merged_with_all_evidence": true,
+        "exact_triage_score_asserted": false,
+        "private_random_seed_used": false
+      }
+    },
+    {
+      "id": "LEARNING-05",
+      "rows": [
+        "OF-545"
+      ],
+      "descriptor": {
+        "revision": "fixture-archive-v1",
+        "axes": [
+          {
+            "key": "length",
+            "values": [
+              "short",
+              "long"
+            ]
+          },
+          {
+            "key": "style",
+            "values": [
+              "plain"
+            ]
+          }
+        ]
+      },
+      "required_cells": [
+        [
+          "short",
+          "plain"
+        ],
+        [
+          "long",
+          "plain"
+        ]
+      ],
+      "outputs": [
+        {
+          "label": "short-old",
+          "cell": [
+            "short",
+            "plain"
+          ],
+          "score": 0.7
+        },
+        {
+          "label": "short-best",
+          "cell": [
+            "short",
+            "plain"
+          ],
+          "score": 0.9
+        },
+        {
+          "label": "long-best",
+          "cell": [
+            "long",
+            "plain"
+          ],
+          "score": 0.6
+        },
+        {
+          "label": "long-worse",
+          "cell": [
+            "long",
+            "plain"
+          ],
+          "score": 0.4
+        }
+      ],
+      "candidate": {
+        "label": "misleading-global-win",
+        "global_score": 0.99,
+        "covered_cells": [
+          [
+            "short",
+            "plain"
+          ]
+        ]
+      },
+      "expected": {
+        "best_per_cell": [
+          {
+            "cell": [
+              "short",
+              "plain"
+            ],
+            "output": "short-best"
+          },
+          {
+            "cell": [
+              "long",
+              "plain"
+            ],
+            "output": "long-best"
+          }
+        ],
+        "candidate_admitted": false,
+        "blocking_axis": "coverage",
+        "goal_rewritten_by_descriptor": false,
+        "mix_descriptor_versions": false
+      }
+    },
+    {
+      "id": "LEARNING-06",
+      "rows": [
+        "OF-578"
+      ],
+      "eval_fixture": "learning-eval-families",
+      "unknown_cases": [
+        {
+          "label": "rare-floor-too-small",
+          "families": 4,
+          "floor_slices": {
+            "rare": 1
+          },
+          "min_families_per_slice": 2,
+          "expected": "unknown"
+        },
+        {
+          "label": "interval-spans-margin",
+          "paired_interval": [
+            -0.03,
+            0.01
+          ],
+          "retest_noise": 0.02,
+          "expected": "unknown"
+        },
+        {
+          "label": "set-changed",
+          "set_changed": true,
+          "expected": "unknown"
+        },
+        {
+          "label": "rubric-changed",
+          "rubric_changed": true,
+          "expected": "unknown"
+        },
+        {
+          "label": "canary-diverged",
+          "canary_diverged": true,
+          "expected": "unknown"
+        }
+      ],
+      "label_requests": [
+        {
+          "blocked_decision": null,
+          "expected_ask": false
+        },
+        {
+          "blocked_decision": "stock-switch-offer",
+          "needed_families": [
+            "rare-floor-next-a",
+            "rare-floor-next-b"
+          ],
+          "human_minutes": 2,
+          "expected_ask": true
+        }
+      ],
+      "expected": {
+        "family_split_atomic": true,
+        "exposed_labels_in_new_sealed_confirmation": false,
+        "fixed_reference_retained": true,
+        "near_copy_is_review_flag_not_proof": true,
+        "unknown_blocks_auto_approval": true,
+        "standing_label_session": false
+      }
+    },
+    {
+      "id": "LEARNING-07",
+      "rows": [
+        "OF-382",
+        "OF-400"
+      ],
+      "corpus_fixture": "learning-training-pairs",
+      "eval_fixture": "learning-eval-families",
+      "compute": {
+        "destination": "owned-loopback-fixture",
+        "cloud_opt_in": false,
+        "protocol_status": "blocked: no public trainer adapter on binding head"
+      },
+      "checkpoint": {
+        "status": "needed from fixture lane when trainer/load-set contract is public",
+        "required_pins": [
+          "revision",
+          "each weight shard BLAKE3",
+          "tokenizer",
+          "config",
+          "templates",
+          "adapter and base if used"
+        ],
+        "required_receipt_fields": [
+          "full training settings",
+          "harness revision",
+          "verifier logs",
+          "data pins",
+          "weight pins"
+        ]
+      },
+      "returned_checks": [
+        {
+          "label": "valid",
+          "hash_match": true,
+          "argmax_flips": 0,
+          "max_logit_difference": 0,
+          "exact_hash_overlaps": 0,
+          "expected_can_propose_swap": true
+        },
+        {
+          "label": "bad-hash",
+          "hash_match": false,
+          "argmax_flips": 0,
+          "max_logit_difference": 0,
+          "exact_hash_overlaps": 0,
+          "expected_can_propose_swap": false
+        },
+        {
+          "label": "argmax-flip",
+          "hash_match": true,
+          "argmax_flips": 1,
+          "max_logit_difference": 0,
+          "exact_hash_overlaps": 0,
+          "expected_can_propose_swap": false
+        },
+        {
+          "label": "excess-logit-difference",
+          "hash_match": true,
+          "argmax_flips": 0,
+          "max_logit_difference": 0.02,
+          "fixture_tolerance": 0.01,
+          "exact_hash_overlaps": 0,
+          "expected_can_propose_swap": false
+        },
+        {
+          "label": "holdout-overlap",
+          "hash_match": true,
+          "argmax_flips": 0,
+          "max_logit_difference": 0,
+          "exact_hash_overlaps": 1,
+          "expected_can_propose_swap": false
+        }
+      ],
+      "owner_actions": [
+        "decline result swap",
+        "approve unchanged viewed spec and checkpoint"
+      ],
+      "expected": {
+        "permitted_pair_labels": [
+          "on-record-consented-a",
+          "on-record-consented-b"
+        ],
+        "excluded_pair_labels": [
+          "off-record-consented",
+          "private-without-source-consent",
+          "on-record-unconsented",
+          "other-person-without-consent"
+        ],
+        "held_out_family_leaks": 0,
+        "success_auto_deploys": false,
+        "decline_changes_binding": false,
+        "approve_changes_only_seat": "decision",
+        "checkpoint_hashes_fabricated": false,
+        "explicit_owner_override_is_separate": true,
+        "model_quality_claim": false
+      }
+    },
+    {
+      "id": "LEARNING-08",
+      "rows": [
+        "OF-577",
+        "OF-512"
+      ],
+      "seat": "decision",
+      "unrelated_seat": "companion",
+      "cost_window": {
+        "from": "2026-09-01T00:00:00Z",
+        "to": "2026-10-01T00:00:00Z"
+      },
+      "incumbent": {
+        "label": "incumbent",
+        "calls": 1000,
+        "input_tokens": 1000000,
+        "output_tokens": 1000000,
+        "dollars": 10,
+        "price_per_million_input": 4,
+        "price_per_million_output": 6,
+        "score": 0.8
+      },
+      "candidates": [
+        {
+          "label": "cheaper-stock",
+          "kind": "switch",
+          "already_downloaded": true,
+          "projected_input_tokens": 2000000,
+          "projected_output_tokens": 1000000,
+          "price_per_million_input": 1,
+          "price_per_million_output": 2,
+          "expected_monthly_cost": 4,
+          "one_off_cost": 6,
+          "expected_avoidable_monthly_saving": 6,
+          "expected_payback_months": 1,
+          "pilot": {
+            "independent_families": 8,
+            "paired_interval": [
+              0,
+              0.01
+            ],
+            "retest_noise": 0.02,
+            "minimum_floor_families": 2,
+            "floor_families": 4,
+            "expected": "not_worse"
+          }
+        },
+        {
+          "label": "uncertain-stock",
+          "kind": "switch",
+          "already_downloaded": true,
+          "expected_monthly_cost": 2,
+          "pilot": {
+            "independent_families": 2,
+            "paired_interval": [
+              -0.05,
+              0.05
+            ],
+            "retest_noise": 0.02,
+            "expected": "unknown"
+          }
+        },
+        {
+          "label": "custom-on-service",
+          "kind": "train",
+          "expected_monthly_cost": 3,
+          "one_off_cost": 21,
+          "destination": "explicit-opt-in-required",
+          "data_leaves_device": true
+        },
+        {
+          "label": "custom-self-train",
+          "kind": "self_train",
+          "expected_monthly_cost": 3,
+          "one_off_cost": null,
+          "payback_months": null,
+          "destination": "owners-machine",
+          "data_leaves_device": false
+        },
+        {
+          "label": "cheapest-local",
+          "kind": "switch",
+          "expected_monthly_cost": 0,
+          "one_off_cost": null,
+          "payback_months": null,
+          "feasibility": "unknown",
+          "new_download_requires_card": true
+        }
+      ],
+      "actions": [
+        "leave unanswered",
+        "close",
+        "postpone",
+        "decline",
+        "approve cheaper-stock"
+      ],
+      "expected": {
+        "baseline_option": "do_nothing",
+        "baseline_monthly_cost": 10,
+        "baseline_score": 0.8,
+        "auto_approve_default": false,
+        "changed_seats_after_approval": [
+          "decision"
+        ],
+        "unchanged_seats_after_approval": [
+          "companion"
+        ],
+        "postpone_refreshes_costs": true,
+        "decline_is_offer_skill_label": true,
+        "train_yes_auto_swaps": false,
+        "unknown_cost_prints_zero": false,
+        "unknown_auto_approves": false,
+        "licence_source_hash_required": true,
+        "scraped_scores_are_promotion_proof": false
+      }
+    },
+    {
+      "id": "LEARNING-09",
+      "rows": [
+        "OF-496"
+      ],
+      "work_line": {
+        "unit": "tokens",
+        "limit": 120,
+        "reserved": 0,
+        "spent": 0
+      },
+      "shares": [
+        {
+          "label": "soft",
+          "units": 30,
+          "pinned": false
+        },
+        {
+          "label": "pinned",
+          "units": 30,
+          "pinned": true
+        }
+      ],
+      "exposure_line": {
+        "unit": "exposures",
+        "limit": 2,
+        "reserved": 0,
+        "spent": 0
+      },
+      "steps": [
+        {
+          "share": "soft",
+          "purpose": "Experiment",
+          "reserve": 30,
+          "settle": 30,
+          "expected": "spent"
+        },
+        {
+          "share": "soft",
+          "purpose": "Judge",
+          "reserve": 10,
+          "settle": 10,
+          "expected": "spent-with-overdraft-receipt"
+        },
+        {
+          "share": "pinned",
+          "purpose": "HeldOut",
+          "reserve": 30,
+          "settle": 30,
+          "expected": "spent"
+        },
+        {
+          "share": "pinned",
+          "purpose": "Experiment",
+          "reserve": 1,
+          "expected": "hold-pinned-share",
+          "expected_spend": 0
+        },
+        {
+          "line": "exploration",
+          "reserve": 2,
+          "settle": 2,
+          "expected": "spent"
+        },
+        {
+          "line": "exploration",
+          "reserve": 1,
+          "expected": "hold-exposure",
+          "expected_spend": 0
+        }
+      ],
+      "pending_experiment": {
+        "label": "pending-candidate",
+        "partial_outputs": [
+          "partial-output-a"
+        ]
+      },
+      "top_ups": [
+        {
+          "line": "pinned-share",
+          "units": 10
+        },
+        {
+          "line": "exploration",
+          "units": 1
+        }
+      ],
+      "expected": {
+        "work_spent_before_top_up": 70,
+        "exposures_spent_before_top_up": 2,
+        "free_work_units_while_pinned_hold": 50,
+        "pending_attempt_preserved": true,
+        "pending_candidate_preserved": true,
+        "partial_outputs_preserved": true,
+        "resume_same_attempt": true,
+        "resource_hold_is_terminal_failure": false,
+        "loop_may_widen_budget": false,
+        "different_units_mixed": false
+      }
+    }
+  ]
+}

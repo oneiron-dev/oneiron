@@ -340,7 +340,7 @@ fn import_promotion_snapshot_with(
     snapshot: &[u8],
 ) -> bool {
     crate::sync::window::validate_promotion_snapshot(vault, doc, snapshot).is_ok()
-        && doc.import(snapshot).is_ok()
+        && crate::sync::ingest::with_promotion(vault, || doc.import(snapshot)).is_ok()
 }
 
 fn refused() -> TransportError {
@@ -430,6 +430,14 @@ impl SyncClient {
         let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
             return Err(TransportError::Storage("home node offline".into()));
         };
+        // A home that may not read the window's world is not told its name,
+        // the selector or the item (FIX 922 item 11): the touch fails as
+        // with no home.
+        if !home_reads_window(&self.vault, rpc.home, window) {
+            return Err(TransportError::Storage(
+                "home may not read this world".into(),
+            ));
+        }
         let reply: TouchReply = serde_json::from_value(
             rpc.request(
                 "residence.touch",
@@ -632,7 +640,9 @@ impl SyncClient {
         let Some(world) = window.world() else {
             return;
         };
-        if let Err(error) = self.manager.materialize_sealed_mirror(world, window) {
+        if let Err(error) = crate::sync::ingest::with_promotion(&self.vault, || {
+            self.manager.materialize_sealed_mirror(world, window)
+        }) {
             tracing::warn!(%error, %window, "sealed mirror not materialized on promotion");
         }
     }

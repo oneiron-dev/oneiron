@@ -460,6 +460,9 @@ side_tables! {
     /// The stock switch an offer's approval bound: the replaced and new role bindings, and any
     /// undo. Key: id16 (offer).
     SKILL_OPTIMIZE_OFFER_SWITCH: VaultMeta b"skill_optimize:offer_switch:v1:" Named;
+    /// The prepared training run an approved Train offer handed off, with the exact spec the
+    /// owner authorized. Key: id16 (offer).
+    SKILL_OPTIMIZE_OFFER_TRAINING: VaultMeta b"skill_optimize:offer_training:v1:" Named;
     /// The owner's final pick between a blind preference pair's two responses (preferred side,
     /// picker, time). Key: string (pair reference).
     SKILL_OPTIMIZE_RESPONSE_PAIR: VaultMeta b"skill_optimize:response_pair:v1:" Named;
@@ -582,6 +585,12 @@ side_tables! {
     TASK_TRAINING_OFFER_ASK: VaultMeta b"tasks.training_offer_ask.v1/" Named;
     /// The training offer ask one ask group carries, by its reservation key. Key: id16 (ask group).
     TASK_TRAINING_OFFER_ASK_GROUP: VaultMeta b"tasks.training_offer_ask_group.v1/" Named;
+    /// One Scored training run's result asked of one owner (OF-577): the question ids reserved
+    /// before the witness, the frozen swap expectation, the ask group once admitted and its state.
+    /// Key: id16 (run) + id16 (owner) + result digest (64 hex).
+    TASK_TRAINING_SWAP_ASK: VaultMeta b"tasks.training_swap_ask.v1/" Named;
+    /// The training swap ask one ask group carries, by its reservation key. Key: id16 (ask group).
+    TASK_TRAINING_SWAP_ASK_GROUP: VaultMeta b"tasks.training_swap_ask_group.v1/" Named;
     /// Registered external ask wait. Key: id16 + bytes32.
     TASK_ASK_WAIT: VaultMeta b"tasks.wait/" Named;
     /// Fan-out launch held for, or launched past, the approval mode: its frozen payload, plan,

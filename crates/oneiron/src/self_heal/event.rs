@@ -48,13 +48,6 @@ pub(super) const DIAGNOSTIC_EVENT_ID_DOMAIN: &[u8] = b"oneiron.self_heal.diagnos
 /// Longest accepted `run_ref` / `checkpoint_ref` / `scope_ref`.
 pub(super) const MAX_REF_LEN: usize = 256;
 
-/// Longest accepted canonical untrusted-detail leaf, AFTER escaping. Only code
-/// runs' blocked receipts use the escaper now; a diagnostic carries no detail.
-pub(super) const MAX_UNTRUSTED_DETAIL_LEN: usize = 4096;
-
-/// Most evidence refs one event may cite.
-pub(super) const MAX_EVIDENCE_REFS: usize = 64;
-
 /// Longest accepted detector id / observation kind token.
 pub(super) const MAX_TOKEN_LEN: usize = 64;
 
@@ -66,12 +59,6 @@ pub(super) const MAX_INVARIANT_NODES: usize = 256;
 
 /// Widest accepted array inside `expected` / `actual` / `delta`.
 pub(super) const MAX_INVARIANT_WIDTH: usize = 64;
-
-/// Most events one detector run may persist.
-///
-/// A detector that trips this is malfunctioning, and a malfunctioning detector
-/// must not be able to fill the vault with its own noise.
-pub(super) const MAX_EVENTS_PER_RUN: usize = 1024;
 
 /// The closed self-healing event vocabulary.
 ///

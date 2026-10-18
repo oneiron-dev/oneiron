@@ -3416,6 +3416,51 @@ async fn vault_widen_proposals_decline(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_craft_candidates(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.craft_candidates")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.craft_candidates", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.craft_candidates", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_craft_candidates(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_craft_candidates_answer(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.craft_candidates.answer")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.craft_candidates.answer", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.craft_candidates.answer", value).await?;
+    let (output, listed) = super::host_doors::vault_craft_candidates_answer(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_settings_wake_policy_set(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -7256,6 +7301,62 @@ async fn vault_notes_lifecycle(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_notes_set_overrides(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.notes.set_overrides",
+        oneiron::memory::RoomTurnHandle::serves("vault.notes.set_overrides"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "note_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.notes.set_overrides",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_notes_defaults(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.notes.defaults",
+        oneiron::memory::RoomTurnHandle::serves("vault.notes.defaults"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "note_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.notes.defaults",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 /// Runs facade verb `verb` for `call` over `input`, as its row admits it:
 /// the one verb table every server transport serves. A board, browser or run
 /// row is refused by the context it needs, which no facade call carries; any
@@ -7464,6 +7565,8 @@ pub(crate) async fn call_verb(
         "vault.widen_proposals" => vault_widen_proposals(server, call, input).await,
         "vault.widen_proposals.approve" => vault_widen_proposals_approve(server, call, input).await,
         "vault.widen_proposals.decline" => vault_widen_proposals_decline(server, call, input).await,
+        "vault.craft_candidates" => vault_craft_candidates(server, call, input).await,
+        "vault.craft_candidates.answer" => vault_craft_candidates_answer(server, call, input).await,
         "vault.settings.wake_policy.set" => {
             vault_settings_wake_policy_set(server, call, input).await
         }
@@ -7680,6 +7783,8 @@ pub(crate) async fn call_verb(
         "vault.notes.edit" => vault_notes_edit(server, call, input).await,
         "vault.notes.seal" => vault_notes_seal(server, call, input).await,
         "vault.notes.lifecycle" => vault_notes_lifecycle(server, call, input).await,
+        "vault.notes.set_overrides" => vault_notes_set_overrides(server, call, input).await,
+        "vault.notes.defaults" => vault_notes_defaults(server, call, input).await,
         "self.focus.refresh" | "self.focus.subscribe" | "self.focus.unsubscribe" => {
             Err(context_required(verb, VerbContext::Board))
         }
@@ -7723,7 +7828,8 @@ pub(crate) async fn call_verb(
         | "self.desktop.windows"
         | "self.desktop.window"
         | "self.desktop.handover" => Err(context_required(verb, VerbContext::Browser)),
-        "vault.search"
+        "connector.answer"
+        | "vault.search"
         | "vault.claims.put"
         | "vault.claims.supersede"
         | "vault.edges.put"

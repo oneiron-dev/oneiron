@@ -2147,6 +2147,30 @@
       "section": false
     },
     {
+      "name": "vault.craft_candidates",
+      "description": "The owner lists the craft notes residents' dreaming proposed about themselves that wait on a verdict, newest first, or one resident's, each with the content hash an answer pins.",
+      "input": "crate::actor_claims::CraftCandidatesRequest",
+      "output": "crate::actor_claims::CraftCandidatesView",
+      "call": "crate::actor_claims::craft_candidates_as_owner(memory.vault(), &memory.embedded_owner(\"vault.craft_candidates\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.craft_candidates.answer",
+      "description": "The owner approves or rejects one craft candidate, bound to the content hash its card showed: an Approved or Rejected row supersedes it, with one receipt. The same answer again returns the first.",
+      "input": "crate::actor_claims::CraftCandidateAnswer",
+      "output": "crate::actor_claims::CraftVerdictView",
+      "call": "crate::actor_claims::answer_craft_candidate_as_owner(memory.vault(), &memory.embedded_owner(\"vault.craft_candidates.answer\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.settings.wake_policy.set",
       "description": "The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof.",
       "input": "crate::policy_setting_doors::WakePolicySetRequest",
@@ -3899,6 +3923,14 @@
       "call": "crate::task_verb::sdk::connector_call_status_read(memory, input)?",
       "scope": "Read",
       "section": false
+    },
+    {
+      "name": "connector.answer",
+      "input": "crate::task_verb::sdk::ConnectorAnswerRequest",
+      "output": "crate::task_verb::sdk::ConnectorCallReply",
+      "scope": "Write",
+      "context": "run",
+      "effect": "ConnectorAnswer"
     },
     {
       "name": "self.browser.open",
@@ -5816,6 +5848,66 @@
           "remote": "    /// Where one NOTE stands (active, sealed, archived or tombstoned) and its seal.\n",
           "ts": "/** Where one NOTE stands (active, sealed, archived or tombstoned) and its seal. */",
           "py": "Where one NOTE stands (active, sealed, archived or tombstoned) and its seal."
+        }
+      }
+    },
+    {
+      "name": "vault.notes.set_overrides",
+      "description": "Sets the extraction, context and retention defaults one NOTE overrides over its kind's, by its author or the owner; empty overrides clear them. An override never widens a scope or grant check.",
+      "refs": ["/note_ref"],
+      "input": "crate::note::SetNoteOverridesRequest",
+      "output": "crate::note::NoteDefaultsView",
+      "call": "memory.set_note_overrides(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "note_ref"
+        ]
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Sets the defaults one NOTE overrides over its kind's; empty overrides clear them.\n",
+          "ts": "/** Sets the defaults one NOTE overrides over its kind's; empty overrides clear them. */",
+          "py": "Sets the defaults one NOTE overrides over its kind's; empty overrides clear them."
+        }
+      }
+    },
+    {
+      "name": "vault.notes.defaults",
+      "description": "One NOTE's overrides and the extraction, context and retention defaults its gates read after them.",
+      "refs": ["/note_ref"],
+      "input": "crate::note::NoteRefRequest",
+      "output": "crate::note::NoteDefaultsView",
+      "call": "memory.note_defaults(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "note_ref"
+        ]
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// One NOTE's overrides and the defaults its gates read after them.\n",
+          "ts": "/** One NOTE's overrides and the defaults its gates read after them. */",
+          "py": "One NOTE's overrides and the defaults its gates read after them."
         }
       }
     },

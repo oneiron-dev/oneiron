@@ -15,6 +15,7 @@
 import { createRequire } from "node:module"
 
 import type {
+  CheckpointPin,
   ClaimInput,
   CommitReceipt,
   FacadeReceipt,
@@ -177,6 +178,8 @@ vaultSecretsLiftHistory(input: unknown): unknown
 vaultWidenProposals(input: unknown): unknown
 vaultWidenProposalsApprove(input: unknown): unknown
 vaultWidenProposalsDecline(input: unknown): unknown
+vaultCraftCandidates(input: unknown): unknown
+vaultCraftCandidatesAnswer(input: unknown): unknown
 vaultSettingsWakePolicySet(input: unknown): unknown
 vaultSettingsInferenceDefaults(input: unknown): unknown
 vaultSettingsInferenceDefaultsReplace(input: unknown): unknown
@@ -345,6 +348,8 @@ vaultNotesFromEntity(input: unknown): unknown
 vaultNotesEdit(input: unknown): unknown
 vaultNotesSeal(requestJson: string): string
 vaultNotesLifecycle(requestJson: string): string
+vaultNotesSetOverrides(requestJson: string): string
+vaultNotesDefaults(requestJson: string): string
 // END GENERATED AGENT VERBS
 
   asActor(actorKey: string): NativeClient
@@ -360,7 +365,8 @@ vaultNotesLifecycle(requestJson: string): string
 interface NativeClientConstructor {
   open(path: string | undefined, dimensions: number | undefined): NativeClient
   connect(url: string, key: string): NativeClient
-  pair(link: string): { url: string; credential: string }
+  /** `pin` is absent when the vault has no attested checkpoint. */
+  pair(link: string): { url: string; credential: string; pin?: CheckpointPin }
 }
 
 interface NativeBinding {

@@ -25,6 +25,8 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use serde::Deserialize;
 
+mod pairing;
+
 /// One message inside a witnessed turn, with the SDK's optional fields.
 ///
 /// Mirrors the engine DTO except that `is_visible` may be omitted (it defaults
@@ -199,11 +201,14 @@ impl NativeClient {
         Ok(Self { inner })
     }
 
-    /// Redeems a pairing link once; returns `(url, credential)`.
+    /// Redeems a pairing link once; returns the `{url, credential, pin}`
+    /// JSON `pairing::Paired` writes, the pin the link named or `null`.
     #[staticmethod]
-    fn pair(py: Python<'_>, link: String) -> PyResult<(String, String)> {
-        py.detach(|| oneiron_remote::OneironClient::pair(&link))
-            .map_err(raise)
+    fn pair(py: Python<'_>, link: String) -> PyResult<String> {
+        let paired = py
+            .detach(|| oneiron_remote::OneironClient::pair_pinned(&link))
+            .map_err(raise)?;
+        encode(&pairing::Paired::from_engine(paired))
     }
 
     /// Returns a NEW handle bound to another actor; refuses when connected.
@@ -1561,6 +1566,23 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_craft_candidates(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.craft_candidates")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.craft_candidates", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_craft_candidates_answer(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.craft_candidates.answer")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.craft_candidates.answer", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_settings_wake_policy_set(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.settings.wake_policy.set")?;
         let output = py
@@ -2905,6 +2927,20 @@ impl NativeClient {
         let input: serde_json::Value = decode(request_json, "vault.notes.lifecycle")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.notes.lifecycle", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_notes_set_overrides(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.notes.set_overrides")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.notes.set_overrides", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_notes_defaults(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.notes.defaults")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.notes.defaults", input))
             .map_err(raise)?;
         encode(&output)
     }

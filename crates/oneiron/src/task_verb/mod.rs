@@ -20,6 +20,7 @@ mod ask_soft_confirm_types;
 mod ask_types;
 mod attendee_answer;
 mod board_task;
+mod comm_widen;
 pub(crate) use board_task::board_task_for_id;
 mod brief;
 mod consts;
@@ -35,6 +36,7 @@ mod consult_payload;
 mod consult_result;
 mod create_facade;
 mod create_origin;
+pub(crate) use create_origin::message_dispatch_in_txn;
 mod create_spec;
 mod create_validation;
 mod decision_port;
@@ -81,6 +83,7 @@ mod subproject;
 mod symbol_lease;
 mod terminal_state;
 mod training_offer_ask;
+mod training_swap_ask;
 mod verb_kind;
 mod wave_port;
 mod wire_decode;
@@ -89,6 +92,11 @@ pub(crate) use training_offer_ask::{
     OFFER_QUESTION_TYPE, issue_training_offer_asks, offer_question_key, offer_question_text,
     reserved_offer_question_in, training_offer_ask_key, void_training_offer_asks_in,
 };
+pub(crate) use training_swap_ask::{
+    SWAP_QUESTION_TYPE, is_training_swap_ask_intent, issue_training_swap_asks,
+    pending_swap_question_in, swap_question_key, training_swap_ask_key, void_training_swap_asks_in,
+};
+pub use training_swap_ask::{SwapAskState, TrainingSwapAskView, training_swap_asks};
 pub(crate) use wire_decode::{
     TaskBinding, done_task_evidence_in, leader_task_body_in, leader_task_brief_in, task_binding,
     task_is_blocked_in, task_text_in,
@@ -155,6 +163,21 @@ pub(crate) use create_validation::{
     settled_task_result_binding, task_human_assignee, task_is_terminal,
 };
 pub(crate) use rate_limit::task_create_owner;
+
+/// The objectives a run realizing `task` confesses against (OF-544): its
+/// brief's done-means question, each criterion that must hold, then each
+/// that must not as `none of: <text>`. `None` for a TASK with no brief, or
+/// a brief that names none.
+pub fn task_confession_objectives(
+    vault: &crate::Vault,
+    task: crate::EntityId,
+) -> crate::Result<Option<Vec<String>>> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(wire_decode::task_verb_body_in(vault, &txn, task)?
+        .and_then(|body| body.brief)
+        .map(|stored| stored.brief.confession_objectives())
+        .filter(|objectives| !objectives.is_empty()))
+}
 
 /// A terminal typed TASK cannot be newly bound to a room thread.
 pub(crate) fn thread_task_is_open_in(
@@ -278,8 +301,8 @@ pub(crate) use ask_option_link::{
 #[cfg(feature = "sync")]
 pub(crate) use ask_record::waits_for_ask_group;
 pub(crate) use ask_record::{
-    AttendeeEntryFact, admit_attendee_entry_in_txn, ask_notice_at_in, attendee_entry_id,
-    guard_ask_fact_put, read_attendee_entry_in,
+    AttendeeEntryFact, admit_attendee_entry_in_txn, admit_unasked_attendee_entry_in_txn,
+    ask_notice_at_in, attendee_entry_id, guard_ask_fact_put, read_attendee_entry_in,
 };
 pub(crate) use ask_settlement::{
     AskStanding, ask_settlement_in, ask_standing_in, settle_ask_if_due,

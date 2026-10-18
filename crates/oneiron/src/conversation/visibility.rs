@@ -146,10 +146,8 @@ impl AudienceCache {
                 }
                 Err(error) => return Err(error),
             }
-            if let Some(readable) =
-                crate::workspace_roster::project_room_audience_in(vault, txn, room, audience)?
-            {
-                if !readable {
+            if crate::workspace_roster::project_room_audience_in(vault, txn, room, &[])?.is_some() {
+                if !project_audience_readable_in(vault, txn, room, audience, h.occurred_start)? {
                     return Ok(false);
                 }
             } else {
@@ -251,6 +249,34 @@ impl AudienceCache {
         }
         Ok(true)
     }
+}
+
+/// Whether `audience` reads a row of the project room `room` that occurred
+/// at `at`. A speaker's entry fact there (FIX 1388/1389) is held to its cut
+/// ([`attendee::speaker_entry_covers_in`]), as in an ordinary room: it is no
+/// actor, and its entry is never project participation. Every other id
+/// stands in the PROJECT roster as an actor.
+fn project_audience_readable_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    audience: &[EntityId],
+    at: u64,
+) -> Result<bool> {
+    let mut actors = Vec::with_capacity(audience.len());
+    for id in audience {
+        let fact = crate::task_verb::read_attendee_entry_in(vault, txn, *id)?;
+        let entry = fact.is_some_and(|fact| {
+            fact.container == room && matches!(fact.attendee, ContainerAttendee::Speaker { .. })
+        });
+        if !entry {
+            actors.push(*id);
+        } else if !attendee::speaker_entry_covers_in(vault, txn, room, *id, at)? {
+            return Ok(false);
+        }
+    }
+    let readable = crate::workspace_roster::project_room_audience_in(vault, txn, room, &actors)?;
+    Ok(readable == Some(true))
 }
 
 /// A reaction (or its echo binding) is readable only together with the record

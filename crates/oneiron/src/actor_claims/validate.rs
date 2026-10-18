@@ -9,6 +9,7 @@ use crate::claim::{
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::Result;
 
+use super::candidate::{is_resident_craft_candidate, is_resident_craft_verdict};
 use super::invalid;
 use super::rows::{
     ACTOR_CLAIM_LINEAGE_KEY, ACTOR_EDIT_COST_SCOPE_KEY, ACTOR_SKILL_FIT_SCOPE_KEY,
@@ -40,13 +41,19 @@ pub fn is_actor_claim_predicate(predicate: &str) -> bool {
 /// Runs on EVERY write door including sync replay, so it is the property that
 /// survives replication: a peer cannot land a bare, human-approved, or
 /// wrong-typed `actor.*` row this vault would then read as its own projection.
+/// The one approved shape is the owner's verdict on a craft candidate, below,
+/// and a federated copy of it is refused.
 ///
 /// The source pin mirrors `actor.confidence_prior`'s trust boundary exactly.
 /// Same-owner multi-device sync preserves `src`, so a user's own rows replicate
 /// and materialize; the cross-vault federation door restamps foreign claims
 /// `src → Imported`. Imported rows can exist only as inert Proposed/Rejected
 /// data with an Imported evidence floor. Routing and projector head reads still
-/// require Observed/Auto; a peer's opinion never becomes local learned truth.
+/// require Observed/Auto (the writer's own head read also takes the owner's
+/// Approved craft verdict); a peer's opinion never becomes local learned truth.
+/// The one native Proposed shape is a resident's dreaming candidate, which no
+/// head read takes as truth either, and the one native Approved or Rejected
+/// shape is the owner's verdict on one ([`super::candidate`]).
 pub(crate) fn validate_actor_claim_structure(body: &ClaimBody) -> Result<()> {
     if !matches!(body.subject, ClaimSubject::Entity(_)) {
         return Err(invalid("actor.* claim subject must be an entity"));
@@ -60,6 +67,8 @@ pub(crate) fn validate_actor_claim_structure(body: &ClaimBody) -> Result<()> {
             ClaimApprovalStatus::Proposed | ClaimApprovalStatus::Rejected
         );
     if !archived
+        && !is_resident_craft_candidate(body)
+        && !is_resident_craft_verdict(body)
         && (body.approval != ClaimApprovalStatus::Auto
             || body.source != Some(ClaimSource::Observed))
     {

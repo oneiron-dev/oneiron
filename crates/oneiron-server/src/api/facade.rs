@@ -31,6 +31,7 @@ mod campaign_split_doors;
 mod connector_call_doors;
 mod core_write_doors;
 mod courtesy_delete_doors;
+mod craft_candidate_doors;
 mod critic_review_doors;
 mod decision_ask_doors;
 pub(super) mod decision_role_asks;
@@ -62,7 +63,7 @@ mod widen_proposal_doors;
 
 pub(crate) use call_context::{FacadeCall, FacadeCallOutput};
 use call_context::{VerbContext, context_required, facade_invocation_id};
-pub(crate) use connector_call_doors::connector_call_as;
+pub(crate) use connector_call_doors::{connector_answer_as, connector_call_as};
 pub(crate) use dispatch::call_verb;
 pub(crate) use host_doors::ai_speech_for_run;
 pub(crate) use secret_use_doors::self_use_as;

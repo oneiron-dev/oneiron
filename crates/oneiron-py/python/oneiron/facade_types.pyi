@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 316 facade rows, 1271 declarations.
-Inputs: 273 of 316 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 273 of 316 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 73; unread shapes: 0.
+Census: 320 facade rows, 1287 declarations.
+Inputs: 277 of 320 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 277 of 320 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 74; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -514,7 +514,7 @@ class ShapePlanSummary(TypedDict):
     ceremonies: int
     no_door: int
 ShapeReachVerdict = Literal["can", "asks"]
-ShapeReachFact = TypedDict("ShapeReachFact", {"actor": str, "actor_name": NotRequired[str | None], "verb": str, "channel": str, "sender": str, "identity": str, "class": NotRequired[str | None], "audience": NotRequired[list[str]], "verdict": ShapeReachVerdict})
+ShapeReachFact = TypedDict("ShapeReachFact", {"actor": str, "actor_name": NotRequired[str | None], "verb": str, "channel": str, "sender": str, "identity": str, "class": NotRequired[str | None], "audience": NotRequired[list[str]], "audience_names": NotRequired[list[str]], "verdict": ShapeReachVerdict})
 class ShapeReach(TypedDict):
     facts: list[ShapeReachFact]
 class ShapePlanReach(TypedDict):
@@ -542,6 +542,8 @@ class MessagePersonRequest(TypedDict):
     pr: str
     text: str
     mention: NotRequired[MentionProvenance | None]
+    from_project: NotRequired[str | None]
+    to_project: NotRequired[str | None]
 class WitnessReceipt(TypedDict):
     turn_short_id: str
     message_short_ids: list[str]
@@ -2508,6 +2510,10 @@ class GuestRevokeDisclosure(TypedDict):
     copied_bytes_recallable: NotRecallable
     recipient_copy_state: GuestCopyState
     deletion_request_status: GuestDeletionRequestStatus
+class GuestRevokeCourtesyTargetView(TypedDict):
+    pact: str
+    peer_vault_id: str
+    epoch_cutoff: int
 class GuestRevokeResponse(TypedDict):
     grant_ref: EntityId
     guest_ref: EntityId
@@ -2516,6 +2522,7 @@ class GuestRevokeResponse(TypedDict):
     revoked_slip_refs: NotRequired[list[str]]
     pact_standing: GuestPactStanding
     disclosure: GuestRevokeDisclosure
+    courtesy_targets: NotRequired[list[GuestRevokeCourtesyTargetView]]
 class GuestSlipMintRequest(TypedDict):
     grant_ref: EntityId
     holder_key: str
@@ -3556,6 +3563,29 @@ class WidenProposalsView(TypedDict):
     proposals: list[WidenProposalView]
 class WidenProposalAnswer(TypedDict):
     proposal_id: str
+class CraftCandidatesRequest(TypedDict):
+    resident: NotRequired[str | None]
+class CraftCandidateView(TypedDict):
+    candidate_id: str
+    content_hash: str
+    resident: str
+    predicate: str
+    text: str
+    attempt: str
+    proposed_at: int
+class CraftCandidatesView(TypedDict):
+    candidates: list[CraftCandidateView]
+CraftVerdict = Literal["approved", "rejected"]
+class CraftCandidateAnswer(TypedDict):
+    candidate_id: str
+    content_hash: str
+    verdict: CraftVerdict
+class CraftVerdictView(TypedDict):
+    candidate_id: str
+    verdict: CraftVerdict
+    verdict_id: str
+    receipt_ref: str
+    decided_at: int
 class WakePolicySetRequest(TypedDict):
     policy: Any
     idempotency_key: str
@@ -4345,7 +4375,7 @@ class TaskAskReceipt(TypedDict):
 class TaskWaitRequest(TypedDict):
     handle: TaskAskHandle
     step_key: str
-SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet", "Summarize", "Leader", "LeaderSplit", "Team"]
+SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "ConnectorAnswer", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet", "Summarize", "Leader", "LeaderSplit", "Team"]
 SelfDurableWaitReason = Literal["HumanInput", "DestructiveEffect", "OutboundEffect", "PeerResult"]
 class SelfDurableWait(TypedDict):
     wait_id: EntityId
@@ -5394,6 +5424,10 @@ class ConnectorToolResult(TypedDict):
     structured_content: NotRequired[Any | None]
     is_error: bool
     rpc_error: NotRequired[Any | None]
+class ConnectorQuestion(TypedDict):
+    key: str
+    message: str
+    requested_schema: Any
 class ConnectorCallReplyDelivered(TypedDict):
     outcome: Literal["delivered"]
     result: NotRequired[ConnectorToolResult | None]
@@ -5411,7 +5445,15 @@ class ConnectorCallReplyPendingDelivery(TypedDict):
     outcome: Literal["pending_delivery"]
     call_ref: NotRequired[str | None]
     reasons: list[str]
-ConnectorCallReply = ConnectorCallReplyDelivered | ConnectorCallReplyHeld | ConnectorCallReplyRefused | ConnectorCallReplyPendingDelivery
+class ConnectorCallReplyAwaitingInput(TypedDict):
+    outcome: Literal["awaiting_input"]
+    handle: str
+    source: str
+    foreign: bool
+    questions: list[ConnectorQuestion]
+    expires_at_ms: int
+    reasons: NotRequired[list[str]]
+ConnectorCallReply = ConnectorCallReplyDelivered | ConnectorCallReplyHeld | ConnectorCallReplyRefused | ConnectorCallReplyPendingDelivery | ConnectorCallReplyAwaitingInput
 class ConnectorSchemaRequest(TypedDict):
     name: str
     tool: str
@@ -6764,16 +6806,38 @@ class NoteEditOutcomeReviewRequired(TypedDict):
 NoteEditOutcome = NoteEditOutcomeEdited | NoteEditOutcomeRewriteFork | NoteEditOutcomeProposedFork | NoteEditOutcomeReviewRequired
 class NoteRefRequest(TypedDict):
     note_ref: str
+NoteActor = str
 class NoteSeal(TypedDict):
     note: str
     document: str
     frontier: list[int]
-    sealed_by: str
+    sealed_by: NoteActor
     sealed_at: int
 NoteLifecycleStatus = Literal["active", "sealed", "archived", "tombstoned"]
 class NoteLifecycleView(TypedDict):
     status: NoteLifecycleStatus
     seal: NotRequired[NoteSeal | None]
+ExtractionDefault = Literal["allowed", "after_seal", "private_strategy_only", "disabled"]
+ContextDefault = Literal["owner_only", "relationship_scoped", "vault_readable", "explicit_only"]
+RetentionDefault = Literal["durable", "session_sealed", "archive_after_days"]
+class NoteOverrides(TypedDict):
+    extraction: NotRequired[ExtractionDefault | None]
+    context: NotRequired[ContextDefault | None]
+    retention: NotRequired[RetentionDefault | None]
+    archive_after_days: NotRequired[int | None]
+class SetNoteOverridesRequest(TypedDict):
+    note_ref: str
+    overrides: NotRequired[NoteOverrides]
+class NoteKindDescriptor(TypedDict):
+    pack: str
+    kind: str
+    extraction: ExtractionDefault
+    context: ContextDefault
+    retention: RetentionDefault
+    archive_after_days: NotRequired[int | None]
+class NoteDefaultsView(TypedDict):
+    overrides: NoteOverrides
+    defaults: NoteKindDescriptor
 class GeneratedUiStatePatchAdd(TypedDict):
     op: Literal["add"]
     path: str

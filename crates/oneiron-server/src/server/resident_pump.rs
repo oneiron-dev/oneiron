@@ -38,7 +38,8 @@ use oneiron::code_run::{
     AgentVerbDoor, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher, SpawnHostSeat,
     TaskExposure, finalize_step_captures, park_and_bind_wait_trap,
 };
-use oneiron::compaction::output::OutputContextEntry;
+use oneiron::compaction::output::{OutputContextEntry, restore_output};
+use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confession};
 use oneiron::dreamer_runner::{CompleteDreamerAttempt, DreamerParkCause, ParkDreamerAttempt};
 use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, RunCompaction,
@@ -47,12 +48,14 @@ use oneiron::failure_ladder::{
     DetectorTier, FailureEscalationMode, FailureLadderOutcome, FailureScope, FailureScopePolicy,
     HandleAttemptFailure, TypedFailureEvidence, TypedFailureVerdict,
 };
+use oneiron::learning::TypeRef;
 use oneiron::llm::SpentKind;
 use oneiron::llm::seat::ModelSeat;
 use oneiron::llm::{
     DurableStepContext, open_trap, register_wait, trap_for_durable_wait, trap_park_owner,
 };
 use oneiron::registry::ENTITY_TYPE_AGENT_DEF;
+use oneiron::self_heal::audit::AttemptConfession;
 use oneiron::{DreamerRunnerStore, EntityId, LlmError, RetryableLlmError, Vault, WriteActor};
 use tokio::sync::broadcast;
 
@@ -121,12 +124,26 @@ impl RunOf {
 }
 
 /// A claimed run: its leased attempt and input, the agent it runs as, what
-/// its task says, and the MESSAGE thread its failure asks on.
+/// its task says, the MESSAGE thread its failure asks on, and the objectives
+/// it confesses against (OF-544).
 struct Claimed {
     status: AgentDispatchStatus,
     agent: EntityId,
     task: String,
     qa_thread_ref: EntityId,
+    objectives: Vec<String>,
+}
+
+impl Claimed {
+    /// The run asked for its confession: its objectives are chosen once, at
+    /// its claim, so its ask and the parse of its answer name the same rows.
+    fn asked(mut self, vault: &Vault, briefing: Option<&str>) -> Self {
+        self.objectives = run_objectives(vault, &self.status, briefing);
+        if !self.objectives.is_empty() {
+            self.task = format!("{}\n\n{}", self.task, confession_ask(&self.objectives));
+        }
+        self
+    }
 }
 
 impl SyncServer {
@@ -348,29 +365,40 @@ impl SyncServer {
 /// Claims the run by id through its pump's door, with the task it runs.
 fn claim(vault: &Vault, id: AttemptId, of: RunOf) -> oneiron::Result<Option<Claimed>> {
     let dispatcher = AgentDispatcher::new(vault);
-    match of {
-        RunOf::Resident(agent) => Ok(dispatcher
+    let claimed = match of {
+        RunOf::Resident(agent) => dispatcher
             .claim_resident_run(id, LEASE_OWNER, unix_now())?
-            .map(|(status, resident)| Claimed {
-                task: resident_task(&dispatcher, &status, &resident),
-                agent,
-                qa_thread_ref: resident.home_message_ref,
-                status,
-            })),
-        RunOf::Agent(agent) => Ok(dispatcher
+            .map(|(status, resident)| {
+                let briefing = briefing(&dispatcher, &status);
+                let claimed = Claimed {
+                    task: resident_task(&status, &resident, briefing.clone()),
+                    agent,
+                    qa_thread_ref: resident.home_message_ref,
+                    status,
+                    objectives: Vec::new(),
+                };
+                (claimed, briefing)
+            }),
+        RunOf::Agent(agent) => dispatcher
             .claim_agent_run(id, LEASE_OWNER, unix_now())?
             .map(
                 |AgentRun {
                      status,
                      qa_thread_ref,
-                 }| Claimed {
-                    task: agent_task(&dispatcher, &status),
-                    agent,
-                    qa_thread_ref,
-                    status,
+                 }| {
+                    let briefing = briefing(&dispatcher, &status);
+                    let claimed = Claimed {
+                        task: agent_task(&status, briefing.clone()),
+                        agent,
+                        qa_thread_ref,
+                        status,
+                        objectives: Vec::new(),
+                    };
+                    (claimed, briefing)
                 },
-            )),
-    }
+            ),
+    };
+    Ok(claimed.map(|(claimed, briefing)| claimed.asked(vault, briefing.as_deref())))
 }
 
 /// Runs the leased attempt until it ends, waits, or fails: a yielded slice
@@ -679,9 +707,9 @@ fn planner_seat_agent(vault: &Vault, agent: &str) -> oneiron::Result<Option<Enti
 /// its sender wrote it (OF-519). It reads only the attempt and its binding,
 /// so each entry of the run binds the same text to the run's record.
 fn resident_task(
-    dispatcher: &AgentDispatcher<'_>,
     status: &AgentDispatchStatus,
     resident: &ResidentAgentSpec,
+    briefing: Option<String>,
 ) -> String {
     let cause = match &status.attempt.task_ref {
         Some(task) => task_cause(task),
@@ -691,18 +719,15 @@ fn resident_task(
             resident.home_conversation_ref.to_hex()
         ),
     };
-    task_text(
-        status,
-        std::iter::once(cause).chain(briefing(dispatcher, status)),
-    )
+    task_text(status, std::iter::once(cause).chain(briefing))
 }
 
 /// Another agent's run task: its frozen definition's instructions, then the
 /// briefing its spawn gave it and the TASK it realizes.
-fn agent_task(dispatcher: &AgentDispatcher<'_>, status: &AgentDispatchStatus) -> String {
+fn agent_task(status: &AgentDispatchStatus, briefing: Option<String>) -> String {
     task_text(
         status,
-        briefing(dispatcher, status)
+        briefing
             .into_iter()
             .chain(status.attempt.task_ref.as_deref().map(task_cause)),
     )
@@ -773,7 +798,7 @@ fn settle(
     let reason = match ran {
         Ok(outcome) => match outcome.status {
             EngineExecutorStatus::Complete => {
-                return complete(vault, decisions, status, &outcome, now);
+                return complete(vault, decisions, claimed, &outcome, now);
             }
             // The run waits on a durable signal; its lease waits with it.
             EngineExecutorStatus::Waiting(_) => return park_on_wait(vault, status, &outcome, now),
@@ -909,15 +934,16 @@ fn passing(error: &LlmError, now: u64) -> Option<(&'static str, Option<u64>)> {
 /// Completes the attempt through the runner's one completion door, its
 /// result the run's result TURN, and closes its spend. The TASK's "Done
 /// means met?" is asked first, on this thread, so the completion carries
-/// its answer.
+/// its answer, and the run's confession (OF-544) is sealed in the commit
+/// that completes it.
 fn complete(
     vault: &Vault,
     decisions: &DecisionHost,
-    status: &AgentDispatchStatus,
+    claimed: &Claimed,
     outcome: &EngineExecutorOutcome,
     now: u64,
 ) -> oneiron::Result<()> {
-    let attempt = &status.attempt;
+    let attempt = &claimed.status.attempt;
     // A run that settled its TASK itself (tasks.refuse; tasks.update once a
     // run may report) is owed no Done from its result.
     let settled_itself = outcome
@@ -961,7 +987,13 @@ fn complete(
             }
         },
     );
-    DreamerRunnerStore::new(vault).complete_judged(
+    // A confession that cannot be read seals nothing; the run still
+    // completes.
+    let confession = run_confession(vault, claimed, outcome).unwrap_or_else(|error| {
+        tracing::warn!(%error, attempt = ?attempt.id, "an agent run's confession does not read; it seals none");
+        None
+    });
+    DreamerRunnerStore::new(vault).complete_with_confession(
         CompleteDreamerAttempt {
             id: attempt.id,
             lease_owner: LEASE_OWNER.to_owned(),
@@ -969,9 +1001,85 @@ fn complete(
             now,
         },
         judged,
+        confession.as_ref(),
     )?;
     AgentDispatcher::new(vault).settle_child(&attempt.id, now)?;
     Ok(())
+}
+
+/// The objectives a run confesses against (OF-544): the caller's, verbatim,
+/// when its dispatch carries them; else its TASK brief's done-means; else,
+/// as a workflow step's, the one its spawn's planned need, its briefing or
+/// its definition's `desc` names, whitespace folded and whole. A TASK brief
+/// that does not read leaves the run unasked, and its claim stands.
+fn run_objectives(
+    vault: &Vault,
+    status: &AgentDispatchStatus,
+    briefing: Option<&str>,
+) -> Vec<String> {
+    if let Some(objectives) = &status.input.objectives {
+        return objectives.clone();
+    }
+    let brief = status.attempt.task_ref.as_deref().map(|task| {
+        oneiron::task_verb::task_confession_objectives(vault, EntityId::from_hex(task)?)
+    });
+    match brief.transpose() {
+        Ok(Some(Some(objectives))) => return objectives,
+        Ok(_) => {}
+        Err(error) => {
+            tracing::warn!(%error, attempt = ?status.attempt.id, "an agent run's TASK brief does not read; it is asked no confession");
+            return Vec::new();
+        }
+    }
+    status
+        .input
+        .plan
+        .as_ref()
+        .map(|plan| plan.asked.need.as_str())
+        .into_iter()
+        .chain(briefing)
+        .chain(std::iter::once(status.input.definition.desc.as_str()))
+        .map(|text| text.split_whitespace().collect::<Vec<_>>().join(" "))
+        .find(|text| !text.is_empty())
+        .into_iter()
+        .collect()
+}
+
+/// The confession the run's finished answer ends with (OF-544), against the
+/// objectives it was asked: read whole from the finished step's
+/// observation, the answer its result names, never a preview or a marker.
+/// A run asked none, or whose answer gives none or is withheld, confesses
+/// nothing. The seal measures the agent that ran, on the type its spawn was
+/// placed under.
+fn run_confession(
+    vault: &Vault,
+    claimed: &Claimed,
+    outcome: &EngineExecutorOutcome,
+) -> oneiron::Result<Option<AttemptConfession>> {
+    if claimed.objectives.is_empty() {
+        return Ok(None);
+    }
+    let status = &claimed.status;
+    let Some(answer) = outcome
+        .replay_record
+        .outputs
+        .iter()
+        .rev()
+        .find(|output| output.complete && output.path.ends_with(".observation.txt"))
+    else {
+        return Ok(None);
+    };
+    let bytes = restore_output(vault, answer.output_ref())?;
+    let Some(objectives) = parse_confession(&bytes, &claimed.objectives) else {
+        tracing::warn!(attempt = ?status.attempt.id, "an agent run asked for its confession gave none that parses");
+        return Ok(None);
+    };
+    Ok(Some(AttemptConfession {
+        attempt: status.attempt.id,
+        subject: status.input.target.agent_definition_ref()?,
+        type_ref: TypeRef::from(&status.input.type_ref),
+        objectives,
+    }))
 }
 
 /// Parks a Waiting run's attempt on a C9 trap its wait's reply wakes: the

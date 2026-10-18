@@ -10,10 +10,11 @@ use super::{
     Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
 };
 use crate::access_grant::{AccessGrant, AccessGrantScope, AccessGrantStatus};
+use crate::agent_dispatch::{AddressDecision, AddressRefusal, AgentDispatchInput, SenderDispatch};
+use crate::attempt_queue::AttemptId;
 use crate::claim::ClaimReadStatus;
 use crate::context_board::{People, PersonKind, PersonRow};
 use crate::conversation::{ConversationBody, ConversationKind};
-use crate::ports::EntityStoreRead;
 use crate::{EdgeActorClass, EntityId, WriteActor};
 
 /// Rows on one `vault.people.list` page.
@@ -21,6 +22,11 @@ pub const PEOPLE_PAGE_SIZE: usize = 50;
 
 /// Derivation domain of the one Direct room two persons share.
 const DIRECT_ROOM_DOMAIN: &[u8] = b"oneiron.people.direct-room.v1";
+
+/// Derivation domain of a leader message's room: one per leadership tenure,
+/// keyed by both projects and the actors leading them, so a new leader gets
+/// a new room and the old one stops admitting turns (FIX 1380; CALLS C6).
+const LEADER_DIRECT_ROOM_DOMAIN: &[u8] = b"oneiron.people.leader-room.v1";
 
 /// `vault.people.list`'s input.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
@@ -63,6 +69,87 @@ pub struct MessagePersonRequest {
     /// (OF-123): the message refuses while that mention is unsettled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mention: Option<crate::outbound::MentionProvenance>,
+    /// When the sender leads several projects and sends from no run that
+    /// names one: the project (entity hex) it speaks for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_project: Option<String>,
+    /// When the person leads several projects: the project (entity hex) the
+    /// message addresses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_project: Option<String>,
+}
+
+/// Where an admitted message lands (FIX 1380).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MessageRoute {
+    /// The leader chat of two projects' leaders, projects in id order.
+    Leader {
+        room: EntityId,
+        projects: [EntityId; 2],
+    },
+    /// The Direct room two persons share, persons in id order.
+    Plain { room: EntityId, pair: [EntityId; 2] },
+}
+
+impl MessageRoute {
+    const fn room(self) -> EntityId {
+        match self {
+            Self::Leader { room, .. } | Self::Plain { room, .. } => room,
+        }
+    }
+}
+
+/// A message the comm dial refused: why, and the run it was sent from.
+#[derive(Debug, Clone, Copy)]
+struct AddressRefused {
+    refusal: AddressRefusal,
+    child: Option<AttemptId>,
+}
+
+/// The "ask" when the leader pair is not fixed (Engine 10-18; CALLS C9): a
+/// bad request naming every candidate, answered by the request's selector.
+fn ask_for_project(who: &str, field: &str, candidates: &[EntityId]) -> MemoryError {
+    let names: Vec<String> = candidates.iter().map(EntityId::to_hex).collect();
+    MemoryError::bad_request(format!(
+        "{who} several projects; name one with {field}: {}",
+        names.join(", ")
+    ))
+}
+
+/// The led project the sender speaks for: a bound run's own project when
+/// the sender leads it, else none (Engine 10-18: the project the dispatch
+/// names); unbound, its one led project, or among several the one
+/// `from_project` names, else the ask.
+fn sender_project(
+    led: &[EntityId],
+    run: Option<&AgentDispatchInput>,
+    from: Option<EntityId>,
+) -> MemoryResult<Option<EntityId>> {
+    if let Some(project) = from
+        && !led.contains(&project)
+    {
+        return Err(MemoryError::bad_request(format!(
+            "you do not lead project {}",
+            project.to_hex()
+        )));
+    }
+    match run {
+        Some(run) => {
+            let named = run.project_ref.filter(|project| led.contains(project));
+            if from.is_some() && from != named {
+                return Err(MemoryError::bad_request(
+                    "from_project is not the led project this run works in",
+                ));
+            }
+            Ok(named)
+        }
+        None => match (led, from) {
+            ([], _) => Ok(None),
+            ([one], _) => Ok(Some(*one)),
+            (_, Some(project)) => Ok(Some(project)),
+            (several, None) => Err(ask_for_project("you lead", "from_project", several)),
+        },
+    }
 }
 
 /// The Direct room the message landed in, and its witness receipt.
@@ -123,6 +210,10 @@ fn hex_ref(field: &str, value: &str) -> MemoryResult<EntityId> {
         .map_err(|_| MemoryError::bad_request(format!("{field} is not an entity id")))
 }
 
+fn hex_opt(field: &str, value: Option<&str>) -> MemoryResult<Option<EntityId>> {
+    value.map(|value| hex_ref(field, value)).transpose()
+}
+
 impl Memory<'_> {
     /// The people the caller reads, each with the `about` line of the
     /// highest band its read admits.
@@ -170,8 +261,18 @@ impl Memory<'_> {
         Ok(Self::person_by_handle(&people, &input.pr)?.clone())
     }
 
-    /// `self.message`: one message to a person, in the Direct room the
-    /// caller's person and theirs share. The room is made on first use.
+    /// `self.message`: one message to a person. Two leaders speak in the
+    /// leader chat of the projects they lead; anyone else in the Direct room
+    /// the two persons share. The room is made on first use, in the message's
+    /// own write.
+    ///
+    /// FIX 1380: the comm dial admits the address first. ARCH-0067 :53-56:
+    /// "An explorer hears only from its parent, through its comm dial."
+    /// ARCH-0067 :449: "Any two leaders in one vault may open a direct
+    /// chat", "Each speaks under its own project's scope", and a shared
+    /// ancestor's rule "narrows the default, stricter wins". One read
+    /// snapshot decides the route; the write decides again and lands the
+    /// message only on the same route.
     pub fn message_person(
         &self,
         input: &MessagePersonRequest,
@@ -202,77 +303,324 @@ impl Memory<'_> {
             }
         }
         let people = self.people_roster()?;
-        let target = Self::person_by_handle(&people, &input.pr)?.person;
+        let target = Self::person_by_handle(&people, &input.pr)?;
         let me = people
             .get(self.actor)
             .ok_or_else(|| MemoryError::bad_request("the caller is not a person in this vault"))?
             .person;
-        if me == target {
+        if me == target.person {
             return Err(MemoryError::bad_request("a person cannot message itself"));
         }
-        let pair = if me < target {
-            [me, target]
-        } else {
-            [target, me]
-        };
-        let room = EntityId::derive(
-            DIRECT_ROOM_DOMAIN,
-            &[pair[0].as_bytes(), pair[1].as_bytes()],
-        )?;
-        let now_ms = unix_ms();
-        let exists = |vault: &crate::Vault| -> MemoryResult<bool> {
-            let txn = vault
+        let decided = {
+            let txn = self
+                .vault
                 .store
                 .env
                 .read_txn()
                 .map_err(crate::error::Error::from)?;
-            Ok(vault.store.port_entity_record(&txn, &room)?.is_some())
+            self.message_route_in_txn(&txn, me, target, input)?
         };
-        if !exists(self.vault)? {
-            let body = ConversationBody {
-                kind: ConversationKind::Direct,
-                member_ids: pair.to_vec(),
-                ..Default::default()
-            };
-            let made = self.vault.create_conversation(
-                room,
-                &body,
-                WriteActor::new(self.actor, self.actor_class),
-                now_ms / 1_000,
-            );
-            // A message racing this one may have made the room first.
-            if let Err(error) = made
-                && !exists(self.vault)?
-            {
-                return Err(error.into());
-            }
-        }
+        let route = match decided {
+            Ok(route) => route,
+            Err(refused) => return Err(self.address_refused(target, refused)),
+        };
+        let room = route.room();
+        let now_ms = unix_ms();
         let author = if self.actor_class == EdgeActorClass::Agent {
             WitnessAuthor::Companion
         } else {
             WitnessAuthor::User
         };
-        let receipt = self.witness(&WitnessTurn {
-            conversation_ref: room.to_hex(),
-            turn_ref: None,
-            thread_audience: None,
-            messages: vec![WitnessMessage {
-                id: None,
-                author,
-                message_type: "text".to_owned(),
-                content: text.to_owned(),
-                metadata: None,
-                is_visible: true,
-                order: 0,
-                quote: None,
-            }],
-            occurred_at: now_ms / 1_000,
-            assertions: Default::default(),
-        })?;
+        let refused_in_write = std::cell::Cell::new(None);
+        let landed = self.witness_with_room_birth(
+            &WitnessTurn {
+                conversation_ref: room.to_hex(),
+                turn_ref: None,
+                thread_audience: None,
+                messages: vec![WitnessMessage {
+                    id: None,
+                    author,
+                    message_type: "text".to_owned(),
+                    content: text.to_owned(),
+                    metadata: None,
+                    is_visible: true,
+                    order: 0,
+                    quote: None,
+                }],
+                occurred_at: now_ms / 1_000,
+                assertions: Default::default(),
+            },
+            |wtxn| {
+                if let Some(mention) = input.mention.as_ref()
+                    && let Some(name) =
+                        crate::dreamer_runner::maintenance::identity::mention_unsettled_in_txn(
+                            self.vault, wtxn, mention,
+                        )?
+                {
+                    return Err(crate::error::Error::Record(
+                        crate::error::RecordError::IdentityUnsettled { name },
+                    )
+                    .into());
+                }
+                match self.message_route_in_txn(wtxn, me, target, input)? {
+                    Err(refused) => {
+                        refused_in_write.set(Some(refused));
+                        Err(Self::address_refusal(target, refused.refusal))
+                    }
+                    Ok(again) if again != route => Err(MemoryError::new(
+                        super::MEMORY_CODE_INVALID_STATE,
+                        "who leads or who hears changed while the message was sent",
+                        &["Send the message again."],
+                    )),
+                    Ok(MessageRoute::Leader { room, projects }) => {
+                        self.vault.ensure_leader_chat_in_txn(
+                            wtxn,
+                            room,
+                            projects,
+                            WriteActor::new(self.actor, self.actor_class),
+                            now_ms / 1_000,
+                        )?;
+                        Ok(())
+                    }
+                    Ok(MessageRoute::Plain { room, pair }) => {
+                        if matches!(
+                            crate::vault::live_entity_row_in_txn(&self.vault.store, wtxn, &room)?,
+                            crate::vault::LiveEntityRow::Absent
+                        ) {
+                            let at = now_ms / 1_000;
+                            crate::conversation::create_in_txn(
+                                self.vault,
+                                wtxn,
+                                room,
+                                &ConversationBody {
+                                    kind: ConversationKind::Direct,
+                                    member_ids: pair.to_vec(),
+                                    ..Default::default()
+                                },
+                                WriteActor::new(self.actor, self.actor_class),
+                                crate::TimeRange { start: at, end: at },
+                                at,
+                                &[],
+                            )?;
+                        }
+                        Ok(())
+                    }
+                }
+            },
+        );
+        // A refusal the write found is answered once the write has unwound.
+        if landed.is_err()
+            && let Some(refused) = refused_in_write.take()
+        {
+            return Err(self.address_refused(target, refused));
+        }
         Ok(MessagePersonReceipt {
             room: room.to_hex(),
-            receipt,
+            receipt: landed?,
         })
+    }
+
+    /// Steps 2-4 of `self.message`, in one snapshot: who sends and from which
+    /// run, whether the two persons' leaders speak for two projects, and
+    /// whether the comm dial admits the address. `Err` inside `Ok` is the
+    /// dial's refusal; anything else that refuses is the outer `Err`.
+    fn message_route_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        me: EntityId,
+        target: &PersonRow,
+        input: &MessagePersonRequest,
+    ) -> MemoryResult<Result<MessageRoute, AddressRefused>> {
+        let vault = self.vault;
+        let run = crate::task_verb::message_dispatch_in_txn(self, txn)?;
+        let sender = match &run {
+            Some((attempt, input)) => SenderDispatch::Bound { attempt, input },
+            None => SenderDispatch::Unbound { actor: self.actor },
+        };
+        let child = run.as_ref().map(|(attempt, _)| attempt.id);
+        // The roster was read in its own snapshots: re-prove both persons'
+        // actors in this one.
+        if !crate::workspace_roster::speaks_as_in_txn(vault, txn, self.actor, me)? {
+            return Err(MemoryError::bad_request(
+                "the caller is not a person in this vault",
+            ));
+        }
+        let mut actors = Vec::new();
+        for actor in &target.actors {
+            if crate::workspace_roster::speaks_as_in_txn(vault, txn, *actor, target.person)? {
+                actors.push(*actor);
+            }
+        }
+        if actors.is_empty() {
+            return Err(MemoryError::not_found(format!(
+                "no person {}",
+                target.handle
+            )));
+        }
+        let mine = sender_project(
+            &crate::workspace_roster::projects_led_in_txn(vault, txn, self.actor)?,
+            run.as_ref().map(|(_, input)| input),
+            hex_opt("from_project", input.from_project.as_deref())?,
+        )?;
+        let theirs = Self::target_project_in_txn(
+            vault,
+            txn,
+            target,
+            &actors,
+            hex_opt("to_project", input.to_project.as_deref())?,
+        )?;
+        if let (Some(mine), Some((theirs, their_leader))) = (mine, theirs) {
+            // Leaders address each other vault-wide unless a shared ancestor
+            // narrows it (CALLS C8); every actor of the person must still
+            // hear the sender.
+            for actor in &actors {
+                if let AddressDecision::Refuse(refusal) =
+                    crate::agent_dispatch::target_admits_in_txn(vault, txn, &sender, *actor)?
+                {
+                    return Ok(Err(AddressRefused { refusal, child }));
+                }
+            }
+            crate::workspace_roster::leader_chat_allowed(vault, txn, [mine, theirs])?;
+            let (projects, leaders) = if mine < theirs {
+                ([mine, theirs], [self.actor, their_leader])
+            } else {
+                ([theirs, mine], [their_leader, self.actor])
+            };
+            let room = EntityId::derive(
+                LEADER_DIRECT_ROOM_DOMAIN,
+                &[
+                    projects[0].as_bytes(),
+                    leaders[0].as_bytes(),
+                    projects[1].as_bytes(),
+                    leaders[1].as_bytes(),
+                ],
+            )?;
+            return Ok(Ok(MessageRoute::Leader { room, projects }));
+        }
+        // A plain message must reach every actor of the person (CALLS C7).
+        for actor in &actors {
+            if let AddressDecision::Refuse(refusal) =
+                crate::agent_dispatch::may_address_in_txn(vault, txn, &sender, *actor)?
+            {
+                return Ok(Err(AddressRefused { refusal, child }));
+            }
+        }
+        let pair = if me < target.person {
+            [me, target.person]
+        } else {
+            [target.person, me]
+        };
+        let room = EntityId::derive(
+            DIRECT_ROOM_DOMAIN,
+            &[pair[0].as_bytes(), pair[1].as_bytes()],
+        )?;
+        Ok(Ok(MessageRoute::Plain { room, pair }))
+    }
+
+    /// The led project a message addresses, with the actor leading it: the
+    /// person's one led project; among several, the one `to_project` names,
+    /// else the one project its live runs work in, else the ask.
+    fn target_project_in_txn(
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        target: &PersonRow,
+        actors: &[EntityId],
+        to: Option<EntityId>,
+    ) -> MemoryResult<Option<(EntityId, EntityId)>> {
+        let mut led = Vec::new();
+        for actor in actors {
+            for project in crate::workspace_roster::projects_led_in_txn(vault, txn, *actor)? {
+                led.push((project, *actor));
+            }
+        }
+        if let Some(project) = to
+            && !led.iter().any(|(led, _)| *led == project)
+        {
+            return Err(MemoryError::bad_request(format!(
+                "{} does not lead project {}",
+                target.handle,
+                project.to_hex()
+            )));
+        }
+        Ok(match (led.as_slice(), to) {
+            ([], _) => None,
+            ([one], _) => Some(*one),
+            (_, Some(project)) => led.iter().copied().find(|(led, _)| *led == project),
+            (several, None) => {
+                let mut named = std::collections::BTreeSet::new();
+                for actor in actors {
+                    for project in
+                        crate::agent_dispatch::live_dispatch_projects_in_txn(vault, txn, *actor)?
+                    {
+                        if let Some(row) = several
+                            .iter()
+                            .find(|(led, leader)| *led == project && leader == actor)
+                        {
+                            named.insert(*row);
+                        }
+                    }
+                }
+                if named.len() != 1 {
+                    let candidates: Vec<EntityId> = several.iter().map(|(led, _)| *led).collect();
+                    return Err(ask_for_project(
+                        &format!("{} leads", target.handle),
+                        "to_project",
+                        &candidates,
+                    ));
+                }
+                named.into_iter().next()
+            }
+        })
+    }
+
+    /// The typed refusal for a dial refusal: `gate.deny.message_address`,
+    /// the dial's reason in its text (FIX 1380).
+    fn address_refusal(target: &PersonRow, refusal: AddressRefusal) -> MemoryError {
+        let (reason, suggestion) = match refusal {
+            AddressRefusal::OutboundReach { reach, needed } => (
+                format!(
+                    "{}: {} is outside this run's comm reach ({}); it needs {}",
+                    refusal.as_str(),
+                    target.handle,
+                    reach.as_str(),
+                    needed.as_str()
+                ),
+                "Ask the run's parent to widen its comm reach, then send again.",
+            ),
+            AddressRefusal::TargetHearsParentOnly => (
+                format!(
+                    "{}: {} hears only from its parent and its own children",
+                    refusal.as_str(),
+                    target.handle
+                ),
+                "Reach it through its parent.",
+            ),
+        };
+        crate::gate::message_address_refusal(&reason, suggestion)
+    }
+
+    /// The one place a dial refusal leaves `self.message`, after any write it
+    /// stopped has unwound. A run refused for reach raises the one widen ask
+    /// to its parent (ARCH-0028 :611 "Widening is one signal to the parent,
+    /// approve-and-stop-asking"), and the refusal names it.
+    fn address_refused(&self, target: &PersonRow, refused: AddressRefused) -> MemoryError {
+        let mut error = Self::address_refusal(target, refused.refusal);
+        let (Some(child), Some(needed)) = (refused.child, refused.refusal.needed_reach()) else {
+            return error;
+        };
+        match self.raise_comm_widen(child, needed) {
+            Ok(view) => {
+                error.message = format!("{}; {}", error.message, view.describe());
+                error.suggestions = vec![view.suggestion().to_owned()];
+            }
+            Err(raise) => {
+                error.message = format!(
+                    "{}; the widen ask could not be raised ({}); the request is kept and the next refused send resumes it",
+                    error.message, raise.message
+                );
+            }
+        }
+        error
     }
 
     /// `self.grants.ask`: asks a person for access, on behalf of the caller.

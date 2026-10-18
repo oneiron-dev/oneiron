@@ -40,11 +40,9 @@ impl Vault {
     ) -> Result<RepresentationContext> {
         if request.evidence.is_empty()
             || request.voice.is_empty()
-            || request.evidence.len() > 32
-            || request.voice.len() > 8
             || [&request.verb, &request.channel, &request.target]
                 .into_iter()
-                .any(|s| s.trim().is_empty() || s.len() > 2048 || s.chars().any(char::is_control))
+                .any(|s| s.trim().is_empty() || s.chars().any(char::is_control))
         {
             return Err(invalid());
         }
@@ -120,7 +118,7 @@ fn read_source(
         return Err(invalid());
     }
     let text = body.value.as_str().ok_or_else(invalid)?;
-    if text.trim().is_empty() || text.len() > 32_768 {
+    if text.trim().is_empty() {
         return Err(invalid());
     }
     Ok(ScopedReadResult {
@@ -179,7 +177,7 @@ pub(super) fn validate_packet(vault: &Vault, packet: &Packet) -> Result<()> {
     let context = vault.representation_context(&packet.request)?;
     let bytes = crate::compaction::output::restore_output(vault, packet.content)?;
     let text = std::str::from_utf8(&bytes).map_err(|_| invalid())?;
-    if text.trim().is_empty() || text.len() > 65_536 {
+    if text.trim().is_empty() {
         return Err(invalid());
     }
     validate_citations(&context.evidence, &packet.evidence, Some(text))?;

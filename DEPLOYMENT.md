@@ -163,6 +163,9 @@ code_result_memory_bytes = 8589934592 # result bodies every run holds in memory 
 code_result_session_memory_bytes = 1073741824 # result bodies one run holds in memory (default: memory / 64); past either, a body is read from its file by range
 import_folder_text_bytes = 268435456 # text one notes import or folder rescan holds; past it the folder is imported whole and the row asks
 import_folder_notes = 100000      # notes one notes import or folder rescan reads; past it the folder is imported whole and the row asks
+maintenance_row_items = 256       # items one maintenance or Coach row holds; past it the row is kept whole and the row asks
+maintenance_text_bytes = 65536    # bytes of one text field a maintenance or Coach row holds; past it the text is kept whole and the row asks
+maintenance_scan_rows = 50000     # rows one maintenance or Coach pass reads to find its work; past it the pass reads them all and the row asks
 import_decoded_messages = 1000000 # messages one history import holds decoded; past it the import lands whole and the row asks
 import_decoded_bytes = 1073741824 # bytes those decoded messages hold; past it the import lands whole and the row asks
 signature_decode_bytes = 1073741824 # bytes one signature image decode (POST /sign/image) allocates; a raster past it asks and is decoded whole
@@ -176,6 +179,22 @@ judge_replay_text_bytes = 40000   # bytes of replay text (runs' tasks and respon
 contribution_judge_task_bytes = 24576 # task text a contribution check's judge reads for one fork; past it the judge reads it whole and the row asks
 contribution_judge_answer_bytes = 16384 # one fork's answer that judge reads; past it the judge reads it whole and the row asks
 callable_nest_depth = 8           # callable skills one self.skills.call nests, itself included; past it the call runs and the row asks
+voice_reference_bytes = 16777216 # bytes of the banked source clip one cloned-voice render sends as its reference; past it the whole clip is sent and the row asks
+esign_pdf_bytes = 268435456       # bytes of one signing item's PDF the e-sign seal holds (the original or its prepared copy); past it the row asks and the item is sealed whole
+state_vad_turns = 256             # VAD turns one affect state read takes in; past it every turn is read and the row asks
+state_window_seconds = 31622400   # seconds of look-back one affect state window asks for (366 days); past it the whole window is read and the row asks
+detector_observations = 1024      # observations one detector pass selects; past it every observation is read and the row asks
+detector_events = 1024            # events one deterministic or signed detector run persists; past it every event is kept and the row asks
+detector_receipt_rows = 1024      # scoped receipts one tripwire or consent-detector window reads; past it every receipt is projected and the row asks
+dreamer_facts_rows = 1024         # Dreamer run facts one output-tripwire pass is handed; past it every fact is projected and the row asks
+healer_proposals = 1024           # proposals one healer bundle carries; past it the whole bundle is reviewed and the row asks
+repair_diagnostic_refs = 64       # diagnostic refs one repair proposal or dev-runner corpus names; past it every ref is kept and the row asks
+centroid_labels = 62              # labeled examples one centroid classification reads; past it every label is kept and the row asks
+detector_consecutive = 64         # consecutive raised runs a model-graded detector policy asks for; past it the policy runs as set and the row asks
+detector_window_runs = 64         # runs in one telemetry window a model-graded detector validates; past it the whole window is kept and the row asks
+blocked_detail_bytes = 4096       # bytes of one blocked report's stored detail; past it the detail is kept whole and the row asks
+seal_reference_bytes = 256        # bytes of one executor, judge or evidence reference a seal check names; past it the reference is kept whole and the row asks
+tripwire_threshold = 1024         # each count threshold a tripwire policy sets; past it the tripwire runs at that threshold and the row asks
 ```
 
 The push door scans a push one blob at a time, so `git_scan_blob_bytes` is

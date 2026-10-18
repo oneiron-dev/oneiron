@@ -40,6 +40,12 @@ pub(super) fn erase_in_txn(
     DECK_ID_MARKS.delete(store, txn, artifact).map(drop)
 }
 
+/// OF-222 (FIX 3681) archive seam: the native-id history an archive carries beside each
+/// deck artifact, lent with its own key type and codec. No import step rebuilds it.
+pub(crate) fn archive_deck_marks_table() -> crate::batch::export::LentSideTable {
+    &DECK_ID_MARKS
+}
+
 const MAX_RENDERS: usize = 4_096;
 const MAX_RENDERER_BYTES: usize = 256;
 

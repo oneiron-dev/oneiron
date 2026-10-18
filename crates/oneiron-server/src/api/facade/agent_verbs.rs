@@ -153,6 +153,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.widen_proposals", post(facade_route))
         .route("/vault.widen_proposals.approve", post(facade_route))
         .route("/vault.widen_proposals.decline", post(facade_route))
+        .route("/vault.craft_candidates", post(facade_route))
+        .route("/vault.craft_candidates.answer", post(facade_route))
         .route("/vault.settings.wake_policy.set", post(facade_route))
         .route("/vault.settings.inference_defaults", post(facade_route))
         .route(
@@ -324,4 +326,6 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.notes.edit", post(facade_route))
         .route("/vault.notes.seal", post(facade_route))
         .route("/vault.notes.lifecycle", post(facade_route))
+        .route("/vault.notes.set_overrides", post(facade_route))
+        .route("/vault.notes.defaults", post(facade_route))
 }

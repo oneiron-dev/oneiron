@@ -5,13 +5,14 @@ use std::sync::atomic::Ordering;
 use super::diagnostic_codec::{encode_diagnostic_event_body, validate_token};
 use super::event::{
     DIAGNOSTIC_EVENT_ID_DOMAIN, DeterministicDetector, DiagnosticEvent, DiagnosticObservation,
-    DiagnosticWorkingSet, MAX_EVENTS_PER_RUN, MAX_REF_LEN, invalid_diagnostic,
+    DiagnosticWorkingSet, MAX_REF_LEN, invalid_diagnostic,
 };
 use super::untrusted_text::is_forbidden_text_scalar;
 use crate::Vault;
 use crate::batch::{BatchOp, apply_ops};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::limit_ask::EngineLimit;
 use crate::registry::ENTITY_TYPE_DIAGNOSTIC;
 use crate::temporal::TimeRange;
 
@@ -24,10 +25,12 @@ use crate::temporal::TimeRange;
 /// order.
 ///
 /// Fails closed BEFORE any write when the working set is not in pinned order,
-/// when a detector id or a draft is malformed, or when a run exceeds the event
-/// ceiling. Persistence is then per-event: every id in the returned vector was
-/// written, and a mid-run storage failure leaves the already-written events in
-/// place rather than discarding observations that really were made.
+/// or when a detector id or a draft is malformed. Past
+/// `limits.detector_events` drafts the run asks whether everything is okay
+/// and persists every event. Persistence is then per-event: every id in the
+/// returned vector was written, and a mid-run storage failure leaves the
+/// already-written events in place rather than discarding observations that
+/// really were made.
 pub fn run_deterministic_detectors(
     vault: &Vault,
     input: &DiagnosticWorkingSet<'_>,
@@ -46,11 +49,9 @@ pub fn run_deterministic_detectors(
             let body = encode_diagnostic_event_body(&event)?;
             let id = diagnostic_event_id(detector_id, &body);
             staged.push((id, body, event));
-            if staged.len() > MAX_EVENTS_PER_RUN {
-                return Err(Error::InvariantViolation("diagnostic event ceiling"));
-            }
         }
     }
+    let _ = vault.measure_limit(EngineLimit::DetectorEvents, staged.len() as u64);
 
     staged.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
     staged.dedup_by(|left, right| left.0 == right.0 && left.1 == right.1);

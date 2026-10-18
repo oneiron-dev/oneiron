@@ -1,0 +1,33 @@
+{
+  "public_symbols": [
+    "add",
+    "increment"
+  ],
+  "numeric_examples": [
+    {
+      "symbol": "add",
+      "args": [
+        2,
+        3
+      ],
+      "result": 5
+    },
+    {
+      "symbol": "add",
+      "args": [
+        -2,
+        3
+      ],
+      "result": 1
+    },
+    {
+      "symbol": "increment",
+      "args": [
+        3
+      ],
+      "result": 4
+    }
+  ],
+  "invalid_input_error": "TypeError",
+  "cli_stdout": "build:4\n"
+}

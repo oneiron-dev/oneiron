@@ -1,0 +1,94 @@
+{
+  "scenario": "JUDGMENTS-02",
+  "note": "Logical unit aliases are resolved from public creation receipts. Paired rows below are admission vectors, never fake server receipts.",
+  "units": {
+    "graph-note": "Parcel R17 is ready.",
+    "artifact-paragraph": "Parcel R17 is ready."
+  },
+  "question": {
+    "text": "Is the parcel ready?",
+    "contract": {
+      "kind": "noul"
+    },
+    "versions": [
+      {
+        "version": 1,
+        "criteria": {
+          "yes_if_all": [
+            "The unit explicitly says ready."
+          ],
+          "no_if_any": [
+            "The unit explicitly says not ready."
+          ],
+          "not_a_reason_to_say_no": [
+            "No tracking number is given."
+          ]
+        },
+        "expectedAnswer": true
+      },
+      {
+        "version": 2,
+        "criteria": {
+          "yes_if_all": [
+            "The unit explicitly says ready.",
+            "A tracking number is given."
+          ],
+          "no_if_any": [
+            "The unit explicitly says not ready."
+          ],
+          "not_a_reason_to_say_no": []
+        },
+        "expected": "abstain for missing required input, not a negative label"
+      }
+    ]
+  },
+  "answeredQuestion": "0000000000000000000000000000aa0201",
+  "pairedQuestion": "0000000000000000000000000000aa0202",
+  "measuringPin": {
+    "rung": "escalation",
+    "model": "fixture-house-read",
+    "version": "e1"
+  },
+  "validPair": {
+    "provider": {
+      "rung": "escalation",
+      "model": "fixture-house-read",
+      "version": "e1"
+    },
+    "question": "0000000000000000000000000000aa0202",
+    "question_version": 1,
+    "probability": 0.82
+  },
+  "invalidPairs": [
+    {
+      "id": "duplicate-provider",
+      "mutation": "repeat validPair for the same measuring pin"
+    },
+    {
+      "id": "wrong-provider",
+      "mutation": "change validPair.provider.model to fixture-unmeasured without adding it to receipt.providers"
+    },
+    {
+      "id": "self-question",
+      "mutation": "change validPair.question to answeredQuestion"
+    },
+    {
+      "id": "zero-version",
+      "mutation": "change validPair.question_version to 0"
+    },
+    {
+      "id": "out-of-range",
+      "mutation": "change validPair.probability to 1.1"
+    }
+  ],
+  "expected": {
+    "absentPair": [],
+    "validPairPreserved": true,
+    "invalidPairMintsClaim": false,
+    "receiptScope": "asker",
+    "criteriaEditMintsVersion": true,
+    "oldReceiptChanges": false,
+    "artifactLanding": "proposal held for Keep; source head unchanged before settlement",
+    "graphLanding": "attributed answer claim on its unit"
+  }
+}

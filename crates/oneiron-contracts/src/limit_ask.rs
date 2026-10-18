@@ -117,6 +117,18 @@ pub enum EngineLimit {
     /// Bytes of the judge's rubric (the active shared `judge` skill's text)
     /// one judgment or label re-check reads. Past it the rubric is read whole.
     JudgeRubricBytes,
+    /// Items one Dreamer-maintenance or Coach row holds: an owner policy's
+    /// rules, aliases, groups, voices or evidence refs, a diagnostic's or
+    /// card's evidence refs, a training offer's losses or refs. Past it the
+    /// row is kept whole.
+    MaintenanceRowItems,
+    /// Bytes of one text field a Dreamer-maintenance or Coach row holds (a
+    /// template, a rule's instruction, a route, a draft, an offer's note).
+    /// Past it the text is kept whole.
+    MaintenanceTextBytes,
+    /// Rows one Dreamer-maintenance or Coach pass reads to find its work
+    /// (receipts, calls, runs). Past it the pass reads them all.
+    MaintenanceScanRows,
     /// Bytes of the skill instructions one held-out replay judgment reads.
     /// Past it the instructions are read whole.
     JudgeInstructionsBytes,
@@ -135,11 +147,61 @@ pub enum EngineLimit {
     /// calls another runs the inner one's step inside its own. Past it the
     /// row asks whether everything is okay and the call runs.
     CallableNestDepth,
+    /// Bytes of the banked source clip one cloned-voice render sends as its
+    /// reference. Past it the whole clip is still sent.
+    VoiceReferenceBytes,
+    /// Bytes of one signing item's PDF the e-sign seal holds in memory: its
+    /// original or its prepared copy, whichever is larger. Past it asks
+    /// whether everything is okay, and the item is prepared and sealed whole.
+    EsignPdfBytes,
+    /// VAD turns one affect state read takes in, supplied or derived. Past it
+    /// every turn is read.
+    StateVadTurns,
+    /// Seconds of look-back one affect state window asks for. Past it the
+    /// whole window is read.
+    StateWindowSeconds,
+    /// Observations one detector pass selects before its detectors see them.
+    /// Past it every observation is read.
+    DetectorObservations,
+    /// Events one deterministic or signed detector run persists. Past it
+    /// every event is kept.
+    DetectorEvents,
+    /// Scoped receipts one tripwire or consent-detector window reads or is
+    /// handed. Past it every receipt is projected.
+    DetectorReceiptRows,
+    /// Dreamer run facts one output-tripwire pass is handed. Past it every
+    /// fact is projected.
+    DreamerFactsRows,
+    /// Proposals one healer bundle carries. Past it the whole bundle is
+    /// reviewed.
+    HealerProposals,
+    /// Diagnostic refs one repair proposal or dev-runner corpus names. Past
+    /// it every ref is kept.
+    RepairDiagnosticRefs,
+    /// Labeled examples one centroid classification reads. Past it every
+    /// label is kept in its snapshot and its finding's evidence.
+    CentroidLabels,
+    /// Consecutive raised runs a model-graded detector policy asks for, or
+    /// reviewed positives its mint needs. Past it the policy runs as set.
+    DetectorConsecutive,
+    /// Runs in one ordered telemetry window a model-graded detector
+    /// validates. Past it the whole window is validated and kept.
+    DetectorWindowRuns,
+    /// Bytes of one blocked report's canonical stored detail. Past it the
+    /// detail is kept whole.
+    BlockedDetailBytes,
+    /// Bytes of one executor, judge or evidence reference a seal check names.
+    /// Past it the reference is kept whole.
+    SealReferenceBytes,
+    /// Each count threshold a tripwire policy sets: consent depth, actor
+    /// writes and retrieval regressions. Past it the tripwire runs at that
+    /// threshold.
+    TripwireThreshold,
 }
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 32] = [
+    pub const ALL: [Self; 51] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -167,11 +229,30 @@ impl EngineLimit {
         Self::PackScriptOutputBytes,
         Self::PackScriptOutputRows,
         Self::JudgeRubricBytes,
+        Self::MaintenanceRowItems,
+        Self::MaintenanceTextBytes,
+        Self::MaintenanceScanRows,
         Self::JudgeInstructionsBytes,
         Self::JudgeReplayTextBytes,
         Self::ContributionJudgeTaskBytes,
         Self::ContributionJudgeAnswerBytes,
         Self::CallableNestDepth,
+        Self::VoiceReferenceBytes,
+        Self::EsignPdfBytes,
+        Self::StateVadTurns,
+        Self::StateWindowSeconds,
+        Self::DetectorObservations,
+        Self::DetectorEvents,
+        Self::DetectorReceiptRows,
+        Self::DreamerFactsRows,
+        Self::HealerProposals,
+        Self::RepairDiagnosticRefs,
+        Self::CentroidLabels,
+        Self::DetectorConsecutive,
+        Self::DetectorWindowRuns,
+        Self::BlockedDetailBytes,
+        Self::SealReferenceBytes,
+        Self::TripwireThreshold,
     ];
 
     /// The config key that sets the row.
@@ -204,11 +285,30 @@ impl EngineLimit {
             Self::PackScriptOutputBytes => "limits.pack_script_output_bytes",
             Self::PackScriptOutputRows => "limits.pack_script_output_rows",
             Self::JudgeRubricBytes => "limits.judge_rubric_bytes",
+            Self::MaintenanceRowItems => "limits.maintenance_row_items",
+            Self::MaintenanceTextBytes => "limits.maintenance_text_bytes",
+            Self::MaintenanceScanRows => "limits.maintenance_scan_rows",
             Self::JudgeInstructionsBytes => "limits.judge_instructions_bytes",
             Self::JudgeReplayTextBytes => "limits.judge_replay_text_bytes",
             Self::ContributionJudgeTaskBytes => "limits.contribution_judge_task_bytes",
             Self::ContributionJudgeAnswerBytes => "limits.contribution_judge_answer_bytes",
             Self::CallableNestDepth => "limits.callable_nest_depth",
+            Self::VoiceReferenceBytes => "limits.voice_reference_bytes",
+            Self::EsignPdfBytes => "limits.esign_pdf_bytes",
+            Self::StateVadTurns => "limits.state_vad_turns",
+            Self::StateWindowSeconds => "limits.state_window_seconds",
+            Self::DetectorObservations => "limits.detector_observations",
+            Self::DetectorEvents => "limits.detector_events",
+            Self::DetectorReceiptRows => "limits.detector_receipt_rows",
+            Self::DreamerFactsRows => "limits.dreamer_facts_rows",
+            Self::HealerProposals => "limits.healer_proposals",
+            Self::RepairDiagnosticRefs => "limits.repair_diagnostic_refs",
+            Self::CentroidLabels => "limits.centroid_labels",
+            Self::DetectorConsecutive => "limits.detector_consecutive",
+            Self::DetectorWindowRuns => "limits.detector_window_runs",
+            Self::BlockedDetailBytes => "limits.blocked_detail_bytes",
+            Self::SealReferenceBytes => "limits.seal_reference_bytes",
+            Self::TripwireThreshold => "limits.tripwire_threshold",
         }
     }
 
@@ -245,6 +345,9 @@ impl EngineLimit {
             // The shipped rubric is about 1 KiB; the judgment's state holds
             // at most 64 KiB in all.
             Self::JudgeRubricBytes => 8_192,
+            Self::MaintenanceRowItems => 256,
+            Self::MaintenanceTextBytes => 65_536,
+            Self::MaintenanceScanRows => 50_000,
             // The shares the judge cut to before Rule 5: 8 KiB of
             // instructions and 40,000 bytes of replay text.
             Self::JudgeInstructionsBytes => 8_192,
@@ -254,6 +357,25 @@ impl EngineLimit {
             Self::ContributionJudgeTaskBytes => 24 << 10,
             Self::ContributionJudgeAnswerBytes => 16 << 10,
             Self::CallableNestDepth => 8,
+            // The serving policy's old reference cap.
+            Self::VoiceReferenceBytes => 16 << 20,
+            Self::EsignPdfBytes => 256 << 20,
+            // The ceilings the affect and self-heal doors refused past before
+            // Rule 5; the state window's is 366 days.
+            Self::StateVadTurns => 256,
+            Self::StateWindowSeconds => 31_622_400,
+            Self::DetectorObservations => 1024,
+            Self::DetectorEvents => 1024,
+            Self::DetectorReceiptRows => 1024,
+            Self::DreamerFactsRows => 1024,
+            Self::HealerProposals => 1024,
+            Self::RepairDiagnosticRefs => 64,
+            Self::CentroidLabels => 62,
+            Self::DetectorConsecutive => 64,
+            Self::DetectorWindowRuns => 64,
+            Self::BlockedDetailBytes => 4096,
+            Self::SealReferenceBytes => 256,
+            Self::TripwireThreshold => 1024,
         }
     }
 }

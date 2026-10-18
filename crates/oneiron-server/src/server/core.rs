@@ -112,6 +112,11 @@ pub struct SyncServer {
     /// The live agent runs a harness may act for over HTTP (OF-181): each
     /// runner's lease proof, its attached credential and its guard.
     pub(crate) live_runs: Arc<super::LiveRuns>,
+    /// The questions connectors asked mid-call, live for their callers
+    /// (ONE-2510): every connector host this server builds keeps them here,
+    /// and `connector.answer` reads them.
+    pub(crate) connector_elicitations:
+        Arc<crate::connector_elicitation::ConnectorElicitationRegistry>,
     /// The `[browser]` guest each code run starts for its own browser verbs.
     /// `None` answers every browser call `browser_unbound`.
     pub(crate) browser_guest: Option<oneiron_browser::BrowserGuest>,
@@ -142,7 +147,7 @@ pub struct SyncServer {
     /// serving, the provider itself. A slot is attached by the serve path after
     /// construction, the same way the deep-retrieval host is: `Self::new` pins
     /// no model and downloads nothing.
-    pub(crate) embedder: Option<EmbedderSlot>,
+    pub(crate) embedder: Option<Arc<EmbedderSlot>>,
     /// The `[oneironer]` tagger slot, `None` when no tagger is configured.
     /// Attached by the serve path after construction, like the embedder.
     pub(crate) tagger: Option<TaggerSlot>,
@@ -420,6 +425,7 @@ impl SyncServer {
             mcp_code_host: None,
             reader_runner,
             live_runs,
+            connector_elicitations: Arc::default(),
             browser_guest: None,
             desktop_guest: None,
             desktop_seats: Arc::default(),
@@ -711,7 +717,7 @@ impl SyncServer {
     /// a possible download: a server built without one runs at rung 0 forever,
     /// which is what every deployment did before this ticket.
     pub(crate) fn with_embedder(mut self, embedder: Option<EmbedderSlot>) -> Self {
-        self.embedder = embedder;
+        self.embedder = embedder.map(Arc::new);
         self
     }
 

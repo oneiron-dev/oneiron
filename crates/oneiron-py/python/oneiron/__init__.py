@@ -169,14 +169,23 @@ class Oneiron:
         return cls(_translate(lambda: _NativeClient.connect(url, key)))
 
     @classmethod
-    def pair(cls, link: str) -> tuple["Oneiron", str]:
+    def pair(cls, link: str) -> dict[str, Any]:
         """Redeems a one-use pairing link and connects with its credential.
 
-        Returns the connected handle and the credential. Store the credential
-        as ``ONEIRON_KEY``; the link cannot be redeemed twice.
+        Returns ``{"memory", "credential", "pin"}``: the connected handle, the
+        credential, and the checkpoint pin the link named (``None`` when the
+        vault has no attested checkpoint). Store the credential as
+        ``ONEIRON_KEY``; the link cannot be redeemed twice. The pin is already
+        checked against the link and is stored nowhere: a machine that will
+        run a local replica keeps it beside the server origin and the
+        credential, and supplies it when that replica starts.
         """
-        url, credential = _translate(lambda: _NativeClient.pair(link))
-        return cls.connect(url, credential), credential
+        paired = json.loads(_translate(lambda: _NativeClient.pair(link)))
+        return {
+            "memory": cls.connect(paired["url"], paired["credential"]),
+            "credential": paired["credential"],
+            "pin": paired["pin"],
+        }
 
     def as_actor(self, actor_key: str) -> "Oneiron":
         """Returns a NEW handle bound to another actor; this one is unchanged.
@@ -551,6 +560,9 @@ class Oneiron:
         @property
         def widen_proposals(self) -> "Oneiron._VaultWidenProposalsVerbs":
             return Oneiron._VaultWidenProposalsVerbs(self._client)
+        @property
+        def craft_candidates(self) -> "Oneiron._VaultCraftCandidatesVerbs":
+            return Oneiron._VaultCraftCandidatesVerbs(self._client)
         @property
         def lenses(self) -> "Oneiron._VaultLensesVerbs":
             return Oneiron._VaultLensesVerbs(self._client)
@@ -1195,6 +1207,15 @@ class Oneiron:
         def decline(self, spec):
             """The owner, as the board above, declines one context-widen proposal for good; the decline stays on record."""
             return json.loads(_translate(lambda: self._client.vault_widen_proposals_decline(json.dumps(spec))))
+    class _VaultCraftCandidatesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """The owner lists the craft notes residents' dreaming proposed about themselves that wait on a verdict, newest first, or one resident's, each with the content hash an answer pins."""
+            return json.loads(_translate(lambda: self._client.vault_craft_candidates(json.dumps(spec))))
+        def answer(self, spec):
+            """The owner approves or rejects one craft candidate, bound to the content hash its card showed: an Approved or Rejected row supersedes it, with one receipt. The same answer again returns the first."""
+            return json.loads(_translate(lambda: self._client.vault_craft_candidates_answer(json.dumps(spec))))
     class _VaultLensesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1718,6 +1739,12 @@ class Oneiron:
         def lifecycle(self, request: dict[str, Any]) -> dict[str, Any]:
             """Where one NOTE stands (active, sealed, archived or tombstoned) and its seal."""
             return json.loads(_translate(lambda: self._client.vault_notes_lifecycle(json.dumps(request, allow_nan=False))))
+        def set_overrides(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Sets the defaults one NOTE overrides over its kind's; empty overrides clear them."""
+            return json.loads(_translate(lambda: self._client.vault_notes_set_overrides(json.dumps(request, allow_nan=False))))
+        def defaults(self, request: dict[str, Any]) -> dict[str, Any]:
+            """One NOTE's overrides and the defaults its gates read after them."""
+            return json.loads(_translate(lambda: self._client.vault_notes_defaults(json.dumps(request, allow_nan=False))))
     class _TasksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

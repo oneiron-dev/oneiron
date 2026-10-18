@@ -38,31 +38,7 @@ pub(super) fn open_root_directory(root: &Path) -> Result<File> {
 /// The staging directory itself is opened no-follow and kept pinned until the
 /// anonymous tempfile has been created through that descriptor.
 pub(super) fn lfs_staging_file(root: &File) -> Result<File> {
-    let name = c"lfs-staging";
-    // SAFETY: `root` holds a live directory descriptor and `name` is a static
-    // NUL-terminated single component. mkdirat does not transfer ownership.
-    let created = unsafe { libc::mkdirat(root.as_raw_fd(), name.as_ptr(), 0o700) };
-    if created < 0 {
-        let error = std::io::Error::last_os_error();
-        if error.kind() != std::io::ErrorKind::AlreadyExists {
-            return Err(error.into());
-        }
-    }
-    // SAFETY: the descriptor is owned by `root` for this call; the static
-    // component remains live. adopt_descriptor takes ownership only on success.
-    let fd = unsafe {
-        libc::openat(
-            root.as_raw_fd(),
-            name.as_ptr(),
-            libc::O_DIRECTORY | libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-        )
-    };
-    let staging = adopt_descriptor(fd)?;
-    if root.metadata()?.dev() != staging.metadata()?.dev() {
-        return Err(Error::InvalidConfig(
-            "lfs staging crosses the vault filesystem".to_owned(),
-        ));
-    }
+    let staging = lfs_staging_dir(root)?;
     #[cfg(target_os = "linux")]
     {
         let path = format!("/proc/self/fd/{}", staging.as_raw_fd());
@@ -93,6 +69,38 @@ pub(super) fn lfs_staging_file(root: &File) -> Result<File> {
         }
         Ok(spool)
     }
+}
+
+/// The staging directory under the retained vault root, made 0700 when
+/// absent and opened no-follow: the directory an anonymous spool or the
+/// import's scratch row index (FIX 3678) is made in.
+pub(super) fn lfs_staging_dir(root: &File) -> Result<File> {
+    let name = c"lfs-staging";
+    // SAFETY: `root` holds a live directory descriptor and `name` is a static
+    // NUL-terminated single component. mkdirat does not transfer ownership.
+    let created = unsafe { libc::mkdirat(root.as_raw_fd(), name.as_ptr(), 0o700) };
+    if created < 0 {
+        let error = std::io::Error::last_os_error();
+        if error.kind() != std::io::ErrorKind::AlreadyExists {
+            return Err(error.into());
+        }
+    }
+    // SAFETY: the descriptor is owned by `root` for this call; the static
+    // component remains live. adopt_descriptor takes ownership only on success.
+    let fd = unsafe {
+        libc::openat(
+            root.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_DIRECTORY | libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    let staging = adopt_descriptor(fd)?;
+    if root.metadata()?.dev() != staging.metadata()?.dev() {
+        return Err(Error::InvalidConfig(
+            "lfs staging crosses the vault filesystem".to_owned(),
+        ));
+    }
+    Ok(staging)
 }
 
 /// Identity of the directory the caller's path names RIGHT NOW, without

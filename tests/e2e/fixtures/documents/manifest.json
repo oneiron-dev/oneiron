@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "area": "documents",
+  "assets": [
+    {
+      "id": "documents-scenarios",
+      "path": "scenarios.json",
+      "source": {
+        "uri": "independent-oracle:owner-documents-e2e-20261018",
+        "revision": "29883e7f16e3a78d87bf3bd1233d4fa2fdb4a8489519c092edcb4ece7cdbdcf1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "a5940551677433bcace856955432042681995d55af95b1e6bb811549564a633c",
+      "expectedFacts": {
+        "scenarioCount": 8,
+        "authoredContent": true,
+        "oracle": "Pinned canon and owner rulings; no engine-derived expected content. Per-ID inputs, expected facts and public prerequisites are in scenarios.json.",
+        "ownerRulings": {
+          "G01": "typed HTTP and SDK call or wait",
+          "G03": "keep incomplete message with Continue and Retry"
+        }
+      },
+      "scenarios": [
+        "DOCUMENTS-01",
+        "DOCUMENTS-02",
+        "DOCUMENTS-03",
+        "DOCUMENTS-04",
+        "DOCUMENTS-05",
+        "DOCUMENTS-06",
+        "DOCUMENTS-07",
+        "DOCUMENTS-08"
+      ],
+      "requires": [
+        "typed NOTE live text read",
+        "reasoned private-note read",
+        "typed note-classification trigger/result",
+        "typed note claim evidence read",
+        "typed NOTE stable cursor/version read",
+        "typed NOTE operation history",
+        "public automatic note grant setup",
+        "typed NOTE base-version read",
+        "typed NOTE live read",
+        "typed live editor binding",
+        "typed NOTE rewrite-fork inspection",
+        "typed NOTE fork_at with proposal membership",
+        "typed NOTE proposal-set merge/switch/reject",
+        "typed NOTE version tree and head-move receipts",
+        "typed NOTE live/indexed/pinned reads",
+        "typed document pin and citation resolve",
+        "public indexed-frontier observation and publication barrier",
+        "typed NOTE citation pin/resolve",
+        "typed NOTE owner-only history purge",
+        "typed purge retained-boundary receipt",
+        "typed SUMMARY document keep/edit/read",
+        "typed SUMMARY anchored patch",
+        "typed SUMMARY regeneration fork and switch",
+        "typed MESSAGE atomic commit and stream begin/append/flush/finalize/cancel HTTP and SDK calls",
+        "typed MESSAGE durability/op-history read"
+      ]
+    }
+  ]
+}

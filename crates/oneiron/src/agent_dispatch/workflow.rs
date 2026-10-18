@@ -95,6 +95,7 @@ impl AgentDispatcher<'_> {
             spend: spawn.spend.as_ref().map(|spend| spend.scope.clone()),
             room: spawn.room,
             objectives: spawn.objectives.clone(),
+            comm: spawn.comm,
         };
         Ok((definition, intent))
     }
@@ -290,6 +291,16 @@ impl AgentDispatcher<'_> {
             frozen.target = target.target;
             frozen.definition = definition;
         }
+        // FIX 1380: a released leaf re-resolves its reach against the real
+        // parent, never the inert wrapper it is queued under.
+        frozen.comm = self.resolve_comm_in_txn(
+            txn,
+            record.intent.comm,
+            record.intent.parent,
+            &frozen.target,
+            &frozen.definition,
+            frozen.project_ref,
+        )?;
         self.resolve_dispatch_context(
             record.intent.parent,
             frozen.context_spec.as_ref(),

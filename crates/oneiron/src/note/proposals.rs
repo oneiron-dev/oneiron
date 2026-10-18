@@ -9,10 +9,67 @@ use super::sync_rows::SYNC_DS_E;
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
 use crate::memory::MemoryResult;
+use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::side_table::{self, HexId, Named, SideTable};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
+
+/// Whose act a NOTE row records: an actor, or no one once that actor was
+/// erased (FIX 3520). It reads and writes as the actor's hex id, or as
+/// [`ERASED_CALL_IDENTITY`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoteActor {
+    Actor(EntityId),
+    Erased,
+}
+
+impl NoteActor {
+    /// Whether this is `actor`.
+    #[must_use]
+    pub fn is(self, actor: EntityId) -> bool {
+        self == Self::Actor(actor)
+    }
+}
+
+impl Serialize for NoteActor {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        match self {
+            Self::Actor(id) => serializer.serialize_str(&id.to_hex()),
+            Self::Erased => serializer.serialize_str(ERASED_CALL_IDENTITY),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for NoteActor {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        if value == ERASED_CALL_IDENTITY {
+            return Ok(Self::Erased);
+        }
+        EntityId::from_hex(&value)
+            .map(Self::Actor)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+/// What an actor's erase does with a fork it opened that no one decided.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingNoteForkErase {
+    /// The fork goes, with its snapshot and its place in a bundle.
+    Delete,
+    /// The fork stays and names no one, as a decided fork does.
+    Keep,
+}
+
+/// A fork no one decided is still review work a reviewer could land, so an
+/// erase of the actor who opened it deletes it (FIX 3520).
+pub const ACTOR_ERASE_PENDING_NOTE_FORK: PendingNoteForkErase = PendingNoteForkErase::Delete;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NoteFork {
@@ -26,8 +83,7 @@ pub struct NoteFork {
     /// Recovery-only value basis: (parent text at capture, exact merged text).
     /// No old CRDT operation identity is assumed after canonical reconstruction.
     pub recovery_merge: Option<(String, String)>,
-    #[serde(with = "crate::entity_id::serde_hex")]
-    pub actor: EntityId,
+    pub actor: NoteActor,
     pub rewrite: bool,
     #[serde(with = "crate::entity_id::serde_hex::optional")]
     pub proposal: Option<EntityId>,
@@ -52,8 +108,7 @@ pub struct NoteLandingReceipt {
     #[serde(with = "crate::entity_id::serde_hex")]
     pub head: EntityId,
     pub verdict: NoteVerdict,
-    #[serde(with = "crate::entity_id::serde_hex")]
-    pub actor: EntityId,
+    pub actor: NoteActor,
     pub at: u64,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -74,6 +129,144 @@ pub(super) const NOTE_RECEIPT: SideTable<EntityId, NoteLandingReceipt, Named> =
 pub(super) const NOTE_PROPOSAL_BUNDLE: SideTable<EntityId, NoteReviewBundle, Named> =
     SideTable::new(&side_table::NOTE_PROPOSAL_BUNDLE);
 
+/// Whether `id`'s entity is no actor, so its erase has no one to take out of
+/// the NOTE rows.
+pub(super) fn names_no_actor(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    if let Some(raw) = vault.get_raw_in(txn, id)?
+        && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
+    {
+        return Ok(!matches!(
+            header.entity_type,
+            crate::registry::ENTITY_TYPE_PERSON
+                | crate::registry::ENTITY_TYPE_MACHINE
+                | crate::registry::ENTITY_TYPE_AGENT_DEF
+        ));
+    }
+    Ok(false)
+}
+
+/// Erasing `actor` from the forks it opened (FIX 3520): a decided fork keeps
+/// its row and names no one. A fork no one decided goes with its snapshot, as
+/// a reject drops it, when [`ACTOR_ERASE_PENDING_NOTE_FORK`] says so. One-way,
+/// in the erase's own transaction. An id whose entity is no actor scans
+/// nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a fork row that cannot be read.
+pub(crate) fn erase_fork_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let mut forks = Vec::new();
+    for (key, mut fork) in NOTE_FORK.scan(&vault.store, wtxn)? {
+        if fork.actor.is(*actor) {
+            fork.actor = NoteActor::Erased;
+            forks.push((key, fork));
+        }
+    }
+    for (key, fork) in forks {
+        if !fork.decided && ACTOR_ERASE_PENDING_NOTE_FORK == PendingNoteForkErase::Delete {
+            NOTE_FORK.delete(&vault.store, wtxn, &key)?;
+            NOTE_PROPOSAL_DOC.delete(
+                &vault.store,
+                wtxn,
+                &HexPair(HexId(fork.note), HexId(fork.fork)),
+            )?;
+        } else {
+            NOTE_FORK.put(&vault.store, wtxn, &key, &fork)?;
+        }
+    }
+    Ok(())
+}
+
+/// Erasing `actor` from the review bundles (FIX 3520): a landing it gave
+/// keeps its place and names no one, and a waiting fork it opened leaves the
+/// bundle as its fork row does. A bundle left with no member goes; one that
+/// lost a waiting fork keeps the rest but not its explainer, which can quote
+/// what left. One-way, in the erase's own transaction. An id whose entity is
+/// no actor scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a bundle row that cannot be read.
+pub(crate) fn erase_proposal_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let mut bundles = Vec::new();
+    for (key, mut bundle) in NOTE_PROPOSAL_BUNDLE.scan(&vault.store, wtxn)? {
+        let waiting = bundle.waiting.len();
+        if ACTOR_ERASE_PENDING_NOTE_FORK == PendingNoteForkErase::Delete {
+            bundle.waiting.retain(|fork| !fork.actor.is(*actor));
+        }
+        let mut erased = bundle.waiting.len() != waiting;
+        if erased {
+            bundle.explainer = "redacted".to_owned();
+        }
+        for fork in &mut bundle.waiting {
+            if fork.actor.is(*actor) {
+                fork.actor = NoteActor::Erased;
+                erased = true;
+            }
+        }
+        for receipt in &mut bundle.landed {
+            if receipt.actor.is(*actor) {
+                receipt.actor = NoteActor::Erased;
+                erased = true;
+            }
+        }
+        if erased {
+            bundles.push((key, bundle));
+        }
+    }
+    for (key, bundle) in bundles {
+        if bundle.waiting.is_empty() && bundle.landed.is_empty() {
+            NOTE_PROPOSAL_BUNDLE.delete(&vault.store, wtxn, &key)?;
+        } else {
+            NOTE_PROPOSAL_BUNDLE.put(&vault.store, wtxn, &key, &bundle)?;
+        }
+    }
+    Ok(())
+}
+
+/// Erasing `actor` from the head-move receipts (FIX 3520): each verdict it
+/// gave keeps its receipt, its heads and its time, and names no one. One-way,
+/// in the erase's own transaction. An id whose entity is no actor scans
+/// nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a receipt row that cannot be read.
+pub(crate) fn erase_receipt_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let mut receipts = Vec::new();
+    for (key, mut receipt) in NOTE_RECEIPT.scan(&vault.store, wtxn)? {
+        if receipt.actor.is(*actor) {
+            receipt.actor = NoteActor::Erased;
+            receipts.push((key, receipt));
+        }
+    }
+    for (key, receipt) in receipts {
+        NOTE_RECEIPT.put(&vault.store, wtxn, &key, &receipt)?;
+    }
+    Ok(())
+}
+
 pub(super) fn remember_fork(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -88,7 +281,7 @@ pub(super) fn remember_fork(
         parent: parent.head,
         frontier: Vec::new(),
         recovery_merge: (!rewrite).then(|| (parent.text(), fork.text())),
-        actor,
+        actor: NoteActor::Actor(actor),
         rewrite,
         proposal: None,
         decided: false,
@@ -175,7 +368,8 @@ impl Vault {
                     let mut fork: NoteFork = NOTE_FORK
                         .get(&self.store, txn, id)?
                         .ok_or_else(|| invalid("missing proposal record"))?;
-                    if fork.proposal.is_some() || fork.decided || fork.actor != actor.entity_ref() {
+                    if fork.proposal.is_some() || fork.decided || !fork.actor.is(actor.entity_ref())
+                    {
                         return Err(
                             invalid("fork already assigned or belongs to another actor").into()
                         );
@@ -384,7 +578,7 @@ fn land(
         previous_head: current.head,
         head,
         verdict,
-        actor: actor.entity_ref(),
+        actor: NoteActor::Actor(actor.entity_ref()),
         at: mutation_recorded_at,
     };
     NOTE_RECEIPT.put(&vault.store, txn, &receipt.id, &receipt)?;

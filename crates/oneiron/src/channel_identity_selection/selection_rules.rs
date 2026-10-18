@@ -49,8 +49,8 @@ pub struct ChannelIdentitySelectionRule {
     pub enabled: bool,
     pub agent_amendable: bool,
     pub updated_at: u64,
-    /// `None` exactly when `writer_kind` is
-    /// [`SelectionRuleWriterKind::SystemDefault`].
+    /// `None` when `writer_kind` is [`SelectionRuleWriterKind::SystemDefault`],
+    /// and on a written row once its writer was erased (FIX 3520).
     pub updated_by: Option<EntityId>,
     pub writer_kind: SelectionRuleWriterKind,
 }
@@ -63,10 +63,12 @@ impl ChannelIdentitySelectionRule {
             ));
         }
         self.scope.validate()?;
+        // An erased writer leaves a written row with no `updated_by`; the
+        // codec keeps that apart from a row that lost its stamp.
         let system_default = self.writer_kind == SelectionRuleWriterKind::SystemDefault;
-        if system_default != self.updated_by.is_none() {
+        if system_default && self.updated_by.is_some() {
             return Err(ChannelIdentitySelectionError::InvalidRule(
-                "only a system-default row may omit updated_by",
+                "a system-default row names no updated_by",
             ));
         }
         Ok(())

@@ -152,6 +152,8 @@ pub enum AgentVerb {
     VaultWidenProposals,
     VaultWidenProposalsApprove,
     VaultWidenProposalsDecline,
+    VaultCraftCandidates,
+    VaultCraftCandidatesAnswer,
     VaultSettingsWakePolicySet,
     VaultSettingsInferenceDefaults,
     VaultSettingsInferenceDefaultsReplace,
@@ -360,6 +362,8 @@ pub enum AgentVerb {
     VaultNotesEdit,
     VaultNotesSeal,
     VaultNotesLifecycle,
+    VaultNotesSetOverrides,
+    VaultNotesDefaults,
 }
 impl AgentVerb {
     pub const ALL: &[Self] = &[
@@ -514,6 +518,8 @@ impl AgentVerb {
         Self::VaultWidenProposals,
         Self::VaultWidenProposalsApprove,
         Self::VaultWidenProposalsDecline,
+        Self::VaultCraftCandidates,
+        Self::VaultCraftCandidatesAnswer,
         Self::VaultSettingsWakePolicySet,
         Self::VaultSettingsInferenceDefaults,
         Self::VaultSettingsInferenceDefaultsReplace,
@@ -722,6 +728,8 @@ impl AgentVerb {
         Self::VaultNotesEdit,
         Self::VaultNotesSeal,
         Self::VaultNotesLifecycle,
+        Self::VaultNotesSetOverrides,
+        Self::VaultNotesDefaults,
     ];
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|verb| verb.as_str() == name)
@@ -881,6 +889,8 @@ impl AgentVerb {
             Self::VaultWidenProposals => "vault.widen_proposals",
             Self::VaultWidenProposalsApprove => "vault.widen_proposals.approve",
             Self::VaultWidenProposalsDecline => "vault.widen_proposals.decline",
+            Self::VaultCraftCandidates => "vault.craft_candidates",
+            Self::VaultCraftCandidatesAnswer => "vault.craft_candidates.answer",
             Self::VaultSettingsWakePolicySet => "vault.settings.wake_policy.set",
             Self::VaultSettingsInferenceDefaults => "vault.settings.inference_defaults",
             Self::VaultSettingsInferenceDefaultsReplace => {
@@ -1091,6 +1101,8 @@ impl AgentVerb {
             Self::VaultNotesEdit => "vault.notes.edit",
             Self::VaultNotesSeal => "vault.notes.seal",
             Self::VaultNotesLifecycle => "vault.notes.lifecycle",
+            Self::VaultNotesSetOverrides => "vault.notes.set_overrides",
+            Self::VaultNotesDefaults => "vault.notes.defaults",
         }
     }
     pub const fn is_facade(self) -> bool {
@@ -1244,6 +1256,8 @@ impl AgentVerb {
                 | Self::VaultWidenProposals
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
+                | Self::VaultCraftCandidates
+                | Self::VaultCraftCandidatesAnswer
                 | Self::VaultSettingsWakePolicySet
                 | Self::VaultSettingsInferenceDefaults
                 | Self::VaultSettingsInferenceDefaultsReplace
@@ -1412,6 +1426,8 @@ impl AgentVerb {
                 | Self::VaultNotesEdit
                 | Self::VaultNotesSeal
                 | Self::VaultNotesLifecycle
+                | Self::VaultNotesSetOverrides
+                | Self::VaultNotesDefaults
         )
     }
     pub const fn is_browser(self) -> bool {
@@ -1613,6 +1629,8 @@ impl AgentVerb {
                 | Self::VaultWidenProposals
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
+                | Self::VaultCraftCandidates
+                | Self::VaultCraftCandidatesAnswer
                 | Self::VaultSettingsWakePolicySet
                 | Self::VaultSettingsInferenceDefaults
                 | Self::VaultSettingsInferenceDefaultsReplace
@@ -1781,6 +1799,8 @@ impl AgentVerb {
                 | Self::VaultNotesEdit
                 | Self::VaultNotesSeal
                 | Self::VaultNotesLifecycle
+                | Self::VaultNotesSetOverrides
+                | Self::VaultNotesDefaults
         )
     }
     pub const fn is_section(self) -> bool {
@@ -2008,6 +2028,8 @@ impl AgentVerb {
                 | Self::VaultWidenProposals
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
+                | Self::VaultCraftCandidates
+                | Self::VaultCraftCandidatesAnswer
                 | Self::VaultSettingsWakePolicySet
                 | Self::VaultSettingsInferenceDefaults
                 | Self::VaultSettingsInferenceDefaultsReplace
@@ -2208,6 +2230,8 @@ impl AgentVerb {
                 | Self::VaultNotesEdit
                 | Self::VaultNotesSeal
                 | Self::VaultNotesLifecycle
+                | Self::VaultNotesSetOverrides
+                | Self::VaultNotesDefaults
         )
     }
     pub const fn born_in_scope(self) -> bool {
@@ -2315,6 +2339,7 @@ impl AgentVerb {
                 | Self::VaultSecretsLiftHistory
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
+                | Self::VaultCraftCandidatesAnswer
                 | Self::VaultSettingsWakePolicySet
                 | Self::VaultSettingsInferenceDefaultsReplace
                 | Self::VaultLensesPropose
@@ -2433,6 +2458,7 @@ impl AgentVerb {
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesEdit
                 | Self::VaultNotesSeal
+                | Self::VaultNotesSetOverrides
         )
     }
     pub const fn proposes(self) -> bool {
@@ -2616,6 +2642,8 @@ impl AgentVerb {
             Self::VaultWidenProposals => &["spec"],
             Self::VaultWidenProposalsApprove => &["spec"],
             Self::VaultWidenProposalsDecline => &["spec"],
+            Self::VaultCraftCandidates => &["spec"],
+            Self::VaultCraftCandidatesAnswer => &["spec"],
             Self::VaultSettingsWakePolicySet => &["spec"],
             Self::VaultSettingsInferenceDefaults => &[],
             Self::VaultSettingsInferenceDefaultsReplace => &["spec"],
@@ -2824,6 +2852,8 @@ impl AgentVerb {
             Self::VaultNotesEdit => &["spec"],
             Self::VaultNotesSeal => &["spec"],
             Self::VaultNotesLifecycle => &["spec"],
+            Self::VaultNotesSetOverrides => &["spec"],
+            Self::VaultNotesDefaults => &["spec"],
         }
     }
     pub const fn required_fields(self) -> &'static [&'static str] {
@@ -2979,6 +3009,8 @@ impl AgentVerb {
             Self::VaultWidenProposals => &["spec"],
             Self::VaultWidenProposalsApprove => &["spec"],
             Self::VaultWidenProposalsDecline => &["spec"],
+            Self::VaultCraftCandidates => &["spec"],
+            Self::VaultCraftCandidatesAnswer => &["spec"],
             Self::VaultSettingsWakePolicySet => &["spec"],
             Self::VaultSettingsInferenceDefaults => &[],
             Self::VaultSettingsInferenceDefaultsReplace => &["spec"],
@@ -3187,6 +3219,8 @@ impl AgentVerb {
             Self::VaultNotesEdit => &["spec"],
             Self::VaultNotesSeal => &["spec"],
             Self::VaultNotesLifecycle => &["spec"],
+            Self::VaultNotesSetOverrides => &["spec"],
+            Self::VaultNotesDefaults => &["spec"],
         }
     }
     /// The row's one-line description, as the verb table states it.
@@ -3612,6 +3646,12 @@ impl AgentVerb {
             }
             Self::VaultWidenProposalsDecline => {
                 "The owner, as the board above, declines one context-widen proposal for good; the decline stays on record."
+            }
+            Self::VaultCraftCandidates => {
+                "The owner lists the craft notes residents' dreaming proposed about themselves that wait on a verdict, newest first, or one resident's, each with the content hash an answer pins."
+            }
+            Self::VaultCraftCandidatesAnswer => {
+                "The owner approves or rejects one craft candidate, bound to the content hash its card showed: an Approved or Rejected row supersedes it, with one receipt. The same answer again returns the first."
             }
             Self::VaultSettingsWakePolicySet => {
                 "The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof."
@@ -4168,6 +4208,12 @@ impl AgentVerb {
             }
             Self::VaultNotesLifecycle => {
                 "Where one NOTE stands (active, sealed, archived or tombstoned) and its seal, if it has one."
+            }
+            Self::VaultNotesSetOverrides => {
+                "Sets the extraction, context and retention defaults one NOTE overrides over its kind's, by its author or the owner; empty overrides clear them. An override never widens a scope or grant check."
+            }
+            Self::VaultNotesDefaults => {
+                "One NOTE's overrides and the extraction, context and retention defaults its gates read after them."
             }
         }
     }

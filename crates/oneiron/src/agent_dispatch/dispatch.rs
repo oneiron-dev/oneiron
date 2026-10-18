@@ -40,6 +40,7 @@ fn spawn_intent_digest(input: &DispatchAgent, spawn: &AgentSpawnContext) -> Resu
         &spawn.team,
         &spawn.plan,
         &spawn.objectives,
+        &spawn.comm,
     ))
     .map_err(|_| {
         Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
@@ -506,6 +507,15 @@ impl<'a> AgentDispatcher<'a> {
                 .flatten(),
             (None, None) => None,
         };
+        // FIX 1380: the comm reach, resolved once against the real parent.
+        let comm = self.resolve_comm_in_txn(
+            wtxn,
+            spawn.comm,
+            requested_parent,
+            &target,
+            &definition,
+            Some(project_ref),
+        )?;
 
         // 3. The descriptor rides the payload UNRESOLVED. It was validated
         //    against live parent state in `dispatch_with_context`; the executor
@@ -528,6 +538,7 @@ impl<'a> AgentDispatcher<'a> {
             team,
             plan: spawn.plan,
             objectives: spawn.objectives,
+            comm,
         })
     }
 
