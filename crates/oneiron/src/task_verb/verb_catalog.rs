@@ -49,6 +49,15 @@ pub enum AgentVerb {
     VaultWitness,
     VaultClaimsUpsert,
     VaultRecall,
+    VaultRetrievalRecall,
+    VaultRetrievalRuns,
+    VaultRetrievalRun,
+    VaultRetrievalTurn,
+    VaultRetrievalOutcomesPut,
+    VaultRetrievalOutcomesEnd,
+    VaultRetrievalTrace,
+    VaultRetrievalExport,
+    VaultRetrievalReplay,
     VaultExport,
     SelfCredentialAttenuate,
     VaultScopeCeiling,
@@ -635,6 +644,15 @@ impl AgentVerb {
         Self::VaultWitness,
         Self::VaultClaimsUpsert,
         Self::VaultRecall,
+        Self::VaultRetrievalRecall,
+        Self::VaultRetrievalRuns,
+        Self::VaultRetrievalRun,
+        Self::VaultRetrievalTurn,
+        Self::VaultRetrievalOutcomesPut,
+        Self::VaultRetrievalOutcomesEnd,
+        Self::VaultRetrievalTrace,
+        Self::VaultRetrievalExport,
+        Self::VaultRetrievalReplay,
         Self::VaultExport,
         Self::SelfCredentialAttenuate,
         Self::VaultScopeCeiling,
@@ -1224,6 +1242,15 @@ impl AgentVerb {
             Self::VaultWitness => "vault.witness",
             Self::VaultClaimsUpsert => "vault.claims.upsert",
             Self::VaultRecall => "vault.recall",
+            Self::VaultRetrievalRecall => "vault.retrieval.recall",
+            Self::VaultRetrievalRuns => "vault.retrieval.runs",
+            Self::VaultRetrievalRun => "vault.retrieval.run",
+            Self::VaultRetrievalTurn => "vault.retrieval.turn",
+            Self::VaultRetrievalOutcomesPut => "vault.retrieval.outcomes.put",
+            Self::VaultRetrievalOutcomesEnd => "vault.retrieval.outcomes.end",
+            Self::VaultRetrievalTrace => "vault.retrieval.trace",
+            Self::VaultRetrievalExport => "vault.retrieval.export",
+            Self::VaultRetrievalReplay => "vault.retrieval.replay",
             Self::VaultExport => "vault.export",
             Self::SelfCredentialAttenuate => "self.credential.attenuate",
             Self::VaultScopeCeiling => "vault.scope.ceiling",
@@ -1819,6 +1846,15 @@ impl AgentVerb {
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
+                | Self::VaultRetrievalRecall
+                | Self::VaultRetrievalRuns
+                | Self::VaultRetrievalRun
+                | Self::VaultRetrievalTurn
+                | Self::VaultRetrievalOutcomesPut
+                | Self::VaultRetrievalOutcomesEnd
+                | Self::VaultRetrievalTrace
+                | Self::VaultRetrievalExport
+                | Self::VaultRetrievalReplay
                 | Self::VaultExport
                 | Self::SelfCredentialAttenuate
                 | Self::VaultScopeCeiling
@@ -2412,6 +2448,15 @@ impl AgentVerb {
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
+                | Self::VaultRetrievalRecall
+                | Self::VaultRetrievalRuns
+                | Self::VaultRetrievalRun
+                | Self::VaultRetrievalTurn
+                | Self::VaultRetrievalOutcomesPut
+                | Self::VaultRetrievalOutcomesEnd
+                | Self::VaultRetrievalTrace
+                | Self::VaultRetrievalExport
+                | Self::VaultRetrievalReplay
                 | Self::VaultExport
                 | Self::SelfCredentialAttenuate
                 | Self::VaultScopeCeiling
@@ -2931,6 +2976,10 @@ impl AgentVerb {
             self,
             Self::SelfInboxList
                 | Self::Describe
+                | Self::VaultRetrievalRuns
+                | Self::VaultRetrievalTurn
+                | Self::VaultRetrievalOutcomesPut
+                | Self::VaultRetrievalOutcomesEnd
                 | Self::VaultReceipts
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
@@ -3057,6 +3106,15 @@ impl AgentVerb {
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
                 | Self::VaultWitness
+                | Self::VaultRetrievalRecall
+                | Self::VaultRetrievalRuns
+                | Self::VaultRetrievalRun
+                | Self::VaultRetrievalTurn
+                | Self::VaultRetrievalOutcomesPut
+                | Self::VaultRetrievalOutcomesEnd
+                | Self::VaultRetrievalTrace
+                | Self::VaultRetrievalExport
+                | Self::VaultRetrievalReplay
                 | Self::VaultExport
                 | Self::VaultReceipts
                 | Self::VaultImagesView
@@ -3601,6 +3659,8 @@ impl AgentVerb {
                 | Self::TasksAccept
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
+                | Self::VaultRetrievalOutcomesPut
+                | Self::VaultRetrievalOutcomesEnd
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
                 | Self::VaultCampaignProgramCreate
@@ -4011,6 +4071,15 @@ impl AgentVerb {
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
+            Self::VaultRetrievalRecall => &["spec"],
+            Self::VaultRetrievalRuns => &["spec"],
+            Self::VaultRetrievalRun => &["spec"],
+            Self::VaultRetrievalTurn => &["spec"],
+            Self::VaultRetrievalOutcomesPut => &["spec"],
+            Self::VaultRetrievalOutcomesEnd => &["spec"],
+            Self::VaultRetrievalTrace => &["spec"],
+            Self::VaultRetrievalExport => &["spec"],
+            Self::VaultRetrievalReplay => &["spec"],
             Self::VaultExport => &["spec"],
             Self::SelfCredentialAttenuate => &["spec"],
             Self::VaultScopeCeiling => &["spec"],
@@ -4598,6 +4667,15 @@ impl AgentVerb {
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
+            Self::VaultRetrievalRecall => &["spec"],
+            Self::VaultRetrievalRuns => &["spec"],
+            Self::VaultRetrievalRun => &["spec"],
+            Self::VaultRetrievalTurn => &["spec"],
+            Self::VaultRetrievalOutcomesPut => &["spec"],
+            Self::VaultRetrievalOutcomesEnd => &["spec"],
+            Self::VaultRetrievalTrace => &["spec"],
+            Self::VaultRetrievalExport => &["spec"],
+            Self::VaultRetrievalReplay => &["spec"],
             Self::VaultExport => &["spec"],
             Self::SelfCredentialAttenuate => &["spec"],
             Self::VaultScopeCeiling => &["spec"],
@@ -5269,6 +5347,33 @@ impl AgentVerb {
             }
             Self::VaultRecall => {
                 "Recalls a memory pack for a query at an effort level: ranked items with provenance, scope honesty and retrieval accounting."
+            }
+            Self::VaultRetrievalRecall => {
+                "Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle."
+            }
+            Self::VaultRetrievalRuns => {
+                "The owner reads finalized local retrieval runs and their independent outcome sidecars, newest first."
+            }
+            Self::VaultRetrievalRun => {
+                "The owner reads one finalized local serving run, its turn, policy state, trace and explicit outcomes; an unknown run reads as none."
+            }
+            Self::VaultRetrievalTurn => {
+                "The owner reads the independent finalized retrieval runs linked to one exact turn, in recorded order."
+            }
+            Self::VaultRetrievalOutcomesPut => {
+                "The owner attaches an explicit observation to one local serving run; raw reward stays telemetry, never a gated training label."
+            }
+            Self::VaultRetrievalOutcomesEnd => {
+                "The owner records a gate-attributed turn outcome for its exact contributing retrievalRunIds; the engine validates the links and shapes the reward."
+            }
+            Self::VaultRetrievalTrace => {
+                "The owner reads an opt-in trace by its vault-local keyed fork hash; hashes are never comparable across vaults."
+            }
+            Self::VaultRetrievalExport => {
+                "The owner exports finalized run evidence without query or pack text, raw frontier samples, trace keys or free-form outcome metadata."
+            }
+            Self::VaultRetrievalReplay => {
+                "The owner replays recorded state, ordered pack scores and trace from exact finalized runs; no fresh search, clock or outcome-derived feature is used."
             }
             Self::VaultExport => {
                 "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only."
