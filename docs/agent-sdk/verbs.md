@@ -104,6 +104,8 @@ both bindings and their export-census tests in one change.
 - `vault.receipts`
 - `vault.images.view`
 - `vault.receipts.get`
+- `self.admission.status`
+- `self.admission.receipts`
 - `vault.explain.memory`
 - `vault.explain.gate`
 - `vault.kv.get`

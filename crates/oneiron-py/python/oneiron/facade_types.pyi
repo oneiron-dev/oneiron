@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 793 facade rows, 2763 declarations.
-Inputs: 741 of 793 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 713 of 793 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 795 facade rows, 2767 declarations.
+Inputs: 743 of 795 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 715 of 795 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 99; unread shapes: 0.
 """
 
@@ -2534,6 +2534,34 @@ class CallReceipt(TypedDict):
     action_digest: NotRequired[str | None]
     served: list[str]
     served_records: NotRequired[list[RecordRef]]
+class AdmissionStatusRequest(TypedDict):
+    intent_key: str
+class AdmissionStatusQueued(TypedDict):
+    status: Literal["queued"]
+class AdmissionStatusHeld(TypedDict):
+    status: Literal["held"]
+    reason: NotRequired[str | None]
+class AdmissionStatusCompleted(TypedDict):
+    status: Literal["completed"]
+    result_digest: str
+class AdmissionStatusRefused(TypedDict):
+    status: Literal["refused"]
+    code: str
+    reason: str
+class AdmissionStatusInterrupted(TypedDict):
+    status: Literal["interrupted"]
+    reason: str
+AdmissionStatus = AdmissionStatusQueued | AdmissionStatusHeld | AdmissionStatusCompleted | AdmissionStatusRefused | AdmissionStatusInterrupted
+class AdmissionReceipt(TypedDict):
+    receipt_ref: str
+    intent_key: str
+    verb: str
+    request_digest: str
+    accepted_at: int
+    updated_at: int
+    state: AdmissionStatus
+class AdmissionReceiptsRequest(TypedDict):
+    intent_keys: list[str]
 class ExplainMemoryRequest(TypedDict):
     entity: str
     session_id: NotRequired[str | None]
