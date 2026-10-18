@@ -40382,7 +40382,7 @@
      "purpose": "Closed diagnostic event vocabulary: classes, sources, criticality, event and working-set types, bounds",
      "surface": {
       "const": 2,
-      "crate-vis": 12,
+      "crate-vis": 9,
       "enum": 4,
       "fn": 10,
       "struct": 4,
