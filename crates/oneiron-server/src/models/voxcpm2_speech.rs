@@ -106,7 +106,10 @@ impl VoxCpm2Speech {
         let max = usize::try_from(warm.limits.max_text_bytes).unwrap_or(usize::MAX);
         let mut pcm = Vec::new();
         for piece in speakable_pieces(&text, max) {
-            pcm.extend(self.render(&warm, &target, piece, &transcript, &audio).await?);
+            pcm.extend(
+                self.render(&warm, &target, piece, &transcript, &audio)
+                    .await?,
+            );
         }
         // A WAV's 32-bit lengths are the one bound on the joined audio.
         let wav = pcm16_wav(warm.sample_rate, 1, &pcm).ok_or(FatalLlmError::EmptyResponse)?;
