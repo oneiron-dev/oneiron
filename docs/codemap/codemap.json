@@ -31714,10 +31714,10 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 33,
+      "crate-vis": 34,
       "enum": 3,
       "fn": 4,
-      "re-export": 11,
+      "re-export": 12,
       "struct": 2
      }
     },
@@ -32046,6 +32046,22 @@
       "crate-vis": 7,
       "enum": 1,
       "fn": 5,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NoteDefaultsView",
+      "NoteOverrides",
+      "SetNoteOverridesRequest"
+     ],
+     "path": "src/note/overrides.rs",
+     "purpose": "A NOTE's own extraction, context and retention defaults (ARCH-0032: each kind \"carries its own extraction…",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 4,
       "struct": 3
      }
     },
@@ -48306,7 +48322,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 365
+      "fn": 367
      }
     },
     {
@@ -54278,7 +54294,7 @@
      "purpose": "A budget check of untrusted MessagePack before it is decoded"
     },
     "note": {
-     "files": 42,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -54938,7 +54954,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3344,
+   "source_files": 3345,
    "test_files": 902
   },
   "oneiron-android": {
@@ -63198,7 +63214,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 316
+      "fn": 318
      }
     },
     {
@@ -64246,7 +64262,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 317
+      "fn": 319
      }
     },
     {
@@ -75202,6 +75218,7 @@
       "ConsentStateMembershipConsent",
       "ConsentStateSpendConsent",
       "ConsultPayloadRef",
+      "ContextDefault",
       "ConversationCreateInput",
       "ConversationTurnCreateInput",
       "CooperativeDeletionDispositionKind",
@@ -75351,6 +75368,7 @@
       "ExplainMemoryRequest",
       "ExplainScoreEvidence",
       "ExportDiaryRead",
+      "ExtractionDefault",
       "FactKind",
       "FactSource",
       "FanoutAckRequest",
@@ -75557,10 +75575,13 @@
       "NodePayload",
       "NotWorse",
       "NoteAnchor",
+      "NoteDefaultsView",
       "NoteEdit",
       "NoteEditOutcome",
+      "NoteKindDescriptor",
       "NoteLifecycleStatus",
       "NoteLifecycleView",
+      "NoteOverrides",
       "NoteRefRequest",
       "NoteSeal",
       "NoteVersion",
@@ -75824,6 +75845,7 @@
       "ResidencePruned",
       "ResolveRecordRefRequest",
       "ResolvedRole",
+      "RetentionDefault",
       "RetrievalScoreComponent",
       "RetrievalSignal",
       "RetryableLlmError",
@@ -75929,6 +75951,7 @@
       "SelfUiValue",
       "Sensitivity",
       "SensitivityCeiling",
+      "SetNoteOverridesRequest",
       "SettleVerdict",
       "ShapeApplyItem",
       "ShapeApplyReceipt",
@@ -76174,8 +76197,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 322,
-      "struct": 854
+      "enum": 325,
+      "struct": 858
      }
     },
     {
