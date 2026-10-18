@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 590 facade rows, 2178 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 12; generated in and out: 550.
+// UniFFI census: 596 facade rows, 2200 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 12; generated in and out: 556.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -14521,6 +14521,123 @@ pub struct HandoffAlarmRequest {
     pub signer: String,
 }
 
+/// `oneiron::vault_cleanup::cleanup_types::CleanupPosture`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CleanupPosture {
+    #[serde(rename = "propose_first")]
+    ProposeFirst,
+    #[serde(rename = "auto_with_digest")]
+    AutoWithDigest,
+}
+
+/// `oneiron::vault_cleanup::cleanup_types::CleanupKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CleanupKind {
+    #[serde(rename = "claimless_extraction_person")]
+    ClaimlessExtractionPerson,
+    #[serde(rename = "empty_summary")]
+    EmptySummary,
+    #[serde(rename = "completed_task")]
+    CompletedTask,
+    #[serde(rename = "completed_attempt")]
+    CompletedAttempt,
+    #[serde(rename = "retained_note")]
+    RetainedNote,
+}
+
+/// `oneiron::vault_cleanup::cleanup_types::CleanupCandidate`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CleanupCandidate {
+    #[serde(rename = "entity")]
+    pub entity: String,
+    #[serde(rename = "kind")]
+    pub kind: CleanupKind,
+}
+
+/// `oneiron::vault_cleanup::surface::CleanupRunView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CleanupRunView {
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+    #[serde(rename = "posture")]
+    pub posture: CleanupPosture,
+    #[serde(rename = "candidates")]
+    pub candidates: Vec<CleanupCandidate>,
+    #[serde(rename = "proposal", default, skip_serializing_if = "Option::is_none")]
+    pub proposal: Option<String>,
+    #[serde(rename = "archived")]
+    pub archived: Vec<String>,
+    #[serde(rename = "digest", default, skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
+}
+
+/// `oneiron::ingest::resolution::EntityResolutionCandidate`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EntityResolutionCandidate {
+    #[serde(rename = "subject")]
+    pub subject: String,
+    #[serde(rename = "confidence_claim_ref")]
+    pub confidence_claim_ref: String,
+}
+
+/// `oneiron::ingest::resolution::EntityMentionRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EntityMentionRequest {
+    #[serde(rename = "candidates")]
+    pub candidates: Vec<EntityResolutionCandidate>,
+    #[serde(
+        rename = "high_collision_mention",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub high_collision_mention: Option<bool>,
+}
+
+/// `oneiron::ingest::resolution::ScoredEntityResolutionCandidate`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScoredEntityResolutionCandidate {
+    #[serde(rename = "candidate")]
+    pub candidate: EntityResolutionCandidate,
+    #[serde(rename = "effective_confidence")]
+    pub effective_confidence: f64,
+}
+
+/// `oneiron::ingest::resolution::EntityResolutionRoute`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum EntityResolutionRoute {
+    #[serde(rename = "hard_link")]
+    HardLink,
+    #[serde(rename = "soft_link")]
+    SoftLink,
+    #[serde(rename = "soft_link_low")]
+    SoftLinkLow,
+    #[serde(rename = "provisional_entity")]
+    ProvisionalEntity,
+}
+
+/// `oneiron::ingest::resolution::EntityResolutionWaterfallDecision`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct EntityResolutionWaterfallDecision {
+    #[serde(rename = "ranked")]
+    pub ranked: Vec<ScoredEntityResolutionCandidate>,
+    #[serde(rename = "claims_suppressed")]
+    pub claims_suppressed: u64,
+    #[serde(rename = "selected", default, skip_serializing_if = "Option::is_none")]
+    pub selected: Option<String>,
+    #[serde(
+        rename = "selected_effective_confidence",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub selected_effective_confidence: Option<f64>,
+    #[serde(rename = "route")]
+    pub route: EntityResolutionRoute,
+    #[serde(rename = "requires_async_verification")]
+    pub requires_async_verification: bool,
+}
+
 /// `oneiron::deletion::legal_hold::types::LegalHoldTarget`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum LegalHoldTarget {
@@ -18315,6 +18432,199 @@ pub struct SecretUseAnswer {
     pub failure: Option<String>,
     #[serde(rename = "receipt")]
     pub receipt: SecretUseRecord,
+}
+
+/// `oneiron::task_verb::sdk_secret_grant::SecretGrantPurpose`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum SecretGrantPurpose {
+    #[serde(rename = "operation")]
+    Operation {
+        #[serde(rename = "name")]
+        name: String,
+    },
+    #[serde(rename = "connector")]
+    Connector {
+        #[serde(rename = "name")]
+        name: String,
+    },
+    #[serde(rename = "host_destination")]
+    HostDestination {
+        #[serde(rename = "name")]
+        name: String,
+    },
+    #[serde(rename = "local_file")]
+    LocalFile {
+        #[serde(rename = "effector")]
+        effector: String,
+        #[serde(rename = "path")]
+        path: String,
+        #[serde(rename = "project_id")]
+        project_id: String,
+    },
+}
+
+/// `oneiron::task_verb::sdk_secret_grant::SecretGrantMintRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SecretGrantMintRequest {
+    #[serde(rename = "handle")]
+    pub handle: String,
+    #[serde(rename = "purpose")]
+    pub purpose: SecretGrantPurpose,
+    #[serde(rename = "ttl_secs", default, skip_serializing_if = "Option::is_none")]
+    pub ttl_secs: Option<u64>,
+}
+
+/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `SecretGrantMintRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LiveRunRequestSecretGrantMintRequest {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+    #[serde(rename = "spec")]
+    pub spec: SecretGrantMintRequest,
+}
+
+/// `oneiron::task_verb::sdk_secret_grant::SecretGrantViewStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SecretGrantViewStatus {
+    #[serde(rename = "active")]
+    Active,
+    #[serde(rename = "expired")]
+    Expired,
+    #[serde(rename = "revoked")]
+    Revoked,
+    #[serde(rename = "replaced")]
+    Replaced,
+}
+
+/// `oneiron::task_verb::sdk_secret_grant::SecretGrantRegistration`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SecretGrantRegistration {
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "project_id")]
+    pub project_id: String,
+}
+
+/// `oneiron::task_verb::sdk_secret_grant::SecretGrantCleanup`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SecretGrantCleanup {
+    #[serde(rename = "removed")]
+    Removed,
+    #[serde(rename = "absent")]
+    Absent,
+    #[serde(rename = "kept")]
+    Kept,
+}
+
+/// `oneiron::task_verb::sdk_secret_grant::SecretGrantView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SecretGrantView {
+    #[serde(rename = "grant")]
+    pub grant: String,
+    #[serde(rename = "handle", default, skip_serializing_if = "Option::is_none")]
+    pub handle: Option<String>,
+    #[serde(rename = "purpose")]
+    pub purpose: SecretGrantPurpose,
+    #[serde(rename = "effector")]
+    pub effector: String,
+    #[serde(rename = "tier")]
+    pub tier: u8,
+    #[serde(rename = "generation")]
+    pub generation: u32,
+    #[serde(rename = "granted_at")]
+    pub granted_at: u64,
+    #[serde(rename = "expires_at")]
+    pub expires_at: u64,
+    #[serde(rename = "status")]
+    pub status: SecretGrantViewStatus,
+    #[serde(
+        rename = "replaced_by",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub replaced_by: Option<String>,
+    #[serde(rename = "lease", default, skip_serializing_if = "Option::is_none")]
+    pub lease: Option<String>,
+    #[serde(
+        rename = "materialization_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub materialization_receipt: Option<String>,
+    #[serde(
+        rename = "registration",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub registration: Option<SecretGrantRegistration>,
+    #[serde(rename = "cleanup", default, skip_serializing_if = "Option::is_none")]
+    pub cleanup: Option<SecretGrantCleanup>,
+}
+
+/// `oneiron::task_verb::sdk_secret_grant::SecretGrantRenewRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SecretGrantRenewRequest {
+    #[serde(rename = "grant")]
+    pub grant: String,
+    #[serde(rename = "ttl_secs", default, skip_serializing_if = "Option::is_none")]
+    pub ttl_secs: Option<u64>,
+}
+
+/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `SecretGrantRenewRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LiveRunRequestSecretGrantRenewRequest {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+    #[serde(rename = "spec")]
+    pub spec: SecretGrantRenewRequest,
+}
+
+/// `oneiron::task_verb::sdk_secret_grant::SecretGrantTeardownRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SecretGrantTeardownRequest {
+    #[serde(rename = "grant")]
+    pub grant: String,
+}
+
+/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `SecretGrantTeardownRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LiveRunRequestSecretGrantTeardownRequest {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+    #[serde(rename = "spec")]
+    pub spec: SecretGrantTeardownRequest,
+}
+
+/// `oneiron::task_verb::sdk_secret_grant::SecretGrantUseRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SecretGrantUseRequest {
+    #[serde(rename = "grant")]
+    pub grant: String,
+    #[serde(rename = "operation")]
+    pub operation: String,
+    #[serde(rename = "arguments", default, skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<crate::WireJson>,
+}
+
+/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `SecretGrantUseRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LiveRunRequestSecretGrantUseRequest {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+    #[serde(rename = "spec")]
+    pub spec: SecretGrantUseRequest,
 }
 
 /// `oneiron_authority::share_travel::BornWithField`.

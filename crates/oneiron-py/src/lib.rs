@@ -2189,6 +2189,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_cleanup_run(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.cleanup.run")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.cleanup.run", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_entities_mention(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.entities.mention")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.entities.mention", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_legal_holds_place(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.legal_holds.place")?;
         let output = py
@@ -2732,6 +2746,34 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "self.use")?;
         let output = py
             .detach(|| self.inner.agent_verb("self.use", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_secrets_materialize(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.secrets.materialize")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.secrets.materialize", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_secrets_renew(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.secrets.renew")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.secrets.renew", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_secrets_teardown(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.secrets.teardown")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.secrets.teardown", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_secrets_use(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.secrets.use")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.secrets.use", input))
             .map_err(raise)?;
         encode(&output)
     }

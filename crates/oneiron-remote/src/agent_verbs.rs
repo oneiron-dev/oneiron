@@ -720,6 +720,12 @@ impl OneironClient {
                         client, verb, &input,
                     )
                 }
+                "vault.cleanup.run" => remote_agent_verb_output::<
+                    oneiron::vault_cleanup::surface::CleanupRunView,
+                >(client, verb, &input),
+                "vault.entities.mention" => remote_agent_verb_output::<
+                    oneiron::ingest::EntityResolutionWaterfallDecision,
+                >(client, verb, &input),
                 "vault.legal_holds.place" => {
                     remote_agent_verb_output::<oneiron::deletion::LegalHold>(client, verb, &input)
                 }
@@ -910,6 +916,18 @@ impl OneironClient {
                 "self.use" => remote_agent_verb_output::<oneiron::task_verb::sdk::SecretUseAnswer>(
                     client, verb, &input,
                 ),
+                "self.secrets.materialize" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SecretGrantView,
+                >(client, verb, &input),
+                "self.secrets.renew" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SecretGrantView,
+                >(client, verb, &input),
+                "self.secrets.teardown" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SecretGrantView,
+                >(client, verb, &input),
+                "self.secrets.use" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SecretUseAnswer,
+                >(client, verb, &input),
                 "vault.shares.create" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ShareCreated,
                 >(client, verb, &input),
@@ -4616,6 +4634,30 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.authority.handoff_alarms.acknowledge", value)
     }
+    pub fn vault_cleanup_run(
+        &self,
+        input: &oneiron::vault_cleanup::surface::CleanupRunRequest,
+    ) -> Result<oneiron::vault_cleanup::surface::CleanupRunView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.cleanup.run", value)
+    }
+    pub fn vault_entities_mention(
+        &self,
+        input: &oneiron::ingest::EntityMentionRequest,
+    ) -> Result<oneiron::ingest::EntityResolutionWaterfallDecision, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.entities.mention", value)
+    }
     pub fn vault_legal_holds_place(
         &self,
         input: &oneiron::task_verb::sdk::LegalHoldPlaceRequest,
@@ -5359,6 +5401,62 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.use", value)
+    }
+    pub fn self_secrets_materialize(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::task_verb::sdk::SecretGrantMintRequest,
+        >,
+    ) -> Result<oneiron::task_verb::sdk::SecretGrantView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.secrets.materialize", value)
+    }
+    pub fn self_secrets_renew(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::task_verb::sdk::SecretGrantRenewRequest,
+        >,
+    ) -> Result<oneiron::task_verb::sdk::SecretGrantView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.secrets.renew", value)
+    }
+    pub fn self_secrets_teardown(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::task_verb::sdk::SecretGrantTeardownRequest,
+        >,
+    ) -> Result<oneiron::task_verb::sdk::SecretGrantView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.secrets.teardown", value)
+    }
+    pub fn self_secrets_use(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::task_verb::sdk::SecretGrantUseRequest,
+        >,
+    ) -> Result<oneiron::task_verb::sdk::SecretUseAnswer, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.secrets.use", value)
     }
     pub fn vault_shares_create(
         &self,

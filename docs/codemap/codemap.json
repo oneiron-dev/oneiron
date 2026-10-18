@@ -651,9 +651,9 @@
      "purpose": "AgentDefinition domain types, key/limit consts, and constructors",
      "surface": {
       "const": 14,
-      "crate-vis": 59,
+      "crate-vis": 60,
       "enum": 5,
-      "fn": 26,
+      "fn": 27,
       "struct": 4
      }
     },
@@ -1004,6 +1004,26 @@
       "crate-vis": 1,
       "fn": 5,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/planner_live/intent.rs",
+     "purpose": "The reserved spawn intent (DOOR-111 S2): the owner's planned spawn, durable under its intent key",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/planner_live/root_plan.rs",
+     "purpose": "The owner's root plan (DOOR-111 S3): the live planner a leased parent's spawn reads, for a spawn the…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -3832,7 +3852,7 @@
      "path": "src/authority/world_privacy.rs",
      "purpose": "Folds `WorldPrivacy` edits into each world's effective settings",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 19,
       "enum": 4,
       "fn": 7,
       "struct": 2
@@ -11658,6 +11678,22 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "CompactionHome",
+      "CompactionHostBinding",
+      "CompactionIdentity",
+      "RenderedHome"
+     ],
+     "path": "src/code_run/compaction_home.rs",
+     "purpose": "The agent's home as its own compaction wears it (FIX 4465; the home is the self-model, voice, diary and…",
+     "surface": {
+      "fn": 8,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "BlastRadiusWalk",
       "CodeConsentRequest",
       "CodeEmissionAdmission",
@@ -12025,7 +12061,7 @@
      "surface": {
       "crate-vis": 19,
       "mod": 6,
-      "re-export": 18
+      "re-export": 19
      }
     },
     {
@@ -14011,11 +14047,11 @@
      "purpose": "DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must…",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 10,
       "mod": 1,
-      "re-export": 6,
+      "re-export": 8,
       "struct": 3
      }
     },
@@ -14026,7 +14062,7 @@
      "path": "src/compaction/driver/integration.rs",
      "purpose": "Transactional epoch integration, typed executor coverage, and swap plans",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2
      }
     },
@@ -14222,6 +14258,40 @@
      "path": "src/compaction/output/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CompactionHostLog",
+      "CompactionSource"
+     ],
+     "path": "src/compaction/packet_source.rs",
+     "purpose": "The packet door's source bindings (FIX 4465)",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CompactionExecution",
+      "CompactionHomeRef",
+      "CompactionUsage",
+      "SelfCompactionUnavailable"
+     ],
+     "path": "src/compaction/self_writer.rs",
+     "purpose": "The agent as its own compaction writer (FIX 4465, owner 10-19: \"the toggle sets WHO writes, not which model\")",
+     "surface": {
+      "crate-vis": 8,
+      "enum": 1,
+      "fn": 3,
+      "struct": 3
+     }
     },
     {
      "bucket": "s",
@@ -47096,7 +47166,32 @@
      "surface": {
       "crate-vis": 3,
       "fn": 3,
+      "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PadAdmissionReport"
+     ],
+     "path": "src/sync/client/residence/bundle/access.rs",
+     "purpose": "This machine's side of a late joiner's access to kept pad objects (FIX 4271), over the home's one…",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/residence/bundle/sweep.rs",
+     "purpose": "Erase's sweep of every pad object the home keeps (FIX 922): each world whose keys were destroyed here leaves…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -48010,7 +48105,7 @@
       "const": 2,
       "crate-vis": 11,
       "fn": 14,
-      "re-export": 13,
+      "re-export": 14,
       "struct": 2
      }
     },
@@ -48058,6 +48153,24 @@
       "crate-vis": 10,
       "enum": 1,
       "fn": 12,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PadAccessRequest",
+      "PadAccessState",
+      "PendingPadAccess",
+      "PendingPadAccessList"
+     ],
+     "path": "src/sync/residence/bundle_access.rs",
+     "purpose": "A late joiner's access to the kept pad objects (FIX 4271): the home's custody of the grants, and the outbox…",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 4,
       "struct": 3
      }
     },
@@ -50122,7 +50235,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 49,
+      "re-export": 50,
       "struct": 36
      }
     },
@@ -50463,7 +50576,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 640
+      "fn": 644
      }
     },
     {
@@ -50878,6 +50991,28 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "SecretGrantCleanup",
+      "SecretGrantMintRequest",
+      "SecretGrantPurpose",
+      "SecretGrantRegistration",
+      "SecretGrantRenewRequest",
+      "SecretGrantTeardownRequest",
+      "SecretGrantUseRequest",
+      "SecretGrantView",
+      "SecretGrantViewStatus"
+     ],
+     "path": "src/task_verb/sdk_secret_grant.rs",
+     "purpose": "`self.secrets.*` (DOOR-124, e2e SECRETS-03): the typed lifecycle of a secret grant, over the engine's grant…",
+     "surface": {
+      "enum": 3,
+      "fn": 4,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "SecretUseAnswer",
       "SecretUseRecord",
       "SecretUseRequest",
@@ -50886,6 +51021,7 @@
      "path": "src/task_verb/sdk_secret_use.rs",
      "purpose": "`self.use`: an agent hands a secret to one trusted operation by its handle, and reads the operation's…",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 4,
       "struct": 3
@@ -51541,7 +51677,7 @@
      "surface": {
       "crate-vis": 1,
       "mod": 10,
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -51660,6 +51796,22 @@
       "crate-vis": 1,
       "fn": 7,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PlannedIntentPhase",
+      "PlannedIntentView",
+      "PlannedSpawnHost",
+      "PlannedSpawnRequest"
+     ],
+     "path": "src/team/spawn_intent.rs",
+     "purpose": "The owner's planned spawn under an intent key (DOOR-111): what the owner asks, what the host serves the ask…",
+     "surface": {
+      "enum": 1,
+      "struct": 3
      }
     },
     {
@@ -54936,7 +55088,23 @@
       "const": 3,
       "crate-vis": 10,
       "fn": 34,
+      "re-export": 1,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PadAdmissionTarget",
+      "SealedPadAdmissionGrant"
+     ],
+     "path": "src/world_keys/bundle/admission.rs",
+     "purpose": "A late joiner's access to kept pad objects (FIX 4271)",
+     "surface": {
+      "crate-vis": 10,
+      "fn": 5,
+      "struct": 2
      }
     },
     {
@@ -54944,7 +55112,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/world_keys/bundle/authority.rs",
-     "purpose": "A private world's authority inside the sealed bundle (FIX 4211): its signed settings and key wrap entries…",
+     "purpose": "A private world's authority inside the sealed bundle (FIX 4211): its signed key wrap entries, sealed to the…",
      "surface": {
       "crate-vis": 9
      }
@@ -55027,7 +55195,7 @@
      "surface": {
       "crate-vis": 12,
       "fn": 3,
-      "re-export": 16,
+      "re-export": 17,
       "struct": 2
      }
     },
@@ -56118,7 +56286,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 45,
+     "files": 47,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56342,7 +56510,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 83,
+     "files": 84,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56419,7 +56587,7 @@
      "purpose": "Commitment timer-wake bridge (CMT-3, ONE-1540): due phase → Dreamer attempt → inbox proposal → OF-327 delivery"
     },
     "compaction": {
-     "files": 19,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -57427,7 +57595,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 179,
+     "files": 182,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -57455,14 +57623,14 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 163,
+     "files": 164,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section"
     },
     "team": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -57609,7 +57777,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 22,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -57625,7 +57793,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3511,
+   "source_files": 3522,
    "test_files": 902
   },
   "oneiron-android": {
@@ -65752,6 +65920,8 @@
       "ExtractionEgressPredicate",
       "PurposeDefault",
       "PurposeDefaultTable",
+      "SelfCompactionDefault",
+      "SelfCompactionSource",
       "ValidatedPurposeDefaults",
       "VoiceBackendBinding",
       "VoiceLane",
@@ -65760,9 +65930,9 @@
      "path": "src/llm/defaults.rs",
      "purpose": "Inference defaults as data: the shipped purpose-default table, its validation and the routing rules it implies",
      "surface": {
-      "enum": 2,
-      "fn": 13,
-      "struct": 4,
+      "enum": 3,
+      "fn": 15,
+      "struct": 5,
       "trait": 1
      }
     },
@@ -66132,7 +66302,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 590
+      "fn": 594
      }
     },
     {
@@ -67181,7 +67351,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 591
+      "fn": 595
      }
     },
     {
@@ -68701,6 +68871,26 @@
      "notable": [],
      "path": "src/ai_host/compaction.rs",
      "purpose": "Compaction for code mode's runs (agent-runtime-v1 §d7)",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/compaction/self_writer.rs",
+     "purpose": "The agent's own compaction writer (FIX 4465, owner 10-19: \"the toggle sets WHO writes, not which model\")",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/compaction/serve.rs",
+     "purpose": "The house compaction route's call (moved from `compaction.rs`): one pass's request, admitted on the role's…",
      "surface": {
       "crate-vis": 7
      }
@@ -70414,7 +70604,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 113
+      "crate-vis": 114
      }
     },
     {
@@ -70615,6 +70805,16 @@
      "purpose": "OF-495: role holders' tradeoff picks (ROLES-EVERYWHERE)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/secret_grant_doors.rs",
+     "purpose": "The host doors of `self.secrets.*` (DOOR-124, e2e SECRETS-03): an agent run's secret grants, minted…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -75050,6 +75250,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/livequery/residence/bundle_access.rs",
+     "purpose": "`residence.bundle.access` (FIX 4271): a late joiner's access to the kept sealed pad objects, one tagged call",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/livequery/residence/machine_history.rs",
      "purpose": "`residence.machine-history` (FIX 3820): a target's machine-claim history, a page at a time, for a machine…",
      "surface": {
@@ -76817,7 +77027,7 @@
      "purpose": "—",
      "surface": {
       "mod": 1,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -76879,6 +77089,23 @@
      "surface": {
       "fn": 10,
       "struct": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RunSecretDestinations",
+      "SecretDestination",
+      "SecretDestinations",
+      "ServedSecretDelivery"
+     ],
+     "path": "src/runtime/secret_destinations.rs",
+     "purpose": "T1 host delivery (DOOR-124, FIX 4490): the secret destinations a run host registers for one run, and the…",
+     "surface": {
+      "const": 1,
+      "fn": 5,
+      "struct": 4
      }
     },
     {
@@ -77045,7 +77272,7 @@
      "path": "src/server/live_runs.rs",
      "purpose": "The live agent runs a harness may act for over HTTP (OF-181)",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 33
      }
     },
     {
@@ -78027,14 +78254,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 43,
+     "files": 45,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 373,
+     "files": 374,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -78279,7 +78506,7 @@
      "purpose": "Opt-in scheduled Linear mirror over an authenticated host-owned bridge"
     },
     "livequery": {
-     "files": 24,
+     "files": 25,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -78370,7 +78597,7 @@
      "purpose": "The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a…"
     },
     "runtime": {
-     "files": 9,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78456,7 +78683,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 704,
+   "source_files": 709,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -79602,6 +79829,10 @@
       "LiveRunRequestAgentSpawnInput",
       "LiveRunRequestLeaderSplitInput",
       "LiveRunRequestMemorySupersedeInput",
+      "LiveRunRequestSecretGrantMintRequest",
+      "LiveRunRequestSecretGrantRenewRequest",
+      "LiveRunRequestSecretGrantTeardownRequest",
+      "LiveRunRequestSecretGrantUseRequest",
       "LiveRunRequestSkillCallInput",
       "LiveRunRequestTaskRefuseInput",
       "LiveVoiceAckKind",
@@ -80308,6 +80539,15 @@
       "SearchAxis",
       "SearchEvidence",
       "SeatInventory",
+      "SecretGrantCleanup",
+      "SecretGrantMintRequest",
+      "SecretGrantPurpose",
+      "SecretGrantRegistration",
+      "SecretGrantRenewRequest",
+      "SecretGrantTeardownRequest",
+      "SecretGrantUseRequest",
+      "SecretGrantView",
+      "SecretGrantViewStatus",
       "SecretLiftClose",
       "SecretLiftHistoryProposal",
       "SecretLiftProgress",
@@ -80832,8 +81072,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 570,
-      "struct": 1608
+      "enum": 573,
+      "struct": 1618
      }
     },
     {

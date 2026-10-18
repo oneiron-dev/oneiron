@@ -251,6 +251,8 @@ vaultResearchRefundWork(input: unknown): unknown
 vaultResearchRecordBenchmark(input: unknown): unknown
 vaultAuthorityHandoffAlarms(input: unknown): unknown
 vaultAuthorityHandoffAlarmsAcknowledge(input: unknown): unknown
+vaultCleanupRun(input: unknown): unknown
+vaultEntitiesMention(input: unknown): unknown
 vaultLegalHoldsPlace(input: unknown): unknown
 vaultLegalHoldsWiden(input: unknown): unknown
 vaultLegalHoldsList(input: unknown): unknown
@@ -313,6 +315,10 @@ reveal(input: unknown): unknown
 revealWait(input: unknown): unknown
 revealDescribe(input: unknown): unknown
 selfUse(input: unknown): unknown
+selfSecretsMaterialize(input: unknown): unknown
+selfSecretsRenew(input: unknown): unknown
+selfSecretsTeardown(input: unknown): unknown
+selfSecretsUse(input: unknown): unknown
 vaultSharesCreate(input: unknown): unknown
 vaultSharesRevoke(input: unknown): unknown
 vaultSharesView(input: unknown): unknown

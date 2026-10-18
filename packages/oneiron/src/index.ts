@@ -303,6 +303,16 @@ export class Oneiron {
     },
     /** Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value. */
     use: (input: Facade.SecretUseRequest): Facade.SecretUseAnswer => this.#call(() => this.#client.selfUse(input) as Facade.SecretUseAnswer),
+    secrets: {
+      /** Mints a value-free grant on a secret for this credential's attached run, to one purpose: an operation or connector (door), a host destination (leased) or a declared file (local); the answer never holds the value. */
+      materialize: (input: Facade.LiveRunRequest<Facade.SecretGrantMintRequest>): Facade.SecretGrantView => this.#call(() => this.#client.selfSecretsMaterialize(input) as Facade.SecretGrantView),
+      /** Renews a grant the attached run holds: a fresh grant at the secret's current generation in its place, never a longer life for bytes already handed out. */
+      renew: (input: Facade.LiveRunRequest<Facade.SecretGrantRenewRequest>): Facade.SecretGrantView => this.#call(() => this.#client.selfSecretsRenew(input) as Facade.SecretGrantView),
+      /** Tears down a grant the attached run holds, whatever its state: revokes it and its lease, removes its file or clears its destination, and says what the cleanup found. */
+      teardown: (input: Facade.LiveRunRequest<Facade.SecretGrantTeardownRequest>): Facade.SecretGrantView => this.#call(() => this.#client.selfSecretsTeardown(input) as Facade.SecretGrantView),
+      /** Hands the secret a door grant redeems to one trusted operation or connector call, for the attached run; a grant minted before a rotation refuses until renewed, and the answer never holds the value. */
+      use: (input: Facade.LiveRunRequest<Facade.SecretGrantUseRequest>): Facade.SecretUseAnswer => this.#call(() => this.#client.selfSecretsUse(input) as Facade.SecretUseAnswer),
+    },
     skills: {
       /** An agent saves a skill it wrote, SKILL.md and scripts together; it lands as a proposed candidate and nothing activates it. */
       save: (input: Facade.SkillSaveRequest): Facade.SkillAuthoringReceipt => this.#call(() => this.#client.selfSkillsSave(input) as Facade.SkillAuthoringReceipt),
@@ -907,6 +917,14 @@ export class Oneiron {
         /** The owner sets up sealed cohorts from a pinned real inventory through the existing family, case and audited cut doors. Reports refused decisions; never serves sealed content or fabricates labels or skill provenance. */
         setup: (input: Facade.EvalCohortSetup): Facade.EvalAuthoringReport => this.#call(() => this.#client.vaultEvalsCohortsSetup(input) as Facade.EvalAuthoringReport),
       },
+    },
+    cleanup: {
+      /** The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing. */
+      run: (input: Facade.CleanupRunRequest): Facade.CleanupRunView => this.#call(() => this.#client.vaultCleanupRun(input) as Facade.CleanupRunView),
+    },
+    entities: {
+      /** The owner resolves an evidence-backed mention through the existing waterfall, restoring its selected archived record in place and never minting a duplicate. */
+      mention: (input: Facade.EntityMentionRequest): Facade.EntityResolutionWaterfallDecision => this.#call(() => this.#client.vaultEntitiesMention(input) as Facade.EntityResolutionWaterfallDecision),
     },
     legal_holds: {
       /** The owner places a customer legal hold on the named records or gate partitions. */

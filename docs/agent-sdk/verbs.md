@@ -289,6 +289,10 @@ both bindings and their export-census tests in one change.
 - `reveal.wait`
 - `reveal.describe`
 - `self.use`
+- `self.secrets.materialize`
+- `self.secrets.renew`
+- `self.secrets.teardown`
+- `self.secrets.use`
 - `vault.shares.create`
 - `vault.shares.revoke`
 - `vault.shares.view`
