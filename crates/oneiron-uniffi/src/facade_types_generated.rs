@@ -480,6 +480,8 @@ pub struct NotificationSource {
     pub run: Option<String>,
     #[serde(rename = "result", default, skip_serializing_if = "Option::is_none")]
     pub result: Option<String>,
+    #[serde(rename = "detail", default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 /// `oneiron::inbox::list::NotificationRow`.
