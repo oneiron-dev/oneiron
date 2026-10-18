@@ -79,6 +79,7 @@ pub use session::{
     AsrUpdate, AudienceRefresh, PreparedAsr, SafeguardUpdate, VOICE_IDENTITY_ASK_SECONDS,
     VoiceCascadeSession, VoiceContainerBinding, VoiceSessionConfig,
 };
+pub use speakable::pieces as speakable_pieces;
 
 #[cfg(test)]
 mod tests;

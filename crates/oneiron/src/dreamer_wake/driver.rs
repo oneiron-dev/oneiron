@@ -646,6 +646,18 @@ impl<'a> DreamerWakeDriver<'a> {
                     reason: (*reason).to_owned(),
                     cause: DreamerParkCause::Other,
                 })
+            } else if matches!(
+                prepared_wake.preparation(attempt_id),
+                Some(crate::dreamer_consolidation::AttemptPreparation::ResidencyDeferred)
+            ) {
+                // A source away from this replica (OF-534) is a wait, never
+                // a park: the attempt stays queued and runs on promotion.
+                Ok(DreamerAttemptExecution::Deferred {
+                    completed_units: 0,
+                    retry_at: input
+                        .now
+                        .saturating_add(crate::dreamer_consolidation::RESIDENCY_RETRY_SECS),
+                })
             } else {
                 let mut ctx = WakeAttemptContext {
                     vault: self.vault,
