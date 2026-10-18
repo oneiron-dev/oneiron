@@ -45,6 +45,8 @@ const CHECK: SideTable<(EntityId, EntityId), OfferCheck, Named> =
 
 /// The shipped skill the Coach drafts its offers with, by name.
 const TRAINING_OFFER_SKILL: &str = "training-offer";
+/// The shipped skill the Coach keeps each seat's eval set with, by name.
+const EVAL_AUTHORING_SKILL: &str = "eval-authoring";
 /// The offer skill's outcome axis: whether a checked offer's promise held.
 pub const OFFER_SKILL_AXIS: &str = "training_offer";
 
@@ -703,6 +705,18 @@ pub fn training_offer_skill_id() -> Result<EntityId> {
     EntityId::derive(
         crate::entity_id::derived_domains::BOOTSTRAP_SKILL,
         &[TRAINING_OFFER_SKILL.as_bytes()],
+    )
+}
+
+/// The shipped eval-authoring skill (ARCH-0053 "Eval authoring", OF-578): the
+/// Coach loads it on its eval-authoring attempt, and each cut and retirement
+/// names the revision that decided it.
+/// # Errors
+/// Never in practice: the id derives from a fixed name.
+pub fn eval_authoring_skill_id() -> Result<EntityId> {
+    EntityId::derive(
+        crate::entity_id::derived_domains::BOOTSTRAP_SKILL,
+        &[EVAL_AUTHORING_SKILL.as_bytes()],
     )
 }
 

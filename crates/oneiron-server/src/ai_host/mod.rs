@@ -36,6 +36,7 @@ pub(crate) mod coach_host;
 mod code_fix;
 mod connector_event;
 mod dreamer;
+mod eval_authoring;
 pub(crate) mod failure_signals;
 mod harness;
 pub(crate) mod home_digests;
