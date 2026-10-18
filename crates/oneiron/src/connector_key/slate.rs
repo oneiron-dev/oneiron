@@ -937,7 +937,7 @@ impl Vault {
     /// [`Self::stamp_slate`] in the caller's writer, so an owner act that
     /// changes a setting composes it with its own record (DOOR-079: a code
     /// consent wait's stop-asking answer).
-    fn stamp_slate_in_txn(
+    pub(in crate::connector_key) fn stamp_slate_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         owner: &AuthenticatedOwner,

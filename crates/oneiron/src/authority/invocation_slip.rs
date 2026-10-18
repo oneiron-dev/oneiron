@@ -17,6 +17,15 @@ pub struct InvocationSlipBinding {
     challenge: Vec<u8>,
     signature: Vec<u8>,
 }
+impl InvocationSlipBinding {
+    /// The exact token this already-authenticated request presented. Host
+    /// adapters use it to resolve that instrument's registration, never to
+    /// mint authority or substitute another caller's credential.
+    pub fn credential_token(&self) -> Result<String> {
+        self.slip.to_token()
+    }
+}
+
 impl std::fmt::Debug for InvocationSlipBinding {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("InvocationSlipBinding")

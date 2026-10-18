@@ -572,6 +572,7 @@ pub use super::sdk_mesh::*;
 pub use super::sdk_note_history::*;
 pub use super::sdk_off_record::*;
 pub use super::sdk_persona::*;
+pub use super::sdk_proxy::*;
 pub use super::sdk_record_erase::*;
 pub use super::sdk_reply::*;
 pub use super::sdk_research::*;

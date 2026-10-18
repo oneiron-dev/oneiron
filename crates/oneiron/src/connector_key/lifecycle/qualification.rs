@@ -262,8 +262,19 @@ impl Vault {
         at: u64,
     ) -> Result<ConnectorKeyRecord> {
         let mut wtxn = self.store.env.write_txn()?;
+        let adopted = self.adopt_connector_slate_stamp_in_txn(&mut wtxn, id, at)?;
+        wtxn.commit()?;
+        Ok(adopted)
+    }
+
+    pub(in crate::connector_key) fn adopt_connector_slate_stamp_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        at: u64,
+    ) -> Result<ConnectorKeyRecord> {
         let record =
-            read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
+            read_connector_key_in_txn(&self.store, wtxn, id)?.ok_or(Error::EntityNotFound)?;
         if record.catalog.is_none()
             || !matches!(
                 record.status,
@@ -276,7 +287,7 @@ impl Vault {
         let slate_id = record
             .slate_ref
             .ok_or_else(|| invalid_body("connector slate missing"))?;
-        let slate = read_connector_slate_in_txn(self, &wtxn, slate_id)?
+        let slate = read_connector_slate_in_txn(self, wtxn, slate_id)?
             .ok_or_else(|| invalid_body("connector slate missing"))?;
         if slate.owner_actor().is_none()
             || !slate.stamp_holds()
@@ -291,19 +302,18 @@ impl Vault {
             ..record
         };
         adopted.validate()?;
-        rewrite_connector_key_in_txn(&self.store, &mut wtxn, id, &adopted)?;
-        let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
+        rewrite_connector_key_in_txn(&self.store, wtxn, id, &adopted)?;
+        let policy = crate::gate::resolve_policy_manifest(&self.store, wtxn)?;
         append_connector_key_op_record(
             &self.store,
-            &mut wtxn,
+            wtxn,
             id,
             "gate.connector_key.restamp",
             &adopted,
             policy.read_frontier_hash()?,
             at,
         )?;
-        self.sync_derived_keys_in_txn(&mut wtxn, &adopted, at)?;
-        wtxn.commit()?;
+        self.sync_derived_keys_in_txn(wtxn, &adopted, at)?;
         Ok(adopted)
     }
 }

@@ -16,7 +16,7 @@ mod wakes;
 
 pub(crate) use self::actor_dispatch::{
     ensure_mcp_actor_matches, execute_mcp_tool, mcp_params, mcp_tool_validation_error,
-    resolve_mcp_gateway_actor,
+    resolve_mcp_actor_for_auth, resolve_mcp_gateway_actor,
 };
 pub(crate) use self::admission::mcp_admit_scoped_call;
 use self::admission::{
