@@ -23,34 +23,22 @@ use super::types::{
 };
 use crate::error::ArtifactError;
 
-/// OF-544: the most objectives one dispatch carries, the confession seal's
-/// own count bound.
-const OBJECTIVES_MAX: usize = 256;
-
-/// OF-544: the most UTF-8 bytes in one objective, the confession seal's own
-/// per-objective bound.
-const OBJECTIVE_MAX_BYTES: usize = 256;
-
 fn objectives_invalid() -> Error {
     Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
-        "objectives must be 1..=256 distinct non-empty lines of at most 256 bytes",
+        "objectives must be one or more distinct non-empty lines",
     ))
 }
 
-/// The caller's objectives as the seal will take them: 1..=256 entries,
-/// each 1..=256 bytes with no control characters, no duplicates. The order
-/// is the caller's, kept verbatim.
+/// The caller's objectives as the seal will take them: at least one entry,
+/// each non-empty with no control characters, no duplicates. The order is
+/// the caller's, kept verbatim.
 fn validate_objectives(rows: &[String]) -> Result<()> {
-    if rows.is_empty() || rows.len() > OBJECTIVES_MAX {
+    if rows.is_empty() {
         return Err(objectives_invalid());
     }
     let mut seen = std::collections::BTreeSet::new();
     for row in rows {
-        if row.is_empty()
-            || row.len() > OBJECTIVE_MAX_BYTES
-            || row.chars().any(char::is_control)
-            || !seen.insert(row.as_str())
-        {
+        if row.is_empty() || row.chars().any(char::is_control) || !seen.insert(row.as_str()) {
             return Err(objectives_invalid());
         }
     }
@@ -59,7 +47,7 @@ fn validate_objectives(rows: &[String]) -> Result<()> {
 
 fn decode_objectives(value: &Value) -> Result<Vec<String>> {
     let values = value.as_array().ok_or_else(objectives_invalid)?;
-    if values.is_empty() || values.len() > OBJECTIVES_MAX {
+    if values.is_empty() {
         return Err(objectives_invalid());
     }
     let rows = values
@@ -67,7 +55,6 @@ fn decode_objectives(value: &Value) -> Result<Vec<String>> {
         .map(|value| {
             value
                 .as_str()
-                .filter(|text| text.len() <= OBJECTIVE_MAX_BYTES)
                 .map(str::to_owned)
                 .ok_or_else(objectives_invalid)
         })

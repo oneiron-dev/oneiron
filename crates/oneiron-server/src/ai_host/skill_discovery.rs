@@ -31,11 +31,10 @@ const BUDGET_UNITS: u64 = 1 << 20;
 /// task or error in it.
 const TRACE_BYTES: usize = 48 * 1024;
 const ITEM_BYTES: usize = 2 * 1024;
-/// Most bytes of skill text the call reads, and of one skill's.
+/// Most bytes of skill text the call reads, and of one skill's. Every loaded
+/// skill is judged; more skills share the text room.
 const SKILLS_BYTES: usize = 32 * 1024;
 const SKILL_BYTES: usize = 8 * 1024;
-/// Most loaded skills one call judges; an attempt that loaded more waits.
-const MAX_SKILLS: usize = 32;
 /// Most bytes of a deviation's reason kept.
 const REASON_BYTES: usize = 1024;
 /// Most bytes of one doubtful answer's note kept.
@@ -120,9 +119,7 @@ impl ReceiptAttributionSource for TraceClassifier<'_> {
             return Ok(Some(Vec::new()));
         }
         // A run that recorded nothing shows no use of any skill.
-        if trace.skills.len() > MAX_SKILLS
-            || (trace.steps.is_empty() && trace.outputs.is_empty() && trace.last_error.is_none())
-        {
+        if trace.steps.is_empty() && trace.outputs.is_empty() && trace.last_error.is_none() {
             return Ok(None);
         }
         let skill_bytes = (SKILLS_BYTES / trace.skills.len()).min(SKILL_BYTES);

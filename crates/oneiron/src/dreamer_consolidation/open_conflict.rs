@@ -1,7 +1,7 @@
 //! A judge outage is an open question, persisted through the shared write gate.
 use super::evidence::{VerifiedCandidate, VerifiedEvidenceSet};
 use super::{ConflictSet, conflict_open_marker_id};
-use crate::provenance::birth::{MAX_BIRTH_INPUTS, RowBirth};
+use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::{
     ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EntityId, Result,
@@ -115,15 +115,13 @@ pub(super) fn park_open_conflict(
         .with_scope(super::persistence::identity_scope(&conflict.identity)?)
         .with_evidence_taint(meet)?;
     // Rule A: the marker is concluded from its members' verified evidence, the
-    // MESSAGEs it cites and the heads they dispute, the first
-    // MAX_BIRTH_INPUTS of them.
+    // MESSAGEs it cites and the heads they dispute, every one of them.
     let birth = {
         let inputs: Vec<EntityId> = verified
             .refs()
             .into_iter()
             .chain(verified.cited_messages())
             .chain(conflict.prior_heads.iter().copied())
-            .take(MAX_BIRTH_INPUTS)
             .collect();
         RowBirth::written(
             actor,

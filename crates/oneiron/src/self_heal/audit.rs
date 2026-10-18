@@ -139,12 +139,16 @@ fn reference(value: &str) -> Result<()> {
 
 fn validate_confession(confession: &AttemptConfession) -> Result<()> {
     confession.type_ref.validate()?;
-    if confession.objectives.is_empty() || confession.objectives.len() > 256 {
-        return Err(invalid("a confession covers 1..=256 objectives"));
+    if confession.objectives.is_empty() {
+        return Err(invalid("a confession covers at least one objective"));
     }
     let mut seen = BTreeSet::new();
     for objective in &confession.objectives {
-        reference(&objective.objective)?;
+        if objective.objective.is_empty() || objective.objective.chars().any(char::is_control) {
+            return Err(invalid(
+                "a confession objective is nonempty without controls",
+            ));
+        }
         if !seen.insert(&objective.objective) {
             return Err(invalid("a confession repeats an objective"));
         }
