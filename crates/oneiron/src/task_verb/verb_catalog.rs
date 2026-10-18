@@ -371,6 +371,7 @@ pub enum AgentVerb {
     VaultTaskTypesPin,
     VaultTaskTypesGet,
     VaultAgentsSpawnGet,
+    VaultAgentsSpawn,
     VaultTasksCancelForce,
     VaultRunsBranchesGet,
     VaultConsultsGet,
@@ -1043,6 +1044,7 @@ impl AgentVerb {
         Self::VaultTaskTypesPin,
         Self::VaultTaskTypesGet,
         Self::VaultAgentsSpawnGet,
+        Self::VaultAgentsSpawn,
         Self::VaultTasksCancelForce,
         Self::VaultRunsBranchesGet,
         Self::VaultConsultsGet,
@@ -1730,6 +1732,7 @@ impl AgentVerb {
             Self::VaultTaskTypesPin => "vault.task_types.pin",
             Self::VaultTaskTypesGet => "vault.task_types.get",
             Self::VaultAgentsSpawnGet => "vault.agents.spawn.get",
+            Self::VaultAgentsSpawn => "vault.agents.spawn",
             Self::VaultTasksCancelForce => "vault.tasks.cancel_force",
             Self::VaultRunsBranchesGet => "vault.runs.branches.get",
             Self::VaultConsultsGet => "vault.consults.get",
@@ -2405,6 +2408,7 @@ impl AgentVerb {
                 | Self::VaultTaskTypesPin
                 | Self::VaultTaskTypesGet
                 | Self::VaultAgentsSpawnGet
+                | Self::VaultAgentsSpawn
                 | Self::VaultTasksCancelForce
                 | Self::VaultRunsBranchesGet
                 | Self::VaultConsultsGet
@@ -3084,6 +3088,7 @@ impl AgentVerb {
                 | Self::VaultTaskTypesPin
                 | Self::VaultTaskTypesGet
                 | Self::VaultAgentsSpawnGet
+                | Self::VaultAgentsSpawn
                 | Self::VaultTasksCancelForce
                 | Self::VaultRunsBranchesGet
                 | Self::VaultConsultsGet
@@ -3819,6 +3824,7 @@ impl AgentVerb {
                 | Self::VaultTaskTypesPin
                 | Self::VaultTaskTypesGet
                 | Self::VaultAgentsSpawnGet
+                | Self::VaultAgentsSpawn
                 | Self::VaultTasksCancelForce
                 | Self::VaultRunsBranchesGet
                 | Self::VaultConsultsGet
@@ -4328,6 +4334,7 @@ impl AgentVerb {
                 | Self::VaultWorkflowsUpdate
                 | Self::VaultWorkflowsDispatch
                 | Self::VaultTaskTypesPin
+                | Self::VaultAgentsSpawn
                 | Self::VaultTasksCancelForce
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
@@ -4910,6 +4917,7 @@ impl AgentVerb {
             Self::VaultTaskTypesPin => &["spec"],
             Self::VaultTaskTypesGet => &["spec"],
             Self::VaultAgentsSpawnGet => &["spec"],
+            Self::VaultAgentsSpawn => &["spec"],
             Self::VaultTasksCancelForce => &["spec"],
             Self::VaultRunsBranchesGet => &["spec"],
             Self::VaultConsultsGet => &["spec"],
@@ -5583,6 +5591,7 @@ impl AgentVerb {
             Self::VaultTaskTypesPin => &["spec"],
             Self::VaultTaskTypesGet => &["spec"],
             Self::VaultAgentsSpawnGet => &["spec"],
+            Self::VaultAgentsSpawn => &["spec"],
             Self::VaultTasksCancelForce => &["spec"],
             Self::VaultRunsBranchesGet => &["spec"],
             Self::VaultConsultsGet => &["spec"],
@@ -6958,6 +6967,9 @@ impl AgentVerb {
             }
             Self::VaultAgentsSpawnGet => {
                 "The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning."
+            }
+            Self::VaultAgentsSpawn => {
+                "The owner launches one reserved planned agent or team under an intent key on this host's planner: the type placed, the plan frozen at the root, then queued; the same key answers what it kept."
             }
             Self::VaultTasksCancelForce => {
                 "The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts."

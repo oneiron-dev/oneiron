@@ -2499,6 +2499,9 @@ class Oneiron:
     class _VaultAgentsSpawnVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def __call__(self, spec):
+            """The owner launches one reserved planned agent or team under an intent key on this host's planner: the type placed, the plan frozen at the root, then queued; the same key answers what it kept."""
+            return json.loads(_translate(lambda: self._client.vault_agents_spawn(json.dumps(spec))))
         def get(self, spec):
             """The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning."""
             return json.loads(_translate(lambda: self._client.vault_agents_spawn_get(json.dumps(spec))))

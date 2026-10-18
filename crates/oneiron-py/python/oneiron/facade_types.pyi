@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 626 facade rows, 2340 declarations.
-Inputs: 574 of 626 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 557 of 626 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 627 facade rows, 2343 declarations.
+Inputs: 575 of 627 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 558 of 627 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 92; unread shapes: 0.
 """
 
@@ -7279,6 +7279,35 @@ class PlannedSpawnObservation(TypedDict):
     critics: list[CriticObservation]
     learning: list[LearningObservation]
     issues: list[ObservationIssue]
+class SpawnAskKnobSeed(TypedDict, Generic[T]):
+    mode: Literal["seed"]
+    value: T
+    weight_runs: float
+class SpawnAskKnobPin(TypedDict, Generic[T]):
+    mode: Literal["pin"]
+    value: T
+SpawnAskKnob = SpawnAskKnobSeed[T] | SpawnAskKnobPin[T]
+class SpawnIntentRequest(TypedDict):
+    intent_key: str
+    prompt: str
+    requested_type: NotRequired[TypeStamp | None]
+    need: str
+    care: NotRequired[str | None]
+    notes: NotRequired[str | None]
+    model: NotRequired[SpawnAskKnob[str] | None]
+    width: NotRequired[SpawnAskKnob[int] | None]
+    pattern: NotRequired[SpawnAskKnob[str] | None]
+    budget_cap_units: NotRequired[SpawnAskKnob[int] | None]
+class SpawnIntentReply(TypedDict):
+    intent_key: str
+    phase: SpawnPhase
+    placed: NotRequired[TypeStamp | None]
+    refusal: NotRequired[str | None]
+    root_attempt: NotRequired[EntityId | None]
+    member_attempts: list[EntityId]
+    team_ref: NotRequired[str | None]
+    agent_def_ref: NotRequired[EntityId | None]
+    plan: NotRequired[PlanObservation | None]
 class CancelForceRequest(TypedDict):
     task_ref: EntityId
     reason: NotRequired[str | None]

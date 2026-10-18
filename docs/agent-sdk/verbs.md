@@ -373,6 +373,7 @@ both bindings and their export-census tests in one change.
 - `vault.task_types.pin`
 - `vault.task_types.get`
 - `vault.agents.spawn.get`
+- `vault.agents.spawn`
 - `vault.tasks.cancel_force`
 - `vault.runs.branches.get`
 - `vault.consults.get`

@@ -11,6 +11,8 @@
 //! stores hold for it, every stamp as stored. A stamp that disagrees is an
 //! issue on the observation, never a correction.
 
+mod spawn;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
@@ -27,6 +29,8 @@ use crate::memory::{MemoryError, MemoryResult};
 use crate::task_type::{ROOT_NODE_ID, TaskTypeNode, TaskTypeRef, TaskTypeTree, TreeScope};
 use crate::team::{PatternSkillRef, SpawnPhase, TeamAxis, TeamPattern};
 use crate::{EntityId, Vault};
+
+pub use spawn::{SpawnAskKnob, SpawnIntentReply, SpawnIntentRequest, spawn_as_owner};
 
 /// The highest version an authored tree may carry: the learning cell's type
 /// stamp holds a `u32` version, so a higher one could not be read back as

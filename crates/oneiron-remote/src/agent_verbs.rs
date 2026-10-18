@@ -1172,6 +1172,9 @@ impl OneironClient {
                 "vault.agents.spawn.get" => remote_agent_verb_output::<
                     oneiron::team::doors::PlannedSpawnObservation,
                 >(client, verb, &input),
+                "vault.agents.spawn" => remote_agent_verb_output::<
+                    oneiron::team::doors::SpawnIntentReply,
+                >(client, verb, &input),
                 "vault.tasks.cancel_force" => remote_agent_verb_output::<
                     oneiron::task_verb::run_doors::CancelForceReceipt,
                 >(client, verb, &input),
@@ -6504,6 +6507,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.agents.spawn.get", value)
+    }
+    pub fn vault_agents_spawn(
+        &self,
+        input: &oneiron::team::doors::SpawnIntentRequest,
+    ) -> Result<oneiron::team::doors::SpawnIntentReply, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.agents.spawn", value)
     }
     pub fn vault_tasks_cancel_force(
         &self,

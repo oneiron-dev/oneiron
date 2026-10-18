@@ -1836,6 +1836,11 @@ export_facade! {
     let output = client.vault_agents_spawn_get(&input)?;
     crate::codec::lift_record("vault.agents.spawn.get", &output)
 };
+"vault.agents.spawn" => fn vault_agents_spawn(&self, input: SpawnIntentRequest) -> SpawnIntentReply = |client| {
+    let input: oneiron::team::doors::SpawnIntentRequest = crate::codec::lower_record("vault.agents.spawn", input)?;
+    let output = client.vault_agents_spawn(&input)?;
+    crate::codec::lift_record("vault.agents.spawn", &output)
+};
 "vault.tasks.cancel_force" => fn vault_tasks_cancel_force(&self, input: CancelForceRequest) -> CancelForceReceipt = |client| {
     let input: oneiron::task_verb::run_doors::CancelForceRequest = crate::codec::lower_record("vault.tasks.cancel_force", input)?;
     let output = client.vault_tasks_cancel_force(&input)?;

@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 626 facade rows, 2280 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 13; generated in and out: 585.
+// UniFFI census: 627 facade rows, 2285 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 13; generated in and out: 586.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -22451,6 +22451,125 @@ pub struct PlannedSpawnObservation {
     pub learning: Vec<LearningObservation>,
     #[serde(rename = "issues")]
     pub issues: Vec<ObservationIssue>,
+}
+
+/// `oneiron::team::doors::spawn::SpawnAskKnob` with `T` = `String`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "mode")]
+pub enum SpawnAskKnobString {
+    #[serde(rename = "seed")]
+    Seed {
+        #[serde(rename = "value")]
+        value: String,
+        #[serde(rename = "weight_runs")]
+        weight_runs: f64,
+    },
+    #[serde(rename = "pin")]
+    Pin {
+        #[serde(rename = "value")]
+        value: String,
+    },
+}
+
+/// `oneiron::team::doors::spawn::SpawnAskKnob` with `T` = `U32`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "mode")]
+pub enum SpawnAskKnobU32 {
+    #[serde(rename = "seed")]
+    Seed {
+        #[serde(rename = "value")]
+        value: u32,
+        #[serde(rename = "weight_runs")]
+        weight_runs: f64,
+    },
+    #[serde(rename = "pin")]
+    Pin {
+        #[serde(rename = "value")]
+        value: u32,
+    },
+}
+
+/// `oneiron::team::doors::spawn::SpawnAskKnob` with `T` = `U64`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "mode")]
+pub enum SpawnAskKnobU64 {
+    #[serde(rename = "seed")]
+    Seed {
+        #[serde(rename = "value")]
+        value: u64,
+        #[serde(rename = "weight_runs")]
+        weight_runs: f64,
+    },
+    #[serde(rename = "pin")]
+    Pin {
+        #[serde(rename = "value")]
+        value: u64,
+    },
+}
+
+/// `oneiron::team::doors::spawn::SpawnIntentRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SpawnIntentRequest {
+    #[serde(rename = "intent_key")]
+    pub intent_key: String,
+    #[serde(rename = "prompt")]
+    pub prompt: String,
+    #[serde(
+        rename = "requested_type",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub requested_type: Option<TypeStamp>,
+    #[serde(rename = "need")]
+    pub need: String,
+    #[serde(rename = "care", default, skip_serializing_if = "Option::is_none")]
+    pub care: Option<String>,
+    #[serde(rename = "notes", default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    #[serde(rename = "model", default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<SpawnAskKnobString>,
+    #[serde(rename = "width", default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<SpawnAskKnobU32>,
+    #[serde(rename = "pattern", default, skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<SpawnAskKnobString>,
+    #[serde(
+        rename = "budget_cap_units",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub budget_cap_units: Option<SpawnAskKnobU64>,
+}
+
+/// `oneiron::team::doors::spawn::SpawnIntentReply`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SpawnIntentReply {
+    #[serde(rename = "intent_key")]
+    pub intent_key: String,
+    #[serde(rename = "phase")]
+    pub phase: SpawnPhase,
+    #[serde(rename = "placed", default, skip_serializing_if = "Option::is_none")]
+    pub placed: Option<TypeStamp>,
+    #[serde(rename = "refusal", default, skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<String>,
+    #[serde(
+        rename = "root_attempt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub root_attempt: Option<String>,
+    #[serde(rename = "member_attempts")]
+    pub member_attempts: Vec<String>,
+    #[serde(rename = "team_ref", default, skip_serializing_if = "Option::is_none")]
+    pub team_ref: Option<String>,
+    #[serde(
+        rename = "agent_def_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub agent_def_ref: Option<String>,
+    #[serde(rename = "plan", default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<PlanObservation>,
 }
 
 /// `oneiron::task_verb::run_doors::CancelForceRequest`.

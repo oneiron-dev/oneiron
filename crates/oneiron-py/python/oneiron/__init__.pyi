@@ -1640,6 +1640,8 @@ class Oneiron:
         def spawn(self) -> "Oneiron._VaultAgentsSpawnVerbs": ...
         def export_pack(self, request: Facade.AgentPackExportRequest) -> Facade.AgentPackExport: ...
     class _VaultAgentsSpawnVerbs:
+        def __call__(self, spec: Facade.SpawnIntentRequest) -> Facade.SpawnIntentReply:
+            """The owner launches one reserved planned agent or team under an intent key on this host's planner: the type placed, the plan frozen at the root, then queued; the same key answers what it kept."""
         def get(self, spec: Facade.PlannedSpawnRead) -> Facade.PlannedSpawnObservation:
             """The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning."""
     class _VaultWorkflowsVerbs:
