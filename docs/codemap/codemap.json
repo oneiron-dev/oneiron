@@ -22060,6 +22060,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/stack_floor.rs",
+     "purpose": "The native stack a callable skill's call leaves its thread (FIX 600)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -41159,7 +41169,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/skill/call.rs",
@@ -53836,7 +53846,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 23,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -54797,7 +54807,7 @@
    },
    "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3333,
+   "source_files": 3334,
    "test_files": 902
   },
   "oneiron-android": {
