@@ -7730,6 +7730,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CalendarEventCreateRequest",
+      "CalendarEventCreated"
+     ],
+     "path": "src/calendar/door.rs",
+     "purpose": "Typed, caller-bound calendar origin creation",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "BusyInterval"
      ],
      "path": "src/calendar/freebusy.rs",
@@ -7854,6 +7869,23 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CalendarIcsImportReceipt",
+      "CalendarIcsImportRequest",
+      "CalendarImportClaimReceipt",
+      "CalendarImportedEvent",
+      "CalendarInstanceMoveRequest"
+     ],
+     "path": "src/calendar/ingest/door.rs",
+     "purpose": "Uploaded ICS import and a single imported-instance amendment",
+     "surface": {
+      "fn": 2,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "CustodyDoorIcsFeedFetcher",
       "IcsFeedFetcher",
       "IcsFeedSource",
@@ -7879,6 +7911,7 @@
      "purpose": "ICS feed poll runner and imported-claim admission (CAL-02, ONE-1784)",
      "surface": {
       "crate-vis": 7,
+      "mod": 1,
       "re-export": 3
      }
     },
@@ -8031,7 +8064,7 @@
      "surface": {
       "crate-vis": 8,
       "enum": 1,
-      "mod": 17,
+      "mod": 18,
       "re-export": 15
      }
     },
@@ -8201,7 +8234,7 @@
      "purpose": "Calendar EVENT query + projection core (CAL-09)",
      "surface": {
       "crate-vis": 4,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -8250,6 +8283,21 @@
      "path": "src/calendar/query/tests.rs",
      "purpose": "A claim awaiting its owner's critical confirm in the calendar's operational reads: free/busy, and the rows…",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CalendarOccurrenceView",
+      "CalendarOccurrencesRequest"
+     ],
+     "path": "src/calendar/query/window.rs",
+     "purpose": "Bounded, scoped series occurrences with stable original-instance identities",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 2
+     }
     },
     {
      "bucket": "s",
@@ -14382,6 +14430,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ConnectorQualificationKit",
       "GroundingOracle",
       "ProbeCitation",
       "ProbeDisposition",
@@ -14406,9 +14455,9 @@
      "surface": {
       "crate-vis": 2,
       "enum": 4,
-      "fn": 2,
+      "fn": 3,
       "re-export": 1,
-      "struct": 11,
+      "struct": 12,
       "trait": 3
      }
     },
@@ -14544,6 +14593,7 @@
       "SlateHolderNarrow",
       "SlateManifest",
       "SlateOwnerOverride",
+      "SlatePackSource",
       "SlateRow",
       "SlateToolManifest"
      ],
@@ -14554,7 +14604,7 @@
       "crate-vis": 12,
       "enum": 3,
       "fn": 36,
-      "struct": 9
+      "struct": 10
      }
     },
     {
@@ -17034,7 +17084,7 @@
      "path": "src/credential_door/checkout_ticket.rs",
      "purpose": "Checkout redemption rights",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -17104,7 +17154,7 @@
      "path": "src/credential_door/mod.rs",
      "purpose": "Checkout receive-pack admission, catastrophe policy, and secret-shaped diff scanning",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -28482,14 +28532,61 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/linear_sync/facade.rs",
+     "purpose": "The TASK ↔ issue mirror doors (OF-427 C6, C7)",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LinearLinkView",
+      "LinearMappingEdit",
+      "LinearMappingEditReceipt",
+      "LinearMappingOp",
+      "LinearMappingRequest",
+      "LinearMappingView",
+      "LinearProvenanceEntry",
+      "LinearProvenancePage",
+      "LinearProvenanceRequest"
+     ],
+     "path": "src/linear_sync/facade_types.rs",
+     "purpose": "The wire shapes of the TASK ↔ issue mirror doors (OF-427 C6, C7): `vault.tasks.linear.mapping`…",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 1,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LinearMirrorEvent",
+      "LinearMirrorRecord"
+     ],
+     "path": "src/linear_sync/mirror_event.rs",
+     "purpose": "The mirror's durable event rows and each TASK's mirror control (OF-427)",
+     "surface": {
+      "crate-vis": 24,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/linear_sync/mod.rs",
      "purpose": "Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905…",
      "surface": {
-      "crate-vis": 2,
-      "re-export": 6
+      "crate-vis": 3,
+      "re-export": 9
      }
     },
     {
@@ -28556,6 +28653,24 @@
      "path": "src/linear_sync/tests.rs",
      "purpose": "Mirror-adapter tests (ONE-1905)",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LinearExternalActor",
+      "LinearWebhookEvent",
+      "LinearWebhookKind",
+      "LinearWebhookReceipt",
+      "LinearWebhookStatus"
+     ],
+     "path": "src/linear_sync/webhook.rs",
+     "purpose": "The engine half of the signed Linear webhook (OF-427 C1, C3–C5)",
+     "surface": {
+      "enum": 2,
+      "fn": 3,
+      "struct": 3
+     }
     },
     {
      "bucket": "m",
@@ -31038,7 +31153,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 3,
+      "mod": 4,
       "re-export": 40
      }
     },
@@ -31060,6 +31175,49 @@
      "purpose": "Agent-facing NOTE verbs; actor identity is bound to the memory facade",
      "surface": {
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/origin_doors/mod.rs",
+     "purpose": "Typed origin and checkout doors (DOOR-139): tested-tree export, the origin authority epoch, publication…",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/origin_doors/operations.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CheckoutDoorBindRequest",
+      "CheckoutDoorBinding",
+      "CodeExportRequest",
+      "CodeExportResult",
+      "OriginAuthoritySetRequest",
+      "OriginAuthorityView",
+      "OriginPublicationState",
+      "OriginPublicationView",
+      "OriginPublicationsRequest",
+      "OriginPublicationsView",
+      "OriginRepoRequest"
+     ],
+     "path": "src/memory/origin_doors/types.rs",
+     "purpose": "—",
+     "surface": {
+      "enum": 1,
+      "struct": 10
      }
     },
     {
@@ -48480,9 +48638,19 @@
      "path": "src/task_verb/linear_store.rs",
      "purpose": "Vault storage for the tracker mirror: replicated fields, local OCC and CAS links",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 10,
       "fn": 5,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/mirror_edit.rs",
+     "purpose": "The owner's public title edit on `tasks.update` (OF-427 C8), and the Owner standing the mirror's mapping…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -48492,7 +48660,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 35,
+      "crate-vis": 36,
       "fn": 1,
       "mod": 2,
       "re-export": 25
@@ -48782,7 +48950,7 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 31,
+      "re-export": 33,
       "struct": 36
      }
     },
@@ -48808,6 +48976,20 @@
       "enum": 3,
       "fn": 3,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AuthorityHistoryImported",
+      "SignedAuthorityHistory"
+     ],
+     "path": "src/task_verb/sdk_authority_history.rs",
+     "purpose": "Byte-preserving signed authority history transfer for the vault owner",
+     "surface": {
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -48888,6 +49070,30 @@
       "enum": 3,
       "fn": 9,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConnectorPackAcceptRequest",
+      "ConnectorPackAdvisory",
+      "ConnectorPackBasis",
+      "ConnectorPackDelta",
+      "ConnectorPackGetRequest",
+      "ConnectorPackGrantRow",
+      "ConnectorPackGrants",
+      "ConnectorPackGrantsGetRequest",
+      "ConnectorPackGrantsPutRequest",
+      "ConnectorPackPrepareRequest",
+      "ConnectorPackQualifyRequest",
+      "ConnectorPackUpdateRequest",
+      "ConnectorPackView"
+     ],
+     "path": "src/task_verb/sdk_connector_pack.rs",
+     "purpose": "Typed, source-bound connector-pack admission and delta re-consent",
+     "surface": {
+      "struct": 13
      }
     },
     {
@@ -49008,7 +49214,7 @@
      "purpose": "—",
      "surface": {
       "const": 3,
-      "fn": 444
+      "fn": 465
      }
     },
     {
@@ -54390,7 +54596,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 61,
+     "files": 64,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -55048,7 +55254,7 @@
      "purpose": "Traversal safety caps, defined in `oneiron-contracts`"
     },
     "linear_sync": {
-     "files": 8,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -55097,7 +55303,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 144,
+     "files": 147,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55608,7 +55814,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 142,
+     "files": 145,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -55778,7 +55984,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3396,
+   "source_files": 3409,
    "test_files": 902
   },
   "oneiron-android": {
@@ -62573,9 +62779,10 @@
      "path": "src/http.rs",
      "purpose": "Bounded host-owned GraphQL transport; credentials never enter the engine",
      "surface": {
+      "const": 1,
       "crate-vis": 1,
       "enum": 1,
-      "fn": 2,
+      "fn": 3,
       "struct": 2,
       "trait": 1
      }
@@ -62597,7 +62804,7 @@
      "path": "src/lib.rs",
      "purpose": "Host-side Linear GraphQL adapter for the engine's TASK ↔ issue mirror",
      "surface": {
-      "re-export": 4
+      "re-export": 6
      }
     },
     {
@@ -62622,6 +62829,16 @@
      "path": "src/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/webhook.rs",
+     "purpose": "Normalizes one verified Linear webhook delivery for the engine (OF-427)",
+     "surface": {
+      "fn": 1
+     }
     }
    ],
    "modules": {
@@ -62666,11 +62883,18 @@
      "largest_src_bucket": "—",
      "layout": "file",
      "purpose": "—"
+    },
+    "webhook": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Normalizes one verified Linear webhook delivery for the engine (OF-427)"
     }
    },
    "over_bar": 0,
    "purpose": "Host-side Linear GraphQL adapter for the engine's TASK ↔ issue mirror",
-   "source_files": 6,
+   "source_files": 7,
    "test_files": 1
   },
   "oneiron-llm-anthropic": {
@@ -64173,7 +64397,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 394
+      "fn": 415
      }
     },
     {
@@ -65221,7 +65445,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 395
+      "fn": 416
      }
     },
     {
@@ -68091,6 +68315,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/authority_history_doors.rs",
+     "purpose": "Owner-authenticated signed authority history transfer",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/booking_doors.rs",
      "purpose": "Owner discovery of the opaque address of an existing booking page",
      "surface": {
@@ -68105,6 +68339,16 @@
      "purpose": "Credential-backed budget controls, beside the owner's held-run routes",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/calendar_doors.rs",
+     "purpose": "Owner-authorized calendar file imports through the credential's own handle",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -68155,6 +68399,16 @@
      "purpose": "The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/connector_pack_doors.rs",
+     "purpose": "Source-bound connector packs over the existing owner, probe and slate doors",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -68294,7 +68548,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 78
+      "crate-vis": 83
      }
     },
     {
@@ -68321,6 +68575,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/linear_doors.rs",
+     "purpose": "The host door of `vault.tasks.linear.mapping.edit` (OF-427 C6)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/live_run_doors.rs",
      "purpose": "Public coordination doors over the caller's own live-run attachment",
      "surface": {
@@ -68335,6 +68599,16 @@
      "purpose": "Host-held NOTE editor bindings beside the ordinary scoped NOTE reads",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/origin_doors.rs",
+     "purpose": "Credential-bound host projections of the typed origin and checkout doors (DOOR-139)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -69134,7 +69408,7 @@
      "path": "src/api/owner_routes.rs",
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -69194,7 +69468,7 @@
      "path": "src/api/owner_routes/connector_admission_routes.rs",
      "purpose": "`/v1/owner/connectors/register`, `/setup`, `/slate/accept` and `/qualify`: the owner's first admission of a…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 9
      }
     },
     {
@@ -71726,13 +72000,13 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/connector_admission_host.rs",
      "purpose": "The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 12
      }
     },
     {
@@ -72529,7 +72803,7 @@
      "path": "src/linear_host.rs",
      "purpose": "Opt-in scheduled Linear mirror over an authenticated host-owned bridge",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -72539,7 +72813,7 @@
      "path": "src/linear_host/direct.rs",
      "purpose": "The server's direct Linear GraphQL mirror, using the production adapter",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -72549,6 +72823,16 @@
      "path": "src/linear_host/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/linear_host/webhook.rs",
+     "purpose": "`POST /v1/hooks/linear`: the signed Linear webhook door (OF-427 C1–C4, C11)",
+     "surface": {
+      "crate-vis": 6
+     }
     },
     {
      "bucket": "m",
@@ -75579,7 +75863,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 333,
+     "files": 338,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -75651,7 +75935,7 @@
     "connector_admission_host": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint…"
     },
@@ -75810,7 +76094,7 @@
      "purpose": "OF-181: the lens frames this server holds for the cards it rendered"
     },
     "linear_host": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -75992,9 +76276,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 56,
+   "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 655,
+   "source_files": 661,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -76288,6 +76572,7 @@
       "AuthorityAuditRow",
       "AuthorityHandoffAlarm",
       "AuthorityHandoffAlarmAck",
+      "AuthorityHistoryImported",
       "BlindCampaignJudgeInput",
       "BlockChange",
       "BodyBlockKind",
@@ -76317,9 +76602,18 @@
       "BundleVerdict",
       "BundledSkillPermissions",
       "ButtonControl",
+      "CalendarEventCreateRequest",
+      "CalendarEventCreated",
       "CalendarEventView",
       "CalendarFreebusyIntervalDto",
       "CalendarFreebusyRequest",
+      "CalendarIcsImportReceipt",
+      "CalendarIcsImportRequest",
+      "CalendarImportClaimReceipt",
+      "CalendarImportedEvent",
+      "CalendarInstanceMoveRequest",
+      "CalendarOccurrenceView",
+      "CalendarOccurrencesRequest",
       "CalendarRangeDto",
       "CalendarReadRequest",
       "CalendarSearchRequest",
@@ -76392,6 +76686,8 @@
       "ChartSeries",
       "ChartSource",
       "ChatProjection",
+      "CheckoutDoorBindRequest",
+      "CheckoutDoorBinding",
       "ClaimApprovalStatus",
       "ClaimChangeVerdict",
       "ClaimLineAtom",
@@ -76410,6 +76706,8 @@
       "CodeChangeView",
       "CodeDiffRequest",
       "CodeDiffView",
+      "CodeExportRequest",
+      "CodeExportResult",
       "CodeFileChange",
       "CodeFileDiffView",
       "CodeOperationView",
@@ -76448,11 +76746,27 @@
       "ConnectorCallRequest",
       "ConnectorCallStatus",
       "ConnectorCallStatusRequest",
+      "ConnectorConsentRowView",
+      "ConnectorConsentView",
       "ConnectorEnd",
       "ConnectorEntry",
       "ConnectorListRequest",
       "ConnectorNameRequest",
+      "ConnectorPackAcceptRequest",
+      "ConnectorPackAdvisory",
+      "ConnectorPackBasis",
+      "ConnectorPackDelta",
+      "ConnectorPackGetRequest",
+      "ConnectorPackGrantRow",
+      "ConnectorPackGrants",
+      "ConnectorPackGrantsGetRequest",
+      "ConnectorPackGrantsPutRequest",
+      "ConnectorPackPrepareRequest",
+      "ConnectorPackQualifyRequest",
+      "ConnectorPackUpdateRequest",
+      "ConnectorPackView",
       "ConnectorPreset",
+      "ConnectorQualificationKit",
       "ConnectorQualificationReceipt",
       "ConnectorQuestion",
       "ConnectorSchemaReply",
@@ -76514,6 +76828,7 @@
       "CritiqueVerdict",
       "DagRecordAppendInput",
       "DagRecordAppendReceipt",
+      "DataClass",
       "DecideRules",
       "DecisionAnswer",
       "DecisionAsk",
@@ -76875,6 +77190,19 @@
       "LiftCounts",
       "LiftFamily",
       "LiftTrigger",
+      "LinearExternalActor",
+      "LinearFieldConflict",
+      "LinearIssueRef",
+      "LinearLinkView",
+      "LinearMappingEdit",
+      "LinearMappingEditReceipt",
+      "LinearMappingOp",
+      "LinearMappingRequest",
+      "LinearMappingView",
+      "LinearMirrorEvent",
+      "LinearProvenanceEntry",
+      "LinearProvenancePage",
+      "LinearProvenanceRequest",
       "LinkedText",
       "LiveRunRequestAgentSpawnInput",
       "LiveRunRequestLeaderSplitInput",
@@ -77015,6 +77343,15 @@
       "OpenSpendLeaseRequest",
       "OracleReceipt",
       "OrganWaitView",
+      "OriginAuthority",
+      "OriginAuthoritySetRequest",
+      "OriginAuthorityView",
+      "OriginPublicationState",
+      "OriginPublicationView",
+      "OriginPublicationsRequest",
+      "OriginPublicationsView",
+      "OriginRepoRequest",
+      "OriginResidence",
       "OutcomeBinding",
       "OutcomeLabel",
       "OutcomeSource",
@@ -77094,6 +77431,7 @@
       "Preset",
       "PriorRung",
       "PriorSeed",
+      "ProbeRequest",
       "ProjectBudgetShare",
       "ProjectCardConfirmRequest",
       "ProjectCardDismissal",
@@ -77132,6 +77470,11 @@
       "PruneReason",
       "PruneReceipt",
       "PulledImage",
+      "QualificationCase",
+      "QualificationInjection",
+      "QualificationInjectionSurface",
+      "QualificationLimits",
+      "QualificationPlan",
       "QuestionActivation",
       "QuestionAnswer",
       "QuestionAnswersRequest",
@@ -77307,6 +77650,7 @@
       "ScopedReadReceipt",
       "ScopedReadResultCalendarEventViewList",
       "ScopedReadResultCalendarFreebusyDto",
+      "ScopedReadResultCalendarOccurrenceViewList",
       "ScopedReadResultLensFrameCard",
       "ScopedReadResultOptionalCalendarEventView",
       "ScopedReadResultOptionalNoteEditorBinding",
@@ -77427,6 +77771,7 @@
       "SharedVaultDeletion",
       "SharedVaultRequest",
       "SignatureRow",
+      "SignedAuthorityHistory",
       "SigningStatus",
       "SkillAuthoringReceipt",
       "SkillForkRequest",
@@ -77440,6 +77785,16 @@
       "SkillPublisherRequest",
       "SkillSaveRequest",
       "SkillSourceFile",
+      "SlateDataClass",
+      "SlateDisposition",
+      "SlateDraftRow",
+      "SlateElicitationManifest",
+      "SlateHolderNarrow",
+      "SlateManifest",
+      "SlateOwnerOverride",
+      "SlatePackSource",
+      "SlateRow",
+      "SlateToolManifest",
       "SlideRender",
       "SlideReviewOutcome",
       "SlideReviewSubmit",
@@ -77657,8 +78012,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 418,
-      "struct": 1048
+      "enum": 426,
+      "struct": 1111
      }
     },
     {

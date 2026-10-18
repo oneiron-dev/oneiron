@@ -498,12 +498,14 @@ pub use super::recall_door::{
     recall_with_vector,
 };
 pub use super::sdk_agents::*;
+pub use super::sdk_authority_history::*;
 pub use super::sdk_calendar::*;
 pub use super::sdk_campaign_split::*;
 pub use super::sdk_catalog_fragment::{
     CATALOG_FRAGMENT_REVISION, CatalogFragment, code_mode_catalog_fragment,
 };
 pub use super::sdk_connector::*;
+pub use super::sdk_connector_pack::*;
 pub use super::sdk_connector_call::*;
 pub use super::sdk_courtesy_delete::*;
 pub use super::sdk_diary::*;

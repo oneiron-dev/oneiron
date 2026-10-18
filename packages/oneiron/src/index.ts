@@ -524,6 +524,24 @@ export class Oneiron {
       },
       /** The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks. */
       put: (input: Facade.PackPutRequest): Facade.PackPutReceipt => this.#call(() => this.#client.vaultPacksPut(input) as Facade.PackPutReceipt),
+      connector: {
+        /** Prepares an immutable connector pack admission, comparing the resolved declaration with the installed transport and drafting an ungranted slate. */
+        prepare: (input: Facade.ConnectorPackPrepareRequest): Facade.ConnectorPackView => this.#call(() => this.#client.vaultPacksConnectorPrepare(input) as Facade.ConnectorPackView),
+        /** Reads a connector pack source, resolved manifest, advisory evidence, qualification and owner-stampable capability rows. */
+        get: (input: Facade.ConnectorPackGetRequest): Facade.ConnectorPackView => this.#call(() => this.#client.vaultPacksConnectorGet(input) as Facade.ConnectorPackView),
+        /** Runs the real connector probes bound to the exact pack source and protocol; qualification grants nothing without the owner slate and actor grant. */
+        qualify: (input: Facade.ConnectorPackQualifyRequest): Facade.ConnectorPackView => this.#call(() => this.#client.vaultPacksConnectorQualify(input) as Facade.ConnectorPackView),
+        /** Stamps the exact connector pack manifest and grant rows once, or revokes a row; qualification stays independent. */
+        accept: (input: Facade.ConnectorPackAcceptRequest): Facade.ConnectorPackView => this.#call(() => this.#client.vaultPacksConnectorAccept(input) as Facade.ConnectorPackView),
+        /** Holds a connector pack at its new immutable source and protocol, carrying narrow rows and re-asking only for expanded capabilities. */
+        update: (input: Facade.ConnectorPackUpdateRequest): Facade.ConnectorPackDelta => this.#call(() => this.#client.vaultPacksConnectorUpdate(input) as Facade.ConnectorPackDelta),
+        grants: {
+          /** Reads current per-capability authority for one actor on the reviewed connector pack source. */
+          get: (input: Facade.ConnectorPackGrantsGetRequest): Facade.ConnectorPackGrants => this.#call(() => this.#client.vaultPacksConnectorGrantsGet(input) as Facade.ConnectorPackGrants),
+          /** Grants declared connector pack rows to one actor through the existing owner consent gate and installed endpoint. */
+          put: (input: Facade.ConnectorPackGrantsPutRequest): Facade.ConnectorPackGrants => this.#call(() => this.#client.vaultPacksConnectorGrantsPut(input) as Facade.ConnectorPackGrants),
+        },
+      },
       /** The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate. */
       remove: (input: Facade.PackRemoveRequest): Facade.PackInstallReceipt => this.#call(() => this.#client.vaultPacksRemove(input) as Facade.PackInstallReceipt),
       setup: {
@@ -562,6 +580,12 @@ export class Oneiron {
     authority: {
       /** One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind. */
       audit: (input: Facade.AuthorityAuditQuery): Facade.AuthorityAuditPage => this.#call(() => this.#client.vaultAuthorityAudit(input) as Facade.AuthorityAuditPage),
+      history: {
+        /** Exports the full original signed authority history, including quarantined forks, as base64 envelopes for the owner. No signing secret leaves. */
+        export: (input: Facade.EmptyRequest = {}): Facade.SignedAuthorityHistory => this.#call(() => this.#client.vaultAuthorityHistoryExport(input) as Facade.SignedAuthorityHistory),
+        /** Imports original base64 signed authority envelopes atomically for the owner, preserving bytes and refolding locally. Invalid signatures, foreign genesis and missing parents write nothing. */
+        import: (input: Facade.SignedAuthorityHistory): Facade.AuthorityHistoryImported => this.#call(() => this.#client.vaultAuthorityHistoryImport(input) as Facade.AuthorityHistoryImported),
+      },
       /** Every saved authority handoff fork alarm, for the owner. */
       handoff_alarms: Object.assign((input: Facade.EmptyRequest = {}): Facade.AuthorityHandoffAlarm[] => this.#call(() => this.#client.vaultAuthorityHandoffAlarms(input) as Facade.AuthorityHandoffAlarm[]), {
         /** The owner acknowledges one saved handoff fork alarm. */
@@ -922,6 +946,22 @@ export class Oneiron {
       proposal_view: (request: Facade.CodeProposalViewRequest): Facade.CodeProposalView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeProposalView(keyedJson(request))) as Facade.CodeProposalView | null; return result === null ? null : result }),
       /** Every file changed between two trees of a repository, unit by unit, with the operations that wrote each. */
       repo_diff: (request: Facade.CodeRepoDiffRequest): Facade.CodeRepoDiffView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeRepoDiff(keyedJson(request))) as Facade.CodeRepoDiffView | null; return result === null ? null : result }),
+      /** Export one already-finalized and reviewed document revision through the existing origin publication protocol. */
+      export: (input: Facade.CodeExportRequest): Facade.CodeExportResult => this.#call(() => this.#client.vaultCodeExport(input) as Facade.CodeExportResult),
+      origin: {
+        authority: {
+          /** Read one served origin authority and this host identity under the owner credential. */
+          get: (input: Facade.OriginRepoRequest): Facade.OriginAuthorityView => this.#call(() => this.#client.vaultCodeOriginAuthorityGet(input) as Facade.OriginAuthorityView),
+          /** Cut over one existing served origin under the owner proof and expected authority epoch. */
+          set: (input: Facade.OriginAuthoritySetRequest): Facade.OriginAuthorityView => this.#call(() => this.#client.vaultCodeOriginAuthoritySet(input) as Facade.OriginAuthorityView),
+        },
+        /** Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement. */
+        publications: (input: Facade.OriginPublicationsRequest): Facade.OriginPublicationsView => this.#call(() => this.#client.vaultCodeOriginPublications(input) as Facade.OriginPublicationsView),
+      },
+      checkout: {
+        /** Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential. */
+        bind: (input: Facade.CheckoutDoorBindRequest): Facade.CheckoutDoorBinding => this.#call(() => this.#client.vaultCodeCheckoutBind(input) as Facade.CheckoutDoorBinding),
+      },
     },
     agents: {
       /** The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched. */
@@ -1085,6 +1125,18 @@ export class Oneiron {
       page_token: (input: Facade.BookingPageTokenRequest): Facade.BookingPageTokenResponse => this.#call(() => this.#client.vaultBookingPageToken(input) as Facade.BookingPageTokenResponse),
     },
     calendar: {
+      /** Creates a native or evidence-linked dreamer EVENT as the caller, with atomic projector-recorded origin and engine-stamped recorded time. */
+      create: (input: Facade.CalendarEventCreateRequest): Facade.CalendarEventCreated => this.#call(() => this.#client.vaultCalendarCreate(input) as Facade.CalendarEventCreated),
+      ics: {
+        /** The owner imports one exact uploaded ICS version through the existing UID diff and imported-claim gate; the receipt exposes pending claim refs without granting consent. */
+        import: (input: Facade.CalendarIcsImportRequest): Facade.CalendarIcsImportReceipt => this.#call(() => this.#client.vaultCalendarIcsImport(input) as Facade.CalendarIcsImportReceipt),
+      },
+      /** Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions. */
+      occurrences: (input: Facade.CalendarOccurrencesRequest): Facade.ScopedReadResult<Facade.CalendarOccurrenceView[]> => this.#call(() => this.#client.vaultCalendarOccurrences(input) as Facade.ScopedReadResult<Facade.CalendarOccurrenceView[]>),
+      instances: {
+        /** The owner applies one uploaded detached-instance amendment matching its UID, original start and new interval, through the import gate without changing other instances. */
+        move: (input: Facade.CalendarInstanceMoveRequest): Facade.CalendarIcsImportReceipt => this.#call(() => this.#client.vaultCalendarInstancesMove(input) as Facade.CalendarIcsImportReceipt),
+      },
       /** Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt. */
       read: (input: Facade.CalendarReadRequest): Facade.ScopedReadResult<Facade.CalendarEventView | null> => this.#call(() => this.#client.vaultCalendarRead(input) as Facade.ScopedReadResult<Facade.CalendarEventView | null>),
       /** Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt. */
@@ -1217,6 +1269,17 @@ export class Oneiron {
       set_overrides: (request: Facade.SetNoteOverridesRequest): Facade.NoteDefaultsView => this.#call(() => {  const result = JSON.parse(this.#client.vaultNotesSetOverrides(keyedJson(request))) as Facade.NoteDefaultsView; return result }),
       /** One NOTE's overrides and the defaults its gates read after them. */
       defaults: (request: Facade.NoteRefRequest): Facade.NoteDefaultsView => this.#call(() => {  const result = JSON.parse(this.#client.vaultNotesDefaults(keyedJson(request))) as Facade.NoteDefaultsView; return result }),
+    },
+    tasks: {
+      linear: {
+        /** One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events. */
+        mapping: Object.assign((input: Facade.LinearMappingRequest): Facade.LinearMappingView => this.#call(() => this.#client.vaultTasksLinearMapping(input) as Facade.LinearMappingView), {
+          /** Links, unlinks or mirrors again one TASK's Linear issue, by the TASK's owner at the mapping revision the caller read, under an intent key. */
+          edit: (input: Facade.LinearMappingEdit): Facade.LinearMappingEditReceipt => this.#call(() => this.#client.vaultTasksLinearMappingEdit(input) as Facade.LinearMappingEditReceipt),
+        }),
+        /** One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts. */
+        provenance: (input: Facade.LinearProvenanceRequest): Facade.LinearProvenancePage => this.#call(() => this.#client.vaultTasksLinearProvenance(input) as Facade.LinearProvenancePage),
+      },
     },
   }
   /** Cancels one task under the ladder's `auto` default. The receipt says what stopped and what became a proposal instead. */

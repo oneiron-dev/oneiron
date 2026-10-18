@@ -2,7 +2,7 @@
 import type * as Facade from "./facade-types.js";
 
 /** Every facade verb, in table order. */
-export const FACADE_VERBS = ["report", "self.focus.scratchpad.recall", "self.focus.scratchpad.append", "self.focus.scratchpad.seal", "self.memory.diary", "self.memory.diary.reads", "self.memory.diary.review", "self.identity.answer", "self.identity.settle", "self.inbox.list", "self.inbox.mark", "self.inbox.concern", "self.inbox.concern.outcome", "self.inbox.concern.move", "vault.people.list", "vault.people.get", "vault.shape.read", "vault.shape.plan", "vault.shape.apply", "self.message", "self.grants.ask", "self.memory.diary.query", "cancel", "steer", "describe", "tasks.create", "tasks.wave", "vault.fanout.launch", "self.budget", "self.budget.land", "vault.budgets.lease.open", "vault.budgets.lease", "vault.budgets.lease.top_up", "vault.budgets.hold", "vault.budgets.hold.resume", "vault.budgets.local", "vault.budgets.settlements", "vault.fanout.resume", "vault.fanout.resume_as", "vault.fanout.ack", "tasks.update", "tasks.accept", "vault.witness", "vault.claims.upsert", "vault.recall", "vault.export", "vault.scope.ceiling", "vault.export.scoped", "vault.receipts", "vault.images.view", "vault.receipts.get", "vault.explain.memory", "vault.explain.gate", "vault.kv.get", "vault.kv.put", "vault.kv.delete", "vault.kv.search", "vault.kv.namespaces", "vault.campaign.program.create", "vault.campaign.program.read", "vault.campaign.program.update", "vault.campaign.program.archive", "vault.weave.report", "vault.weave.digest", "vault.weave.lens", "vault.weave.link.wrong", "vault.weave.owner.link.wrong", "vault.weave.item.wrong", "vault.weave.owner.item.wrong", "vault.skill_hubs.put", "vault.skill_hubs.get", "vault.skill_hubs.publishers.admit", "vault.skill_hubs.publishers.revoke", "vault.skill_hubs.refs.get", "vault.skill_hubs.refs.set", "vault.packs.install", "vault.packs.sync", "vault.packs.get", "vault.skills.import", "vault.skills.sync", "vault.skills.receipts", "vault.skills.permissions.approve", "vault.packs.hooks.bind", "vault.packs.hooks.list", "vault.packs.hooks.qualify", "vault.packs.put", "vault.packs.remove", "vault.connectors.subscriptions.put", "vault.connectors.subscriptions.list", "vault.connectors.subscriptions.revoke", "vault.packs.setup.prepare", "vault.packs.setup.get", "vault.packs.setup.answer", "vault.packs.setup.verify", "vault.authority.audit", "vault.mesh.path_receipts", "vault.inspection.resolve", "vault.shared.propose_delete", "vault.shared.propose_transfer", "vault.shared.propose_remove_owner", "vault.shared.execute", "vault.shared.receipt", "vault.shared.outcomes", "vault.shared.deletion", "vault.members.add", "vault.members.invitation_slip", "vault.members.change", "vault.members.remove", "vault.members.leave", "vault.members.invitations", "vault.members.accept", "vault.members.decline", "vault.members.withdraw_invitation", "vault.shared.object", "vault.shared.withdraw_objection", "vault.shared.started", "vault.shared.matured", "vault.shared.erase_ask", "vault.shared.erase_asks", "vault.shared.close_erase_ask", "vault.guests.revoke", "vault.guests.mint_slip", "vault.residence.mode", "vault.residence.open", "vault.residence.index", "vault.residence.prune", "vault.records.erase_preview", "vault.records.erase_confirm", "vault.research.bind", "vault.research.fork", "vault.research.weave", "vault.research.measure_search", "vault.research.measure_held_out", "vault.research.evaluate_split", "vault.research.mark_invalid", "vault.research.prune", "vault.research.select", "vault.research.promotion_basis", "vault.research.reserve_confirmation", "vault.research.promote", "vault.research.reserve_work", "vault.research.settle_work", "vault.research.refund_work", "vault.research.record_benchmark", "vault.authority.handoff_alarms", "vault.authority.handoff_alarms.acknowledge", "vault.legal_holds.place", "vault.legal_holds.widen", "vault.legal_holds.list", "vault.legal_holds.log", "vault.legal_holds.lift_and_erase", "vault.courtesy_delete.send", "vault.courtesy_delete.sent", "vault.courtesy_delete.incoming", "vault.courtesy_delete.answer", "vault.embedding_spaces.list", "vault.embedding_spaces.declare", "vault.embedding_spaces.bind", "vault.embedding_spaces.one_space", "vault.embedding_spaces.retire", "vault.embedding_spaces.move", "vault.embedding_spaces.move_check", "vault.embedding_spaces.move_approve", "vault.embedding_spaces.move_undo", "vault.embedding_spaces.move_abandon", "vault.embedding_spaces.probes.list", "vault.embedding_spaces.probes.put", "vault.embedding_spaces.probes.delete", "vault.gate.policy.get", "vault.gate.policy.put", "vault.gate.policy.propose", "vault.gate.checker.get", "vault.gate.checker.set", "vault.settings.learning", "vault.settings.learning.put", "vault.settings.learning.clear", "vault.secrets.lift_history", "vault.widen_proposals", "vault.widen_proposals.approve", "vault.widen_proposals.decline", "vault.claims.review", "vault.claims.settle", "vault.craft_candidates", "vault.craft_candidates.answer", "vault.settings.wake_policy.set", "vault.settings.inference_defaults", "vault.settings.inference_defaults.replace", "vault.lenses.propose", "vault.lenses.activate", "vault.lenses.deactivate", "vault.lenses.list", "vault.lenses.default", "vault.disclosure.offer", "reveal", "reveal.wait", "reveal.describe", "self.use", "vault.shares.create", "vault.shares.revoke", "vault.shares.view", "vault.hooks.replay", "vault.artifacts.view", "vault.artifacts.units", "vault.artifacts.anchors.pin", "vault.artifacts.threads.open", "vault.artifacts.threads.comment", "vault.artifacts.threads.read", "vault.artifacts.threads.list", "vault.artifacts.threads.assign", "vault.artifacts.threads.state", "vault.code.diff", "vault.code.blame", "vault.code.proposal_view", "vault.code.repo_diff", "vault.artifacts.export", "vault.agents.create", "vault.agents.get", "vault.agents.update", "vault.workspace.establish", "vault.workspace.members.onboard", "vault.workspace.roster", "vault.agents.export_pack", "vault.artifacts.born_from", "vault.artifacts.proposals", "vault.artifacts.waits", "vault.artifacts.release_wait", "vault.artifacts.review_slides", "vault.artifacts.ask", "vault.critic.review", "vault.artifacts.propose_deck", "vault.artifacts.propose_output", "vault.artifacts.keep", "vault.artifacts.discard", "vault.artifacts.undo", "can", "peek", "ask", "wait", "tasks.answer", "tasks.outcomes", "vault.rooms.list", "vault.rooms.messages", "vault.rooms.participants", "vault.rooms.render", "vault.rooms.find", "vault.rooms.get", "vault.rooms.trunk", "vault.rooms.reply_strips", "vault.rooms.claim", "vault.rooms.speak", "vault.projects.propose", "vault.projects.proposals", "vault.projects.dismiss_card", "vault.projects.confirm", "vault.projects.roster.write", "vault.projects.goal.intake", "vault.rooms.join", "vault.rooms.invite", "vault.rooms.consent", "vault.rooms.offer", "vault.rooms.offer.answer", "vault.rooms.offer.vote", "vault.rooms.offer.reopen", "vault.rooms.offers", "vault.projects.goal.revisions", "vault.projects.goal.dismiss", "vault.projects.route_tradeoff", "vault.conversations.turn.continue", "vault.conversations.turn.retry", "vault.messages.react", "vault.rooms.host", "vault.rooms.host.pin", "vault.rooms.host.hand", "vault.rooms.sharing", "vault.companions.sharing.get", "vault.companions.sharing.set", "vault.workspace.work_companion.get", "vault.workspace.work_companion.set", "self.skills.save", "self.skills.fork", "self.skills.callables", "ai.options", "ai.image", "ai.speech", "ai.transcribe", "ai.embed", "ai.video", "ai.video.poll", "ai.video.cancel", "ai.verdict", "vault.graph.ask", "vault.questions.create", "vault.questions.edit", "vault.questions.pause", "vault.questions.backfill", "vault.questions.read", "vault.questions.answers", "vault.questions.refresh", "vault.decisions.asks.answer", "vault.decisions.asks.climb", "self.decisions.asks", "connector.list", "connector.status", "connector.call", "connector.schema", "connector.call_status", "vault.commit", "vault.remember", "vault.claims.retract", "vault.forget", "vault.booking.page_token", "vault.calendar.read", "vault.calendar.search", "vault.calendar.freebusy", "vault.calendar.transcript.ingest", "vault.claims.list", "vault.claims.history", "vault.delete", "vault.writes.pending", "vault.hydrate", "vault.get", "vault.refs.resolve", "vault.refs.links", "vault.search.bm25", "vault.neighbors", "vault.structural.put", "vault.habits.checkin", "vault.claims.admit", "vault.artifacts.create", "vault.esign.create", "vault.esign.get", "vault.esign.links.issue", "vault.esign.send_for_signature", "vault.esign.remind", "vault.esign.void", "vault.conversations.create", "vault.conversations.turns.create", "vault.conversations.records.append", "vault.batch", "vault.artifacts.put", "vault.artifacts.body.import", "vault.artifacts.body.head", "vault.artifacts.body.read", "vault.artifacts.body.commits", "vault.artifacts.body.edit", "vault.artifacts.body.fork.open", "vault.artifacts.body.fork.edit", "vault.artifacts.body.fork.diff", "vault.artifacts.body.fork.merge", "vault.artifacts.body.fork.discard", "vault.artifacts.body.proposal.read", "vault.artifacts.body.proposal.settle", "vault.artifacts.body.export", "vault.artifacts.body.preview", "vault.artifacts.body.deck.review", "vault.artifacts.body.deck.merge", "vault.artifacts.body.deck.export", "vault.artifacts.body.deck.gate", "vault.artifacts.body.deck.oracle", "vault.artifacts.body.deck.preview", "vault.artifacts.append", "vault.artifacts.read", "vault.consolidation.enqueue", "vault.consolidation.status", "vault.claims.seed", "vault.channel_identities.provision", "vault.channel_identities.bind", "vault.channel_identities.fulfill", "vault.channel_identities.rotate", "vault.channel_identities.release", "vault.channel_identities.route_inbound", "vault.channel_identities.get", "vault.channel_identities.selection.rules", "vault.channel_identities.selection.update", "vault.channel_identities.select", "vault.channel_identities.passports.get", "vault.channel_identities.passports.list", "vault.delivery_window.policy.put", "vault.delivery_window.policy.list", "vault.delivery_window.policy.retract", "vault.delivery_window.evaluate", "connector.outbound.schedule", "vault.notes.create", "vault.notes.from_entity", "vault.notes.read", "vault.notes.history", "vault.notes.editor.bind", "vault.notes.editor.close", "vault.notes.edit", "vault.notes.seal", "vault.notes.lifecycle", "vault.notes.set_overrides", "vault.notes.defaults", "self.run.attach", "self.folds.describe", "self.history", "self.fold", "self.compact", "self.unfold", "self.folds", "self.agents.spawn", "self.leader.split"] as const;
+export const FACADE_VERBS = ["report", "self.focus.scratchpad.recall", "self.focus.scratchpad.append", "self.focus.scratchpad.seal", "self.memory.diary", "self.memory.diary.reads", "self.memory.diary.review", "self.identity.answer", "self.identity.settle", "self.inbox.list", "self.inbox.mark", "self.inbox.concern", "self.inbox.concern.outcome", "self.inbox.concern.move", "vault.people.list", "vault.people.get", "vault.shape.read", "vault.shape.plan", "vault.shape.apply", "self.message", "self.grants.ask", "self.memory.diary.query", "cancel", "steer", "describe", "tasks.create", "tasks.wave", "vault.fanout.launch", "self.budget", "self.budget.land", "vault.budgets.lease.open", "vault.budgets.lease", "vault.budgets.lease.top_up", "vault.budgets.hold", "vault.budgets.hold.resume", "vault.budgets.local", "vault.budgets.settlements", "vault.fanout.resume", "vault.fanout.resume_as", "vault.fanout.ack", "tasks.update", "tasks.accept", "vault.witness", "vault.claims.upsert", "vault.recall", "vault.export", "vault.scope.ceiling", "vault.export.scoped", "vault.receipts", "vault.images.view", "vault.receipts.get", "vault.explain.memory", "vault.explain.gate", "vault.kv.get", "vault.kv.put", "vault.kv.delete", "vault.kv.search", "vault.kv.namespaces", "vault.campaign.program.create", "vault.campaign.program.read", "vault.campaign.program.update", "vault.campaign.program.archive", "vault.weave.report", "vault.weave.digest", "vault.weave.lens", "vault.weave.link.wrong", "vault.weave.owner.link.wrong", "vault.weave.item.wrong", "vault.weave.owner.item.wrong", "vault.skill_hubs.put", "vault.skill_hubs.get", "vault.skill_hubs.publishers.admit", "vault.skill_hubs.publishers.revoke", "vault.skill_hubs.refs.get", "vault.skill_hubs.refs.set", "vault.packs.install", "vault.packs.sync", "vault.packs.get", "vault.skills.import", "vault.skills.sync", "vault.skills.receipts", "vault.skills.permissions.approve", "vault.packs.hooks.bind", "vault.packs.hooks.list", "vault.packs.hooks.qualify", "vault.packs.put", "vault.packs.connector.prepare", "vault.packs.connector.get", "vault.packs.connector.qualify", "vault.packs.connector.accept", "vault.packs.connector.update", "vault.packs.connector.grants.get", "vault.packs.connector.grants.put", "vault.packs.remove", "vault.connectors.subscriptions.put", "vault.connectors.subscriptions.list", "vault.connectors.subscriptions.revoke", "vault.packs.setup.prepare", "vault.packs.setup.get", "vault.packs.setup.answer", "vault.packs.setup.verify", "vault.authority.audit", "vault.authority.history.export", "vault.authority.history.import", "vault.mesh.path_receipts", "vault.inspection.resolve", "vault.shared.propose_delete", "vault.shared.propose_transfer", "vault.shared.propose_remove_owner", "vault.shared.execute", "vault.shared.receipt", "vault.shared.outcomes", "vault.shared.deletion", "vault.members.add", "vault.members.invitation_slip", "vault.members.change", "vault.members.remove", "vault.members.leave", "vault.members.invitations", "vault.members.accept", "vault.members.decline", "vault.members.withdraw_invitation", "vault.shared.object", "vault.shared.withdraw_objection", "vault.shared.started", "vault.shared.matured", "vault.shared.erase_ask", "vault.shared.erase_asks", "vault.shared.close_erase_ask", "vault.guests.revoke", "vault.guests.mint_slip", "vault.residence.mode", "vault.residence.open", "vault.residence.index", "vault.residence.prune", "vault.records.erase_preview", "vault.records.erase_confirm", "vault.research.bind", "vault.research.fork", "vault.research.weave", "vault.research.measure_search", "vault.research.measure_held_out", "vault.research.evaluate_split", "vault.research.mark_invalid", "vault.research.prune", "vault.research.select", "vault.research.promotion_basis", "vault.research.reserve_confirmation", "vault.research.promote", "vault.research.reserve_work", "vault.research.settle_work", "vault.research.refund_work", "vault.research.record_benchmark", "vault.authority.handoff_alarms", "vault.authority.handoff_alarms.acknowledge", "vault.legal_holds.place", "vault.legal_holds.widen", "vault.legal_holds.list", "vault.legal_holds.log", "vault.legal_holds.lift_and_erase", "vault.courtesy_delete.send", "vault.courtesy_delete.sent", "vault.courtesy_delete.incoming", "vault.courtesy_delete.answer", "vault.embedding_spaces.list", "vault.embedding_spaces.declare", "vault.embedding_spaces.bind", "vault.embedding_spaces.one_space", "vault.embedding_spaces.retire", "vault.embedding_spaces.move", "vault.embedding_spaces.move_check", "vault.embedding_spaces.move_approve", "vault.embedding_spaces.move_undo", "vault.embedding_spaces.move_abandon", "vault.embedding_spaces.probes.list", "vault.embedding_spaces.probes.put", "vault.embedding_spaces.probes.delete", "vault.gate.policy.get", "vault.gate.policy.put", "vault.gate.policy.propose", "vault.gate.checker.get", "vault.gate.checker.set", "vault.settings.learning", "vault.settings.learning.put", "vault.settings.learning.clear", "vault.secrets.lift_history", "vault.widen_proposals", "vault.widen_proposals.approve", "vault.widen_proposals.decline", "vault.claims.review", "vault.claims.settle", "vault.craft_candidates", "vault.craft_candidates.answer", "vault.settings.wake_policy.set", "vault.settings.inference_defaults", "vault.settings.inference_defaults.replace", "vault.lenses.propose", "vault.lenses.activate", "vault.lenses.deactivate", "vault.lenses.list", "vault.lenses.default", "vault.disclosure.offer", "reveal", "reveal.wait", "reveal.describe", "self.use", "vault.shares.create", "vault.shares.revoke", "vault.shares.view", "vault.hooks.replay", "vault.artifacts.view", "vault.artifacts.units", "vault.artifacts.anchors.pin", "vault.artifacts.threads.open", "vault.artifacts.threads.comment", "vault.artifacts.threads.read", "vault.artifacts.threads.list", "vault.artifacts.threads.assign", "vault.artifacts.threads.state", "vault.code.diff", "vault.code.blame", "vault.code.proposal_view", "vault.code.repo_diff", "vault.code.export", "vault.code.origin.authority.get", "vault.code.origin.authority.set", "vault.code.origin.publications", "vault.code.checkout.bind", "vault.artifacts.export", "vault.agents.create", "vault.agents.get", "vault.agents.update", "vault.workspace.establish", "vault.workspace.members.onboard", "vault.workspace.roster", "vault.agents.export_pack", "vault.artifacts.born_from", "vault.artifacts.proposals", "vault.artifacts.waits", "vault.artifacts.release_wait", "vault.artifacts.review_slides", "vault.artifacts.ask", "vault.critic.review", "vault.artifacts.propose_deck", "vault.artifacts.propose_output", "vault.artifacts.keep", "vault.artifacts.discard", "vault.artifacts.undo", "can", "peek", "ask", "wait", "tasks.answer", "tasks.outcomes", "vault.rooms.list", "vault.rooms.messages", "vault.rooms.participants", "vault.rooms.render", "vault.rooms.find", "vault.rooms.get", "vault.rooms.trunk", "vault.rooms.reply_strips", "vault.rooms.claim", "vault.rooms.speak", "vault.projects.propose", "vault.projects.proposals", "vault.projects.dismiss_card", "vault.projects.confirm", "vault.projects.roster.write", "vault.projects.goal.intake", "vault.rooms.join", "vault.rooms.invite", "vault.rooms.consent", "vault.rooms.offer", "vault.rooms.offer.answer", "vault.rooms.offer.vote", "vault.rooms.offer.reopen", "vault.rooms.offers", "vault.projects.goal.revisions", "vault.projects.goal.dismiss", "vault.projects.route_tradeoff", "vault.conversations.turn.continue", "vault.conversations.turn.retry", "vault.messages.react", "vault.rooms.host", "vault.rooms.host.pin", "vault.rooms.host.hand", "vault.rooms.sharing", "vault.companions.sharing.get", "vault.companions.sharing.set", "vault.workspace.work_companion.get", "vault.workspace.work_companion.set", "self.skills.save", "self.skills.fork", "self.skills.callables", "ai.options", "ai.image", "ai.speech", "ai.transcribe", "ai.embed", "ai.video", "ai.video.poll", "ai.video.cancel", "ai.verdict", "vault.graph.ask", "vault.questions.create", "vault.questions.edit", "vault.questions.pause", "vault.questions.backfill", "vault.questions.read", "vault.questions.answers", "vault.questions.refresh", "vault.decisions.asks.answer", "vault.decisions.asks.climb", "self.decisions.asks", "connector.list", "connector.status", "connector.call", "connector.schema", "connector.call_status", "vault.commit", "vault.remember", "vault.claims.retract", "vault.forget", "vault.booking.page_token", "vault.calendar.create", "vault.calendar.ics.import", "vault.calendar.occurrences", "vault.calendar.instances.move", "vault.calendar.read", "vault.calendar.search", "vault.calendar.freebusy", "vault.calendar.transcript.ingest", "vault.claims.list", "vault.claims.history", "vault.delete", "vault.writes.pending", "vault.hydrate", "vault.get", "vault.refs.resolve", "vault.refs.links", "vault.search.bm25", "vault.neighbors", "vault.structural.put", "vault.habits.checkin", "vault.claims.admit", "vault.artifacts.create", "vault.esign.create", "vault.esign.get", "vault.esign.links.issue", "vault.esign.send_for_signature", "vault.esign.remind", "vault.esign.void", "vault.conversations.create", "vault.conversations.turns.create", "vault.conversations.records.append", "vault.batch", "vault.artifacts.put", "vault.artifacts.body.import", "vault.artifacts.body.head", "vault.artifacts.body.read", "vault.artifacts.body.commits", "vault.artifacts.body.edit", "vault.artifacts.body.fork.open", "vault.artifacts.body.fork.edit", "vault.artifacts.body.fork.diff", "vault.artifacts.body.fork.merge", "vault.artifacts.body.fork.discard", "vault.artifacts.body.proposal.read", "vault.artifacts.body.proposal.settle", "vault.artifacts.body.export", "vault.artifacts.body.preview", "vault.artifacts.body.deck.review", "vault.artifacts.body.deck.merge", "vault.artifacts.body.deck.export", "vault.artifacts.body.deck.gate", "vault.artifacts.body.deck.oracle", "vault.artifacts.body.deck.preview", "vault.artifacts.append", "vault.artifacts.read", "vault.consolidation.enqueue", "vault.consolidation.status", "vault.claims.seed", "vault.channel_identities.provision", "vault.channel_identities.bind", "vault.channel_identities.fulfill", "vault.channel_identities.rotate", "vault.channel_identities.release", "vault.channel_identities.route_inbound", "vault.channel_identities.get", "vault.channel_identities.selection.rules", "vault.channel_identities.selection.update", "vault.channel_identities.select", "vault.channel_identities.passports.get", "vault.channel_identities.passports.list", "vault.delivery_window.policy.put", "vault.delivery_window.policy.list", "vault.delivery_window.policy.retract", "vault.delivery_window.evaluate", "connector.outbound.schedule", "vault.notes.create", "vault.notes.from_entity", "vault.notes.read", "vault.notes.history", "vault.notes.editor.bind", "vault.notes.editor.close", "vault.notes.edit", "vault.notes.seal", "vault.notes.lifecycle", "vault.notes.set_overrides", "vault.notes.defaults", "vault.tasks.linear.mapping", "vault.tasks.linear.mapping.edit", "vault.tasks.linear.provenance", "self.run.attach", "self.folds.describe", "self.history", "self.fold", "self.compact", "self.unfold", "self.folds", "self.agents.spawn", "self.leader.split"] as const;
 export type FacadeVerb = typeof FACADE_VERBS[number];
 
 /** Each verb's request body, as its Rust input type reads it. */
@@ -93,6 +93,13 @@ export interface FacadeInputs {
   "vault.packs.hooks.list": Facade.EmptyRequest;
   "vault.packs.hooks.qualify": Facade.HubHookQualifyRequest;
   "vault.packs.put": Facade.PackPutRequest;
+  "vault.packs.connector.prepare": Facade.ConnectorPackPrepareRequest;
+  "vault.packs.connector.get": Facade.ConnectorPackGetRequest;
+  "vault.packs.connector.qualify": Facade.ConnectorPackQualifyRequest;
+  "vault.packs.connector.accept": Facade.ConnectorPackAcceptRequest;
+  "vault.packs.connector.update": Facade.ConnectorPackUpdateRequest;
+  "vault.packs.connector.grants.get": Facade.ConnectorPackGrantsGetRequest;
+  "vault.packs.connector.grants.put": Facade.ConnectorPackGrantsPutRequest;
   "vault.packs.remove": Facade.PackRemoveRequest;
   "vault.connectors.subscriptions.put": Facade.ChannelSubscriptionRequest;
   "vault.connectors.subscriptions.list": Facade.ChannelSubscriptionsRequest;
@@ -102,6 +109,8 @@ export interface FacadeInputs {
   "vault.packs.setup.answer": Facade.PackSetupAnswerRequest;
   "vault.packs.setup.verify": Facade.PackSetupVerifyRequest;
   "vault.authority.audit": Facade.AuthorityAuditQuery;
+  "vault.authority.history.export": Facade.EmptyRequest;
+  "vault.authority.history.import": Facade.SignedAuthorityHistory;
   "vault.mesh.path_receipts": Facade.MeshPathReceiptsRequest;
   "vault.inspection.resolve": Facade.InspectionResolveRequest;
   "vault.shared.propose_delete": Facade.SharedVaultRequest;
@@ -221,6 +230,11 @@ export interface FacadeInputs {
   "vault.code.blame": Facade.CodeStateRequest;
   "vault.code.proposal_view": Facade.CodeProposalViewRequest;
   "vault.code.repo_diff": Facade.CodeRepoDiffRequest;
+  "vault.code.export": Facade.CodeExportRequest;
+  "vault.code.origin.authority.get": Facade.OriginRepoRequest;
+  "vault.code.origin.authority.set": Facade.OriginAuthoritySetRequest;
+  "vault.code.origin.publications": Facade.OriginPublicationsRequest;
+  "vault.code.checkout.bind": Facade.CheckoutDoorBindRequest;
   "vault.artifacts.export": Facade.ArtifactExportRequest;
   "vault.agents.create": Facade.AgentDefinitionCreateRequest;
   "vault.agents.get": Facade.AgentDefinitionRequest;
@@ -318,6 +332,10 @@ export interface FacadeInputs {
   "vault.claims.retract": Facade.ClaimRefRequest;
   "vault.forget": Facade.ForgetRequest;
   "vault.booking.page_token": Facade.BookingPageTokenRequest;
+  "vault.calendar.create": Facade.CalendarEventCreateRequest;
+  "vault.calendar.ics.import": Facade.CalendarIcsImportRequest;
+  "vault.calendar.occurrences": Facade.CalendarOccurrencesRequest;
+  "vault.calendar.instances.move": Facade.CalendarInstanceMoveRequest;
   "vault.calendar.read": Facade.CalendarReadRequest;
   "vault.calendar.search": Facade.CalendarSearchRequest;
   "vault.calendar.freebusy": Facade.CalendarFreebusyRequest;
@@ -400,6 +418,9 @@ export interface FacadeInputs {
   "vault.notes.lifecycle": Facade.NoteRefRequest;
   "vault.notes.set_overrides": Facade.SetNoteOverridesRequest;
   "vault.notes.defaults": Facade.NoteRefRequest;
+  "vault.tasks.linear.mapping": Facade.LinearMappingRequest;
+  "vault.tasks.linear.mapping.edit": Facade.LinearMappingEdit;
+  "vault.tasks.linear.provenance": Facade.LinearProvenanceRequest;
   "self.run.attach": Facade.RunAttachRequest;
   "self.folds.describe": Facade.FoldUnfoldRequest;
   "self.history": Facade.FoldHistoryRequest;
@@ -498,6 +519,13 @@ export interface FacadeResults {
   "vault.packs.hooks.list": Facade.HubHookBindingRow[];
   "vault.packs.hooks.qualify": Facade.HubHookQualificationReceipt;
   "vault.packs.put": Facade.PackPutReceipt;
+  "vault.packs.connector.prepare": Facade.ConnectorPackView;
+  "vault.packs.connector.get": Facade.ConnectorPackView;
+  "vault.packs.connector.qualify": Facade.ConnectorPackView;
+  "vault.packs.connector.accept": Facade.ConnectorPackView;
+  "vault.packs.connector.update": Facade.ConnectorPackDelta;
+  "vault.packs.connector.grants.get": Facade.ConnectorPackGrants;
+  "vault.packs.connector.grants.put": Facade.ConnectorPackGrants;
   "vault.packs.remove": Facade.PackInstallReceipt;
   "vault.connectors.subscriptions.put": Facade.ChannelMessageSubscription;
   "vault.connectors.subscriptions.list": Facade.ChannelSubscriptions;
@@ -507,6 +535,8 @@ export interface FacadeResults {
   "vault.packs.setup.answer": Facade.PackSetupReceipt;
   "vault.packs.setup.verify": Facade.PackSetupReceipt;
   "vault.authority.audit": Facade.AuthorityAuditPage;
+  "vault.authority.history.export": Facade.SignedAuthorityHistory;
+  "vault.authority.history.import": Facade.AuthorityHistoryImported;
   "vault.mesh.path_receipts": Facade.MeshPathReceipt[];
   "vault.inspection.resolve": Facade.InspectionResolved;
   "vault.shared.propose_delete": Facade.PendingAuthorityAct;
@@ -626,6 +656,11 @@ export interface FacadeResults {
   "vault.code.blame": Facade.CodeBlameView | null;
   "vault.code.proposal_view": Facade.CodeProposalView | null;
   "vault.code.repo_diff": Facade.CodeRepoDiffView | null;
+  "vault.code.export": Facade.CodeExportResult;
+  "vault.code.origin.authority.get": Facade.OriginAuthorityView;
+  "vault.code.origin.authority.set": Facade.OriginAuthorityView;
+  "vault.code.origin.publications": Facade.OriginPublicationsView;
+  "vault.code.checkout.bind": Facade.CheckoutDoorBinding;
   "vault.artifacts.export": Facade.ArtifactExportFile | null;
   "vault.agents.create": Facade.AgentDefinitionView;
   "vault.agents.get": Facade.AgentDefinitionView;
@@ -723,6 +758,10 @@ export interface FacadeResults {
   "vault.claims.retract": Facade.CommitReceipt;
   "vault.forget": Facade.CommitReceipt[];
   "vault.booking.page_token": Facade.BookingPageTokenResponse;
+  "vault.calendar.create": Facade.CalendarEventCreated;
+  "vault.calendar.ics.import": Facade.CalendarIcsImportReceipt;
+  "vault.calendar.occurrences": Facade.ScopedReadResult<Facade.CalendarOccurrenceView[]>;
+  "vault.calendar.instances.move": Facade.CalendarIcsImportReceipt;
   "vault.calendar.read": Facade.ScopedReadResult<Facade.CalendarEventView | null>;
   "vault.calendar.search": Facade.ScopedReadResult<Facade.CalendarEventView[]>;
   "vault.calendar.freebusy": Facade.ScopedReadResult<Facade.CalendarFreebusyDto>;
@@ -805,6 +844,9 @@ export interface FacadeResults {
   "vault.notes.lifecycle": Facade.NoteLifecycleView;
   "vault.notes.set_overrides": Facade.NoteDefaultsView;
   "vault.notes.defaults": Facade.NoteDefaultsView;
+  "vault.tasks.linear.mapping": Facade.LinearMappingView;
+  "vault.tasks.linear.mapping.edit": Facade.LinearMappingEditReceipt;
+  "vault.tasks.linear.provenance": Facade.LinearProvenancePage;
   "self.run.attach": Facade.RunAttached;
   "self.folds.describe": Facade.FoldReply<Facade.FoldDescription>;
   "self.history": Facade.FoldHistory;
@@ -919,6 +961,13 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.packs.hooks.list": { description: "Reads live pack hook bindings as the owner, excluding revoked foreign publisher grants.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.packs.hooks.qualify": { description: "The owner qualifies a Candidate hub hook pack by real sandbox replay; qualification does not consent to wider hooks.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.packs.put": { description: "The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.packs.connector.prepare": { description: "Prepares an immutable connector pack admission, comparing the resolved declaration with the installed transport and drafting an ungranted slate.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.packs.connector.get": { description: "Reads a connector pack source, resolved manifest, advisory evidence, qualification and owner-stampable capability rows.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.packs.connector.qualify": { description: "Runs the real connector probes bound to the exact pack source and protocol; qualification grants nothing without the owner slate and actor grant.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.packs.connector.accept": { description: "Stamps the exact connector pack manifest and grant rows once, or revokes a row; qualification stays independent.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.packs.connector.update": { description: "Holds a connector pack at its new immutable source and protocol, carrying narrow rows and re-asking only for expanded capabilities.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.packs.connector.grants.get": { description: "Reads current per-capability authority for one actor on the reviewed connector pack source.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.packs.connector.grants.put": { description: "Grants declared connector pack rows to one actor through the existing owner consent gate and installed endpoint.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.packs.remove": { description: "The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.connectors.subscriptions.put": { description: "The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.connectors.subscriptions.list": { description: "An agent's connector event subscriptions, standing and revoked, for the owner.", scope: "Read", proposes: false, hostDoor: true, section: false },
@@ -928,6 +977,8 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.packs.setup.answer": { description: "The owner's one typed answer or card action in a pack's guided setup; a credential value never passes here.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.packs.setup.verify": { description: "Checks one pack connection with the engine's fixed read-only provider call for its declared check.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.authority.audit": { description: "One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.authority.history.export": { description: "Exports the full original signed authority history, including quarantined forks, as base64 envelopes for the owner. No signing secret leaves.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.authority.history.import": { description: "Imports original base64 signed authority envelopes atomically for the owner, preserving bytes and refolding locally. Invalid signatures, foreign genesis and missing parents write nothing.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.mesh.path_receipts": { description: "The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.inspection.resolve": { description: "Resolves an inspection handle for the caller; unreadable, missing and wrong-kind targets all answer with no item.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.shared.propose_delete": { description: "Starts a shared vault's delete_vault act, returned as a typed pending act.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -1047,6 +1098,11 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.code.blame": { description: "Every unit of one tested state of a code file, with the runs of text each operation wrote, and who made each operation and why.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.code.proposal_view": { description: "One repo proposal as a reviewer reads it: its candidate against the file at its base, unit by unit, under the provenance it was proposed with, and the operation it landed as once applied.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.code.repo_diff": { description: "Every file changed between two repository trees, each a code revision or a git snapshot: added, removed, modified or renamed, each unit with the operations that wrote it.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "vault.code.export": { description: "Export one already-finalized and reviewed document revision through the existing origin publication protocol.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.code.origin.authority.get": { description: "Read one served origin authority and this host identity under the owner credential.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.code.origin.authority.set": { description: "Cut over one existing served origin under the owner proof and expected authority epoch.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.code.origin.publications": { description: "Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.code.checkout.bind": { description: "Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.artifacts.export": { description: "One artifact version's export file, with the born-with text the caller chose and a share receipt listing it.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.agents.create": { description: "The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.agents.get": { description: "The owner reads one saved agent composition and its version and approval state.", scope: "Read", proposes: false, hostDoor: true, section: false },
@@ -1144,6 +1200,10 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.claims.retract": { description: "Retracts one active claim: a deliberate withdrawal that preserves the record.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.forget": { description: "Retracts claims by exact claim or by subject and predicate; never a hard delete.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.booking.page_token": { description: "The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.calendar.create": { description: "Creates a native or evidence-linked dreamer EVENT as the caller, with atomic projector-recorded origin and engine-stamped recorded time.", scope: "Write", proposes: false, hostDoor: false, section: false },
+  "vault.calendar.ics.import": { description: "The owner imports one exact uploaded ICS version through the existing UID diff and imported-claim gate; the receipt exposes pending claim refs without granting consent.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.calendar.occurrences": { description: "Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "vault.calendar.instances.move": { description: "The owner applies one uploaded detached-instance amendment matching its UID, original start and new interval, through the import gate without changing other instances.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.calendar.read": { description: "Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.calendar.search": { description: "Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.calendar.freebusy": { description: "Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt.", scope: "Read", proposes: false, hostDoor: false, section: false },
@@ -1226,6 +1286,9 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.notes.lifecycle": { description: "Where one NOTE stands (active, sealed, archived or tombstoned) and its seal, if it has one.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.notes.set_overrides": { description: "Sets the extraction, context and retention defaults one NOTE overrides over its kind's, by its author or the owner; empty overrides clear them. An override never widens a scope or grant check.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.notes.defaults": { description: "One NOTE's overrides and the extraction, context and retention defaults its gates read after them.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "vault.tasks.linear.mapping": { description: "One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "vault.tasks.linear.mapping.edit": { description: "Links, unlinks or mirrors again one TASK's Linear issue, by the TASK's owner at the mapping revision the caller read, under an intent key.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.tasks.linear.provenance": { description: "One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "self.run.attach": { description: "Attaches the caller's own credential to its leased live run and returns the handle required by the public fold and history calls.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "self.folds.describe": { description: "Reads one pending mark or landed fold of the attached run, with its Generated stub, source ids and retained result handles.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "self.history": { description: "Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled.", scope: "Read", proposes: false, hostDoor: true, section: false },
@@ -1564,6 +1627,24 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         },
         /** The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks. */
         put: (input: Facade.PackPutRequest, options?: O): FacadeReturns<"vault.packs.put">[K] => invoke("vault.packs.put", input, options, newInvocation()),
+        connector: {
+          /** Prepares an immutable connector pack admission, comparing the resolved declaration with the installed transport and drafting an ungranted slate. */
+          prepare: (input: Facade.ConnectorPackPrepareRequest, options?: O): FacadeReturns<"vault.packs.connector.prepare">[K] => invoke("vault.packs.connector.prepare", input, options, newInvocation()),
+          /** Reads a connector pack source, resolved manifest, advisory evidence, qualification and owner-stampable capability rows. */
+          get: (input: Facade.ConnectorPackGetRequest, options?: O): FacadeReturns<"vault.packs.connector.get">[K] => invoke("vault.packs.connector.get", input, options, newInvocation()),
+          /** Runs the real connector probes bound to the exact pack source and protocol; qualification grants nothing without the owner slate and actor grant. */
+          qualify: (input: Facade.ConnectorPackQualifyRequest, options?: O): FacadeReturns<"vault.packs.connector.qualify">[K] => invoke("vault.packs.connector.qualify", input, options, newInvocation()),
+          /** Stamps the exact connector pack manifest and grant rows once, or revokes a row; qualification stays independent. */
+          accept: (input: Facade.ConnectorPackAcceptRequest, options?: O): FacadeReturns<"vault.packs.connector.accept">[K] => invoke("vault.packs.connector.accept", input, options, newInvocation()),
+          /** Holds a connector pack at its new immutable source and protocol, carrying narrow rows and re-asking only for expanded capabilities. */
+          update: (input: Facade.ConnectorPackUpdateRequest, options?: O): FacadeReturns<"vault.packs.connector.update">[K] => invoke("vault.packs.connector.update", input, options, newInvocation()),
+          grants: {
+            /** Reads current per-capability authority for one actor on the reviewed connector pack source. */
+            get: (input: Facade.ConnectorPackGrantsGetRequest, options?: O): FacadeReturns<"vault.packs.connector.grants.get">[K] => invoke("vault.packs.connector.grants.get", input, options, newInvocation()),
+            /** Grants declared connector pack rows to one actor through the existing owner consent gate and installed endpoint. */
+            put: (input: Facade.ConnectorPackGrantsPutRequest, options?: O): FacadeReturns<"vault.packs.connector.grants.put">[K] => invoke("vault.packs.connector.grants.put", input, options, newInvocation()),
+          },
+        },
         /** The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate. */
         remove: (input: Facade.PackRemoveRequest, options?: O): FacadeReturns<"vault.packs.remove">[K] => invoke("vault.packs.remove", input, options, newInvocation()),
         setup: {
@@ -1602,6 +1683,12 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
       authority: {
         /** One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind. */
         audit: (input: Facade.AuthorityAuditQuery, options?: O): FacadeReturns<"vault.authority.audit">[K] => invoke("vault.authority.audit", input, options, newInvocation()),
+        history: {
+          /** Exports the full original signed authority history, including quarantined forks, as base64 envelopes for the owner. No signing secret leaves. */
+          export: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.authority.history.export">[K] => invoke("vault.authority.history.export", input, options, newInvocation()),
+          /** Imports original base64 signed authority envelopes atomically for the owner, preserving bytes and refolding locally. Invalid signatures, foreign genesis and missing parents write nothing. */
+          import: (input: Facade.SignedAuthorityHistory, options?: O): FacadeReturns<"vault.authority.history.import">[K] => invoke("vault.authority.history.import", input, options, newInvocation()),
+        },
         /** Every saved authority handoff fork alarm, for the owner. */
         handoff_alarms: Object.assign((input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.authority.handoff_alarms">[K] => invoke("vault.authority.handoff_alarms", input, options, newInvocation()), {
           /** The owner acknowledges one saved handoff fork alarm. */
@@ -1962,6 +2049,22 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         proposal_view: (input: Facade.CodeProposalViewRequest, options?: O): FacadeReturns<"vault.code.proposal_view">[K] => invoke("vault.code.proposal_view", input, options, newInvocation()),
         /** Every file changed between two repository trees, each a code revision or a git snapshot: added, removed, modified or renamed, each unit with the operations that wrote it. */
         repo_diff: (input: Facade.CodeRepoDiffRequest, options?: O): FacadeReturns<"vault.code.repo_diff">[K] => invoke("vault.code.repo_diff", input, options, newInvocation()),
+        /** Export one already-finalized and reviewed document revision through the existing origin publication protocol. */
+        export: (input: Facade.CodeExportRequest, options?: O): FacadeReturns<"vault.code.export">[K] => invoke("vault.code.export", input, options, newInvocation()),
+        origin: {
+          authority: {
+            /** Read one served origin authority and this host identity under the owner credential. */
+            get: (input: Facade.OriginRepoRequest, options?: O): FacadeReturns<"vault.code.origin.authority.get">[K] => invoke("vault.code.origin.authority.get", input, options, newInvocation()),
+            /** Cut over one existing served origin under the owner proof and expected authority epoch. */
+            set: (input: Facade.OriginAuthoritySetRequest, options?: O): FacadeReturns<"vault.code.origin.authority.set">[K] => invoke("vault.code.origin.authority.set", input, options, newInvocation()),
+          },
+          /** Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement. */
+          publications: (input: Facade.OriginPublicationsRequest, options?: O): FacadeReturns<"vault.code.origin.publications">[K] => invoke("vault.code.origin.publications", input, options, newInvocation()),
+        },
+        checkout: {
+          /** Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential. */
+          bind: (input: Facade.CheckoutDoorBindRequest, options?: O): FacadeReturns<"vault.code.checkout.bind">[K] => invoke("vault.code.checkout.bind", input, options, newInvocation()),
+        },
       },
       agents: {
         /** The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched. */
@@ -2125,6 +2228,18 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         page_token: (input: Facade.BookingPageTokenRequest, options?: O): FacadeReturns<"vault.booking.page_token">[K] => invoke("vault.booking.page_token", input, options, newInvocation()),
       },
       calendar: {
+        /** Creates a native or evidence-linked dreamer EVENT as the caller, with atomic projector-recorded origin and engine-stamped recorded time. */
+        create: (input: Facade.CalendarEventCreateRequest, options?: O): FacadeReturns<"vault.calendar.create">[K] => invoke("vault.calendar.create", input, options, newInvocation()),
+        ics: {
+          /** The owner imports one exact uploaded ICS version through the existing UID diff and imported-claim gate; the receipt exposes pending claim refs without granting consent. */
+          import: (input: Facade.CalendarIcsImportRequest, options?: O): FacadeReturns<"vault.calendar.ics.import">[K] => invoke("vault.calendar.ics.import", input, options, newInvocation()),
+        },
+        /** Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions. */
+        occurrences: (input: Facade.CalendarOccurrencesRequest, options?: O): FacadeReturns<"vault.calendar.occurrences">[K] => invoke("vault.calendar.occurrences", input, options, newInvocation()),
+        instances: {
+          /** The owner applies one uploaded detached-instance amendment matching its UID, original start and new interval, through the import gate without changing other instances. */
+          move: (input: Facade.CalendarInstanceMoveRequest, options?: O): FacadeReturns<"vault.calendar.instances.move">[K] => invoke("vault.calendar.instances.move", input, options, newInvocation()),
+        },
         /** Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt. */
         read: (input: Facade.CalendarReadRequest, options?: O): FacadeReturns<"vault.calendar.read">[K] => invoke("vault.calendar.read", input, options, newInvocation()),
         /** Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt. */
@@ -2257,6 +2372,17 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         set_overrides: (input: Facade.SetNoteOverridesRequest, options?: O): FacadeReturns<"vault.notes.set_overrides">[K] => invoke("vault.notes.set_overrides", input, options, newInvocation()),
         /** One NOTE's overrides and the extraction, context and retention defaults its gates read after them. */
         defaults: (input: Facade.NoteRefRequest, options?: O): FacadeReturns<"vault.notes.defaults">[K] => invoke("vault.notes.defaults", input, options, newInvocation()),
+      },
+      tasks: {
+        linear: {
+          /** One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events. */
+          mapping: Object.assign((input: Facade.LinearMappingRequest, options?: O): FacadeReturns<"vault.tasks.linear.mapping">[K] => invoke("vault.tasks.linear.mapping", input, options, newInvocation()), {
+            /** Links, unlinks or mirrors again one TASK's Linear issue, by the TASK's owner at the mapping revision the caller read, under an intent key. */
+            edit: (input: Facade.LinearMappingEdit, options?: O): FacadeReturns<"vault.tasks.linear.mapping.edit">[K] => invoke("vault.tasks.linear.mapping.edit", input, options, newInvocation()),
+          }),
+          /** One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts. */
+          provenance: (input: Facade.LinearProvenanceRequest, options?: O): FacadeReturns<"vault.tasks.linear.provenance">[K] => invoke("vault.tasks.linear.provenance", input, options, newInvocation()),
+        },
       },
     },
     /** Cancels one TASK under the caller's own-scoped auto default, abandoning only unlanded work. */
