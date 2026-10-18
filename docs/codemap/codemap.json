@@ -49263,7 +49263,7 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 37,
+      "re-export": 38,
       "struct": 36
      }
     },
@@ -49540,7 +49540,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 508
+      "fn": 516
      }
     },
     {
@@ -49985,6 +49985,30 @@
      "surface": {
       "fn": 4,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TrustedContactAsksRequest",
+      "TrustedContactAuthorization",
+      "TrustedContactAuthorizationOutcome",
+      "TrustedContactAuthorizeRequest",
+      "TrustedContactConsentRequest",
+      "TrustedContactDialRequest",
+      "TrustedContactNameRequest",
+      "TrustedContactRevokeRequest",
+      "TrustedContactTierRequest",
+      "TrustedContactTierSet",
+      "TrustedContactsRequest"
+     ],
+     "path": "src/task_verb/sdk_trusted_contact.rs",
+     "purpose": "The trusted-contact rows a host door answers (DOOR-140 A, OF-527): the person names a trusted contact…",
+     "surface": {
+      "enum": 1,
+      "fn": 8,
+      "struct": 10
      }
     },
     {
@@ -56202,7 +56226,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 149,
+     "files": 150,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -56372,7 +56396,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3435,
+   "source_files": 3436,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64786,7 +64810,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 458
+      "fn": 466
      }
     },
     {
@@ -65834,7 +65858,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 459
+      "fn": 467
      }
     },
     {
@@ -68987,7 +69011,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 92
+      "crate-vis": 93
      }
     },
     {
@@ -69227,6 +69251,16 @@
      "path": "src/api/facade/tests/call_mode.rs",
      "purpose": "Call mode at the HTTP recall door (retrieval hub #call-mode)",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/trusted_contact_doors.rs",
+     "purpose": "The host doors of the trusted-contact rows (DOOR-140 A, OF-527), beside `shared_policy_doors`",
+     "surface": {
+      "crate-vis": 8
+     }
     },
     {
      "bucket": "s",
@@ -76372,7 +76406,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 348,
+     "files": 349,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -76787,7 +76821,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 673,
+   "source_files": 674,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -77594,6 +77628,8 @@
       "GateCheckerSet",
       "GateCheckerView",
       "GateDecisionId",
+      "GateSystemNoticeAction",
+      "GateSystemNoticeRecord",
       "GeneratedLens",
       "GeneratedUiActionDeclaration",
       "GeneratedUiActionTier",
@@ -78570,6 +78606,24 @@
       "TranscriptFileDropInput",
       "TranscriptIngestOutcome",
       "TravelChoice",
+      "TrustedContact",
+      "TrustedContactAcceptance",
+      "TrustedContactAnswer",
+      "TrustedContactAsk",
+      "TrustedContactAuthorization",
+      "TrustedContactAuthorizationOutcome",
+      "TrustedContactAuthorizeRequest",
+      "TrustedContactConsentRequest",
+      "TrustedContactDial",
+      "TrustedContactDialRequest",
+      "TrustedContactNameRequest",
+      "TrustedContactParty",
+      "TrustedContactReach",
+      "TrustedContactRevocation",
+      "TrustedContactRevokeRequest",
+      "TrustedContactTier",
+      "TrustedContactTierRequest",
+      "TrustedContactTierSet",
       "TurnAction",
       "TurnActionReceipt",
       "TurnActionRequest",
@@ -78663,8 +78717,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 451,
-      "struct": 1228
+      "enum": 455,
+      "struct": 1244
      }
     },
     {
