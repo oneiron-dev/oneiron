@@ -57,13 +57,14 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
 /// [`reverse_rematerialize`] into a sealed window's own mirror document
 /// (OF-570): it packs the rows a device-only world keeps here too. Only the
 /// sealed-content door calls it, and what it packs leaves this machine only
-/// sealed under the world's key.
+/// sealed under the world's key. It packs no key pad, which lives in its
+/// world's windows too: pads ride only the sealed pad object.
 pub(crate) fn reverse_rematerialize_for_sealing(
     vault: &Vault,
     doc: &LoroDoc,
     window_key: &WindowKey,
 ) -> Result<u32> {
-    reverse_rematerialize_with(vault, doc, window_key, super::Withhold::Nothing)
+    reverse_rematerialize_scan(vault, doc, window_key, super::Withhold::Nothing, None, true)
 }
 
 /// [`reverse_rematerialize`] for only the `rows` a commit just wrote, not the
@@ -86,6 +87,7 @@ pub(crate) fn reverse_rematerialize_rows(
         window_key,
         super::Withhold::Worlds(&withheld),
         Some((rows, edited)),
+        false,
     )
 }
 
@@ -99,12 +101,13 @@ pub(in crate::sync) fn reverse_rematerialize_with(
     window_key: &WindowKey,
     withhold: super::Withhold<'_>,
 ) -> Result<u32> {
-    reverse_rematerialize_scan(vault, doc, window_key, withhold, None)
+    reverse_rematerialize_scan(vault, doc, window_key, withhold, None, false)
 }
 
 /// The reverse pass over the window's learned range, or over the rows of
 /// `committed` (each kept when its learned time falls in the window's month),
-/// whose edited rows replace the carriers they differ from.
+/// whose edited rows replace the carriers they differ from. A `sealing` pass
+/// packs no key pad.
 fn reverse_rematerialize_scan(
     vault: &Vault,
     doc: &LoroDoc,
@@ -114,6 +117,7 @@ fn reverse_rematerialize_scan(
         &std::collections::BTreeSet<EntityId>,
         &std::collections::BTreeSet<EntityId>,
     )>,
+    sealing: bool,
 ) -> Result<u32> {
     let only = committed.map(|(rows, _)| rows);
     let is_edited = |id: &EntityId| committed.is_some_and(|(_, edited)| edited.contains(id));
@@ -146,6 +150,9 @@ fn reverse_rematerialize_scan(
                 && !EntityMetadataHeader::parse(&raw)
                     .is_some_and(|header| (start_ts..end_ts).contains(&header.learned_at))
             {
+                continue;
+            }
+            if sealing && crate::world_keys::pad_body_world(&raw).is_some() {
                 continue;
             }
             let belongs = super::types::entity_belongs_to_window(&raw, window_key);

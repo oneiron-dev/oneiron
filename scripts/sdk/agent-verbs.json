@@ -3890,7 +3890,7 @@
     },
     {
       "name": "self.browser.observe",
-      "description": "Observes the current page of the run's browser session, in pages: an answer with next goes on, and observe with that cursor reads the next page.",
+      "description": "Observes the current page of the run's browser session, in pages read on with observe and an answer's next cursor; the verbs follow a tab an act opens, or a closed tab's opener, and name the move as switched.",
       "input": "oneiron_browser::ObserveInput",
       "output": "oneiron_browser::ObservationPage",
       "call": "driver.observe_page(input)?",
@@ -4110,7 +4110,7 @@
     },
     {
       "name": "self.desktop.observe",
-      "description": "Observes the current window of the run's desktop guest, in pages: an answer with next goes on, and observe with that cursor reads the next page.",
+      "description": "Observes the current window of the run's desktop guest, in pages read on with observe and an answer's next cursor; a tree walk cut short answers partial, and its last page's next walks the window again.",
       "input": "oneiron_browser::ObserveInput",
       "output": "oneiron_browser::ObservationPage",
       "call": "driver.observe_page(input)?",

@@ -16,6 +16,10 @@
 //! The same thread retries the setup window's waiting rows once a local
 //! embedding space move ends (OF-370): a received binding or retirement that
 //! waited on that move lands then, through the window's remat-marker drain.
+//!
+//! It also flushes a room's side rows marked while no loaded window carried
+//! them (FIX 3095): the room or thread root is queued by its own id, and its
+//! window alone is opened for them.
 
 use std::cell::Cell;
 use std::collections::BTreeSet;
@@ -31,6 +35,18 @@ use crate::sync::types::WindowKey;
 /// How long the mirror thread waits for rows before it checks that its
 /// manager still lives.
 const LIVENESS_POLL: Duration = Duration::from_secs(1);
+
+/// Whether a room or thread root queued by its own id, whose marked side
+/// rows no loaded window takes, has its window opened for them (FIX 3095; a
+/// call, canon is silent). Only the window of that carrier's learned month
+/// opens, never a scan of every month, and the default window count stays.
+/// `false` leaves the marks for that window's next open.
+const ROOM_FACT_COLD_FLUSH: bool = true;
+
+/// Whether a window opened only for a room fact flush stays loaded once its
+/// repair is durable (FIX 3095; a call, canon is silent). `false` unloads
+/// it, unless another holder still has it.
+const ROOM_FACT_KEEP_FLUSH_WINDOW: bool = false;
 
 thread_local! {
     /// Set while this thread writes the rows a sync import brought.
@@ -133,10 +149,17 @@ impl WindowManager {
     /// remote import of the same row lands in LMDB between the two. An import
     /// that reached the doc first, and waits on the lock, finds the mirror's
     /// carrier there and leaves LMDB alone (`carrier_superseded`).
-    fn mirror_committed_rows(&self, rows: &BTreeSet<EntityId>, edited: &BTreeSet<EntityId>) {
+    fn mirror_committed_rows(
+        self: &Arc<Self>,
+        rows: &BTreeSet<EntityId>,
+        edited: &BTreeSet<EntityId>,
+    ) {
         // FIX 1794: a committed room turn's door wrote side rows that ride
         // its room's, parent's and thread root's windows as well as its own.
         let carriers = crate::sync::room_facts::committed_carriers(&self.vault, rows);
+        if ROOM_FACT_COLD_FLUSH {
+            self.flush_cold_room_facts(rows, &carriers);
+        }
         for key in self.loaded_keys() {
             let Some(window) = self.window(&key) else {
                 continue;
@@ -175,6 +198,35 @@ impl WindowManager {
                 )
             {
                 tracing::warn!(window = %key, %error, "room side rows not mirrored into the live window");
+            }
+        }
+    }
+
+    /// Opens the window of each of `carriers` queued by its own id among
+    /// `rows` whose marked side rows no loaded window takes (FIX 3095). The
+    /// open mirrors them and routes the repair
+    /// ([`Self::open_window_for_room_fact_flush`]); a window it opened is
+    /// unloaded after ([`ROOM_FACT_KEEP_FLUSH_WINDOW`]).
+    fn flush_cold_room_facts(
+        self: &Arc<Self>,
+        rows: &BTreeSet<EntityId>,
+        carriers: &[(EntityId, u8)],
+    ) {
+        let loaded = self.loaded_keys();
+        for key in crate::sync::room_facts::cold_flush_windows(&self.vault, rows, carriers, &loaded)
+        {
+            let opened = match self.open_window_for_room_fact_flush(&key) {
+                Ok((_, opened)) => opened,
+                Err(error) => {
+                    tracing::warn!(window = %key, %error, "room side rows not flushed into their window");
+                    continue;
+                }
+            };
+            if opened
+                && !ROOM_FACT_KEEP_FLUSH_WINDOW
+                && let Err(error) = self.unload_window(&key)
+            {
+                tracing::debug!(window = %key, %error, "window opened for a room fact flush stays loaded");
             }
         }
     }
