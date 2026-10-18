@@ -718,6 +718,30 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CommReach"
+     ],
+     "path": "src/agent_dispatch/comm.rs",
+     "purpose": "FIX 1380: the comm dial",
+     "surface": {
+      "crate-vis": 16,
+      "enum": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/comm_widen.rs",
+     "purpose": "FIX 1380 phase 2: the one widen signal a running child sends when the comm dial refuses it, and the reach…",
+     "surface": {
+      "crate-vis": 16
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -858,9 +882,9 @@
      "path": "src/agent_dispatch/mod.rs",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "mod": 1,
-      "re-export": 21
+      "re-export": 22
      }
     },
     {
@@ -1121,7 +1145,7 @@
      "purpose": "Dispatch domain types, outcome enums, and pinned key/sentinel constants",
      "surface": {
       "const": 7,
-      "crate-vis": 23,
+      "crate-vis": 24,
       "enum": 7,
       "fn": 26,
       "struct": 9
@@ -24182,10 +24206,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/gate/message_address.rs",
+     "purpose": "FIX 1380: the refusal a `self.message` takes when the comm dial does not admit its address",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 63,
+      "crate-vis": 64,
       "re-export": 8
      }
     },
@@ -47566,6 +47600,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/comm_widen.rs",
+     "purpose": "FIX 1380 phase 2: a comm refusal raises the one widen ask to the parent",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -47721,7 +47765,7 @@
      "path": "src/task_verb/create_origin.rs",
      "purpose": "The creator a created TASK's realizing agent runs under (OF-532)",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -47974,7 +48018,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 34,
       "mod": 2,
       "re-export": 25
      }
@@ -51667,7 +51711,7 @@
      "purpose": "Direct leader chats: same-vault routing, shared-ancestor rule clamp and speaker scope",
      "surface": {
       "const": 1,
-      "crate-vis": 13,
+      "crate-vis": 17,
       "fn": 2,
       "struct": 1
      }
@@ -53624,7 +53668,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 40,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54247,7 +54291,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 134,
+     "files": 135,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54961,7 +55005,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 135,
+     "files": 136,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -55131,7 +55175,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3357,
+   "source_files": 3361,
    "test_files": 902
   },
   "oneiron-android": {
