@@ -33,15 +33,27 @@ impl NoteEditors {
         bytes: HeldBytes,
     ) -> MemoryResult<String> {
         let binding = EntityId::now();
-        self.held.lock().map_err(|_| MemoryError::bad_request("NOTE editor registry poisoned"))?
-            .insert((actor, binding), HeldEditor { _document: document, _bytes: bytes });
+        self.held
+            .lock()
+            .map_err(|_| MemoryError::bad_request("NOTE editor registry poisoned"))?
+            .insert(
+                (actor, binding),
+                HeldEditor {
+                    _document: document,
+                    _bytes: bytes,
+                },
+            );
         Ok(binding.to_hex())
     }
 
     pub(crate) fn close(&self, actor: EntityId, binding: &str) -> MemoryResult<bool> {
         let binding = EntityId::from_hex(binding)
             .map_err(|_| MemoryError::bad_request("invalid NOTE editor binding"))?;
-        Ok(self.held.lock().map_err(|_| MemoryError::bad_request("NOTE editor registry poisoned"))?
-            .remove(&(actor, binding)).is_some())
+        Ok(self
+            .held
+            .lock()
+            .map_err(|_| MemoryError::bad_request("NOTE editor registry poisoned"))?
+            .remove(&(actor, binding))
+            .is_some())
     }
 }

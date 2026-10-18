@@ -512,6 +512,8 @@ class Oneiron:
         @property
         def embedding_spaces(self) -> "Oneiron._VaultEmbeddingSpacesVerbs": ...
         @property
+        def gate(self) -> "Oneiron._VaultGateVerbs": ...
+        @property
         def settings(self) -> "Oneiron._VaultSettingsVerbs": ...
         @property
         def secrets(self) -> "Oneiron._VaultSecretsVerbs": ...
@@ -872,6 +874,23 @@ class Oneiron:
             """Stores one retrieval probe the owner or another model wrote: kind, query, family, targets and author."""
         def delete(self, spec: Facade.EmbeddingSpaceProbeDeleteRequest) -> Facade.EmbeddingSpaceProbeDeleted:
             """Removes one stored embedding space probe by its id."""
+    class _VaultGateVerbs:
+        @property
+        def policy(self) -> "Oneiron._VaultGatePolicyVerbs": ...
+        @property
+        def checker(self) -> "Oneiron._VaultGateCheckerVerbs": ...
+    class _VaultGatePolicyVerbs:
+        def get(self, spec: Facade.PolicyManifestRead) -> Facade.PolicyManifestsView:
+            """The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions."""
+        def put(self, spec: Facade.PolicyManifestPut) -> Facade.PolicyManifestReceipt:
+            """The owner installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions."""
+        def propose(self, spec: Facade.PolicyManifestPropose) -> Facade.PolicyManifestReceipt:
+            """Propose a Gate policy under the caller's own authority; even a tighter contribution remains untrusted and inert."""
+    class _VaultGateCheckerVerbs:
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.GateCheckerView:
+            """The owner reads the calibrated checker verdict role from the vault model manifest."""
+        def set(self, spec: Facade.GateCheckerSet) -> Facade.GateCheckerReceipt:
+            """The owner sets the calibrated checker model, slot, confidence floor and shadow or enforce mode without changing other model bindings."""
     class _VaultSettingsVerbs:
         @property
         def learning(self) -> "Oneiron._VaultSettingsLearningVerbs": ...

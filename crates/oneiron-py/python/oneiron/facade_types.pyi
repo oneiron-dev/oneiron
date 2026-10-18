@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 340 facade rows, 1347 declarations.
-Inputs: 297 of 340 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 297 of 340 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 345 facade rows, 1373 declarations.
+Inputs: 302 of 345 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 302 of 345 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 74; unread shapes: 0.
 """
 
@@ -2502,6 +2502,7 @@ class SharedEraseAskCloseRequest(TypedDict):
     act_id: NotRequired[str | None]
 class GuestRevokeRequest(TypedDict):
     grant_ref: EntityId
+    peer: NotRequired[str | None]
 GuestPactStanding = Literal["unpacted", "active", "suspended", "promoted", "disconnected", "dissolved"]
 NotRecallable = bool
 GuestCopyState = Literal["unknown"]
@@ -2514,6 +2515,9 @@ class GuestRevokeCourtesyTargetView(TypedDict):
     pact: str
     peer_vault_id: str
     epoch_cutoff: int
+    deletion_request_status: GuestDeletionRequestStatus
+    request: NotRequired[str | None]
+    error: NotRequired[str | None]
 class GuestRevokeResponse(TypedDict):
     grant_ref: EntityId
     guest_ref: EntityId
@@ -3454,6 +3458,85 @@ class EmbeddingSpaceProbeDeleteRequest(TypedDict):
     id: str
 class EmbeddingSpaceProbeDeleted(TypedDict):
     ok: bool
+class PolicyManifestRead(TypedDict):
+    manifest_ref: NotRequired[str | None]
+PolicyCriticality = Literal["normal", "critical"]
+PolicySensitivity = Literal["normal", "sensitive"]
+class PolicyAxes(TypedDict):
+    criticality: NotRequired[PolicyCriticality | None]
+    sensitivity: NotRequired[PolicySensitivity | None]
+class PolicyRule(TypedDict):
+    prefix: str
+    exact: NotRequired[bool]
+    axes: PolicyAxes
+PolicyCeiling = Literal["auto", "proposed"]
+class ActorCeiling(TypedDict):
+    actor_class: str
+    actor_ref: NotRequired[str | None]
+    ceiling: PolicyCeiling
+PolicySource = Literal["user_stated", "observed", "inferred", "generated", "imported", "tool_output"]
+SensitivityName = Literal["public", "private", "internal", "sensitive", "restricted"]
+SensitivityBand = int | SensitivityName
+class SourceTrustRow(TypedDict):
+    actor_ref: NotRequired[str | None]
+    max_auto_sensitivity: NotRequired[SensitivityBand | None]
+    auto: NotRequired[bool | None]
+    receipted: NotRequired[bool]
+    warned: NotRequired[bool]
+SourceTrust = SourceTrustRow | list[SourceTrustRow] | bool | SensitivityBand
+class PolicySignature(TypedDict):
+    alg: str
+    key_id: NotRequired[str | None]
+    sig: str
+class PolicyManifest(TypedDict):
+    schema_version: str
+    pack_id: str
+    pack_version: str
+    min_engine_version: str
+    defaults: PolicyAxes
+    rules: list[PolicyRule]
+    actor_ceilings: list[ActorCeiling]
+    source_trust: NotRequired[dict[str, SourceTrust]]
+    signature: NotRequired[PolicySignature | None]
+    signatures: NotRequired[list[PolicySignature]]
+    auto_checker: NotRequired[str | None]
+class PolicyManifestView(TypedDict):
+    manifest_ref: str
+    body_hash: str
+    trusted: bool
+    quarantined: bool
+    manifest: PolicyManifest
+class PolicyManifestsView(TypedDict):
+    default_manifest_ref: str
+    read_frontier_hash: str
+    manifests: list[PolicyManifestView]
+class PolicyManifestPut(TypedDict):
+    manifest_ref: NotRequired[str | None]
+    expected_body_hash: NotRequired[str | None]
+    manifest: PolicyManifest
+class PolicyManifestReceipt(TypedDict):
+    manifest: PolicyManifestView
+    approval: PolicyCeiling
+    receipt_ref: str
+    read_frontier_hash: str
+class PolicyManifestPropose(TypedDict):
+    manifest: PolicyManifest
+ModelId = str
+ModelSlot = Literal["llm", "embedder", "oneironer"]
+ConfidenceBand = Literal["low", "medium", "high", "certain"]
+VerdictMode = Literal["shadow", "enforce"]
+class VerdictBinding(TypedDict):
+    model: ModelId
+    slot: ModelSlot
+    floor: ConfidenceBand
+    mode: VerdictMode
+class GateCheckerView(TypedDict):
+    binding: NotRequired[VerdictBinding | None]
+class GateCheckerSet(TypedDict):
+    binding: VerdictBinding
+class GateCheckerReceipt(TypedDict):
+    binding: VerdictBinding
+    receipt_ref: str
 class LearningSettingsRequest(TypedDict):
     key: NotRequired[str | None]
 class LearningSettingSpecView(TypedDict):
@@ -5145,7 +5228,6 @@ class RetryableLlmErrorKeptOnDevice(TypedDict):
     KeptOnDevice: RetryableLlmErrorKeptOnDeviceBody
 RetryableLlmError = Literal["ServerError", "Timeout", "StreamCut"] | RetryableLlmErrorRateLimited | RetryableLlmErrorQuotaSpent | RetryableLlmErrorKeptOnDevice
 LlmCapability = Literal["streaming", "tool_calling", "tool_results", "image_input", "json_response", "reasoning", "voice", "assistant_prefill", "audio_input"]
-ModelId = str
 class UnsupportedCapability(TypedDict):
     capability: LlmCapability
     model: NotRequired[ModelId | None]

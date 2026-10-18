@@ -552,6 +552,9 @@ class Oneiron:
         def embedding_spaces(self) -> "Oneiron._VaultEmbeddingSpacesVerbs":
             return Oneiron._VaultEmbeddingSpacesVerbs(self._client)
         @property
+        def gate(self) -> "Oneiron._VaultGateVerbs":
+            return Oneiron._VaultGateVerbs(self._client)
+        @property
         def settings(self) -> "Oneiron._VaultSettingsVerbs":
             return Oneiron._VaultSettingsVerbs(self._client)
         @property
@@ -1156,6 +1159,36 @@ class Oneiron:
         def delete(self, spec):
             """Removes one stored embedding space probe by its id."""
             return json.loads(_translate(lambda: self._client.vault_embedding_spaces_probes_delete(json.dumps(spec))))
+    class _VaultGateVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def policy(self) -> "Oneiron._VaultGatePolicyVerbs":
+            return Oneiron._VaultGatePolicyVerbs(self._client)
+        @property
+        def checker(self) -> "Oneiron._VaultGateCheckerVerbs":
+            return Oneiron._VaultGateCheckerVerbs(self._client)
+    class _VaultGatePolicyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions."""
+            return json.loads(_translate(lambda: self._client.vault_gate_policy_get(json.dumps(spec))))
+        def put(self, spec):
+            """The owner installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions."""
+            return json.loads(_translate(lambda: self._client.vault_gate_policy_put(json.dumps(spec))))
+        def propose(self, spec):
+            """Propose a Gate policy under the caller's own authority; even a tighter contribution remains untrusted and inert."""
+            return json.loads(_translate(lambda: self._client.vault_gate_policy_propose(json.dumps(spec))))
+    class _VaultGateCheckerVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec=None):
+            """The owner reads the calibrated checker verdict role from the vault model manifest."""
+            return json.loads(_translate(lambda: self._client.vault_gate_checker_get(json.dumps({} if spec is None else spec))))
+        def set(self, spec):
+            """The owner sets the calibrated checker model, slot, confidence floor and shadow or enforce mode without changing other model bindings."""
+            return json.loads(_translate(lambda: self._client.vault_gate_checker_set(json.dumps(spec))))
     class _VaultSettingsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

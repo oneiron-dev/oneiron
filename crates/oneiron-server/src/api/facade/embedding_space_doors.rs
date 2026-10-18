@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use oneiron::EntityId;
 use oneiron::embed::{SpaceMove, SpaceProbe};
-use oneiron::memory::{MemoryError, MemoryResult};
+use oneiron::memory::MemoryError;
 use oneiron::task_verb::sdk::{
     self, EmbeddingSpaceBindRequest, EmbeddingSpaceCandidateRequest, EmbeddingSpaceDeclareRequest,
     EmbeddingSpaceMoveChecked, EmbeddingSpaceMoveRequest, EmbeddingSpaceProbe,
@@ -25,7 +25,7 @@ use oneiron::task_verb::sdk::{
     EmbeddingSpaceProbes, EmbeddingSpaceRequest, EmbeddingSpacesView, EmptyRequest,
 };
 
-use super::host_doors::Listed;
+use super::host_doors::{Listed, MaybeListed};
 use super::legal_hold_doors::{as_owner, as_owner_naming};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -134,26 +134,33 @@ pub(crate) async fn vault_embedding_spaces_move(
 }
 
 /// `vault.embedding_spaces.move_check`: runs the move's probes now, through
-/// both spaces' towers, and acts on the reading.
+/// both spaces' towers, and acts on the reading. Beside it, each live
+/// probe's family and targets and every hit its reciprocal ranks stand on;
+/// a check it waited on lists none (the move's stored check is a side
+/// table), and a candidate still filling lists `None`.
 pub(crate) async fn vault_embedding_spaces_move_check(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: EmbeddingSpaceCandidateRequest,
-) -> MemoryResult<EmbeddingSpaceMoveChecked> {
+) -> MaybeListed<EmbeddingSpaceMoveChecked> {
     let runtime = tokio::runtime::Handle::current();
-    as_owner(
+    let answer = as_owner(
         server,
         auth,
         "vault.embedding_spaces.move_check",
         move |server, owner| {
             let moving = sdk::find_embedding_space_move(server.vault(), owner, &input.candidate)?;
             server
-                .check_space_move(&runtime, &moving)
-                .map(EmbeddingSpaceMoveChecked::from)
+                .check_space_move_listing(&runtime, &moving)
+                .map(|(outcome, rows)| (EmbeddingSpaceMoveChecked::from(outcome), rows))
                 .map_err(|refusal| MemoryError::bad_request(refusal.to_string()))
         },
     )
-    .await
+    .await;
+    match answer {
+        Ok((checked, rows)) => (Ok(checked), rows),
+        Err(refusal) => (Err(refusal), Some(Vec::new())),
+    }
 }
 
 /// `vault.embedding_spaces.move_approve`: the owner's yes over a check that
