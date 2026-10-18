@@ -300,6 +300,7 @@ mod sdk_off_record;
 mod sdk_record_erase;
 mod sdk_reply;
 mod sdk_research;
+mod sdk_retrieval;
 mod sdk_residence;
 mod sdk_scratchpad;
 mod sdk_secret;

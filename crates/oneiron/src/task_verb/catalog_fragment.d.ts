@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 599 code-mode rows (578 host rows, 21 run rows), 2121 declarations.
-// Replies: 531 fully typed, 64 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 609 code-mode rows (588 host rows, 21 run rows), 2173 declarations.
+// Replies: 536 fully typed, 69 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 94; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 95; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -306,7 +306,9 @@ declare namespace Sdk {
   type MediaQueryKind = "text" | "image" | "audio";
   type ContextPackMediaQuery = { space: string; mime: string; bytes_b64: string; kinds?: MediaQueryKind[] };
   type QueryAffect = { valence: number; arousal: number; dominance: number };
-  type RecallRequest = { query: string; effort?: RecallEffort | null; scope?: RecallScope | null; limit?: number | null; format?: string | null; as_of?: number | null; deadline_ms?: number | null; media?: ContextPackMediaQuery | null; query_affect?: QueryAffect | null };
+  type RetrievalTurn = { turn_id: number[]; episode_id: number[]; turn_idx: number };
+  type RecallTelemetry = { capture_trace?: boolean; turn?: RetrievalTurn | null };
+  type RecallRequest = { query: string; effort?: RecallEffort | null; scope?: RecallScope | null; limit?: number | null; format?: string | null; as_of?: number | null; deadline_ms?: number | null; media?: ContextPackMediaQuery | null; query_affect?: QueryAffect | null; telemetry?: RecallTelemetry | null };
   type MemoryProvenance = { source: string; source_revision_ids: string[]; evidence_turn_ids: string[] };
   type MemoryStaleStamp = { stale_since?: number | null; age_secs?: number | null; reason: string; pact_epoch: number };
   type CitedMessage = { short_id: string; value_text: string; record?: RecordRef | null };
@@ -322,7 +324,39 @@ declare namespace Sdk {
   type RetrievalMeta = { quality?: RetrievalQuality; degradation?: RetrievalDegradation[]; confidence_adjustment?: ConfidenceAdjustment; sparse?: boolean | null; total_candidates: number; claims_returned: number; deep_pending?: boolean | null; partial?: boolean; temporal_hints?: TemporalHintReport[]; rerank?: RerankReport | null; limit_clamped?: boolean };
   type ReadScope = { entity_types?: number[] | null; max_sensitivity_band: number; include_stale: boolean; min_confidence: number; min_salience: number; deny_all: boolean };
   type ScopedReadReceipt = { requested: ReadScope; actor_ceiling: ReadScope; applied: ReadScope; narrowed_axes: string[]; suppressed_count: number; replan_hint: string[] };
-  type MemoryPack = { items: MemoryItem[]; scope_honesty: ScopeHonesty; retrieval_meta: RetrievalMeta; pack_version: number; rendered?: string | null; narrowing: ScopedReadReceipt };
+  type RetrievalRunId = { bytes: number[] };
+  type MemoryPack = { items: MemoryItem[]; scope_honesty: ScopeHonesty; retrieval_meta: RetrievalMeta; pack_version: number; rendered?: string | null; narrowing: ScopedReadReceipt; retrieval_run_id?: RetrievalRunId | null };
+  type RetrievalRunsRequest = { limit?: number | null };
+  type RetrievalAction = "pipeline" | "context_pack" | "vault_search" | "graph_fs_coreutils" | "speculative";
+  type RetrievalState = { top_score_norm?: number; score_gap_ratio?: number; mean_score_norm?: number; entity_coverage?: number; novelty_vs_prior?: number; signal_agreement?: number; result_count?: number; iteration?: number; budget_remaining?: number; frontier_size?: number; avg_edge_weight?: number; graph_degree?: number; temporal_spread?: number; hops?: number; last_action?: number; intent_class?: number };
+  type RetrievalPolicyIdentity = { user: EntityId; persona?: EntityId | null };
+  type RetrievalPolicyEnvelope = { max_steps: number; max_hops: number; temporal_rounds: number };
+  type RetrievalPolicyAction = "search" | "expand" | "widen_temporal" | "stop" | "abstain";
+  type RetrievalPolicyTier = "user" | "persona" | "global" | "seed";
+  type RetrievalPolicyDecision = { state: RetrievalState; action: RetrievalPolicyAction; tier: RetrievalPolicyTier };
+  type RetrievalPolicyTrace = { identity: RetrievalPolicyIdentity; envelope: RetrievalPolicyEnvelope; bandit_enabled: boolean; decisions: RetrievalPolicyDecision[] };
+  type RetrievalReplayInputs = { query_ref?: string | null; config: unknown; corpus_snapshot_ref?: string | null };
+  type RetrievalSignal = "vector" | "text" | "phonetic" | "temporal" | "ppr" | "recency" | "salience" | "confidence" | "gravity" | "rerank" | "hyde" | "hyde_retry" | "media_vector";
+  type RetrievalScoreComponent = { signal: RetrievalSignal; rank: number; score: number };
+  type RetrievalScoreBreakdown = { result_id: number[]; final_rank: number; final_score: number; components: RetrievalScoreComponent[]; access_factor?: number | null };
+  type RetrievalTraceForkHash = number[];
+  type RetrievalTraceStage = "per_channel" | "fused" | "blended" | "reranked" | "final";
+  type RetrievalTraceChannelRecord = { stage: RetrievalTraceStage; signal: RetrievalSignal; candidates: RetrievalScoreBreakdown[] };
+  type RetrievalTraceStageRecord = { stage: RetrievalTraceStage; candidates: RetrievalScoreBreakdown[] };
+  type RetrievalTrace = { fork_hash?: RetrievalTraceForkHash; per_channel: RetrievalTraceChannelRecord[]; fused: RetrievalTraceStageRecord; blended: RetrievalTraceStageRecord; reranked: RetrievalTraceStageRecord; final: RetrievalTraceStageRecord; fusion_list_length?: number };
+  type RetrievalRunRecord = { version: number; run_id: RetrievalRunId; action: RetrievalAction; started_at: number; elapsed_us: number; state?: RetrievalState; policy_trace?: RetrievalPolicyTrace | null; replay_inputs?: RetrievalReplayInputs | null; turn?: RetrievalTurn | null; signals: RetrievalSignal[]; result_ids: number[][]; score_breakdown: RetrievalScoreBreakdown[]; total_in_scope: number; claims_suppressed: number; empty_reason?: string | null; trace?: RetrievalTrace | null; quality?: RetrievalQuality | null; degradation?: RetrievalDegradation[]; confidence_adjustment?: ConfidenceAdjustment | null };
+  type RetrievalRewardEvidence = { retrievalRunIds: RetrievalRunId[]; turn_id: number[]; gate_score: number; confirmed_fact_hit: boolean; latency_scale_us: number; cost_weight: number };
+  type RetrievalOutcomeRecord = { version: number; run_id: RetrievalRunId; key: string; reward?: number | null; accepted?: boolean | null; metadata: Record<string, string>; updated_at: number; reward_evidence?: RetrievalRewardEvidence | null };
+  type RetrievalRunEvidence = { run: RetrievalRunRecord; outcomes: RetrievalOutcomeRecord[] };
+  type RetrievalRunRequest = { run_id: RetrievalRunId };
+  type RetrievalTurnRequest = { turn_id: number[] };
+  type RetrievalOutcome = { run_id: RetrievalRunId; key: string; reward?: number | null; accepted?: boolean | null; metadata: Record<string, string> };
+  type RetrievalEndOutcome = { retrievalRunIds: RetrievalRunId[]; key: string; turn_id: number[]; gate_score: number; confirmed_fact_hit: boolean; latency_scale_us: number; cost_weight: number; metadata: Record<string, string> };
+  type RetrievalTraceRequest = { fork_hash: number[] };
+  type RetrievalDiagnosticRequest = { run_ids: RetrievalRunId[] };
+  type RetrievalDiagnosticExport = { contract_version: string; runs: RetrievalRunEvidence[] };
+  type RetrievalReplayRun = { source_run_id: RetrievalRunId; turn?: RetrievalTurn | null; state: RetrievalState; result_ids: number[][]; pack: RetrievalScoreBreakdown[]; trace?: RetrievalTrace | null };
+  type RetrievalDiagnosticReplay = { contract_version: string; runs: RetrievalReplayRun[] };
   type ExportOptions = { format?: string | null; include_secrets?: boolean | null };
   type MemoryExport = { format: string; archive: string; digest: string };
   type ScopeAxis<T> = { kind: "bottom" } | { kind: "all" } | { kind: "some"; values: T[] };
@@ -363,8 +397,6 @@ declare namespace Sdk {
   type CallOutcome = "ok" | { refused: { code: string } };
   type CallReceipt = { receipt_ref: string; at: number; transport: CallTransport; verb: string; actor_ref: string; actor_class: string; credential_ref?: string | null; outcome: CallOutcome; request_digest: string; result_digest?: string | null; action_digest?: string | null; served: string[]; served_records?: RecordRef[] };
   type ExplainMemoryRequest = { entity: string; session_id?: string | null };
-  type RetrievalSignal = "vector" | "text" | "phonetic" | "temporal" | "ppr" | "recency" | "salience" | "confidence" | "gravity" | "rerank" | "hyde" | "hyde_retry" | "media_vector";
-  type RetrievalScoreComponent = { signal: RetrievalSignal; rank: number; score: number };
   type ExplainScoreEvidence = { result_id: string; final_rank: number; final_score: number; access_factor?: number | null; components: RetrievalScoreComponent[] };
   type ExplainMemoryReply = { id: string; run_id?: string | null; rank?: number | null; neighbor: boolean; tier?: string | null; hook?: string | null; score?: ExplainScoreEvidence | null };
   type ExplainGateRequest = { receipt: string };
@@ -1302,6 +1334,27 @@ declare namespace Sdk {
   type TaskTypeTreePinReceipt = { fork_ref: EntityId; stored: TaskTypeTreeView; in_force: boolean };
   type TaskTypeTreeRead = { project_ref?: EntityId | null; tree_version?: number | null };
   type TaskTypeTreeReadReply = { project_ref?: EntityId | null; in_force_skill_ref?: EntityId | null; tree?: TaskTypeTreeView | null };
+  type PlannedSpawnRead = { spawn_ref: EntityId };
+  type SpawnPhase = "reserved" | "planned" | "launched" | "in_doubt";
+  type CoordinationPatternView = "solo" | "ceo_decides" | "committee" | "vote" | "market" | "rotation";
+  type SkillRevisionView = { skill_ref: EntityId; version: string };
+  type ProviderPinView = { rung: DecisionRung; model: string; version: string };
+  type PlanObservation = { type_ref: TypeStamp; model: string; width: number; pattern: CoordinationPatternView; hard_cap_units?: number | null; expected_spend_units: number; available_units?: number | null; over_budget: boolean; fitted_to_budget: boolean; why: string[]; team_shape?: SkillRevisionView | null; pattern_skill?: SkillRevisionView | null; rung_skill?: SkillRevisionView | null; rung_providers: ProviderPinView[] };
+  type LaunchedMember = { attempt_ref: EntityId; state: string; type_ref: TypeStamp; team_ref?: string | null };
+  type TeamAxis = "converge" | "diverge";
+  type ResolvedTeam = { type_ref: TypeStamp; pattern: CoordinationPatternView; width: number; model: string; axis?: TeamAxis | null; project_ref?: EntityId | null; root_attempt_ref: EntityId; member_attempt_refs: EntityId[]; team_ref?: string | null };
+  type TeamBindingView = { team_ref: string; pattern: CoordinationPatternView; leader: EntityId; member_attempt_refs: EntityId[]; proposal_refs: string[]; root_task?: string | null; started_at: number };
+  type TeamReceiptView = { team_ref: string; type_ref: TypeStamp; pattern: CoordinationPatternView; pattern_skill?: SkillRevisionView | null; axis: TeamAxis; width: number; models: string[]; outcome_receipt?: string | null };
+  type RouteStampState = "unstamped_before_s5" | "stamped";
+  type RouteObservation = { run_ref: EntityId; type_ref?: TypeStamp | null; stamp_state: RouteStampState; model: string; effort: ReasoningEffort; why: string; reused: boolean };
+  type CriticAssociation = "branch_attempt" | "canonical_run_ref";
+  type CriticObservation = { run_ref: string; branch_attempt_ref: EntityId; association: CriticAssociation; artifact_id: string; target_ref: string; type_ref: TypeStamp; lens_ref: EntityId; lens_id: string; executor: string; axis: string; verdict: string };
+  type DoorsLearningCellView = { predicate: string; subject: EntityId; executor: string; type_ref: TypeStamp; axis: string };
+  type BorrowedCellView = { predicate: string; subject: EntityId; executor?: string | null; type_ref?: TypeStamp | null; axis?: string | null };
+  type DoorsLearningEvidenceView = { receipt_ref: string; at: number; anchor_kind: string; weight: number };
+  type LearningObservation = { cell: DoorsLearningCellView; mean: number; own: boolean; own_runs: number; prior_origin: string; prior_weight_runs: number; borrowed_from?: BorrowedCellView | null; untested: boolean; window_half_life_secs: number; estimator_version: number; evidence: DoorsLearningEvidenceView[] };
+  type ObservationIssue = { kind: "stamp_mismatch"; consumer: string; reference: string; expected: TypeStamp; actual: TypeStamp } | { kind: "missing_binding"; reference: string } | { kind: "several_teams"; team_refs: string[] } | { kind: "team_mismatch"; member_ref: EntityId; expected: string; actual?: string | null } | { kind: "unavailable"; consumer: string; reason: string };
+  type PlannedSpawnObservation = { spawn_ref: EntityId; phase: SpawnPhase; type_ref: TypeStamp; plan?: PlanObservation | null; launched: LaunchedMember[]; resolved?: ResolvedTeam | null; binding?: TeamBindingView | null; receipt?: TeamReceiptView | null; routes: RouteObservation[]; critics: CriticObservation[]; learning: LearningObservation[]; issues: ObservationIssue[] };
   type WorkspaceRosterPreset = { workspace_ref: string; workspace_vault_id: string; org_ref: EntityId; venture_name: string; house_display_name?: string | null; house_actor_ref: EntityId; house_identity_ref?: EntityId | null };
   type WorkCompanionPolicy = "choose" | "suggest" | "require";
   type WorkspacePresetRequest = { preset: WorkspaceRosterPreset; work_companion?: WorkCompanionPolicy };
@@ -2123,7 +2176,6 @@ declare namespace Sdk {
   type TeamPattern = "ceo_decides" | "committee" | "vote" | "market" | "rotation";
   type TeamMemberAnswer = { agent: string; attemptRef?: string | null; proposalRef?: string | null };
   type TeamRunAnswer = { verb: "started"; teamRef: string; pattern: TeamPattern; members: TeamMemberAnswer[] } | { verb: "recorded"; teamRef: string; pattern: TeamPattern; width: number; models: string[]; patternSkill?: string | null; replay: boolean };
-  type TeamAxis = "converge" | "diverge";
   type TeamDecisionInput = { kind: "leader" } | { kind: "chair" } | { kind: "vote"; tally: Record<string, number> } | { kind: "referee"; rule: string; signedAt: number };
   type TeamCoverageInput = { cellsFilled: number; cellsTotal: number };
   type TeamRecordInput = { teamRef: string; members: string[]; axis: TeamAxis; decidedBy: TeamDecisionInput; roles?: Record<string, number> | null; coverage?: TeamCoverageInput | null };
@@ -2441,6 +2493,10 @@ declare const vault: Sdk.VaultHost & {
     export_pack(input: Sdk.AgentPackExportRequest): Promise<Sdk.AgentPackExport | StoredResult>;
     /** The owner reads one saved agent composition and its version and approval state. */
     get(input: Sdk.AgentDefinitionRequest): Promise<Sdk.AgentDefinitionView | StoredResult>;
+    spawn: {
+      /** The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning. */
+      get(input: Sdk.PlannedSpawnRead): Promise<Sdk.PlannedSpawnObservation | StoredResult>;
+    };
     /** The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision. */
     update(input: Sdk.AgentDefinitionUpdateRequest): Promise<Sdk.AgentDefinitionView | StoredResult>;
   };
@@ -3339,6 +3395,28 @@ declare const vault: Sdk.VaultHost & {
     slice(input: Sdk.ResultSliceRequest): Promise<Sdk.ResultSliceView | StoredResult>;
     /** The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run. */
     status(input: Sdk.ResultRunRequest): Promise<Sdk.ResultRunStatus | StoredResult>;
+  };
+  retrieval: {
+    /** The owner exports finalized run evidence without query or pack text, raw frontier samples, trace keys or free-form outcome metadata. */
+    export(input: Sdk.RetrievalDiagnosticRequest): Promise<Sdk.RetrievalDiagnosticExport | StoredResult>;
+    outcomes: {
+      /** The owner records a gate-attributed turn outcome for its exact contributing retrievalRunIds; the engine validates the links and shapes the reward. */
+      end(input: Sdk.RetrievalEndOutcome): Promise<Sdk.RetrievalRunEvidence[] | StoredResult>;
+      /** The owner attaches an explicit observation to one local serving run; raw reward stays telemetry, never a gated training label. */
+      put(input: Sdk.RetrievalOutcome): Promise<Sdk.RetrievalOutcomeRecord[] | StoredResult>;
+    };
+    /** Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle. */
+    recall(input: Sdk.RecallRequest): Promise<Sdk.MemoryPack | StoredResult>;
+    /** The owner replays recorded state, ordered pack scores and trace from exact finalized runs; no fresh search, clock or outcome-derived feature is used. */
+    replay(input: Sdk.RetrievalDiagnosticRequest): Promise<Sdk.RetrievalDiagnosticReplay | StoredResult>;
+    /** The owner reads one finalized local serving run, its turn, policy state, trace and explicit outcomes; an unknown run reads as none. */
+    run(input: Sdk.RetrievalRunRequest): Promise<Sdk.RetrievalRunEvidence | null | StoredResult>;
+    /** The owner reads finalized local retrieval runs and their independent outcome sidecars, newest first. */
+    runs(input: Sdk.RetrievalRunsRequest): Promise<Sdk.RetrievalRunEvidence[] | StoredResult>;
+    /** The owner reads an opt-in trace by its vault-local keyed fork hash; hashes are never comparable across vaults. */
+    trace(input: Sdk.RetrievalTraceRequest): Promise<Sdk.RetrievalTrace | null | StoredResult>;
+    /** The owner reads the independent finalized retrieval runs linked to one exact turn, in recorded order. */
+    turn(input: Sdk.RetrievalTurnRequest): Promise<Sdk.RetrievalRunEvidence[] | StoredResult>;
   };
   rooms: {
     /** Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed. */

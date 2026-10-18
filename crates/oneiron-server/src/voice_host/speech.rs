@@ -76,8 +76,12 @@ pub(super) struct PlayoutGate {
 
 impl PlayoutGate {
     pub(super) fn is_current(&self) -> bool {
-        let Some(session) = self.session.upgrade() else { return false };
-        let Ok(state) = session.lock() else { return false };
+        let Some(session) = self.session.upgrade() else {
+            return false;
+        };
+        let Ok(state) = session.lock() else {
+            return false;
+        };
         state.core.accepts_pcm(self.generation)
     }
 }
@@ -95,7 +99,10 @@ impl PlayoutFrame {
     }
 
     fn public_gate(&self) -> PlayoutGate {
-        PlayoutGate { generation: self.frame.generation, session: self.session.clone() }
+        PlayoutGate {
+            generation: self.frame.generation,
+            session: self.session.clone(),
+        }
     }
 
     pub(super) fn public_parts(&self) -> Option<(&PcmFrame, PlayoutGate)> {
