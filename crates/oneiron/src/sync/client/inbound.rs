@@ -211,7 +211,8 @@ impl SyncClient {
         let key = WindowKey::try_new(window_key).ok_or(TransportError::InvalidWindowKey)?;
         // A window the server stopped pushing to this socket changed. An owner-lane device that
         // follows it asks for it again, and the request subscribes it again; anything else reads
-        // the notice as nothing, since the server may not know what this device follows.
+        // the notice as nothing, since the server may not know what this device follows. A world
+        // window is never asked of a home that may not read the world (FIX 922 item 11).
         if sub_tag == window_sub_tags::WINDOW_INVALIDATE {
             if !payload.is_empty() {
                 return Err(TransportError::InvalidPayload(
@@ -221,6 +222,7 @@ impl SyncClient {
             if self.config.federation_peer.is_some()
                 || self.config.residence_mode == SyncResidenceMode::Opened
                 || !Self::follows_window(&key, &self.effective_worlds()?)
+                || !self.home_may_request(&key)
             {
                 return Ok(Vec::new());
             }
@@ -281,6 +283,11 @@ impl SyncClient {
                 }
                 // The setup window's catch-up asks for the window only once the home granted it.
                 if sub_tag == window_sub_tags::PROMOTION_GRANTED && !catch_up {
+                    return Ok(Vec::new());
+                }
+                // Nor is the vector asked of a home that may not read the
+                // window's world (FIX 922 item 11).
+                if !self.home_may_request(&key) {
                     return Ok(Vec::new());
                 }
                 let window = self.ensure_window(window_key)?;

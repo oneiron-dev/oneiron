@@ -2287,6 +2287,7 @@
      "path": "src/authority/federation_activation.rs",
      "purpose": "Grant activation under the folded pact states",
      "surface": {
+      "crate-vis": 1,
       "fn": 2
      }
     },
@@ -2448,7 +2449,7 @@
      "surface": {
       "const": 3,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 3
      }
     },
@@ -2712,7 +2713,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "re-export": 39
      }
     },
@@ -16422,7 +16423,7 @@
      "path": "src/conversation_dag/quote.rs",
      "purpose": "Quote spans: a transient scalar selection over one MESSAGE becomes an engine-issued anchor in the reply's…",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "enum": 1,
       "struct": 1
      }
@@ -22059,6 +22060,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/stack_floor.rs",
+     "purpose": "The native stack a callable skill's call leaves its thread (FIX 600)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -22923,6 +22934,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/foreign_world.rs",
+     "purpose": "Where a guest's content lands here (FIX 3497)",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -23016,9 +23038,9 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 23,
       "mod": 2,
-      "re-export": 16
+      "re-export": 17
      }
     },
     {
@@ -24020,7 +24042,7 @@
      "path": "src/gate/mail_policy.rs",
      "purpose": "Vault-resident native-mail posture and CID-5 graduation policy rows",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -24312,7 +24334,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gate/resolution/manifest_narrowing.rs",
@@ -24397,7 +24419,7 @@
      "path": "src/gate/room_policy.rs",
      "purpose": "Typed room authority policy rows",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -37365,7 +37387,7 @@
      "path": "src/receipt/reference_refusal.rs",
      "purpose": "Reference-refusal receipts (OF-063): a record ref a write named does not resolve for its writer",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -41147,7 +41169,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/skill/call.rs",
@@ -44982,7 +45004,7 @@
      "path": "src/sync/client/base.rs",
      "purpose": "SyncClient construction, window and ephemeral accessors, and root persistence",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 14,
       "fn": 16,
       "struct": 1
      }
@@ -45006,7 +45028,7 @@
      "path": "src/sync/client/federated.rs",
      "purpose": "Federated admission and staged vault-import confirmation",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 5
      }
@@ -45080,7 +45102,7 @@
       "crate-vis": 5,
       "enum": 2,
       "fn": 7,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 3
      }
     },
@@ -45104,7 +45126,7 @@
      "path": "src/sync/client/residence/bundle.rs",
      "purpose": "The vault's sealed cloud bundle through the home (DEC-0005 \"Sealed copies\", FIX 922)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 2,
       "struct": 1
      }
@@ -45120,6 +45142,17 @@
      "surface": {
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/residence/kit_fetch.rs",
+     "purpose": "A restore's read of the sealed cloud bundle from the home with the kit alone (FIX 922): no session, slip or…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -45958,7 +45991,7 @@
       "const": 2,
       "crate-vis": 9,
       "fn": 14,
-      "re-export": 9,
+      "re-export": 10,
       "struct": 2
      }
     },
@@ -45995,6 +46028,7 @@
      "kind": "src",
      "notable": [
       "SealedBundleEntry",
+      "SealedBundleKitRoot",
       "SealedBundleObject",
       "SealedBundleStage"
      ],
@@ -46002,9 +46036,10 @@
      "purpose": "The home's custody of the vault's sealed cloud bundle (DEC-0005 \"Sealed copies\", FIX 922)",
      "surface": {
       "const": 2,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 12,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -46043,6 +46078,20 @@
      "purpose": "Discover locally held world/month partitions without loading their Docs",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "KitBundleFetch"
+     ],
+     "path": "src/sync/residence/kit_fetch.rs",
+     "purpose": "The kit door to the home's sealed cloud bundle (FIX 922; owner ruling 10-18: the recovery kit alone must…",
+     "surface": {
+      "const": 3,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -46106,7 +46155,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/room_turns.rs",
@@ -46122,7 +46171,7 @@
      "path": "src/sync/row_birth.rs",
      "purpose": "Rule A row births on sync",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -46145,7 +46194,7 @@
      "path": "src/sync/selector/admission.rs",
      "purpose": "Federated import admission: window admit, claim revalidation, entity copy, authority-log door, and tombstone…",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 26,
       "enum": 1,
       "fn": 2
      }
@@ -53797,7 +53846,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 23,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -53853,7 +53902,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 34,
+     "files": 35,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54560,7 +54609,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 168,
+     "files": 170,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54758,7 +54807,7 @@
    },
    "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3330,
+   "source_files": 3334,
    "test_files": 902
   },
   "oneiron-android": {
@@ -57691,7 +57740,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 50,
+      "const": 51,
       "crate-vis": 1
      }
     },
@@ -60004,6 +60053,7 @@
       "XlsxChange",
       "XlsxLock",
       "XlsxName",
+      "XlsxProjection",
       "XlsxSheet",
       "XlsxSheetPlan",
       "XlsxSheetVisibility",
@@ -60019,7 +60069,7 @@
       "enum": 5,
       "fn": 16,
       "re-export": 2,
-      "struct": 9
+      "struct": 10
      }
     },
     {
@@ -67773,7 +67823,7 @@
      "path": "src/api/owner_routes.rs",
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -68234,6 +68284,16 @@
      "purpose": "Reactive local-first read contract (ONE-1437 — the on-device half of OF-241)",
      "surface": {
       "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/recovery_bundle.rs",
+     "purpose": "The kit door to the vault's sealed cloud bundle (FIX 922): an install that holds the recovery kit and no…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -74137,7 +74197,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 315,
+     "files": 316,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -74545,7 +74605,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 631,
+   "source_files": 632,
    "test_files": 182
   },
   "oneiron-spawn": {
