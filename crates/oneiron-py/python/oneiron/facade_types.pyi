@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 434 facade rows, 1653 declarations.
-Inputs: 386 of 434 fully typed, 48 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 384 of 434 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 437 facade rows, 1663 declarations.
+Inputs: 389 of 437 fully typed, 48 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 386 of 437 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 77; unread shapes: 0.
 """
 
@@ -7938,6 +7938,34 @@ class DreamerAttemptView(TypedDict):
     last_error: NotRequired[str | None]
     created_at: int
     updated_at: int
+class SignalExtractionRequest(TypedDict):
+    turn_refs: list[str]
+class SignalExtractionTicket(TypedDict):
+    job_refs: list[str]
+class SignalExtractionResultRequest(TypedDict):
+    job_ref: str
+class SignalExtractionMessage(TypedDict):
+    message_ref: str
+    byte_range: tuple[int, int]
+    revision: str
+class SignalExtractionSource(TypedDict):
+    source_ref: str
+    claim_ref: NotRequired[str | None]
+    byte_range: NotRequired[tuple[int, int] | None]
+    content_hash: str
+    messages: list[SignalExtractionMessage]
+class ProspectiveQueryHint(TypedDict):
+    hint_ref: str
+    target_ref: str
+    query: str
+    source: str
+class SignalExtractionClaim(TypedDict):
+    claim: ClaimView
+    sources: list[SignalExtractionSource]
+    prospective_queries: list[ProspectiveQueryHint]
+class SignalExtractionResult(TypedDict):
+    job: DreamerAttemptView
+    claims: list[SignalExtractionClaim]
 SelfHeldShape = Literal["dedicated_address", "dedicated_handle", "shared_presence"]
 class ChannelIdentityBindingActor(TypedDict):
     kind: Literal["actor"]
@@ -8417,6 +8445,15 @@ class FoldHistory(TypedDict):
     epochs: list[FoldHistoryEpoch]
     steps: list[FoldHistoryStep]
     next: NotRequired[int | None]
+class LiveRunRequest(TypedDict, Generic[T]):
+    live_run: str
+    spec: T
+class MemorySupersedeInput(TypedDict):
+    newId: str
+    oldId: str
+    now: int
+class MemoryWriteOutput(TypedDict):
+    id: EntityId
 FoldMarkRequest = TypedDict("FoldMarkRequest", {"live_run": str, "from": int, "through": int, "note": NotRequired[str | None]})
 FoldMarked = TypedDict("FoldMarked", {"fold": str, "from": int, "through": int, "pending": bool})
 class FoldCompactRequest(TypedDict):
@@ -8428,9 +8465,6 @@ class FoldCompactAsked(TypedDict):
 FoldUnfolded = TypedDict("FoldUnfolded", {"fold": str, "from": int, "through": int, "unfolded_after_step": int})
 class FoldRunRequest(TypedDict):
     live_run: str
-class LiveRunRequest(TypedDict, Generic[T]):
-    live_run: str
-    spec: T
 SpawnCare = Literal["light", "medium", "high", "xhigh", "max"]
 class SpawnKnobSeed(TypedDict, Generic[T]):
     mode: Literal["seed"]

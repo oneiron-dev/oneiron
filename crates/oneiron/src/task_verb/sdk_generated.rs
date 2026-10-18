@@ -2227,6 +2227,17 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<ConsolidationStatusRequest>(),
             ),
             (
+                "vault.memory.signal_extraction",
+                crate::code_run::vault_read::request_schema::<crate::memory::SignalExtractionRequest>(
+                ),
+            ),
+            (
+                "vault.memory.signal_extraction.result",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::SignalExtractionResultRequest,
+                >(),
+            ),
+            (
                 "vault.claims.seed",
                 crate::code_run::vault_read::request_schema::<crate::memory::ScopedCommitRequest>(),
             ),
@@ -2411,6 +2422,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.claims.supersede",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<crate::code_run::MemorySupersedeInput>,
+                >(),
+            ),
+            (
                 "self.fold",
                 crate::code_run::vault_read::request_schema::<
                     crate::code_run::fold_api::FoldMarkRequest,
@@ -2459,11 +2476,6 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.claims.put",
                 crate::code_run::vault_read::request_schema::<crate::code_run::MemoryClaimInput>(),
-            ),
-            (
-                "vault.claims.supersede",
-                crate::code_run::vault_read::request_schema::<crate::code_run::MemorySupersedeInput>(
-                ),
             ),
             (
                 "vault.edges.put",
@@ -2530,6 +2542,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.decisions.bands.read",
     "vault.decisions.bands.learn",
     "vault.decisions.bands.enforce",
+    "vault.memory.signal_extraction",
+    "vault.memory.signal_extraction.result",
 ];
 /// The JSON schema of an [`OPENAPI_ROWS`] row's answer; `None` for any other row.
 pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
@@ -2570,6 +2584,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.decisions.bands.enforce" => {
             crate::code_run::vault_read::request_schema::<crate::llm::decision::LearnedBand>()
         }
+        "vault.memory.signal_extraction" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::SignalExtractionTicket>()
+        }
+        "vault.memory.signal_extraction.result" => crate::code_run::vault_read::request_schema::<
+            Option<crate::memory::SignalExtractionResult>,
+        >(),
         _ => return None,
     })
 }
@@ -5388,6 +5408,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.memory.signal_extraction" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.memory.signal_extraction.result" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.claims.seed" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -5627,6 +5661,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.history" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.claims.supersede" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -7077,6 +7118,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.consolidation.status" => {
             let _input: ConsolidationStatusRequest = decode(value.clone())?;
         }
+        "vault.memory.signal_extraction" => {
+            let _input: crate::memory::SignalExtractionRequest = decode(value.clone())?;
+        }
+        "vault.memory.signal_extraction.result" => {
+            let _input: crate::memory::SignalExtractionResultRequest = decode(value.clone())?;
+        }
         "vault.claims.seed" => {
             let input: crate::memory::ScopedCommitRequest = decode(value.clone())?;
             crate::memory::caps::check_batch_len("claims", input.claims.len())?;
@@ -7197,6 +7244,11 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "self.history" => {
             let _input: crate::code_run::fold_api::FoldHistoryRequest = decode(value.clone())?;
+        }
+        "vault.claims.supersede" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::code_run::MemorySupersedeInput,
+            > = decode(value.clone())?;
         }
         "self.fold" => {
             let _input: crate::code_run::fold_api::FoldMarkRequest = decode(value.clone())?;
@@ -7871,6 +7923,13 @@ pub fn invoke(
             encode(vault_consolidation_enqueue(memory, decode(value)?)?)
         }
         "vault.consolidation.status" => encode(vault_consolidation_status(memory, decode(value)?)?),
+        "vault.memory.signal_extraction" => {
+            encode(vault_memory_signal_extraction(memory, decode(value)?)?)
+        }
+        "vault.memory.signal_extraction.result" => encode(vault_memory_signal_extraction_result(
+            memory,
+            decode(value)?,
+        )?),
         "vault.claims.seed" => encode(vault_claims_seed(memory, decode(value)?)?),
         "vault.channel_identities.provision" => {
             encode(vault_channel_identities_provision(memory, decode(value)?)?)
@@ -7947,6 +8006,7 @@ pub fn invoke(
         "self.run.attach" => encode(self_run_attach(memory, decode(value)?)?),
         "self.folds.describe" => encode(self_folds_describe(memory, decode(value)?)?),
         "self.history" => encode(self_history(memory, decode(value)?)?),
+        "vault.claims.supersede" => encode(vault_claims_supersede(memory, decode(value)?)?),
         "self.fold" => encode(self_fold(memory, decode(value)?)?),
         "self.compact" => encode(self_compact(memory, decode(value)?)?),
         "self.unfold" => encode(self_unfold(memory, decode(value)?)?),
@@ -11659,6 +11719,24 @@ pub fn vault_consolidation_status(
 ) -> MemoryResult<Option<crate::memory::DreamerAttemptView>> {
     memory_requests::dreamer_attempt_status(memory, input)
 }
+pub fn vault_memory_signal_extraction(
+    memory: &Memory<'_>,
+    input: crate::memory::SignalExtractionRequest,
+) -> MemoryResult<crate::memory::SignalExtractionTicket> {
+    memory.signal_extraction_as_owner(
+        &memory.embedded_owner("vault.memory.signal_extraction")?,
+        &input,
+    )
+}
+pub fn vault_memory_signal_extraction_result(
+    memory: &Memory<'_>,
+    input: crate::memory::SignalExtractionResultRequest,
+) -> MemoryResult<Option<crate::memory::SignalExtractionResult>> {
+    memory.signal_extraction_result_as_owner(
+        &memory.embedded_owner("vault.memory.signal_extraction.result")?,
+        &input,
+    )
+}
 pub fn vault_claims_seed(
     memory: &Memory<'_>,
     input: crate::memory::ScopedCommitRequest,
@@ -11969,6 +12047,12 @@ pub fn self_history(
     input: crate::code_run::fold_api::FoldHistoryRequest,
 ) -> MemoryResult<crate::engine_executor::history::FoldHistory> {
     crate::code_run::fold_api::host_required(memory, &input)
+}
+pub fn vault_claims_supersede(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::MemorySupersedeInput>,
+) -> MemoryResult<crate::code_run::MemoryWriteOutput> {
+    crate::task_verb::sdk::host_only(memory, "vault.claims.supersede", &input)
 }
 pub fn self_fold(
     memory: &Memory<'_>,

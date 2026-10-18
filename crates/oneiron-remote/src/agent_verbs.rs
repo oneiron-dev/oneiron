@@ -1242,6 +1242,12 @@ impl OneironClient {
                 "vault.consolidation.status" => remote_agent_verb_output::<
                     Option<oneiron::memory::DreamerAttemptView>,
                 >(client, verb, &input),
+                "vault.memory.signal_extraction" => remote_agent_verb_output::<
+                    oneiron::memory::SignalExtractionTicket,
+                >(client, verb, &input),
+                "vault.memory.signal_extraction.result" => remote_agent_verb_output::<
+                    Option<oneiron::memory::SignalExtractionResult>,
+                >(client, verb, &input),
                 "vault.claims.seed" => remote_agent_verb_output::<
                     Vec<oneiron::memory::CommitOutcome>,
                 >(client, verb, &input),
@@ -1354,6 +1360,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "self.history" => remote_agent_verb_output::<
                     oneiron::engine_executor::history::FoldHistory,
+                >(client, verb, &input),
+                "vault.claims.supersede" => remote_agent_verb_output::<
+                    oneiron::code_run::MemoryWriteOutput,
                 >(client, verb, &input),
                 "self.fold" => remote_agent_verb_output::<
                     oneiron::compaction::FoldReply<oneiron::compaction::FoldMarked>,
@@ -6283,6 +6292,30 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.consolidation.status", value)
     }
+    pub fn vault_memory_signal_extraction(
+        &self,
+        input: &oneiron::memory::SignalExtractionRequest,
+    ) -> Result<oneiron::memory::SignalExtractionTicket, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.memory.signal_extraction", value)
+    }
+    pub fn vault_memory_signal_extraction_result(
+        &self,
+        input: &oneiron::memory::SignalExtractionResultRequest,
+    ) -> Result<Option<oneiron::memory::SignalExtractionResult>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.memory.signal_extraction.result", value)
+    }
     pub fn vault_claims_seed(
         &self,
         input: &oneiron::memory::ScopedCommitRequest,
@@ -6715,6 +6748,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.history", value)
+    }
+    pub fn vault_claims_supersede(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::MemorySupersedeInput>,
+    ) -> Result<oneiron::code_run::MemoryWriteOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.claims.supersede", value)
     }
     pub fn self_fold(
         &self,

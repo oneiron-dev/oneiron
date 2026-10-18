@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 492 code-mode rows (471 host rows, 21 run rows), 1744 declarations.
-// Replies: 431 fully typed, 57 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 494 code-mode rows (473 host rows, 21 run rows), 1752 declarations.
+// Replies: 432 fully typed, 58 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 82; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1601,6 +1601,14 @@ declare namespace Sdk {
   type DreamerAttemptRef = { job_ref: string; state: string; existing: boolean };
   type ConsolidationStatusRequest = { job_ref: string };
   type DreamerAttemptView = { job_ref: string; state: string; kind: string; lease_owner?: string | null; attempt_count: number; run_id?: string | null; last_error?: string | null; created_at: number; updated_at: number };
+  type SignalExtractionRequest = { turn_refs: string[] };
+  type SignalExtractionTicket = { job_refs: string[] };
+  type SignalExtractionResultRequest = { job_ref: string };
+  type SignalExtractionMessage = { message_ref: string; byte_range: [number, number]; revision: string };
+  type SignalExtractionSource = { source_ref: string; claim_ref?: string | null; byte_range?: [number, number] | null; content_hash: string; messages: SignalExtractionMessage[] };
+  type ProspectiveQueryHint = { hint_ref: string; target_ref: string; query: string; source: string };
+  type SignalExtractionClaim = { claim: ClaimView; sources: SignalExtractionSource[]; prospective_queries: ProspectiveQueryHint[] };
+  type SignalExtractionResult = { job: DreamerAttemptView; claims: SignalExtractionClaim[] };
   type SelfHeldShape = "dedicated_address" | "dedicated_handle" | "shared_presence";
   type ChannelIdentityBinding = { kind: "actor"; actor_ref: EntityId; facet_ref?: EntityId | null } | { kind: "vault"; vault_id: number };
   type ChannelIdentityFulfillment = "api" | "manual" | "review";
@@ -2558,6 +2566,13 @@ declare const vault: Sdk.VaultHost & {
     remove(input: Sdk.SharedMemberRequest): Promise<Sdk.SharedActExecutionReceipt | StoredResult>;
     /** An Admin with the add_member power takes back a pending invitation. */
     withdraw_invitation(input: Sdk.SharedInvitationWithdrawRequest): Promise<Sdk.SharedActExecutionReceipt | StoredResult>;
+  };
+  memory: {
+    /** Queues typed extraction of witnessed turns on the configured production Dreamer role; returns durable partition job refs, never caller-authored candidates. */
+    signal_extraction: ((input: Sdk.SignalExtractionRequest) => Promise<Sdk.SignalExtractionTicket | StoredResult>) & {
+      /** Reads extraction completion, accepted claims, generated prospective queries and parent-verified source ranges and MESSAGE revisions as the owner may read them. */
+      result(input: Sdk.SignalExtractionResultRequest): Promise<Sdk.SignalExtractionResult | null | StoredResult>;
+    };
   };
   mesh: {
     /** The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner. */

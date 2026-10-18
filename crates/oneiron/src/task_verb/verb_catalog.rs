@@ -437,6 +437,8 @@ pub enum AgentVerb {
     VaultArtifactsRead,
     VaultConsolidationEnqueue,
     VaultConsolidationStatus,
+    VaultMemorySignalExtraction,
+    VaultMemorySignalExtractionResult,
     VaultClaimsSeed,
     VaultChannelIdentitiesProvision,
     VaultChannelIdentitiesBind,
@@ -472,6 +474,7 @@ pub enum AgentVerb {
     SelfRunAttach,
     SelfFoldsDescribe,
     SelfHistory,
+    VaultClaimsSupersede,
     SelfFold,
     SelfCompact,
     SelfUnfold,
@@ -917,6 +920,8 @@ impl AgentVerb {
         Self::VaultArtifactsRead,
         Self::VaultConsolidationEnqueue,
         Self::VaultConsolidationStatus,
+        Self::VaultMemorySignalExtraction,
+        Self::VaultMemorySignalExtractionResult,
         Self::VaultClaimsSeed,
         Self::VaultChannelIdentitiesProvision,
         Self::VaultChannelIdentitiesBind,
@@ -952,6 +957,7 @@ impl AgentVerb {
         Self::SelfRunAttach,
         Self::SelfFoldsDescribe,
         Self::SelfHistory,
+        Self::VaultClaimsSupersede,
         Self::SelfFold,
         Self::SelfCompact,
         Self::SelfUnfold,
@@ -1404,6 +1410,8 @@ impl AgentVerb {
             Self::VaultArtifactsRead => "vault.artifacts.read",
             Self::VaultConsolidationEnqueue => "vault.consolidation.enqueue",
             Self::VaultConsolidationStatus => "vault.consolidation.status",
+            Self::VaultMemorySignalExtraction => "vault.memory.signal_extraction",
+            Self::VaultMemorySignalExtractionResult => "vault.memory.signal_extraction.result",
             Self::VaultClaimsSeed => "vault.claims.seed",
             Self::VaultChannelIdentitiesProvision => "vault.channel_identities.provision",
             Self::VaultChannelIdentitiesBind => "vault.channel_identities.bind",
@@ -1443,6 +1451,7 @@ impl AgentVerb {
             Self::SelfRunAttach => "self.run.attach",
             Self::SelfFoldsDescribe => "self.folds.describe",
             Self::SelfHistory => "self.history",
+            Self::VaultClaimsSupersede => "vault.claims.supersede",
             Self::SelfFold => "self.fold",
             Self::SelfCompact => "self.compact",
             Self::SelfUnfold => "self.unfold",
@@ -1847,6 +1856,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultMemorySignalExtraction
+                | Self::VaultMemorySignalExtractionResult
                 | Self::VaultClaimsSeed
                 | Self::VaultChannelIdentitiesProvision
                 | Self::VaultChannelIdentitiesBind
@@ -1882,6 +1893,7 @@ impl AgentVerb {
                 | Self::SelfRunAttach
                 | Self::SelfFoldsDescribe
                 | Self::SelfHistory
+                | Self::VaultClaimsSupersede
                 | Self::SelfFold
                 | Self::SelfCompact
                 | Self::SelfUnfold
@@ -2334,6 +2346,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultMemorySignalExtraction
+                | Self::VaultMemorySignalExtractionResult
                 | Self::VaultClaimsSeed
                 | Self::VaultChannelIdentitiesProvision
                 | Self::VaultChannelIdentitiesBind
@@ -2369,6 +2383,7 @@ impl AgentVerb {
                 | Self::SelfRunAttach
                 | Self::SelfFoldsDescribe
                 | Self::SelfHistory
+                | Self::VaultClaimsSupersede
                 | Self::SelfFold
                 | Self::SelfCompact
                 | Self::SelfUnfold
@@ -2889,6 +2904,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultMemorySignalExtraction
+                | Self::VaultMemorySignalExtractionResult
                 | Self::VaultChannelIdentitiesProvision
                 | Self::VaultChannelIdentitiesBind
                 | Self::VaultChannelIdentitiesFulfill
@@ -2919,6 +2936,7 @@ impl AgentVerb {
                 | Self::SelfRunAttach
                 | Self::SelfFoldsDescribe
                 | Self::SelfHistory
+                | Self::VaultClaimsSupersede
                 | Self::SelfFold
                 | Self::SelfCompact
                 | Self::SelfUnfold
@@ -3193,6 +3211,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyDeckOracle
                 | Self::VaultArtifactsAppend
                 | Self::VaultConsolidationEnqueue
+                | Self::VaultMemorySignalExtraction
                 | Self::VaultClaimsSeed
                 | Self::VaultChannelIdentitiesProvision
                 | Self::VaultChannelIdentitiesBind
@@ -3211,6 +3230,7 @@ impl AgentVerb {
                 | Self::VaultNotesSetOverrides
                 | Self::VaultTasksLinearMappingEdit
                 | Self::SelfRunAttach
+                | Self::VaultClaimsSupersede
                 | Self::SelfFold
                 | Self::SelfCompact
                 | Self::SelfUnfold
@@ -3685,6 +3705,8 @@ impl AgentVerb {
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
             Self::VaultConsolidationStatus => &["spec"],
+            Self::VaultMemorySignalExtraction => &["spec"],
+            Self::VaultMemorySignalExtractionResult => &["spec"],
             Self::VaultClaimsSeed => &["spec"],
             Self::VaultChannelIdentitiesProvision => &["spec"],
             Self::VaultChannelIdentitiesBind => &["spec"],
@@ -3720,6 +3742,7 @@ impl AgentVerb {
             Self::SelfRunAttach => &["spec"],
             Self::SelfFoldsDescribe => &["spec"],
             Self::SelfHistory => &["spec"],
+            Self::VaultClaimsSupersede => &["spec"],
             Self::SelfFold => &["spec"],
             Self::SelfCompact => &["spec"],
             Self::SelfUnfold => &["spec"],
@@ -4166,6 +4189,8 @@ impl AgentVerb {
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
             Self::VaultConsolidationStatus => &["spec"],
+            Self::VaultMemorySignalExtraction => &["spec"],
+            Self::VaultMemorySignalExtractionResult => &["spec"],
             Self::VaultClaimsSeed => &["spec"],
             Self::VaultChannelIdentitiesProvision => &["spec"],
             Self::VaultChannelIdentitiesBind => &["spec"],
@@ -4201,6 +4226,7 @@ impl AgentVerb {
             Self::SelfRunAttach => &["spec"],
             Self::SelfFoldsDescribe => &["spec"],
             Self::SelfHistory => &["spec"],
+            Self::VaultClaimsSupersede => &["spec"],
             Self::SelfFold => &["spec"],
             Self::SelfCompact => &["spec"],
             Self::SelfUnfold => &["spec"],
@@ -5418,6 +5444,12 @@ impl AgentVerb {
             Self::VaultConsolidationStatus => {
                 "Reads the status of one consolidation attempt by its durable job reference."
             }
+            Self::VaultMemorySignalExtraction => {
+                "Queues typed extraction of witnessed turns on the configured production Dreamer role; returns durable partition job refs, never caller-authored candidates."
+            }
+            Self::VaultMemorySignalExtractionResult => {
+                "Reads extraction completion, accepted claims, generated prospective queries and parent-verified source ranges and MESSAGE revisions as the owner may read them."
+            }
             Self::VaultClaimsSeed => {
                 "Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt."
             }
@@ -5522,6 +5554,9 @@ impl AgentVerb {
             }
             Self::SelfHistory => {
                 "Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled."
+            }
+            Self::VaultClaimsSupersede => {
+                "Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override."
             }
             Self::SelfFold => {
                 "Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands."
