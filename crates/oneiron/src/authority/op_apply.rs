@@ -84,11 +84,14 @@ pub(super) fn apply_op(
         | AuthorityOp::RebindActor { .. }
         | AuthorityOp::RevokeActor { .. } => {}
         // `fold_entry_state`'s machine-profile, anchor, world-privacy,
-        // grant-travel and world-key arms return before reaching here.
+        // grant-travel, owner-work and world-key arms return before reaching
+        // here.
         AuthorityOp::MachineProfile(_)
         | AuthorityOp::OwnerRoot(_)
         | AuthorityOp::WorldPrivacy(_)
         | AuthorityOp::GrantTravelSet(_)
+        | AuthorityOp::OwnerWorkRequest(_)
+        | AuthorityOp::OwnerWorkResult(_)
         | AuthorityOp::WorldKeyWraps(_) => {}
         // The signed record of a shared-act change; the change itself is the
         // execution's (`federation::shared_act`).

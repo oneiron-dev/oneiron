@@ -3075,6 +3075,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/owner_work.rs",
+     "purpose": "Folds the owner's work requests and their results: which install is to do the key, custody or root work an…",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -10765,7 +10775,7 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 36,
+      "crate-vis": 38,
       "enum": 1,
       "fn": 9,
       "struct": 1
@@ -12026,7 +12036,7 @@
      "path": "src/code_run/dispatcher/host_doors.rs",
      "purpose": "Typed coordination calls whose credential admission and verb hooks are owned by the host's verb-table door",
      "surface": {
-      "fn": 6
+      "fn": 7
      }
     },
     {
@@ -12074,7 +12084,7 @@
      "path": "src/code_run/dispatcher/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 9,
       "re-export": 2,
       "struct": 1,
@@ -15246,7 +15256,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 31,
-      "fn": 25,
+      "fn": 26,
       "struct": 2
      }
     },
@@ -15309,6 +15319,7 @@
       "ApproveOnceRequest",
       "ConsentActReceipt",
       "CreateStandingGrantRequest",
+      "DenyConsentRequest",
       "DisclosureBoundRequest",
       "DisclosureEnvelopeRequest",
       "RevokeGrantRequest",
@@ -15318,8 +15329,8 @@
      "purpose": "Typed public consent lifecycle calls",
      "surface": {
       "enum": 1,
-      "fn": 4,
-      "struct": 8
+      "fn": 5,
+      "struct": 9
      }
     },
     {
@@ -20793,7 +20804,7 @@
      "path": "src/dreamer_wake/policy.rs",
      "purpose": "Row-backed wake admission",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 5,
       "fn": 8,
       "struct": 8
@@ -36391,7 +36402,7 @@
      "purpose": "Named (agent, world) standing blocks compiled from gated persona claims",
      "surface": {
       "enum": 1,
-      "fn": 11,
+      "fn": 12,
       "struct": 4
      }
     },
@@ -37707,13 +37718,17 @@
      "notable": [
       "InferenceDefaultsReplaceRequest",
       "PolicyActionOutcome",
+      "PolicySetting",
+      "PolicySettingActReceipt",
       "WakePolicySetRequest"
      ],
      "path": "src/policy_setting_doors.rs",
      "purpose": "The app's policy actions as host verbs (OF-181)",
      "surface": {
-      "fn": 8,
-      "struct": 3
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 11,
+      "struct": 4
      }
     },
     {
@@ -49198,7 +49213,7 @@
       "const": 6,
       "crate-vis": 10,
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -49210,7 +49225,7 @@
      "purpose": "The tagging marker and its drain: the write path's outbox rule applied to the Oneironer slot (ARCH-0036…",
      "surface": {
       "crate-vis": 9,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -49319,6 +49334,39 @@
       "crate-vis": 2,
       "enum": 4,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DerivationEnvelopeView",
+      "MentionLinkView",
+      "MentionReferenceView",
+      "MergeEvidenceView",
+      "TaggedMentionView",
+      "TaggingFailureView",
+      "TaggingHistoryView",
+      "TaggingMarkerState",
+      "TaggingMarkerView",
+      "TaggingMentionHitView",
+      "TaggingMentionsRequest",
+      "TaggingMentionsView",
+      "TaggingOutcomeView",
+      "TaggingSpeakerTarget",
+      "TaggingStatusView",
+      "TaggingTagsView",
+      "TaggingTraceView",
+      "TaggingTurnRequest",
+      "TaggingVadView",
+      "TurnTagsView"
+     ],
+     "path": "src/tagging/verbs.rs",
+     "purpose": "Typed public reads of the tagging marker and the saved tag sets: the `vault.tagging.*` doors over…",
+     "surface": {
+      "enum": 5,
+      "fn": 4,
+      "struct": 15
      }
     },
     {
@@ -50511,7 +50559,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 53,
+      "re-export": 55,
       "struct": 36
      }
     },
@@ -50595,7 +50643,22 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/sdk_browser.rs",
+     "purpose": "Browser wire shapes, shared by code mode and the credential-bound host doors",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
+      "BookingConstraintHoldContext",
+      "BookingConstraintTurnInput",
+      "BookingConstraintTurnRequest",
+      "BookingConstraintTurnResponse",
+      "BookingConstraintTurnWindow",
       "BookingPageTokenRequest",
       "BookingPageTokenResponse",
       "CalendarFreebusyRequest"
@@ -50603,7 +50666,8 @@
      "path": "src/task_verb/sdk_calendar.rs",
      "purpose": "Typed booking-page discovery and calendar occupancy inputs",
      "surface": {
-      "struct": 3
+      "enum": 1,
+      "struct": 7
      }
     },
     {
@@ -50892,7 +50956,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 671
+      "fn": 688
      }
     },
     {
@@ -51055,6 +51119,8 @@
      "kind": "src",
      "notable": [
       "AppendBlobVersionRequest",
+      "AuthorTakeRequest",
+      "AuthorTakeTarget",
       "BlobContent",
       "ClaimRefRequest",
       "CommitRequest",
@@ -51075,9 +51141,9 @@
      "path": "src/task_verb/sdk_memory.rs",
      "purpose": "Typed inputs for the public memory verbs in the SDK inventory",
      "surface": {
-      "crate-vis": 6,
-      "enum": 1,
-      "struct": 16
+      "crate-vis": 7,
+      "enum": 2,
+      "struct": 17
      }
     },
     {
@@ -51486,6 +51552,30 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AgentDreamingRequest",
+      "AgentDreamingSetRequest",
+      "AgentDreamingView",
+      "DreamingModeInput",
+      "OwnStandingBlockRequest",
+      "StandingBlockConfigureRequest",
+      "StandingBlockEditReceipt",
+      "StandingBlockEditRequest",
+      "StandingBlockRequest",
+      "StandingBlockView",
+      "StandingBlocksRequest"
+     ],
+     "path": "src/task_verb/sdk_standing.rs",
+     "purpose": "Standing-block configuration, gated self-edits and per-agent dreaming choice (BOARD-04)",
+     "surface": {
+      "enum": 1,
+      "fn": 9,
+      "struct": 10
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -51852,7 +51942,7 @@
      "path": "src/task_verb/verb_hook_boundary.rs",
      "purpose": "The verb-hook boundary of one SDK row (ARCH-0080 §3, attach point 1)",
      "surface": {
-      "fn": 7
+      "fn": 8
      }
     },
     {
@@ -55527,8 +55617,60 @@
      "surface": {
       "crate-vis": 12,
       "fn": 3,
-      "re-export": 17,
+      "re-export": 18,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OwnerWorkReceipt",
+      "OwnerWorkStatus",
+      "OwnerWorkUnassigned"
+     ],
+     "path": "src/world_keys/owner_work/mod.rs",
+     "purpose": "The owner's work an install records for another to do, and what the named install did with it (owner work…",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 2,
+      "fn": 1,
+      "re-export": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OwnerWorkDrain"
+     ],
+     "path": "src/world_keys/owner_work/pickup.rs",
+     "purpose": "The executor's pickup: every owner work request naming this install, each rechecked and done in a writer…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/owner_work/record.rs",
+     "purpose": "Recording one owner work request in the act's own transaction, and the one rule that names its executor",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/owner_work/result.rs",
+     "purpose": "The executor's signed result for one request, and the receipt door that reads where a request stands",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -56667,7 +56809,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 157,
+     "files": 158,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57571,7 +57713,7 @@
     },
     "policy_setting_doors": {
      "files": 1,
-     "impl_vault": false,
+     "impl_vault": true,
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "The app's policy actions as host verbs (OF-181)"
@@ -57934,7 +58076,7 @@
      "purpose": "CRDT sync layer for Oneiron"
     },
     "tagging": {
-     "files": 14,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57955,7 +58097,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 167,
+     "files": 169,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -58109,7 +58251,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 23,
+     "files": 27,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -58125,7 +58267,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3546,
+   "source_files": 3554,
    "test_files": 902
   },
   "oneiron-android": {
@@ -58309,7 +58451,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary…",
      "surface": {
-      "re-export": 20
+      "re-export": 21
      }
     },
     {
@@ -58361,6 +58503,27 @@
       "const": 1,
       "crate-vis": 3,
       "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OwnerWorkBody",
+      "OwnerWorkKind",
+      "OwnerWorkOutcome",
+      "OwnerWorkRefusal",
+      "OwnerWorkRequest",
+      "OwnerWorkResult"
+     ],
+     "path": "src/authority/owner_work.rs",
+     "purpose": "The owner's work requests and their results, and their wire codec: the key, custody or root work an owner…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 6,
+      "enum": 4,
+      "fn": 10,
       "struct": 2
      }
     },
@@ -58626,7 +58789,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 21,
+     "files": 22,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -58656,7 +58819,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 30,
+   "source_files": 31,
    "test_files": 1
   },
   "oneiron-bench": {
@@ -66634,7 +66797,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 621
+      "fn": 652
      }
     },
     {
@@ -67683,7 +67846,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 622
+      "fn": 653
      }
     },
     {
@@ -69718,7 +69881,7 @@
      "path": "src/api/booking.rs",
      "purpose": "ONE-1819 [BK-08] the agent-readable booking surface",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 17
      }
     },
     {
@@ -69760,13 +69923,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/api/booking/front.rs",
      "purpose": "ONE-1816 / ARCH-0062 §5: a published page's interactive constraint front",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 2
      }
     },
     {
@@ -69890,7 +70053,7 @@
      "path": "src/api/booking/transport.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -70624,9 +70787,19 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/booking_doors.rs",
-     "purpose": "Owner discovery of the opaque address of an existing booking page",
+     "purpose": "Typed booking-page discovery and the published constraint front",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/browser_doors.rs",
+     "purpose": "Typed browser calls on the caller's own attached run and existing guest door",
+     "surface": {
+      "crate-vis": 15
      }
     },
     {
@@ -70756,7 +70929,7 @@
      "path": "src/api/facade/consent_doors.rs",
      "purpose": "Consent lifecycle host doors, on the same owner proof as Gate policy",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -70976,7 +71149,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 118
+      "crate-vis": 120
      }
     },
     {
@@ -71026,7 +71199,7 @@
      "path": "src/api/facade/live_run_doors.rs",
      "purpose": "Public coordination doors over the caller's own live-run attachment",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -71087,6 +71260,16 @@
      "purpose": "Credential-bound host projections of the typed origin and checkout doors (DOOR-139)",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/owner_binding.rs",
+     "purpose": "WILL-PLAN L13 row 01: one revalidated binding for a managed vault's attested owner, shared by the policy…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -71287,6 +71470,16 @@
      "purpose": "Owner-bound lifecycle doors; each transport reaches the same engine transaction",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/standing_doors.rs",
+     "purpose": "Standing-block configuration and per-agent dreaming choice, with the caller's own proof (BOARD-04)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -71688,7 +71881,7 @@
      "path": "src/api/mcp_gateway/code_mode_verbs.rs",
      "purpose": "Code mode's verb calls at their SDK paths: the SDK verb table through the tool door",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -77594,6 +77787,17 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/server/core/pattern_workflow.rs",
+     "purpose": "The house pattern runner (DOOR-111 S4b): the start a planned team's pattern skill writes, run on the house…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/desktop_seats.rs",
      "purpose": "The run guests live on this host (CUA-001), so the owner's door can reach the same guest a run's door…",
      "surface": {
@@ -77617,7 +77821,7 @@
      "path": "src/server/housekeeping.rs",
      "purpose": "The host's half of the engine's housekeeping",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
@@ -77665,7 +77869,7 @@
      "path": "src/server/live_runs.rs",
      "purpose": "The live agent runs a harness may act for over HTTP (OF-181)",
      "surface": {
-      "crate-vis": 33
+      "crate-vis": 34
      }
     },
     {
@@ -77743,6 +77947,16 @@
      "surface": {
       "crate-vis": 5,
       "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/owner_work_drain.rs",
+     "purpose": "The served holder's owner work pickup",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -78654,7 +78868,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 379,
+     "files": 382,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -79004,7 +79218,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 37,
+     "files": 39,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -79076,7 +79290,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 715,
+   "source_files": 720,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -79292,6 +79506,9 @@
       "AgentDefinitionSpec",
       "AgentDefinitionUpdateRequest",
       "AgentDefinitionView",
+      "AgentDreamingRequest",
+      "AgentDreamingSetRequest",
+      "AgentDreamingView",
       "AgentHealthApplicationState",
       "AgentHealthCard",
       "AgentHealthCardView",
@@ -79437,6 +79654,8 @@
       "AttemptResumePoint",
       "AttemptState",
       "AttemptView",
+      "AuthorTakeRequest",
+      "AuthorTakeTarget",
       "AuthoringStrategyPin",
       "AuthorityAuditEventKind",
       "AuthorityAuditOrder",
@@ -79447,7 +79666,10 @@
       "AuthorityHandoffAlarmAck",
       "AuthorityHistoryImported",
       "BandMode",
+      "BatchInput",
+      "BatchOutput",
       "BatchState",
+      "BatchStep",
       "Birth",
       "BlindCampaignJudgeInput",
       "BlockChange",
@@ -79456,6 +79678,11 @@
       "BodyConflict",
       "BodyFormat",
       "BodyName",
+      "BookingConstraintHoldContext",
+      "BookingConstraintTurnInput",
+      "BookingConstraintTurnRequest",
+      "BookingConstraintTurnResponse",
+      "BookingConstraintTurnWindow",
       "BookingPageTokenRequest",
       "BookingPageTokenResponse",
       "BornFromArtifact",
@@ -79593,6 +79820,7 @@
       "CleanupKind",
       "CleanupPosture",
       "CleanupRunView",
+      "ClickInput",
       "CodeBlameView",
       "CodeChangeView",
       "CodeDiffRequest",
@@ -79728,6 +79956,9 @@
       "ConsolidationPromoteRequest",
       "ConsolidationPromotion",
       "ConsolidationRejection",
+      "ConstraintContinuation",
+      "ConstraintObject",
+      "ConstraintWeekday",
       "ConsultDisposition",
       "ConsultInspection",
       "ConsultPayloadRef",
@@ -79800,12 +80031,14 @@
       "CritiqueTriage",
       "CritiqueTriageScores",
       "CritiqueVerdict",
+      "CropInput",
       "CursorSpan",
       "CutDecision",
       "DagRecordAppendInput",
       "DagRecordAppendReceipt",
       "DataClass",
       "DecideRules",
+      "DecideStep",
       "DecisionAnswer",
       "DecisionAsk",
       "DecisionAskAnswerRequest",
@@ -79877,6 +80110,8 @@
       "DeliveryWindowRule",
       "DeliveryWindowTimeWindow",
       "DeliveryWindowVerbClass",
+      "DenyConsentRequest",
+      "DerivationEnvelopeView",
       "DerivationKind",
       "DeterministicFallback",
       "DiaryEntryReceipt",
@@ -79908,7 +80143,9 @@
       "DoorsLearningCellView",
       "DoorsLearningEvidenceView",
       "DreamerAttemptView",
+      "DreamingModeInput",
       "EditNoteRequest",
+      "EffectReceipt",
       "EmbeddingSpace",
       "EmbeddingSpaceBindRequest",
       "EmbeddingSpaceCandidateRequest",
@@ -79976,6 +80213,8 @@
       "EvidenceRow",
       "EvidenceVersion",
       "ExceptionalWidthCheck",
+      "ExpectInput",
+      "ExpectOutput",
       "ExpectedSpend",
       "ExperimentKind",
       "ExperimentNode",
@@ -80018,6 +80257,8 @@
       "FieldGeometry",
       "FieldMeta",
       "FieldValue",
+      "FindInput",
+      "FindOutput",
       "FinishReason",
       "FoldCompactAsked",
       "FoldCompactRequest",
@@ -80057,6 +80298,7 @@
       "GeneratedUiActionDeclaration",
       "GeneratedUiActionTier",
       "GeneratedUiArchiveReason",
+      "GeneratedUiCard",
       "GeneratedUiCardLifecycle",
       "GeneratedUiCardPhase",
       "GeneratedUiCatalog",
@@ -80086,6 +80328,8 @@
       "GuestSlipMintRequest",
       "GuestSlipMinted",
       "HandoffAlarmRequest",
+      "HandoverInput",
+      "HandoverOutput",
       "HeapDropReport",
       "HeldAttempt",
       "HeldMedia",
@@ -80147,6 +80391,7 @@
       "IdentitySettled",
       "ImageBox",
       "ImageContent",
+      "ImageOutput",
       "ImagePin",
       "ImagePoint",
       "ImageViewRequest",
@@ -80257,6 +80502,7 @@
       "LensSlotDecision",
       "LensStatus",
       "LensTextSpan",
+      "LibraryCard",
       "LiftCause",
       "LiftCauseCount",
       "LiftCloseReason",
@@ -80278,15 +80524,30 @@
       "LinearProvenanceRequest",
       "LinkedText",
       "LiveRunRequestAgentSpawnInput",
+      "LiveRunRequestBatchInput",
+      "LiveRunRequestClickInput",
+      "LiveRunRequestCropInput",
+      "LiveRunRequestExpectInput",
       "LiveRunRequestFanoutBatchInput",
+      "LiveRunRequestFindInput",
+      "LiveRunRequestHandoverInput",
       "LiveRunRequestLeaderSplitInput",
       "LiveRunRequestMemorySupersedeInput",
+      "LiveRunRequestObserveInput",
+      "LiveRunRequestOpenInput",
+      "LiveRunRequestPointInput",
+      "LiveRunRequestScreenshotInput",
       "LiveRunRequestSecretGrantMintRequest",
       "LiveRunRequestSecretGrantRenewRequest",
       "LiveRunRequestSecretGrantTeardownRequest",
       "LiveRunRequestSecretGrantUseRequest",
+      "LiveRunRequestSelectInput",
       "LiveRunRequestSkillCallInput",
       "LiveRunRequestTaskRefuseInput",
+      "LiveRunRequestTypeInput",
+      "LiveRunRequestViewInput",
+      "LiveRunRequestWaitForInput",
+      "LiveRunRequestZoomInput",
       "LiveVoiceAckKind",
       "LiveVoiceAckRequest",
       "LiveVoiceAudioRequest",
@@ -80313,6 +80574,7 @@
       "LlmResponse",
       "LlmToolSpec",
       "LlmUsage",
+      "LocalMinuteWindow",
       "LocalRunnerBudgetCounter",
       "LocalRunnerBudgetRequest",
       "LocalRunnerBudgetView",
@@ -80338,7 +80600,10 @@
       "MemoryProjection",
       "MemorySupersedeInput",
       "MemoryWriteOutput",
+      "MentionLinkView",
+      "MentionReferenceView",
       "MergeCrossover",
+      "MergeEvidenceView",
       "MergeQueueBatchRequest",
       "MergeQueueBatchView",
       "MergeQueueEnqueueRequest",
@@ -80426,7 +80691,10 @@
       "NotificationRow",
       "NotificationSource",
       "Observation",
+      "Observation2",
       "ObservationIssue",
+      "ObservationPage",
+      "ObserveInput",
       "Of360Ar3MetricTier",
       "Of360CaseEvalReport",
       "Of360CaseExtractionOutput",
@@ -80506,6 +80774,7 @@
       "OfficeFormat",
       "OmittedKnowledge",
       "OpaqueChange",
+      "OpenInput",
       "OpenSpendLeaseRequest",
       "OracleReceipt",
       "OrganWaitView",
@@ -80521,6 +80790,7 @@
       "OutcomeBinding",
       "OutcomeLabel",
       "OutcomeSource",
+      "OwnStandingBlockRequest",
       "OwnerPolicyConfiguration",
       "OwnerPolicyConfigurationReceipt",
       "OwnerPolicyConfigurationView",
@@ -80566,6 +80836,7 @@
       "PairedReading",
       "Paragraph",
       "PartialResultHold",
+      "PartialTree",
       "ParticipantView",
       "ParticipantsPage",
       "ParticipantsRequest",
@@ -80588,6 +80859,7 @@
       "PlannedSpawnObservation",
       "PlannedSpawnRead",
       "PlannerRung",
+      "PointInput",
       "PolicyActionOutcome",
       "PolicyAxes",
       "PolicyBargeInKill",
@@ -80720,6 +80992,7 @@
       "RecallTelemetry",
       "RecallWorlds",
       "ReceiptAtom",
+      "ReceiptEvidence",
       "ReceiptKind",
       "ReceiptRecord",
       "RecipientRole",
@@ -80913,6 +81186,7 @@
       "RoomWaitKind",
       "RouteObservation",
       "RoutineOutcome",
+      "Row",
       "RowBirth",
       "RsiSettlement",
       "RsiSpendPurpose",
@@ -80988,6 +81262,10 @@
       "ScratchpadRecallRequest",
       "ScratchpadSealRequest",
       "ScratchpadWriteReply",
+      "ScreenshotInput",
+      "ScreenshotOutput",
+      "ScreenshotTrigger",
+      "ScrollDirection",
       "SealAtom",
       "SealLevel",
       "SearchAxis",
@@ -81017,6 +81295,7 @@
       "SectionAtom",
       "SegmentedControl",
       "SelectControl",
+      "SelectInput",
       "SelectionBenchmark",
       "SelectionRanking",
       "SelectionReceipt",
@@ -81220,6 +81499,12 @@
       "SpendSignal",
       "SpendState",
       "SpentKind",
+      "StandingBlockConfigureRequest",
+      "StandingBlockEditReceipt",
+      "StandingBlockEditRequest",
+      "StandingBlockRequest",
+      "StandingBlockView",
+      "StandingBlocksRequest",
       "StandingGrantBound",
       "StateFamilyRef",
       "StatusDotAtom",
@@ -81235,6 +81520,7 @@
       "StepXfrm",
       "StopCause",
       "StoredShapeSeed",
+      "SubgoalStatus",
       "SufficiencyCard",
       "SufficiencyInput",
       "SufficiencyVerdict",
@@ -81268,6 +81554,21 @@
       "SupportGrantStatus",
       "SupportGrantView",
       "SupportHolderClass",
+      "TaggedMentionView",
+      "TaggingFailureView",
+      "TaggingHistoryView",
+      "TaggingMarkerState",
+      "TaggingMarkerView",
+      "TaggingMentionHitView",
+      "TaggingMentionsRequest",
+      "TaggingMentionsView",
+      "TaggingOutcomeView",
+      "TaggingSpeakerTarget",
+      "TaggingStatusView",
+      "TaggingTagsView",
+      "TaggingTraceView",
+      "TaggingTurnRequest",
+      "TaggingVadView",
       "TaskAccept",
       "TaskAnswerRequest",
       "TaskAskAnswer",
@@ -81371,6 +81672,7 @@
       "ThreadPassportsView",
       "ThrobberAtom",
       "TierPrecedence",
+      "TimeRangeWire",
       "ToggleControl",
       "TopUpSpendLeaseRequest",
       "TrackedHubRef",
@@ -81403,8 +81705,10 @@
       "TurnAction",
       "TurnActionReceipt",
       "TurnActionRequest",
+      "TurnTagsView",
       "TwoClocksAtom",
       "TypeByteFamily",
+      "TypeInput",
       "TypeRef",
       "TypeStamp",
       "TypedDecision",
@@ -81420,6 +81724,7 @@
       "VadBadge",
       "VerdictBinding",
       "VerdictMode",
+      "ViewInput",
       "VoiceBankClipInput",
       "VoiceBankInspectRequest",
       "VoiceBankInspection",
@@ -81443,6 +81748,8 @@
       "VoiceTargetReceipt",
       "VoiceVendorDeleteStatus",
       "VoiceVendorEviction",
+      "WaitForInput",
+      "WaitForOutput",
       "WakePolicySetRequest",
       "WeaveDigestRequest",
       "WeaveDigestView",
@@ -81527,13 +81834,14 @@
       "XlsxSheetVisibility",
       "XlsxStyle",
       "XlsxTable",
-      "XlsxValue"
+      "XlsxValue",
+      "ZoomInput"
      ],
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 588,
-      "struct": 1670
+      "enum": 602,
+      "struct": 1750
      }
     },
     {
