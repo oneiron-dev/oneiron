@@ -92,6 +92,9 @@ both bindings and their export-census tests in one change.
 - `vault.kv.delete`
 - `vault.kv.search`
 - `vault.kv.namespaces`
+- `vault.campaign.enroll`
+- `vault.campaign.stage.evidence`
+- `vault.campaign.unsubscribe`
 - `vault.campaign.program.create`
 - `vault.campaign.program.read`
 - `vault.campaign.program.update`
