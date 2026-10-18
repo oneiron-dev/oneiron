@@ -64,7 +64,8 @@ pub fn row_pre(memory: &Memory<'_>, verb: &str, args: Value) -> MemoryResult<Ver
 /// call again without its caller, and `credential` how it runs a credential
 /// caller's through its door; a door that runs the row itself, not through
 /// the generated `invoke`, passes `None` for both, since the drain could not
-/// run it the way that door does.
+/// run it the way that door does. A hook's ask runs on the task-work turn
+/// `memory`'s operation already holds, if any, never waiting for another.
 fn row_pre_resumable(
     memory: &Memory<'_>,
     verb: &str,
@@ -80,11 +81,12 @@ fn row_pre_resumable(
     };
     let vault = memory.vault();
     let call = row_call(memory, verb)?;
+    let turn = memory.task_work_turn();
     Ok(match credential {
         Some(credential) => {
-            vault.pre_verb_hooks_for_credential(call, args, &check, Some(credential))?
+            vault.pre_verb_hooks_for_credential(call, args, &check, Some(credential), turn)?
         }
-        None => vault.pre_verb_hooks_resumable(call, args, &check, resume)?,
+        None => vault.pre_verb_hooks_resumable(call, args, &check, resume, turn)?,
     })
 }
 

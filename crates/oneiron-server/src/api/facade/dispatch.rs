@@ -553,17 +553,26 @@ async fn describe(
     }
     let (actor, class) = facade_actor(server, auth)?;
     facade_admit_readable_ref(&server.vault, auth, &value, "task_ref")?;
+    let turn = if oneiron::task_verb::sdk::describe_takes_task_work_turn(&value) {
+        Some(Arc::new(server.admit_task_work(actor).await))
+    } else {
+        None
+    };
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_readable_task_rows(
-        &server.vault,
-        auth,
-        oneiron::task_verb::sdk::describe(
-            &credential_memory(&server.vault, Some(auth), actor, class)
-                .at(auth.locality())
-                .listing_producers(&producers),
-            facade_input(value)?,
-        )?,
-    )?;
+    let output = {
+        let memory = credential_memory(&server.vault, Some(auth), actor, class)
+            .at(auth.locality())
+            .listing_producers(&producers);
+        let memory = match turn {
+            Some(turn) => memory.with_task_work_turn(turn),
+            None => memory,
+        };
+        facade_readable_task_rows(
+            &server.vault,
+            auth,
+            oneiron::task_verb::sdk::describe(&memory, facade_input(value)?)?,
+        )?
+    };
     let rows = Some(producers.take());
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
@@ -6393,6 +6402,90 @@ async fn vault_code_model_heal_count(
     Ok(FacadeCallOutput::unlisted(
         facade_hooks_post(server, hooks, output).await?,
     ))
+}
+async fn vault_results_status(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.results.status")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.results.status", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.results.status", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_results_status(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_results_recover(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.results.recover")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.results.recover", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.results.recover", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_results_recover(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_results_read(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.results.read")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.results.read", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.results.read", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_results_read(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_results_slice(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.results.slice")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.results.slice", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.results.slice", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_results_slice(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
 }
 async fn vault_code_repo_diff(
     server: &Arc<SyncServer>,
@@ -12675,6 +12768,10 @@ pub(crate) async fn call_verb(
         "vault.code.proposal_submit" => vault_code_proposal_submit(server, call, input).await,
         "vault.code.oplog" => vault_code_oplog(server, call, input).await,
         "vault.code.model_heal_count" => vault_code_model_heal_count(server, call, input).await,
+        "vault.results.status" => vault_results_status(server, call, input).await,
+        "vault.results.recover" => vault_results_recover(server, call, input).await,
+        "vault.results.read" => vault_results_read(server, call, input).await,
+        "vault.results.slice" => vault_results_slice(server, call, input).await,
         "vault.code.repo_diff" => vault_code_repo_diff(server, call, input).await,
         "vault.code.export" => vault_code_export(server, call, input).await,
         "vault.code.origin.authority.get" => {

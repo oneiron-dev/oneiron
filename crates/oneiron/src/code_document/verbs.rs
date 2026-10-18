@@ -1,16 +1,19 @@
 //! The code views' agent verbs (OF-323): `vault.code.diff`, a semantic diff
 //! between two tested states of one file, and `vault.code.blame`, blame by op
 //! over one. Every unit names the operations that wrote it, and every
-//! operation its actor, session, turn, activity, intent, model and effort.
-//! Text diff stays a derived rendering (`rendered`); birth text, which no
-//! operation wrote, carries no operation.
+//! operation its actor, session, turn, activity, intent, model and effort,
+//! each ref as the caller reads it ([`OpRefs`]). Text diff stays a derived
+//! rendering (`rendered`); birth text, which no operation wrote, carries no
+//! operation.
+
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
 use super::{CodeDocumentFrontier, CodeOpAttribution};
 use crate::blob_artifact::hash_hex;
 use crate::code_symbol::{
-    CodeAttributedChange, CodeContentVersion, CodeUnitBlame, render_attributed_semantic_diff,
+    CodeAttributedChange, CodeContentVersion, CodeUnitBlame, render_code_semantic_diff,
 };
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error};
@@ -45,14 +48,16 @@ pub struct CodeStateView {
     pub text_hash: String,
 }
 
-/// One operation on a code document, with who made it and why.
+/// One operation on a code document, with who made it and why. Each ref is
+/// one the caller reads: a session, actor, turn, activity, intent or model it
+/// cannot read is `None`, and renders as `-`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodeOperationView {
     pub operation_ref: String,
     /// Its order within the document.
     pub sequence: u64,
-    pub session_ref: String,
-    pub actor_ref: String,
+    pub session_ref: Option<String>,
+    pub actor_ref: Option<String>,
     pub actor_class: String,
     pub turn_ref: Option<String>,
     pub activity_ref: Option<String>,
@@ -168,11 +173,12 @@ impl Memory<'_> {
             .into());
         }
         let changes = self.vault().code_document_semantic_diff(&before, &after)?;
+        let (changes, rendered) = OpRefs::new(self).changes(changes)?;
         let view = CodeDiffView {
             before: before_view,
             after: after_view,
-            rendered: render_attributed_semantic_diff(&changes),
-            changes: changes.into_iter().map(change_view).collect(),
+            changes,
+            rendered,
         };
         // A lifted key reads as its handle to all but the owner (OF-067).
         self.lifted_view(view, || {
@@ -188,10 +194,12 @@ impl Memory<'_> {
             return Ok(None);
         };
         let units = self.vault().code_document_symbol_blame(&at)?;
-        let view = CodeBlameView {
-            at: view,
-            units: units.into_iter().map(unit_view).collect(),
-        };
+        let mut refs = OpRefs::new(self);
+        let units = units
+            .into_iter()
+            .map(|unit| refs.unit(unit))
+            .collect::<MemoryResult<Vec<_>>>()?;
+        let view = CodeBlameView { at: view, units };
         self.lifted_view(view, || self.vault().code_document_lifted_keys(&[&at]))
             .map(Some)
     }
@@ -211,20 +219,133 @@ pub(super) fn state_view(
     }
 }
 
-pub(super) fn operation_view(op: &CodeOpAttribution) -> CodeOperationView {
-    let id = |id: Option<EntityId>| id.map(|id| id.to_hex());
-    CodeOperationView {
-        operation_ref: op.operation.to_hex(),
-        sequence: op.sequence,
-        session_ref: op.session_id.to_hex(),
-        actor_ref: op.actor.entity_ref().to_hex(),
-        actor_class: op.actor.actor_class().gate_actor_class().to_owned(),
-        turn_ref: id(op.provenance.turn),
-        activity_ref: id(op.provenance.activity),
-        intent_ref: id(op.provenance.intent),
-        model_ref: id(op.provenance.substrate_ref),
-        reasoning_effort: op.provenance.reasoning_effort.clone(),
+/// The refs a code view's operations name, each read through the caller's
+/// credential once a view: a session, actor, turn, activity, intent or model
+/// the caller cannot read projects as `None` and renders as `-`, and one it
+/// reads is listed as a producer.
+pub(super) struct OpRefs<'a, 'v> {
+    memory: &'a Memory<'v>,
+    readable: BTreeMap<EntityId, bool>,
+}
+
+impl<'a, 'v> OpRefs<'a, 'v> {
+    pub(super) fn new(memory: &'a Memory<'v>) -> Self {
+        Self {
+            memory,
+            readable: BTreeMap::new(),
+        }
     }
+
+    /// `id` as a view names it: its hex when the caller reads it.
+    pub(super) fn admitted(&mut self, id: Option<EntityId>) -> MemoryResult<Option<String>> {
+        let Some(id) = id else {
+            return Ok(None);
+        };
+        let readable = match self.readable.get(&id).copied() {
+            Some(readable) => readable,
+            None => {
+                let readable = self.memory.get_entity(&id.to_hex())?.value.is_some();
+                if readable {
+                    self.memory.produced_from([id]);
+                }
+                self.readable.insert(id, readable);
+                readable
+            }
+        };
+        Ok(readable.then(|| id.to_hex()))
+    }
+
+    /// One operation, with who made it and why as the caller reads them.
+    pub(super) fn operation(&mut self, op: &CodeOpAttribution) -> MemoryResult<CodeOperationView> {
+        Ok(CodeOperationView {
+            operation_ref: op.operation.to_hex(),
+            sequence: op.sequence,
+            session_ref: self.admitted(Some(op.session_id))?,
+            actor_ref: self.admitted(Some(op.actor.entity_ref()))?,
+            actor_class: op.actor.actor_class().gate_actor_class().to_owned(),
+            turn_ref: self.admitted(op.provenance.turn)?,
+            activity_ref: self.admitted(op.provenance.activity)?,
+            intent_ref: self.admitted(op.provenance.intent)?,
+            model_ref: self.admitted(op.provenance.substrate_ref)?,
+            reasoning_effort: op.provenance.reasoning_effort.clone(),
+        })
+    }
+
+    fn operations(&mut self, ops: &[CodeOpAttribution]) -> MemoryResult<Vec<CodeOperationView>> {
+        ops.iter().map(|op| self.operation(op)).collect()
+    }
+
+    /// The changes as a view shows them, and their text: each change's
+    /// operations, one line each, then its hunk.
+    pub(super) fn changes(
+        &mut self,
+        changes: Vec<CodeAttributedChange>,
+    ) -> MemoryResult<(Vec<CodeChangeView>, String)> {
+        let mut views = Vec::with_capacity(changes.len());
+        let mut rendered = String::new();
+        for change in changes {
+            let inserted_by = self.operations(&change.inserted_by)?;
+            let deleted_by = self.operations(&change.deleted_by)?;
+            for (sign, ops) in [("+", &inserted_by), ("-", &deleted_by)] {
+                for op in ops {
+                    rendered.push_str(&format!("# {sign}op {}\n", op_line(op)));
+                }
+            }
+            rendered.push_str(&render_code_semantic_diff(std::slice::from_ref(
+                &change.change,
+            )));
+            let unit = change.change;
+            views.push(CodeChangeView {
+                path: unit.path,
+                symbol: unit.symbol,
+                before: unit.before.map(version_view),
+                after: unit.after.map(version_view),
+                inserted_by,
+                deleted_by,
+            });
+        }
+        Ok((views, rendered))
+    }
+
+    /// One unit of a blame, each run's operation as the caller reads it.
+    fn unit(&mut self, unit: CodeUnitBlame) -> MemoryResult<CodeUnitBlameView> {
+        let mut spans = Vec::with_capacity(unit.spans.len());
+        for span in unit.spans {
+            spans.push(CodeSpanView {
+                start: span.start,
+                end: span.end,
+                op: span.op.as_ref().map(|op| self.operation(op)).transpose()?,
+            });
+        }
+        Ok(CodeUnitBlameView {
+            path: unit.path,
+            symbol: unit.symbol,
+            version: version_view(unit.version),
+            spans,
+        })
+    }
+}
+
+/// One operation's line of a rendered diff, as
+/// [`crate::code_symbol::render_op`] writes one: a ref the caller cannot read
+/// shows as `-`.
+fn op_line(op: &CodeOperationView) -> String {
+    format!(
+        "{} seq:{} session:{} actor:{} turn:{} activity:{} intent:{} model:{} effort:{}",
+        op.operation_ref,
+        op.sequence,
+        shown(op.session_ref.as_deref()),
+        shown(op.actor_ref.as_deref()),
+        shown(op.turn_ref.as_deref()),
+        shown(op.activity_ref.as_deref()),
+        shown(op.intent_ref.as_deref()),
+        shown(op.model_ref.as_deref()),
+        shown(op.reasoning_effort.as_deref()),
+    )
+}
+
+fn shown(text: Option<&str>) -> &str {
+    text.unwrap_or("-")
 }
 
 fn version_view(version: CodeContentVersion) -> CodeUnitVersionView {
@@ -233,33 +354,5 @@ fn version_view(version: CodeContentVersion) -> CodeUnitVersionView {
         text: version.text,
         start_line: version.start_line,
         end_line: version.end_line,
-    }
-}
-
-pub(super) fn change_view(change: CodeAttributedChange) -> CodeChangeView {
-    CodeChangeView {
-        path: change.change.path,
-        symbol: change.change.symbol,
-        before: change.change.before.map(version_view),
-        after: change.change.after.map(version_view),
-        inserted_by: change.inserted_by.iter().map(operation_view).collect(),
-        deleted_by: change.deleted_by.iter().map(operation_view).collect(),
-    }
-}
-
-fn unit_view(unit: CodeUnitBlame) -> CodeUnitBlameView {
-    CodeUnitBlameView {
-        path: unit.path,
-        symbol: unit.symbol,
-        version: version_view(unit.version),
-        spans: unit
-            .spans
-            .into_iter()
-            .map(|span| CodeSpanView {
-                start: span.start,
-                end: span.end,
-                op: span.op.as_ref().map(operation_view),
-            })
-            .collect(),
     }
 }
