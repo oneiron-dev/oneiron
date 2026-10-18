@@ -10308,13 +10308,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/claim/scoped_read/admission.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "fn": 8
      }
     },
@@ -15864,7 +15864,7 @@
      "purpose": "The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration",
      "surface": {
       "crate-vis": 5,
-      "fn": 64,
+      "fn": 65,
       "struct": 1
      }
     },
@@ -30455,6 +30455,25 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AllRelationships",
+      "ClaimRelationships",
+      "ClaimScope",
+      "ScopedClaimInput",
+      "ScopedCommitRequest"
+     ],
+     "path": "src/memory/claim_admission.rs",
+     "purpose": "Explicit claim positions on the public door; the ordinary candidate writer still owns the write",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 2,
+      "struct": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -30479,7 +30498,7 @@
      "path": "src/memory/claims/commit.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -30861,7 +30880,7 @@
      "surface": {
       "crate-vis": 15,
       "mod": 3,
-      "re-export": 37
+      "re-export": 40
      }
     },
     {
@@ -31028,6 +31047,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RecallWorlds"
+     ],
+     "path": "src/memory/read_selection.rs",
+     "purpose": "Caller-selected world and project filters",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -31174,6 +31206,30 @@
       "crate-vis": 3,
       "fn": 14,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ChannelCeiling",
+      "CredentialCeiling",
+      "ExportChannel",
+      "RecordPosition",
+      "RecordSelector",
+      "ScopeAxisInput",
+      "ScopeSensitivityBand",
+      "ScopeSensitivityInput",
+      "ScopedExport",
+      "ScopedExportRecord",
+      "ScopedExportRequest"
+     ],
+     "path": "src/memory/scoped_export.rs",
+     "purpose": "Scoped exports carry the caller's verified ceiling, never a caller-authored grant",
+     "surface": {
+      "enum": 5,
+      "fn": 2,
+      "struct": 6
      }
     },
     {
@@ -48749,7 +48805,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 418
+      "fn": 420
      }
     },
     {
@@ -54813,7 +54869,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 140,
+     "files": 143,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55492,9 +55548,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 193,
+   "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3378,
+   "source_files": 3381,
    "test_files": 902
   },
   "oneiron-android": {
@@ -63889,7 +63945,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 369
+      "fn": 371
      }
     },
     {
@@ -64937,7 +64993,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 370
+      "fn": 372
      }
     },
     {
@@ -75904,6 +75960,7 @@
       "AiVideoJobRequest",
       "AiVideoTicket",
       "AiVoice",
+      "AllRelationships",
       "AnswerContract",
       "AnswerRecord",
       "AnswerSheetAtom",
@@ -76002,6 +76059,7 @@
       "Care",
       "CellTypeRef",
       "ChangeKind",
+      "ChannelCeiling",
       "ChannelIdentityBindRequest",
       "ChannelIdentityBinding",
       "ChannelIdentityCustody",
@@ -76036,6 +76094,8 @@
       "ChatProjection",
       "ClaimApprovalStatus",
       "ClaimLineAtom",
+      "ClaimRelationships",
+      "ClaimScope",
       "CodeBlameView",
       "CodeChangeView",
       "CodeDiffRequest",
@@ -76128,6 +76188,7 @@
       "CreateCampaignProgramRequest",
       "CreateNoteFromEntityRequest",
       "CreateNoteRequest",
+      "CredentialCeiling",
       "Criterion",
       "CriticBinding",
       "CriticPrediction",
@@ -76274,6 +76335,7 @@
       "ExplainMemoryReply",
       "ExplainMemoryRequest",
       "ExplainScoreEvidence",
+      "ExportChannel",
       "ExportDiaryRead",
       "ExtractionDefault",
       "FactKind",
@@ -76750,6 +76812,7 @@
       "QuoteStripStatus",
       "Reasoning",
       "ReasoningCause",
+      "RecallWorlds",
       "ReceiptAtom",
       "ReceiptKind",
       "ReceiptRecord",
@@ -76761,8 +76824,10 @@
       "RecordEraseRequest",
       "RecordLinks",
       "RecordLinksRequest",
+      "RecordPosition",
       "RecordRef",
       "RecordRefPreview",
+      "RecordSelector",
       "RefreshPolicy",
       "RelationshipChange",
       "RelationshipContext",
@@ -76861,6 +76926,7 @@
       "RoomTurnRequest",
       "RoomWaitKind",
       "RoutineOutcome",
+      "RowBirth",
       "RsiSettlement",
       "RsiSpendPurpose",
       "Run",
@@ -76875,11 +76941,20 @@
       "RunTreeTimestamps",
       "ScheduledBackfill",
       "Scope",
+      "ScopeAxisInputString",
+      "ScopeAxisInputU8",
       "ScopeAxisScopeId",
       "ScopeAxisString",
       "ScopeAxisU8",
       "ScopeResource",
       "ScopeScope",
+      "ScopeSensitivityBand",
+      "ScopeSensitivityInput",
+      "ScopedClaimInput",
+      "ScopedCommitRequest",
+      "ScopedExport",
+      "ScopedExportRecord",
+      "ScopedExportRequest",
       "ScopedReadReceipt",
       "ScopedReadResultLensFrameCard",
       "ScopedReadResultOptionalNoteEditorBinding",
@@ -77168,12 +77243,17 @@
       "WidenProposalsView",
       "WidthCheckClass",
       "WireClaimView",
+      "WireCommitOutcome",
       "WireCommitReceipt",
       "WireDeleteReceipt",
       "WireEntityView",
       "WireMentionProvenance",
       "WireReadScope",
+      "WireRecordRefusal",
+      "WireRefusalReason",
       "WireWitnessReceipt",
+      "WithheldRef",
+      "WithheldRole",
       "WorkCompanionPolicy",
       "WorkCompanionSetRequest",
       "WorkspaceCompanionInput",
@@ -77212,8 +77292,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 384,
-      "struct": 971
+      "enum": 396,
+      "struct": 983
      }
     },
     {
