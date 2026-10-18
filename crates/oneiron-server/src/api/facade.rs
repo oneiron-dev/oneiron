@@ -75,8 +75,8 @@ mod feedback_doors;
 mod fold_doors;
 mod foreign_code_doors;
 mod gate_policy_doors;
-mod graduation_doors;
 mod goal_optimize_doors;
+mod graduation_doors;
 mod graph_ask_doors;
 mod guest_document_doors;
 mod guest_doors;
@@ -134,11 +134,11 @@ mod weave_doors;
 mod web_fetch_doors;
 mod widen_proposal_doors;
 
+pub(crate) use admission_doors::{admission_observer, call_verb};
 pub(crate) use asr_doors::AsrSessions;
 pub(crate) use call_context::{FacadeCall, FacadeCallOutput};
 use call_context::{VerbContext, context_required, facade_invocation_id};
 pub(crate) use connector_call_doors::{connector_answer_as, connector_call_as};
-pub(crate) use admission_doors::{admission_observer, call_verb};
 pub(crate) use host_doors::ai_speech_for_run;
 pub(crate) use secret_use_doors::self_use_as;
 

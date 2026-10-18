@@ -115,7 +115,10 @@ impl Vault {
     /// Complete the witnessed interview, optionally checking the full record
     /// the caller saw. The expected record supplies no authority: it must match
     /// the human answer and the confirmed agent draft in the committing txn.
-    #[expect(clippy::too_many_arguments, reason = "the interview binds its witnessed turns and expected record")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the interview binds its witnessed turns and expected record"
+    )]
     pub fn complete_project_goal_intake(
         &self,
         owner: &AuthenticatedOwner,

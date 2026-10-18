@@ -2,10 +2,14 @@
 //! frontier; the sandbox supplies inert deltas, never a vault write.
 use serde::{Deserialize, Serialize};
 
-use super::{Memory, MemoryError, MemoryResult, MEMORY_CODE_FORBIDDEN};
+use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::code_sandbox::foreign::{ForeignCodeArtifact, execute_foreign_code};
-use crate::code_sandbox::{SandboxBoundaryContract, SandboxGuestTier, SandboxMountTable, SandboxProposalWrite};
-use crate::{ClaimApprovalStatus, ClaimSource, EntityId, WriteActor, WriteEnvelope, WriteProvenance};
+use crate::code_sandbox::{
+    SandboxBoundaryContract, SandboxGuestTier, SandboxMountTable, SandboxProposalWrite,
+};
+use crate::{
+    ClaimApprovalStatus, ClaimSource, EntityId, WriteActor, WriteEnvelope, WriteProvenance,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -35,25 +39,47 @@ pub struct ForeignCodeOutput {
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum ForeignCodeTier { Foreign }
+pub enum ForeignCodeTier {
+    Foreign,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum ForeignCodeApproval { Proposed }
+pub enum ForeignCodeApproval {
+    Proposed,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum ForeignCodeSource { Generated }
+pub enum ForeignCodeSource {
+    Generated,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ForeignCodeEffect {
-    FileWrite { path: String, bytes: Vec<u8> },
-    FileEdit { path: String, base_content_hash: String, edit: crate::code_document::CodeFileEdit },
-    FileDelete { path: String },
-    FileRename { from: String, to: String },
-    DirectoryOpaque { path: String },
-    ClaimCandidate { claim: super::ClaimInput },
+    FileWrite {
+        path: String,
+        bytes: Vec<u8>,
+    },
+    FileEdit {
+        path: String,
+        base_content_hash: String,
+        edit: crate::code_document::CodeFileEdit,
+    },
+    FileDelete {
+        path: String,
+    },
+    FileRename {
+        from: String,
+        to: String,
+    },
+    DirectoryOpaque {
+        path: String,
+    },
+    ClaimCandidate {
+        claim: super::ClaimInput,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -125,12 +151,21 @@ impl Memory<'_> {
         for (index, reference) in input.reads.into_iter().enumerate() {
             let view = self.get_entity(&reference)?.value.ok_or_else(refused)?;
             let name = format!("record-{index}.json");
-            let bytes = serde_json::to_vec(&view).map_err(|_| MemoryError::bad_request("record snapshot cannot be encoded"))?;
+            let bytes = serde_json::to_vec(&view)
+                .map_err(|_| MemoryError::bad_request("record snapshot cannot be encoded"))?;
             std::fs::write(workspace.path().join(&name), bytes).map_err(crate::Error::from)?;
-            reads.push(ForeignCodeRead { reference, path: format!("/mnt/workspace/{name}") });
+            reads.push(ForeignCodeRead {
+                reference,
+                path: format!("/mnt/workspace/{name}"),
+            });
         }
         // Never mount a vault, checkout or caller-selected host directory.
-        let mounts = SandboxMountTable::new(workspace.path(), workspace.path(), workspace.path(), workspace.path());
+        let mounts = SandboxMountTable::new(
+            workspace.path(),
+            workspace.path(),
+            workspace.path(),
+            workspace.path(),
+        );
         let run_id = EntityId::now();
         let outcome = execute_foreign_code(&input.source, mounts, artifact, budget)?;
         let output: StepOutput = serde_json::from_str(&outcome.result_json)
@@ -138,11 +173,14 @@ impl Memory<'_> {
         for file in &output.outputs {
             let path = crate::code_sandbox::SandboxVirtualPath::try_new(&file.path)?;
             if path.mount() != crate::code_sandbox::SandboxMount::Outputs {
-                return Err(MemoryError::bad_request("foreign output must name /mnt/outputs"));
+                return Err(MemoryError::bad_request(
+                    "foreign output must name /mnt/outputs",
+                ));
             }
         }
-        let manifest = outcome.manifest.as_ref()
-            .ok_or_else(|| MemoryError::bad_request("foreign execution returned no isolation manifest"))?;
+        let manifest = outcome.manifest.as_ref().ok_or_else(|| {
+            MemoryError::bad_request("foreign execution returned no isolation manifest")
+        })?;
         let contract = SandboxBoundaryContract::for_tier(SandboxGuestTier::Foreign);
         let actor_ref = self.actor.to_hex();
         let isolation = ForeignCodeIsolation {
@@ -162,54 +200,110 @@ impl Memory<'_> {
             let manifest = serde_json::to_string(&serde_json::json!({
                 "run_id": run_id.to_hex(), "actor_ref": actor_ref,
                 "source": "generated", "session_manifest": manifest,
-            })).map_err(|_| MemoryError::bad_request("foreign manifest cannot be encoded"))?;
+            }))
+            .map_err(|_| MemoryError::bad_request("foreign manifest cannot be encoded"))?;
             let digest = *blake3::hash(manifest.as_bytes()).as_bytes();
             let receipt_ref = self.vault.append_sandbox_gate_receipt_in_txn(
-                txn, run_id, "session_manifest", "recorded", manifest, digest,
+                txn,
+                run_id,
+                "session_manifest",
+                "recorded",
+                manifest,
+                digest,
             )?;
             let mut proposals = Vec::new();
             for delta in &outcome.proposals {
                 let effect = match delta.write() {
                     SandboxProposalWrite::FileWrite(file) => ForeignCodeEffect::FileWrite {
                         path: file.path.as_str().to_owned(),
-                        bytes: file.body.read_range(0, usize::try_from(file.body.len())
-                            .map_err(|_| MemoryError::bad_request("proposal cannot fit on this host"))?)?,
+                        bytes: file.body.read_range(
+                            0,
+                            usize::try_from(file.body.len()).map_err(|_| {
+                                MemoryError::bad_request("proposal cannot fit on this host")
+                            })?,
+                        )?,
                     },
                     SandboxProposalWrite::FileEdit(file) => ForeignCodeEffect::FileEdit {
                         path: file.path.as_str().to_owned(),
-                        base_content_hash: blake3::Hash::from_bytes(file.base_content_hash).to_hex().to_string(),
+                        base_content_hash: blake3::Hash::from_bytes(file.base_content_hash)
+                            .to_hex()
+                            .to_string(),
                         edit: file.edit.clone(),
                     },
-                    SandboxProposalWrite::FileDelete(file) => ForeignCodeEffect::FileDelete { path: file.path.as_str().to_owned() },
-                    SandboxProposalWrite::FileRename(file) => ForeignCodeEffect::FileRename { from: file.from.as_str().to_owned(), to: file.to.as_str().to_owned() },
-                    SandboxProposalWrite::DirectoryOpaque(file) => ForeignCodeEffect::DirectoryOpaque { path: file.path.as_str().to_owned() },
+                    SandboxProposalWrite::FileDelete(file) => ForeignCodeEffect::FileDelete {
+                        path: file.path.as_str().to_owned(),
+                    },
+                    SandboxProposalWrite::FileRename(file) => ForeignCodeEffect::FileRename {
+                        from: file.from.as_str().to_owned(),
+                        to: file.to.as_str().to_owned(),
+                    },
+                    SandboxProposalWrite::DirectoryOpaque(file) => {
+                        ForeignCodeEffect::DirectoryOpaque {
+                            path: file.path.as_str().to_owned(),
+                        }
+                    }
                     SandboxProposalWrite::ClaimCandidate(claim) => {
                         let provenance = WriteProvenance::new(rmpv::Value::from(run_id.to_hex()))?;
-                        let envelope = WriteEnvelope::new(WriteActor::new(self.actor, self.actor_class), ClaimSource::Generated, provenance, ClaimApprovalStatus::Proposed);
-                        let facet = crate::batch::claim_candidate_apply::claim_candidate_birth_facet(&self.vault.store, txn, &claim.id)?;
-                        let body = (*claim.candidate).clone().into_claim_body(&envelope, facet)?;
+                        let envelope = WriteEnvelope::new(
+                            WriteActor::new(self.actor, self.actor_class),
+                            ClaimSource::Generated,
+                            provenance,
+                            ClaimApprovalStatus::Proposed,
+                        );
+                        let facet =
+                            crate::batch::claim_candidate_apply::claim_candidate_birth_facet(
+                                &self.vault.store,
+                                txn,
+                                &claim.id,
+                            )?;
+                        let body = (*claim.candidate)
+                            .clone()
+                            .into_claim_body(&envelope, facet)?;
                         let subject_ref = match body.subject {
                             crate::claim::ClaimSubject::Entity(id) => id.to_hex(),
-                            crate::claim::ClaimSubject::Edge { source, kind, target } => format!("edge:{}:{}:{}", source.to_hex(), kind as u8, target.to_hex()),
+                            crate::claim::ClaimSubject::Edge {
+                                source,
+                                kind,
+                                target,
+                            } => format!(
+                                "edge:{}:{}:{}",
+                                source.to_hex(),
+                                kind as u8,
+                                target.to_hex()
+                            ),
                         };
-                        ForeignCodeEffect::ClaimCandidate { claim: super::ClaimInput {
-                            id: Some(claim.id.to_hex()), predicate: body.predicate, subject_ref,
-                            value: crate::batch::export::served_messagepack_json(body.value),
-                            confidence: body.confidence, source: "generated".to_owned(),
-                            world_ref: body.world.map(|id| id.to_hex()),
-                            relationship_ref: body.rel.map(|id| id.to_hex()),
-                            scope: body.scope.map(crate::batch::export::served_messagepack_json),
-                            valid_from: body.valid_from, valid_to: body.valid_to,
-                            occurred_at: None, learned_at: None, salience: body.salience,
-                        } }
+                        ForeignCodeEffect::ClaimCandidate {
+                            claim: super::ClaimInput {
+                                id: Some(claim.id.to_hex()),
+                                predicate: body.predicate,
+                                subject_ref,
+                                value: crate::batch::export::served_messagepack_json(body.value),
+                                confidence: body.confidence,
+                                source: "generated".to_owned(),
+                                world_ref: body.world.map(|id| id.to_hex()),
+                                relationship_ref: body.rel.map(|id| id.to_hex()),
+                                scope: body
+                                    .scope
+                                    .map(crate::batch::export::served_messagepack_json),
+                                valid_from: body.valid_from,
+                                valid_to: body.valid_to,
+                                occurred_at: None,
+                                learned_at: None,
+                                salience: body.salience,
+                            },
+                        }
                     }
                 };
                 let mut proposal = ForeignCodeProposal {
-                    proposal_ref: delta.id().to_hex(), receipt_ref: String::new(),
-                    actor_ref: actor_ref.clone(), source: ForeignCodeSource::Generated,
-                    approval: ForeignCodeApproval::Proposed, effect,
+                    proposal_ref: delta.id().to_hex(),
+                    receipt_ref: String::new(),
+                    actor_ref: actor_ref.clone(),
+                    source: ForeignCodeSource::Generated,
+                    approval: ForeignCodeApproval::Proposed,
+                    effect,
                 };
-                let body = serde_json::to_string(&proposal).map_err(|_| MemoryError::bad_request("foreign proposal cannot be encoded"))?;
+                let body = serde_json::to_string(&proposal)
+                    .map_err(|_| MemoryError::bad_request("foreign proposal cannot be encoded"))?;
                 let digest = *blake3::hash(body.as_bytes()).as_bytes();
                 proposal.receipt_ref = self.vault.append_sandbox_gate_receipt_in_txn(
                     txn, run_id, "proposal", "proposed", body, digest,
@@ -220,10 +314,21 @@ impl Memory<'_> {
         })?;
         self.foreign_code_credential()?;
         Ok(ForeignCodeRunResult {
-            run_id: run_id.to_hex(), actor_ref, tier: ForeignCodeTier::Foreign,
-            linked_imports: contract.linked_imports().iter().map(|import| import.name().to_owned()).collect(),
-            reads, done: output.done, observation: output.observation, outputs: output.outputs,
-            proposals, isolation, receipt_ref,
+            run_id: run_id.to_hex(),
+            actor_ref,
+            tier: ForeignCodeTier::Foreign,
+            linked_imports: contract
+                .linked_imports()
+                .iter()
+                .map(|import| import.name().to_owned())
+                .collect(),
+            reads,
+            done: output.done,
+            observation: output.observation,
+            outputs: output.outputs,
+            proposals,
+            isolation,
+            receipt_ref,
         })
     }
 
@@ -232,7 +337,9 @@ impl Memory<'_> {
         if proof.claims().holder_ref != self.actor.to_hex()
             || proof.claims().actor_class.as_deref() != Some(self.actor_class.gate_actor_class())
             || !(proof.allows_verb("read") || proof.allows_verb("core:read"))
-            || !(proof.allows_verb("core:propose") || proof.allows_verb("write") || proof.allows_verb("core:write"))
+            || !(proof.allows_verb("core:propose")
+                || proof.allows_verb("write")
+                || proof.allows_verb("core:write"))
             || !self.vault.capability_slip_is_live(proof)?
             || self.vault.credential_read_key(proof)?.is_none()
         {
@@ -243,5 +350,9 @@ impl Memory<'_> {
 }
 
 fn refused() -> MemoryError {
-    MemoryError::new(MEMORY_CODE_FORBIDDEN, "foreign code requires its own live read and propose credential", &[])
+    MemoryError::new(
+        MEMORY_CODE_FORBIDDEN,
+        "foreign code requires its own live read and propose credential",
+        &[],
+    )
 }

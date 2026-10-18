@@ -5,21 +5,21 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use super::cohort::{
-    EXPOSURE_PREFIX, cohort_in_txn, exposure_in_txn, retired_families_in_txn,
-};
+use super::cohort::{EXPOSURE_PREFIX, cohort_in_txn, exposure_in_txn, retired_families_in_txn};
 use super::{
-    CASE_PREFIX, FAMILY_PREFIX, DerivationKind, EvalCase, EvalCaseDraft, EvalCohort,
-    EvalCutAudit, EvalExposure, EvalExposureCounts, EvalExposureKind, EvalLabelAsk,
-    EvalRelease, EvalSeat, FamilyPurpose, SourceFamily, SufficiencyCard, SufficiencyInput,
-    assign_family_in_txn, record_case_in_txn, rows_in_txn, sufficiency_card,
+    CASE_PREFIX, DerivationKind, EvalCase, EvalCaseDraft, EvalCohort, EvalCutAudit, EvalExposure,
+    EvalExposureCounts, EvalExposureKind, EvalLabelAsk, EvalRelease, EvalSeat, FAMILY_PREFIX,
+    FamilyPurpose, SourceFamily, SufficiencyCard, SufficiencyInput, assign_family_in_txn,
+    record_case_in_txn, rows_in_txn, sufficiency_card,
 };
 use crate::attempt_queue::{AttemptId, AttemptState};
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::maintenance::coach::{
     COACH_EVAL_AUTHORING_FACET, COACH_HOST_QUEUE_KIND,
 };
-use crate::dreamer_runner::{DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome};
+use crate::dreamer_runner::{
+    DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
+};
 use crate::{EntityId, Error, Result, Vault};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
@@ -182,7 +182,9 @@ pub fn authoring_result(
     if status.attempt.kind != COACH_HOST_QUEUE_KIND
         || status.payload.attempt_type != COACH_EVAL_AUTHORING_FACET
     {
-        return Err(Error::InvalidConfig("the attempt is not an eval-authoring pass".into()));
+        return Err(Error::InvalidConfig(
+            "the attempt is not an eval-authoring pass".into(),
+        ));
     }
     Ok(Some(EvalAuthoringResult {
         attempt: input.attempt,

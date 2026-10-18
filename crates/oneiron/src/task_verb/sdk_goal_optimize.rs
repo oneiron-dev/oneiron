@@ -7,7 +7,9 @@ use crate::workspace_roster::{GoalInterviewTurns, GoalRecord};
 use crate::{EntityId, Error, TimeRange, Vault};
 use serde::{Deserialize, Serialize};
 
-use super::sdk::{SkillOptimizeResultRequest, SkillOptimizeResultView, skill_optimize_result_as_owner};
+use super::sdk::{
+    SkillOptimizeResultRequest, SkillOptimizeResultView, skill_optimize_result_as_owner,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -39,8 +41,12 @@ pub fn project_goal_intake_complete_as_owner(
     input: &ProjectGoalIntakeCompleteRequest,
 ) -> MemoryResult<ProjectGoalIntakeReceipt> {
     let claim = vault.complete_project_goal_intake(
-        owner, input.project_ref, attempt(input.attempt_ref)?, input.turns,
-        Some(&input.record), vault.now_recorded_at(),
+        owner,
+        input.project_ref,
+        attempt(input.attempt_ref)?,
+        input.turns,
+        Some(&input.record),
+        vault.now_recorded_at(),
     )?;
     Ok(ProjectGoalIntakeReceipt {
         project_ref: input.project_ref,
@@ -60,7 +66,11 @@ pub fn project_goal_get_as_owner(
         Some((claim, record)) => (Some(claim), Some(record)),
         None => (None, None),
     };
-    Ok(ProjectGoalView { project_ref: project, goal_claim, record })
+    Ok(ProjectGoalView {
+        project_ref: project,
+        goal_claim,
+        record,
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -86,10 +96,18 @@ pub fn skill_optimize_propose_as_owner(
     input: &SkillOptimizeProposeRequest,
 ) -> MemoryResult<SkillOptimizeProposalReceipt> {
     let proposal = optimize::propose_skill_edit_as_owner(
-        vault, owner, attempt(input.attempt_ref)?, &input.skill,
-        &input.expected_version, &input.desc, &input.rationale,
+        vault,
+        owner,
+        attempt(input.attempt_ref)?,
+        &input.skill,
+        &input.expected_version,
+        &input.desc,
+        &input.rationale,
     )?;
-    Ok(SkillOptimizeProposalReceipt { skill: input.skill, proposal })
+    Ok(SkillOptimizeProposalReceipt {
+        skill: input.skill,
+        proposal,
+    })
 }
 
 fn attempt(id: EntityId) -> MemoryResult<crate::attempt_queue::AttemptId> {
@@ -127,11 +145,19 @@ pub fn skill_optimize_measure_as_owner(
     pulls_per_axis: u32,
 ) -> MemoryResult<SkillOptimizeMeasurement> {
     let preflight = optimize::preflight_skill_edit_offline_floors_as_owner(
-        vault, owner, &input.proposal, scorer,
+        vault,
+        owner,
+        &input.proposal,
+        scorer,
     )?;
     let report = if preflight.passed {
         Some(optimize::measure_skill_edit_goal_axes_as_owner(
-            vault, owner, &input.proposal, scorer, bandit, pulls_per_axis,
+            vault,
+            owner,
+            &input.proposal,
+            scorer,
+            bandit,
+            pulls_per_axis,
         )?)
     } else {
         None
@@ -157,7 +183,10 @@ pub fn skill_optimize_admit_as_owner(
     input: &SkillOptimizeProposalRequest,
 ) -> MemoryResult<SkillOptimizeResultView> {
     let now = vault.now_recorded_at();
-    let occurred = TimeRange { start: now, end: now };
+    let occurred = TimeRange {
+        start: now,
+        end: now,
+    };
     vault.with_write_txn_grouped(|txn| {
         owner.revalidate_in_txn(vault, txn)?;
         let verdict = optimize::skill_edit_verdict_in_txn(vault, txn, &input.proposal)?
@@ -173,9 +202,16 @@ pub fn skill_optimize_admit_as_owner(
         {
             return Ok(());
         }
-        if vault.admit_optimized_skill_in_txn(txn, &input.proposal, occurred, now)?.is_none() {
+        if vault
+            .admit_optimized_skill_in_txn(txn, &input.proposal, occurred, now)?
+            .is_none()
+        {
             vault.supersede_skill_record_in_txn(
-                txn, &verdict.skill, &input.proposal, occurred, now,
+                txn,
+                &verdict.skill,
+                &input.proposal,
+                occurred,
+                now,
             )?;
         }
         Ok(())
@@ -188,9 +224,14 @@ fn result(
     owner: &AuthenticatedOwner,
     proposal: EntityId,
 ) -> MemoryResult<SkillOptimizeResultView> {
-    skill_optimize_result_as_owner(vault, owner, &SkillOptimizeResultRequest {
-        job_ref: None, proposal: Some(proposal),
-    })
+    skill_optimize_result_as_owner(
+        vault,
+        owner,
+        &SkillOptimizeResultRequest {
+            job_ref: None,
+            proposal: Some(proposal),
+        },
+    )
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -271,7 +312,11 @@ pub fn skill_optimize_preferences_set_as_owner(
 ) -> MemoryResult<SkillOptimizeGoalRevision> {
     Ok(SkillOptimizeGoalRevision {
         goal_revision: optimize::set_skill_tradeoff_preferences(
-            vault, owner, &input.skill, input.rules.clone(), input.jev_band,
+            vault,
+            owner,
+            &input.skill,
+            input.rules.clone(),
+            input.jev_band,
         )?,
     })
 }
@@ -290,9 +335,12 @@ pub fn skill_optimize_tradeoff_asks_as_owner(
     let actor = owner.actor_for_read(vault)?;
     optimize::skill_tradeoff_asks_for(vault, &actor)?
         .into_iter()
-        .map(|ask| Ok(SkillOptimizeTradeoffAskView {
-            question_digest: ask.question.digest()?, ask,
-        }))
+        .map(|ask| {
+            Ok(SkillOptimizeTradeoffAskView {
+                question_digest: ask.question.digest()?,
+                ask,
+            })
+        })
         .collect()
 }
 
@@ -311,7 +359,12 @@ pub fn skill_optimize_tradeoff_pick_as_owner(
     input: &SkillOptimizeTradeoffPickRequest,
 ) -> MemoryResult<SkillOptimizeResultView> {
     optimize::settle_skill_tradeoff_ask(
-        vault, owner, &input.proposal, &input.question_digest, input.choice, vault.now_recorded_at(),
+        vault,
+        owner,
+        &input.proposal,
+        &input.question_digest,
+        input.choice,
+        vault.now_recorded_at(),
     )?;
     result(vault, owner, input.proposal)
 }

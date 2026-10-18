@@ -26,7 +26,9 @@ struct Flight {
 
 impl Drop for Flight {
     fn drop(&mut self) {
-        if !self.settled && let Err(error) = self.tracker.interrupt() {
+        if !self.settled
+            && let Err(error) = self.tracker.interrupt()
+        {
             tracing::error!(%error, "admission interruption receipt failed");
         }
     }
@@ -68,7 +70,8 @@ pub(crate) fn call_verb<'a>(
         let digest = oneiron::receipt::call_json_digest(&value);
         let room = call.room_turn()?.map(|id| id.to_hex()).unwrap_or_default();
         let fingerprint = crate::api::facade::invocation_body(
-            Some(call.auth()), call.auth().locality(),
+            Some(call.auth()),
+            call.auth().locality(),
             &[verb.as_bytes(), room.as_bytes(), digest.as_bytes()],
         );
         let fingerprint = blake3::Hash::from_bytes(fingerprint).to_hex().to_string();
@@ -80,21 +83,30 @@ pub(crate) fn call_verb<'a>(
             let name = verb.clone();
             let tracker = tokio::task::spawn_blocking(move || {
                 AdmissionTracker::start(vault, actor, class, invocation, &name, digest, fingerprint)
-            }).await.map_err(|_| super::host_doors::internal(&verb))??;
-            let mut flight = Flight { tracker, settled: false };
+            })
+            .await
+            .map_err(|_| super::host_doors::internal(&verb))??;
+            let mut flight = Flight {
+                tracker,
+                settled: false,
+            };
             let observer: Arc<dyn LineObserver> = Arc::new(flight.tracker.clone());
-            let result = OBSERVER.scope(observer, async {
-                dispatch::call_verb(&server, &call.call(), &verb, Ok(value)).await
-            }).await;
+            let result = OBSERVER
+                .scope(observer, async {
+                    dispatch::call_verb(&server, &call.call(), &verb, Ok(value)).await
+                })
+                .await;
             let finish = match &result {
                 Ok(output) => flight.tracker.finish(Ok(&output.value)),
-                Err(error) => flight.tracker.finish(Err((
-                    &error.body.error.code, &error.body.error.message,
-                ))),
+                Err(error) => flight
+                    .tracker
+                    .finish(Err((&error.body.error.code, &error.body.error.message))),
             };
             finish?;
             flight.settled = true;
             result
-        }).await.map_err(|_| super::host_doors::internal("admission"))?
+        })
+        .await
+        .map_err(|_| super::host_doors::internal("admission"))?
     })
 }

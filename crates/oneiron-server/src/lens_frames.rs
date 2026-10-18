@@ -297,13 +297,18 @@ impl LensFrameStore {
         let selection_ref = blake3::hash(&encoded).to_hex().to_string();
         let key = FrameKey::new(auth, held.render.card_id.clone());
         let mut frames = self.lock();
-        let Some((arrival, base, old)) = frames.cards.get(&key)
+        let Some((arrival, base, old)) = frames
+            .cards
+            .get(&key)
             .filter(|entry| Arc::ptr_eq(&entry.card, held))
             .map(|entry| (entry.arrival, entry.base, entry.bytes))
         else {
             return Ok(None);
         };
-        let mut selections = held.selections.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut selections = held
+            .selections
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         if selections.contains_key(&selection_ref) {
             return Ok(Some(selection_ref));
         }
@@ -334,9 +339,15 @@ impl LensFrameStore {
     ) -> Option<LensReadHandle> {
         let key = FrameKey::new(auth, held.render.card_id.clone());
         let frames = self.lock();
-        frames.cards.get(&key).filter(|entry| Arc::ptr_eq(&entry.card, held))?;
-        held.selections.lock().unwrap_or_else(PoisonError::into_inner)
-            .get(selection_ref).cloned()
+        frames
+            .cards
+            .get(&key)
+            .filter(|entry| Arc::ptr_eq(&entry.card, held))?;
+        held.selections
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(selection_ref)
+            .cloned()
     }
 
     /// The run that created `held`, which `auth`'s caller holds, by the

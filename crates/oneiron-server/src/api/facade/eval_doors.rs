@@ -20,12 +20,11 @@ async fn owned<T: Send + 'static>(
         Err(error) => return (Err(error), Vec::new()),
     };
     let server = Arc::clone(server);
-    let answer: MemoryResult<T> = tokio::task::spawn_blocking(move || {
-        act(server.vault(), &owner).map_err(MemoryError::from)
-    })
-    .await
-    .map_err(|_| internal(verb))
-    .and_then(|answer| answer);
+    let answer: MemoryResult<T> =
+        tokio::task::spawn_blocking(move || act(server.vault(), &owner).map_err(MemoryError::from))
+            .await
+            .map_err(|_| internal(verb))
+            .and_then(|answer| answer);
     // These are local ledger rows and receipt refs, not core row content.
     (answer, Vec::new())
 }
@@ -35,9 +34,12 @@ pub(crate) async fn vault_evals_author_now(
     auth: &CoreAuth,
     input: oneiron::skill_optimize::eval_doors::EvalAuthorNowRequest,
 ) -> Listed<oneiron::skill_optimize::eval_doors::EvalAuthoringRef> {
-    owned(server, auth, "vault.evals.author_now", move |vault, owner| {
-        eval_doors::author_now(vault, owner, input)
-    })
+    owned(
+        server,
+        auth,
+        "vault.evals.author_now",
+        move |vault, owner| eval_doors::author_now(vault, owner, input),
+    )
     .await
 }
 
@@ -46,9 +48,12 @@ pub(crate) async fn vault_evals_authoring_result(
     auth: &CoreAuth,
     input: oneiron::skill_optimize::eval_doors::EvalAuthoringRef,
 ) -> Listed<Option<oneiron::skill_optimize::eval_doors::EvalAuthoringResult>> {
-    owned(server, auth, "vault.evals.authoring.result", move |vault, owner| {
-        eval_doors::authoring_result(vault, owner, input)
-    })
+    owned(
+        server,
+        auth,
+        "vault.evals.authoring.result",
+        move |vault, owner| eval_doors::authoring_result(vault, owner, input),
+    )
     .await
 }
 
@@ -68,9 +73,12 @@ pub(crate) async fn vault_evals_families_assign(
     auth: &CoreAuth,
     input: oneiron::skill_optimize::eval_doors::EvalFamilyAssignRequest,
 ) -> Listed<oneiron::skill_optimize::SourceFamily> {
-    owned(server, auth, "vault.evals.families.assign", move |vault, owner| {
-        eval_doors::assign_family(vault, owner, input)
-    })
+    owned(
+        server,
+        auth,
+        "vault.evals.families.assign",
+        move |vault, owner| eval_doors::assign_family(vault, owner, input),
+    )
     .await
 }
 
@@ -90,9 +98,12 @@ pub(crate) async fn vault_evals_cases_record(
     auth: &CoreAuth,
     input: oneiron::skill_optimize::EvalCaseDraft,
 ) -> Listed<oneiron::skill_optimize::EvalCase> {
-    owned(server, auth, "vault.evals.cases.record", move |vault, owner| {
-        eval_doors::record_case(vault, owner, input)
-    })
+    owned(
+        server,
+        auth,
+        "vault.evals.cases.record",
+        move |vault, owner| eval_doors::record_case(vault, owner, input),
+    )
     .await
 }
 
@@ -112,9 +123,12 @@ pub(crate) async fn vault_evals_cohorts_open(
     auth: &CoreAuth,
     input: oneiron::skill_optimize::eval_doors::EvalCohortOpenRequest,
 ) -> Listed<oneiron::skill_optimize::EvalRelease> {
-    owned(server, auth, "vault.evals.cohorts.open", move |vault, owner| {
-        eval_doors::open_cohort(vault, owner, input)
-    })
+    owned(
+        server,
+        auth,
+        "vault.evals.cohorts.open",
+        move |vault, owner| eval_doors::open_cohort(vault, owner, input),
+    )
     .await
 }
 
@@ -134,9 +148,12 @@ pub(crate) async fn vault_evals_sufficiency(
     auth: &CoreAuth,
     input: oneiron::skill_optimize::SufficiencyInput,
 ) -> Listed<oneiron::skill_optimize::SufficiencyCard> {
-    owned(server, auth, "vault.evals.sufficiency", move |vault, owner| {
-        eval_doors::sufficiency(vault, owner, input)
-    })
+    owned(
+        server,
+        auth,
+        "vault.evals.sufficiency",
+        move |vault, owner| eval_doors::sufficiency(vault, owner, input),
+    )
     .await
 }
 
@@ -145,9 +162,12 @@ pub(crate) async fn vault_evals_labels_blocked(
     auth: &CoreAuth,
     input: oneiron::skill_optimize::eval_doors::EvalBlockedLabelsRequest,
 ) -> Listed<Vec<oneiron::skill_optimize::EvalLabelAsk>> {
-    owned(server, auth, "vault.evals.labels.blocked", move |vault, owner| {
-        eval_doors::blocked_labels(vault, owner, input)
-    })
+    owned(
+        server,
+        auth,
+        "vault.evals.labels.blocked",
+        move |vault, owner| eval_doors::blocked_labels(vault, owner, input),
+    )
     .await
 }
 
@@ -156,8 +176,11 @@ pub(crate) async fn vault_evals_labels_pick(
     auth: &CoreAuth,
     input: oneiron::skill_optimize::eval_doors::EvalLabelPickRequest,
 ) -> Listed<oneiron::skill_optimize::EvalCase> {
-    owned(server, auth, "vault.evals.labels.pick", move |vault, owner| {
-        eval_doors::pick_label(vault, owner, input)
-    })
+    owned(
+        server,
+        auth,
+        "vault.evals.labels.pick",
+        move |vault, owner| eval_doors::pick_label(vault, owner, input),
+    )
     .await
 }

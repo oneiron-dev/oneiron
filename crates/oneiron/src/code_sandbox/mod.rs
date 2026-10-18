@@ -21,9 +21,9 @@ pub mod wasmtime_runtime;
 mod adapter;
 mod contract;
 mod credential;
-pub mod foreign;
 /// Engine-owned open-web relay and owner-local receipts.
 pub mod egress;
+pub mod foreign;
 mod paths;
 mod proposal;
 

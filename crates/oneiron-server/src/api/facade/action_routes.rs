@@ -405,7 +405,8 @@ pub(super) async fn execute_result_set_action(
         move |executor, vault, writer, binding| {
             executor.execute_ui_bound(vault, writer, &event, &key, binding)
         },
-    ).await
+    )
+    .await
 }
 
 /// Runs `run` on a blocking thread with the app's table, the vault, the
@@ -437,8 +438,9 @@ where
         surface,
         live_run,
     } = bound;
-    let door: Arc<dyn AgentVerbDoor> =
-        Arc::new(FacadeRowDoor::new(server, headers, extensions, key, credential));
+    let door: Arc<dyn AgentVerbDoor> = Arc::new(FacadeRowDoor::new(
+        server, headers, extensions, key, credential,
+    ));
     let executor = app()?;
     // OF-181: the live run's guard, waited for briefly while an entry or
     // another action holds it, taken before the action and held through it,
@@ -790,14 +792,15 @@ impl FacadeRowDoor {
             self.runtime.spawn(async move {
                 let invocation = invocation.to_hex();
                 let context = super::FacadeCall::bound(&auth, None, Some(&invocation), None);
-                let answer = super::call_verb(&server, &context, call.verb.as_str(), Ok(call.input))
-                    .await
-                    .map(|answer| answer.value)
-                    .map_err(|error| AgentVerbRefusalWords {
-                        code: error.body.error.code,
-                        message: error.body.error.message,
-                        suggestions: error.body.error.suggestions,
-                    });
+                let answer =
+                    super::call_verb(&server, &context, call.verb.as_str(), Ok(call.input))
+                        .await
+                        .map(|answer| answer.value)
+                        .map_err(|error| AgentVerbRefusalWords {
+                            code: error.body.error.code,
+                            message: error.body.error.message,
+                            suggestions: error.body.error.suggestions,
+                        });
                 let _ = sender.send(answer);
             });
             let output = receiver.recv().map_err(|_| refused())?.map_err(|row| {

@@ -84,7 +84,19 @@ const ALL_RENDERERS_FAILED_REASON_PREFIX: &str = "all web fetch renderers failed
 const FIRECRAWL_UNREPORTED_STATUS: u16 = 200;
 
 /// Which rung of the fixed ladder produced a result.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum RendererKind {
     Readability,
@@ -354,7 +366,9 @@ impl TryFrom<usize> for CrawlPageBudget {
 
 /// Same-site containment is the default; leaving the seed's origin is an
 /// affirmative caller choice.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CrawlScope {
     #[default]

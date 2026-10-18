@@ -462,18 +462,23 @@ pub(crate) fn guest_share_envelope_body_listing(
     crate::sync::loro_support::map_for_each_value_bytes(
         &stripped.get_map("entities"),
         |key, value| {
-            if value.is_some() && let Ok(id) = EntityId::from_hex(key) {
+            if value.is_some()
+                && let Ok(id) = EntityId::from_hex(key)
+            {
                 rows.push(id);
             }
         },
     );
-    Ok((GuestShareEnvelopeBody::new(
-        grant_scope,
-        selector.member_ref,
-        selector_bytes,
-        key.as_str(),
-        update,
-    ), rows))
+    Ok((
+        GuestShareEnvelopeBody::new(
+            grant_scope,
+            selector.member_ref,
+            selector_bytes,
+            key.as_str(),
+            update,
+        ),
+        rows,
+    ))
 }
 
 fn decode_selector_value(value: &Value) -> Result<SyncSelector> {

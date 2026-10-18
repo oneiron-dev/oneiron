@@ -4,14 +4,14 @@
 use serde::{Deserialize, Serialize};
 
 use crate::claim::ClaimReadStatus;
-use crate::lens::{
-    GeneratedUiRender, GeneratedUiResultSetActionEvent, GeneratedUiResultSetScope,
-    GeneratedUiStateSnapshot, GeneratedUiValidatedAction, InspectionResolved,
-    LensAtomId, LensAtomSelectionRequest, LensBackingTargetKind, LensHandleName,
-    LensReadHandle, LensReadReach, LensRenderFrame, LensRenderId,
-};
 #[cfg(feature = "sync")]
 use crate::lens::LensSpanSelectionRequest;
+use crate::lens::{
+    GeneratedUiRender, GeneratedUiResultSetActionEvent, GeneratedUiResultSetScope,
+    GeneratedUiStateSnapshot, GeneratedUiValidatedAction, InspectionResolved, LensAtomId,
+    LensAtomSelectionRequest, LensBackingTargetKind, LensHandleName, LensReadHandle, LensReadReach,
+    LensRenderFrame, LensRenderId,
+};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 
 /// Half-open Unicode scalar offsets. A supplied version is an echo to check,
@@ -128,25 +128,37 @@ impl Memory<'_> {
     ) -> MemoryResult<LensReadHandle> {
         let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
         match &input.span {
-            None => Ok(frame.select_atom(&read, render, &LensAtomSelectionRequest {
-                card_id: input.card_id.clone(),
-                atom_id: input.atom_id.clone(),
-                handle: input.handle.clone(),
-            })?),
+            None => Ok(frame.select_atom(
+                &read,
+                render,
+                &LensAtomSelectionRequest {
+                    card_id: input.card_id.clone(),
+                    atom_id: input.atom_id.clone(),
+                    handle: input.handle.clone(),
+                },
+            )?),
             Some(span) => {
                 #[cfg(feature = "sync")]
                 {
-                    let selected = frame.select_span(&read, render, &LensSpanSelectionRequest {
-                        card_id: input.card_id.clone(),
-                        atom_id: input.atom_id.clone(),
-                        handle: input.handle.clone(),
-                        start: span.start,
-                        end: span.end,
-                    })?;
+                    let selected = frame.select_span(
+                        &read,
+                        render,
+                        &LensSpanSelectionRequest {
+                            card_id: input.card_id.clone(),
+                            atom_id: input.atom_id.clone(),
+                            handle: input.handle.clone(),
+                            start: span.start,
+                            end: span.end,
+                        },
+                    )?;
                     if let Some(version) = &span.version
-                        && selected.span().is_none_or(|current| current.frontier() != version.as_slice())
+                        && selected
+                            .span()
+                            .is_none_or(|current| current.frontier() != version.as_slice())
                     {
-                        return Err(MemoryError::bad_request("selection version differs from the rendered document"));
+                        return Err(MemoryError::bad_request(
+                            "selection version differs from the rendered document",
+                        ));
                     }
                     Ok(selected)
                 }
@@ -185,7 +197,9 @@ impl Memory<'_> {
             GeneratedUiResultSetScope::Predicate { predicate } => std::slice::from_ref(predicate),
         };
         if expected != selected {
-            return Err(MemoryError::bad_request("result-set selections must match exactly the ticked rows or rendered predicate"));
+            return Err(MemoryError::bad_request(
+                "result-set selections must match exactly the ticked rows or rendered predicate",
+            ));
         }
         for handle in selected {
             frame.resolve_read_handle(&read, render, handle)?;

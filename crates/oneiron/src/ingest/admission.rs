@@ -200,7 +200,12 @@ fn admit_imported_evidence_claim_typed_guarded(
     if guard.is_some() {
         return vault.try_with_actor_content_write_txn(admission.actor, |content| {
             admit_imported_evidence_in_content(
-                vault, content, predicate, value, source_record_id, admission,
+                vault,
+                content,
+                predicate,
+                value,
+                source_record_id,
+                admission,
             )
         });
     }
@@ -291,7 +296,10 @@ pub(crate) fn admit_imported_evidence_in_content(
         ));
     }
     crate::memory::guard_existing_claim_in_txn(
-        vault, content.read(), admission.actor, admission.claim_id,
+        vault,
+        content.read(),
+        admission.actor,
+        admission.claim_id,
     )?;
     if vault.local_hard_delete_marker_exists_in_txn(content.read(), &admission.claim_id)? {
         return Err(crate::error::ClaimError::ActorLacksClaimAuthority {
