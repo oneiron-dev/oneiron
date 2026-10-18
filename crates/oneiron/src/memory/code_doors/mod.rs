@@ -8,15 +8,15 @@
 //! Authority is the owner's live proof alone (`Memory::code_owner`). The
 //! lease holder and the proposal actor are always that caller.
 
-mod leases;
-mod conflicts;
 mod conflict_types;
-mod resolutions;
+mod conflicts;
+mod leases;
 mod proposals;
+mod resolutions;
 mod types;
 
-pub use types::*;
 pub use conflict_types::*;
+pub use types::*;
 
 use std::collections::BTreeSet;
 

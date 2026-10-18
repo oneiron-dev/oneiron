@@ -624,7 +624,8 @@ impl OpenedVaultBundle {
 
     /// Whether a machine the owner vouched for signed the bundle, mine here now
     /// or removed since: the key of its roster chain an owner-held key accepted,
-    /// or of its chain under an owner anchor, in `fold`.
+    /// or of its chain under an owner anchor, in `fold`. An install whose own
+    /// profile is still unanswered is no machine he vouched for (selfprofile).
     #[cfg(feature = "sync")]
     #[must_use]
     pub(crate) fn signed_by_owner_machine(&self, fold: &AuthorityFold) -> bool {
@@ -633,6 +634,7 @@ impl OpenedVaultBundle {
                 .roster_trusted
                 .iter()
                 .chain(machine.anchored.values())
+                .filter(|chain| chain.profile.role.answered())
                 .any(|chain| self.signed_by(&chain.profile.machine_key))
         })
     }

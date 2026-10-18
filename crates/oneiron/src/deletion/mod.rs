@@ -69,6 +69,8 @@ pub use tombstone::{
     TombstoneReason, TombstoneValueV2, decode_tombstone_value,
 };
 
+// A checkpoint restore reruns the erase's actor sweep (FIX 3655).
+pub(crate) use actor_fields::{hard_erased_ids_in, rerun_actor_scrubs_in_txn};
 pub(crate) use derived_rows::tear_derived_rows_in_txn;
 pub(crate) use gate::{DeletionClaim, DeletionGateContext, GatedDeletion};
 pub(crate) use receipt::{decode_redaction_audit_receipt, validate_redaction_receipt_body};
