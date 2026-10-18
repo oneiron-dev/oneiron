@@ -15,11 +15,11 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::agent_inbox_lens::{InboxLensPage, InboxLensRequest, InboxRunGroupsRequest};
 use oneiron::claim::{WeaveDigestRendered, WeaveReaderRef, WeaveScheduleView};
 use oneiron::inbox::InboxGroup;
+use oneiron::lens::LensFrameCard;
 use oneiron::memory::DreamerAttemptRef;
+use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::{EmptyRequest, WeaveEnqueueRequest, WeaveScheduleCleared};
-use oneiron::lens::LensFrameCard;
-use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::{EdgeActorClass, EntityId};
 
 use super::host_doors::{Listed, credential_listing, off_runtime_listing, refused};

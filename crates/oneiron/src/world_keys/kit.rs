@@ -17,9 +17,10 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use super::doors::world_recovery_state_in;
+use super::page_seal::WrapTransition;
 use super::{
-    ActivatedRoot, KitConfirmation, RecoveryRoot, RecoveryRootId, RecoveryRootSeed, RootRestore,
-    VaultKeyStatus, VaultKeyWrapInfo, WorldRecoveryState, refused,
+    ActivatedRoot, KitConfirmation, PreparedRoot, RecoveryRoot, RecoveryRootId, RecoveryRootSeed,
+    RootRestore, VaultKeyStatus, VaultKeyWrapInfo, WorldRecoveryState, refused,
 };
 use crate::authority::EditOrigin;
 use crate::consent::AuthenticatedOwner;
@@ -109,6 +110,24 @@ pub struct WorldKitRestore {
     pub keys: RootRestore,
     /// The kit's passphrase cost is below today's default: offer a reissue.
     pub reissue_advised: bool,
+}
+
+/// The seed a kit's pieces rebuild, before anything is written.
+pub(super) struct KitSeed {
+    pub(super) kit: KitId,
+    pub(super) seed: RecoveryRootSeed,
+    /// The root the seed grows into.
+    pub(super) root: RecoveryRoot,
+    /// The kit's passphrase cost is below today's default.
+    pub(super) reissue_advised: bool,
+}
+
+/// The pending row a kit's confirm finishes, as its pieces named it. Public
+/// facts only.
+pub(super) struct KitConfirmRow {
+    pub(super) kit: KitId,
+    key: String,
+    root: RecoveryRoot,
 }
 
 /// The kits this vault issued and what they cover on this install.
@@ -211,6 +230,18 @@ impl Vault {
         owner: &AuthenticatedOwner,
         issue: &KitIssue<'_>,
     ) -> Result<IssuedWorldKit> {
+        let kit = self.draw_world_kit(owner, issue)?;
+        self.with_write_txn(|txn| self.list_issued_kit_in_txn(txn, owner, &kit))?;
+        Ok(kit)
+    }
+
+    /// Kit issue's draw: a fresh root's seed split over the homes, held in
+    /// memory only. Nothing is written.
+    pub(super) fn draw_world_kit(
+        &self,
+        owner: &AuthenticatedOwner,
+        issue: &KitIssue<'_>,
+    ) -> Result<IssuedWorldKit> {
         let prepared = self.prepare_owner_root(owner)?;
         let (vault_id, only_machine, me) = {
             let txn = self.store.env.read_txn()?;
@@ -242,35 +273,43 @@ impl Vault {
         )
         .map_err(kit_refused)?;
         drop(prepared);
-        let manifest = kit.manifest().clone();
-        self.with_write_txn(|txn| {
-            owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-            let key = kit_key(manifest.kit_id);
-            if KITS.get(&self.store, txn, &key)?.is_some() {
-                return Err(refused("a kit with this id is already listed"));
-            }
-            let row = StoredKit {
-                kit_id: manifest.kit_id,
-                kind: manifest.kind,
-                homes: manifest.homes.clone(),
-                cost: manifest.cost.map(|cost| StoredCost {
-                    memory_mib: cost.memory_mib(),
-                    passes: cost.passes(),
-                }),
-                coverage: manifest.coverage,
-                root: root.0,
-                created_at: self.instant_in_txn(txn)?.secs(),
-                confirmed_at: None,
-                replaced_by: None,
-            };
-            KITS.put(&self.store, txn, &key, &row)
-        })?;
         Ok(IssuedWorldKit {
             vault_id,
             root,
-            manifest,
+            manifest: kit.manifest().clone(),
             pieces: kit.into_pieces(),
         })
+    }
+
+    /// The pending row of a kit just drawn, in the caller's write
+    /// transaction. Public facts only.
+    pub(super) fn list_issued_kit_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        issued: &IssuedWorldKit,
+    ) -> Result<()> {
+        owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+        let manifest = &issued.manifest;
+        let key = kit_key(manifest.kit_id);
+        if KITS.get(&self.store, txn, &key)?.is_some() {
+            return Err(refused("a kit with this id is already listed"));
+        }
+        let row = StoredKit {
+            kit_id: manifest.kit_id,
+            kind: manifest.kind,
+            homes: manifest.homes.clone(),
+            cost: manifest.cost.map(|cost| StoredCost {
+                memory_mib: cost.memory_mib(),
+                passes: cost.passes(),
+            }),
+            coverage: manifest.coverage,
+            root: issued.root.0,
+            created_at: self.instant_in_txn(txn)?.secs(),
+            confirmed_at: None,
+            replaced_by: None,
+        };
+        KITS.put(&self.store, txn, &key, &row)
     }
 
     /// Confirms a world kit from its pieces as the owner saved them: two, or
@@ -289,16 +328,37 @@ impl Vault {
         passphrase: Option<&KitPassphrase>,
         carry: &BTreeSet<EntityId>,
     ) -> Result<ConfirmedWorldKit> {
-        let kit = pieces
-            .first()
-            .map(|piece| piece.kit_id())
-            .ok_or_else(|| kit_refused(KitError::NeedTwoPieces))?;
+        let (row, prepared) = self.draw_kit_confirm(owner, pieces, passphrase)?;
+        // The `world-kit` wrap is a wrap change: a sealed vault's page-seal
+        // mirror is staged in the activation's transaction and rewritten
+        // after it commits (OF-570).
+        let transition = self.begin_wrap_transition()?;
+        let (activated, (replaced, escrow)) =
+            self.activate_owner_root_with(owner, origin, prepared, carry, |txn| {
+                self.confirm_kit_rows_in_txn(txn, &transition, &row)
+            })?;
+        transition.finish()?;
+        Ok(ConfirmedWorldKit {
+            kit: row.kit,
+            activated,
+            replaced,
+            escrow,
+        })
+    }
+
+    /// A kit confirm's checks before any write: the pieces rebuild the seed
+    /// of the root a pending row of this vault names, and a vault with a
+    /// data key holds it unlocked. The root is prepared, not published.
+    pub(super) fn draw_kit_confirm(
+        &self,
+        owner: &AuthenticatedOwner,
+        pieces: &[&KitPiece],
+        passphrase: Option<&KitPassphrase>,
+    ) -> Result<(KitConfirmRow, PreparedRoot)> {
+        let KitSeed {
+            kit, seed, root, ..
+        } = self.kit_seed(pieces, passphrase)?;
         let key = kit_key(kit);
-        let vault_id = self.kit_vault_id()?;
-        let secret = restore_kit(vault_id, KitSecretKind::RecoveryRoot, pieces, passphrase)
-            .map_err(kit_refused)?;
-        let seed = RecoveryRootSeed::from_restored_kit(secret)?;
-        let root = seed.public(&vault_id)?;
         {
             let txn = self.store.env.read_txn()?;
             pending_row(KITS.get(&self.store, &txn, &key)?, &root)?;
@@ -308,38 +368,37 @@ impl Vault {
             return Err(refused("unlock the vault key first"));
         }
         let prepared = self.prepare_owner_root_from_seed(owner, seed)?;
-        // The `world-kit` wrap is a wrap change: a sealed vault's page-seal
-        // mirror is staged in the activation's transaction and rewritten
-        // after it commits (OF-570).
-        let transition = self.begin_wrap_transition()?;
-        let (activated, (replaced, escrow)) =
-            self.activate_owner_root_with(owner, origin, prepared, carry, |txn| {
-                let mut row = pending_row(KITS.get(&self.store, txn, &key)?, &root)?;
-                let mut replaced = Vec::new();
-                for (other_key, mut other) in KITS.scan(&self.store, txn)? {
-                    if other.kit_id != kit && other.current() {
-                        other.replaced_by = Some(kit);
-                        replaced.push(other.kit_id);
-                        KITS.put(&self.store, txn, &other_key, &other)?;
-                    }
-                }
-                row.confirmed_at = Some(self.instant_in_txn(txn)?.secs());
-                KITS.put(&self.store, txn, &key, &row)?;
-                let escrow = self.put_vault_key_escrow_in_txn(
-                    txn,
-                    &transition,
-                    WORLD_KIT_ESCROW,
-                    &root.recovery_key,
-                )?;
-                Ok((replaced, escrow))
-            })?;
-        transition.finish()?;
-        Ok(ConfirmedWorldKit {
-            kit,
-            activated,
-            replaced,
-            escrow,
-        })
+        Ok((KitConfirmRow { kit, key, root }, prepared))
+    }
+
+    /// A kit confirm's own rows, in the activation's transaction once the
+    /// new root stands: its row confirmed, the kits it replaces, and the
+    /// vault key's `world-kit` escrow wrap to its root.
+    pub(super) fn confirm_kit_rows_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        transition: &WrapTransition<'_>,
+        confirm: &KitConfirmRow,
+    ) -> Result<(Vec<KitId>, Option<VaultKeyWrapInfo>)> {
+        let kit = confirm.kit;
+        let mut row = pending_row(KITS.get(&self.store, txn, &confirm.key)?, &confirm.root)?;
+        let mut replaced = Vec::new();
+        for (other_key, mut other) in KITS.scan(&self.store, txn)? {
+            if other.kit_id != kit && other.current() {
+                other.replaced_by = Some(kit);
+                replaced.push(other.kit_id);
+                KITS.put(&self.store, txn, &other_key, &other)?;
+            }
+        }
+        row.confirmed_at = Some(self.instant_in_txn(txn)?.secs());
+        KITS.put(&self.store, txn, &confirm.key, &row)?;
+        let escrow = self.put_vault_key_escrow_in_txn(
+            txn,
+            transition,
+            WORLD_KIT_ESCROW,
+            &confirm.root.recovery_key,
+        )?;
+        Ok((replaced, escrow))
     }
 
     /// Restores this vault's world keys from the kit: the pieces rebuild the
@@ -357,6 +416,29 @@ impl Vault {
         passphrase: Option<&KitPassphrase>,
         confirm: Option<KitConfirmation>,
     ) -> Result<WorldKitRestore> {
+        let KitSeed {
+            kit,
+            seed,
+            root,
+            reissue_advised,
+        } = self.kit_seed(pieces, passphrase)?;
+        let keys = self.restore_world_keys(owner, origin, &seed, confirm)?;
+        Ok(WorldKitRestore {
+            kit,
+            root: root.id,
+            keys,
+            reissue_advised,
+        })
+    }
+
+    /// The seed `pieces` rebuild, two or one and the passphrase, for this
+    /// vault's root kit; a kit refusal names the kit's fixed reason, never
+    /// piece bytes.
+    pub(super) fn kit_seed(
+        &self,
+        pieces: &[&KitPiece],
+        passphrase: Option<&KitPassphrase>,
+    ) -> Result<KitSeed> {
         let kit = pieces
             .first()
             .map(|piece| piece.kit_id())
@@ -366,12 +448,11 @@ impl Vault {
             .map_err(kit_refused)?;
         let reissue_advised = secret.reissue_advised();
         let seed = RecoveryRootSeed::from_restored_kit(secret)?;
-        let root = seed.public(&vault_id)?.id;
-        let keys = self.restore_world_keys(owner, origin, &seed, confirm)?;
-        Ok(WorldKitRestore {
+        let root = seed.public(&vault_id)?;
+        Ok(KitSeed {
             kit,
+            seed,
             root,
-            keys,
             reissue_advised,
         })
     }

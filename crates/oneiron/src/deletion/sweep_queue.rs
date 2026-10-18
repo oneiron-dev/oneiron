@@ -12,6 +12,11 @@ use super::receipt::RedactionScope;
 pub(crate) const HARD_ERASE_SWEEP_PREFIX: &[u8] = b"h:";
 pub(crate) const LAST_HARD_ERASE_SWEEP_SEQ_KEY: &[u8] = b"m:last_hard_erase_sweep_seq";
 pub(crate) const HARD_ERASE_SWEEP_SLA_SECS: u64 = 30 * 86_400;
+
+/// The queue and its immutable receipt share the request's deadline.
+pub(super) fn hard_erase_sweep_deadline_at(requested_at: u64) -> u64 {
+    requested_at.saturating_add(HARD_ERASE_SWEEP_SLA_SECS)
+}
 /// Withdrawn-generation rows, `hw:{id16}{generation:8BE}`. Not `h:` rows: a
 /// withdrawn generation is no erased id, and the `h:` executor must not
 /// finalize one its compaction never rewrote.
@@ -90,14 +95,14 @@ pub(crate) struct HardEraseRetryState {
 }
 
 impl HardEraseRetryState {
-    /// A job queued at `queued_at`: due now, under the 30-day SLA.
-    fn fresh(queued_at: u64) -> Self {
+    /// Due at queue time, with the 30-day SLA starting at the request.
+    fn fresh(queued_at: u64, requested_at: u64) -> Self {
         Self {
             attempt_count: 0,
             next_attempt_at: queued_at,
             last_error_code: None,
             queued_at,
-            deadline_at: queued_at.saturating_add(HARD_ERASE_SWEEP_SLA_SECS),
+            deadline_at: hard_erase_sweep_deadline_at(requested_at),
         }
     }
 }
@@ -133,6 +138,7 @@ pub(crate) fn encode_hard_erase_sweep_job(
     scope: RedactionScope,
     extras: HardEraseSweepExtras,
     queued_at: u64,
+    requested_at: u64,
 ) -> Result<Vec<u8>> {
     let mut revision_ids = scope.revision_ids;
     revision_ids.extend(extras.revision_ids);
@@ -143,7 +149,7 @@ pub(crate) fn encode_hard_erase_sweep_job(
             body_snapshot_refs: extras.body_snapshot_refs,
             carrier_classes: arch0038_carrier_classes(),
         },
-        retry_state: HardEraseRetryState::fresh(queued_at),
+        retry_state: HardEraseRetryState::fresh(queued_at, requested_at),
     };
     rmp_serde::to_vec_named(&job)
         .map_err(|_| Error::InvariantViolation("hard erase sweep job encode"))
@@ -179,7 +185,7 @@ pub(crate) fn enqueue_withdrawn_generation_in_txn(
             generation,
             replacement,
         },
-        retry_state: HardEraseRetryState::fresh(queued_at),
+        retry_state: HardEraseRetryState::fresh(queued_at, queued_at),
     };
     let value = rmp_serde::to_vec_named(&job)
         .map_err(|_| Error::InvariantViolation("withdrawn generation sweep job encode"))?;
@@ -331,10 +337,11 @@ impl Vault {
         scope: RedactionScope,
         extras: HardEraseSweepExtras,
         queued_at: u64,
+        requested_at: u64,
     ) -> Result<Vec<u8>> {
         let seq = self.allocate_next_hard_erase_sweep_seq(wtxn)?;
         let key = encode_hard_erase_sweep_key(seq);
-        let value = encode_hard_erase_sweep_job(scope, extras, queued_at)?;
+        let value = encode_hard_erase_sweep_job(scope, extras, queued_at, requested_at)?;
         self.store.sync_queue.put(wtxn, &key, &value)?;
         Ok(key.to_vec())
     }
