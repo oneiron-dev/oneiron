@@ -2718,7 +2718,7 @@
      "purpose": "The signed instrument a request was admitted on, kept with the work it queued, so that work's standing is…",
      "surface": {
       "crate-vis": 1,
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -49451,7 +49451,7 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 42,
+      "re-export": 43,
       "struct": 36
      }
     },
@@ -49619,6 +49619,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CredentialAttenuated",
+      "CredentialAttenuationRequest"
+     ],
+     "path": "src/task_verb/sdk_credential.rs",
+     "purpose": "Holder-owned attenuation of the credential a transport admitted",
+     "surface": {
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "DiaryQueryEntry",
       "DiaryQueryOutcome",
       "DiaryQueryRequest"
@@ -49762,7 +49775,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 551
+      "fn": 552
      }
     },
     {
@@ -56537,7 +56550,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 154,
+     "files": 155,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -56707,7 +56720,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3455,
+   "source_files": 3456,
    "test_files": 902
   },
   "oneiron-android": {
@@ -65121,7 +65134,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 501
+      "fn": 502
      }
     },
     {
@@ -66170,7 +66183,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 502
+      "fn": 503
      }
     },
     {
@@ -69210,6 +69223,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/credential_doors.rs",
+     "purpose": "A holder appends a narrowing to the exact credential this call presented",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/critic_review_doors.rs",
      "purpose": "The host door of one critic review (`vault.critic.review`, OF-352): the caller binds a target, a session, a…",
      "surface": {
@@ -69343,7 +69366,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 97
+      "crate-vis": 98
      }
     },
     {
@@ -76788,7 +76811,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 355,
+     "files": 356,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -77203,7 +77226,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 681,
+   "source_files": 682,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -77824,6 +77847,8 @@
       "CreateCampaignProgramRequest",
       "CreateNoteFromEntityRequest",
       "CreateNoteRequest",
+      "CredentialAttenuated",
+      "CredentialAttenuationRequest",
       "CredentialCeiling",
       "Criterion",
       "CriticBinding",
@@ -78933,6 +78958,7 @@
       "SlideReviewUnitInput",
       "SlideUnitRefused",
       "SliderControl",
+      "SlipCaveat",
       "SmartArtNode",
       "SourceTrust",
       "SourceTrustRow",
@@ -79203,7 +79229,7 @@
      "purpose": "—",
      "surface": {
       "enum": 473,
-      "struct": 1328
+      "struct": 1331
      }
     },
     {
