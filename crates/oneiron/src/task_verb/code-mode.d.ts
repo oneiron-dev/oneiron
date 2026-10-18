@@ -9,7 +9,7 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 633 code-mode rows (612 host rows, 21 run rows), 2285 declarations.
+// Census: 633 code-mode rows (612 host rows, 21 run rows), 2286 declarations.
 // Replies: 555 fully typed, 74 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 94; unread shapes: BoardVerbOutput.
@@ -2014,8 +2014,9 @@ declare namespace Sdk {
   type OfficeBodyEditRequest = { artifact_ref: string; base?: number[] | null; ops: OfficeBodyOps; made_by?: unknown | null };
   type OfficeBodyEdit = { frontier: number[]; minted: string[]; receipt: TextCommitReceipt; effects: string[] };
   type OfficeBodyForkOpenRequest = { artifact_ref: string; run_root_ref?: string | null; proposal_ref?: string | null };
-  type ForkState = { state: "open" } | { state: "merged"; by: EntityId; at: number; head: number[] } | { state: "discarded"; by: EntityId; at: number };
-  type OfficeBodyFork = { id: EntityId; artifact: EntityId; opener: EntityId; base: number[]; commits: number; opened_at: number; state: ForkState; run_root?: EntityId | null };
+  type BodyActor = string;
+  type ForkState = { state: "open" } | { state: "merged"; by: BodyActor; at: number; head: number[] } | { state: "discarded"; by: BodyActor; at: number };
+  type OfficeBodyFork = { id: EntityId; artifact: EntityId; opener: BodyActor; base: number[]; commits: number; opened_at: number; state: ForkState; run_root?: EntityId | null };
   type OfficeBodyForkEditRequest = { artifact_ref: string; fork_ref: string; ops: OfficeBodyOps; made_by?: unknown | null };
   type OfficeBodyForkRequest = { artifact_ref: string; fork_ref: string };
   type ChangeKind = "added" | "deleted" | "moved" | "text" | "cells";
@@ -2025,11 +2026,11 @@ declare namespace Sdk {
   type OfficeBodyDiff = { base: number[]; head: number[]; fork_head: number[]; proposal: BlockChange[]; current: BlockChange[]; conflicts: BodyConflict[] };
   type OfficeBodyForkMergeRequest = { artifact_ref: string; fork_ref: string; reviewed_head: number[]; reviewed_fork: number[] };
   type OfficeBodyProposalRequest = { artifact_ref: string; proposal_ref: string };
-  type ProposalHeader = { proposal: EntityId; artifact: EntityId; opener: EntityId; run_root?: EntityId | null; opened_at: number };
+  type ProposalHeader = { proposal: EntityId; artifact: EntityId; opener: BodyActor; run_root?: EntityId | null; opened_at: number };
   type MemberVerdict = "waiting" | "landed" | "rejected" | "let_go";
-  type AnsweringAuthority = { kind: "word"; person: EntityId } | { kind: "grant"; grant_ref: string; decision: string };
-  type MemberAnswer = { by: AnsweringAuthority; caller: EntityId; head: number[]; fork_head: number[]; landed?: number[] | null; at: number };
-  type ProposalMember = { fork: EntityId; opener: EntityId; run_root?: EntityId | null; verdict: MemberVerdict; answer?: MemberAnswer | null };
+  type AnsweringAuthority = { kind: "word"; person: BodyActor } | { kind: "grant"; grant_ref: string; decision: string };
+  type MemberAnswer = { by: AnsweringAuthority; caller: BodyActor; head: number[]; fork_head: number[]; landed?: number[] | null; at: number };
+  type ProposalMember = { fork: EntityId; opener: BodyActor; run_root?: EntityId | null; verdict: MemberVerdict; answer?: MemberAnswer | null };
   type BundleVerdict = "landed" | "rejected" | "mixed" | "let_go";
   type ProposalSettlement = { verdict: BundleVerdict; at: number; reason?: string | null };
   type ProposalAsk = { ask: EntityId; forks: EntityId[]; at: number };
@@ -2040,7 +2041,7 @@ declare namespace Sdk {
   type OfficeBodyReviewedFork = { fork_ref: string; reviewed_fork: number[] };
   type OfficeBodyProposalSettleRequest = { artifact_ref: string; proposal_ref: string; verdict: SettleVerdict; scope?: ApproveScope | null; reviewed_head: number[]; reviewed: OfficeBodyReviewedFork[]; reason?: string | null };
   type OfficeBodyExportVerbRequest = { artifact_ref: string; run_ref: string; author?: string | null; made_by?: unknown | null; utc_offset_minutes?: number | null; iana_timezone?: string | null };
-  type OfficeBodyExportRecord = { artifact: EntityId; version: number; frontier: number[]; source_version: number; actor: EntityId; author: string; at: number; changes: number; recalc?: string | null; effects: string[] };
+  type OfficeBodyExportRecord = { artifact: EntityId; version: number; frontier: number[]; source_version: number; actor: BodyActor; author: string; at: number; changes: number; recalc?: string | null; effects: string[] };
   type OfficeBodyExportView = { frontier: number[]; record?: OfficeBodyExportRecord | null };
   type OfficeBodyPreviewRequest = { artifact_ref: string; utc_offset_minutes?: number | null; iana_timezone?: string | null };
   type XlsxCell = { col: number; row: number; value: XlsxValue; formula?: string | null; style?: number | null; locked?: XlsxLock | null };

@@ -17,7 +17,8 @@ use super::authority::{OutboundBindingAuthority, observed_freeze_events_since};
 use super::connector_call::escalation_code;
 use super::result_scrub::{OutboundResultSender, scrub_outbound_result};
 use super::scope::{
-    ScopedMcpCall, ScopedMcpConsentDecision, ScopedMcpEscalationReason, evaluate_scoped_mcp_call,
+    ScopedMcpCall, ScopedMcpCallContext, ScopedMcpConsentDecision, ScopedMcpEscalationReason,
+    evaluate_scoped_mcp_call,
 };
 use super::tool_call::PreparedToolCall;
 
@@ -101,32 +102,7 @@ pub(super) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
     let freeze_event_baseline = ();
     let _ = grant;
     let call = prepared_call.call().clone();
-    let actor_entity_ref = Some(EntityId::from_hex(principal_ref).unwrap_or(grant_id));
-    let gate = crate::gate::ExternalEffectGateInput {
-        actor: crate::gate::GateActor {
-            actor_class: "first_party".to_owned(),
-            actor_ref: Some(principal_ref.to_owned()),
-            delegation_grant_ref: None,
-        },
-        provenance: crate::gate::GateProvenanceHandles {
-            actor_entity_ref,
-            ..crate::gate::GateProvenanceHandles::default()
-        },
-        verb: "send".to_owned(),
-        channel: format!("mcp:{}", call.server),
-        channel_identity_ref: None,
-        counterparty: None,
-        brief_ref: None,
-        send_ref: None,
-        standing_grant_ref: None,
-        scoped_mcp_call: Some(call.clone()),
-        counterparty_first_touch: None,
-        counterparty_opted_out: false,
-        counterparty_opt_out_receipt_reason: None,
-        has_opted_in: false,
-        has_permission: false,
-        policy_risk: crate::gate::ExternalEffectPolicyRisk::Normal,
-    };
+    let gate = scoped_mcp_gate_input(principal_ref, grant_id, &call);
     let idempotency_supported = prepared_call.idempotency_supported();
     // The Send class follows the catalog entry (ONE-1794): only a
     // counterparty-communication connector's calls debit `Sends` rows.
@@ -176,6 +152,42 @@ pub(super) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
         scoped_decision_after_effect(vault, grant_id, principal_ref, &prepared_call, &effect)?;
     let freeze_events = observed_freeze_events_since(freeze_event_baseline);
     Ok(dispatch_result(effect, decision, transport, freeze_events))
+}
+
+/// The Gate input of one scoped call by `principal_ref` under `grant_id`:
+/// the one place it is built, so a code consent wait's approval digest
+/// (DOOR-079 1a) composes over the very input its effect's gate reads.
+pub(super) fn scoped_mcp_gate_input(
+    principal_ref: &str,
+    grant_id: EntityId,
+    call: &ScopedMcpCallContext,
+) -> crate::gate::ExternalEffectGateInput {
+    let actor_entity_ref = Some(EntityId::from_hex(principal_ref).unwrap_or(grant_id));
+    crate::gate::ExternalEffectGateInput {
+        actor: crate::gate::GateActor {
+            actor_class: "first_party".to_owned(),
+            actor_ref: Some(principal_ref.to_owned()),
+            delegation_grant_ref: None,
+        },
+        provenance: crate::gate::GateProvenanceHandles {
+            actor_entity_ref,
+            ..crate::gate::GateProvenanceHandles::default()
+        },
+        verb: "send".to_owned(),
+        channel: format!("mcp:{}", call.server),
+        channel_identity_ref: None,
+        counterparty: None,
+        brief_ref: None,
+        send_ref: None,
+        standing_grant_ref: None,
+        scoped_mcp_call: Some(call.clone()),
+        counterparty_first_touch: None,
+        counterparty_opted_out: false,
+        counterparty_opt_out_receipt_reason: None,
+        has_opted_in: false,
+        has_permission: false,
+        policy_risk: crate::gate::ExternalEffectPolicyRisk::Normal,
+    }
 }
 
 /// Resumes one admitted scoped intent from its frozen ledger row, by id: the
