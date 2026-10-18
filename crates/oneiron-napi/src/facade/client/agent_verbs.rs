@@ -2916,6 +2916,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_code_waits_resolve(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.waits.resolve", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_waits_receipt(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.waits.receipt", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_results_status(
         &self,
         input: serde_json::Value,

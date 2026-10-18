@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 673 code-mode rows (652 host rows, 21 run rows), 2389 declarations.
-// Replies: 594 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 675 code-mode rows (654 host rows, 21 run rows), 2400 declarations.
+// Replies: 596 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 95; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1348,6 +1348,17 @@ declare namespace Sdk {
   type CodeMutationLog = { repo: EntityId; entries: CodeMutationEntry[] };
   type CodeRunModelHealCountRequest = { model_id: string };
   type CodeRunModelHealCountView = { model_id: string; healed_turns: number };
+  type CodeWaitTarget = { run_id: EntityId; wait_id: EntityId; generation: number; step_hash: string; effect_digest: string };
+  type CodeWaitChoice = "approve_once" | "approve_and_stop_asking" | "deny";
+  type CodeWaitResolveRequest = { target: CodeWaitTarget; answer: CodeWaitChoice; word_ref: EntityId };
+  type CodeWaitState = "waiting" | "settling" | "settled" | "consumed";
+  type CodeWaitAnswerView = { answer: CodeWaitChoice; word_ref: EntityId; decision_ref: string; answered_at_ms: number };
+  type CodeWaitSettleOutcome = "delivered" | "refused" | "delivery_unknown";
+  type CodeWaitLedgerLinks = { prior_ref?: string | null; word_ref?: EntityId | null; facts_digest: string };
+  type CodeWaitSettlementView = { receipt_ref: string; outcome: CodeWaitSettleOutcome; reason_codes: string[]; settled_at_ms: number; ledger?: CodeWaitLedgerLinks | null };
+  type CodeWaitConsumptionView = { receipt_ref: string; step: number; resumed_path: string; result_handle: string; consumed_at_ms: number; ledger?: CodeWaitLedgerLinks | null };
+  type CodeWaitReceiptView = { target: CodeWaitTarget; state: CodeWaitState; verb: string; connector: string; tool: string; hold_reasons: string[]; ask_ref?: EntityId | null; allowed_answers: CodeWaitChoice[]; answer?: CodeWaitAnswerView | null; settlement?: CodeWaitSettlementView | null; consumption?: CodeWaitConsumptionView | null; already_answered: boolean };
+  type CodeWaitReceiptRequest = { run_id: EntityId; wait_id: EntityId };
   type ResultRunRequest = { run_id: EntityId };
   type ResultEffectRecord = { seq: number; effect: string; action_digest?: string | null; started_at_ms: number; finished_at_ms: number };
   type ResultRetainedBody = { blake3: string; bytes: number };
@@ -3079,6 +3090,12 @@ declare const vault: Sdk.VaultHost & {
       release(input: Sdk.CodeSymbolsTaskRequest): Promise<Sdk.CodeSymbolsReleased | StoredResult>;
       /** Renew the live symbol declaration the caller holds for one task by its declared lifetime. Owner only. */
       renew(input: Sdk.CodeSymbolsTaskRequest): Promise<Sdk.CodeSymbolLeaseView | StoredResult>;
+    };
+    waits: {
+      /** Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait. */
+      receipt(input: Sdk.CodeWaitReceiptRequest): Promise<Sdk.CodeWaitReceiptView | null | StoredResult>;
+      /** Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken. */
+      resolve(input: Sdk.CodeWaitResolveRequest): Promise<Sdk.CodeWaitReceiptView | StoredResult>;
     };
   };
   /** Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted. */

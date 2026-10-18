@@ -1051,6 +1051,12 @@ impl OneironClient {
                 "vault.code.model_heal_count" => remote_agent_verb_output::<
                     oneiron::memory::code_run_doors::CodeRunModelHealCountView,
                 >(client, verb, &input),
+                "vault.code.waits.resolve" => remote_agent_verb_output::<
+                    oneiron::memory::code_wait_doors::CodeWaitReceiptView,
+                >(client, verb, &input),
+                "vault.code.waits.receipt" => remote_agent_verb_output::<
+                    Option<oneiron::memory::code_wait_doors::CodeWaitReceiptView>,
+                >(client, verb, &input),
                 "vault.results.status" => remote_agent_verb_output::<
                     oneiron::memory::result_doors::ResultRunStatus,
                 >(client, verb, &input),
@@ -6007,6 +6013,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.code.model_heal_count", value)
+    }
+    pub fn vault_code_waits_resolve(
+        &self,
+        input: &oneiron::memory::code_wait_doors::CodeWaitResolveRequest,
+    ) -> Result<oneiron::memory::code_wait_doors::CodeWaitReceiptView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.waits.resolve", value)
+    }
+    pub fn vault_code_waits_receipt(
+        &self,
+        input: &oneiron::memory::code_wait_doors::CodeWaitReceiptRequest,
+    ) -> Result<Option<oneiron::memory::code_wait_doors::CodeWaitReceiptView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.waits.receipt", value)
     }
     pub fn vault_results_status(
         &self,
