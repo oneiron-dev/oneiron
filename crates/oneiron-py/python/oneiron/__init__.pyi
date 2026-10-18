@@ -737,6 +737,8 @@ class Oneiron:
         def scoped(self, spec: Facade.ScopedExportRequest) -> Facade.ScopedExport:
             """Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding."""
     class _VaultScopeVerbs:
+        def position(self, spec: Facade.RecordPositionRequest) -> Facade.ScopedReadResult[Facade.RecordPosition | None]:
+            """Reads a positively stamped record position through the caller credential and existing read gate, with its narrowing receipt."""
         def ceiling(self, spec: Facade.EmptyRequest | None = None) -> Facade.CredentialCeiling:
             """Reads the caller credential ceiling as a typed ceiling, never as a record position."""
     class _VaultReceiptsVerbs:

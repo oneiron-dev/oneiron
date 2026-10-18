@@ -3,10 +3,10 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 691 facade rows, 2468 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 14; generated in and out: 649.
+// UniFFI census: 692 facade rows, 2471 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 14; generated in and out: 650.
 // WireJson rows: self.skills.call (result).
-// WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
+// WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
     clippy::large_enum_variant,
     clippy::enum_variant_names,
@@ -6173,12 +6173,102 @@ pub struct Scope {
     pub sensitivity: Option<SensitivityCeiling>,
 }
 
-/// `oneiron::authority::slip::SlipCaveat`.
+/// `oneiron::memory::scoped_export::CredentialCeiling`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind", content = "scope")]
+#[serde(deny_unknown_fields)]
+pub enum CredentialCeiling {
+    #[serde(rename = "ceiling")]
+    Ceiling(Scope),
+}
+
+/// `oneiron_contracts::registry::families::TypeByteFamily`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TypeByteFamily {
+    #[serde(rename = "Conversation")]
+    Conversation,
+    #[serde(rename = "People")]
+    People,
+    #[serde(rename = "World")]
+    World,
+    #[serde(rename = "Content")]
+    Content,
+    #[serde(rename = "AgentsAndSurfacing")]
+    AgentsAndSurfacing,
+    #[serde(rename = "CoreOverflow")]
+    CoreOverflow,
+    #[serde(rename = "AuthorityPolicyCustody")]
+    AuthorityPolicyCustody,
+    #[serde(rename = "AuditObservability")]
+    AuditObservability,
+    #[serde(rename = "OutboundCommunicationConsent")]
+    OutboundCommunicationConsent,
+    #[serde(rename = "RegistriesDerived")]
+    RegistriesDerived,
+    #[serde(rename = "Productivity")]
+    Productivity,
+    #[serde(rename = "Code")]
+    Code,
+    #[serde(rename = "Documents")]
+    Documents,
+    #[serde(rename = "Companion")]
+    Companion,
+    #[serde(rename = "PackOverflow")]
+    PackOverflow,
+}
+
+/// `oneiron_authority::federation::selector_kind::SelectorRange`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SelectorRange {
+    #[serde(rename = "Semantic")]
+    Semantic,
+    #[serde(rename = "Core")]
+    Core,
+    #[serde(rename = "Maintenance")]
+    Maintenance,
+    #[serde(rename = "Family")]
+    Family(TypeByteFamily),
+}
+
+/// `oneiron_authority::federation::scope::ScopeAxis` with `T` = `SelectorRange`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind", content = "values")]
+pub enum ScopeAxisSelectorRange {
+    #[serde(rename = "bottom")]
+    Bottom,
+    #[serde(rename = "all")]
+    All,
+    #[serde(rename = "some")]
+    Some(Vec<SelectorRange>),
+}
+
+/// `oneiron_authority::federation::pact_scope::FederationDirectionScope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FederationDirectionScope {
+    #[serde(rename = "worlds")]
+    pub worlds: ScopeAxisScopeId,
+    #[serde(rename = "facets")]
+    pub facets: ScopeAxisScopeId,
+    #[serde(rename = "bands")]
+    pub bands: ScopeAxisSelectorRange,
+}
+
+/// `oneiron::task_verb::sdk_credential::CredentialPactCeiling`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
-pub struct SlipCaveat {
+pub struct CredentialPactCeiling {
+    #[serde(rename = "grant_ref")]
+    pub grant_ref: String,
+    #[serde(rename = "ceiling")]
+    pub ceiling: FederationDirectionScope,
+}
+
+/// `oneiron::task_verb::sdk_credential::CredentialCaveat`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CredentialCaveat {
     #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
-    pub scope: Option<Scope>,
+    pub scope: Option<CredentialCeiling>,
     #[serde(
         rename = "expires_at",
         default,
@@ -6187,14 +6277,18 @@ pub struct SlipCaveat {
     pub expires_at: Option<u64>,
     #[serde(rename = "ttl_secs", default, skip_serializing_if = "Option::is_none")]
     pub ttl_secs: Option<u64>,
-    #[serde(rename = "single_use")]
-    pub single_use: bool,
+    #[serde(
+        rename = "single_use",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub single_use: Option<bool>,
     #[serde(rename = "records", default, skip_serializing_if = "Option::is_none")]
     pub records: Option<Vec<String>>,
     #[serde(rename = "channels", default, skip_serializing_if = "Option::is_none")]
     pub channels: Option<Vec<String>>,
     #[serde(rename = "pact", default, skip_serializing_if = "Option::is_none")]
-    pub pact: Option<crate::WireJson>,
+    pub pact: Option<CredentialPactCeiling>,
 }
 
 /// `oneiron::task_verb::sdk_credential::CredentialAttenuationRequest`.
@@ -6204,7 +6298,7 @@ pub struct CredentialAttenuationRequest {
     #[serde(rename = "holder_seed")]
     pub holder_seed: Vec<u8>,
     #[serde(rename = "caveat")]
-    pub caveat: SlipCaveat,
+    pub caveat: CredentialCaveat,
     #[serde(
         rename = "next_binding_key",
         default,
@@ -6223,13 +6317,68 @@ pub struct CredentialAttenuated {
     pub binding_key: Vec<u8>,
 }
 
-/// `oneiron::memory::scoped_export::CredentialCeiling`.
+/// `oneiron::memory::scoped_export::RecordPositionRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RecordPositionRequest {
+    #[serde(rename = "record_ref")]
+    pub record_ref: String,
+}
+
+/// `oneiron::memory::scoped_export::RecordPosition`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind", content = "scope")]
 #[serde(deny_unknown_fields)]
-pub enum CredentialCeiling {
-    #[serde(rename = "ceiling")]
-    Ceiling(Scope),
+pub enum RecordPosition {
+    #[serde(rename = "position")]
+    Position(Scope),
+}
+
+/// `oneiron_contracts::claim::receipt::ReadScope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WireReadScope {
+    #[serde(
+        rename = "entity_types",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub entity_types: Option<Vec<u8>>,
+    #[serde(rename = "max_sensitivity_band")]
+    pub max_sensitivity_band: u8,
+    #[serde(rename = "include_stale")]
+    pub include_stale: bool,
+    #[serde(rename = "min_confidence")]
+    pub min_confidence: f64,
+    #[serde(rename = "min_salience")]
+    pub min_salience: f64,
+    #[serde(rename = "deny_all")]
+    pub deny_all: bool,
+}
+
+/// `oneiron_contracts::claim::receipt::ScopedReadReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadReceipt {
+    #[serde(rename = "requested")]
+    pub requested: WireReadScope,
+    #[serde(rename = "actor_ceiling")]
+    pub actor_ceiling: WireReadScope,
+    #[serde(rename = "applied")]
+    pub applied: WireReadScope,
+    #[serde(rename = "narrowed_axes")]
+    pub narrowed_axes: Vec<String>,
+    #[serde(rename = "suppressed_count")]
+    pub suppressed_count: u64,
+    #[serde(rename = "replan_hint")]
+    pub replan_hint: Vec<String>,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `OptionalRecordPosition`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultOptionalRecordPosition {
+    #[serde(rename = "value", default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<RecordPosition>,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
 }
 
 /// `oneiron::memory::scoped_export::RecordSelector`.
@@ -6344,15 +6493,6 @@ pub struct ScopedExportRequest {
     pub selector: RecordSelector,
     #[serde(rename = "channel")]
     pub channel: ExportChannel,
-}
-
-/// `oneiron::memory::scoped_export::RecordPosition`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(tag = "kind", content = "scope")]
-#[serde(deny_unknown_fields)]
-pub enum RecordPosition {
-    #[serde(rename = "position")]
-    Position(Scope),
 }
 
 /// `oneiron::provenance::made_by::MadeByInputRole`.
@@ -7417,44 +7557,6 @@ pub struct WeaveSectionView {
     pub kind: WeaveSectionKind,
     #[serde(rename = "items")]
     pub items: Vec<WeaveItemView>,
-}
-
-/// `oneiron_contracts::claim::receipt::ReadScope`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct WireReadScope {
-    #[serde(
-        rename = "entity_types",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub entity_types: Option<Vec<u8>>,
-    #[serde(rename = "max_sensitivity_band")]
-    pub max_sensitivity_band: u8,
-    #[serde(rename = "include_stale")]
-    pub include_stale: bool,
-    #[serde(rename = "min_confidence")]
-    pub min_confidence: f64,
-    #[serde(rename = "min_salience")]
-    pub min_salience: f64,
-    #[serde(rename = "deny_all")]
-    pub deny_all: bool,
-}
-
-/// `oneiron_contracts::claim::receipt::ScopedReadReceipt`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct ScopedReadReceipt {
-    #[serde(rename = "requested")]
-    pub requested: WireReadScope,
-    #[serde(rename = "actor_ceiling")]
-    pub actor_ceiling: WireReadScope,
-    #[serde(rename = "applied")]
-    pub applied: WireReadScope,
-    #[serde(rename = "narrowed_axes")]
-    pub narrowed_axes: Vec<String>,
-    #[serde(rename = "suppressed_count")]
-    pub suppressed_count: u64,
-    #[serde(rename = "replan_hint")]
-    pub replan_hint: Vec<String>,
 }
 
 /// `oneiron::claim::scoped_read::weave_serve::WeaveReportView`.
@@ -12245,77 +12347,6 @@ pub struct ConnectGrant {
         skip_serializing_if = "Option::is_none"
     )]
     pub expires_at: Option<u64>,
-}
-
-/// `oneiron_contracts::registry::families::TypeByteFamily`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum TypeByteFamily {
-    #[serde(rename = "Conversation")]
-    Conversation,
-    #[serde(rename = "People")]
-    People,
-    #[serde(rename = "World")]
-    World,
-    #[serde(rename = "Content")]
-    Content,
-    #[serde(rename = "AgentsAndSurfacing")]
-    AgentsAndSurfacing,
-    #[serde(rename = "CoreOverflow")]
-    CoreOverflow,
-    #[serde(rename = "AuthorityPolicyCustody")]
-    AuthorityPolicyCustody,
-    #[serde(rename = "AuditObservability")]
-    AuditObservability,
-    #[serde(rename = "OutboundCommunicationConsent")]
-    OutboundCommunicationConsent,
-    #[serde(rename = "RegistriesDerived")]
-    RegistriesDerived,
-    #[serde(rename = "Productivity")]
-    Productivity,
-    #[serde(rename = "Code")]
-    Code,
-    #[serde(rename = "Documents")]
-    Documents,
-    #[serde(rename = "Companion")]
-    Companion,
-    #[serde(rename = "PackOverflow")]
-    PackOverflow,
-}
-
-/// `oneiron_authority::federation::selector_kind::SelectorRange`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum SelectorRange {
-    #[serde(rename = "Semantic")]
-    Semantic,
-    #[serde(rename = "Core")]
-    Core,
-    #[serde(rename = "Maintenance")]
-    Maintenance,
-    #[serde(rename = "Family")]
-    Family(TypeByteFamily),
-}
-
-/// `oneiron_authority::federation::scope::ScopeAxis` with `T` = `SelectorRange`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(tag = "kind", content = "values")]
-pub enum ScopeAxisSelectorRange {
-    #[serde(rename = "bottom")]
-    Bottom,
-    #[serde(rename = "all")]
-    All,
-    #[serde(rename = "some")]
-    Some(Vec<SelectorRange>),
-}
-
-/// `oneiron_authority::federation::pact_scope::FederationDirectionScope`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct FederationDirectionScope {
-    #[serde(rename = "worlds")]
-    pub worlds: ScopeAxisScopeId,
-    #[serde(rename = "facets")]
-    pub facets: ScopeAxisScopeId,
-    #[serde(rename = "bands")]
-    pub bands: ScopeAxisSelectorRange,
 }
 
 /// `oneiron::task_verb::sdk_federation::OfferConnect`.

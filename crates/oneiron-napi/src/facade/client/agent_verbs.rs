@@ -607,6 +607,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_scope_position(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.scope.position", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_scope_ceiling(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.scope.ceiling", input)
