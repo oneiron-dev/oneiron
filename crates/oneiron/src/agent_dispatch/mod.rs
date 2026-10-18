@@ -34,7 +34,7 @@ pub(crate) use self::comm::{
 mod comm_widen;
 pub(crate) use self::comm_widen::{
     CommWidenDecision, CommWidenQuestion, CommWidenRecipient, CommWidenRequest, CommWidenState,
-    comm_widen_in, comm_widen_recipient_in_txn, put_comm_widen_in,
+    comm_widen_in, comm_widen_recipient_in_txn, erase_comm_widen_actor_in_txn, put_comm_widen_in,
 };
 mod context;
 mod continuation;
