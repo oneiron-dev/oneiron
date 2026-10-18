@@ -1191,6 +1191,31 @@ export_facade! {
     let output = client.vault_code_proposal_view(&input)?;
     crate::codec::lift_record("vault.code.proposal_view", &output)
 };
+"vault.code.symbols.declare" => fn vault_code_symbols_declare(&self, input: CodeSymbolsDeclareRequest) -> CodeSymbolsDeclared = |client| {
+    let input: oneiron::memory::code_doors::CodeSymbolsDeclareRequest = crate::codec::lower_record("vault.code.symbols.declare", input)?;
+    let output = client.vault_code_symbols_declare(&input)?;
+    crate::codec::lift_record("vault.code.symbols.declare", &output)
+};
+"vault.code.symbols.renew" => fn vault_code_symbols_renew(&self, input: CodeSymbolsTaskRequest) -> CodeSymbolLeaseView = |client| {
+    let input: oneiron::memory::code_doors::CodeSymbolsTaskRequest = crate::codec::lower_record("vault.code.symbols.renew", input)?;
+    let output = client.vault_code_symbols_renew(&input)?;
+    crate::codec::lift_record("vault.code.symbols.renew", &output)
+};
+"vault.code.symbols.release" => fn vault_code_symbols_release(&self, input: CodeSymbolsTaskRequest) -> CodeSymbolsReleased = |client| {
+    let input: oneiron::memory::code_doors::CodeSymbolsTaskRequest = crate::codec::lower_record("vault.code.symbols.release", input)?;
+    let output = client.vault_code_symbols_release(&input)?;
+    crate::codec::lift_record("vault.code.symbols.release", &output)
+};
+"vault.code.proposal_submit" => fn vault_code_proposal_submit(&self, input: CodeProposalSubmitRequest) -> CodeProposalSubmitted = |client| {
+    let input: oneiron::memory::code_doors::CodeProposalSubmitRequest = crate::codec::lower_record("vault.code.proposal_submit", input)?;
+    let output = client.vault_code_proposal_submit(&input)?;
+    crate::codec::lift_record("vault.code.proposal_submit", &output)
+};
+"vault.code.oplog" => fn vault_code_oplog(&self, input: CodeRepoRequest) -> CodeMutationLog = |client| {
+    let input: oneiron::memory::code_doors::CodeRepoRequest = crate::codec::lower_record("vault.code.oplog", input)?;
+    let output = client.vault_code_oplog(&input)?;
+    crate::codec::lift_record("vault.code.oplog", &output)
+};
 "vault.code.repo_diff" => fn vault_code_repo_diff(&self, input: CodeRepoDiffRequest) -> Option<CodeRepoDiffView> = |client| {
     let input: oneiron::code_document::CodeRepoDiffRequest = crate::codec::lower_record("vault.code.repo_diff", input)?;
     let output = client.vault_code_repo_diff(&input)?;

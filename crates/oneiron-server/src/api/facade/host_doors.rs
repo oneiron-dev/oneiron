@@ -129,6 +129,8 @@ pub(crate) use super::research_doors::*;
 pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
 pub(crate) use super::claim_settle_doors::*;
+// The owner's symbol lease, proposal submit and oplog doors (DOOR-137), likewise.
+pub(crate) use super::code_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
 pub(crate) use super::ui_action_routes::vault_lenses_default;
 // The explain receipts' doors (OF-278), beside their HTTP routes, likewise.
@@ -1146,6 +1148,11 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.research.create_child"
         | "vault.evals.inventory"
         | "vault.evals.cohorts.setup"
+        | "vault.code.symbols.declare"
+        | "vault.code.symbols.renew"
+        | "vault.code.symbols.release"
+        | "vault.code.proposal_submit"
+        | "vault.code.oplog"
         | "vault.code.export"
         | "vault.code.origin.authority.get"
         | "vault.code.origin.authority.set"
