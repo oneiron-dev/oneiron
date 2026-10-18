@@ -3,6 +3,7 @@
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::federation::PactDelivery;
 
 use super::{AuthorityFold, FederationGrantActivation, FederationPactStatus, invalid_authority};
 
@@ -13,6 +14,16 @@ impl AuthorityFold {
     /// bindings, a superseded binding or a non-Active pact refuse; a
     /// convenient id is never picked.
     pub fn active_pact_delivery_context(&self, grant: &EntityId) -> Result<([u8; 32], u64)> {
+        self.active_pact_delivery(grant)
+            .map(|delivery| (delivery.pact, delivery.epoch))
+    }
+
+    /// [`Self::active_pact_delivery_context`] with the delivery's source: the
+    /// peer vault the pact's fold state names (FIX 3497). A guest's content
+    /// lands in the foreign WORLD that source and the sender's world derive
+    /// (`federation::foreign_world_for`), so the source is the authenticated
+    /// fold's, never a body field's.
+    pub(crate) fn active_pact_delivery(&self, grant: &EntityId) -> Result<PactDelivery> {
         let mut bindings = self
             .federation_grant_bindings
             .get(grant)
@@ -25,7 +36,11 @@ impl AuthorityFold {
             Some(state)
                 if state.status == FederationPactStatus::Active && state.grant_ref == *grant =>
             {
-                Ok((*pact_id, state.pact_epoch))
+                Ok(PactDelivery {
+                    pact: *pact_id,
+                    epoch: state.pact_epoch,
+                    source_vault: state.peer_vault_id,
+                })
             }
             _ => Err(invalid_authority()),
         }

@@ -130,6 +130,17 @@ pub enum EngineLimit {
     /// judgment's state carries. Past it the replays are read whole, cut only
     /// where the decision ladder's state bound would refuse the call.
     JudgeReplayTextBytes,
+    /// UTF-8 bytes of the task a contribution check's judge reads for one
+    /// fork: the replayed step's non-system message text. Past it the row
+    /// asks whether everything is okay and the judge reads the task whole.
+    ContributionJudgeTaskBytes,
+    /// UTF-8 bytes of one contribution fork's answer its judge reads. Past
+    /// it the row asks and the judge reads the answer whole.
+    ContributionJudgeAnswerBytes,
+    /// Callable skills one call nests, itself included: a callable that
+    /// calls another runs the inner one's step inside its own. Past it the
+    /// row asks whether everything is okay and the call runs.
+    CallableNestDepth,
 }
 
 impl EngineLimit {
@@ -165,6 +176,9 @@ impl EngineLimit {
         Self::MaintenanceScanRows,
         Self::JudgeInstructionsBytes,
         Self::JudgeReplayTextBytes,
+        Self::ContributionJudgeTaskBytes,
+        Self::ContributionJudgeAnswerBytes,
+        Self::CallableNestDepth,
     ];
 
     /// The config key that sets the row.
@@ -200,6 +214,9 @@ impl EngineLimit {
             Self::MaintenanceScanRows => "limits.maintenance_scan_rows",
             Self::JudgeInstructionsBytes => "limits.judge_instructions_bytes",
             Self::JudgeReplayTextBytes => "limits.judge_replay_text_bytes",
+            Self::ContributionJudgeTaskBytes => "limits.contribution_judge_task_bytes",
+            Self::ContributionJudgeAnswerBytes => "limits.contribution_judge_answer_bytes",
+            Self::CallableNestDepth => "limits.callable_nest_depth",
         }
     }
 
@@ -241,6 +258,11 @@ impl EngineLimit {
             // instructions and 40,000 bytes of replay text.
             Self::JudgeInstructionsBytes => 8_192,
             Self::JudgeReplayTextBytes => 40_000,
+            // Together they leave room in the judgment's 64 KiB state, whose
+            // ladder refuses a larger one: the row asks before that.
+            Self::ContributionJudgeTaskBytes => 24 << 10,
+            Self::ContributionJudgeAnswerBytes => 16 << 10,
+            Self::CallableNestDepth => 8,
         }
     }
 }

@@ -572,6 +572,27 @@ impl Connection {
         self.conn_id
     }
 
+    /// The open instance of subscription `id` on this socket, for a call the
+    /// bound credential `auth` makes over it (FIX 2612 (b)):
+    /// `socket:<conn>:sub:<id>:open:<incarnation>`, so each reopen is a new
+    /// instance. Host-only: the socket names it from its own table, never
+    /// from the request's id, a cursor's document or a kept session. `None`
+    /// when `id` is not open here, or this socket's session is no longer
+    /// `auth`'s or no longer attached to it.
+    pub(crate) fn subscription_instance(&self, auth: &CoreAuth, id: u64) -> Option<String> {
+        let session = self.session.as_ref()?;
+        if !session.auth.same_authority(auth)
+            || session.attached.load(Ordering::Acquire) != self.conn_id
+        {
+            return None;
+        }
+        let incarnation = self.active.get(&id)?;
+        Some(format!(
+            "socket:{}:sub:{id}:open:{incarnation}",
+            self.conn_id
+        ))
+    }
+
     pub(crate) fn is_scoped_broadcast(data: &[u8]) -> bool {
         super::routing::is_routed(data)
     }
