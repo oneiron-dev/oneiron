@@ -136,14 +136,13 @@ impl State {
             }
         }
         for fork in self.forks.values() {
-            if fork.recovery_merge.is_some()
-                && (!fork.frontier.is_empty() || fork.rewrite || fork.decided)
-                || (!fork.decided
-                    && !fork.rewrite
-                    && fork.frontier.is_empty()
-                    && fork.recovery_merge.is_none())
-            {
+            // Only a pending merge fork carries a value basis. The frontier the
+            // fork opened at rides beside it as recorded; it is never a basis.
+            if (!fork.decided && !fork.rewrite) != fork.recovery_merge.is_some() {
                 return Err(invalid("NOTE fork merge basis"));
+            }
+            if !fork.frontier.is_empty() && loro::Frontiers::decode(&fork.frontier).is_err() {
+                return Err(invalid("NOTE fork frontier"));
             }
             if fork.parent != fork.note || !self.heads.contains_key(&fork.note) {
                 return Err(invalid("NOTE proposal parent identity"));
@@ -159,10 +158,8 @@ impl State {
             {
                 return Err(invalid("NOTE merge target differs from proposal value"));
             }
-            if !fork.decided
-                && (!documents.contains_key(&(fork.note, fork.fork)) || !fork.frontier.is_empty())
-            {
-                return Err(invalid("NOTE proposal value absent or carries raw history"));
+            if !fork.decided && !documents.contains_key(&(fork.note, fork.fork)) {
+                return Err(invalid("NOTE proposal value absent"));
             }
         }
         for (note, head) in documents.keys() {

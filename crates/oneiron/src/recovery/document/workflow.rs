@@ -39,14 +39,20 @@ fn fork_bytes(fork: &NoteFork) -> usize {
             .map_or(0, |(parent, merged)| parent.len() + merged.len())
 }
 
-/// Resolve the old history while it still exists. The artifact carries values,
-/// not frontiers that could refer to unrelated peers after reconstruction.
+/// The frontier a fork opened at: empty, or a Loro frontier encoding.
+fn frontier_decodes(fork: &NoteFork) -> bool {
+    fork.frontier.is_empty() || loro::Frontiers::decode(&fork.frontier).is_ok()
+}
+
+/// Resolve the old history while it still exists. The artifact merges by
+/// values: the fork's opening frontier rides along byte for byte, never as a
+/// basis, since it may name peers a reconstruction no longer has.
 pub(super) fn normalize(vault: &Vault, txn: &heed::RoTxn<'_>, fork: &NoteFork) -> Result<NoteFork> {
     // A pending fork's basis is the live head; a decided one's may be a head a
     // later switch replaced.
     let head = crate::note::documents::head_in(&vault.store, txn, fork.note)?.0;
     if (fork.parent != fork.note && (!fork.decided && fork.parent != head))
-        || !fork.frontier.is_empty()
+        || !frontier_decodes(fork)
         || ((!fork.decided && !fork.rewrite) != fork.recovery_merge.is_some())
     {
         return Err(invalid("proposal requires canonical value basis"));
@@ -184,7 +190,7 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
         .map(|receipt| (receipt.note, receipt.head))
         .collect();
     for fork in &snapshot.note_forks {
-        if !fork.frontier.is_empty()
+        if !frontier_decodes(fork)
             || (fork.parent != fork.note && !switched.contains(&(fork.note, fork.parent)))
             || fork.fork == fork.parent
             || (!fork.decided && !fork.rewrite) != fork.recovery_merge.is_some()
