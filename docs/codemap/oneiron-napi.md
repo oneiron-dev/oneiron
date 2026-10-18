@@ -22,6 +22,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/facade/input_error.rs` | src | s | 1 crate-vis | — | Typed input refusals for the scoped SDK client, not the legacy bridge |
 | `src/facade/mod.rs` | src | s | 1 re-export · 4 crate-vis | — | BRIDGE-01 (ONE-1454): napi lift of the engine memory facade |
 | `src/facade/numeric.rs` | src | s | 3 crate-vis | — | JavaScript numbers must be validated before N-API can narrow them |
+| `src/facade/pairing.rs` | src | s | 6 struct · 1 crate-vis | NapiCheckpointPin, NapiCheckpointPinBinding, NapiCheckpointPinKey, NapiCheckpointPinPolicy, NapiCheckpointPinRoot, NapiCheckpointPinSignature | The checkpoint pin `NativeClient.pair` returns (OF-469, FIX 3376), lifted whole from… |
 | `src/facade/tests.rs` | test | s | — | — | Boundary regression tests for the napi facade surface |
 | `src/facade/verbs_claims.rs` | src | m | 13 fn | — | Core claim/witness/read verbs of the actor-scoped surface |
 | `src/facade/verbs_services.rs` | src | m | 17 fn | — | Structural/blob/retrieval/outbound/calendar verbs of the actor surface |
