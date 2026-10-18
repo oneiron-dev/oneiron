@@ -171,6 +171,30 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::GrantAskRequest>(),
             ),
             (
+                "vault.companions.access_requests.answer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::CompanionAccessRequestAnswerRequest,
+                >(),
+            ),
+            (
+                "vault.personas.preview",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::PersonaSnapshotPreviewRequest,
+                >(),
+            ),
+            (
+                "vault.personas.export",
+                crate::code_run::vault_read::request_schema::<
+                    crate::persona_snapshot::PersonaSnapshotCopyRequest,
+                >(),
+            ),
+            (
+                "vault.personas.edit",
+                crate::code_run::vault_read::request_schema::<
+                    crate::persona_snapshot::PersonaSnapshotCopyEditRequest,
+                >(),
+            ),
+            (
                 "self.memory.diary.query",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::DiaryQueryRequest,
@@ -1986,6 +2010,42 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.code.proposal_submit",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::code_doors::CodeProposalSubmitRequest,
+                >(),
+            ),
+            (
+                "vault.code.conflict_record",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeConflictRecordRequest,
+                >(),
+            ),
+            (
+                "vault.code.conflict_view",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeConflictViewRequest,
+                >(),
+            ),
+            (
+                "vault.code.proposal_resolve",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeProposalResolveRequest,
+                >(),
+            ),
+            (
+                "vault.code.proposal_review",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeProposalReviewRequest,
+                >(),
+            ),
+            (
+                "vault.code.proposal_settle",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeProposalSettleRequest,
+                >(),
+            ),
+            (
+                "vault.code.proposal_settlement",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeProposalSettlementRequest,
                 >(),
             ),
             (
@@ -3972,6 +4032,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.worlds.privacy.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::policy_model::WorldPrivacySetInput,
+                >(),
+            ),
+            (
                 "vault.search",
                 crate::code_run::vault_read::request_schema::<crate::code_run::MemorySearchInput>(),
             ),
@@ -4032,6 +4098,10 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.standing.get",
     "self.standing.list",
     "self.standing.edit",
+    "vault.companions.access_requests.answer",
+    "vault.personas.preview",
+    "vault.personas.export",
+    "vault.personas.edit",
     "vault.fanout.spawn",
     "vault.fanout.slots",
     "self.budget",
@@ -4212,6 +4282,13 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.artifacts.threads.list",
     "vault.artifacts.threads.assign",
     "vault.artifacts.threads.state",
+    "vault.code.proposal_submit",
+    "vault.code.conflict_record",
+    "vault.code.conflict_view",
+    "vault.code.proposal_resolve",
+    "vault.code.proposal_review",
+    "vault.code.proposal_settle",
+    "vault.code.proposal_settlement",
     "vault.code.model_heal_count",
     "vault.code.waits.resolve",
     "vault.code.waits.receipt",
@@ -4414,6 +4491,18 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "self.standing.edit" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::StandingBlockEditReceipt,
+        >(),
+        "vault.companions.access_requests.answer" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::CompanionAccessRequestAnswered,
+        >(),
+        "vault.personas.preview" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::PersonaSnapshotPreview,
+        >(),
+        "vault.personas.export" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::PersonaSnapshotExportedCopy,
+        >(),
+        "vault.personas.edit" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::PersonaSnapshotExportedCopy,
         >(),
         "vault.fanout.spawn" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::FanoutBatchView>()
@@ -4962,6 +5051,27 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.artifacts.threads.state" => crate::code_run::vault_read::request_schema::<
             crate::anchored_annotation::AnnotationThreadView,
+        >(),
+        "vault.code.proposal_submit" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_doors::CodeProposalSubmitted,
+        >(),
+        "vault.code.conflict_record" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_doors::CodeConflictView,
+        >(),
+        "vault.code.conflict_view" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_doors::CodeConflictHistory,
+        >(),
+        "vault.code.proposal_resolve" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_doors::CodeProposalSubmitted,
+        >(),
+        "vault.code.proposal_review" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_doors::CodeProposalSettlementView,
+        >(),
+        "vault.code.proposal_settle" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_doors::CodeProposalSettlementView,
+        >(),
+        "vault.code.proposal_settlement" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_doors::CodeProposalSettlementView,
         >(),
         "vault.code.model_heal_count" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_run_doors::CodeRunModelHealCountView,
@@ -5735,6 +5845,34 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.grants.ask" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.companions.access_requests.answer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.personas.preview" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.personas.export" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.personas.edit" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -8082,6 +8220,48 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.proposal_submit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.conflict_record" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.conflict_view" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.proposal_resolve" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.proposal_review" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.proposal_settle" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.proposal_settlement" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -10652,6 +10832,22 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.grants.ask" => {
             let _input: crate::memory::GrantAskRequest = decode(value.clone())?;
         }
+        "vault.companions.access_requests.answer" => {
+            let _input: crate::task_verb::sdk::CompanionAccessRequestAnswerRequest =
+                decode(value.clone())?;
+        }
+        "vault.personas.preview" => {
+            let _input: crate::task_verb::sdk::PersonaSnapshotPreviewRequest =
+                decode(value.clone())?;
+        }
+        "vault.personas.export" => {
+            let _input: crate::persona_snapshot::PersonaSnapshotCopyRequest =
+                decode(value.clone())?;
+        }
+        "vault.personas.edit" => {
+            let _input: crate::persona_snapshot::PersonaSnapshotCopyEditRequest =
+                decode(value.clone())?;
+        }
         "self.memory.diary.query" => {
             let input: crate::task_verb::sdk::DiaryQueryRequest = decode(value.clone())?;
             input.validate()?;
@@ -11766,6 +11962,29 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.code.proposal_submit" => {
             let _input: crate::memory::code_doors::CodeProposalSubmitRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.conflict_record" => {
+            let _input: crate::memory::code_doors::CodeConflictRecordRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.conflict_view" => {
+            let _input: crate::memory::code_doors::CodeConflictViewRequest = decode(value.clone())?;
+        }
+        "vault.code.proposal_resolve" => {
+            let _input: crate::memory::code_doors::CodeProposalResolveRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.proposal_review" => {
+            let _input: crate::memory::code_doors::CodeProposalReviewRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.proposal_settle" => {
+            let _input: crate::memory::code_doors::CodeProposalSettleRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.proposal_settlement" => {
+            let _input: crate::memory::code_doors::CodeProposalSettlementRequest =
                 decode(value.clone())?;
         }
         "vault.code.oplog" => {
@@ -13181,6 +13400,12 @@ pub fn invoke(
         "vault.shape.apply" => encode(vault_shape_apply(memory, decode(value)?)?),
         "self.message" => encode(self_message(memory, decode(value)?)?),
         "self.grants.ask" => encode(self_grants_ask(memory, decode(value)?)?),
+        "vault.companions.access_requests.answer" => encode(
+            vault_companions_access_requests_answer(memory, decode(value)?)?,
+        ),
+        "vault.personas.preview" => encode(vault_personas_preview(memory, decode(value)?)?),
+        "vault.personas.export" => encode(vault_personas_export(memory, decode(value)?)?),
+        "vault.personas.edit" => encode(vault_personas_edit(memory, decode(value)?)?),
         "self.memory.diary.query" => encode(self_memory_diary_query(memory, decode(value)?)?),
         "cancel" => encode(cancel(memory, decode(value)?)?),
         "steer" => encode(steer(memory, decode(value)?)?),
@@ -13796,6 +14021,16 @@ pub fn invoke(
         "vault.code.symbols.renew" => encode(vault_code_symbols_renew(memory, decode(value)?)?),
         "vault.code.symbols.release" => encode(vault_code_symbols_release(memory, decode(value)?)?),
         "vault.code.proposal_submit" => encode(vault_code_proposal_submit(memory, decode(value)?)?),
+        "vault.code.conflict_record" => encode(vault_code_conflict_record(memory, decode(value)?)?),
+        "vault.code.conflict_view" => encode(vault_code_conflict_view(memory, decode(value)?)?),
+        "vault.code.proposal_resolve" => {
+            encode(vault_code_proposal_resolve(memory, decode(value)?)?)
+        }
+        "vault.code.proposal_review" => encode(vault_code_proposal_review(memory, decode(value)?)?),
+        "vault.code.proposal_settle" => encode(vault_code_proposal_settle(memory, decode(value)?)?),
+        "vault.code.proposal_settlement" => {
+            encode(vault_code_proposal_settlement(memory, decode(value)?)?)
+        }
         "vault.code.oplog" => encode(vault_code_oplog(memory, decode(value)?)?),
         "vault.code.model_heal_count" => {
             encode(vault_code_model_heal_count(memory, decode(value)?)?)
@@ -14833,6 +15068,30 @@ pub fn self_grants_ask(
     input: crate::memory::GrantAskRequest,
 ) -> MemoryResult<crate::memory::GrantAskReceipt> {
     memory.grants_ask(&input)
+}
+pub fn vault_companions_access_requests_answer(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::CompanionAccessRequestAnswerRequest,
+) -> MemoryResult<crate::task_verb::sdk::CompanionAccessRequestAnswered> {
+    crate::task_verb::sdk::host_only(memory, "vault.companions.access_requests.answer", &input)
+}
+pub fn vault_personas_preview(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::PersonaSnapshotPreviewRequest,
+) -> MemoryResult<crate::task_verb::sdk::PersonaSnapshotPreview> {
+    crate::task_verb::sdk::host_only(memory, "vault.personas.preview", &input)
+}
+pub fn vault_personas_export(
+    memory: &Memory<'_>,
+    input: crate::persona_snapshot::PersonaSnapshotCopyRequest,
+) -> MemoryResult<crate::task_verb::sdk::PersonaSnapshotExportedCopy> {
+    crate::task_verb::sdk::host_only(memory, "vault.personas.export", &input)
+}
+pub fn vault_personas_edit(
+    memory: &Memory<'_>,
+    input: crate::persona_snapshot::PersonaSnapshotCopyEditRequest,
+) -> MemoryResult<crate::task_verb::sdk::PersonaSnapshotExportedCopy> {
+    crate::task_verb::sdk::host_only(memory, "vault.personas.edit", &input)
 }
 pub fn self_memory_diary_query(
     memory: &Memory<'_>,
@@ -17630,6 +17889,48 @@ pub fn vault_code_proposal_submit(
     input: crate::memory::code_doors::CodeProposalSubmitRequest,
 ) -> MemoryResult<crate::memory::code_doors::CodeProposalSubmitted> {
     memory.code_proposal_submit_as(&memory.embedded_owner("vault.code.proposal_submit")?, input)
+}
+pub fn vault_code_conflict_record(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeConflictRecordRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeConflictView> {
+    memory.code_conflict_record_as(&memory.embedded_owner("vault.code.conflict_record")?, input)
+}
+pub fn vault_code_conflict_view(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeConflictViewRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeConflictHistory> {
+    memory.code_conflict_history_as(&memory.embedded_owner("vault.code.conflict_view")?, input)
+}
+pub fn vault_code_proposal_resolve(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeProposalResolveRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeProposalSubmitted> {
+    memory.code_proposal_resolve_as(
+        &memory.embedded_owner("vault.code.proposal_resolve")?,
+        input,
+    )
+}
+pub fn vault_code_proposal_review(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeProposalReviewRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeProposalSettlementView> {
+    memory.code_proposal_review_as(&memory.embedded_owner("vault.code.proposal_review")?, input)
+}
+pub fn vault_code_proposal_settle(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeProposalSettleRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeProposalSettlementView> {
+    memory.code_proposal_settle_as(&memory.embedded_owner("vault.code.proposal_settle")?, input)
+}
+pub fn vault_code_proposal_settlement(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeProposalSettlementRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeProposalSettlementView> {
+    memory.code_proposal_settlement_as(
+        &memory.embedded_owner("vault.code.proposal_settlement")?,
+        input,
+    )
 }
 pub fn vault_code_oplog(
     memory: &Memory<'_>,

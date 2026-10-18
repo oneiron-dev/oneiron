@@ -31,6 +31,13 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.shape.apply", post(facade_route))
         .route("/self.message", post(facade_route))
         .route("/self.grants.ask", post(facade_route))
+        .route(
+            "/vault.companions.access_requests.answer",
+            post(facade_route),
+        )
+        .route("/vault.personas.preview", post(facade_route))
+        .route("/vault.personas.export", post(facade_route))
+        .route("/vault.personas.edit", post(facade_route))
         .route("/self.memory.diary.query", post(facade_route))
         .route("/cancel", post(facade_route))
         .route("/steer", post(facade_route))
@@ -398,6 +405,12 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.code.symbols.renew", post(facade_route))
         .route("/vault.code.symbols.release", post(facade_route))
         .route("/vault.code.proposal_submit", post(facade_route))
+        .route("/vault.code.conflict_record", post(facade_route))
+        .route("/vault.code.conflict_view", post(facade_route))
+        .route("/vault.code.proposal_resolve", post(facade_route))
+        .route("/vault.code.proposal_review", post(facade_route))
+        .route("/vault.code.proposal_settle", post(facade_route))
+        .route("/vault.code.proposal_settlement", post(facade_route))
         .route("/vault.code.oplog", post(facade_route))
         .route("/vault.code.model_heal_count", post(facade_route))
         .route("/vault.code.waits.resolve", post(facade_route))

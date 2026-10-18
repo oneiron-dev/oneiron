@@ -145,6 +145,26 @@ export_facade! {
     let output = client.self_grants_ask(&input)?;
     crate::codec::lift_record("self.grants.ask", &output)
 };
+"vault.companions.access_requests.answer" => fn vault_companions_access_requests_answer(&self, input: CompanionAccessRequestAnswerRequest) -> CompanionAccessRequestAnswered = |client| {
+    let input: oneiron::task_verb::sdk::CompanionAccessRequestAnswerRequest = crate::codec::lower_record("vault.companions.access_requests.answer", input)?;
+    let output = client.vault_companions_access_requests_answer(&input)?;
+    crate::codec::lift_record("vault.companions.access_requests.answer", &output)
+};
+"vault.personas.preview" => fn vault_personas_preview(&self, input: PersonaSnapshotPreviewRequest) -> PersonaSnapshotPreview = |client| {
+    let input: oneiron::task_verb::sdk::PersonaSnapshotPreviewRequest = crate::codec::lower_record("vault.personas.preview", input)?;
+    let output = client.vault_personas_preview(&input)?;
+    crate::codec::lift_record("vault.personas.preview", &output)
+};
+"vault.personas.export" => fn vault_personas_export(&self, input: PersonaSnapshotCopyRequest) -> PersonaSnapshotExportedCopy = |client| {
+    let input: oneiron::persona_snapshot::PersonaSnapshotCopyRequest = crate::codec::lower_record("vault.personas.export", input)?;
+    let output = client.vault_personas_export(&input)?;
+    crate::codec::lift_record("vault.personas.export", &output)
+};
+"vault.personas.edit" => fn vault_personas_edit(&self, input: PersonaSnapshotCopyEditRequest) -> PersonaSnapshotExportedCopy = |client| {
+    let input: oneiron::persona_snapshot::PersonaSnapshotCopyEditRequest = crate::codec::lower_record("vault.personas.edit", input)?;
+    let output = client.vault_personas_edit(&input)?;
+    crate::codec::lift_record("vault.personas.edit", &output)
+};
 "self.memory.diary.query" => fn self_memory_diary_query(&self, input: DiaryQueryRequest) -> DiaryQueryOutcome = |client| {
     let input: oneiron::task_verb::sdk::DiaryQueryRequest = crate::codec::lower_record("self.memory.diary.query", input)?;
     let output = client.self_memory_diary_query(&input)?;
@@ -1830,6 +1850,36 @@ export_facade! {
     let input: oneiron::memory::code_doors::CodeProposalSubmitRequest = crate::codec::lower_record("vault.code.proposal_submit", input)?;
     let output = client.vault_code_proposal_submit(&input)?;
     crate::codec::lift_record("vault.code.proposal_submit", &output)
+};
+"vault.code.conflict_record" => fn vault_code_conflict_record(&self, input: CodeConflictRecordRequest) -> CodeConflictView = |client| {
+    let input: oneiron::memory::code_doors::CodeConflictRecordRequest = crate::codec::lower_record("vault.code.conflict_record", input)?;
+    let output = client.vault_code_conflict_record(&input)?;
+    crate::codec::lift_record("vault.code.conflict_record", &output)
+};
+"vault.code.conflict_view" => fn vault_code_conflict_view(&self, input: CodeConflictViewRequest) -> CodeConflictHistory = |client| {
+    let input: oneiron::memory::code_doors::CodeConflictViewRequest = crate::codec::lower_record("vault.code.conflict_view", input)?;
+    let output = client.vault_code_conflict_view(&input)?;
+    crate::codec::lift_record("vault.code.conflict_view", &output)
+};
+"vault.code.proposal_resolve" => fn vault_code_proposal_resolve(&self, input: CodeProposalResolveRequest) -> CodeProposalSubmitted = |client| {
+    let input: oneiron::memory::code_doors::CodeProposalResolveRequest = crate::codec::lower_record("vault.code.proposal_resolve", input)?;
+    let output = client.vault_code_proposal_resolve(&input)?;
+    crate::codec::lift_record("vault.code.proposal_resolve", &output)
+};
+"vault.code.proposal_review" => fn vault_code_proposal_review(&self, input: CodeProposalReviewRequest) -> CodeProposalSettlementView = |client| {
+    let input: oneiron::memory::code_doors::CodeProposalReviewRequest = crate::codec::lower_record("vault.code.proposal_review", input)?;
+    let output = client.vault_code_proposal_review(&input)?;
+    crate::codec::lift_record("vault.code.proposal_review", &output)
+};
+"vault.code.proposal_settle" => fn vault_code_proposal_settle(&self, input: CodeProposalSettleRequest) -> CodeProposalSettlementView = |client| {
+    let input: oneiron::memory::code_doors::CodeProposalSettleRequest = crate::codec::lower_record("vault.code.proposal_settle", input)?;
+    let output = client.vault_code_proposal_settle(&input)?;
+    crate::codec::lift_record("vault.code.proposal_settle", &output)
+};
+"vault.code.proposal_settlement" => fn vault_code_proposal_settlement(&self, input: CodeProposalSettlementRequest) -> CodeProposalSettlementView = |client| {
+    let input: oneiron::memory::code_doors::CodeProposalSettlementRequest = crate::codec::lower_record("vault.code.proposal_settlement", input)?;
+    let output = client.vault_code_proposal_settlement(&input)?;
+    crate::codec::lift_record("vault.code.proposal_settlement", &output)
 };
 "vault.code.oplog" => fn vault_code_oplog(&self, input: CodeRepoRequest) -> CodeMutationLog = |client| {
     let input: oneiron::memory::code_doors::CodeRepoRequest = crate::codec::lower_record("vault.code.oplog", input)?;
