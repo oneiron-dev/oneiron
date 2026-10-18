@@ -85,6 +85,23 @@ impl MailPolicy {
     pub(crate) fn warmup_earns(&self, stage: &str) -> bool {
         self.warmup.iter().any(|allowed| allowed == stage)
     }
+    /// A vault-wide row: the one a resolution needs to read any mail policy.
+    pub(crate) fn is_vault_row(&self) -> bool {
+        self.scope == Scope::Vault
+    }
+    /// Whether this row, added beside a vault row, only narrows every reader
+    /// (ARCH-0070 vault shape). Both first touches stay known and no cold
+    /// send is held, so no recipient's class or cold-risk selector moves;
+    /// its rates and earned tiers only meet.
+    pub(crate) fn only_meets_beside_vault(&self) -> bool {
+        !self.hold_cold
+            && [
+                CounterpartyFirstTouch::UserIntroduction,
+                CounterpartyFirstTouch::InboundFirst,
+            ]
+            .iter()
+            .all(|touch| self.known.contains(touch))
+    }
     fn restrict(&mut self, other: &Self) {
         self.known.retain(|v| other.known.contains(v));
         self.hold_cold |= other.hold_cold;
