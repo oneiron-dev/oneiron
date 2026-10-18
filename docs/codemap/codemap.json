@@ -49736,7 +49736,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 45,
+      "re-export": 46,
       "struct": 36
      }
     },
@@ -50060,7 +50060,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 590
+      "fn": 599
      }
     },
     {
@@ -50402,6 +50402,29 @@
       "enum": 5,
       "fn": 2,
       "struct": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RecallTelemetry",
+      "RetrievalDiagnosticExport",
+      "RetrievalDiagnosticReplay",
+      "RetrievalDiagnosticRequest",
+      "RetrievalReplayRun",
+      "RetrievalRunEvidence",
+      "RetrievalRunRequest",
+      "RetrievalRunsRequest",
+      "RetrievalTraceRequest",
+      "RetrievalTurnRequest"
+     ],
+     "path": "src/task_verb/sdk_retrieval.rs",
+     "purpose": "Owner-only, tenant-local retrieval diagnostics over the existing finalized ledger",
+     "surface": {
+      "const": 1,
+      "fn": 9,
+      "struct": 10
      }
     },
     {
@@ -56941,7 +56964,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 157,
+     "files": 158,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -57111,7 +57134,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3479,
+   "source_files": 3480,
    "test_files": 902
   },
   "oneiron-android": {
@@ -65578,7 +65601,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 540
+      "fn": 549
      }
     },
     {
@@ -66627,7 +66650,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 541
+      "fn": 550
      }
     },
     {
@@ -69840,7 +69863,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 105
+      "crate-vis": 106
      }
     },
     {
@@ -70021,6 +70044,16 @@
      "purpose": "Owner-authenticated retained-result reads",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/retrieval_doors.rs",
+     "purpose": "Typed owner-only retrieval diagnostics",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -76886,7 +76919,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/voice_host/public_loop.rs",
@@ -77380,7 +77413,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 364,
+     "files": 365,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -77795,7 +77828,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 694,
+   "source_files": 695,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -78387,6 +78420,7 @@
       "ContextDefault",
       "ContextEmitReceipt",
       "ContextPackBudgetControls",
+      "ContextPackMediaQuery",
       "ContextPackRetrievalBudgetControls",
       "ContextReceiptFields",
       "ContextSpec",
@@ -78921,6 +78955,7 @@
       "MeasuredLearningView",
       "Measurement",
       "MediaAtom",
+      "MediaQueryKind",
       "MediaUsage",
       "MemberAnswer",
       "MemberOnboardingOutcome",
@@ -79301,6 +79336,9 @@
       "Reasoning",
       "ReasoningCause",
       "ReasoningEffort",
+      "RecallEffort",
+      "RecallRequest",
+      "RecallTelemetry",
       "RecallWorlds",
       "ReceiptAtom",
       "ReceiptKind",
@@ -79415,9 +79453,39 @@
       "ResultTaintState",
       "ResultWithheld",
       "RetentionDefault",
+      "RetrievalAction",
       "RetrievalBlendWeights",
+      "RetrievalDiagnosticExport",
+      "RetrievalDiagnosticReplay",
+      "RetrievalDiagnosticRequest",
+      "RetrievalEndOutcome",
+      "RetrievalOutcome",
+      "RetrievalOutcomeRecord",
+      "RetrievalPolicyAction",
+      "RetrievalPolicyDecision",
+      "RetrievalPolicyEnvelope",
+      "RetrievalPolicyIdentity",
+      "RetrievalPolicyTier",
+      "RetrievalPolicyTrace",
+      "RetrievalReplayInputs",
+      "RetrievalReplayRun",
+      "RetrievalRewardEvidence",
+      "RetrievalRunEvidence",
+      "RetrievalRunId",
+      "RetrievalRunRecord",
+      "RetrievalRunRequest",
+      "RetrievalRunsRequest",
+      "RetrievalScoreBreakdown",
       "RetrievalScoreComponent",
       "RetrievalSignal",
+      "RetrievalState",
+      "RetrievalTrace",
+      "RetrievalTraceChannelRecord",
+      "RetrievalTraceRequest",
+      "RetrievalTraceStage",
+      "RetrievalTraceStageRecord",
+      "RetrievalTurn",
+      "RetrievalTurnRequest",
       "RetryableLlmError",
       "RevealDecision",
       "RevealDescribeRequest",
@@ -79911,10 +79979,14 @@
       "WireDeleteReceipt",
       "WireEntityView",
       "WireMentionProvenance",
+      "WireQueryAffect",
       "WireQuoteSpan",
       "WireReadScope",
+      "WireRecallScope",
       "WireRecordRefusal",
       "WireRefusalReason",
+      "WireRetrievalDegradation",
+      "WireRetrievalQuality",
       "WireWitnessAuthor",
       "WireWitnessMessage",
       "WireWitnessReceipt",
@@ -79969,8 +80041,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 519,
-      "struct": 1457
+      "enum": 527,
+      "struct": 1488
      }
     },
     {
