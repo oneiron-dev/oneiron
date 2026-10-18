@@ -29,10 +29,11 @@
 //!   under, where its publisher knew it (FIX 3359), so a publisher that cannot
 //!   read a world still knows which section is that world's and stops carrying
 //!   it once the world is deleted here or no longer eligible.
-//! - Each carried private world's signed settings and key wraps also ride a
-//!   capsule of their own inside the bundle, sealed to the world's readers and
-//!   the root ([`SealedWorldAuthority`], FIX 4211), which a publisher that may
-//!   not read the world carries unchanged, as it carries the world's section.
+//! - Each carried private world's signed key wraps also ride a capsule of
+//!   their own inside the bundle, sealed to the world's readers and the root
+//!   ([`SealedWorldAuthority`], FIX 4211), which a publisher that may not read
+//!   the world carries unchanged, as it carries the world's section. Its
+//!   settings ride the base, as main-log metadata (PR1a #2961).
 //! - Erase rewrites every kept pad object without the world's pads: that world's
 //!   section in every kept bundle stops opening, and every other world's still
 //!   does. A machine admitted after a generation was sealed opens its pad object
