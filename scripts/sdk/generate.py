@@ -134,6 +134,14 @@ for row in ROWS:
     # that route.
     if row.get('openapi') and row.get('context', 'memory') != 'memory':
         raise ValueError(f'{row["name"]}: only a facade row is published in OpenAPI')
+    # DOOR-127: `no_record` marks a facade row no transport keeps a call
+    # receipt of (`NO_RECORD_ROWS`): an off-record session's own rows, as
+    # ARCH-0052 keeps no wire receipt that a session ran. Every reply states
+    # `none; no-record`, as the owner's off-record routes do. Only a host door
+    # judged by the owner's proof carries it, so no other caller's call goes
+    # unrecorded.
+    if row.get('no_record') and (row.get('context', 'memory') != 'memory' or not row.get('host_door')):
+        raise ValueError(f'{row["name"]}: only a host-door facade row keeps no call receipt')
 # OF-063: `refs` lists a row's typed record-ref slots as JSON pointers into its
 # input, `*` taking every item of an array. The row's generated engine fn checks
 # that each ref there resolves under the writer's own scoped read before the
@@ -1351,6 +1359,9 @@ def outputs():
     for r in openapi_rows:
         core += f'{json.dumps(r["name"])} => crate::code_run::vault_read::request_schema::<{r["output"]}>(),\n'
     core += "_ => return None, }) }\n"
+    # DOOR-127: the rows whose calls keep no call receipt on any transport.
+    core += "/// The facade rows no transport keeps a call receipt of (DOOR-127): an\n/// off-record session's own rows.\n"
+    core += "pub const NO_RECORD_ROWS: &[&str] = &[" + ''.join(f'{json.dumps(r["name"])},' for r in ROWS if r.get('no_record')) + "];\n"
     core += "pub fn mcp_arguments_schema(verb: &str) -> Option<serde_json::Value> { mcp_arguments_schema_from_input(verb, input_schema(verb)?) }\n"
     core += "pub fn mcp_arguments_schema_from_input(verb: &str, schema: &serde_json::Value) -> Option<serde_json::Value> { let mut properties = serde_json::Map::new(); let required: &[&str] = match verb {\n"
     for r in mcp_rows():

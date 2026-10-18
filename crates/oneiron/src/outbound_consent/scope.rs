@@ -7,7 +7,19 @@ use serde::{Deserialize, Serialize};
 ///
 /// [`Self::Unclassified`] is the fail-closed parse result. It sorts above the
 /// highest grantable ceiling, so it can never accidentally become public.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DataClass {
     Public,

@@ -1564,7 +1564,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/anchored_annotation/verbs.rs",
@@ -29186,7 +29186,10 @@
      "kind": "src",
      "notable": [
       "BandMode",
+      "DecisionBandEnforceRequest",
+      "DecisionBandLearnRequest",
       "DecisionBandPolicy",
+      "DecisionBandReadRequest",
       "LearnedBand",
       "PersonThreshold",
       "Reversibility",
@@ -29198,7 +29201,7 @@
       "const": 1,
       "enum": 2,
       "fn": 10,
-      "struct": 4
+      "struct": 7
      }
     },
     {
@@ -31592,6 +31595,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/session_writes.rs",
+     "purpose": "NOTE and claim writes through an off-record session's handle (DOOR-127; Engine ruling 10-18 on ARCH-0052…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/shape_doors.rs",
      "purpose": "The vault shape on code mode and MCP (ARCH-0070): the free reads `describe(vault)`, `vault.shape.read` and…",
      "surface": {
@@ -33004,6 +33017,16 @@
      "surface": {
       "crate-vis": 14,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/off_record/lifecycle/overlay_writes.rs",
+     "purpose": "Session-bound NOTE and claim writes (DOOR-127; Engine ruling 10-18 on ARCH-0052 D1/D2): a row written…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -46058,8 +46081,18 @@
      "purpose": "The vault's sealed cloud bundle through the home (DEC-0005 \"Sealed copies\", FIX 922)",
      "surface": {
       "crate-vis": 3,
-      "fn": 2,
+      "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/residence/bundle/turn.rs",
+     "purpose": "This machine's side of the home's publisher turn (FIX 3351): a publisher asks for the turn before it…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -46940,9 +46973,9 @@
      "purpose": "Grant-checked, per-item residence projections over a window document",
      "surface": {
       "const": 2,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 14,
-      "re-export": 10,
+      "re-export": 12,
       "struct": 2
      }
     },
@@ -46987,7 +47020,7 @@
      "purpose": "The home's custody of the vault's sealed cloud bundle (DEC-0005 \"Sealed copies\", FIX 922)",
      "surface": {
       "const": 2,
-      "crate-vis": 6,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 12,
       "struct": 3
@@ -47005,6 +47038,30 @@
      "surface": {
       "fn": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SealedBundleStaged"
+     ],
+     "path": "src/sync/residence/bundle_stage.rs",
+     "purpose": "The uploads the home stages, as its disk sees them (FIX 3354)",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/residence/bundle_turn.rs",
+     "purpose": "The publisher turn of the vault's sealed cloud bundle on the home (FIX 3351)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
      }
     },
     {
@@ -48989,7 +49046,7 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 33,
+      "re-export": 34,
       "struct": 36
      }
     },
@@ -49252,8 +49309,8 @@
      "path": "src/task_verb/sdk_generated.rs",
      "purpose": "—",
      "surface": {
-      "const": 3,
-      "fn": 473
+      "const": 4,
+      "fn": 484
      }
     },
     {
@@ -49424,6 +49481,32 @@
       "const": 1,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OffRecordClaimRequest",
+      "OffRecordClosed",
+      "OffRecordEnterMode",
+      "OffRecordExecuteRequest",
+      "OffRecordExecuted",
+      "OffRecordNoteRequest",
+      "OffRecordRecallRequest",
+      "OffRecordRunStatus",
+      "OffRecordSessionRequest",
+      "OffRecordSessionView",
+      "OffRecordStartRequest",
+      "OffRecordWitnessRequest"
+     ],
+     "path": "src/task_verb/sdk_off_record.rs",
+     "purpose": "The owner's off-record session rows (DOOR-127, e2e PRIVACY-06): typed calls over the engine's off-record…",
+     "surface": {
+      "const": 1,
+      "enum": 2,
+      "fn": 1,
+      "struct": 10
      }
     },
     {
@@ -53342,7 +53425,7 @@
      "purpose": "The vault's one sealed cloud bundle (DEC-0005 \"Sealed copies\", FIX 922), and the sealed pad object beside it",
      "surface": {
       "const": 3,
-      "crate-vis": 6,
+      "crate-vis": 9,
       "fn": 34,
       "struct": 8
      }
@@ -55342,7 +55425,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 147,
+     "files": 148,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55370,7 +55453,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 19,
+     "files": 20,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55825,7 +55908,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 172,
+     "files": 175,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -55853,7 +55936,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 145,
+     "files": 146,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -56023,7 +56106,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3411,
+   "source_files": 3417,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64436,7 +64519,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 423
+      "fn": 434
      }
     },
     {
@@ -65484,7 +65567,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 424
+      "fn": 435
      }
     },
     {
@@ -68504,6 +68587,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/decision_band_doors.rs",
+     "purpose": "The owner's live decision-band policy through the typed verb table",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/decision_role_asks.rs",
      "purpose": "OF-516: a role holder's door to the ladder's person asks (Q3 by role)",
      "surface": {
@@ -68587,7 +68680,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 83
+      "crate-vis": 85
      }
     },
     {
@@ -68638,6 +68731,16 @@
      "purpose": "Host-held NOTE editor bindings beside the ordinary scoped NOTE reads",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/off_record_doors.rs",
+     "purpose": "The host doors of the owner's off-record session rows (DOOR-127, e2e PRIVACY-06)",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -70579,7 +70682,7 @@
      "path": "src/api/transfer.rs",
      "purpose": "Bounded transfers between an HTTP body and a blocking worker, shared by the git smart-HTTP and LFS bridges",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 31
      }
     },
     {
@@ -73506,12 +73609,22 @@
      "path": "src/mcp/exec_host.rs",
      "purpose": "MCP code-execution host seam and the engine-native host binding",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 7,
       "struct": 3,
       "trait": 2,
       "type": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mcp/exec_host/off_record_run.rs",
+     "purpose": "Durable code-mode runs bound to an off-record session (DOOR-127): one entry of a run whose every row stays…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -75902,7 +76015,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 338,
+     "files": 340,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -76168,7 +76281,7 @@
      "purpose": "Managed serve mode: the vault engine as a supervised child process"
     },
     "mcp": {
-     "files": 22,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -76317,7 +76430,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 661,
+   "source_files": 664,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -76629,6 +76742,7 @@
       "AuthorityHandoffAlarm",
       "AuthorityHandoffAlarmAck",
       "AuthorityHistoryImported",
+      "BandMode",
       "BlindCampaignJudgeInput",
       "BlockChange",
       "BodyBlockKind",
@@ -76891,6 +77005,9 @@
       "DecisionAskAnswerRequest",
       "DecisionAskClimbRequest",
       "DecisionBand",
+      "DecisionBandEnforceRequest",
+      "DecisionBandLearnRequest",
+      "DecisionBandReadRequest",
       "DecisionClass",
       "DecisionDial",
       "DecisionQuestion",
@@ -77192,6 +77309,7 @@
       "LaunchStatement",
       "LeaderSplitInput",
       "LeaderSplitOutput",
+      "LearnedBand",
       "LearningCell",
       "LearningChoiceValue",
       "LearningPredicate",
@@ -77357,6 +77475,20 @@
       "Of360QaAnswer",
       "Of360RateMetric",
       "Of360Speaker",
+      "OffRecordBackendClass",
+      "OffRecordClaimRequest",
+      "OffRecordClosed",
+      "OffRecordEnterMode",
+      "OffRecordExecuteRequest",
+      "OffRecordExecuted",
+      "OffRecordMode",
+      "OffRecordNoteRequest",
+      "OffRecordRecallRequest",
+      "OffRecordRunStatus",
+      "OffRecordSessionRequest",
+      "OffRecordSessionView",
+      "OffRecordStartRequest",
+      "OffRecordWitnessRequest",
       "OfferAnswer",
       "OfferAnswerRequest",
       "OfferCard",
@@ -78024,12 +78156,17 @@
       "WireDeleteReceipt",
       "WireEntityView",
       "WireMentionProvenance",
+      "WireQuoteSpan",
       "WireReadScope",
       "WireRecordRefusal",
       "WireRefusalReason",
+      "WireWitnessAuthor",
+      "WireWitnessMessage",
       "WireWitnessReceipt",
+      "WireWitnessTurn",
       "WithheldRef",
       "WithheldRole",
+      "WitnessAssertions",
       "WorkCompanionPolicy",
       "WorkCompanionSetRequest",
       "WorkspaceCompanionInput",
@@ -78068,8 +78205,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 430,
-      "struct": 1124
+      "enum": 436,
+      "struct": 1142
      }
     },
     {

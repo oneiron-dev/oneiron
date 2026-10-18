@@ -70,6 +70,7 @@ pub(crate) use super::hub_doors::*;
 // The owner's residence doors (OF-534), likewise.
 pub(crate) use super::fold_doors::*;
 pub(crate) use super::note_doors::*;
+pub(crate) use super::off_record_doors::*;
 pub(crate) use super::residence_doors::*;
 // The weave lens's human doors, likewise.
 pub(crate) use super::weave_doors::*;
@@ -79,13 +80,14 @@ pub(crate) use super::graph_ask_doors::*;
 pub(crate) use super::share_doors::*;
 // The role-holder decision-ask doors (OF-493), likewise.
 pub(crate) use super::decision_ask_doors::*;
+pub(crate) use super::decision_band_doors::*;
 // The vault shape's apply door (ARCH-0070), likewise.
 pub(crate) use super::vault_shape_doors::*;
 // The owner's embedding-space doors (OF-370), likewise.
 pub(crate) use super::embedding_space_doors::*;
 // The owner's fan-out ruling doors (OF-393), likewise.
-pub(crate) use super::fanout_doors::*;
 pub(crate) use super::budget_doors::*;
+pub(crate) use super::fanout_doors::*;
 // The owner's learned-setting doors, likewise.
 pub(crate) use super::setting_doors::*;
 // The owner's historical secret lift sweep door (OF-067), likewise.
@@ -1070,6 +1072,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.courtesy_delete.sent"
         | "vault.courtesy_delete.incoming"
         | "vault.courtesy_delete.answer"
+        | "vault.decisions.bands.read"
+        | "vault.decisions.bands.learn"
+        | "vault.decisions.bands.enforce"
         | "vault.settings.learning"
         | "vault.settings.learning.put"
         | "vault.settings.learning.clear"
@@ -1081,6 +1086,43 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.claims.review"
         | "vault.claims.settle"
         | "vault.settings.wake_policy.set"
+        | "vault.agents.create"
+        | "vault.agents.update"
+        | "vault.agents.get"
+        | "vault.workspace.roster"
+        | "vault.booking.page_token"
+        | "vault.channel_identities.provision"
+        | "vault.channel_identities.bind"
+        | "vault.channel_identities.fulfill"
+        | "vault.channel_identities.rotate"
+        | "vault.channel_identities.release"
+        | "vault.channel_identities.route_inbound"
+        | "vault.delivery_window.policy.put"
+        | "vault.delivery_window.policy.retract"
+        | "vault.gate.policy.get"
+        | "vault.gate.policy.put"
+        | "vault.gate.checker.get"
+        | "vault.gate.checker.set"
+        | "vault.embedding_spaces.list"
+        | "vault.embedding_spaces.declare"
+        | "vault.embedding_spaces.bind"
+        | "vault.embedding_spaces.one_space"
+        | "vault.embedding_spaces.retire"
+        | "vault.embedding_spaces.move"
+        | "vault.embedding_spaces.move_check"
+        | "vault.embedding_spaces.move_approve"
+        | "vault.embedding_spaces.move_undo"
+        | "vault.embedding_spaces.move_abandon"
+        | "vault.embedding_spaces.probes.list"
+        | "vault.embedding_spaces.probes.put"
+        | "vault.embedding_spaces.probes.delete"
+        | "vault.fanout.resume"
+        | "vault.fanout.ack"
+        | "vault.guests.revoke"
+        | "vault.guests.mint_slip"
+        | "vault.projects.confirm"
+        | "vault.weave.owner.link.wrong"
+        | "vault.weave.owner.item.wrong"
         | "vault.budgets.lease.open"
         | "vault.budgets.lease"
         | "vault.budgets.lease.top_up"
@@ -1096,7 +1138,15 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.origin.authority.get"
         | "vault.code.origin.authority.set"
         | "vault.code.origin.publications"
-        | "vault.code.checkout.bind" => owner_proof(auth, server, verb).map(drop),
+        | "vault.code.checkout.bind"
+        | "vault.off_record.start"
+        | "vault.off_record.status"
+        | "vault.off_record.witness"
+        | "vault.off_record.discard"
+        | "vault.off_record.recall"
+        | "vault.off_record.notes.create"
+        | "vault.off_record.claims.upsert"
+        | "self.off_record.execute" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"
         | "vault.shared.propose_transfer"
         | "vault.shared.propose_remove_owner"
@@ -1120,15 +1170,18 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.shared.erase_asks"
         | "vault.shared.close_erase_ask"
         | "vault.records.erase_preview"
-        | "vault.records.erase_confirm" => {
+        | "vault.records.erase_confirm"
+        | "vault.workspace.establish"
+        | "vault.workspace.members.onboard" => {
             super::shared_act_doors::person(server, auth, verb).map(drop)
         }
         "vault.artifacts.review_slides" => slide_reviewer(auth).map(drop),
         "vault.artifacts.ask" => artifact_asker(auth).map(drop),
         "self.memory.diary.query" => diary_reader(auth).map(drop),
-        "vault.decisions.asks.answer" | "vault.decisions.asks.climb" | "self.decisions.asks" => {
-            super::decision_ask_doors::holder(auth, verb).map(drop)
-        }
+        "vault.decisions.asks.answer"
+        | "vault.decisions.asks.climb"
+        | "self.decisions.asks"
+        | "vault.fanout.resume_as" => super::decision_ask_doors::holder(auth, verb).map(drop),
         "ai.verdict" => asking(auth, server).map(drop),
         "ai.image" | "ai.speech" | "ai.transcribe" | "ai.embed" | "ai.video" => {
             owner_grade(auth, MEDIA_OWNERS)
