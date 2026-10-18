@@ -36,7 +36,8 @@ use crate::write_envelope::WriteActor;
 // ---------------------------------------------------------------------------
 
 /// Status of a cross-vault coreference link.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum CoreferenceStatus {
     /// Asserted, not yet owner-confirmed. Written `Proposed`.
     Proposed,
@@ -167,6 +168,88 @@ pub fn coreference_share_consent(
     let ops = coreference_claim_ops(claim_id, source, &body, occurred, learned_at)?;
     apply_coreference_ops(vault, ops)?;
     Ok(claim_id)
+}
+
+/// Removes both orientations of a coreference link and retracts its live
+/// status and share-consent claims in one transaction. The people and their
+/// independently authored claims are retained. A later link needs fresh consent.
+///
+/// # Errors
+///
+/// Returns an owner-proof error, [`Error::EdgeNotFound`] for a missing link,
+/// or a claim-lifecycle or batch error. Any failure rolls back the whole unlink.
+pub fn unlink_coreference_link(
+    vault: &Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    local_person: EntityId,
+    other_person: EntityId,
+) -> Result<Vec<EntityId>> {
+    vault.with_write_txn_grouped(|wtxn| {
+        let actor = WriteActor::new(
+            owner.revalidate_in_txn(vault, wtxn)?,
+            crate::edge::EdgeActorClass::Human,
+        );
+        if !person_pair_in_txn(vault, wtxn, local_person, other_person)? {
+            return Err(Error::InvalidClaimBody(
+                "cross-vault same_as requires PERSON endpoints",
+            ));
+        }
+        let mut ops = Vec::new();
+        let mut claims = std::collections::BTreeSet::new();
+        for (source, target) in [(local_person, other_person), (other_person, local_person)] {
+            if vault
+                .store
+                .port_edge_get(wtxn, &source, EdgeKind::SameAs, &target)?
+                .is_some()
+            {
+                ops.push(BatchOp::DeleteEdge {
+                    src: source,
+                    kind: EdgeKind::SameAs,
+                    tgt: target,
+                });
+            }
+            for claim in vault.claims_for_subject_in_txn(wtxn, &source)? {
+                let Some(body) = vault.get_claim_in_txn(wtxn, &claim)? else {
+                    continue;
+                };
+                if body.lifecycle == ClaimLifecycleStatus::Active
+                    && matches!(
+                        body.predicate.as_str(),
+                        crate::claim::PREDICATE_COREFERENCE_STATUS
+                            | crate::claim::PREDICATE_COREFERENCE_SHARE_CONSENT
+                    )
+                    && body.subject
+                        == (ClaimSubject::Edge {
+                            source,
+                            kind: EdgeKind::SameAs,
+                            target,
+                        })
+                {
+                    claims.insert(claim);
+                }
+            }
+        }
+        if ops.is_empty() {
+            return Err(Error::EdgeNotFound);
+        }
+        let now = vault.now_recorded_at();
+        for claim in &claims {
+            vault.retract_claim_in_txn_as(wtxn, claim, now, Some(actor))?;
+        }
+        crate::batch::apply_ops(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            wtxn,
+            ops,
+            vault
+                .text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )?;
+        Ok(claims.into_iter().collect())
+    })
 }
 
 /// Whether the link between `a` and `b` carries live LOCAL consent for EXACTLY

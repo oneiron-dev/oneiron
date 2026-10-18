@@ -79,6 +79,7 @@ pub(crate) use super::skill_execution_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
 // The owner's guest revoke door (OF-232) too.
+pub(crate) use super::coreference_doors::*;
 pub(crate) use super::federation_connect_doors::*;
 pub(crate) use super::guest_doors::*;
 pub(crate) use super::hub_doors::*;
@@ -1223,6 +1224,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.embedding_spaces.probes.delete"
         | "vault.fanout.resume"
         | "vault.fanout.ack"
+        | "vault.federation.coreference.link"
+        | "vault.federation.coreference.confirm"
+        | "vault.federation.coreference.share_consent"
+        | "vault.federation.coreference.unlink"
         | "vault.federation.connect.identity"
         | "vault.federation.connect.grants.mint"
         | "vault.federation.connect.offer"

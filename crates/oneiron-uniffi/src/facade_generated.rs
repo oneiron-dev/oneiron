@@ -801,6 +801,26 @@ export_facade! {
     let output = client.vault_shared_policy_change(&input)?;
     crate::codec::lift_record("vault.shared.policy.change", &output)
 };
+"vault.federation.coreference.link" => fn vault_federation_coreference_link(&self, input: CoreferenceLinkRequest) -> CoreferenceLinkReceipt = |client| {
+    let input: oneiron::task_verb::sdk::CoreferenceLinkRequest = crate::codec::lower_record("vault.federation.coreference.link", input)?;
+    let output = client.vault_federation_coreference_link(&input)?;
+    crate::codec::lift_record("vault.federation.coreference.link", &output)
+};
+"vault.federation.coreference.confirm" => fn vault_federation_coreference_confirm(&self, input: CoreferencePairRequest) -> CoreferenceLinkReceipt = |client| {
+    let input: oneiron::task_verb::sdk::CoreferencePairRequest = crate::codec::lower_record("vault.federation.coreference.confirm", input)?;
+    let output = client.vault_federation_coreference_confirm(&input)?;
+    crate::codec::lift_record("vault.federation.coreference.confirm", &output)
+};
+"vault.federation.coreference.share_consent" => fn vault_federation_coreference_share_consent(&self, input: CoreferenceShareConsentRequest) -> CoreferenceShareConsentReceipt = |client| {
+    let input: oneiron::task_verb::sdk::CoreferenceShareConsentRequest = crate::codec::lower_record("vault.federation.coreference.share_consent", input)?;
+    let output = client.vault_federation_coreference_share_consent(&input)?;
+    crate::codec::lift_record("vault.federation.coreference.share_consent", &output)
+};
+"vault.federation.coreference.unlink" => fn vault_federation_coreference_unlink(&self, input: CoreferencePairRequest) -> CoreferenceUnlinkReceipt = |client| {
+    let input: oneiron::task_verb::sdk::CoreferencePairRequest = crate::codec::lower_record("vault.federation.coreference.unlink", input)?;
+    let output = client.vault_federation_coreference_unlink(&input)?;
+    crate::codec::lift_record("vault.federation.coreference.unlink", &output)
+};
 "vault.federation.connect.identity" => fn vault_federation_connect_identity(&self) -> ConnectIdentity = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.federation.connect.identity")?;
     let output = client.vault_federation_connect_identity(&input)?;

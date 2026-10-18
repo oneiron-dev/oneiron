@@ -164,6 +164,10 @@ pub enum AgentVerb {
     VaultSharedPolicyPropose,
     VaultSharedPolicyAnswer,
     VaultSharedPolicyChange,
+    VaultFederationCoreferenceLink,
+    VaultFederationCoreferenceConfirm,
+    VaultFederationCoreferenceShareConsent,
+    VaultFederationCoreferenceUnlink,
     VaultFederationConnectIdentity,
     VaultFederationConnectGrantsMint,
     VaultFederationConnectOffer,
@@ -819,6 +823,10 @@ impl AgentVerb {
         Self::VaultSharedPolicyPropose,
         Self::VaultSharedPolicyAnswer,
         Self::VaultSharedPolicyChange,
+        Self::VaultFederationCoreferenceLink,
+        Self::VaultFederationCoreferenceConfirm,
+        Self::VaultFederationCoreferenceShareConsent,
+        Self::VaultFederationCoreferenceUnlink,
         Self::VaultFederationConnectIdentity,
         Self::VaultFederationConnectGrantsMint,
         Self::VaultFederationConnectOffer,
@@ -1477,6 +1485,12 @@ impl AgentVerb {
             Self::VaultSharedPolicyPropose => "vault.shared.policy.propose",
             Self::VaultSharedPolicyAnswer => "vault.shared.policy.answer",
             Self::VaultSharedPolicyChange => "vault.shared.policy.change",
+            Self::VaultFederationCoreferenceLink => "vault.federation.coreference.link",
+            Self::VaultFederationCoreferenceConfirm => "vault.federation.coreference.confirm",
+            Self::VaultFederationCoreferenceShareConsent => {
+                "vault.federation.coreference.share_consent"
+            }
+            Self::VaultFederationCoreferenceUnlink => "vault.federation.coreference.unlink",
             Self::VaultFederationConnectIdentity => "vault.federation.connect.identity",
             Self::VaultFederationConnectGrantsMint => "vault.federation.connect.grants.mint",
             Self::VaultFederationConnectOffer => "vault.federation.connect.offer",
@@ -2145,6 +2159,10 @@ impl AgentVerb {
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
                 | Self::VaultSharedPolicyChange
+                | Self::VaultFederationCoreferenceLink
+                | Self::VaultFederationCoreferenceConfirm
+                | Self::VaultFederationCoreferenceShareConsent
+                | Self::VaultFederationCoreferenceUnlink
                 | Self::VaultFederationConnectIdentity
                 | Self::VaultFederationConnectGrantsMint
                 | Self::VaultFederationConnectOffer
@@ -2807,6 +2825,10 @@ impl AgentVerb {
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
                 | Self::VaultSharedPolicyChange
+                | Self::VaultFederationCoreferenceLink
+                | Self::VaultFederationCoreferenceConfirm
+                | Self::VaultFederationCoreferenceShareConsent
+                | Self::VaultFederationCoreferenceUnlink
                 | Self::VaultFederationConnectIdentity
                 | Self::VaultFederationConnectGrantsMint
                 | Self::VaultFederationConnectOffer
@@ -3524,6 +3546,10 @@ impl AgentVerb {
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
                 | Self::VaultSharedPolicyChange
+                | Self::VaultFederationCoreferenceLink
+                | Self::VaultFederationCoreferenceConfirm
+                | Self::VaultFederationCoreferenceShareConsent
+                | Self::VaultFederationCoreferenceUnlink
                 | Self::VaultFederationConnectIdentity
                 | Self::VaultFederationConnectGrantsMint
                 | Self::VaultFederationConnectOffer
@@ -4087,6 +4113,10 @@ impl AgentVerb {
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
+                | Self::VaultFederationCoreferenceLink
+                | Self::VaultFederationCoreferenceConfirm
+                | Self::VaultFederationCoreferenceShareConsent
+                | Self::VaultFederationCoreferenceUnlink
                 | Self::VaultFederationConnectGrantsMint
                 | Self::VaultFederationConnectOffer
                 | Self::VaultFederationConnectAccept
@@ -4593,6 +4623,10 @@ impl AgentVerb {
             Self::VaultSharedPolicyPropose => &["spec"],
             Self::VaultSharedPolicyAnswer => &["spec"],
             Self::VaultSharedPolicyChange => &["spec"],
+            Self::VaultFederationCoreferenceLink => &["spec"],
+            Self::VaultFederationCoreferenceConfirm => &["spec"],
+            Self::VaultFederationCoreferenceShareConsent => &["spec"],
+            Self::VaultFederationCoreferenceUnlink => &["spec"],
             Self::VaultFederationConnectIdentity => &[],
             Self::VaultFederationConnectGrantsMint => &["spec"],
             Self::VaultFederationConnectOffer => &["spec"],
@@ -5249,6 +5283,10 @@ impl AgentVerb {
             Self::VaultSharedPolicyPropose => &["spec"],
             Self::VaultSharedPolicyAnswer => &["spec"],
             Self::VaultSharedPolicyChange => &["spec"],
+            Self::VaultFederationCoreferenceLink => &["spec"],
+            Self::VaultFederationCoreferenceConfirm => &["spec"],
+            Self::VaultFederationCoreferenceShareConsent => &["spec"],
+            Self::VaultFederationCoreferenceUnlink => &["spec"],
             Self::VaultFederationConnectIdentity => &[],
             Self::VaultFederationConnectGrantsMint => &["spec"],
             Self::VaultFederationConnectOffer => &["spec"],
@@ -6209,6 +6247,18 @@ impl AgentVerb {
             }
             Self::VaultSharedPolicyChange => {
                 "A live Owner reads one shared-act policy change: its row, approvals, veto, state and the live editors it still waits on."
+            }
+            Self::VaultFederationCoreferenceLink => {
+                "The owner atomically links two people with proposed or confirmed identity status, without pooling their claims or granting reads."
+            }
+            Self::VaultFederationCoreferenceConfirm => {
+                "The owner atomically confirms cross-vault identity without changing either person or their claims."
+            }
+            Self::VaultFederationCoreferenceShareConsent => {
+                "The owner consents to exporting an existing identity link into exactly one named federation pact."
+            }
+            Self::VaultFederationCoreferenceUnlink => {
+                "The owner atomically removes both identity-link orientations and retracts link metadata while retaining the original claims."
             }
             Self::VaultFederationConnectIdentity => {
                 "The owner reads this vault identity and the host key used for reciprocal Connect consent."

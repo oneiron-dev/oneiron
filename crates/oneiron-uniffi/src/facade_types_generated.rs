@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 609 facade rows, 2220 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 12; generated in and out: 569.
+// UniFFI census: 613 facade rows, 2227 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 12; generated in and out: 573.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -10717,6 +10717,90 @@ pub struct SharedActPolicyAnswerRequest {
 pub struct SharedActPolicyChangeRequest {
     #[serde(rename = "change_id")]
     pub change_id: String,
+}
+
+/// `oneiron::federation::coreference::CoreferenceStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CoreferenceStatus {
+    #[serde(rename = "proposed")]
+    Proposed,
+    #[serde(rename = "confirmed")]
+    Confirmed,
+}
+
+/// `oneiron::task_verb::sdk_coreference::CoreferenceLinkRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CoreferenceLinkRequest {
+    #[serde(rename = "local_person")]
+    pub local_person: String,
+    #[serde(rename = "other_person")]
+    pub other_person: String,
+    #[serde(rename = "status")]
+    pub status: CoreferenceStatus,
+}
+
+/// `oneiron::task_verb::sdk_coreference::CoreferenceLinkReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CoreferenceLinkReceipt {
+    #[serde(rename = "local_person")]
+    pub local_person: String,
+    #[serde(rename = "other_person")]
+    pub other_person: String,
+    #[serde(rename = "status")]
+    pub status: CoreferenceStatus,
+    #[serde(rename = "status_claim")]
+    pub status_claim: String,
+}
+
+/// `oneiron::task_verb::sdk_coreference::CoreferencePairRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CoreferencePairRequest {
+    #[serde(rename = "local_person")]
+    pub local_person: String,
+    #[serde(rename = "other_person")]
+    pub other_person: String,
+}
+
+/// `oneiron::task_verb::sdk_coreference::CoreferenceShareConsentRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CoreferenceShareConsentRequest {
+    #[serde(rename = "local_person")]
+    pub local_person: String,
+    #[serde(rename = "other_person")]
+    pub other_person: String,
+    #[serde(rename = "pact")]
+    pub pact: String,
+}
+
+/// `oneiron::task_verb::sdk_coreference::CoreferenceShareConsentReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CoreferenceShareConsentReceipt {
+    #[serde(rename = "local_person")]
+    pub local_person: String,
+    #[serde(rename = "other_person")]
+    pub other_person: String,
+    #[serde(rename = "pact")]
+    pub pact: String,
+    #[serde(rename = "consent_claim")]
+    pub consent_claim: String,
+}
+
+/// `oneiron::task_verb::sdk_coreference::CoreferenceUnlinkReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CoreferenceUnlinkReceipt {
+    #[serde(rename = "local_person")]
+    pub local_person: String,
+    #[serde(rename = "other_person")]
+    pub other_person: String,
+    #[serde(rename = "unlinked")]
+    pub unlinked: bool,
+    #[serde(rename = "retracted_claims")]
+    pub retracted_claims: Vec<String>,
+    #[serde(rename = "original_claims_retained")]
+    pub original_claims_retained: bool,
 }
 
 /// `oneiron::task_verb::sdk_federation::ConnectIdentity`.
