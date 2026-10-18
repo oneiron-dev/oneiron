@@ -17,11 +17,6 @@ use serde_json::json;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::{Duration, Instant};
 
-/// A step's report keeps at most this many diagnostics, each message cut at
-/// this many bytes, so a report stays a few KiB however much tsc printed.
-const RECORDED_DIAGNOSTICS: usize = 32;
-const RECORDED_MESSAGE_BYTES: usize = 512;
-
 /// The action a shadow check's digest names.
 const SHADOW_CHECK_ACTION: &str = "code_check.shadow";
 
@@ -102,22 +97,9 @@ impl<'a> ShadowStep<'a> {
         });
         match &self.result {
             Ok(report) => {
-                // Bounded: the first diagnostics, each message cut short.
-                let kept: Vec<_> = report
-                    .diagnostics
-                    .iter()
-                    .take(RECORDED_DIAGNOSTICS)
-                    .map(|diagnostic| {
-                        let mut diagnostic = diagnostic.clone();
-                        let cut = diagnostic
-                            .message
-                            .floor_char_boundary(RECORDED_MESSAGE_BYTES);
-                        diagnostic.message.truncate(cut);
-                        diagnostic
-                    })
-                    .collect();
-                record["diagnostics_omitted"] = json!(report.diagnostics.len() - kept.len());
-                record["diagnostics"] = json!(kept);
+                // Rule 5: every diagnostic, each message whole. The report
+                // is a stored output, which holds any size.
+                record["diagnostics"] = json!(report.diagnostics);
                 record["peak_memory_bytes"] = json!(report.peak_memory_bytes);
             }
             Err(failure) => record["failure"] = json!(failure.code()),

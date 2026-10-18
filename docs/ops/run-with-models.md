@@ -699,9 +699,8 @@ microsoft_tsc = "/opt/typescript-7.1.0-dev.20261010.1/package/lib/tsc"  # option
 
 Shadow mode blocks nothing and changes no program's result. Once a step's own
 state is saved, the check's report is appended to the run's replay record as
-`executor/repl/<step>.code-check.json`: backend and pin, latency, the first 32
-diagnostics in program coordinates (`diagnostics_omitted` counts the rest), or
-a failure code. Each check also logs one `oneiron::code_check` line with the
+`executor/repl/<step>.code-check.json`: backend and pin, latency, every
+diagnostic in program coordinates with its whole message, or a failure code. Each check also logs one `oneiron::code_check` line with the
 step's outcome (`completed`, `waiting`, `continued` or `failed`) and the
 running counts. A step that fails keeps no report, and neither does a run in an
 off-record session, whose overlay is quota-bounded; their checks are only in
