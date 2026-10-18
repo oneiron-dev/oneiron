@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 793 facade rows, 2727 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 749.
+// UniFFI census: 795 facade rows, 2731 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 751.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -7567,6 +7567,73 @@ pub struct CallReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub served_records: Option<Vec<RecordRef>>,
+}
+
+/// `oneiron::receipt::admission::AdmissionStatusRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AdmissionStatusRequest {
+    #[serde(rename = "intent_key")]
+    pub intent_key: String,
+}
+
+/// `oneiron::receipt::admission::AdmissionStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "status")]
+#[serde(deny_unknown_fields)]
+pub enum AdmissionStatus {
+    #[serde(rename = "queued")]
+    Queued,
+    #[serde(rename = "held")]
+    Held {
+        #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+    #[serde(rename = "completed")]
+    Completed {
+        #[serde(rename = "result_digest")]
+        result_digest: String,
+    },
+    #[serde(rename = "refused")]
+    Refused {
+        #[serde(rename = "code")]
+        code: String,
+        #[serde(rename = "reason")]
+        reason: String,
+    },
+    #[serde(rename = "interrupted")]
+    Interrupted {
+        #[serde(rename = "reason")]
+        reason: String,
+    },
+}
+
+/// `oneiron::receipt::admission::AdmissionReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AdmissionReceipt {
+    #[serde(rename = "receipt_ref")]
+    pub receipt_ref: String,
+    #[serde(rename = "intent_key")]
+    pub intent_key: String,
+    #[serde(rename = "verb")]
+    pub verb: String,
+    #[serde(rename = "request_digest")]
+    pub request_digest: String,
+    #[serde(rename = "accepted_at")]
+    pub accepted_at: u64,
+    #[serde(rename = "updated_at")]
+    pub updated_at: u64,
+    #[serde(rename = "state")]
+    pub state: AdmissionStatus,
+}
+
+/// `oneiron::receipt::admission::AdmissionReceiptsRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AdmissionReceiptsRequest {
+    #[serde(rename = "intent_keys")]
+    pub intent_keys: Vec<String>,
 }
 
 /// `oneiron::task_verb::sdk_explain::ExplainMemoryRequest`.

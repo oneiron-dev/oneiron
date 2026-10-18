@@ -491,6 +491,16 @@ export_facade! {
     let output = client.vault_receipts_get(&input)?;
     crate::codec::lift_record("vault.receipts.get", &output)
 };
+"self.admission.status" => fn self_admission_status(&self, input: AdmissionStatusRequest) -> Option<AdmissionReceipt> = |client| {
+    let input: oneiron::receipt::admission::AdmissionStatusRequest = crate::codec::lower_record("self.admission.status", input)?;
+    let output = client.self_admission_status(&input)?;
+    crate::codec::lift_record("self.admission.status", &output)
+};
+"self.admission.receipts" => fn self_admission_receipts(&self, input: AdmissionReceiptsRequest) -> Vec<AdmissionReceipt> = |client| {
+    let input: oneiron::receipt::admission::AdmissionReceiptsRequest = crate::codec::lower_record("self.admission.receipts", input)?;
+    let output = client.self_admission_receipts(&input)?;
+    crate::codec::lift_record("self.admission.receipts", &output)
+};
 "vault.explain.memory" => fn vault_explain_memory(&self, input: ExplainMemoryRequest) -> Option<ExplainMemoryReply> = |client| {
     let input: oneiron::task_verb::sdk::ExplainMemoryRequest = crate::codec::lower_record("vault.explain.memory", input)?;
     let output = client.vault_explain_memory(&input)?;

@@ -73,7 +73,7 @@ impl<K: Eq + Hash + Clone + Send + 'static> Admission<K> {
 
     /// A permit for `key`'s work, now or at its turn.
     pub(crate) async fn admit(&self, key: K) -> Result<Permit, WaitTimedOut> {
-        self.line.admit(key).await
+        self.admit_in_line(key).await
     }
 
     /// [`Self::admit`], in line from this call on: the returned future only
@@ -83,7 +83,7 @@ impl<K: Eq + Hash + Clone + Send + 'static> Admission<K> {
         &self,
         key: K,
     ) -> impl Future<Output = Result<Permit, WaitTimedOut>> + Send + 'static {
-        self.line.admit_in_line(key)
+        self.line.admit_in_line_observed(key, crate::api::admission_observer())
     }
 
     /// A permit for the host's own work, given only when no caller waits.

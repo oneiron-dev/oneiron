@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 829 code-mode rows (806 host rows, 23 run rows), 2807 declarations.
-// Replies: 742 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 831 code-mode rows (808 host rows, 23 run rows), 2811 declarations.
+// Replies: 744 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 101; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -514,6 +514,10 @@ declare namespace Sdk {
   type CallTransport = "http_facade" | "mcp" | "ws";
   type CallOutcome = "ok" | { refused: { code: string } };
   type CallReceipt = { receipt_ref: string; at: number; transport: CallTransport; verb: string; actor_ref: string; actor_class: string; credential_ref?: string | null; outcome: CallOutcome; request_digest: string; result_digest?: string | null; action_digest?: string | null; served: string[]; served_records?: RecordRef[] };
+  type AdmissionStatusRequest = { intent_key: string };
+  type AdmissionStatus = { status: "queued" } | { status: "held"; reason?: string | null } | { status: "completed"; result_digest: string } | { status: "refused"; code: string; reason: string } | { status: "interrupted"; reason: string };
+  type AdmissionReceipt = { receipt_ref: string; intent_key: string; verb: string; request_digest: string; accepted_at: number; updated_at: number; state: AdmissionStatus };
+  type AdmissionReceiptsRequest = { intent_keys: string[] };
   type ExplainMemoryRequest = { entity: string; session_id?: string | null };
   type ExplainScoreEvidence = { result_id: string; final_rank: number; final_score: number; access_factor?: number | null; components: RetrievalScoreComponent[] };
   type ExplainMemoryReply = { id: string; run_id?: string | null; rank?: number | null; neighbor: boolean; tier?: string | null; hook?: string | null; score?: ExplainScoreEvidence | null };
@@ -2953,6 +2957,12 @@ declare const reveal: ((input: Sdk.RevealRequest) => Promise<Sdk.RevealPending |
   wait(input: Sdk.RevealWaitRequest): Promise<Sdk.RevealWaitAnswer | StoredResult>;
 };
 declare namespace self {
+  const admission: {
+    /** Reconciles an exact authored set of invocation ids against the caller actor durable admission receipts in one snapshot, without duplicate outcomes or replay. */
+    receipts(input: Sdk.AdmissionReceiptsRequest): Promise<Sdk.AdmissionReceipt[] | StoredResult>;
+    /** Reads the durable queued, held or terminal receipt of one typed call under its invocation id, as its own actor; never submits or replays work. */
+    status(input: Sdk.AdmissionStatusRequest): Promise<Sdk.AdmissionReceipt | null | StoredResult>;
+  };
   const agents: {
     spawn(input: Sdk.AgentSpawnInput): Promise<Sdk.AgentSpawnOutput | StoredResult>;
   };

@@ -2362,6 +2362,50 @@ async fn vault_receipts_get(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn self_admission_status(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "self.admission.status",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn self_admission_receipts(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "self.admission.receipts",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_explain_memory(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -18799,6 +18843,8 @@ pub(crate) async fn call_verb(
         "vault.receipts" => vault_receipts(server, call, input).await,
         "vault.images.view" => vault_images_view(server, call, input).await,
         "vault.receipts.get" => vault_receipts_get(server, call, input).await,
+        "self.admission.status" => self_admission_status(server, call, input).await,
+        "self.admission.receipts" => self_admission_receipts(server, call, input).await,
         "vault.explain.memory" => vault_explain_memory(server, call, input).await,
         "vault.explain.gate" => vault_explain_gate(server, call, input).await,
         "vault.kv.get" => vault_kv_get(server, call, input).await,
