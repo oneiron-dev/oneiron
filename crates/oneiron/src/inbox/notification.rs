@@ -71,6 +71,15 @@ pub enum NotificationKind {
     /// asks, `source.result` the thing to answer and `source.detail`, when
     /// the producer gives it, why it asks.
     Ask,
+    /// An agent's tighten of a world's settings applied, under its Grant or
+    /// by a holder's yes (FIX 4480): `source.result` names the settings
+    /// receipt, and the notice's one tap is its undo, the tapping holder's
+    /// own act (`Vault::undo_world_privacy_change`).
+    WorldPrivacyChanged,
+    /// An agent's proposal of stricter settings for a world waits for a
+    /// holder (FIX 4480): `source.result` names the proposal, and the
+    /// notice's one tap cancels it (`Vault::answer_world_privacy_request`).
+    WorldPrivacyProposed,
 }
 
 impl NotificationKind {

@@ -36,17 +36,22 @@ fn run_error(refusal: LiveRunRefusal) -> MemoryError {
     MemoryError::new(refusal.code(), refusal.message(), &[refusal.suggestion()])
 }
 
+/// `self.run.attach`: binds the caller's credential to its leased run and
+/// answers the opaque handle (`host_door_lists`). The attachment reads the
+/// credential and its lease and serves no history text, so its list is
+/// complete and empty; the fold and history doors list what they serve.
 pub(crate) async fn self_run_attach(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     _caller: (EntityId, EdgeActorClass),
     _invocation: Option<InvocationId>,
     input: RunAttachRequest,
-) -> MemoryResult<RunAttached> {
-    let live_run = attach_run_as(server, auth, &input.run, input.rebind)
+) -> Listed<RunAttached> {
+    let answer = attach_run_as(server, auth, &input.run, input.rebind)
         .await
-        .map_err(facade_error)?;
-    Ok(RunAttached { live_run })
+        .map(|live_run| RunAttached { live_run })
+        .map_err(facade_error);
+    (answer, Vec::new())
 }
 
 /// A fixed typed fold verb, not a public generic action escape hatch. The
@@ -95,14 +100,16 @@ async fn fold_action<T: DeserializeOwned>(
     }
 }
 
+/// `self.fold` (`host_door_lists`): the reply is the pending mark's handle
+/// and span, never the span's text, so the list is complete and empty.
 pub(crate) async fn self_fold(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     _caller: (EntityId, EdgeActorClass),
     invocation: Option<InvocationId>,
     input: FoldMarkRequest,
-) -> MemoryResult<FoldReply<FoldMarked>> {
-    fold_action(
+) -> Listed<FoldReply<FoldMarked>> {
+    let answer = fold_action(
         server,
         auth,
         invocation,
@@ -110,17 +117,21 @@ pub(crate) async fn self_fold(
         input.live_run,
         json!([[input.from, input.through], {"note": input.note}]),
     )
-    .await
+    .await;
+    (answer, Vec::new())
 }
 
+/// `self.compact` (`host_door_lists`): the reply is the pending handles and
+/// the step the batch applies at; the compaction itself runs later, so the
+/// list is complete and empty.
 pub(crate) async fn self_compact(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     _caller: (EntityId, EdgeActorClass),
     invocation: Option<InvocationId>,
     input: FoldCompactRequest,
-) -> MemoryResult<FoldReply<FoldCompactAsked>> {
-    fold_action(
+) -> Listed<FoldReply<FoldCompactAsked>> {
+    let answer = fold_action(
         server,
         auth,
         invocation,
@@ -128,17 +139,21 @@ pub(crate) async fn self_compact(
         input.live_run,
         json!({"note": input.note}),
     )
-    .await
+    .await;
+    (answer, Vec::new())
 }
 
+/// `self.unfold` (`host_door_lists`): the reply is the fold's handle, span
+/// and append step, not its raw turns (`self.history` serves and lists
+/// those), so the list is complete and empty.
 pub(crate) async fn self_unfold(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     _caller: (EntityId, EdgeActorClass),
     invocation: Option<InvocationId>,
     input: FoldUnfoldRequest,
-) -> MemoryResult<FoldReply<FoldUnfolded>> {
-    fold_action(
+) -> Listed<FoldReply<FoldUnfolded>> {
+    let answer = fold_action(
         server,
         auth,
         invocation,
@@ -146,17 +161,22 @@ pub(crate) async fn self_unfold(
         input.live_run,
         json!({"fold": input.fold}),
     )
-    .await
+    .await;
+    (answer, Vec::new())
 }
 
+/// `self.folds` (`host_door_lists`): the reply is the run's fold spans,
+/// pending marks with their notes and failures, and the compact ask; no
+/// fold's summary or sources (`self.folds.describe` lists those), so the
+/// list is complete and empty.
 pub(crate) async fn self_folds(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     _caller: (EntityId, EdgeActorClass),
     invocation: Option<InvocationId>,
     input: FoldRunRequest,
-) -> MemoryResult<FoldReply<FoldList>> {
-    fold_action(
+) -> Listed<FoldReply<FoldList>> {
+    let answer = fold_action(
         server,
         auth,
         invocation,
@@ -164,7 +184,8 @@ pub(crate) async fn self_folds(
         input.live_run,
         json!({}),
     )
-    .await
+    .await;
+    (answer, Vec::new())
 }
 
 /// The run's guard makes this a durable boundary, never a snapshot of the

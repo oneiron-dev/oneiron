@@ -121,7 +121,9 @@ pub(super) struct AppendVersion {
     made_by: Option<MadeBy>,
 }
 
-#[derive(Deserialize)]
+/// The deck proposal route's body; the OpenAPI document publishes its
+/// schema (FIX 4485).
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ProposeDeck {
     /// The deck transaction, in its closed grammar.

@@ -164,12 +164,13 @@ pub use self::types::{
 pub use run_verbs::{
     AgentSpawnInput, JS_SAFE_INTEGER, LeaderAdviceInput, LeaderPatternInput, LeaderSplitInput,
     MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput, MemoryTimeRange,
-    ReaderSpawnInput, SkillCallInput, SpawnCare, SpawnKnob, SpawnPattern, SummarizeInput,
-    SummarizeInputEffort, TaskRefuseDomain, TaskRefuseInput, TaskWaitSetRequest,
+    ReaderSpawnInput, ReportBlockedInput, SkillCallInput, SpawnCare, SpawnKnob, SpawnPattern,
+    SummarizeInput, SummarizeInputEffort, TaskRefuseDomain, TaskRefuseInput, TaskWaitSetRequest,
 };
 pub use run_verbs::{
     AgentSpawnKind, AgentSpawnOutput, LeaderPatternFile, LeaderPatternOutput, LeaderSplitOutput,
-    MemoryEdgeOutput, MemorySearchHit, MemorySearchOutput, MemoryWriteOutput, TaskRefuseOutput,
+    MemoryEdgeOutput, MemorySearchHit, MemorySearchOutput, MemoryWriteOutput, ReportBlockedOutput,
+    TaskRefuseOutput,
 };
 pub use types::{
     AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor,

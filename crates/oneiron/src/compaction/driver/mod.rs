@@ -93,7 +93,9 @@ pub trait CompactionBackend: Send + Sync {
 }
 
 /// One message-log row the host hands the backend.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct CompactionWindowMessage {
     /// The MESSAGE whose words `content` renders: a `DerivedFrom` target
     /// when the vault stores it.
@@ -200,6 +202,40 @@ pub(crate) enum WindowLog {
 }
 
 impl CompactionRequest {
+    /// Seals a host-requested conversation window without inventing a
+    /// threshold crossing. The same gate and transactional mint judge it.
+    pub(super) fn for_host(
+        vault: &Vault,
+        session_ref: EntityId,
+        window: Vec<CompactionWindowMessage>,
+        pins: Vec<String>,
+        token_ceiling: u64,
+    ) -> Result<Self> {
+        let (turn_start, last) = validate_window_span(&window)?;
+        let sources = conversation_sources(vault, &window)?;
+        let rtxn = vault.store.env.read_txn()?;
+        validate_epoch_boundary(
+            prior_epoch_in_txn(&vault.store, &rtxn, &session_ref)?,
+            turn_start,
+        )?;
+        Ok(Self {
+            request_id: vault.store.clock.entity_id()?,
+            session_ref,
+            window,
+            summary_token_budget: token_ceiling,
+            turn_start,
+            watermark: CompactionWatermark {
+                learned_at: vault.now_recorded_at(),
+                turn_id: None,
+                turn: Some(last),
+            },
+            pins,
+            sources,
+            note: None,
+            log: WindowLog::Conversation,
+        })
+    }
+
     /// The host calls a host-numbered log's `sources` were read from; `None`
     /// for a conversation.
     pub(crate) const fn host_calls(&self) -> Option<u64> {
@@ -208,6 +244,26 @@ impl CompactionRequest {
             WindowLog::Host { calls, .. } => Some(calls),
         }
     }
+}
+
+fn conversation_sources(
+    vault: &Vault,
+    window: &[CompactionWindowMessage],
+) -> Result<Vec<EntityId>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut seen = BTreeSet::new();
+    let mut sources = Vec::new();
+    for message in window {
+        if seen.insert(message.turn_id) {
+            sources.push(message.turn_id);
+        }
+        if seen.insert(message.message_id)
+            && stored_or_deleted_in(vault, &rtxn, &message.message_id)?
+        {
+            sources.push(message.message_id);
+        }
+    }
+    Ok(sources)
 }
 
 /// What a backend produced.
@@ -661,22 +717,7 @@ impl CompactionDriver {
         // Every record the window's text was read from (OF-013): each TURN
         // and each MESSAGE, uncut. A deleted MESSAGE stays a source, so the
         // summary is born withdrawn; an id the vault never stored is none.
-        let sources = {
-            let rtxn = vault.store.env.read_txn()?;
-            let mut seen = BTreeSet::new();
-            let mut sources = Vec::new();
-            for message in &window {
-                if seen.insert(message.turn_id) {
-                    sources.push(message.turn_id);
-                }
-                if seen.insert(message.message_id)
-                    && stored_or_deleted_in(vault, &rtxn, &message.message_id)?
-                {
-                    sources.push(message.message_id);
-                }
-            }
-            sources
-        };
+        let sources = conversation_sources(vault, &window)?;
         self.seal_request(
             vault,
             session_ref,

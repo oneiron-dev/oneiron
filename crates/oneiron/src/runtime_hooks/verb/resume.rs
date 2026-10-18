@@ -8,10 +8,12 @@
 //! it the row keeps only that the call completed.
 //!
 //! Only a call the drain can make as its caller made it has a target: a
-//! memory row the generated dispatcher runs, for an on-device caller with no
-//! credential, or a credential caller's row its host can run again through
-//! the door it came in by, under the credential as it stands then
-//! ([`super::credential`]). Any other call resumes on its caller's retry.
+//! credential caller's row its host can run again through the door it came
+//! in by, under the credential as it stands then ([`super::credential`]), or
+//! any other memory row the generated dispatcher runs, on its caller's handle
+//! rebuilt, while the authority its ask saved still stands, wherever the
+//! caller sits ([`super::plain_resume`]). Any other call resumes on its
+//! caller's retry.
 //!
 //! While the drain runs a call, the call's invocation is held for it, so a
 //! retry in this process waits Pending rather than running the verb too. Each
@@ -23,12 +25,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::memory::MEMORY_CODE_INTERNAL;
 use crate::runtime_hooks::filter;
-use crate::session_lifecycle::SessionKey;
 use crate::task_verb::TaskAskResult;
 use crate::{EntityId, Result, Vault};
 
 use super::credential::{RefusalReceipt, VerbAskCredentialRef, VerbAskResumed};
-use super::state::DrainScope;
+use super::plain_resume::{self, PlainRowResume};
 use super::{InvocationId, VerbHookStop, ask, credential};
 
 /// How long a stopped call's row stays once its answer is used, or once its
@@ -42,15 +43,24 @@ const VERB_ASK_PRUNE_MAX: usize = 256;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum VerbResume {
-    /// A memory row the generated dispatcher runs: the caller's sitting and
-    /// the room its turn ran in, if any.
-    Row {
-        session: Option<SessionKey>,
-        room: Option<EntityId>,
-    },
+    /// A memory row the generated dispatcher runs on its caller's handle,
+    /// rebuilt, once the authority its ask saved was proved again.
+    Row(PlainRowResume),
     /// A credential caller's row, run again through the door it came in by,
     /// once the host's check verified the credential again.
     Credential { reference: VerbAskCredentialRef },
+}
+
+impl VerbResume {
+    /// Whether a call presenting `call` is the call this target was saved
+    /// for: the same plain caller, whatever authority its ask read, or the
+    /// same credential reference.
+    pub(super) fn same_target(&self, call: &Self) -> bool {
+        match (self, call) {
+            (Self::Row(saved), Self::Row(call)) => saved.same_caller(call),
+            (saved, call) => saved == call,
+        }
+    }
 }
 
 /// The settlement hook: in the settling write, marks the call stopped on
@@ -85,12 +95,14 @@ impl Vault {
     /// Runs each call a settled proceed made ready, once, as its caller: the
     /// caller's actor and class, the invocation, its sitting and, for a room
     /// turn, the room, whose current terms admit the call again or refuse
-    /// it. A credential caller's call runs through its host's check, under
-    /// the credential as it stands then; a refusal ends it, with one
-    /// receipt. Saves what each returned for the caller's retry. A call whose
-    /// retry is in flight is left to that retry. With hooks off or suppressed
-    /// it runs nothing: the chain would pass through without using the
-    /// answer up. Then deletes old rows. Returns how many calls ran.
+    /// it. A plain call runs once the authority its ask saved is proved
+    /// again; one that no longer stands ends it refused. A credential
+    /// caller's call runs through its host's check, under the credential as
+    /// it stands then; a refusal ends it, with one receipt. Saves what each
+    /// returned for the caller's retry. A call whose retry is in flight is
+    /// left to that retry. With hooks off or suppressed it runs nothing: the
+    /// chain would pass through without using the answer up. Then deletes
+    /// old rows. Returns how many calls ran.
     ///
     /// # Errors
     ///
@@ -152,21 +164,15 @@ impl Vault {
         }
         let mut receipt = None;
         let ran = match resume {
-            VerbResume::Row { session, room } => {
-                let mut memory = self
-                    .memory(actor, filter::edge_class(class))
-                    .with_invocation(invocation);
-                if let Some(session) = session {
-                    memory = memory.with_session(session);
-                }
-                let _draining = DrainScope::enter(invocation);
-                match room {
-                    Some(room) => memory
-                        .for_room_turn(room)
-                        .and_then(|turn| turn.invoke(&verb, args)),
-                    None => crate::task_verb::sdk::invoke(&memory, &verb, args),
-                }
-            }
+            VerbResume::Row(plain) => plain_resume::run(
+                self,
+                invocation,
+                &verb,
+                actor,
+                filter::edge_class(class),
+                args,
+                plain,
+            )?,
             VerbResume::Credential { reference } => {
                 let class = filter::edge_class(class);
                 receipt = Some(RefusalReceipt::new(&reference, &verb, actor, class, &args));

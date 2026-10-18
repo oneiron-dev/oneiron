@@ -14,7 +14,7 @@ use crate::error::Error;
 use crate::secret_rotation::ArtifactTaintState;
 use crate::side_table::{self, Raw, RawValue, SideTable};
 
-pub const BUILD_CACHE_SCHEMA_VERSION_V1: u8 = 2;
+pub const BUILD_CACHE_SCHEMA_VERSION_V1: u8 = 3;
 pub const BUILD_CACHE_ACTION_SCHEMA_VERSION_V1: u8 = 1;
 pub const BUILD_CACHE_ACTION_DOMAIN_V1: &[u8] = b"oneiron:build-cache:action:v1";
 pub const BUILD_CACHE_KEY_PREFIX_V1: &[u8] = b"build_cache:reapi:v2:";
@@ -34,6 +34,24 @@ impl ActionKey {
 
     pub fn to_hex(&self) -> String {
         bytes_to_hex_lower(&self.0)
+    }
+
+    pub fn parse(value: &str) -> BuildCacheResult<Self> {
+        if value.len() != 64
+            || !value
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Err(BuildCacheError::InvalidAction(
+                "action key must be 64 lower-hex characters",
+            ));
+        }
+        let mut bytes = [0; 32];
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16)
+                .map_err(|_| BuildCacheError::InvalidAction("invalid action key"))?;
+        }
+        Ok(Self(bytes))
     }
 }
 
@@ -277,6 +295,7 @@ impl ActionResult {
             .chain(self.stdout_ref.iter())
             .chain(self.stderr_ref.iter())
             .cloned()
+            .chain(ArtifactVersionRef::parse(&self.producer_ref).ok())
             .collect()
     }
 }
@@ -284,6 +303,7 @@ impl ActionResult {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CachedActionResult {
     pub action_key: ActionKey,
+    pub action_size_bytes: u64,
     pub result: ActionResult,
     pub referenced_bytes: u64,
 }
@@ -326,32 +346,40 @@ pub enum BuildCacheError {
 
 pub struct BuildCache<'a> {
     vault: &'a Vault,
+    owner: Option<&'a crate::consent::AuthenticatedOwner>,
 }
 
 impl<'a> BuildCache<'a> {
     #[must_use]
     pub const fn new(vault: &'a Vault) -> Self {
-        Self { vault }
+        Self { vault, owner: None }
     }
 
     /// Only an absent row is a miss. Admission errors never remove a row.
     pub fn get(&self, key: &ActionKey) -> BuildCacheResult<Option<CachedActionResult>> {
-        self.read_row(key)?
-            .map(|record| self.admit_row(key, record))
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        self.admit_account_in_txn(&txn)?;
+        BUILD_CACHE_REAPI_ROW
+            .get(&self.vault.store, &txn, key.as_bytes())?
+            .map(|record| self.admit_row_in_txn(&txn, key, record))
             .transpose()
     }
 
-    /// Immutable first-writer-wins. An admitted existing row short-circuits
-    /// proposal validation. `Stored` certifies admission at inspection time:
-    /// concurrent taint/deletion can make the very next lookup refuse it.
+    /// Immutable first-writer-wins. Account authority, exact versions and
+    /// clean taint admission are checked inside the index write transaction.
     pub fn put(
         &self,
         action: &BuildAction,
         result: ActionResult,
     ) -> BuildCacheResult<BuildCachePutOutcome> {
         let key = action.action_key()?;
-        if let Some(existing) = self.get(&key)? {
-            return Ok(BuildCachePutOutcome::Existing(existing));
+        let store = &self.vault.store;
+        let mut txn = store.env.write_txn()?;
+        self.admit_account_in_txn(&txn)?;
+        if let Some(record) = BUILD_CACHE_REAPI_ROW.get(store, &txn, key.as_bytes())? {
+            return Ok(BuildCachePutOutcome::Existing(
+                self.admit_row_in_txn(&txn, &key, record)?,
+            ));
         }
         result.validate()?;
         for path in result.outputs.keys() {
@@ -361,46 +389,26 @@ impl<'a> BuildCache<'a> {
                 });
             }
         }
-        let referenced_bytes = inspect_result_for_store(self.vault, &result)?;
+        let referenced_bytes = inspect_result_in_txn(self.vault, &txn, &result, true)?;
         let candidate = CachedActionResult {
             action_key: key,
+            action_size_bytes: action.reapi_digest()?.size_bytes,
             result,
             referenced_bytes,
         };
-        BUILD_CACHE_REAPI_ROW.encode_value(&candidate)?;
-        let store = &self.vault.store;
-        // This scope does index work ONLY. Copy a winner before aborting the
-        // write transaction, then decode/admit it outside the transaction.
-        let winner = {
-            let mut wtxn = store.env.write_txn()?;
-            let winner = BUILD_CACHE_REAPI_ROW.get(store, &wtxn, key.as_bytes())?;
-            if winner.is_none() {
-                BUILD_CACHE_REAPI_ROW.put(store, &mut wtxn, key.as_bytes(), &candidate)?;
-                wtxn.commit().map_err(Error::from)?;
-            }
-            winner
-        };
-        match winner {
-            Some(record) => Ok(BuildCachePutOutcome::Existing(
-                self.admit_row(&key, record)?,
-            )),
-            None => Ok(BuildCachePutOutcome::Stored(candidate)),
-        }
+        BUILD_CACHE_REAPI_ROW.put(store, &mut txn, key.as_bytes(), &candidate)?;
+        txn.commit().map_err(Error::from)?;
+        Ok(BuildCachePutOutcome::Stored(candidate))
     }
 
-    fn read_row(&self, key: &ActionKey) -> BuildCacheResult<Option<CachedActionResult>> {
-        let store = &self.vault.store;
-        let rtxn = store.env.read_txn().map_err(Error::from)?;
-        Ok(BUILD_CACHE_REAPI_ROW.get(store, &rtxn, key.as_bytes())?)
-    }
-
-    fn admit_row(
+    fn admit_row_in_txn(
         &self,
+        txn: &heed::RoTxn<'_>,
         key: &ActionKey,
         record: CachedActionResult,
     ) -> BuildCacheResult<CachedActionResult> {
         verify_action_key(key, &record)?;
-        admit_result_for_hit(self.vault, &record.result)?;
+        admit_result_in_txn(self.vault, txn, &record.result)?;
         Ok(record)
     }
 }
@@ -435,6 +443,7 @@ fn verify_action_key(key: &ActionKey, record: &CachedActionResult) -> BuildCache
 #[serde(deny_unknown_fields)]
 struct BuildCacheRowV1 {
     action_key: [u8; 32],
+    action_size_bytes: u64,
     exit_code: i32,
     outputs: Vec<(String, String)>,
     stdout_ref: Option<String>,
@@ -449,6 +458,7 @@ fn encode_build_cache_row(record: &CachedActionResult) -> BuildCacheResult<Vec<u
     let result = &record.result;
     let row = BuildCacheRowV1 {
         action_key: *record.action_key.as_bytes(),
+        action_size_bytes: record.action_size_bytes,
         exit_code: result.exit_code,
         outputs: result
             .outputs
@@ -480,9 +490,9 @@ fn decode_build_cache_row(bytes: &[u8]) -> BuildCacheResult<CachedActionResult> 
     if version != BUILD_CACHE_SCHEMA_VERSION_V1 {
         return Err(BuildCacheError::UnknownSchemaVersion { found: version });
     }
-    // The v1 body is the fixed eight-field MessagePack sequence emitted by
+    // The v1 body is the fixed nine-field MessagePack sequence emitted by
     // rmp-serde, not a map with optional/missing fields or an extensible tail.
-    if body.first() != Some(&0x98) {
+    if body.first() != Some(&0x99) {
         return Err(BuildCacheError::CorruptRecord("invalid row field set"));
     }
     let mut cursor = Cursor::new(body);
@@ -524,6 +534,7 @@ fn decode_build_cache_row(bytes: &[u8]) -> BuildCacheResult<CachedActionResult> 
     result.validate()?;
     Ok(CachedActionResult {
         action_key: ActionKey(row.action_key),
+        action_size_bytes: row.action_size_bytes,
         result,
         referenced_bytes: row.referenced_bytes,
     })
@@ -534,8 +545,17 @@ fn decode_artifact_ref(value: &str) -> BuildCacheResult<ArtifactVersionRef> {
         .map_err(|_| BuildCacheError::CorruptRecord("invalid artifact reference"))
 }
 
-fn require_clean(vault: &Vault, reference: &ArtifactVersionRef) -> BuildCacheResult<()> {
-    match vault.artifact_taint_state(reference.artifact_id())? {
+fn require_clean_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    reference: &ArtifactVersionRef,
+) -> BuildCacheResult<()> {
+    let refs = crate::secret_rotation::exhaust_taint_refs_in_txn(
+        &vault.store,
+        txn,
+        reference.artifact_id(),
+    )?;
+    match crate::secret_rotation::taint_state_for_refs_in_txn(&vault.store, txn, &refs)? {
         ArtifactTaintState::Clean => Ok(()),
         ArtifactTaintState::TaintedLive | ArtifactTaintState::TaintedStale => {
             Err(BuildCacheError::TaintedResult {
@@ -545,15 +565,34 @@ fn require_clean(vault: &Vault, reference: &ArtifactVersionRef) -> BuildCacheRes
     }
 }
 
-fn inspect_result_for_store(vault: &Vault, result: &ActionResult) -> BuildCacheResult<u64> {
+fn inspect_result_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    result: &ActionResult,
+    clean: bool,
+) -> BuildCacheResult<u64> {
     let mut referenced_bytes = 0;
     for reference in result.artifact_refs() {
+        if vault
+            .blob_artifact_version_metadata_in_txn(
+                txn,
+                reference.artifact_id(),
+                reference.version(),
+            )?
+            .is_none()
+        {
+            return Err(BuildCacheError::ArtifactUnavailable {
+                artifact_ref: reference.to_result_ref(),
+            });
+        }
         let bytes = vault
-            .read_blob_artifact_version(reference.artifact_id(), reference.version())?
+            .read_blob_artifact_version_in_txn(txn, reference.artifact_id(), reference.version())?
             .ok_or_else(|| BuildCacheError::ArtifactUnavailable {
                 artifact_ref: reference.to_result_ref(),
             })?;
-        require_clean(vault, &reference)?;
+        if clean {
+            require_clean_in_txn(vault, txn, &reference)?;
+        }
         let size =
             u64::try_from(bytes.len()).map_err(|_| BuildCacheError::ReferencedBytesOverflow)?;
         referenced_bytes = sum_referenced_bytes([referenced_bytes, size])?;
@@ -568,19 +607,25 @@ fn sum_referenced_bytes<I: IntoIterator<Item = u64>>(sizes: I) -> BuildCacheResu
     })
 }
 
-fn admit_result_for_hit(vault: &Vault, result: &ActionResult) -> BuildCacheResult<()> {
+fn admit_result_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    result: &ActionResult,
+) -> BuildCacheResult<()> {
     for reference in result.artifact_refs() {
-        // One exact metadata lookup per ref: neither version-chain scans nor
-        // potentially large content bodies belong on the hit path.
         if vault
-            .blob_artifact_version_metadata(reference.artifact_id(), reference.version())?
+            .blob_artifact_version_metadata_in_txn(
+                txn,
+                reference.artifact_id(),
+                reference.version(),
+            )?
             .is_none()
         {
             return Err(BuildCacheError::ArtifactUnavailable {
                 artifact_ref: reference.to_result_ref(),
             });
         }
-        require_clean(vault, &reference)?;
+        require_clean_in_txn(vault, txn, &reference)?;
     }
     Ok(())
 }

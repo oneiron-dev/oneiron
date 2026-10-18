@@ -13,6 +13,11 @@
 //! each entry the thin index shows (its title is that row's). A mode switch
 //! and a prune answer the machine's windows and counts, and list none; a
 //! queued directive lists none.
+//!
+//! `vault.residence.directives` (FIX 4346) reads those directives back, with
+//! each machine's result as this replica received it, under the same owner
+//! proof. It reaches no machine and queues nothing, and its view is
+//! content-free control metadata, so it lists none.
 use std::sync::Arc;
 
 use oneiron::authority::{HostSlipIssuer, ResidenceAct};
@@ -20,12 +25,13 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::sync::SyncConnection;
 use oneiron::task_verb::sdk::{
-    ResidenceIndexAnswer, ResidenceMachineRequest, ResidenceModeAnswer, ResidenceModeName,
-    ResidenceModeRequest, ResidenceOpenAnswer, ResidenceOpenRequest, ResidenceOpened,
-    ResidencePruneAnswer, ResidencePruneRequest, ResidencePruned, ResidenceQueued,
+    ResidenceDirectiveView, ResidenceDirectivesRequest, ResidenceIndexAnswer,
+    ResidenceMachineRequest, ResidenceModeAnswer, ResidenceModeName, ResidenceModeRequest,
+    ResidenceOpenAnswer, ResidenceOpenRequest, ResidenceOpened, ResidencePruneAnswer,
+    ResidencePruneRequest, ResidencePruned, ResidenceQueued,
 };
 
-use super::host_doors::{Listed, naming};
+use super::host_doors::{Listed, internal, naming, owner_proof};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -222,6 +228,24 @@ async fn residence_prune(
     }))
 }
 
+/// [`vault_residence_directives`]'s answer: the directives this replica
+/// holds and each machine's result as received here, read as the owner the
+/// request proves, off the runtime. No connection, relay or signing key.
+async fn residence_directives(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ResidenceDirectivesRequest,
+) -> MemoryResult<Vec<ResidenceDirectiveView>> {
+    const VERB: &str = "vault.residence.directives";
+    let owner = owner_proof(auth, server, VERB)?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        oneiron::task_verb::sdk::residence_directives_as_owner(server.vault(), &owner, &input)
+    })
+    .await
+    .map_err(|_| internal(VERB))?
+}
+
 /// `vault.residence.mode`: switches the named machine's residence mode, listing no row.
 pub(crate) async fn vault_residence_mode(
     server: &Arc<SyncServer>,
@@ -274,4 +298,18 @@ pub(crate) async fn vault_residence_prune(
     input: ResidencePruneRequest,
 ) -> Listed<ResidencePruneAnswer> {
     naming(residence_prune(server, auth, input).await, |_| Vec::new())
+}
+
+/// `vault.residence.directives`: the owner reads the residence directives
+/// this replica holds and each machine's result as received here, listing no
+/// row: the view is content-free control metadata, never an item or index
+/// body.
+pub(crate) async fn vault_residence_directives(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ResidenceDirectivesRequest,
+) -> Listed<Vec<ResidenceDirectiveView>> {
+    naming(residence_directives(server, auth, input).await, |_| {
+        Vec::new()
+    })
 }

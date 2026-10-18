@@ -148,7 +148,7 @@ impl CalendarOrigin {
 }
 
 /// Sync direction of one calendar passport.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CalendarPassportDirection {
     /// Read from the foreign system.
@@ -192,7 +192,9 @@ impl CalendarPassportDirection {
 }
 
 /// Whether one source still reports the EVENT in its feed.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CalendarPassportPresence {
     /// The source still reports this UID. The default when the field is missing.
@@ -228,7 +230,7 @@ impl CalendarPassportPresence {
 /// One live passport per (system x UID) via `supersede_claim`; CAL-02 owns the
 /// UID index and the feed diff. The claim value is truth, the index is only a
 /// lookup accelerator.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CalendarPassportValue {
     /// Foreign system identifier.
     pub system: String,

@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::agent_dispatch::CoordinationPattern;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::learning::{Anchor, EvidenceSource, LearningEvidence, Observation, TypeRef};
@@ -140,6 +141,14 @@ fn bounded(text: &str, what: &'static str) -> Result<()> {
 }
 
 impl TeamReceipt {
+    /// Whether the team ran below its pattern's floor: fewer agents than the
+    /// pattern needs to mean anything, such as a one-branch market. The
+    /// receipt still records what ran, at its real width.
+    #[must_use]
+    pub const fn below_floor(&self) -> bool {
+        !CoordinationPattern::from_team(self.pattern).admits_width(self.shape.width)
+    }
+
     /// The contract's structural checks.
     ///
     /// # Errors
@@ -266,6 +275,13 @@ pub(crate) fn settle_team_outcome_in_txn(
     Ok(receipt)
 }
 
+/// Whether a team's outcome teaches its pattern skill's cell: a team that
+/// ran below its pattern's floor did not run that pattern, so its outcome
+/// stays on its receipt and teaches no pattern prior.
+const fn teaches_pattern(receipt: &TeamReceipt) -> bool {
+    !receipt.below_floor()
+}
+
 fn feed_pattern_payoff_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -273,6 +289,9 @@ fn feed_pattern_payoff_in_txn(
     skill: EntityId,
     outcome: &TeamOutcome,
 ) -> Result<()> {
+    if !teaches_pattern(receipt) {
+        return Ok(());
+    }
     let cell = pattern_cell(skill, &receipt.executor_mix(), &receipt.type_ref);
     // The planner card read this cell with parent/carried backoff; its first
     // own result keeps that borrowed prior (ARCH-0053 `#executor-swaps`).

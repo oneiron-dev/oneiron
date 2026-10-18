@@ -4,6 +4,7 @@ mod ledger;
 mod notifications;
 mod secret_scan_switch;
 mod world_privacy_switch;
+mod world_privacy_will;
 
 pub(crate) use authority::{is_live_vault_owner_in_txn, owners_in_txn};
 pub use ledger::{PolicyChangedEvent, PolicyProposalStatus, PolicyRowProposal, PolicyRowReceipt};
@@ -13,6 +14,12 @@ pub use notifications::{
 };
 pub use secret_scan_switch::SecretScanReceipt;
 pub use world_privacy_switch::WorldPrivacyReceipt;
+pub use world_privacy_will::{
+    WORLD_PRIVACY_ROW_REF, WidenUnanimity, WidenUnanimityOffRequest, WidenUnanimityOutcome,
+    WorldPrivacyAnswer, WorldPrivacyOutcome, WorldPrivacyRequest, WorldPrivacyRequestKind,
+    WorldPrivacyRequestStatus, WorldPrivacySetInput, WorldPrivacySetOutput, WorldReadInput,
+    WorldSealedInput,
+};
 
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};

@@ -8298,6 +8298,7 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-foundation",
  "oneiron",
+ "oneiron-server",
  "oneiron-spawn",
  "rmpv",
  "serde",
@@ -8305,6 +8306,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tempfile",
+ "tracing",
 ]
 
 [[package]]
