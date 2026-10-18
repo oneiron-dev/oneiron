@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::agent_dispatch::CoordinationPattern;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::learning::{Anchor, EvidenceSource, LearningEvidence, Observation, TypeRef};
@@ -140,6 +141,14 @@ fn bounded(text: &str, what: &'static str) -> Result<()> {
 }
 
 impl TeamReceipt {
+    /// Whether the team ran below its pattern's floor: fewer agents than the
+    /// pattern needs to mean anything, such as a one-branch market. The
+    /// receipt still records what ran, at its real width.
+    #[must_use]
+    pub const fn below_floor(&self) -> bool {
+        !CoordinationPattern::from_team(self.pattern).admits_width(self.shape.width)
+    }
+
     /// The contract's structural checks.
     ///
     /// # Errors

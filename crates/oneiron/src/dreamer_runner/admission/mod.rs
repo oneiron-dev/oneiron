@@ -680,7 +680,9 @@ impl DreamerRunnerStore<'_> {
             .total_units
             .checked_sub(record.remaining_units)
             .and_then(|free| free.checked_sub(record.reserved_units))
-            .ok_or(invalid_dreamer_runner("dreamer budget counter is inconsistent"))?;
+            .ok_or(invalid_dreamer_runner(
+                "dreamer budget counter is inconsistent",
+            ))?;
         let committed_units = spent_units
             .checked_add(record.reserved_units)
             .ok_or(Error::ArithmeticOverflow("dreamer budget refill units"))?;

@@ -1,19 +1,19 @@
 //! Per-seat candidate pins and externally measured pilot evidence for OF-577.
 //! Preparation releases receipt-backed cases through the existing counted
 //! cohort door. It launches no compute and authorizes no training or egress.
-use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
-    ComputeDestination, EvalExposure, EvalExposureKind, EvalRelease, EvalSeat,
-    OfferCandidate, OfferModelPin, SufficiencyCard, SufficiencyInput, sufficiency_card,
+    ComputeDestination, EvalExposure, EvalExposureKind, EvalRelease, EvalSeat, OfferCandidate,
+    OfferModelPin, SufficiencyCard, SufficiencyInput, sufficiency_card,
 };
+use crate::ModelLocality;
 use crate::consent::AuthenticatedOwner;
 use crate::llm::manifest::read_manifest;
 use crate::llm::registry::ModelRegistryRow;
-use crate::training_pack::{ComputeChoice, TrainingRun};
-use crate::ModelLocality;
 use crate::side_table::{self, Named, SideTable};
+use crate::training_pack::{ComputeChoice, TrainingRun};
 use crate::{EntityId, Error, ModelId, Result, Vault};
 
 const CANDIDATES: SideTable<EntityId, OfferCandidateRecord, Named> =
@@ -101,123 +101,241 @@ pub struct OfferPilotPrepared {
     pub release: EvalRelease,
 }
 
-fn invalid(message: &str) -> Error { Error::InvalidConfig(message.into()) }
+fn invalid(message: &str) -> Error {
+    Error::InvalidConfig(message.into())
+}
 
-fn registered_pin(vault: &Vault, txn: &heed::RoTxn<'_>, pin: &OfferModelPin) -> Result<crate::llm::registry::ModelRegistryRow> {
-    let model = ModelId::new(pin.model.clone()).map_err(|_| invalid("the model pin does not parse"))?;
-    let row = vault.model_registry_row_in_txn(txn, &model)?.ok_or(Error::EntityNotFound)?;
-    if row.is_stale() || model_offer_pin(&row).as_ref().is_none_or(|(registered, _)| registered != pin) {
-        return Err(invalid("the offer pin must match the registered serving revision"));
+fn registered_pin(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    pin: &OfferModelPin,
+) -> Result<crate::llm::registry::ModelRegistryRow> {
+    let model =
+        ModelId::new(pin.model.clone()).map_err(|_| invalid("the model pin does not parse"))?;
+    let row = vault
+        .model_registry_row_in_txn(txn, &model)?
+        .ok_or(Error::EntityNotFound)?;
+    if row.is_stale()
+        || model_offer_pin(&row)
+            .as_ref()
+            .is_none_or(|(registered, _)| registered != pin)
+    {
+        return Err(invalid(
+            "the offer pin must match the registered serving revision",
+        ));
     }
     Ok(row)
 }
 
 fn validate(vault: &Vault, txn: &heed::RoTxn<'_>, setup: &OfferCandidateSetup) -> Result<()> {
-    let role = super::seat_model_role(&setup.seat).ok_or(invalid("the seat names no served model role"))?;
+    let role = super::seat_model_role(&setup.seat)
+        .ok_or(invalid("the seat names no served model role"))?;
     let manifest = read_manifest(&vault.store, txn)?.ok_or(Error::EntityNotFound)?;
-    if manifest.roles.get(&role).is_none_or(|binding| binding.model.as_str() != setup.incumbent.model) {
+    if manifest
+        .roles
+        .get(&role)
+        .is_none_or(|binding| binding.model.as_str() != setup.incumbent.model)
+    {
         return Err(invalid("the seat no longer holds this incumbent"));
     }
     let incumbent = registered_pin(vault, txn, &setup.incumbent)?;
     let (pin, licence) = match &setup.candidate {
-        OfferCandidate::Stock { model, licence, source } => {
-            if *model == setup.incumbent { return Err(invalid("a stock candidate differs from the incumbent")); }
+        OfferCandidate::Stock {
+            model,
+            licence,
+            source,
+        } => {
+            if *model == setup.incumbent {
+                return Err(invalid("a stock candidate differs from the incumbent"));
+            }
             let row = registered_pin(vault, txn, model)?;
-            if row.backends()?.first().is_none_or(|backend| &backend.pin.backend != source)
-                || !incumbent.catalog.capabilities.iter().all(|capability| row.catalog.supports(capability))
+            if row
+                .backends()?
+                .first()
+                .is_none_or(|backend| &backend.pin.backend != source)
+                || !incumbent
+                    .catalog
+                    .capabilities
+                    .iter()
+                    .all(|capability| row.catalog.supports(capability))
             {
-                return Err(invalid("the stock source or capabilities differ from the served candidate"));
+                return Err(invalid(
+                    "the stock source or capabilities differ from the served candidate",
+                ));
             }
             let destination = match row.catalog.locality {
                 ModelLocality::OnDevice => ComputeDestination::OnDevice,
-                ModelLocality::OwnServer => ComputeDestination::SelfHosted { host: source.clone() },
-                ModelLocality::ThirdParty => ComputeDestination::Hosted { provider: source.clone(), rows_leaving: 0 },
+                ModelLocality::OwnServer => ComputeDestination::SelfHosted {
+                    host: source.clone(),
+                },
+                ModelLocality::ThirdParty => ComputeDestination::Hosted {
+                    provider: source.clone(),
+                    rows_leaving: 0,
+                },
             };
             if destination != setup.destination {
-                return Err(invalid("the stock destination differs from its registered backend"));
+                return Err(invalid(
+                    "the stock destination differs from its registered backend",
+                ));
             }
             (model, licence)
         }
-        OfferCandidate::TrainRecipe { base, licence, recipe_ref } => {
-            let id = recipe_ref.strip_prefix("training_run:")
-                .and_then(|id| EntityId::from_hex(id).ok()).ok_or(invalid("the recipe names an existing training run"))?;
-            let run = crate::training_pack::training_run_in(vault, txn, &id)?.ok_or(Error::EntityNotFound)?;
-            if run.plan.seat != setup.seat || training_base_pin(&run).as_ref() != Some(base)
+        OfferCandidate::TrainRecipe {
+            base,
+            licence,
+            recipe_ref,
+        } => {
+            let id = recipe_ref
+                .strip_prefix("training_run:")
+                .and_then(|id| EntityId::from_hex(id).ok())
+                .ok_or(invalid("the recipe names an existing training run"))?;
+            let run = crate::training_pack::training_run_in(vault, txn, &id)?
+                .ok_or(Error::EntityNotFound)?;
+            if run.plan.seat != setup.seat
+                || training_base_pin(&run).as_ref() != Some(base)
                 || training_destination(&run).as_ref() != Some(&setup.destination)
-            { return Err(invalid("the recipe does not match this seat, base pin and destination")); }
+            {
+                return Err(invalid(
+                    "the recipe does not match this seat, base pin and destination",
+                ));
+            }
             (base, licence)
         }
     };
-    let row = vault.model_registry_row_in_txn(txn, &ModelId::new(pin.model.clone()).map_err(|_| invalid("the model pin does not parse"))?)?.ok_or(Error::EntityNotFound)?;
+    let row = vault
+        .model_registry_row_in_txn(
+            txn,
+            &ModelId::new(pin.model.clone())
+                .map_err(|_| invalid("the model pin does not parse"))?,
+        )?
+        .ok_or(Error::EntityNotFound)?;
     if model_offer_licence(&row).as_deref() != Some(licence.as_str()) {
         return Err(invalid("the candidate licence must match its catalog pin"));
     }
     match &setup.destination {
-        ComputeDestination::OnDevice => {},
-        ComputeDestination::SelfHosted { host } if !host.trim().is_empty() && host.len() <= 256 => {},
-        ComputeDestination::Hosted { provider, .. } if !provider.trim().is_empty() && provider.len() <= 256 => {},
-        _ => return Err(invalid("the compute destination must name a bounded host or provider")),
+        ComputeDestination::OnDevice => {}
+        ComputeDestination::SelfHosted { host } if !host.trim().is_empty() && host.len() <= 256 => {
+        }
+        ComputeDestination::Hosted { provider, .. }
+            if !provider.trim().is_empty() && provider.len() <= 256 => {}
+        _ => {
+            return Err(invalid(
+                "the compute destination must name a bounded host or provider",
+            ));
+        }
     }
     Ok(())
 }
 
-pub fn prepare_candidate(vault: &Vault, owner: &AuthenticatedOwner, setup: OfferCandidateSetup) -> Result<OfferCandidateRecord> {
+pub fn prepare_candidate(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    setup: OfferCandidateSetup,
+) -> Result<OfferCandidateRecord> {
     let now = vault.now_recorded_at();
     vault.with_write_txn_grouped(|txn| {
         owner.revalidate_in_txn(vault, txn)?;
         validate(vault, txn, &setup)?;
         for (_, row) in CANDIDATES.scan(&vault.store, txn)? {
-            if row.setup == setup { return Ok(row); }
+            if row.setup == setup {
+                return Ok(row);
+            }
         }
-        let row = OfferCandidateRecord { id: vault.store.clock.entity_id()?, setup, at: now };
+        let row = OfferCandidateRecord {
+            id: vault.store.clock.entity_id()?,
+            setup,
+            at: now,
+        };
         CANDIDATES.put(&vault.store, txn, &row.id, &row)?;
         Ok(row)
     })
 }
 
-pub fn candidates(vault: &Vault, owner: &AuthenticatedOwner, query: OfferCandidateQuery) -> Result<Vec<OfferCandidateRecord>> {
+pub fn candidates(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    query: OfferCandidateQuery,
+) -> Result<Vec<OfferCandidateRecord>> {
     owner.revalidate_person(vault)?;
     candidate_rows(vault, query.seat.as_ref())
 }
 
 pub fn candidate_rows(vault: &Vault, seat: Option<&EvalSeat>) -> Result<Vec<OfferCandidateRecord>> {
     let txn = vault.store.env.read_txn()?;
-    Ok(CANDIDATES.scan(&vault.store, &txn)?.into_iter().map(|(_, row)| row)
-        .filter(|row| seat.is_none_or(|seat| *seat == row.setup.seat)).collect())
+    Ok(CANDIDATES
+        .scan(&vault.store, &txn)?
+        .into_iter()
+        .map(|(_, row)| row)
+        .filter(|row| seat.is_none_or(|seat| *seat == row.setup.seat))
+        .collect())
 }
 
-pub fn prepare_pilot(vault: &Vault, owner: &AuthenticatedOwner, input: OfferPilotPrepare) -> Result<OfferPilotPrepared> {
+pub fn prepare_pilot(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: OfferPilotPrepare,
+) -> Result<OfferPilotPrepared> {
     let now = vault.now_recorded_at();
     vault.with_write_txn_grouped(|txn| {
         owner.revalidate_in_txn(vault, txn)?;
-        let candidate = CANDIDATES.get(&vault.store, txn, &input.candidate)?.ok_or(Error::EntityNotFound)?;
+        let candidate = CANDIDATES
+            .get(&vault.store, txn, &input.candidate)?
+            .ok_or(Error::EntityNotFound)?;
         validate(vault, txn, &candidate.setup)?;
         let id = vault.store.clock.entity_id()?;
-        let release = vault.open_eval_cohort_in_txn(txn, &input.cohort, EvalExposureKind::Candidate,
-            &format!("offer_pilot:{}", id.to_hex()), Some(&candidate.id.to_hex()), now)?;
-        if release.cases.is_empty() || release.cases.iter().any(|case| case.seat != candidate.setup.seat) {
-            return Err(invalid("the pilot needs a nonempty cohort for its own seat"));
+        let release = vault.open_eval_cohort_in_txn(
+            txn,
+            &input.cohort,
+            EvalExposureKind::Candidate,
+            &format!("offer_pilot:{}", id.to_hex()),
+            Some(&candidate.id.to_hex()),
+            now,
+        )?;
+        if release.cases.is_empty()
+            || release
+                .cases
+                .iter()
+                .any(|case| case.seat != candidate.setup.seat)
+        {
+            return Err(invalid(
+                "the pilot needs a nonempty cohort for its own seat",
+            ));
         }
         let cohort = super::eval_set::cohort_for_offer_in_txn(vault, txn, &input.cohort)?;
         let mut slices: BTreeMap<String, BTreeSet<EntityId>> = BTreeMap::new();
         for case in &release.cases {
             slices.entry("all".into()).or_default().insert(case.family);
-            if let Some(slice) = &case.stratum { slices.entry(slice.clone()).or_default().insert(case.family); }
+            if let Some(slice) = &case.stratum {
+                slices.entry(slice.clone()).or_default().insert(case.family);
+            }
         }
         let pilot = OfferPilot {
-            id, candidate: candidate.id, exposure: release.exposure.clone(),
+            id,
+            candidate: candidate.id,
+            exposure: release.exposure.clone(),
             membership_digest: cohort.membership_digest,
             rubric_revision: cohort.rubric_revision,
-            families: u32::try_from(cohort.families.len()).map_err(|_| invalid("too many pilot families"))?,
-            floor_slices: slices.into_iter().map(|(key, families)| (key, families.len() as u32)).collect(),
-            prepared_at: now, measurement: None, card: None, completed_at: None,
+            families: u32::try_from(cohort.families.len())
+                .map_err(|_| invalid("too many pilot families"))?,
+            floor_slices: slices
+                .into_iter()
+                .map(|(key, families)| (key, families.len() as u32))
+                .collect(),
+            prepared_at: now,
+            measurement: None,
+            card: None,
+            completed_at: None,
         };
         PILOTS.put(&vault.store, txn, &id, &pilot)?;
         Ok(OfferPilotPrepared { pilot, release })
     })
 }
 
-pub fn complete_pilot(vault: &Vault, owner: &AuthenticatedOwner, input: OfferPilotComplete) -> Result<OfferPilot> {
+pub fn complete_pilot(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: OfferPilotComplete,
+) -> Result<OfferPilot> {
     let now = vault.now_recorded_at();
     vault.with_write_txn_grouped(|txn| {
         owner.revalidate_in_txn(vault, txn)?;
@@ -248,7 +366,11 @@ pub fn complete_pilot(vault: &Vault, owner: &AuthenticatedOwner, input: OfferPil
     })
 }
 
-pub fn pilot(vault: &Vault, owner: &AuthenticatedOwner, input: OfferPilotRef) -> Result<Option<OfferPilot>> {
+pub fn pilot(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: OfferPilotRef,
+) -> Result<Option<OfferPilot>> {
     owner.revalidate_person(vault)?;
     let txn = vault.store.env.read_txn()?;
     PILOTS.get(&vault.store, &txn, &input.pilot)
@@ -259,15 +381,23 @@ pub fn pilot(vault: &Vault, owner: &AuthenticatedOwner, input: OfferPilotRef) ->
 pub fn latest_pilot(vault: &Vault, candidate: &OfferCandidateRecord) -> Result<Option<OfferPilot>> {
     let txn = vault.store.env.read_txn()?;
     match validate(vault, &txn, &candidate.setup) {
-        Ok(()) => {},
+        Ok(()) => {}
         Err(Error::InvalidConfig(_) | Error::EntityNotFound) => return Ok(None),
         Err(error) => return Err(error),
     }
     let pilots = PILOTS.scan(&vault.store, &txn)?;
-    let Some((_, pilot)) = pilots.into_iter().filter(|(_, pilot)| pilot.candidate == candidate.id && pilot.completed_at.is_some())
-        .max_by_key(|(_, pilot)| (pilot.completed_at, pilot.id)) else { return Ok(None); };
+    let Some((_, pilot)) = pilots
+        .into_iter()
+        .filter(|(_, pilot)| pilot.candidate == candidate.id && pilot.completed_at.is_some())
+        .max_by_key(|(_, pilot)| (pilot.completed_at, pilot.id))
+    else {
+        return Ok(None);
+    };
     let cohort = super::eval_set::cohort_for_offer_in_txn(vault, &txn, &pilot.exposure.cohort)?;
-    if cohort.retired_at.is_some() || cohort.membership_digest != pilot.membership_digest || cohort.rubric_revision != pilot.rubric_revision {
+    if cohort.retired_at.is_some()
+        || cohort.membership_digest != pilot.membership_digest
+        || cohort.rubric_revision != pilot.rubric_revision
+    {
         return Ok(None);
     }
     Ok(Some(pilot))
@@ -300,18 +430,16 @@ pub fn training_base_pin(run: &TrainingRun) -> Option<OfferModelPin> {
     let checkpoint = &run.plan.starting_checkpoint;
     let file = checkpoint.files.first()?;
     let model = checkpoint.model.as_str();
-    (bounded(model, 256) && bounded(&file.source.revision, 256)).then(|| {
-        OfferModelPin {
-            model: model.to_owned(),
-            revision: file.source.revision.clone(),
-            content_hash: Some(
-                file.content
-                    .blake3
-                    .iter()
-                    .map(|byte| format!("{byte:02x}"))
-                    .collect(),
-            ),
-        }
+    (bounded(model, 256) && bounded(&file.source.revision, 256)).then(|| OfferModelPin {
+        model: model.to_owned(),
+        revision: file.source.revision.clone(),
+        content_hash: Some(
+            file.content
+                .blake3
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+        ),
     })
 }
 
@@ -357,17 +485,33 @@ pub(crate) fn validate_snapshot_in_txn(
         let primary = offer.evidence.exposures.contains(&pilot.exposure.id);
         let reference = format!("offer_pilot:{}", pilot.id.to_hex());
         let comparison = offer.baseline.evidence_refs.contains(&reference)
-            || offer.alternatives.iter().any(|option| option.evidence_refs.contains(&reference));
-        if !primary && !comparison { continue; }
-        let candidate = CANDIDATES.get(&vault.store, txn, &pilot.candidate)?.ok_or(Error::EntityNotFound)?;
+            || offer
+                .alternatives
+                .iter()
+                .any(|option| option.evidence_refs.contains(&reference));
+        if !primary && !comparison {
+            continue;
+        }
+        let candidate = CANDIDATES
+            .get(&vault.store, txn, &pilot.candidate)?
+            .ok_or(Error::EntityNotFound)?;
         validate(vault, txn, &candidate.setup)?;
         let cohort = super::eval_set::cohort_for_offer_in_txn(vault, txn, &pilot.exposure.cohort)?;
-        if candidate.setup.seat != offer.seat || candidate.setup.incumbent != offer.incumbent
-            || cohort.retired_at.is_some() || cohort.membership_digest != pilot.membership_digest
-            || cohort.rubric_revision != pilot.rubric_revision || pilot.completed_at.is_none()
-            || (primary && (candidate.setup.candidate != offer.candidate
-                || candidate.setup.destination != offer.destination || pilot.card != offer.evidence.card))
-        { return Err(invalid("the pilot evidence changed before the offer committed")); }
+        if candidate.setup.seat != offer.seat
+            || candidate.setup.incumbent != offer.incumbent
+            || cohort.retired_at.is_some()
+            || cohort.membership_digest != pilot.membership_digest
+            || cohort.rubric_revision != pilot.rubric_revision
+            || pilot.completed_at.is_none()
+            || (primary
+                && (candidate.setup.candidate != offer.candidate
+                    || candidate.setup.destination != offer.destination
+                    || pilot.card != offer.evidence.card))
+        {
+            return Err(invalid(
+                "the pilot evidence changed before the offer committed",
+            ));
+        }
     }
     Ok(())
 }

@@ -75,6 +75,12 @@ typedef enum OneironStatus {
    * Input bytes were not valid UTF-8.
    */
   OneironStatus_Utf8 = 7,
+  /**
+   * The request needs a model this library does not serve: a context
+   * pack's media needs the `ai.embed` rung its space names (OF-370).
+   * Retry without it, or on a server that serves that rung.
+   */
+  OneironStatus_ModelUnavailable = 8,
 } OneironStatus;
 
 /**
@@ -810,10 +816,18 @@ enum OneironStatus oneiron_vault_put_vector(struct OneironVault *vault,
 /**
  * Run a context-pack query and return UTF-8 bytes.
  *
- * `query_text_ptr`, `query_vector_ptr`, and `format_ptr` are optional: pass a
- * null pointer with length 0 to omit. If `limit_is_set == 0`, the default
- * limit of 10 is used; otherwise `limit` must be at most 1000. The returned
- * buffer must be released with `oneiron_buffer_free`.
+ * `query_text_ptr`, `query_vector_ptr`, `format_ptr` and `media_json_ptr`
+ * are optional: pass a null pointer with length 0 to omit. If
+ * `limit_is_set == 0`, the default limit of 10 is used; otherwise `limit`
+ * must be at most 1000. The returned buffer must be released with
+ * `oneiron_buffer_free`.
+ *
+ * `media_json_ptr` is UTF-8 JSON of the served context pack's media query
+ * (OF-370): `{"space": "<ai.embed rung id>@<provider>", "mime": "image/png",
+ * "bytes_b64": "<standard base64>", "kinds": ["image"]}`, `kinds` optional.
+ * JSON of another shape is `InvalidArg`. This library serves no `ai.embed`
+ * rung, so once every input validates a pack naming media is refused
+ * `ModelUnavailable` and nothing is packed: the media is never dropped.
  *
  * # Safety
  *
@@ -830,6 +844,8 @@ enum OneironStatus oneiron_vault_context_pack(struct OneironVault *vault,
                                               uint8_t limit_is_set,
                                               const uint8_t *format_ptr,
                                               size_t format_len,
+                                              const uint8_t *media_json_ptr,
+                                              size_t media_json_len,
                                               struct OneironBuffer *out_buffer);
 
 /**

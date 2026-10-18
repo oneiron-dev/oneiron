@@ -23,6 +23,7 @@ mod contract;
 mod credential;
 /// Engine-owned open-web relay and owner-local receipts.
 pub mod egress;
+pub mod foreign;
 mod paths;
 mod proposal;
 

@@ -51,6 +51,7 @@ pub(in crate::calendar) use admission::{
     preflight_connector_feed, sweep_connector_resource,
 };
 mod fetch;
+pub mod feed_door;
 mod poll;
 pub(in crate::calendar) mod property_claims;
 

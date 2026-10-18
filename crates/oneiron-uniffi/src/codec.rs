@@ -546,6 +546,12 @@ impl Lift<engine::MemoryReceipt> for FacadeReceipt {
             actor_ref: value.actor_ref,
             content_kind: value.content_kind,
             claim_ref: value.claim_ref,
+            claim: value.claim.map(|record| crate::RecordRef {
+                kind: record.kind,
+                id: record.id,
+                short_id: record.short_id,
+                label: record.label,
+            }),
             fields: value.fields.into_iter().collect(),
         })
     }
@@ -877,6 +883,10 @@ impl Lift<engine::DreamerAttemptView> for DreamerJobView {
             last_error: job.last_error,
             created_at: signed_seconds("created_at", job.created_at)?,
             updated_at: signed_seconds("updated_at", job.updated_at)?,
+            parked: job
+                .parked
+                .map(|parked| lift_record("vault.consolidation.status", &parked))
+                .transpose()?,
         })
     }
 }

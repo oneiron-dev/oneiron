@@ -25,6 +25,7 @@ use super::types::{
     NapiEmailInboundEvent, NapiScoredEntity, NapiSubtreeEntry,
 };
 use crate::facade::{NapiRecallMedia, boundary_error, facade_error, recall_media_to_engine};
+use crate::host_root::HostRootOpenOptions;
 
 /// What this embedded vault says to a context pack naming `media` (OF-370):
 /// it serves no `ai.embed` rung, so it cannot embed the bytes into their
@@ -138,6 +139,26 @@ impl NapiVault {
             dimensions,
             binding: None,
         })
+    }
+
+    /// `new`, then this install's own machine profile from the vault's host
+    /// root secret (FIX 4730), so the owner's acts carry from it. With
+    /// `initializeRoot`, a store this open creates is rooted under the
+    /// secret first, as a new local-origin vault. A secret that cannot
+    /// profile the install refuses the open with the engine's reason.
+    #[napi(factory)]
+    pub fn open_with_host_root(
+        path: String,
+        dimensions: Option<u32>,
+        dict_search_paths: Option<Vec<String>>,
+        options: HostRootOpenOptions,
+    ) -> napi::Result<Self> {
+        let request = options
+            .before_open(&path)
+            .map_err(napi::Error::from_reason)?;
+        let opened = Self::new(path, dimensions, dict_search_paths)?;
+        request.profile(&opened.vault).map_err(to_napi_err)?;
+        Ok(opened)
     }
 
     /// A NEW vault over this same open vault whose writes run as one caller

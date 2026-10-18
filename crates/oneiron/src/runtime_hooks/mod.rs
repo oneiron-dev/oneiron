@@ -15,6 +15,7 @@ mod dial;
 mod filter;
 mod grant;
 mod host;
+pub mod host_doors;
 mod lineage;
 mod outcome;
 mod read;

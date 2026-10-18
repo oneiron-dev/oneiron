@@ -336,6 +336,7 @@ async fn execute(
         headers,
         extensions,
         bound,
+        None,
         move |executor, vault, writer, binding| {
             executor.execute_call(vault, writer, &principal, &call, binding)
         },
@@ -361,6 +362,46 @@ pub(super) async fn execute_validated_ui(
         headers,
         extensions,
         bound,
+        None,
+        move |executor, vault, writer, binding| {
+            executor.execute_ui_bound(vault, writer, &event, &key, binding)
+        },
+    )
+    .await
+}
+
+/// Runs the result-set door's already validated action under its caller's
+/// credential. SDK rows meet the normal generated facade admission, as a
+/// socket call under that same credential does.
+pub(super) async fn execute_result_set_action(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    held: &Arc<crate::lens_frames::HeldCard>,
+    event: GeneratedUiValidatedAction,
+    key: String,
+) -> Result<ActionDispatch, FacadeApiError> {
+    let GeneratedUiValidatedAction::DeterministicTool { action, .. } = &event else {
+        return Err(internal());
+    };
+    require_action_scope(auth, action.command().as_str())?;
+    let mut bound = action_bound(server, auth)?.ok_or_else(|| {
+        FacadeApiError::forbidden(
+            "an action runs under the credential's own read key",
+            ["Present a verified slip paired to this principal."],
+        )
+    })?;
+    let key = if is_live_run_verb(action.command().as_str()) {
+        let creator_run = server.lens_frames.creator_run(auth, held);
+        bind_card_run(server, auth, &mut bound, creator_run.as_deref(), &key)?
+    } else {
+        key
+    };
+    run_bound(
+        server,
+        HeaderMap::new(),
+        Extensions::new(),
+        bound,
+        Some(auth.clone()),
         move |executor, vault, writer, binding| {
             executor.execute_ui_bound(vault, writer, &event, &key, binding)
         },
@@ -376,6 +417,7 @@ async fn run_bound<F>(
     headers: HeaderMap,
     extensions: Extensions,
     bound: ActionBound,
+    credential: Option<CoreAuth>,
     run: F,
 ) -> Result<ActionDispatch, FacadeApiError>
 where
@@ -396,8 +438,9 @@ where
         surface,
         live_run,
     } = bound;
-    let door: Arc<dyn AgentVerbDoor> =
-        Arc::new(FacadeRowDoor::new(server, headers, extensions, key));
+    let door: Arc<dyn AgentVerbDoor> = Arc::new(FacadeRowDoor::new(
+        server, headers, extensions, key, credential,
+    ));
     let executor = app()?;
     // OF-181: the live run's guard, waited for briefly while an entry or
     // another action holds it, taken before the action and held through it,
@@ -651,6 +694,8 @@ struct FacadeRowDoor {
     extensions: Extensions,
     runtime: tokio::runtime::Handle,
     read_key: ScopedReadActorKey,
+    credential: Option<CoreAuth>,
+    server: Arc<SyncServer>,
     refused: Mutex<Option<AgentVerbRefusalWords>>,
 }
 
@@ -669,6 +714,7 @@ impl FacadeRowDoor {
         headers: HeaderMap,
         extensions: Extensions,
         read_key: ScopedReadActorKey,
+        credential: Option<CoreAuth>,
     ) -> Self {
         Self {
             rows: super::recorded_facade_routes(Arc::clone(server)).with_state(Arc::clone(server)),
@@ -676,6 +722,8 @@ impl FacadeRowDoor {
             extensions,
             runtime: tokio::runtime::Handle::current(),
             read_key,
+            credential,
+            server: Arc::clone(server),
             refused: Mutex::new(None),
         }
     }
@@ -736,6 +784,32 @@ impl FacadeRowDoor {
         let refused = || AgentVerbRefusal {
             code: MEMORY_CODE_INTERNAL.to_owned(),
         };
+        if let Some(auth) = &self.credential {
+            let auth = auth.clone();
+            let server = Arc::clone(&self.server);
+            let call = call.clone();
+            let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+            self.runtime.spawn(async move {
+                let invocation = invocation.to_hex();
+                let context = super::FacadeCall::bound(&auth, None, Some(&invocation), None);
+                let answer =
+                    super::call_verb(&server, &context, call.verb.as_str(), Ok(call.input))
+                        .await
+                        .map(|answer| answer.value)
+                        .map_err(|error| AgentVerbRefusalWords {
+                            code: error.body.error.code,
+                            message: error.body.error.message,
+                            suggestions: error.body.error.suggestions,
+                        });
+                let _ = sender.send(answer);
+            });
+            let output = receiver.recv().map_err(|_| refused())?.map_err(|row| {
+                let code = row.code.clone();
+                *self.refused.lock().unwrap_or_else(PoisonError::into_inner) = Some(row);
+                AgentVerbRefusal { code }
+            })?;
+            return Ok(AgentVerbAnswer { output, rows: None });
+        }
         let body = serde_json::to_vec(&call.input).map_err(|_| refused())?;
         let mut request = axum::http::Request::post(format!("/{}", call.verb.as_str()))
             .body(Body::from(body))
