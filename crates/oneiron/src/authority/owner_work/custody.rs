@@ -71,7 +71,10 @@ impl AuthorityFold {
             .get(&(OwnerWorkKind::Custody, secret))
             .into_iter()
             .flatten()
-            .filter_map(|hash| self.owner_work_request(hash).map(|request| (*hash, request)))
+            .filter_map(|hash| {
+                self.owner_work_request(hash)
+                    .map(|request| (*hash, request))
+            })
             .collect()
     }
 

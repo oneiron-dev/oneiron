@@ -236,7 +236,8 @@ impl Vault {
             policy_floor_snapshot: floor,
         });
         let custody = if custody_portable(&rec.0) {
-            rec.0.rotation_generation = register_generation_in_txn(&self.store, &wtxn, request.name)?;
+            rec.0.rotation_generation =
+                register_generation_in_txn(&self.store, &wtxn, request.name)?;
             refuse_bindings_wider_than_live_floor(&self.store, &wtxn, &rec.0)?;
             let recorded = self.record_custody_change_in_txn(
                 &mut wtxn,

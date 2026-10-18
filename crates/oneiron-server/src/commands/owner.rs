@@ -701,10 +701,7 @@ fn register_secret(args: SecretRegisterArgs, value: &[u8]) -> anyhow::Result<sec
     Ok(registered.into())
 }
 
-fn rotate_secret(
-    args: SecretRotateArgs,
-    value: &[u8],
-) -> anyhow::Result<secrets::CustodyRotated> {
+fn rotate_secret(args: SecretRotateArgs, value: &[u8]) -> anyhow::Result<secrets::CustodyRotated> {
     let plan = secrets::custody_plan(args.holder, args.recipients)?;
     let config = resolve_serve_config(&args.serve)?;
     let vault = open_vault(&config, "POST /v1/owner/secrets/rotate --data -")?;

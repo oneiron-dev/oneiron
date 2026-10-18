@@ -602,25 +602,30 @@ fn change_permits(
     } else {
         match change.change {
             CustodyChange::Rotate => {
-                let mut live: Vec<_> = fold
-                    .custody_heads(change.id)
-                    .into_iter()
-                    .filter_map(|(_, request)| match &request.work {
-                        OwnerWorkBody::Custody {
-                            change:
-                                CustodyChange::Register | CustodyChange::Rotate | CustodyChange::Rewrap,
-                            recipients,
-                            ..
-                        } => Some(recipients.clone()),
-                        _ => None,
-                    })
-                    .collect();
+                let mut live: Vec<_> =
+                    fold.custody_heads(change.id)
+                        .into_iter()
+                        .filter_map(|(_, request)| match &request.work {
+                            OwnerWorkBody::Custody {
+                                change:
+                                    CustodyChange::Register
+                                    | CustodyChange::Rotate
+                                    | CustodyChange::Rewrap,
+                                recipients,
+                                ..
+                            } => Some(recipients.clone()),
+                            _ => None,
+                        })
+                        .collect();
                 if live.len() == 1
                     && let Some(kept) = live.pop()
                 {
                     kept
                 } else {
-                    vec![permits::permit_for(fold, holder).ok_or_else(|| recipient_refused(holder))?]
+                    vec![
+                        permits::permit_for(fold, holder)
+                            .ok_or_else(|| recipient_refused(holder))?,
+                    ]
                 }
             }
             CustodyChange::Register => {

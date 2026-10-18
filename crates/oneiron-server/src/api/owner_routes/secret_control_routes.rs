@@ -105,8 +105,7 @@ async fn revoke_secret(
     }
     let surface = act_surface(&server, &auth, &headers);
     let name = secrets::read_revoke(body).await.map_err(owner_error)?;
-    let revoked =
-        blocking(move || secrets::revoke(server.vault(), &owner, surface, &name)).await?;
+    let revoked = blocking(move || secrets::revoke(server.vault(), &owner, surface, &name)).await?;
     Ok(Json(revoked))
 }
 

@@ -13,11 +13,11 @@
 
 use zeroize::Zeroize;
 
+use super::super::control::refuse_revoked_use_in_txn;
 use super::super::doors::{
     put_secret_custody_in_txn, read_secret_custody_in_txn, refuse_bindings_wider_than_live_floor,
     resolve_secret_ref_in_txn,
 };
-use super::super::control::refuse_revoked_use_in_txn;
 use super::super::reveal::RevealTarget;
 use super::super::types::{
     CustodyTier, SECRET_SCOPE_READ, SecretBinding, SecretCustodyRecord, SecretCustodyStatus,

@@ -201,14 +201,18 @@ impl Vault {
             CustodyChange::Register => {
                 let record = match material {
                     Material::Record(record) => Held(record.clone()),
-                    Material::Input(secret) => match self.opened_input_in_txn(txn, &binding, *input, secret)? {
+                    Material::Input(secret) => match self
+                        .opened_input_in_txn(txn, &binding, *input, secret)?
+                    {
                         Opened::Missing => return Ok(None),
                         Opened::Invalid => {
                             return Ok(Some(Enacted::refused(OwnerWorkRefusal::InvalidInput)));
                         }
                         Opened::Body(body) => match decode_secret_custody_body(&body) {
                             Ok(record) => Held(record),
-                            Err(_) => return Ok(Some(Enacted::refused(OwnerWorkRefusal::InvalidInput))),
+                            Err(_) => {
+                                return Ok(Some(Enacted::refused(OwnerWorkRefusal::InvalidInput)));
+                            }
                         },
                     },
                     Material::Value(_) | Material::Held => {
@@ -220,13 +224,15 @@ impl Vault {
             CustodyChange::Rotate => {
                 let value = match material {
                     Material::Value(value) => Zeroizing::new(value.to_vec()),
-                    Material::Input(secret) => match self.opened_input_in_txn(txn, &binding, *input, secret)? {
-                        Opened::Missing => return Ok(None),
-                        Opened::Invalid => {
-                            return Ok(Some(Enacted::refused(OwnerWorkRefusal::InvalidInput)));
+                    Material::Input(secret) => {
+                        match self.opened_input_in_txn(txn, &binding, *input, secret)? {
+                            Opened::Missing => return Ok(None),
+                            Opened::Invalid => {
+                                return Ok(Some(Enacted::refused(OwnerWorkRefusal::InvalidInput)));
+                            }
+                            Opened::Body(body) => body,
                         }
-                        Opened::Body(body) => body,
-                    },
+                    }
                     Material::Record(_) | Material::Held => {
                         return Ok(Some(Enacted::refused(OwnerWorkRefusal::InvalidInput)));
                     }
@@ -334,12 +340,16 @@ impl Vault {
             return Ok(None);
         }
         let rotation = self.rotate_secret_in_txn(txn, &record.0.name, value, at)?;
-        let after = Held(
-            read_secret_custody_in_txn(&self.store, txn, &id)?
-                .ok_or(Error::CorruptedIndex("secret custody record after its rotation"))?,
-        );
+        let after = Held(read_secret_custody_in_txn(&self.store, txn, &id)?.ok_or(
+            Error::CorruptedIndex("secret custody record after its rotation"),
+        )?);
         let transition = write_custody_transition_in_txn(self, txn, id, &after.0, enactment, at)?;
-        self.close_out_in_txn(txn, enactment, transition.digest(), Some(rotation.receipt_id))?;
+        self.close_out_in_txn(
+            txn,
+            enactment,
+            transition.digest(),
+            Some(rotation.receipt_id),
+        )?;
         Ok(Some(Enacted::done(Some(rotation))))
     }
 

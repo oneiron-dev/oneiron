@@ -22,8 +22,8 @@ use super::super::types::{CustodyClass, SecretCustodyRecord, SecretCustodyStatus
 use super::input::MAX_INPUT_BYTES;
 use super::permits::candidate_for;
 use super::{
-    ActiveChange, CustodyDelivery, CustodyPlan, Material, SecretCustodyWork, refuse_revoked_use_in_txn,
-    refused,
+    ActiveChange, CustodyDelivery, CustodyPlan, Material, SecretCustodyWork,
+    refuse_revoked_use_in_txn, refused,
 };
 use crate::authority::{ActSurface, CustodyChange, CustodyRecipientPermit};
 use crate::consent::AuthenticatedOwner;
@@ -177,7 +177,12 @@ impl Vault {
         name: &str,
     ) -> Result<SecretCustodyView> {
         let txn = self.store.env.read_txn()?;
-        live_owner_in_txn(self, owner, &txn, "only the vault owner reads a secret's custody")?;
+        live_owner_in_txn(
+            self,
+            owner,
+            &txn,
+            "only the vault owner reads a secret's custody",
+        )?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let vault_id = fold
             .vault_id
@@ -259,14 +264,24 @@ impl Vault {
         self.load_install_signing_if_minted()?;
         let mut wtxn = self.store.env.write_txn()?;
         live_owner_in_txn(self, owner, &wtxn, "only the vault owner rewraps a secret")?;
-        let known = self.known_custody_in_txn(&wtxn, secret_ref)?.ok_or_else(|| {
-            Error::Secret(SecretError::SecretRefNotFound {
-                name: secret_ref.to_owned(),
-            })
-        })?;
-        refuse_revoked_use_in_txn(self, &wtxn, &known.id, known.record.class, &known.record.name)?;
+        let known = self
+            .known_custody_in_txn(&wtxn, secret_ref)?
+            .ok_or_else(|| {
+                Error::Secret(SecretError::SecretRefNotFound {
+                    name: secret_ref.to_owned(),
+                })
+            })?;
+        refuse_revoked_use_in_txn(
+            self,
+            &wtxn,
+            &known.id,
+            known.record.class,
+            &known.record.name,
+        )?;
         if !custody_portable(&known.record) {
-            return Err(refused("this secret stays on its device, so no rewrap sends it"));
+            return Err(refused(
+                "this secret stays on its device, so no rewrap sends it",
+            ));
         }
         if plan.holder.is_none() && !known.held_here {
             return Err(refused(
@@ -321,7 +336,10 @@ impl Vault {
         sealed: &SealedCustodyChange<'_>,
         at: u64,
     ) -> Result<SecretCustodyWork> {
-        if !matches!(sealed.change, CustodyChange::Register | CustodyChange::Rotate) {
+        if !matches!(
+            sealed.change,
+            CustodyChange::Register | CustodyChange::Rotate
+        ) {
             return Err(refused(
                 "a sealed input carries a register or a rotate; a rewrap and a revoke need none",
             ));
@@ -342,7 +360,12 @@ impl Vault {
             None
         };
         let mut wtxn = self.store.env.write_txn()?;
-        live_owner_in_txn(self, owner, &wtxn, "only the vault owner changes a secret's custody")?;
+        live_owner_in_txn(
+            self,
+            owner,
+            &wtxn,
+            "only the vault owner changes a secret's custody",
+        )?;
         refuse_revoked_use_in_txn(
             self,
             &wtxn,

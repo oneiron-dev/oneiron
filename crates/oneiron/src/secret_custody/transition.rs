@@ -23,7 +23,9 @@ mod payload;
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron_crypto::HybridPublicKey;
 
-use self::payload::{MAX_RECIPIENTS, MAX_TRANSITION_BYTES, ValueBinding, seal_value, status_byte, unsigned};
+use self::payload::{
+    MAX_RECIPIENTS, MAX_TRANSITION_BYTES, ValueBinding, seal_value, status_byte, unsigned,
+};
 use super::codec::encode_secret_custody_body;
 use super::doors::bind_synced_name_in_txn;
 use super::types::{CustodyClass, SecretCustodyRecord, SecretCustodyStatus};
@@ -492,13 +494,14 @@ impl Vault {
                 return Ok(None);
             };
             let record = WipedRecord(record);
-            let permits = super::control::permits::permits_for(&fold, recipients).map_err(|machine| {
-                Error::InvalidConfig(format!(
-                    "recipient {} is not a linked install with an importable encryption key; \
+            let permits =
+                super::control::permits::permits_for(&fold, recipients).map_err(|machine| {
+                    Error::InvalidConfig(format!(
+                        "recipient {} is not a linked install with an importable encryption key; \
                      nothing was written",
-                    machine.to_hex()
-                ))
-            })?;
+                        machine.to_hex()
+                    ))
+                })?;
             let keyed = super::control::permits::permitted_keys(&fold, &permits)
                 .ok_or_else(|| refused("a recipient's key changed"))?;
             let keyed = if record.0.status == SecretCustodyStatus::Revoked {
@@ -578,10 +581,8 @@ pub(crate) fn apply_custody_transition_in_txn(
         super::control::settle_revoked_in_txn(vault, wtxn, &transition.id, at)?;
         return Ok(CustodyApplied::Refused);
     }
-    if transition
-        .verify(&vault.authority_view_readonly_in_txn(wtxn)?)
-        .is_err()
-    {
+    let fold = vault.authority_view_readonly_in_txn(wtxn)?;
+    if transition.verify(&fold).is_err() {
         return Ok(CustodyApplied::Unadmitted);
     }
     let mut record = transition.record()?;

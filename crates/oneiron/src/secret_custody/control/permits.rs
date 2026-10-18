@@ -79,16 +79,21 @@ pub(crate) fn holder_key(fold: &AuthorityFold, holder: EntityId) -> Option<Hybri
 /// The permit the owner gives `machine` as the fold stands: the profile
 /// entry and key digest of its live linked revision whose key imports.
 /// `None` when it is no live linked install with such a key.
-pub(crate) fn permit_for(fold: &AuthorityFold, machine: EntityId) -> Option<CustodyRecipientPermit> {
-    live_revisions(fold, machine).into_iter().find_map(|revision| {
-        HybridPublicKey::from_bytes(&revision.profile.encryption_key.key)
-            .ok()
-            .map(|_| CustodyRecipientPermit {
-                machine,
-                profile: revision.entry,
-                encryption_key: revision_key_digest(revision),
-            })
-    })
+pub(crate) fn permit_for(
+    fold: &AuthorityFold,
+    machine: EntityId,
+) -> Option<CustodyRecipientPermit> {
+    live_revisions(fold, machine)
+        .into_iter()
+        .find_map(|revision| {
+            HybridPublicKey::from_bytes(&revision.profile.encryption_key.key)
+                .ok()
+                .map(|_| CustodyRecipientPermit {
+                    machine,
+                    profile: revision.entry,
+                    encryption_key: revision_key_digest(revision),
+                })
+        })
 }
 
 /// The permit `machine` would get now, with its encryption key's suite and

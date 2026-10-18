@@ -21,11 +21,11 @@ use oneiron_crypto::{
 };
 use zeroize::Zeroizing;
 
+use crate::Vault;
 use crate::authority::{AuthorityEntryHash, CustodyChange, CustodyRecipientPermit, WrapRecipient};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideTable};
-use crate::Vault;
 use crate::store::Store;
 use crate::world_keys::MachineSecret;
 
@@ -144,7 +144,9 @@ impl InputBinding<'_> {
             min_epoch: EPOCH,
             argon2_max: Argon2Cost::RFC9106_SECOND,
         };
-        let payload = envelope.open(OpenKey::Hybrid(&secret.secret), &policy).ok()?;
+        let payload = envelope
+            .open(OpenKey::Hybrid(&secret.secret), &policy)
+            .ok()?;
         let body = payload.strip_prefix(INPUT_LABEL)?;
         Some(Zeroizing::new(body.to_vec()))
     }
