@@ -90,13 +90,13 @@ pub(in crate::pipeline) fn capture_replay_inputs(
                 "retry_query_count": extra_text_queries.len(),
             },
             "bm25": {"k1": bm25.k1, "formula": formula, "fields": fields},
-            "ppr_vad_alpha": crate::ppr::canonical_vad_alpha(builder.vault.config.ppr_vad_alpha),
+            "ppr_vad_alpha": crate::ppr::canonical_vad_alpha(builder.ppr_vad_alpha),
             "ppr_community": {
-                "beta": builder.vault.config.ppr_community.beta,
-                "gamma": builder.vault.config.ppr_community.gamma,
-                "multiplier_cap": builder.vault.config.ppr_community.multiplier_cap,
-                "max_graph_fraction": builder.vault.config.ppr_community.max_graph_fraction,
-                "max_top_k_fraction": builder.vault.config.ppr_community.max_top_k_fraction,
+                "beta": builder.ppr_community.beta,
+                "gamma": builder.ppr_community.gamma,
+                "multiplier_cap": builder.ppr_community.multiplier_cap,
+                "max_graph_fraction": builder.ppr_community.max_graph_fraction,
+                "max_top_k_fraction": builder.ppr_community.max_top_k_fraction,
                 "session_usage": builder.community_session_usage.map(|usage| {
                     let mut entries: Vec<_> = usage.iter().map(|(id, count)| (id.to_hex(), count)).collect();
                     entries.sort_unstable_by(|a, b| a.0.cmp(&b.0));

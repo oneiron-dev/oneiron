@@ -148,15 +148,28 @@ impl Vault {
         claim_id: &EntityId,
         now: u64,
     ) -> Result<ClaimVadConsolidation> {
-        self.consolidate_claim_vad_in_txn(claim_id, now)
+        self.consolidate_claim_vad_in_txn(claim_id, now, None)
+    }
+
+    pub(crate) fn consolidate_claim_vad_as_owner(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        claim_id: &EntityId,
+        now: u64,
+    ) -> Result<ClaimVadConsolidation> {
+        self.consolidate_claim_vad_in_txn(claim_id, now, Some(owner))
     }
 
     fn consolidate_claim_vad_in_txn(
         &self,
         claim_id: &EntityId,
         now: u64,
+        owner: Option<&crate::consent::AuthenticatedOwner>,
     ) -> Result<ClaimVadConsolidation> {
         let mut wtxn = self.store.env.write_txn()?;
+        if let Some(owner) = owner {
+            owner.revalidate_in_txn(self, &wtxn)?;
+        }
         let claim_body = self.claim_body_for_claim_vad_in_txn(&wtxn, claim_id)?;
         if !claim_consolidatable(&claim_body)
             || !crate::gate::claim_consolidation_eligible_in_txn(
@@ -203,8 +216,13 @@ impl Vault {
             ));
         }
 
+        let mut turn_refs: BTreeSet<_> = collect_claim_turn_evidence_refs(&claim_body).into_iter().collect();
+        // The public claim writer records its typed evidence turns in the immutable birth.
+        if let Some(birth) = crate::provenance::birth::row_birth_in_txn(&self.store, wtxn, claim_id)? {
+            turn_refs.extend(birth.made_by.inputs.into_iter().map(|input| input.row));
+        }
         let mut evidence_turns = Vec::new();
-        for candidate in collect_claim_turn_evidence_refs(&claim_body) {
+        for candidate in turn_refs {
             if let Some(annotation) = self.turn_vad_annotation_in_txn(wtxn, &candidate)? {
                 evidence_turns.push(ClaimVadTurnEvidence {
                     turn_id: candidate,

@@ -227,6 +227,26 @@ export_facade! {
     let output = client.vault_recall(&query, effort, &scope, limit, format.as_deref(), as_of, deadline_ms, media, query_affect)?;
     Lift::lift(output)
 };
+"vault.retrieval.weights.get" => fn vault_retrieval_weights_get(&self) -> RetrievalWeightsView = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.retrieval.weights.get")?;
+    let output = client.vault_retrieval_weights_get(&input)?;
+    crate::codec::lift_record("vault.retrieval.weights.get", &output)
+};
+"vault.retrieval.weights.configure" => fn vault_retrieval_weights_configure(&self, input: RetrievalWeightsConfigureRequest) -> RetrievalWeightsReceipt = |client| {
+    let input: oneiron::policy_manifest_doors::RetrievalWeightsConfigureRequest = crate::codec::lower_record("vault.retrieval.weights.configure", input)?;
+    let output = client.vault_retrieval_weights_configure(&input)?;
+    crate::codec::lift_record("vault.retrieval.weights.configure", &output)
+};
+"vault.affect.annotations.put" => fn vault_affect_annotations_put(&self, input: AffectAnnotationPut) -> CommitReceipt = |client| {
+    let input: oneiron::memory::affect::AffectAnnotationPut = crate::codec::lower_record("vault.affect.annotations.put", input)?;
+    let output = client.vault_affect_annotations_put(&input)?;
+    Lift::lift(output)
+};
+"vault.affect.claims.consolidate" => fn vault_affect_claims_consolidate(&self, input: AffectClaimConsolidateRequest) -> AffectClaimConsolidation = |client| {
+    let input: oneiron::memory::affect::AffectClaimConsolidateRequest = crate::codec::lower_record("vault.affect.claims.consolidate", input)?;
+    let output = client.vault_affect_claims_consolidate(&input)?;
+    crate::codec::lift_record("vault.affect.claims.consolidate", &output)
+};
 "vault.retrieval.recall" => fn vault_retrieval_recall(&self, input: RecallRequest) -> MemoryPack = |client| {
     let input: oneiron::task_verb::sdk::RecallRequest = crate::codec::lower_record("vault.retrieval.recall", input)?;
     let output = client.vault_retrieval_recall(&input)?;

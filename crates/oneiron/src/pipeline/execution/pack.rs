@@ -61,8 +61,16 @@ impl PipelineBuilder<'_> {
                 temporal_hints: Vec::new(),
             });
         }
+        if let Some(weights) = crate::gate::policy_manifest_doors::retrieval_weights_for_run(self.vault)? {
+            if !self.affect_policy_overridden {
+                self.affect_policy.emotion_weight = weights.affect;
+                self.affect_policy.arousal_stretch = weights.arousal;
+            }
+            self.ppr_vad_alpha = weights.vad;
+            self.ppr_community.beta = weights.community;
+        }
         if self.ppr_search.is_some() || self.ppr_expand.is_some() {
-            crate::config::validate_ppr_vad_alpha(self.vault.config.ppr_vad_alpha)?;
+            crate::config::validate_ppr_vad_alpha(self.ppr_vad_alpha)?;
         }
         self.affect_policy.validate()?;
         if let Some(query) = self.query_affect {
@@ -76,8 +84,8 @@ impl PipelineBuilder<'_> {
                 .get_turn_vad_annotation(&turn_id)?
                 .map(|annotation| annotation.vad);
         }
-        if self.ppr_expand.is_some() && self.vault.config.ppr_community.beta != 0.0 {
-            crate::config::validate_ppr_community(&self.vault.config.ppr_community)?;
+        if self.ppr_expand.is_some() && self.ppr_community.beta != 0.0 {
+            crate::config::validate_ppr_community(&self.ppr_community)?;
         }
         if let Some(state) = &self.retrieval_state {
             state.validate()?;

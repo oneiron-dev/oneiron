@@ -295,6 +295,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "policy_values"
                 | crate::failure_signals::policy::POLICY_KEY
                 | "livequery_tracker_limits"
+                | crate::gate::policy_manifest_doors::RETRIEVAL_WEIGHTS_KEY
                 | crate::gate::weave_policy::KEY
                 | crate::gate::weave_policy::PRECEDENCE_KEY
                 | super::POLICY_RESIDENCE_OPERATION_BUDGETS_KEY
@@ -325,6 +326,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         }
     }
 
+    crate::gate::policy_manifest_doors::decode_retrieval_weights(&entries).ok()?;
     validate_owner_policy_notify(&entries)?;
 
     let unsupported_schema = match single_map_value(&entries, POLICY_SCHEMA_VERSION_KEY) {

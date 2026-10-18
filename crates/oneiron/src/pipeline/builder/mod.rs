@@ -111,6 +111,9 @@ pub struct PipelineBuilder<'a> {
     /// The run's affect retrieval policy (OF-423): the vault's by default,
     /// replaced per run with [`Self::affect_policy`].
     pub(super) affect_policy: super::AffectRetrievalPolicy,
+    pub(super) affect_policy_overridden: bool,
+    pub(super) ppr_vad_alpha: f32,
+    pub(super) ppr_community: crate::config::PprCommunityConfig,
     /// The query side of emotion congruence. When unset, a run bound to a
     /// retrieval turn reads that turn's VAD annotation.
     pub(super) query_affect: Option<crate::affect::Vad>,
@@ -188,6 +191,9 @@ impl<'a> PipelineBuilder<'a> {
             hyde: None,
             access_factor_overrides: None,
             affect_policy: vault.config.affect_retrieval,
+            affect_policy_overridden: false,
+            ppr_vad_alpha: vault.config.ppr_vad_alpha,
+            ppr_community: vault.config.ppr_community.clone(),
             query_affect: None,
             skip_vector_rescore: false,
             no_match_floors: None,
@@ -591,7 +597,7 @@ impl<'a> PipelineBuilder<'a> {
         let mut hash = Sha256::new();
         hash.update(b"oneiron.retrieval_trace.community.v0");
         hash.update(version.to_le_bytes());
-        let config = &self.vault.config.ppr_community;
+        let config = &self.ppr_community;
         for value in [
             config.beta,
             config.gamma,
@@ -654,6 +660,7 @@ impl<'a> PipelineBuilder<'a> {
     /// when the run starts.
     pub fn affect_policy(mut self, policy: super::AffectRetrievalPolicy) -> Self {
         self.affect_policy = policy;
+        self.affect_policy_overridden = true;
         self
     }
 
