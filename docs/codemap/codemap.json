@@ -29983,13 +29983,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/llm/decision/questions/outcomes.rs",
      "purpose": "Idempotent outcome projection over durable facts and immutable question versions",
      "surface": {
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -30025,6 +30025,7 @@
       "QuestionDefinition",
       "QuestionMedia",
       "QuestionRecord",
+      "QuestionScheduleHead",
       "RefreshPolicy",
       "RefreshTrigger",
       "ScheduledBackfill",
@@ -30037,7 +30038,7 @@
       "crate-vis": 1,
       "enum": 5,
       "fn": 11,
-      "struct": 13
+      "struct": 14
      }
     },
     {
@@ -30093,7 +30094,7 @@
      "purpose": "Immutable question versions and a CAS-updated scheduling head in the typed `TYPED_QUESTION` side table: one…",
      "surface": {
       "crate-vis": 13,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -39474,10 +39475,15 @@
       "QuestionBackfillRequest",
       "QuestionCreateRequest",
       "QuestionEditRequest",
+      "QuestionOutcomes",
+      "QuestionOutcomesProjectRequest",
+      "QuestionOutcomesProjected",
+      "QuestionOutcomesRequest",
       "QuestionPauseRequest",
       "QuestionPaused",
       "QuestionReadRequest",
-      "QuestionRefreshRequest"
+      "QuestionRefreshRequest",
+      "QuestionScheduleRequest"
      ],
      "path": "src/receipt/questions.rs",
      "purpose": "OF-506's doors (ARCH-0076): the wire shapes of a one-off graph ask and of the standing-question verbs",
@@ -39485,7 +39491,7 @@
       "const": 2,
       "enum": 2,
       "fn": 3,
-      "struct": 11
+      "struct": 16
      }
     },
     {
@@ -51066,7 +51072,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 702
+      "fn": 705
      }
     },
     {
@@ -66925,7 +66931,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 666
+      "fn": 669
      }
     },
     {
@@ -67974,7 +67980,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 667
+      "fn": 670
      }
     },
     {
@@ -71277,7 +71283,7 @@
      "path": "src/api/facade/graph_ask_doors.rs",
      "purpose": "OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 11
      }
     },
     {
@@ -81151,11 +81157,17 @@
       "QuestionDefinition",
       "QuestionEditRequest",
       "QuestionMedia",
+      "QuestionOutcomes",
+      "QuestionOutcomesProjectRequest",
+      "QuestionOutcomesProjected",
+      "QuestionOutcomesRequest",
       "QuestionPauseRequest",
       "QuestionPaused",
       "QuestionReadRequest",
       "QuestionRecord",
       "QuestionRefreshRequest",
+      "QuestionScheduleHead",
+      "QuestionScheduleRequest",
       "QueueTaskBrief",
       "QuickFilterAtom",
       "QuoteAnchor",
@@ -82034,7 +82046,7 @@
      "purpose": "—",
      "surface": {
       "enum": 612,
-      "struct": 1785
+      "struct": 1791
      }
     },
     {
