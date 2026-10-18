@@ -46058,8 +46058,18 @@
      "purpose": "The vault's sealed cloud bundle through the home (DEC-0005 \"Sealed copies\", FIX 922)",
      "surface": {
       "crate-vis": 3,
-      "fn": 2,
+      "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/residence/bundle/turn.rs",
+     "purpose": "This machine's side of the home's publisher turn (FIX 3351): a publisher asks for the turn before it…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -46940,9 +46950,9 @@
      "purpose": "Grant-checked, per-item residence projections over a window document",
      "surface": {
       "const": 2,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 14,
-      "re-export": 10,
+      "re-export": 12,
       "struct": 2
      }
     },
@@ -46987,7 +46997,7 @@
      "purpose": "The home's custody of the vault's sealed cloud bundle (DEC-0005 \"Sealed copies\", FIX 922)",
      "surface": {
       "const": 2,
-      "crate-vis": 6,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 12,
       "struct": 3
@@ -47005,6 +47015,30 @@
      "surface": {
       "fn": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SealedBundleStaged"
+     ],
+     "path": "src/sync/residence/bundle_stage.rs",
+     "purpose": "The uploads the home stages, as its disk sees them (FIX 3354)",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/residence/bundle_turn.rs",
+     "purpose": "The publisher turn of the vault's sealed cloud bundle on the home (FIX 3351)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
      }
     },
     {
@@ -53342,7 +53376,7 @@
      "purpose": "The vault's one sealed cloud bundle (DEC-0005 \"Sealed copies\", FIX 922), and the sealed pad object beside it",
      "surface": {
       "const": 3,
-      "crate-vis": 6,
+      "crate-vis": 9,
       "fn": 34,
       "struct": 8
      }
@@ -55825,7 +55859,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 172,
+     "files": 175,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -56023,7 +56057,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3411,
+   "source_files": 3414,
    "test_files": 902
   },
   "oneiron-android": {
@@ -70579,7 +70613,7 @@
      "path": "src/api/transfer.rs",
      "purpose": "Bounded transfers between an HTTP body and a blocking worker, shared by the git smart-HTTP and LFS bridges",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 31
      }
     },
     {
