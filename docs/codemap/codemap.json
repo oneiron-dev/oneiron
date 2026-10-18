@@ -702,6 +702,32 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "AgentBudgetView",
+      "BudgetHoldRequest",
+      "BudgetLandRequest",
+      "LocalRunnerBudgetCounter",
+      "LocalRunnerBudgetRequest",
+      "LocalRunnerBudgetView",
+      "OpenSpendLeaseRequest",
+      "RunRungSettlement",
+      "RunSettlementsRequest",
+      "RunSettlementsView",
+      "SelfBudgetRequest",
+      "SpendLeaseView",
+      "SpendScopeRequest",
+      "TopUpSpendLeaseRequest"
+     ],
+     "path": "src/agent_dispatch/budget_doors.rs",
+     "purpose": "Typed doors over launch spend leases, budget holds and the local runner counter",
+     "surface": {
+      "fn": 8,
+      "struct": 14
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "BudgetHoldLease",
       "BudgetHoldNotice",
       "BudgetHoldState",
@@ -907,7 +933,7 @@
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
       "crate-vis": 9,
-      "mod": 1,
+      "mod": 2,
       "re-export": 23
      }
     },
@@ -1071,7 +1097,7 @@
      "purpose": "Spend scopes: each launch's lease tree under one hard cap (OF-532, ARCH-0079 #budget, #reader-forks)",
      "surface": {
       "crate-vis": 12,
-      "fn": 16
+      "fn": 17
      }
     },
     {
@@ -7704,6 +7730,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CalendarEventCreateRequest",
+      "CalendarEventCreated"
+     ],
+     "path": "src/calendar/door.rs",
+     "purpose": "Typed, caller-bound calendar origin creation",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "BusyInterval"
      ],
      "path": "src/calendar/freebusy.rs",
@@ -7828,6 +7869,23 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CalendarIcsImportReceipt",
+      "CalendarIcsImportRequest",
+      "CalendarImportClaimReceipt",
+      "CalendarImportedEvent",
+      "CalendarInstanceMoveRequest"
+     ],
+     "path": "src/calendar/ingest/door.rs",
+     "purpose": "Uploaded ICS import and a single imported-instance amendment",
+     "surface": {
+      "fn": 2,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "CustodyDoorIcsFeedFetcher",
       "IcsFeedFetcher",
       "IcsFeedSource",
@@ -7853,6 +7911,7 @@
      "purpose": "ICS feed poll runner and imported-claim admission (CAL-02, ONE-1784)",
      "surface": {
       "crate-vis": 7,
+      "mod": 1,
       "re-export": 3
      }
     },
@@ -8005,7 +8064,7 @@
      "surface": {
       "crate-vis": 8,
       "enum": 1,
-      "mod": 17,
+      "mod": 18,
       "re-export": 15
      }
     },
@@ -8175,7 +8234,7 @@
      "purpose": "Calendar EVENT query + projection core (CAL-09)",
      "surface": {
       "crate-vis": 4,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -8224,6 +8283,21 @@
      "path": "src/calendar/query/tests.rs",
      "purpose": "A claim awaiting its owner's critical confirm in the calendar's operational reads: free/busy, and the rows…",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CalendarOccurrenceView",
+      "CalendarOccurrencesRequest"
+     ],
+     "path": "src/calendar/query/window.rs",
+     "purpose": "Bounded, scoped series occurrences with stable original-instance identities",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 2
+     }
     },
     {
      "bucket": "s",
@@ -17008,7 +17082,7 @@
      "path": "src/credential_door/checkout_ticket.rs",
      "purpose": "Checkout redemption rights",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -17078,7 +17152,7 @@
      "path": "src/credential_door/mod.rs",
      "purpose": "Checkout receive-pack admission, catastrophe policy, and secret-shaped diff scanning",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -28456,14 +28530,61 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/linear_sync/facade.rs",
+     "purpose": "The TASK ↔ issue mirror doors (OF-427 C6, C7)",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LinearLinkView",
+      "LinearMappingEdit",
+      "LinearMappingEditReceipt",
+      "LinearMappingOp",
+      "LinearMappingRequest",
+      "LinearMappingView",
+      "LinearProvenanceEntry",
+      "LinearProvenancePage",
+      "LinearProvenanceRequest"
+     ],
+     "path": "src/linear_sync/facade_types.rs",
+     "purpose": "The wire shapes of the TASK ↔ issue mirror doors (OF-427 C6, C7): `vault.tasks.linear.mapping`…",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 1,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LinearMirrorEvent",
+      "LinearMirrorRecord"
+     ],
+     "path": "src/linear_sync/mirror_event.rs",
+     "purpose": "The mirror's durable event rows and each TASK's mirror control (OF-427)",
+     "surface": {
+      "crate-vis": 24,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/linear_sync/mod.rs",
      "purpose": "Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905…",
      "surface": {
-      "crate-vis": 2,
-      "re-export": 6
+      "crate-vis": 3,
+      "re-export": 9
      }
     },
     {
@@ -28530,6 +28651,24 @@
      "path": "src/linear_sync/tests.rs",
      "purpose": "Mirror-adapter tests (ONE-1905)",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LinearExternalActor",
+      "LinearWebhookEvent",
+      "LinearWebhookKind",
+      "LinearWebhookReceipt",
+      "LinearWebhookStatus"
+     ],
+     "path": "src/linear_sync/webhook.rs",
+     "purpose": "The engine half of the signed Linear webhook (OF-427 C1, C3–C5)",
+     "surface": {
+      "enum": 2,
+      "fn": 3,
+      "struct": 3
+     }
     },
     {
      "bucket": "m",
@@ -31012,7 +31151,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 3,
+      "mod": 4,
       "re-export": 40
      }
     },
@@ -31034,6 +31173,49 @@
      "purpose": "Agent-facing NOTE verbs; actor identity is bound to the memory facade",
      "surface": {
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/origin_doors/mod.rs",
+     "purpose": "Typed origin and checkout doors (DOOR-139): tested-tree export, the origin authority epoch, publication…",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/origin_doors/operations.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CheckoutDoorBindRequest",
+      "CheckoutDoorBinding",
+      "CodeExportRequest",
+      "CodeExportResult",
+      "OriginAuthoritySetRequest",
+      "OriginAuthorityView",
+      "OriginPublicationState",
+      "OriginPublicationView",
+      "OriginPublicationsRequest",
+      "OriginPublicationsView",
+      "OriginRepoRequest"
+     ],
+     "path": "src/memory/origin_doors/types.rs",
+     "purpose": "—",
+     "surface": {
+      "enum": 1,
+      "struct": 10
      }
     },
     {
@@ -48454,9 +48636,19 @@
      "path": "src/task_verb/linear_store.rs",
      "purpose": "Vault storage for the tracker mirror: replicated fields, local OCC and CAS links",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 10,
       "fn": 5,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/mirror_edit.rs",
+     "purpose": "The owner's public title edit on `tasks.update` (OF-427 C8), and the Owner standing the mirror's mapping…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -48466,7 +48658,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 35,
+      "crate-vis": 36,
       "fn": 1,
       "mod": 2,
       "re-export": 25
@@ -48756,7 +48948,7 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 31,
+      "re-export": 32,
       "struct": 36
      }
     },
@@ -48782,6 +48974,20 @@
       "enum": 3,
       "fn": 3,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AuthorityHistoryImported",
+      "SignedAuthorityHistory"
+     ],
+     "path": "src/task_verb/sdk_authority_history.rs",
+     "purpose": "Byte-preserving signed authority history transfer for the vault owner",
+     "surface": {
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -48982,7 +49188,7 @@
      "purpose": "—",
      "surface": {
       "const": 3,
-      "fn": 435
+      "fn": 458
      }
     },
     {
@@ -49426,7 +49632,7 @@
      "path": "src/task_verb/task_continuation.rs",
      "purpose": "The same-TASK continuation of a failed agent run (FIX 3694, OF-568, ruling 3)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -54245,7 +54451,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 44,
+     "files": 45,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54364,7 +54570,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 61,
+     "files": 64,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -55022,7 +55228,7 @@
      "purpose": "Traversal safety caps, defined in `oneiron-contracts`"
     },
     "linear_sync": {
-     "files": 8,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -55071,7 +55277,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 144,
+     "files": 147,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55582,7 +55788,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 142,
+     "files": 144,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -55752,7 +55958,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3395,
+   "source_files": 3408,
    "test_files": 902
   },
   "oneiron-android": {
@@ -62547,9 +62753,10 @@
      "path": "src/http.rs",
      "purpose": "Bounded host-owned GraphQL transport; credentials never enter the engine",
      "surface": {
+      "const": 1,
       "crate-vis": 1,
       "enum": 1,
-      "fn": 2,
+      "fn": 3,
       "struct": 2,
       "trait": 1
      }
@@ -62571,7 +62778,7 @@
      "path": "src/lib.rs",
      "purpose": "Host-side Linear GraphQL adapter for the engine's TASK ↔ issue mirror",
      "surface": {
-      "re-export": 4
+      "re-export": 6
      }
     },
     {
@@ -62596,6 +62803,16 @@
      "path": "src/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/webhook.rs",
+     "purpose": "Normalizes one verified Linear webhook delivery for the engine (OF-427)",
+     "surface": {
+      "fn": 1
+     }
     }
    ],
    "modules": {
@@ -62640,11 +62857,18 @@
      "largest_src_bucket": "—",
      "layout": "file",
      "purpose": "—"
+    },
+    "webhook": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Normalizes one verified Linear webhook delivery for the engine (OF-427)"
     }
    },
    "over_bar": 0,
    "purpose": "Host-side Linear GraphQL adapter for the engine's TASK ↔ issue mirror",
-   "source_files": 6,
+   "source_files": 7,
    "test_files": 1
   },
   "oneiron-llm-anthropic": {
@@ -64147,7 +64371,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 385
+      "fn": 408
      }
     },
     {
@@ -65195,7 +65419,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 386
+      "fn": 409
      }
     },
     {
@@ -68065,10 +68289,40 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/authority_history_doors.rs",
+     "purpose": "Owner-authenticated signed authority history transfer",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/booking_doors.rs",
      "purpose": "Owner discovery of the opaque address of an existing booking page",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/budget_doors.rs",
+     "purpose": "Credential-backed budget controls, beside the owner's held-run routes",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/calendar_doors.rs",
+     "purpose": "Owner-authorized calendar file imports through the credential's own handle",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -68258,7 +68512,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 77
+      "crate-vis": 82
      }
     },
     {
@@ -68285,6 +68539,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/linear_doors.rs",
+     "purpose": "The host door of `vault.tasks.linear.mapping.edit` (OF-427 C6)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/live_run_doors.rs",
      "purpose": "Public coordination doors over the caller's own live-run attachment",
      "surface": {
@@ -68299,6 +68563,16 @@
      "purpose": "Host-held NOTE editor bindings beside the ordinary scoped NOTE reads",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/origin_doors.rs",
+     "purpose": "Credential-bound host projections of the typed origin and checkout doors (DOOR-139)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -72493,7 +72767,7 @@
      "path": "src/linear_host.rs",
      "purpose": "Opt-in scheduled Linear mirror over an authenticated host-owned bridge",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -72503,7 +72777,7 @@
      "path": "src/linear_host/direct.rs",
      "purpose": "The server's direct Linear GraphQL mirror, using the production adapter",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -72513,6 +72787,16 @@
      "path": "src/linear_host/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/linear_host/webhook.rs",
+     "purpose": "`POST /v1/hooks/linear`: the signed Linear webhook door (OF-427 C1–C4, C11)",
+     "surface": {
+      "crate-vis": 6
+     }
     },
     {
      "bucket": "m",
@@ -74875,7 +75159,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SeatUsage",
@@ -74886,7 +75170,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -75543,7 +75827,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 332,
+     "files": 337,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -75774,7 +76058,7 @@
      "purpose": "OF-181: the lens frames this server holds for the cards it rendered"
     },
     "linear_host": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -75958,7 +76242,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 654,
+   "source_files": 660,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -76156,6 +76440,7 @@
       "ActorCeiling",
       "AdmissionBasis",
       "AdmissionConsent",
+      "AgentBudgetView",
       "AgentCeilingInput",
       "AgentDefinitionCreateRequest",
       "AgentDefinitionLifecycle",
@@ -76235,8 +76520,13 @@
       "AskTo",
       "AsofScrubberAtom",
       "AssetRef",
+      "AttemptCancelReceipt",
+      "AttemptCancelReceiptKind",
       "AttemptHandle",
       "AttemptId",
+      "AttemptLanding",
+      "AttemptLandingReserve",
+      "AttemptResumePoint",
       "AttemptView",
       "AuthoringStrategyPin",
       "AuthorityAuditEventKind",
@@ -76246,6 +76536,7 @@
       "AuthorityAuditRow",
       "AuthorityHandoffAlarm",
       "AuthorityHandoffAlarmAck",
+      "AuthorityHistoryImported",
       "BlindCampaignJudgeInput",
       "BlockChange",
       "BodyBlockKind",
@@ -76267,13 +76558,26 @@
       "BriefIntent",
       "BriefStamp",
       "BudgetDenied",
+      "BudgetHoldNotice",
+      "BudgetHoldRequest",
+      "BudgetHoldState",
+      "BudgetLandRequest",
       "BudgetLease",
       "BundleVerdict",
       "BundledSkillPermissions",
       "ButtonControl",
+      "CalendarEventCreateRequest",
+      "CalendarEventCreated",
       "CalendarEventView",
       "CalendarFreebusyIntervalDto",
       "CalendarFreebusyRequest",
+      "CalendarIcsImportReceipt",
+      "CalendarIcsImportRequest",
+      "CalendarImportClaimReceipt",
+      "CalendarImportedEvent",
+      "CalendarInstanceMoveRequest",
+      "CalendarOccurrenceView",
+      "CalendarOccurrencesRequest",
       "CalendarRangeDto",
       "CalendarReadRequest",
       "CalendarSearchRequest",
@@ -76307,8 +76611,10 @@
       "CampaignSplits",
       "CampaignTaste",
       "CancelRejectionPathology",
+      "CancelStanding",
       "CandidateRef",
       "Care",
+      "CareLevel",
       "CellTypeRef",
       "ChangeKind",
       "ChannelCeiling",
@@ -76344,6 +76650,8 @@
       "ChartSeries",
       "ChartSource",
       "ChatProjection",
+      "CheckoutDoorBindRequest",
+      "CheckoutDoorBinding",
       "ClaimApprovalStatus",
       "ClaimChangeVerdict",
       "ClaimLineAtom",
@@ -76362,6 +76670,8 @@
       "CodeChangeView",
       "CodeDiffRequest",
       "CodeDiffView",
+      "CodeExportRequest",
+      "CodeExportResult",
       "CodeFileChange",
       "CodeFileDiffView",
       "CodeOperationView",
@@ -76427,6 +76737,7 @@
       "ConversationCreateInput",
       "ConversationTurnCreateInput",
       "CooperativeDeletionDispositionKind",
+      "CoordinationPattern",
       "CoreBatchEntityInput",
       "CoreBatchEntityReceipt",
       "CoreBatchWriteInput",
@@ -76435,6 +76746,7 @@
       "CoreDagQuoteInput",
       "CoreEntityWriteReceipt",
       "CoreWriteTextField",
+      "CostEnvelope",
       "CourtesyDeleteAnswerRequest",
       "CourtesyDeleteAskedWorld",
       "CourtesyDeleteChoice",
@@ -76638,6 +76950,7 @@
       "FoldUnfoldRequest",
       "FoldUnfolded",
       "FolderItemInput",
+      "ForceCancelGrounds",
       "ForkKind",
       "ForkState",
       "GateCheckerReceipt",
@@ -76677,6 +76990,7 @@
       "GuestSlipMintRequest",
       "GuestSlipMinted",
       "HandoffAlarmRequest",
+      "HeldAttempt",
       "HeldMedia",
       "HeldOutCall",
       "HeldOutEvidence",
@@ -76765,6 +77079,7 @@
       "LadderTerminalDisposition",
       "Landing",
       "LandingReceipt",
+      "LandingTrigger",
       "LaunchStatement",
       "LeaderSplitInput",
       "LeaderSplitOutput",
@@ -76822,11 +77137,27 @@
       "LiftCounts",
       "LiftFamily",
       "LiftTrigger",
+      "LinearExternalActor",
+      "LinearFieldConflict",
+      "LinearIssueRef",
+      "LinearLinkView",
+      "LinearMappingEdit",
+      "LinearMappingEditReceipt",
+      "LinearMappingOp",
+      "LinearMappingRequest",
+      "LinearMappingView",
+      "LinearMirrorEvent",
+      "LinearProvenanceEntry",
+      "LinearProvenancePage",
+      "LinearProvenanceRequest",
       "LinkedText",
       "LiveRunRequestAgentSpawnInput",
       "LiveRunRequestLeaderSplitInput",
       "LlmCapability",
       "LlmError",
+      "LocalRunnerBudgetCounter",
+      "LocalRunnerBudgetRequest",
+      "LocalRunnerBudgetView",
       "MadeBy",
       "MadeByClass",
       "MadeByInput",
@@ -76956,8 +77287,18 @@
       "OfficeBodyView",
       "OmittedKnowledge",
       "OpaqueChange",
+      "OpenSpendLeaseRequest",
       "OracleReceipt",
       "OrganWaitView",
+      "OriginAuthority",
+      "OriginAuthoritySetRequest",
+      "OriginAuthorityView",
+      "OriginPublicationState",
+      "OriginPublicationView",
+      "OriginPublicationsRequest",
+      "OriginPublicationsView",
+      "OriginRepoRequest",
+      "OriginResidence",
       "OutcomeBinding",
       "OutcomeLabel",
       "OutcomeSource",
@@ -76999,9 +77340,11 @@
       "PairedInterval",
       "PairedReading",
       "Paragraph",
+      "PartialResultHold",
       "ParticipantView",
       "ParticipantsPage",
       "ParticipantsRequest",
+      "PatternSkillRef",
       "PeerCount",
       "PendingActMatured",
       "PendingActStarted",
@@ -77016,6 +77359,7 @@
       "PinnedPack",
       "PinnedRef",
       "PixelRegion",
+      "PlannerRung",
       "PolicyActionOutcome",
       "PolicyAxes",
       "PolicyCeiling",
@@ -77095,6 +77439,7 @@
       "QuoteStripStatus",
       "Reasoning",
       "ReasoningCause",
+      "ReasoningEffort",
       "RecallWorlds",
       "ReceiptAtom",
       "ReceiptKind",
@@ -77215,6 +77560,9 @@
       "Run",
       "RunAttachRequest",
       "RunAttached",
+      "RunRungSettlement",
+      "RunSettlementsRequest",
+      "RunSettlementsView",
       "RunSignalState",
       "RunTree",
       "RunTreeEvent",
@@ -77243,6 +77591,7 @@
       "ScopedReadReceipt",
       "ScopedReadResultCalendarEventViewList",
       "ScopedReadResultCalendarFreebusyDto",
+      "ScopedReadResultCalendarOccurrenceViewList",
       "ScopedReadResultLensFrameCard",
       "ScopedReadResultOptionalCalendarEventView",
       "ScopedReadResultOptionalNoteEditorBinding",
@@ -77281,6 +77630,7 @@
       "SelectionReceipt",
       "SelectionRuleScope",
       "SelectionRuleWriterKind",
+      "SelfBudgetRequest",
       "SelfDurableWait",
       "SelfDurableWaitReason",
       "SelfEffect",
@@ -77362,6 +77712,7 @@
       "SharedVaultDeletion",
       "SharedVaultRequest",
       "SignatureRow",
+      "SignedAuthorityHistory",
       "SigningStatus",
       "SkillAuthoringReceipt",
       "SkillForkRequest",
@@ -77399,6 +77750,13 @@
       "SpendBasis",
       "SpendCapView",
       "SpendConsent",
+      "SpendLeaseView",
+      "SpendPayer",
+      "SpendRead",
+      "SpendScope",
+      "SpendScopeRequest",
+      "SpendSignal",
+      "SpendState",
       "SpentKind",
       "StateFamilyRef",
       "StatusDotAtom",
@@ -77478,6 +77836,8 @@
       "TaskWaveRequest",
       "TasksOverflow",
       "TasksSection",
+      "TeamPlan",
+      "TeamShape",
       "TextBlockAtom",
       "TextBody",
       "TextCommitReceipt",
@@ -77491,6 +77851,7 @@
       "ThreadPassportsView",
       "ThrobberAtom",
       "ToggleControl",
+      "TopUpSpendLeaseRequest",
       "TrackedHubRef",
       "TranscriptFileDropInput",
       "TranscriptIngestOutcome",
@@ -77582,8 +77943,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 407,
-      "struct": 1020
+      "enum": 422,
+      "struct": 1082
      }
     },
     {

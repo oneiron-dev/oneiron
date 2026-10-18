@@ -61,6 +61,7 @@ pub(crate) use lifecycle_receipt::{
     erase_in_txn as erase_lifecycle_receipts_in_txn, task_lifecycle_receipts,
 };
 mod linear_store;
+mod mirror_edit;
 mod owner_index;
 mod policy_change_followup;
 mod presence_diagnostics;
@@ -166,6 +167,7 @@ pub(crate) use create_validation::{
 pub(crate) use rate_limit::task_create_owner;
 pub(crate) use task_continuation::{
     FailedTaskContinuation, TaskContinuationOutcome, continue_failed_task_in_txn,
+    task_settled_at_in,
 };
 
 /// The objectives a run realizing `task` confesses against (OF-544): its
@@ -256,7 +258,11 @@ pub use fanout_launch::{FanoutCheckChoice, FanoutLaunchReceipt};
 pub use wave_port::{VaultWaveTaskPort, WaveDispatchGeneration, WaveDispatchPage};
 
 pub use linear_store::VaultLinearTaskStore;
-pub(crate) use linear_store::{forget_task_mirror, linear_effect_state_in_txn, note_task_write};
+pub(crate) use linear_store::{
+    drop_mirror_link_in, forget_task_mirror, linear_effect_state_in_txn, linear_issue_task_in,
+    mark_mirror_dirty_in, note_task_write, put_mirror_link_in,
+};
+pub(crate) use mirror_edit::prove_task_owner_in;
 
 #[cfg(test)]
 mod production_ports_tests;
@@ -266,6 +272,7 @@ pub(crate) use symbol_lease::forget_symbols;
 mod recall_door;
 pub mod sdk;
 mod sdk_agents;
+mod sdk_authority_history;
 mod sdk_calendar;
 mod sdk_campaign_split;
 mod sdk_catalog_fragment;

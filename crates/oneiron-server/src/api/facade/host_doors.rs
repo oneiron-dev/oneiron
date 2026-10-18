@@ -48,7 +48,10 @@ use crate::builtin_host::HostConnectionChecks;
 use crate::models::RungVoices;
 use crate::server::SyncServer;
 
+// The signed authority history doors, under the audit door's owner proof.
+pub(crate) use super::authority_history_doors::*;
 pub(crate) use super::booking_doors::*;
+pub(crate) use super::calendar_doors::*;
 
 // The shared-vault doors live beside these; the generated callers name them here.
 pub(crate) use super::agent_definition_doors::*;
@@ -57,6 +60,7 @@ pub(crate) use super::shared_act_doors::*;
 pub(crate) use super::shared_member_doors::*;
 // The owner's legal-hold doors (OF-470) too.
 pub(crate) use super::legal_hold_doors::*;
+pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
@@ -82,6 +86,7 @@ pub(crate) use super::vault_shape_doors::*;
 pub(crate) use super::embedding_space_doors::*;
 // The owner's fan-out ruling doors (OF-393), likewise.
 pub(crate) use super::fanout_doors::*;
+pub(crate) use super::budget_doors::*;
 // The owner's learned-setting doors, likewise.
 pub(crate) use super::setting_doors::*;
 // The owner's historical secret lift sweep door (OF-067), likewise.
@@ -96,6 +101,8 @@ pub(crate) use super::craft_candidate_doors::*;
 pub(crate) use super::channel_doors::*;
 pub(crate) use super::gate_policy_doors::*;
 pub(crate) use super::policy_doors::*;
+// The owner's origin and checkout doors (DOOR-139), likewise.
+pub(crate) use super::origin_doors::*;
 // The generic connector call's door (ONE-2510), likewise.
 pub(crate) use super::connector_call_doors::*;
 // The secret use door, whose connector.call sends (OF-560), likewise.
@@ -1006,7 +1013,9 @@ fn owner_grade(auth: &CoreAuth, message: &str) -> MemoryResult<()> {
 /// proof it acts under. A row whose door has no such check passes.
 pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<()> {
     match verb {
-        "vault.packs.put"
+        "vault.calendar.ics.import"
+        | "vault.calendar.instances.move"
+        | "vault.packs.put"
         | "vault.packs.remove"
         | "vault.skill_hubs.put"
         | "vault.skill_hubs.get"
@@ -1028,6 +1037,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.connectors.subscriptions.list"
         | "vault.connectors.subscriptions.revoke"
         | "vault.authority.audit"
+        | "vault.authority.history.export"
+        | "vault.authority.history.import"
         | "vault.mesh.path_receipts"
         | "vault.hooks.replay"
         | "vault.lenses.activate"
@@ -1062,7 +1073,19 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.claims.review"
         | "vault.claims.settle"
         | "vault.settings.wake_policy.set"
+        | "vault.budgets.lease.open"
+        | "vault.budgets.lease"
+        | "vault.budgets.lease.top_up"
+        | "vault.budgets.hold"
+        | "vault.budgets.hold.resume"
+        | "vault.budgets.local"
+        | "vault.budgets.settlements"
         | "vault.research.evaluate_split"
+        | "vault.code.export"
+        | "vault.code.origin.authority.get"
+        | "vault.code.origin.authority.set"
+        | "vault.code.origin.publications"
+        | "vault.code.checkout.bind"
         | "vault.off_record.start"
         | "vault.off_record.status"
         | "vault.off_record.witness"

@@ -423,12 +423,16 @@ impl Memory<'_> {
         let task_ref = report.task_ref;
         let now = self.vault().now_recorded_at();
         let journal = match report.body {
-            TaskReportBody::Ack | TaskReportBody::Brief(_) => None,
+            TaskReportBody::Ack | TaskReportBody::Brief(_) | TaskReportBody::Edit { .. } => None,
             _ => report_journal::identity(self.actor(), via, &report, &key)?,
         };
         match report.body {
             TaskReportBody::Ack => self.report_ack(via, task_ref, &key, now),
             TaskReportBody::Brief(next) => self.report_brief(via, task_ref, &key, *next, now),
+            TaskReportBody::Edit {
+                expected_revision,
+                title,
+            } => self.report_edit(via, task_ref, &key, expected_revision, title, now),
             body => {
                 if self.credential_withholds(task_ref)? {
                     return Err(not_found());
@@ -470,9 +474,12 @@ impl Memory<'_> {
         let key = qualified_key(via, &report.report_key, "report key")?;
         let task_ref = report.task_ref;
         let now = self.vault().now_recorded_at();
-        if matches!(report.body, TaskReportBody::Ack | TaskReportBody::Brief(_)) {
+        if matches!(
+            report.body,
+            TaskReportBody::Ack | TaskReportBody::Brief(_) | TaskReportBody::Edit { .. }
+        ) {
             return Err(MemoryError::bad_request(
-                "an acknowledgement or brief revision is not a runner report",
+                "an acknowledgement, brief revision or title edit is not a runner report",
             ));
         }
         let journal = report_journal::identity(self.actor(), via, &report, &key)?;
@@ -1269,9 +1276,11 @@ impl Memory<'_> {
                     },
                 )
             }
-            TaskReportBody::Ack | TaskReportBody::Brief(_) => Err(MemoryError::bad_request(
-                "an acknowledgement or brief revision is not a work report",
-            )),
+            TaskReportBody::Ack | TaskReportBody::Brief(_) | TaskReportBody::Edit { .. } => {
+                Err(MemoryError::bad_request(
+                    "an acknowledgement, brief revision or title edit is not a work report",
+                ))
+            }
         }
     }
 
