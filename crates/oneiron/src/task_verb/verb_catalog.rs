@@ -49,6 +49,15 @@ pub enum AgentVerb {
     VaultWitness,
     VaultClaimsUpsert,
     VaultRecall,
+    VaultRetrievalRecall,
+    VaultRetrievalRuns,
+    VaultRetrievalRun,
+    VaultRetrievalTurn,
+    VaultRetrievalOutcomesPut,
+    VaultRetrievalOutcomesEnd,
+    VaultRetrievalTrace,
+    VaultRetrievalExport,
+    VaultRetrievalReplay,
     VaultExport,
     SelfCredentialAttenuate,
     VaultScopeCeiling,
@@ -231,6 +240,8 @@ pub enum AgentVerb {
     VaultGatePolicyPropose,
     VaultGateCheckerGet,
     VaultGateCheckerSet,
+    VaultLearningRead,
+    VaultLearningProjection,
     VaultSettingsLearning,
     VaultSettingsLearningPut,
     VaultSettingsLearningClear,
@@ -309,6 +320,7 @@ pub enum AgentVerb {
     VaultWorkflowsStatus,
     VaultTaskTypesPin,
     VaultTaskTypesGet,
+    VaultAgentsSpawnGet,
     VaultWorkspaceEstablish,
     VaultWorkspaceMembersOnboard,
     VaultWorkspaceRoster,
@@ -376,6 +388,14 @@ pub enum AgentVerb {
     AiStepsReceipt,
     AiReply,
     VaultReceiptsContext,
+    AiVoiceStart,
+    AiVoiceAudio,
+    AiVoiceEvents,
+    AiVoiceAck,
+    AiVoiceUsage,
+    AiVoiceTool,
+    AiVoiceEnd,
+    AiVoiceClose,
     AiOptions,
     AiImage,
     AiSpeech,
@@ -624,6 +644,15 @@ impl AgentVerb {
         Self::VaultWitness,
         Self::VaultClaimsUpsert,
         Self::VaultRecall,
+        Self::VaultRetrievalRecall,
+        Self::VaultRetrievalRuns,
+        Self::VaultRetrievalRun,
+        Self::VaultRetrievalTurn,
+        Self::VaultRetrievalOutcomesPut,
+        Self::VaultRetrievalOutcomesEnd,
+        Self::VaultRetrievalTrace,
+        Self::VaultRetrievalExport,
+        Self::VaultRetrievalReplay,
         Self::VaultExport,
         Self::SelfCredentialAttenuate,
         Self::VaultScopeCeiling,
@@ -806,6 +835,8 @@ impl AgentVerb {
         Self::VaultGatePolicyPropose,
         Self::VaultGateCheckerGet,
         Self::VaultGateCheckerSet,
+        Self::VaultLearningRead,
+        Self::VaultLearningProjection,
         Self::VaultSettingsLearning,
         Self::VaultSettingsLearningPut,
         Self::VaultSettingsLearningClear,
@@ -884,6 +915,7 @@ impl AgentVerb {
         Self::VaultWorkflowsStatus,
         Self::VaultTaskTypesPin,
         Self::VaultTaskTypesGet,
+        Self::VaultAgentsSpawnGet,
         Self::VaultWorkspaceEstablish,
         Self::VaultWorkspaceMembersOnboard,
         Self::VaultWorkspaceRoster,
@@ -951,6 +983,14 @@ impl AgentVerb {
         Self::AiStepsReceipt,
         Self::AiReply,
         Self::VaultReceiptsContext,
+        Self::AiVoiceStart,
+        Self::AiVoiceAudio,
+        Self::AiVoiceEvents,
+        Self::AiVoiceAck,
+        Self::AiVoiceUsage,
+        Self::AiVoiceTool,
+        Self::AiVoiceEnd,
+        Self::AiVoiceClose,
         Self::AiOptions,
         Self::AiImage,
         Self::AiSpeech,
@@ -1202,6 +1242,15 @@ impl AgentVerb {
             Self::VaultWitness => "vault.witness",
             Self::VaultClaimsUpsert => "vault.claims.upsert",
             Self::VaultRecall => "vault.recall",
+            Self::VaultRetrievalRecall => "vault.retrieval.recall",
+            Self::VaultRetrievalRuns => "vault.retrieval.runs",
+            Self::VaultRetrievalRun => "vault.retrieval.run",
+            Self::VaultRetrievalTurn => "vault.retrieval.turn",
+            Self::VaultRetrievalOutcomesPut => "vault.retrieval.outcomes.put",
+            Self::VaultRetrievalOutcomesEnd => "vault.retrieval.outcomes.end",
+            Self::VaultRetrievalTrace => "vault.retrieval.trace",
+            Self::VaultRetrievalExport => "vault.retrieval.export",
+            Self::VaultRetrievalReplay => "vault.retrieval.replay",
             Self::VaultExport => "vault.export",
             Self::SelfCredentialAttenuate => "self.credential.attenuate",
             Self::VaultScopeCeiling => "vault.scope.ceiling",
@@ -1388,6 +1437,8 @@ impl AgentVerb {
             Self::VaultGatePolicyPropose => "vault.gate.policy.propose",
             Self::VaultGateCheckerGet => "vault.gate.checker.get",
             Self::VaultGateCheckerSet => "vault.gate.checker.set",
+            Self::VaultLearningRead => "vault.learning.read",
+            Self::VaultLearningProjection => "vault.learning.projection",
             Self::VaultSettingsLearning => "vault.settings.learning",
             Self::VaultSettingsLearningPut => "vault.settings.learning.put",
             Self::VaultSettingsLearningClear => "vault.settings.learning.clear",
@@ -1468,6 +1519,7 @@ impl AgentVerb {
             Self::VaultWorkflowsStatus => "vault.workflows.status",
             Self::VaultTaskTypesPin => "vault.task_types.pin",
             Self::VaultTaskTypesGet => "vault.task_types.get",
+            Self::VaultAgentsSpawnGet => "vault.agents.spawn.get",
             Self::VaultWorkspaceEstablish => "vault.workspace.establish",
             Self::VaultWorkspaceMembersOnboard => "vault.workspace.members.onboard",
             Self::VaultWorkspaceRoster => "vault.workspace.roster",
@@ -1535,6 +1587,14 @@ impl AgentVerb {
             Self::AiStepsReceipt => "ai.steps.receipt",
             Self::AiReply => "ai.reply",
             Self::VaultReceiptsContext => "vault.receipts.context",
+            Self::AiVoiceStart => "ai.voice.start",
+            Self::AiVoiceAudio => "ai.voice.audio",
+            Self::AiVoiceEvents => "ai.voice.events",
+            Self::AiVoiceAck => "ai.voice.ack",
+            Self::AiVoiceUsage => "ai.voice.usage",
+            Self::AiVoiceTool => "ai.voice.tool",
+            Self::AiVoiceEnd => "ai.voice.end",
+            Self::AiVoiceClose => "ai.voice.close",
             Self::AiOptions => "ai.options",
             Self::AiImage => "ai.image",
             Self::AiSpeech => "ai.speech",
@@ -1786,6 +1846,15 @@ impl AgentVerb {
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
+                | Self::VaultRetrievalRecall
+                | Self::VaultRetrievalRuns
+                | Self::VaultRetrievalRun
+                | Self::VaultRetrievalTurn
+                | Self::VaultRetrievalOutcomesPut
+                | Self::VaultRetrievalOutcomesEnd
+                | Self::VaultRetrievalTrace
+                | Self::VaultRetrievalExport
+                | Self::VaultRetrievalReplay
                 | Self::VaultExport
                 | Self::SelfCredentialAttenuate
                 | Self::VaultScopeCeiling
@@ -1968,6 +2037,8 @@ impl AgentVerb {
                 | Self::VaultGatePolicyPropose
                 | Self::VaultGateCheckerGet
                 | Self::VaultGateCheckerSet
+                | Self::VaultLearningRead
+                | Self::VaultLearningProjection
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
@@ -2046,6 +2117,7 @@ impl AgentVerb {
                 | Self::VaultWorkflowsStatus
                 | Self::VaultTaskTypesPin
                 | Self::VaultTaskTypesGet
+                | Self::VaultAgentsSpawnGet
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultWorkspaceRoster
@@ -2113,6 +2185,14 @@ impl AgentVerb {
                 | Self::AiStepsReceipt
                 | Self::AiReply
                 | Self::VaultReceiptsContext
+                | Self::AiVoiceStart
+                | Self::AiVoiceAudio
+                | Self::AiVoiceEvents
+                | Self::AiVoiceAck
+                | Self::AiVoiceUsage
+                | Self::AiVoiceTool
+                | Self::AiVoiceEnd
+                | Self::AiVoiceClose
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
@@ -2368,6 +2448,15 @@ impl AgentVerb {
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
+                | Self::VaultRetrievalRecall
+                | Self::VaultRetrievalRuns
+                | Self::VaultRetrievalRun
+                | Self::VaultRetrievalTurn
+                | Self::VaultRetrievalOutcomesPut
+                | Self::VaultRetrievalOutcomesEnd
+                | Self::VaultRetrievalTrace
+                | Self::VaultRetrievalExport
+                | Self::VaultRetrievalReplay
                 | Self::VaultExport
                 | Self::SelfCredentialAttenuate
                 | Self::VaultScopeCeiling
@@ -2550,6 +2639,8 @@ impl AgentVerb {
                 | Self::VaultGatePolicyPropose
                 | Self::VaultGateCheckerGet
                 | Self::VaultGateCheckerSet
+                | Self::VaultLearningRead
+                | Self::VaultLearningProjection
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
@@ -2628,6 +2719,7 @@ impl AgentVerb {
                 | Self::VaultWorkflowsStatus
                 | Self::VaultTaskTypesPin
                 | Self::VaultTaskTypesGet
+                | Self::VaultAgentsSpawnGet
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultWorkspaceRoster
@@ -2695,6 +2787,14 @@ impl AgentVerb {
                 | Self::AiStepsReceipt
                 | Self::AiReply
                 | Self::VaultReceiptsContext
+                | Self::AiVoiceStart
+                | Self::AiVoiceAudio
+                | Self::AiVoiceEvents
+                | Self::AiVoiceAck
+                | Self::AiVoiceUsage
+                | Self::AiVoiceTool
+                | Self::AiVoiceEnd
+                | Self::AiVoiceClose
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
@@ -2876,6 +2976,10 @@ impl AgentVerb {
             self,
             Self::SelfInboxList
                 | Self::Describe
+                | Self::VaultRetrievalRuns
+                | Self::VaultRetrievalTurn
+                | Self::VaultRetrievalOutcomesPut
+                | Self::VaultRetrievalOutcomesEnd
                 | Self::VaultReceipts
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
@@ -3002,6 +3106,15 @@ impl AgentVerb {
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
                 | Self::VaultWitness
+                | Self::VaultRetrievalRecall
+                | Self::VaultRetrievalRuns
+                | Self::VaultRetrievalRun
+                | Self::VaultRetrievalTurn
+                | Self::VaultRetrievalOutcomesPut
+                | Self::VaultRetrievalOutcomesEnd
+                | Self::VaultRetrievalTrace
+                | Self::VaultRetrievalExport
+                | Self::VaultRetrievalReplay
                 | Self::VaultExport
                 | Self::VaultReceipts
                 | Self::VaultImagesView
@@ -3181,6 +3294,8 @@ impl AgentVerb {
                 | Self::VaultGatePolicyPropose
                 | Self::VaultGateCheckerGet
                 | Self::VaultGateCheckerSet
+                | Self::VaultLearningRead
+                | Self::VaultLearningProjection
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
@@ -3259,6 +3374,7 @@ impl AgentVerb {
                 | Self::VaultWorkflowsStatus
                 | Self::VaultTaskTypesPin
                 | Self::VaultTaskTypesGet
+                | Self::VaultAgentsSpawnGet
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultWorkspaceRoster
@@ -3326,6 +3442,14 @@ impl AgentVerb {
                 | Self::AiStepsReceipt
                 | Self::AiReply
                 | Self::VaultReceiptsContext
+                | Self::AiVoiceStart
+                | Self::AiVoiceAudio
+                | Self::AiVoiceEvents
+                | Self::AiVoiceAck
+                | Self::AiVoiceUsage
+                | Self::AiVoiceTool
+                | Self::AiVoiceEnd
+                | Self::AiVoiceClose
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
@@ -3535,6 +3659,8 @@ impl AgentVerb {
                 | Self::TasksAccept
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
+                | Self::VaultRetrievalOutcomesPut
+                | Self::VaultRetrievalOutcomesEnd
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
                 | Self::VaultCampaignProgramCreate
@@ -3739,6 +3865,12 @@ impl AgentVerb {
                 | Self::SelfSkillsFork
                 | Self::AiStepsSubmit
                 | Self::AiReply
+                | Self::AiVoiceStart
+                | Self::AiVoiceAudio
+                | Self::AiVoiceAck
+                | Self::AiVoiceTool
+                | Self::AiVoiceEnd
+                | Self::AiVoiceClose
                 | Self::AiImage
                 | Self::AiSpeech
                 | Self::VaultVoicesPacksPut
@@ -3939,6 +4071,15 @@ impl AgentVerb {
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
+            Self::VaultRetrievalRecall => &["spec"],
+            Self::VaultRetrievalRuns => &["spec"],
+            Self::VaultRetrievalRun => &["spec"],
+            Self::VaultRetrievalTurn => &["spec"],
+            Self::VaultRetrievalOutcomesPut => &["spec"],
+            Self::VaultRetrievalOutcomesEnd => &["spec"],
+            Self::VaultRetrievalTrace => &["spec"],
+            Self::VaultRetrievalExport => &["spec"],
+            Self::VaultRetrievalReplay => &["spec"],
             Self::VaultExport => &["spec"],
             Self::SelfCredentialAttenuate => &["spec"],
             Self::VaultScopeCeiling => &["spec"],
@@ -4121,6 +4262,8 @@ impl AgentVerb {
             Self::VaultGatePolicyPropose => &["spec"],
             Self::VaultGateCheckerGet => &["spec"],
             Self::VaultGateCheckerSet => &["spec"],
+            Self::VaultLearningRead => &["spec"],
+            Self::VaultLearningProjection => &["spec"],
             Self::VaultSettingsLearning => &["spec"],
             Self::VaultSettingsLearningPut => &["spec"],
             Self::VaultSettingsLearningClear => &["spec"],
@@ -4199,6 +4342,7 @@ impl AgentVerb {
             Self::VaultWorkflowsStatus => &["spec"],
             Self::VaultTaskTypesPin => &["spec"],
             Self::VaultTaskTypesGet => &["spec"],
+            Self::VaultAgentsSpawnGet => &["spec"],
             Self::VaultWorkspaceEstablish => &["spec"],
             Self::VaultWorkspaceMembersOnboard => &["spec"],
             Self::VaultWorkspaceRoster => &["spec"],
@@ -4266,6 +4410,14 @@ impl AgentVerb {
             Self::AiStepsReceipt => &["spec"],
             Self::AiReply => &["spec"],
             Self::VaultReceiptsContext => &["spec"],
+            Self::AiVoiceStart => &["spec"],
+            Self::AiVoiceAudio => &["spec"],
+            Self::AiVoiceEvents => &["spec"],
+            Self::AiVoiceAck => &["spec"],
+            Self::AiVoiceUsage => &["spec"],
+            Self::AiVoiceTool => &["spec"],
+            Self::AiVoiceEnd => &["spec"],
+            Self::AiVoiceClose => &["spec"],
             Self::AiOptions => &["spec"],
             Self::AiImage => &["spec"],
             Self::AiSpeech => &["spec"],
@@ -4515,6 +4667,15 @@ impl AgentVerb {
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
+            Self::VaultRetrievalRecall => &["spec"],
+            Self::VaultRetrievalRuns => &["spec"],
+            Self::VaultRetrievalRun => &["spec"],
+            Self::VaultRetrievalTurn => &["spec"],
+            Self::VaultRetrievalOutcomesPut => &["spec"],
+            Self::VaultRetrievalOutcomesEnd => &["spec"],
+            Self::VaultRetrievalTrace => &["spec"],
+            Self::VaultRetrievalExport => &["spec"],
+            Self::VaultRetrievalReplay => &["spec"],
             Self::VaultExport => &["spec"],
             Self::SelfCredentialAttenuate => &["spec"],
             Self::VaultScopeCeiling => &["spec"],
@@ -4697,6 +4858,8 @@ impl AgentVerb {
             Self::VaultGatePolicyPropose => &["spec"],
             Self::VaultGateCheckerGet => &["spec"],
             Self::VaultGateCheckerSet => &["spec"],
+            Self::VaultLearningRead => &["spec"],
+            Self::VaultLearningProjection => &["spec"],
             Self::VaultSettingsLearning => &["spec"],
             Self::VaultSettingsLearningPut => &["spec"],
             Self::VaultSettingsLearningClear => &["spec"],
@@ -4775,6 +4938,7 @@ impl AgentVerb {
             Self::VaultWorkflowsStatus => &["spec"],
             Self::VaultTaskTypesPin => &["spec"],
             Self::VaultTaskTypesGet => &["spec"],
+            Self::VaultAgentsSpawnGet => &["spec"],
             Self::VaultWorkspaceEstablish => &["spec"],
             Self::VaultWorkspaceMembersOnboard => &["spec"],
             Self::VaultWorkspaceRoster => &["spec"],
@@ -4842,6 +5006,14 @@ impl AgentVerb {
             Self::AiStepsReceipt => &["spec"],
             Self::AiReply => &["spec"],
             Self::VaultReceiptsContext => &["spec"],
+            Self::AiVoiceStart => &["spec"],
+            Self::AiVoiceAudio => &["spec"],
+            Self::AiVoiceEvents => &["spec"],
+            Self::AiVoiceAck => &["spec"],
+            Self::AiVoiceUsage => &["spec"],
+            Self::AiVoiceTool => &["spec"],
+            Self::AiVoiceEnd => &["spec"],
+            Self::AiVoiceClose => &["spec"],
             Self::AiOptions => &["spec"],
             Self::AiImage => &["spec"],
             Self::AiSpeech => &["spec"],
@@ -5175,6 +5347,33 @@ impl AgentVerb {
             }
             Self::VaultRecall => {
                 "Recalls a memory pack for a query at an effort level: ranked items with provenance, scope honesty and retrieval accounting."
+            }
+            Self::VaultRetrievalRecall => {
+                "Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle."
+            }
+            Self::VaultRetrievalRuns => {
+                "The owner reads finalized local retrieval runs and their independent outcome sidecars, newest first."
+            }
+            Self::VaultRetrievalRun => {
+                "The owner reads one finalized local serving run, its turn, policy state, trace and explicit outcomes; an unknown run reads as none."
+            }
+            Self::VaultRetrievalTurn => {
+                "The owner reads the independent finalized retrieval runs linked to one exact turn, in recorded order."
+            }
+            Self::VaultRetrievalOutcomesPut => {
+                "The owner attaches an explicit observation to one local serving run; raw reward stays telemetry, never a gated training label."
+            }
+            Self::VaultRetrievalOutcomesEnd => {
+                "The owner records a gate-attributed turn outcome for its exact contributing retrievalRunIds; the engine validates the links and shapes the reward."
+            }
+            Self::VaultRetrievalTrace => {
+                "The owner reads an opt-in trace by its vault-local keyed fork hash; hashes are never comparable across vaults."
+            }
+            Self::VaultRetrievalExport => {
+                "The owner exports finalized run evidence without query or pack text, raw frontier samples, trace keys or free-form outcome metadata."
+            }
+            Self::VaultRetrievalReplay => {
+                "The owner replays recorded state, ordered pack scores and trace from exact finalized runs; no fresh search, clock or outcome-derived feature is used."
             }
             Self::VaultExport => {
                 "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only."
@@ -5700,6 +5899,12 @@ impl AgentVerb {
             Self::VaultGateCheckerSet => {
                 "The owner sets the calibrated checker model, slot, confidence floor and shadow or enforce mode without changing other model bindings."
             }
+            Self::VaultLearningRead => {
+                "The owner reads a measured learning cell, its explicit prior, derived UNTESTED mark, projector heads and anchored evidence; borrowed provenance stays separate from own runs."
+            }
+            Self::VaultLearningProjection => {
+                "The owner observes the stored projection receipt for an anchored attempt outcome; an absent receipt means projection has not committed, never a successful empty projection."
+            }
             Self::VaultSettingsLearning => {
                 "The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type."
             }
@@ -5930,6 +6135,9 @@ impl AgentVerb {
             Self::VaultTaskTypesGet => {
                 "The owner reads the task-type tree in force, or one kept tree version, for the vault or a project."
             }
+            Self::VaultAgentsSpawnGet => {
+                "The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning."
+            }
             Self::VaultWorkspaceEstablish => {
                 "The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted."
             }
@@ -6116,6 +6324,30 @@ impl AgentVerb {
             }
             Self::VaultReceiptsContext => {
                 "Read the frozen context of one actual reply emit, as its actor or the live vault owner; never rebuild the assembly."
+            }
+            Self::AiVoiceStart => {
+                "Opens an owner-bound live media session on the configured voice routes, using the caller credential, room audience and existing budget gates."
+            }
+            Self::AiVoiceAudio => {
+                "Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech retires old output through the shared cancellation path."
+            }
+            Self::AiVoiceEvents => {
+                "Reads ordered utterance and epoch events, PCM, flushes, playout stops, safeguard receipts and notices; advancing the cursor releases consumed events."
+            }
+            Self::AiVoiceAck => {
+                "Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed."
+            }
+            Self::AiVoiceUsage => {
+                "Observes actual voice-brain run settlements and a terminal boundary after producer teardown, epoch retirement, TTS cancel and client playout acknowledgment."
+            }
+            Self::AiVoiceTool => {
+                "Calls a connector under the caller grant and carries its delivered result, marked foreign, into the next voice utterance for parallel sentence safeguards."
+            }
+            Self::AiVoiceEnd => {
+                "Ends live voice through the shared cancellation path; keeps the session available for final playout acknowledgment and usage observation."
+            }
+            Self::AiVoiceClose => {
+                "Ends and releases a live voice session and its retained events; read terminal usage and acknowledge playout before closing."
             }
             Self::AiOptions => {
                 "The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."

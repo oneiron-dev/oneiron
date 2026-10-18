@@ -369,6 +369,8 @@ export type MemoryPack = {
   rendered?: string
   /** The actor-scoped read receipt for candidates and rendered content. */
   narrowing: ReadReceipt
+  /** Finalized serving-run id bytes; absent when local capture is off. */
+  retrievalRunId?: number[]
 }
 
 /** One governance receipt: a gate decision, or a receipt of another family. */
@@ -948,6 +950,8 @@ class Oneiron:
         def claims(self) -> "Oneiron._VaultClaimsVerbs": ...
         def recall(self, query: str, *, effort: Effort = 'medium', scope: RecallScope | None = None, limit: int = 10, format: PackFormat | None = None, as_of: int | None = None, deadline_ms: int | None = None, media: RecallMedia | None = None, query_affect: QueryAffect | None = None) -> MemoryPack: ...
         @property
+        def retrieval(self) -> "Oneiron._VaultRetrievalVerbs": ...
+        @property
         def export(self) -> "Oneiron._VaultExportVerbs": ...
         @property
         def scope(self) -> "Oneiron._VaultScopeVerbs": ...
@@ -1009,6 +1013,8 @@ class Oneiron:
         def policy(self) -> "Oneiron._VaultPolicyVerbs": ...
         @property
         def gate(self) -> "Oneiron._VaultGateVerbs": ...
+        @property
+        def learning(self) -> "Oneiron._VaultLearningVerbs": ...
         @property
         def settings(self) -> "Oneiron._VaultSettingsVerbs": ...
         @property
@@ -1170,6 +1176,28 @@ class Oneiron:
             """Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt."""
         def supersede(self, spec: Facade.LiveRunRequest[Facade.MemorySupersedeInput]) -> Facade.MemoryWriteOutput:
             """Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override."""
+    class _VaultRetrievalVerbs:
+        def recall(self, spec: Facade.RecallRequest) -> Facade.MemoryPack:
+            """Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle."""
+        def runs(self, spec: Facade.RetrievalRunsRequest) -> list[Facade.RetrievalRunEvidence]:
+            """The owner reads finalized local retrieval runs and their independent outcome sidecars, newest first."""
+        def run(self, spec: Facade.RetrievalRunRequest) -> Facade.RetrievalRunEvidence | None:
+            """The owner reads one finalized local serving run, its turn, policy state, trace and explicit outcomes; an unknown run reads as none."""
+        def turn(self, spec: Facade.RetrievalTurnRequest) -> list[Facade.RetrievalRunEvidence]:
+            """The owner reads the independent finalized retrieval runs linked to one exact turn, in recorded order."""
+        @property
+        def outcomes(self) -> "Oneiron._VaultRetrievalOutcomesVerbs": ...
+        def trace(self, spec: Facade.RetrievalTraceRequest) -> Facade.RetrievalTrace | None:
+            """The owner reads an opt-in trace by its vault-local keyed fork hash; hashes are never comparable across vaults."""
+        def export(self, spec: Facade.RetrievalDiagnosticRequest) -> Facade.RetrievalDiagnosticExport:
+            """The owner exports finalized run evidence without query or pack text, raw frontier samples, trace keys or free-form outcome metadata."""
+        def replay(self, spec: Facade.RetrievalDiagnosticRequest) -> Facade.RetrievalDiagnosticReplay:
+            """The owner replays recorded state, ordered pack scores and trace from exact finalized runs; no fresh search, clock or outcome-derived feature is used."""
+    class _VaultRetrievalOutcomesVerbs:
+        def put(self, spec: Facade.RetrievalOutcome) -> list[Facade.RetrievalOutcomeRecord]:
+            """The owner attaches an explicit observation to one local serving run; raw reward stays telemetry, never a gated training label."""
+        def end(self, spec: Facade.RetrievalEndOutcome) -> list[Facade.RetrievalRunEvidence]:
+            """The owner records a gate-attributed turn outcome for its exact contributing retrievalRunIds; the engine validates the links and shapes the reward."""
     class _VaultExportVerbs:
         def __call__(self, format: PackFormat | None = None) -> dict[str, Any]: ...
         def scoped(self, spec: Facade.ScopedExportRequest) -> Facade.ScopedExport:
@@ -1653,6 +1681,11 @@ class Oneiron:
             """The owner reads the calibrated checker verdict role from the vault model manifest."""
         def set(self, spec: Facade.GateCheckerSet) -> Facade.GateCheckerReceipt:
             """The owner sets the calibrated checker model, slot, confidence floor and shadow or enforce mode without changing other model bindings."""
+    class _VaultLearningVerbs:
+        def read(self, spec: Facade.LearningReadRequest) -> Facade.LearningCellView:
+            """The owner reads a measured learning cell, its explicit prior, derived UNTESTED mark, projector heads and anchored evidence; borrowed provenance stays separate from own runs."""
+        def projection(self, spec: Facade.LearningProjectionRequest) -> Facade.LearningProjectionView:
+            """The owner observes the stored projection receipt for an anchored attempt outcome; an absent receipt means projection has not committed, never a successful empty projection."""
     class _VaultSettingsVerbs:
         @property
         def learning(self) -> "Oneiron._VaultSettingsLearningVerbs": ...
@@ -1872,7 +1905,12 @@ class Oneiron:
             """The owner reads one saved agent composition and its version and approval state."""
         def update(self, spec: Facade.AgentDefinitionUpdateRequest) -> Facade.AgentDefinitionView:
             """The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision."""
+        @property
+        def spawn(self) -> "Oneiron._VaultAgentsSpawnVerbs": ...
         def export_pack(self, request: Facade.AgentPackExportRequest) -> Facade.AgentPackExport: ...
+    class _VaultAgentsSpawnVerbs:
+        def get(self, spec: Facade.PlannedSpawnRead) -> Facade.PlannedSpawnObservation:
+            """The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning."""
     class _VaultWorkflowsVerbs:
         def save(self, spec: Facade.WorkflowSaveRequest) -> Facade.WorkflowView:
             """The owner saves an ordered composition of live AGENT_DEF steps at a new WORKFLOW id at revision 1; an occupied id is refused and no attempt is dispatched."""
@@ -2276,6 +2314,8 @@ class Oneiron:
         def steps(self) -> "Oneiron._AiStepsVerbs": ...
         def reply(self, spec: Facade.AiReplyRequest) -> Facade.AiReply:
             """Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs."""
+        @property
+        def voice(self) -> "Oneiron._AiVoiceVerbs": ...
         def options(self, spec: Facade.AiOptionsRequest) -> Facade.AiOptions:
             """The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."""
         def image(self, spec: Facade.AiCallRequest) -> Facade.AiAnswer:
@@ -2295,6 +2335,23 @@ class Oneiron:
             """Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result."""
         def receipt(self, spec: Facade.ModelStepReceiptRequest) -> Facade.ModelStepReceipt:
             """Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease."""
+    class _AiVoiceVerbs:
+        def start(self, spec: Facade.LiveVoiceStartRequest) -> Facade.LiveVoiceSession:
+            """Opens an owner-bound live media session on the configured voice routes, using the caller credential, room audience and existing budget gates."""
+        def audio(self, spec: Facade.LiveVoiceAudioRequest) -> Facade.LiveVoiceProcessed:
+            """Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech retires old output through the shared cancellation path."""
+        def events(self, spec: Facade.LiveVoiceEventsRequest) -> Facade.LiveVoiceEvents:
+            """Reads ordered utterance and epoch events, PCM, flushes, playout stops, safeguard receipts and notices; advancing the cursor releases consumed events."""
+        def ack(self, spec: Facade.LiveVoiceAckRequest) -> Facade.LiveVoiceProcessed:
+            """Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed."""
+        def usage(self, spec: Facade.LiveVoiceUsageRequest) -> Facade.LiveVoiceUsage:
+            """Observes actual voice-brain run settlements and a terminal boundary after producer teardown, epoch retirement, TTS cancel and client playout acknowledgment."""
+        def tool(self, spec: Facade.LiveVoiceToolRequest) -> Facade.LiveVoiceToolReply:
+            """Calls a connector under the caller grant and carries its delivered result, marked foreign, into the next voice utterance for parallel sentence safeguards."""
+        def end(self, spec: Facade.LiveVoiceSessionRequest) -> Facade.LiveVoiceProcessed:
+            """Ends live voice through the shared cancellation path; keeps the session available for final playout acknowledgment and usage observation."""
+        def close(self, spec: Facade.LiveVoiceSessionRequest) -> Facade.LiveVoiceProcessed:
+            """Ends and releases a live voice session and its retained events; read terminal usage and acknowledge playout before closing."""
     class _AiVideoVerbs:
         def __call__(self, spec: Facade.AiCallRequest) -> Facade.AiVideoTicket:
             """Starts a video render as a provider job and answers with its ticket."""

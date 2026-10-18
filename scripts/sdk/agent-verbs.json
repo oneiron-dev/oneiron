@@ -286,6 +286,7 @@
       "output": "crate::vault_shape::ShapeApplyReceipt",
       "call": "memory.shape_apply(&input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -829,7 +830,8 @@
           "remote": "    /// Recalls a memory pack.\n    ///\n    /// The lease the engine takes is not a client input, and a bearer slip\n    /// is not one. Embedded, `Effort::High`, `XHigh` and `Max` return the\n    /// engine's `LEASE_REQUIRED`: this client mints no lease. Remote, the\n    /// server admits them on a line of its own and reranks on its `[models]`\n    /// reranker, or runs them unreranked and says so when it has none.\n    /// `media` is embedded by the server into its declared space; embedded,\n    /// it returns `MODEL_UNAVAILABLE`. `query_affect` (valence in -1..=1,\n    /// arousal and dominance in 0..=1) ranks by emotion congruence, embedded\n    /// and remote alike; out of range it returns `BAD_REQUEST`.\n",
           "ts": "/**\n   * Recalls a memory pack.\n   *\n   * `effort: \"high\"`, `\"xhigh\"`, or `\"max\"` needs a lease this package never\n   * mints: an embedded client returns `LEASE_REQUIRED`; a remote one gets what\n   * the server serves (reranked on its `[models]` reranker, or unreranked and\n   * saying so). `effort: \"call\"` is call mode for live calls: light\n   * effort under a hard deadline (`deadlineMs`, or the vault's call-mode\n   * deadline), answering with the best results ready, marked `partial`.\n   * `media` (`{ space, mime, bytesB64, kinds? }`) is embedded by the server\n   * into its declared space; an embedded client returns `MODEL_UNAVAILABLE`.\n   * `queryAffect` (`{ valence, arousal, dominance }`: valence in -1..1,\n   * arousal and dominance in 0..1) ranks by emotion congruence, embedded and\n   * remote alike; out of range it returns `BAD_REQUEST`.\n   */",
           "py": "Recalls a memory pack.\n\n        ``effort=\"high\"`` needs a lease this package never mints: an embedded\n        client raises ``LEASE_REQUIRED``; a remote one gets what the server\n        serves (reranked on its ``[models]`` reranker, or unreranked and\n        saying so). ``effort=\"call\"`` is call mode for live calls:\n        light effort under a hard deadline (``deadline_ms``, or the vault's\n        call-mode deadline), answering with the best results ready, marked\n        ``partial``. ``format`` takes the engine's exact tokens:\n        ``\"json\"``, ``\"yaml\"``, ``\"toon\"``, ``\"md\"``, ``\"txt\"``.\n        ``media`` (``{\"space\", \"mime\", \"bytes_b64\", \"kinds\"}``) is embedded\n        by the server into its declared space; an embedded client raises\n        ``MODEL_UNAVAILABLE``. ``query_affect`` (``{\"valence\", \"arousal\",\n        \"dominance\"}``: valence in -1..1, arousal and dominance in 0..1)\n        ranks by emotion congruence, embedded and remote alike; out of range\n        it raises ``BAD_REQUEST``.\n        "
-        }
+        },
+        "defaults": true
       },
       "uniffi": {
         "args": {
@@ -846,6 +848,140 @@
         "output": "MemoryPack"
       },
       "mcp_scope": "filtered"
+    },
+    {
+      "name": "vault.retrieval.recall",
+      "description": "Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle.",
+      "input": "crate::task_verb::sdk::RecallRequest",
+      "output": "crate::memory::MemoryPack",
+      "call": "crate::task_verb::sdk::retrieval_recall_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.recall\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.retrieval.runs",
+      "description": "The owner reads finalized local retrieval runs and their independent outcome sidecars, newest first.",
+      "input": "crate::task_verb::sdk::RetrievalRunsRequest",
+      "output": "Vec<crate::task_verb::sdk::RetrievalRunEvidence>",
+      "call": "crate::task_verb::sdk::retrieval_runs_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.runs\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.retrieval.run",
+      "description": "The owner reads one finalized local serving run, its turn, policy state, trace and explicit outcomes; an unknown run reads as none.",
+      "input": "crate::task_verb::sdk::RetrievalRunRequest",
+      "output": "Option<crate::task_verb::sdk::RetrievalRunEvidence>",
+      "call": "crate::task_verb::sdk::retrieval_run_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.run\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.retrieval.turn",
+      "description": "The owner reads the independent finalized retrieval runs linked to one exact turn, in recorded order.",
+      "input": "crate::task_verb::sdk::RetrievalTurnRequest",
+      "output": "Vec<crate::task_verb::sdk::RetrievalRunEvidence>",
+      "call": "crate::task_verb::sdk::retrieval_turn_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.turn\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.retrieval.outcomes.put",
+      "description": "The owner attaches an explicit observation to one local serving run; raw reward stays telemetry, never a gated training label.",
+      "input": "crate::store::RetrievalOutcome",
+      "output": "Vec<crate::store::RetrievalOutcomeRecord>",
+      "call": "crate::task_verb::sdk::retrieval_outcomes_put_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.outcomes.put\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.retrieval.outcomes.end",
+      "description": "The owner records a gate-attributed turn outcome for its exact contributing retrievalRunIds; the engine validates the links and shapes the reward.",
+      "input": "crate::store::RetrievalEndOutcome",
+      "output": "Vec<crate::task_verb::sdk::RetrievalRunEvidence>",
+      "call": "crate::task_verb::sdk::retrieval_outcomes_end_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.outcomes.end\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.retrieval.trace",
+      "description": "The owner reads an opt-in trace by its vault-local keyed fork hash; hashes are never comparable across vaults.",
+      "input": "crate::task_verb::sdk::RetrievalTraceRequest",
+      "output": "Option<crate::store::RetrievalTrace>",
+      "call": "crate::task_verb::sdk::retrieval_trace_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.trace\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.retrieval.export",
+      "description": "The owner exports finalized run evidence without query or pack text, raw frontier samples, trace keys or free-form outcome metadata.",
+      "input": "crate::task_verb::sdk::RetrievalDiagnosticRequest",
+      "output": "crate::task_verb::sdk::RetrievalDiagnosticExport",
+      "call": "crate::task_verb::sdk::retrieval_export_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.export\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.retrieval.replay",
+      "description": "The owner replays recorded state, ordered pack scores and trace from exact finalized runs; no fresh search, clock or outcome-derived feature is used.",
+      "input": "crate::task_verb::sdk::RetrievalDiagnosticRequest",
+      "output": "crate::task_verb::sdk::RetrievalDiagnosticReplay",
+      "call": "crate::task_verb::sdk::retrieval_replay_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.replay\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.export",
@@ -3571,6 +3707,36 @@
       "openapi": true
     },
     {
+      "name": "vault.learning.read",
+      "description": "The owner reads a measured learning cell, its explicit prior, derived UNTESTED mark, projector heads and anchored evidence; borrowed provenance stays separate from own runs.",
+      "input": "crate::learning::doors::LearningReadRequest",
+      "output": "crate::learning::doors::LearningCellView",
+      "call": "crate::learning::doors::read_learning_as_owner(memory.vault(), &memory.embedded_owner(\"vault.learning.read\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.learning.projection",
+      "description": "The owner observes the stored projection receipt for an anchored attempt outcome; an absent receipt means projection has not committed, never a successful empty projection.",
+      "input": "crate::learning::doors::LearningProjectionRequest",
+      "output": "crate::learning::doors::LearningProjectionView",
+      "call": "crate::learning::doors::learning_projection_as_owner(memory.vault(), &memory.embedded_owner(\"vault.learning.projection\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.settings.learning",
       "description": "The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type.",
       "input": "crate::learning_setting_doors::LearningSettingsRequest",
@@ -4787,6 +4953,21 @@
       "input": "crate::team::doors::TaskTypeTreeRead",
       "output": "crate::team::doors::TaskTypeTreeReadReply",
       "call": "crate::team::doors::read_tree_as(memory.vault(), &memory.embedded_owner(\"vault.task_types.get\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.agents.spawn.get",
+      "description": "The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning.",
+      "input": "crate::team::doors::PlannedSpawnRead",
+      "output": "crate::team::doors::PlannedSpawnObservation",
+      "call": "crate::team::doors::observe_spawn_as(memory.vault(), &memory.embedded_owner(\"vault.agents.spawn.get\")?, input)?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
@@ -6088,6 +6269,118 @@
       "output": "Option<crate::receipt::ContextEmitReceipt>",
       "call": "memory.context_emit_receipt(&input.receipt_ref)?",
       "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "ai.voice.start",
+      "description": "Opens an owner-bound live media session on the configured voice routes, using the caller credential, room audience and existing budget gates.",
+      "input": "crate::task_verb::sdk::LiveVoiceStartRequest",
+      "output": "crate::task_verb::sdk::LiveVoiceSession",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.start\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "ai.voice.audio",
+      "description": "Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech retires old output through the shared cancellation path.",
+      "input": "crate::task_verb::sdk::LiveVoiceAudioRequest",
+      "output": "crate::task_verb::sdk::LiveVoiceProcessed",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.audio\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "ai.voice.events",
+      "description": "Reads ordered utterance and epoch events, PCM, flushes, playout stops, safeguard receipts and notices; advancing the cursor releases consumed events.",
+      "input": "crate::task_verb::sdk::LiveVoiceEventsRequest",
+      "output": "crate::task_verb::sdk::LiveVoiceEvents",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.events\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "ai.voice.ack",
+      "description": "Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed.",
+      "input": "crate::task_verb::sdk::LiveVoiceAckRequest",
+      "output": "crate::task_verb::sdk::LiveVoiceProcessed",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.ack\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "ai.voice.usage",
+      "description": "Observes actual voice-brain run settlements and a terminal boundary after producer teardown, epoch retirement, TTS cancel and client playout acknowledgment.",
+      "input": "crate::task_verb::sdk::LiveVoiceUsageRequest",
+      "output": "crate::task_verb::sdk::LiveVoiceUsage",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.usage\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "ai.voice.tool",
+      "description": "Calls a connector under the caller grant and carries its delivered result, marked foreign, into the next voice utterance for parallel sentence safeguards.",
+      "input": "crate::task_verb::sdk::LiveVoiceToolRequest",
+      "output": "crate::task_verb::sdk::LiveVoiceToolReply",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.tool\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door_caller": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "ai.voice.end",
+      "description": "Ends live voice through the shared cancellation path; keeps the session available for final playout acknowledgment and usage observation.",
+      "input": "crate::task_verb::sdk::LiveVoiceSessionRequest",
+      "output": "crate::task_verb::sdk::LiveVoiceProcessed",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.end\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "ai.voice.close",
+      "description": "Ends and releases a live voice session and its retained events; read terminal usage and acknowledge playout before closing.",
+      "input": "crate::task_verb::sdk::LiveVoiceSessionRequest",
+      "output": "crate::task_verb::sdk::LiveVoiceProcessed",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.close\", &input)?",
+      "host_door": true,
+      "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
       },

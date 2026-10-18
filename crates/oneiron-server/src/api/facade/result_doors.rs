@@ -2,9 +2,9 @@
 //! handle enforces locality; no run is resumed to recover a result body.
 use std::sync::Arc;
 
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::result_doors::*;
 use oneiron::memory::{Memory, MemoryResult};
-use oneiron::consent::AuthenticatedOwner;
 
 use super::FacadeApiError;
 use super::host_doors::{Listed, credential_listing, owner_proof};
@@ -38,9 +38,12 @@ pub(crate) async fn vault_results_status(
     auth: &CoreAuth,
     input: ResultRunRequest,
 ) -> Listed<ResultRunStatus> {
-    as_owner(server, auth, "vault.results.status", move |memory, owner| {
-        memory.result_status_as_owner(owner, input)
-    })
+    as_owner(
+        server,
+        auth,
+        "vault.results.status",
+        move |memory, owner| memory.result_status_as_owner(owner, input),
+    )
     .await
 }
 
@@ -49,9 +52,12 @@ pub(crate) async fn vault_results_recover(
     auth: &CoreAuth,
     input: ResultRunRequest,
 ) -> Listed<ResultRunStatus> {
-    as_owner(server, auth, "vault.results.recover", move |memory, owner| {
-        memory.result_status_as_owner(owner, input)
-    })
+    as_owner(
+        server,
+        auth,
+        "vault.results.recover",
+        move |memory, owner| memory.result_status_as_owner(owner, input),
+    )
     .await
 }
 

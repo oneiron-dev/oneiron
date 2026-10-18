@@ -500,6 +500,10 @@ pub struct RecallRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub query_affect: Option<QueryAffect>,
+    /// Local diagnostics only. Capture stays opt-in at vault configuration;
+    /// the request can add stage detail and the host's exact turn identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telemetry: Option<RecallTelemetry>,
 }
 
 /// A query's affect: valence in -1..=1, arousal and dominance in 0..=1.
@@ -553,12 +557,14 @@ pub use super::sdk_host::*;
 pub use super::sdk_hub::*;
 pub use super::sdk_legal_hold::*;
 pub use super::sdk_live_run::*;
+pub use super::sdk_live_voice::*;
 pub use super::sdk_mesh::*;
 pub use super::sdk_note_history::*;
 pub use super::sdk_off_record::*;
 pub use super::sdk_record_erase::*;
 pub use super::sdk_reply::*;
 pub use super::sdk_research::*;
+pub use super::sdk_retrieval::*;
 pub use super::sdk_residence::*;
 pub use super::sdk_scratchpad::*;
 pub use super::sdk_secret::*;
