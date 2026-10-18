@@ -786,6 +786,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.trusted_contacts.concern.propose",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::TrustedContactConcernRequest,
+                >(),
+            ),
+            (
+                "vault.trusted_contacts.concern.deliver",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::TrustedContactDeliverRequest,
+                >(),
+            ),
+            (
                 "vault.guests.revoke",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::GuestRevokeRequest,
@@ -3028,6 +3040,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.trusted_contacts.tier.set",
     "vault.trusted_contacts.concern.asks",
     "vault.trusted_contacts.concern.authorize",
+    "vault.trusted_contacts.concern.propose",
+    "vault.trusted_contacts.concern.deliver",
     "vault.support_grants.mint",
     "vault.support_grants.list",
     "vault.support_grants.revoke",
@@ -3312,6 +3326,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
                 crate::task_verb::sdk::TrustedContactAuthorization,
             >()
         }
+        "vault.trusted_contacts.concern.propose" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::TrustedContactConcernProposal,
+        >(),
+        "vault.trusted_contacts.concern.deliver" => crate::code_run::vault_read::request_schema::<
+            Option<crate::task_verb::sdk::TrustedContactDeliveryReceipt>,
+        >(),
         "vault.support_grants.mint" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::SupportGrantMintAnswer,
         >(),
@@ -4794,6 +4814,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.trusted_contacts.concern.authorize" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.trusted_contacts.concern.propose" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.trusted_contacts.concern.deliver" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -7846,6 +7880,14 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::task_verb::sdk::TrustedContactAuthorizeRequest =
                 decode(value.clone())?;
         }
+        "vault.trusted_contacts.concern.propose" => {
+            let _input: crate::task_verb::sdk::TrustedContactConcernRequest =
+                decode(value.clone())?;
+        }
+        "vault.trusted_contacts.concern.deliver" => {
+            let _input: crate::task_verb::sdk::TrustedContactDeliverRequest =
+                decode(value.clone())?;
+        }
         "vault.guests.revoke" => {
             let _input: crate::task_verb::sdk::GuestRevokeRequest = decode(value.clone())?;
         }
@@ -9416,6 +9458,14 @@ pub fn invoke(
         "vault.trusted_contacts.concern.authorize" => encode(
             vault_trusted_contacts_concern_authorize(memory, decode(value)?)?,
         ),
+        "vault.trusted_contacts.concern.propose" => encode(vault_trusted_contacts_concern_propose(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.trusted_contacts.concern.deliver" => encode(vault_trusted_contacts_concern_deliver(
+            memory,
+            decode(value)?,
+        )?),
         "vault.guests.revoke" => encode(vault_guests_revoke(memory, decode(value)?)?),
         "vault.guests.mint_slip" => encode(vault_guests_mint_slip(memory, decode(value)?)?),
         "vault.support_grants.mint" => encode(vault_support_grants_mint(memory, decode(value)?)?),
@@ -11521,6 +11571,27 @@ pub fn vault_trusted_contacts_concern_authorize(
         &memory.embedded_owner("vault.trusted_contacts.concern.authorize")?,
         input,
         &crate::policy_model::PolicyModelConfig::default(),
+    )
+}
+pub fn vault_trusted_contacts_concern_propose(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TrustedContactConcernRequest,
+) -> MemoryResult<crate::task_verb::sdk::TrustedContactConcernProposal> {
+    crate::task_verb::sdk::propose_trusted_contact_concern(
+        memory,
+        &memory.embedded_owner("vault.trusted_contacts.concern.propose")?,
+        input,
+        &crate::policy_model::PolicyModelConfig::default(),
+    )
+}
+pub fn vault_trusted_contacts_concern_deliver(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TrustedContactDeliverRequest,
+) -> MemoryResult<Option<crate::task_verb::sdk::TrustedContactDeliveryReceipt>> {
+    crate::task_verb::sdk::deliver_trusted_contact_notice(
+        memory,
+        input,
+        &mut crate::outbound::ServedChannelSink::new(memory.vault())?,
     )
 }
 pub fn vault_guests_revoke(
