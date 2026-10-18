@@ -44,7 +44,9 @@ use rmpv::Value;
 mod admission;
 mod attempt_sink;
 pub use admission::{CursorSpan, EvidenceKind, EvidenceRef, PromotionEvidenceReason};
-pub(crate) use admission::{evidence_ref_refusal_in_txn, public_evidence_refs, public_evidence_value};
+pub(crate) use admission::{
+    evidence_ref_refusal_in_txn, public_evidence_refs, public_evidence_value,
+};
 mod corrections;
 mod scoped;
 /// What the live policy lets the vault's Dreamer do (see
@@ -56,8 +58,8 @@ pub use scoped::promote_scoped_consolidation;
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::claim::{
-    CLAIM_SCOPE_EVIDENCE_TAINT_KEY, ClaimApprovalStatus, ClaimSource,
-    claim_evidence_taint, claim_source_widens_beyond,
+    CLAIM_SCOPE_EVIDENCE_TAINT_KEY, ClaimApprovalStatus, ClaimSource, claim_evidence_taint,
+    claim_source_widens_beyond,
 };
 use crate::dreamer_consolidation::evidence::VerifiedEvidenceSet;
 use crate::dreamer_consolidation::{
@@ -70,9 +72,9 @@ use crate::error::{Error, Result};
 use crate::llm::BoundedAutoChecker;
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
-use crate::write_envelope::{SourceLineage, WriteActor, WriteEnvelope, WriteProvenance};
 #[cfg(test)]
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION};
+use crate::write_envelope::{SourceLineage, WriteActor, WriteEnvelope, WriteProvenance};
 
 // PromotionCandidate is DEFINED by its producer (dreamer_consolidation,
 // ONE-1289 — orchestrator ruling); this module is its designed home for
@@ -206,10 +208,17 @@ fn promote_one(
     let public_refs = public_evidence_refs(candidate.candidate.evidence())
         .map_err(|error| format!("invalid document evidence: {error}"))?;
     let pinned_sources = {
-        let txn = vault.store.env.read_txn().map_err(|error| error.to_string())?;
-        public_refs.iter().map(|reference| {
-            crate::entity_doc::promotion_evidence_source_in_txn(vault, &txn, reference)
-        }).collect::<Result<Vec<_>>>()
+        let txn = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|error| error.to_string())?;
+        public_refs
+            .iter()
+            .map(|reference| {
+                crate::entity_doc::promotion_evidence_source_in_txn(vault, &txn, reference)
+            })
+            .collect::<Result<Vec<_>>>()
             .map_err(|error| format!("document evidence refused: {error}"))?
     };
     let default_facet = vault
@@ -230,7 +239,10 @@ fn promote_one(
     if verified.is_some_and(|evidence| evidence.refs() != surviving) {
         return Err("scoped evidence differs from verified parent refs".into());
     }
-    if pinned_sources.iter().any(|source| !surviving.contains(source)) {
+    if pinned_sources
+        .iter()
+        .any(|source| !surviving.contains(source))
+    {
         return Err("document citation has no admissible source ref".into());
     }
     if surviving.is_empty() {
@@ -382,8 +394,10 @@ fn promote_one(
         let Value::Map(fields) = &mut evidence_value else {
             return Err("promotion evidence is not a map".into());
         };
-        fields.push((Value::from("evidence_refs"), public_evidence_value(&public_refs)
-            .map_err(|error| error.to_string())?));
+        fields.push((
+            Value::from("evidence_refs"),
+            public_evidence_value(&public_refs).map_err(|error| error.to_string())?,
+        ));
     }
 
     // `ClaimCandidate` exposes no scope accessor, so the probe body is how
@@ -466,7 +480,10 @@ fn promote_one(
     };
     let finish_promotion = |wtxn: &mut heed::RwTxn<'_>| {
         crate::entity_doc::retain_promotion_evidence_in_txn(
-            vault, wtxn, &candidate.claim_id, &public_refs,
+            vault,
+            wtxn,
+            &candidate.claim_id,
+            &public_refs,
         )?;
         if let Some(fence) = fence {
             fence.validate_in_txn(vault, wtxn)?;
