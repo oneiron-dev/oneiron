@@ -11243,7 +11243,7 @@
      "path": "src/claim/scoped_read/served_forms.rs",
      "purpose": "The served-form receipts a read writes (OF-329): what it served of each asset, recorded under the holder it…",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -11263,13 +11263,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/claim/scoped_read/versions.rs",
      "purpose": "Explicit read frontiers keep the scoped lane's current and historic gates",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -23015,7 +23015,7 @@
       "crate-vis": 9,
       "enum": 3,
       "fn": 8,
-      "re-export": 6,
+      "re-export": 7,
       "struct": 4,
       "trait": 2
      }
@@ -23061,6 +23061,18 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "EmbeddingMatchEvidence"
+     ],
+     "path": "src/embed/evidence.rs",
+     "purpose": "Raw match evidence stays keyed by the space and input kind that produced it",
+     "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/embed/locality.rs",
      "purpose": "Provenance of a filled vector, written atomically with the fill",
@@ -23080,7 +23092,7 @@
      "path": "src/embed/media.rs",
      "purpose": "The media embedder adapter and the backfill that fills a declared media space from stored image and audio…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1,
       "struct": 2,
       "trait": 1
@@ -23109,7 +23121,7 @@
      "purpose": "Kind slots bound to declared embedding spaces (OF-370; ARCH-0019 `#kind-slots`, ARCH-0004 `#embedding-spaces`)",
      "surface": {
       "const": 4,
-      "crate-vis": 31,
+      "crate-vis": 32,
       "enum": 1,
       "fn": 16,
       "struct": 3
@@ -31803,6 +31815,22 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AssetIngestReceipt",
+      "AssetIngestRequest",
+      "AssetResolveRequest",
+      "AssetResolved"
+     ],
+     "path": "src/memory/asset_doors.rs",
+     "purpose": "Typed ASSET ingest and consumer-form reads (OF-370, OF-329)",
+     "surface": {
+      "fn": 2,
+      "struct": 4
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -31821,7 +31849,7 @@
      "purpose": "Generated images and the form each consumer reads (OF-328, OF-329)",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 9,
       "enum": 2,
       "fn": 14,
       "struct": 8
@@ -32989,7 +33017,7 @@
      "surface": {
       "crate-vis": 15,
       "mod": 20,
-      "re-export": 47
+      "re-export": 49
      }
     },
     {
@@ -33562,6 +33590,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "VectorSearchHit",
+      "VectorSearchRequest"
+     ],
+     "path": "src/memory/search_vector.rs",
+     "purpose": "Typed vector search in the caller's ordinary credential-bound lane",
+     "surface": {
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/memory/session_writes.rs",
      "purpose": "NOTE and claim writes through an off-record session's handle (DOOR-127; Engine ruling 10-18 on ARCH-0052…",
@@ -33651,7 +33693,7 @@
      "path": "src/memory/structural/mod.rs",
      "purpose": "Structural puts (habit checkins, imported-claim admission, blob artifacts) and `author_take`",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 2
      }
     },
@@ -40629,7 +40671,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 2,
-      "fn": 9,
+      "fn": 10,
       "struct": 1
      }
     },
@@ -52406,7 +52448,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 899
+      "fn": 902
      }
     },
     {
@@ -59010,7 +59052,7 @@
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts"
     },
     "embed": {
-     "files": 16,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -59297,7 +59339,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 199,
+     "files": 201,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59978,7 +60020,7 @@
    },
    "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3659,
+   "source_files": 3662,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68553,7 +68595,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 868
+      "fn": 871
      }
     },
     {
@@ -69616,7 +69658,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 869
+      "fn": 872
      }
     },
     {
@@ -81814,7 +81856,11 @@
       "AsrHypothesisRequest",
       "AsrOpenRequest",
       "AsrSession",
+      "AssetIngestReceipt",
+      "AssetIngestRequest",
       "AssetRef",
+      "AssetResolveRequest",
+      "AssetResolved",
       "AttemptCancelPressure",
       "AttemptCancelReceipt",
       "AttemptCancelReceiptKind",
@@ -82519,6 +82565,7 @@
       "DreamingModeInput",
       "EditNoteRequest",
       "EffectReceipt",
+      "EmbeddingMatchEvidence",
       "EmbeddingSpace",
       "EmbeddingSpaceBindRequest",
       "EmbeddingSpaceCandidateRequest",
@@ -83897,6 +83944,7 @@
       "ScopedExportRecord",
       "ScopedExportRequest",
       "ScopedReadReceipt",
+      "ScopedReadResultAssetResolved",
       "ScopedReadResultCalendarEventViewList",
       "ScopedReadResultCalendarFreebusyDto",
       "ScopedReadResultCalendarOccurrenceViewList",
@@ -83922,6 +83970,7 @@
       "ScopedReadResultOptionalSummaryReadView",
       "ScopedReadResultRecordRefPreview",
       "ScopedReadResultTemporalSearchResult",
+      "ScopedReadResultVectorSearchHitList",
       "ScoredEntityResolutionCandidate",
       "ScratchpadAppendRequest",
       "ScratchpadRecallMark",
@@ -83999,6 +84048,7 @@
       "SensitivityBand",
       "SensitivityCeiling",
       "SensitivityName",
+      "ServedAssetForm",
       "SetNoteOverridesRequest",
       "SettleVerb",
       "SettleVerdict",
@@ -84461,6 +84511,8 @@
       "UsedProvenanceEdge",
       "VadAnnotationSource",
       "VadBadge",
+      "VectorSearchHit",
+      "VectorSearchRequest",
       "VerdictBinding",
       "VerdictMode",
       "ViewInput",
@@ -84607,8 +84659,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 731,
-      "struct": 2230
+      "enum": 732,
+      "struct": 2239
      }
     },
     {
