@@ -132,6 +132,10 @@ side_tables! {
     /// One bound autoresearch campaign: its ruler, goal pin, policy digest, cohort and budget
     /// share, written once. Key: id16 (root attempt).
     AUTORESEARCH_BINDING: VaultMeta b"autoresearch:binding:v1:" Named;
+    /// One autoresearch host continuation (FIX 886): the bootstrap measure or one selection
+    /// round's work, its pending tasks, the run in flight with its reservation, and the runs it
+    /// dispatched. Key: id16 (root attempt) + u64be (0 bootstrap, n + 1 round n).
+    AUTORESEARCH_CONTINUATION: VaultMeta b"autoresearch:continuation:v1:" Named;
     /// One held-out selection benchmark of an autoresearch parent-selection estimator version
     /// against the DGM formula, recorded once. Key: string (estimator version).
     AUTORESEARCH_ESTIMATOR: VaultMeta b"autoresearch:estimator:v1:" Named;

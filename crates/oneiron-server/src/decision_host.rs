@@ -54,8 +54,8 @@ use oneiron::{
 };
 
 use crate::config::models::{
-    BigSettings, BookingParseSettings, ConnectorSlateSettings, ImagePickSettings, ModelsConfig,
-    SeatPickSettings, SystemOneSettings,
+    BigSettings, BookingParseSettings, ConnectorSlateSettings, ImagePickSettings,
+    ImportAudienceSettings, ModelsConfig, SeatPickSettings, SystemOneSettings,
 };
 use crate::models::DecisionReadDoor;
 use crate::server::SyncServer;
@@ -153,6 +153,7 @@ pub struct DecisionHost {
     image_pick: Option<ImagePickSettings>,
     booking_parse: Option<BookingParseSettings>,
     connector_slate: Option<ConnectorSlateSettings>,
+    import_audience: Option<ImportAudienceSettings>,
     /// The owner's explicit opt-in to send unit text off the host,
     /// `[models.decisions.system_one].remote_opt_in`.
     remote_opt_in: bool,
@@ -191,6 +192,7 @@ impl DecisionHost {
             image_pick: None,
             booking_parse: None,
             connector_slate: None,
+            import_audience: None,
             remote_opt_in: false,
             big_model: None,
             verdict_spend: Arc::default(),
@@ -466,6 +468,19 @@ impl DecisionHost {
     #[must_use]
     pub fn connector_slate(&self) -> Option<&ConnectorSlateSettings> {
         self.connector_slate.as_ref()
+    }
+
+    /// The import audience questions' wording and budget (OF-492).
+    fn with_import_audience(mut self, settings: Option<&ImportAudienceSettings>) -> Self {
+        self.import_audience = settings.cloned();
+        self
+    }
+
+    /// The two questions `[models.decisions.import_audience]` words for an
+    /// imported topic; `None` asks nothing, and every import stays private.
+    #[must_use]
+    pub fn import_audience(&self) -> Option<&ImportAudienceSettings> {
+        self.import_audience.as_ref()
     }
 
     /// The seat `[models.decisions.booking_parse]` names for a booking's
@@ -951,7 +966,8 @@ impl SyncServer {
             .with_auto_check(models.decisions.auto_check.as_deref(), principal)
             .with_image_pick(models.decisions.image_pick.as_ref())
             .with_booking_parse(models.decisions.booking_parse.clone())
-            .with_connector_slate(models.decisions.connector_slate.as_ref());
+            .with_connector_slate(models.decisions.connector_slate.as_ref())
+            .with_import_audience(models.decisions.import_audience.as_ref());
         self
     }
 
