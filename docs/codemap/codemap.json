@@ -41617,7 +41617,7 @@
      "path": "src/runtime_hooks/replay.rs",
      "purpose": "`hooks.replay` (ARCH-0080 §6): runs a hook's body over past entries and shows each outcome beside the one…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 3,
       "fn": 2,
       "struct": 1
@@ -45171,7 +45171,7 @@
      "purpose": "Connector packs use the engine's real wire probes, never a publisher's grade",
      "surface": {
       "crate-vis": 2,
-      "fn": 2,
+      "fn": 3,
       "struct": 7
      }
     },
@@ -45751,7 +45751,7 @@
      "path": "src/skill_optimize/eval_set/authoring/apply.rs",
      "purpose": "The plan the eval-authoring skill answers with, checked whole against its inventory and applied in order…",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 8
      }
     },
@@ -45801,7 +45801,7 @@
      "path": "src/skill_optimize/eval_set/cut_audit.rs",
      "purpose": "The near-copy audit every cohort cut commits with (ARCH-0053: \"At each cut, a near-copy audit runs across…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 1,
       "struct": 7
@@ -51487,7 +51487,7 @@
      "path": "src/task_verb/sdk_eval_cohort.rs",
      "purpose": "Owner setup of sealed cohorts through the eval-authoring mechanism",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -51592,7 +51592,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 752
+      "fn": 753
      }
     },
     {
@@ -51687,7 +51687,7 @@
      "purpose": "Typed owner doors over configured hubs, foreign publishers and pinned imports",
      "surface": {
       "enum": 2,
-      "fn": 17,
+      "fn": 18,
       "struct": 20
      }
     },
@@ -51934,9 +51934,12 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "ResidenceActView",
+      "ResidenceDirectiveView",
+      "ResidenceDirectivesRequest",
       "ResidenceIndex",
       "ResidenceIndexAnswer",
       "ResidenceIndexEntry",
@@ -51952,14 +51955,16 @@
       "ResidencePruneAnswer",
       "ResidencePruneRequest",
       "ResidencePruned",
-      "ResidenceQueued"
+      "ResidenceQueued",
+      "ResidenceResultStatusName",
+      "ResidenceResultView"
      ],
      "path": "src/task_verb/sdk_residence.rs",
      "purpose": "The owner's residence controls (OF-534, FIX 531): a machine's residence mode, opening one item there, its…",
      "surface": {
-      "enum": 5,
-      "fn": 2,
-      "struct": 11
+      "enum": 7,
+      "fn": 5,
+      "struct": 14
      }
     },
     {
@@ -67520,7 +67525,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 716
+      "fn": 717
      }
     },
     {
@@ -68569,7 +68574,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 717
+      "fn": 718
      }
     },
     {
@@ -70702,7 +70707,7 @@
      "path": "src/api/booking/page_token.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -72116,13 +72121,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/residence_doors.rs",
      "purpose": "The host doors of the owner's residence rows (OF-534, FIX 531): `vault.residence.mode`, `.open`, `.index`…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -82066,6 +82071,9 @@
       "ResearchTarget",
       "ResearchWeaveWire",
       "ResearchWorkWire",
+      "ResidenceActView",
+      "ResidenceDirectiveView",
+      "ResidenceDirectivesRequest",
       "ResidenceIndex",
       "ResidenceIndexAnswer",
       "ResidenceIndexEntry",
@@ -82082,6 +82090,8 @@
       "ResidencePruneRequest",
       "ResidencePruned",
       "ResidenceQueued",
+      "ResidenceResultStatusName",
+      "ResidenceResultView",
       "ResolveRecordRefRequest",
       "ResolvedRole",
       "ResolvedTeam",
@@ -82865,8 +82875,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 637,
-      "struct": 1890
+      "enum": 639,
+      "struct": 1893
      }
     },
     {
