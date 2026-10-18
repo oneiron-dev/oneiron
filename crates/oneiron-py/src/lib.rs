@@ -300,6 +300,20 @@ impl NativeClient {
     }
 
     // BEGIN GENERATED AGENT VERBS
+    fn fetch(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "fetch")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("fetch", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn crawl(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "crawl")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("crawl", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn report(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "report")?;
         let output = py

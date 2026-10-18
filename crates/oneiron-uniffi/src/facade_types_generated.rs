@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 791 facade rows, 2719 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 747.
+// UniFFI census: 793 facade rows, 2727 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 749.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -13,6 +13,97 @@
     clippy::upper_case_acronyms,
     reason = "each type mirrors one engine type, its names and its variants"
 )]
+
+/// `oneiron::web_fetch::door::WebFetchRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WebFetchRequest {
+    #[serde(rename = "url")]
+    pub url: String,
+}
+
+/// `oneiron::web_fetch::RendererKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RendererKind {
+    #[serde(rename = "readability")]
+    Readability,
+    #[serde(rename = "headless")]
+    Headless,
+    #[serde(rename = "firecrawl")]
+    Firecrawl,
+}
+
+/// `oneiron::web_fetch::FetchResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FetchResult {
+    #[serde(rename = "markdown")]
+    pub markdown: String,
+    #[serde(rename = "title")]
+    pub title: String,
+    #[serde(rename = "canonical_url")]
+    pub canonical_url: String,
+    #[serde(rename = "fetched_at")]
+    pub fetched_at: u64,
+    #[serde(rename = "content_hash")]
+    pub content_hash: String,
+    #[serde(rename = "renderer")]
+    pub renderer: RendererKind,
+}
+
+/// `oneiron::web_fetch::CrawlScope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CrawlScope {
+    #[serde(rename = "same_site")]
+    SameSite,
+    #[serde(rename = "cross_site")]
+    CrossSite,
+}
+
+/// `oneiron::web_fetch::door::WebCrawlRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WebCrawlRequest {
+    #[serde(rename = "seed_url")]
+    pub seed_url: String,
+    #[serde(rename = "page_budget")]
+    pub page_budget: u64,
+    #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<CrawlScope>,
+}
+
+/// `oneiron::web_fetch::CrawlPageFailure`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CrawlPageFailure {
+    #[serde(rename = "url")]
+    pub url: String,
+    #[serde(rename = "reason")]
+    pub reason: String,
+}
+
+/// `oneiron::web_fetch::CrawlCompletion`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "status")]
+pub enum CrawlCompletion {
+    #[serde(rename = "complete")]
+    Complete,
+    #[serde(rename = "budget_exhausted")]
+    BudgetExhausted {
+        #[serde(rename = "unvisited_urls")]
+        unvisited_urls: Vec<String>,
+    },
+}
+
+/// `oneiron::web_fetch::CrawlResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CrawlResult {
+    #[serde(rename = "pages")]
+    pub pages: Vec<FetchResult>,
+    #[serde(rename = "failed")]
+    pub failed: Vec<CrawlPageFailure>,
+    #[serde(rename = "completion")]
+    pub completion: CrawlCompletion,
+}
 
 /// `oneiron::edit_distance::publisher::vocab::IssueCategory`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
