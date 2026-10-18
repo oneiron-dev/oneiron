@@ -1,0 +1,934 @@
+{
+  "version": 1,
+  "area": "retrieval",
+  "oracle": "Author-authored content and canon invariants. Symbolic labels bind to public write receipts, never fabricated engine ids. Unavailable public wire DTOs are not invented.",
+  "sourcePins": [
+    {
+      "path": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/retrieval/oneiron-arch-0004-retrieval-graph.md",
+      "sha256": "b214b7c1dd31851c0feae51a9c79a3e913ff7aab3f7ddd5021f46b36be7ae740"
+    },
+    {
+      "path": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/core/oneiron-arch-0003-semantic-memory.md",
+      "sha256": "195a3a6bae7a44dd6ab6b1353268513176531abcee5b47ceaed5fb8664c588ed"
+    },
+    {
+      "path": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/core/oneiron-arch-0019-oneiron-db-v1.md",
+      "sha256": "99a775e2b95d0e7fcf1c5f7bd138882a4c0b7920239ce020e26382e718544483"
+    },
+    {
+      "path": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1.md",
+      "sha256": "6b960493c722c1182a81a5c168d63a9be3d8a669559addf3a749f556c4628050"
+    },
+    {
+      "path": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/sync/oneiron-arch-0043-federation-membership-v1.md",
+      "sha256": "9a9f83242578b5e90c6faf5cec009ef1c9e6d0b1633e3e4c92476a2f170433e7"
+    },
+    {
+      "path": "/Users/olety/Desktop/temp/vibe-build-20261017/e2e-rulings.md",
+      "sha256": "e1e02bfb1592280b869b9963bf6c8d5c8a9880d018438dbbdae27bcda87d90df"
+    }
+  ],
+  "registryPin": {
+    "path": "/Users/olety/Desktop/code/oneiron-docs/registry/oneiron.json",
+    "sha256": "8f56eb0c82be8475001e0127735558a0c6aa5721017138f9d68b951f87b19be7",
+    "rows": [
+      "OF-029",
+      "OF-032",
+      "OF-064",
+      "OF-065",
+      "OF-081",
+      "OF-083",
+      "OF-084",
+      "OF-085",
+      "OF-086",
+      "OF-087",
+      "OF-088",
+      "OF-089",
+      "OF-090",
+      "OF-094",
+      "OF-095",
+      "OF-097",
+      "OF-098",
+      "OF-099",
+      "OF-100",
+      "OF-101",
+      "OF-102",
+      "OF-103",
+      "OF-104",
+      "OF-109",
+      "OF-110",
+      "OF-111",
+      "OF-228",
+      "OF-423",
+      "OF-447",
+      "OF-563"
+    ]
+  },
+  "publicBinding": {
+    "worktreeHead": "ea42ef0c7fb931624cdc2b3645c0320d0efaae6b",
+    "originMainObserved": "6f2446660ef09f823131d6faaa7e586a75df0b72",
+    "note": "Relevant generated SDK, API, CLI, recall and endpoint files have no diff between these refs. Runtime schema is diagnostic only."
+  },
+  "assumptionsAndConstants": {
+    "engineDefaultsChanged": false,
+    "slots": 1,
+    "flowBudgetMs": 30000,
+    "noPrivateClock": true,
+    "noMutationRetries": true,
+    "noModelDownloads": true,
+    "fixturesUseGeometricVectorsNotIntelligence": true,
+    "noWeibullOrSpeedRequirement": true
+  },
+  "scenarios": [
+    {
+      "id": "RETRIEVAL-01",
+      "name": "Five-channel recall and stable rank should work",
+      "surface": "HTTP",
+      "setup": "Pinned fixture vectors, terms, edges and times with public inserts.",
+      "steps": [
+        "recall repeated fixed query",
+        "request trace",
+        "check hand-labeled relevant candidates and ordering constraints"
+      ],
+      "expect": "Each enabled channel contributes evidence to one deterministic rank; no expected scores are copied from implementation formulas.",
+      "source": [
+        "/oneiron/retrieval/oneiron-arch-0004-retrieval-graph/#rrf-pipeline",
+        "/registry/oneiron/#OF-081",
+        "/registry/oneiron/#OF-094",
+        "/registry/oneiron/#OF-098",
+        "/registry/oneiron/#OF-100",
+        "/registry/oneiron/#OF-102"
+      ],
+      "rows": [
+        "OF-081",
+        "OF-094",
+        "OF-098",
+        "OF-100",
+        "OF-102"
+      ],
+      "inputs": {
+        "query": "Mira lantern calibration",
+        "queryVector": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "anchorUtc": "2026-08-01T00:00:00Z",
+        "seedLabels": [
+          "calibration-seed"
+        ],
+        "corpus": [
+          {
+            "label": "all-evidence",
+            "text": "Mira lantern calibration checklist",
+            "name": "Mira",
+            "vector": [
+              1,
+              0,
+              0,
+              0
+            ],
+            "occurredUtc": "2026-08-01T00:00:00Z"
+          },
+          {
+            "label": "lexical",
+            "text": "Mira lantern calibration guide",
+            "vector": [
+              0,
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "label": "vector",
+            "text": "The beacon adjustment procedure",
+            "vector": [
+              1,
+              0,
+              0,
+              0
+            ]
+          },
+          {
+            "label": "graph",
+            "text": "The reserve lens is in the cabinet",
+            "vector": [
+              0,
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "label": "temporal",
+            "text": "That evening the roof hatch opened",
+            "occurredUtc": "2026-08-01T00:00:00Z",
+            "vector": [
+              0,
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "label": "phonetic",
+            "name": "Meera",
+            "text": "The visitor signed the guest register",
+            "vector": [
+              0,
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "label": "unrelated",
+            "text": "A receipt for garden twine",
+            "vector": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "occurredUtc": "2025-01-01T00:00:00Z"
+          }
+        ],
+        "edges": [
+          {
+            "from": "calibration-seed",
+            "kind": "about",
+            "to": "graph"
+          },
+          {
+            "from": "calibration-seed",
+            "kind": "about",
+            "to": "all-evidence"
+          }
+        ],
+        "expected": {
+          "relevantLabels": [
+            "all-evidence",
+            "lexical",
+            "vector",
+            "graph",
+            "temporal",
+            "phonetic"
+          ],
+          "before": [
+            [
+              "all-evidence",
+              "unrelated"
+            ]
+          ],
+          "repeatOrderStable": true,
+          "traceSignals": [
+            "vector",
+            "text",
+            "ppr",
+            "temporal",
+            "phonetic"
+          ],
+          "numericExpectedScores": false
+        }
+      },
+      "status": "todo",
+      "waitsOn": "typed five-channel query inputs for phonetic codes/PPR seeds and fixed-rank trace replay"
+    },
+    {
+      "id": "RETRIEVAL-02",
+      "name": "Multilingual lexical retrieval should work",
+      "surface": "HTTP",
+      "setup": "English morphology, Japanese, Chinese and cross-script name fixtures.",
+      "steps": [
+        "witness texts",
+        "search exact and morphological queries",
+        "query misheard name",
+        "inspect citations"
+      ],
+      "expect": "Per-script lexical processing and phonetic retrieval find independently labeled matches without losing original text.",
+      "source": [
+        "/oneiron/retrieval/oneiron-arch-0004-retrieval-graph/#rrf-pipeline",
+        "/registry/oneiron/#OF-097",
+        "/registry/oneiron/#OF-098",
+        "/registry/oneiron/#OF-100",
+        "/registry/oneiron/#OF-101"
+      ],
+      "rows": [
+        "OF-097",
+        "OF-098",
+        "OF-100",
+        "OF-101"
+      ],
+      "inputs": {
+        "texts": [
+          {
+            "label": "english",
+            "text": "The astronomer was running toward the observatory.",
+            "queries": [
+              "running",
+              "runs"
+            ]
+          },
+          {
+            "label": "japanese",
+            "text": "図書館で日本語の本を読みました。",
+            "queries": [
+              "図書館",
+              "日本語"
+            ]
+          },
+          {
+            "label": "chinese",
+            "text": "我在图书馆阅读天文学资料。",
+            "queries": [
+              "图书馆",
+              "天文学"
+            ]
+          },
+          {
+            "label": "distractor",
+            "text": "A purple ribbon is folded inside a cardboard box.",
+            "queries": []
+          }
+        ],
+        "names": [
+          {
+            "label": "cross-script",
+            "name": "クオモ",
+            "queries": [
+              "Cuomo"
+            ]
+          },
+          {
+            "label": "misheard",
+            "name": "Robert",
+            "queries": [
+              "Rupert"
+            ]
+          }
+        ],
+        "expected": {
+          "originalTextUnchanged": true,
+          "nameEvidenceNotLexicalCoincidence": true,
+          "citationsResolveOriginal": true
+        }
+      },
+      "status": "todo",
+      "waitsOn": "typed HTTP/SDK phonetic query input for cross-script and misheard names"
+    },
+    {
+      "id": "RETRIEVAL-03",
+      "name": "Bitemporal widening should work",
+      "surface": "HTTP",
+      "setup": "Sparse memories around independently fixed occurrence and learning dates.",
+      "steps": [
+        "recall narrow time window",
+        "allow widening",
+        "compare answers for occurred versus learned anchor"
+      ],
+      "expect": "Sparse query can widen within its declared bound; returned timing corresponds to requested axis, not ingestion order.",
+      "source": [
+        "/oneiron/retrieval/oneiron-arch-0004-retrieval-graph/#rrf-pipeline",
+        "/registry/oneiron/#OF-081"
+      ],
+      "rows": [
+        "OF-081"
+      ],
+      "inputs": {
+        "ingestionOrder": [
+          "late-event",
+          "early-event",
+          "nearby-event"
+        ],
+        "corpus": [
+          {
+            "label": "late-event",
+            "occurredUtc": "2026-08-20T00:00:00Z",
+            "learnedUtc": "2026-08-02T00:00:00Z"
+          },
+          {
+            "label": "early-event",
+            "occurredUtc": "2026-08-02T00:00:00Z",
+            "learnedUtc": "2026-08-20T00:00:00Z"
+          },
+          {
+            "label": "nearby-event",
+            "occurredUtc": "2026-08-04T00:00:00Z",
+            "learnedUtc": "2026-08-22T00:00:00Z"
+          }
+        ],
+        "narrowUtc": [
+          "2026-08-01T23:00:00Z",
+          "2026-08-02T01:00:00Z"
+        ],
+        "wideningOuterUtc": [
+          "2026-08-01T00:00:00Z",
+          "2026-08-06T00:00:00Z"
+        ],
+        "expected": {
+          "occurredMatch": "early-event",
+          "learnedMatch": "late-event",
+          "widenedOccurredMatch": "nearby-event",
+          "maximumAdaptiveRounds": 3,
+          "outsideBoundNotReturned": true
+        }
+      },
+      "status": "todo",
+      "waitsOn": "typed bitemporal anchor, sigma and adaptive-widening controls/results"
+    },
+    {
+      "id": "RETRIEVAL-04",
+      "name": "Read clamp across every public read door should work",
+      "surface": "HTTP + MCP",
+      "setup": "Private endpoint connected by graph to readable node, proposed/stale/deleted claims.",
+      "steps": [
+        "request broad recall, hydrate, query, batch and edge expansion",
+        "inspect scope receipt"
+      ],
+      "expect": "Only eligible live claims and both-readable endpoints return; requested filters only narrow and every narrowed ScopedRead explains itself.",
+      "source": [
+        "/oneiron/retrieval/oneiron-arch-0004-retrieval-graph/#access",
+        "/oneiron/sync/oneiron-arch-0043-federation-membership-v1/#guest-grants",
+        "/registry/oneiron/#OF-064",
+        "/registry/oneiron/#OF-065",
+        "/registry/oneiron/#OF-086",
+        "/registry/oneiron/#OF-111"
+      ],
+      "rows": [
+        "OF-064",
+        "OF-065",
+        "OF-086",
+        "OF-111"
+      ],
+      "inputs": {
+        "rows": [
+          {
+            "label": "readable",
+            "approval": "approved",
+            "lifecycle": "active",
+            "stale": false,
+            "access": "reader"
+          },
+          {
+            "label": "private",
+            "approval": "approved",
+            "lifecycle": "active",
+            "stale": false,
+            "access": "owner-only"
+          },
+          {
+            "label": "proposed",
+            "approval": "proposed",
+            "lifecycle": "active",
+            "stale": false,
+            "access": "reader"
+          },
+          {
+            "label": "stale",
+            "approval": "approved",
+            "lifecycle": "active",
+            "stale": true,
+            "access": "reader"
+          },
+          {
+            "label": "deleted",
+            "approval": "approved",
+            "lifecycle": "active",
+            "stale": false,
+            "access": "erased"
+          },
+          {
+            "label": "superseded",
+            "approval": "approved",
+            "lifecycle": "superseded",
+            "stale": false,
+            "access": "reader"
+          }
+        ],
+        "edges": [
+          {
+            "from": "readable",
+            "kind": "about",
+            "to": "private"
+          }
+        ],
+        "doors": [
+          "vault.recall",
+          "vault.hydrate",
+          "vault.get",
+          "vault.search.bm25",
+          "vault.neighbors",
+          "POST /v1/core/query",
+          "POST /v1/core/context-pack",
+          "POST /v1/core/hydrate",
+          "POST /v1/core/batch/shortId/hydrate",
+          "GET /api/search/text",
+          "GET /api/search/vector",
+          "GET /api/entity/{id}",
+          "GET /api/edges/{id}",
+          "MCP tool-first equivalents"
+        ],
+        "expected": {
+          "eligibleLabels": [
+            "readable"
+          ],
+          "bothEndpointsReadable": true,
+          "neverWidens": true,
+          "everyNarrowingExplained": true,
+          "unreadableNamesAndCountsAbsent": true
+        }
+      },
+      "status": "todo",
+      "waitsOn": "typed stale-claim fixture producer and caller read-filter controls across read doors"
+    },
+    {
+      "id": "RETRIEVAL-05",
+      "name": "Retrieval effort and deadline should work",
+      "surface": "HTTP",
+      "setup": "All five effort values, optional reranker fake and delayed expansion response.",
+      "steps": [
+        "recall each level",
+        "record calls and receipts",
+        "make anytime/deadline request",
+        "release late response"
+      ],
+      "expect": "Light/medium need no model lease; high tiers use only configured paid stages; deadline returns best admitted pack and no late mutation of delivered result.",
+      "source": [
+        "/oneiron/retrieval/oneiron-arch-0004-retrieval-graph/#effort",
+        "/registry/oneiron/#OF-084",
+        "/registry/oneiron/#OF-109",
+        "/registry/oneiron/#OF-228"
+      ],
+      "rows": [
+        "OF-084",
+        "OF-109",
+        "OF-228"
+      ],
+      "inputs": {
+        "efforts": [
+          "light",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "deadlineMs": 300,
+        "providerBarrier": "expansion-response-held",
+        "lateAnswer": "The model suggests an unrelated garden query.",
+        "expected": {
+          "lightMediumModelLeases": 0,
+          "paidStagesOnlyWhenConfigured": true,
+          "noRerankerReason": "no_reranker",
+          "deadlinePartial": true,
+          "deliveredBytesNeverChange": true,
+          "lateResponseCannotInventEvidence": true
+        }
+      },
+      "status": "todo",
+      "waitsOn": "typed host HyDE/expansion configuration with a public completion receipt"
+    },
+    {
+      "id": "RETRIEVAL-06",
+      "name": "Evidence abstention not invented recall should work",
+      "surface": "HTTP",
+      "setup": "Unrelated text, weak fixture vectors and a separate strong near-tie pair.",
+      "steps": [
+        "query weak/no-keyword case",
+        "query anomalous input",
+        "query strong pair",
+        "read stored records"
+      ],
+      "expect": "Weak/anomalous evidence gives explicit abstention, strong near ties are not rejected merely for close scores, and reads change no facts.",
+      "source": [
+        "/oneiron/retrieval/oneiron-arch-0004-retrieval-graph/#rrf-pipeline",
+        "/oneiron/retrieval/oneiron-arch-0004-retrieval-graph/#pre-assembly",
+        "/registry/oneiron/#OF-085",
+        "/registry/oneiron/#OF-104",
+        "/registry/oneiron/#OF-090"
+      ],
+      "rows": [
+        "OF-085",
+        "OF-104",
+        "OF-090"
+      ],
+      "inputs": {
+        "fixtureId": "retrieval-evidence",
+        "expected": {
+          "storedSource": "user_stated",
+          "storedApproval": "auto",
+          "storedLifecycle": "active",
+          "storedStale": false,
+          "noKeywordMatches": true,
+          "noGenerator": true,
+          "noFactWritesOnRead": true
+        }
+      },
+      "status": "executable",
+      "waitsOn": null
+    },
+    {
+      "id": "RETRIEVAL-07",
+      "name": "Freshness does not rewrite confidence should work",
+      "surface": "HTTP",
+      "setup": "Old and new facts with same explicit confidence and different temporal classes.",
+      "steps": [
+        "recall at supported time anchors",
+        "supersede one",
+        "inspect original bodies and rank"
+      ],
+      "expect": "Access and temporal freshness may change retrievability, not stored truth confidence; superseded facts are historical only.",
+      "source": [
+        "/oneiron/core/oneiron-arch-0003-semantic-memory/#claim-type",
+        "/oneiron/retrieval/oneiron-arch-0004-retrieval-graph/#rrf-pipeline",
+        "/registry/oneiron/#OF-095",
+        "/registry/oneiron/#OF-099"
+      ],
+      "rows": [
+        "OF-095",
+        "OF-099"
+      ],
+      "inputs": {
+        "confidence": 0.875,
+        "classes": [
+          "semantic",
+          "working"
+        ],
+        "oldUtc": "2024-01-01T00:00:00Z",
+        "newUtc": "2026-08-01T00:00:00Z",
+        "timeAnchorsUtc": [
+          "2026-08-02T00:00:00Z",
+          "2026-08-20T00:00:00Z"
+        ],
+        "oldValue": "The field kit is in the eastern locker.",
+        "newValue": "The field kit is in the western locker.",
+        "expected": {
+          "confidenceAfterRecall": 0.875,
+          "confidenceAfterSupersession": 0.875,
+          "supersededVisibleInHistoryOnly": true,
+          "curve": "exponential",
+          "weibullRequired": false
+        }
+      },
+      "status": "todo",
+      "waitsOn": "typed class-aging profile setup/readback and fixed-time rank control"
+    },
+    {
+      "id": "RETRIEVAL-08",
+      "name": "Warm and rebuilt graph parity should work",
+      "surface": "HTTP + CLI",
+      "setup": "Small graph with known allowed neighborhood.",
+      "steps": [
+        "cold recall",
+        "warm recall",
+        "enter documented slim/drop mode",
+        "resume and recall"
+      ],
+      "expect": "Droppable caches reconstruct lazily and never change authorized evidence or fixed-input answer semantics.",
+      "source": [
+        "/oneiron/core/oneiron-arch-0019-oneiron-db-v1/#storage-invariants",
+        "/oneiron/retrieval/oneiron-arch-0004-retrieval-graph/#rrf-pipeline",
+        "/registry/oneiron/#OF-087",
+        "/registry/oneiron/#OF-103",
+        "/registry/oneiron/#OF-447"
+      ],
+      "rows": [
+        "OF-087",
+        "OF-103",
+        "OF-447"
+      ],
+      "inputs": {
+        "seed": "seed",
+        "allowedNeighborhood": [
+          "seed",
+          "near",
+          "far"
+        ],
+        "privateNode": "withheld",
+        "edges": [
+          {
+            "from": "seed",
+            "kind": "about",
+            "to": "near"
+          },
+          {
+            "from": "near",
+            "kind": "about",
+            "to": "far"
+          },
+          {
+            "from": "near",
+            "kind": "about",
+            "to": "withheld"
+          }
+        ],
+        "expected": {
+          "phases": [
+            "cold",
+            "warm",
+            "slim",
+            "resumed"
+          ],
+          "authorizedEvidenceIdentical": true,
+          "fixedInputSemanticsIdentical": true,
+          "restartIsNotSlim": true,
+          "latencyOrResidualCacheClaim": false
+        }
+      },
+      "status": "todo",
+      "waitsOn": "public CLI SLIM/drop-heavy and resume with completion receipts"
+    },
+    {
+      "id": "RETRIEVAL-09",
+      "name": "Optional affect and community priors should work",
+      "surface": "HTTP",
+      "setup": "Emotion-tagged and community-linked controlled corpus, default settings.",
+      "steps": [
+        "recall with defaults",
+        "enable respective manifest weights separately",
+        "inspect trace and results",
+        "disable"
+      ],
+      "expect": "Optional affect/arousal/community boosts start off and can affect relevance only within scope, never claim authority or confidence.",
+      "source": [
+        "/oneiron/retrieval/oneiron-arch-0004-retrieval-graph/#rrf-pipeline",
+        "/registry/oneiron/#OF-029",
+        "/registry/oneiron/#OF-032",
+        "/registry/oneiron/#OF-110",
+        "/registry/oneiron/#OF-423",
+        "/registry/oneiron/#OF-563"
+      ],
+      "rows": [
+        "OF-029",
+        "OF-032",
+        "OF-110",
+        "OF-423",
+        "OF-563"
+      ],
+      "inputs": {
+        "rows": [
+          {
+            "label": "calm",
+            "vad": {
+              "valence": 0.2,
+              "arousal": 0.1,
+              "dominance": 0.5
+            },
+            "confidence": 0.875
+          },
+          {
+            "label": "intense",
+            "vad": {
+              "valence": 0.2,
+              "arousal": 0.9,
+              "dominance": 0.5
+            },
+            "confidence": 0.875
+          },
+          {
+            "label": "community-neighbor",
+            "confidence": 0.875
+          },
+          {
+            "label": "private-community",
+            "confidence": 0.875
+          }
+        ],
+        "queryAffect": {
+          "valence": 0.2,
+          "arousal": 0.9,
+          "dominance": 0.5
+        },
+        "expected": {
+          "defaultWeights": {
+            "affect": 0,
+            "arousal": 0,
+            "community": 0
+          },
+          "oneWeightAtATime": true,
+          "disabledReturnsBaseline": true,
+          "scopeAuthorityConfidenceUnchanged": true
+        }
+      },
+      "status": "todo",
+      "waitsOn": "typed affect/arousal/community weight controls and VAD evidence setup"
+    },
+    {
+      "id": "RETRIEVAL-10",
+      "name": "Clustering produces proposals not truth should work",
+      "surface": "MCP",
+      "setup": "Two clusters with one ambiguous bridge.",
+      "steps": [
+        "request cluster tool",
+        "inspect candidates",
+        "choose merge/split through ordinary gate",
+        "recall"
+      ],
+      "expect": "Clustering offers structure for judgment, never auto-mints semantic truth or bypasses approval.",
+      "source": [
+        "/oneiron/retrieval/oneiron-arch-0004-retrieval-graph/#rrf-pipeline",
+        "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#mcp-actor-ceilings",
+        "/registry/oneiron/#OF-089"
+      ],
+      "rows": [
+        "OF-089"
+      ],
+      "inputs": {
+        "clusters": {
+          "roof": [
+            "slate",
+            "shingle"
+          ],
+          "optics": [
+            "lens",
+            "mirror"
+          ]
+        },
+        "ambiguousBridge": "glass roof panel",
+        "choices": [
+          "merge",
+          "split"
+        ],
+        "expected": {
+          "groupingKey": [
+            "subject",
+            "predicate",
+            "world"
+          ],
+          "resultsAreProposals": true,
+          "noSemanticTruthWriteBeforeGate": true,
+          "settlementReceipted": true,
+          "gateRefusalIsNotApplied": true
+        }
+      },
+      "status": "todo",
+      "waitsOn": "typed MCP clustering proposal and gated merge/split settlement"
+    },
+    {
+      "id": "RETRIEVAL-11",
+      "name": "Visible claims are not automatically evidence should work",
+      "surface": "HTTP",
+      "setup": "First-party Auto generated claim visible to owner, unvetted content and pending critical claim.",
+      "steps": [
+        "recall for review",
+        "run consolidation/effector proposal citing those rows",
+        "inspect output evidence"
+      ],
+      "expect": "Surfaceability does not confer consolidation or effector eligibility; unvetted/pending-confirm sources cannot manufacture corroboration or outbound authority.",
+      "source": [
+        "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#memory-board-source-trust",
+        "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#mcp-actor-ceilings",
+        "/registry/oneiron/#OF-083"
+      ],
+      "rows": [
+        "OF-083"
+      ],
+      "inputs": {
+        "sources": [
+          {
+            "label": "first-party-auto",
+            "source": "generated",
+            "approval": "auto",
+            "vetted": false
+          },
+          {
+            "label": "foreign-tool",
+            "source": "tool_output",
+            "approval": "proposed",
+            "vetted": false
+          },
+          {
+            "label": "critical",
+            "source": "generated",
+            "approval": "proposed",
+            "pendingConfirm": true
+          },
+          {
+            "label": "vetted-control",
+            "source": "user_stated",
+            "approval": "approved",
+            "vetted": true
+          }
+        ],
+        "expected": {
+          "reviewMaySurface": [
+            "first-party-auto"
+          ],
+          "ineligibleCorroboration": [
+            "first-party-auto",
+            "foreign-tool",
+            "critical"
+          ],
+          "noOutboundAuthorityFromVisibleProse": true,
+          "vettedPositiveControlRequired": true
+        }
+      },
+      "status": "todo",
+      "waitsOn": "typed generated-claim vetting producer and consolidation/effector evidence results"
+    },
+    {
+      "id": "RETRIEVAL-12",
+      "name": "Vector prefix candidates get full-dimension refinement should work",
+      "surface": "HTTP",
+      "setup": "Tiny oracle vectors with same prefix and distinct tails, plus voice-mode profile.",
+      "steps": [
+        "upload through supported vector door",
+        "search normal and voice mode",
+        "inspect candidate citations and trace"
+      ],
+      "expect": "Normal path refines selected candidates with full vector evidence; voice lane may use declared prefix-only mode, without a million-row speed claim.",
+      "source": [
+        "/oneiron/retrieval/oneiron-arch-0004-retrieval-graph/#rrf-pipeline",
+        "/oneiron/retrieval/oneiron-arch-0004-retrieval-graph/#embedding-funnel",
+        "/registry/oneiron/#OF-088"
+      ],
+      "rows": [
+        "OF-088"
+      ],
+      "inputs": {
+        "dimensions": 4,
+        "fastDims": 2,
+        "query": [
+          1,
+          0,
+          1,
+          0
+        ],
+        "vectors": [
+          {
+            "label": "wrong-tail",
+            "value": [
+              1,
+              0,
+              -1,
+              0
+            ]
+          },
+          {
+            "label": "right-tail",
+            "value": [
+              1,
+              0,
+              1,
+              0
+            ]
+          }
+        ],
+        "expected": {
+          "normalBefore": [
+            [
+              "right-tail",
+              "wrong-tail"
+            ]
+          ],
+          "voiceMode": "declared-prefix-only",
+          "voiceTieOrderNotPinned": true,
+          "millionRowSpeedClaim": false
+        }
+      },
+      "status": "todo",
+      "waitsOn": "typed MRL fast_dims setup and voice prefix-only search with refinement evidence"
+    }
+  ]
+}
