@@ -30507,6 +30507,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ModelStepCheckpoint",
       "ModelStepFailure",
       "ModelStepFailureClass",
       "ModelStepReceipt",
@@ -30518,10 +30519,10 @@
      "path": "src/llm/step/public.rs",
      "purpose": "Owner-submitted durable model steps over the engine's existing step executor",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 2,
-      "struct": 5
+      "struct": 6
      }
     },
     {
@@ -45329,6 +45330,7 @@
       "crate-vis": 2,
       "enum": 6,
       "fn": 3,
+      "mod": 1,
       "re-export": 1,
       "struct": 2
      }
@@ -45345,6 +45347,32 @@
       "crate-vis": 1,
       "fn": 1,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SavedIntentState",
+      "SavedResumeStep",
+      "SlimDropOutcome",
+      "SlimDropReceipt",
+      "SlimDropRequest",
+      "SlimIdlePolicy",
+      "SlimResidueView",
+      "SlimResumeOutcome",
+      "SlimResumeReceipt",
+      "SlimResumeStep",
+      "SlimResumeStepRequest",
+      "SlimStateSnapshot",
+      "SlimStateView"
+     ],
+     "path": "src/slim/public.rs",
+     "purpose": "Typed lifecycle observations and completion receipts over the SLIM controller",
+     "surface": {
+      "enum": 7,
+      "fn": 2,
+      "struct": 6
      }
     },
     {
@@ -50174,7 +50202,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 610
+      "fn": 615
      }
     },
     {
@@ -57051,7 +57079,7 @@
      "purpose": "Deterministic static skill scanning and the activation risk consult"
     },
     "slim": {
-     "files": 3,
+     "files": 4,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -57291,7 +57319,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3489,
+   "source_files": 3490,
    "test_files": 902
   },
   "oneiron-android": {
@@ -65779,7 +65807,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 560
+      "fn": 565
      }
     },
     {
@@ -66828,7 +66856,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 561
+      "fn": 566
      }
     },
     {
@@ -70041,7 +70069,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 107
+      "crate-vis": 108
      }
     },
     {
@@ -70322,6 +70350,16 @@
      "purpose": "Selected-message conversion and the owner's skill library, through the same facade and MCP doors",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/slim_doors.rs",
+     "purpose": "Owner-bound lifecycle doors; each transport reaches the same engine transaction",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -75658,7 +75696,7 @@
      "path": "src/models/outbound_wait.rs",
      "purpose": "Server policy for shedding during a long journaled model wait",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -77601,7 +77639,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 366,
+     "files": 367,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -78016,7 +78054,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 696,
+   "source_files": 697,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -78939,6 +78977,7 @@
       "GuestSlipMintRequest",
       "GuestSlipMinted",
       "HandoffAlarmRequest",
+      "HeapDropReport",
       "HeldAttempt",
       "HeldMedia",
       "HeldOutCall",
@@ -79212,6 +79251,7 @@
       "MintConnectGrant",
       "ModelLocality",
       "ModelSlot",
+      "ModelStepCheckpoint",
       "ModelStepFailure",
       "ModelStepFailureClass",
       "ModelStepReceipt",
@@ -79776,6 +79816,8 @@
       "RunTreeRepair",
       "RunTreeStatus",
       "RunTreeTimestamps",
+      "SavedIntentState",
+      "SavedResumeStep",
       "ScheduledBackfill",
       "Scope",
       "ScopeAxisInputString",
@@ -79931,6 +79973,8 @@
       "SharedVaultChange",
       "SharedVaultDeletion",
       "SharedVaultRequest",
+      "ShedBlocker",
+      "ShedCause",
       "SignalExtractionClaim",
       "SignalExtractionMessage",
       "SignalExtractionRequest",
@@ -79991,6 +80035,17 @@
       "SlideReviewUnitInput",
       "SlideUnitRefused",
       "SliderControl",
+      "SlimDropOutcome",
+      "SlimDropReceipt",
+      "SlimDropRequest",
+      "SlimIdlePolicy",
+      "SlimResidueView",
+      "SlimResumeOutcome",
+      "SlimResumeReceipt",
+      "SlimResumeStep",
+      "SlimResumeStepRequest",
+      "SlimStateSnapshot",
+      "SlimStateView",
       "SlipCaveat",
       "SmartArtNode",
       "SourceTrust",
@@ -80297,8 +80352,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 547,
-      "struct": 1536
+      "enum": 556,
+      "struct": 1544
      }
     },
     {
