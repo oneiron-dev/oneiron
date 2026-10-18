@@ -897,6 +897,11 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         admitted(),
         managed.seal_config(),
     ));
+    // Held automated sign acts are asked up their role chain (OF-415).
+    ladder_workers.push(crate::api::spawn_esign_hold_worker_admitted(
+        Arc::clone(&sync_server),
+        admitted(),
+    ));
     // Due standing questions are answered through the ladder (OF-506).
     if !ai.bind_question_timer(&sync_server) {
         ladder_workers.push(crate::decision_graph::spawn(&sync_server, admitted()));
