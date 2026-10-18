@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 600 facade rows, 2209 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 12; generated in and out: 560.
+// UniFFI census: 618 facade rows, 2241 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 12; generated in and out: 578.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -10719,6 +10719,90 @@ pub struct SharedActPolicyChangeRequest {
     pub change_id: String,
 }
 
+/// `oneiron::federation::coreference::CoreferenceStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CoreferenceStatus {
+    #[serde(rename = "proposed")]
+    Proposed,
+    #[serde(rename = "confirmed")]
+    Confirmed,
+}
+
+/// `oneiron::task_verb::sdk_coreference::CoreferenceLinkRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CoreferenceLinkRequest {
+    #[serde(rename = "local_person")]
+    pub local_person: String,
+    #[serde(rename = "other_person")]
+    pub other_person: String,
+    #[serde(rename = "status")]
+    pub status: CoreferenceStatus,
+}
+
+/// `oneiron::task_verb::sdk_coreference::CoreferenceLinkReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CoreferenceLinkReceipt {
+    #[serde(rename = "local_person")]
+    pub local_person: String,
+    #[serde(rename = "other_person")]
+    pub other_person: String,
+    #[serde(rename = "status")]
+    pub status: CoreferenceStatus,
+    #[serde(rename = "status_claim")]
+    pub status_claim: String,
+}
+
+/// `oneiron::task_verb::sdk_coreference::CoreferencePairRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CoreferencePairRequest {
+    #[serde(rename = "local_person")]
+    pub local_person: String,
+    #[serde(rename = "other_person")]
+    pub other_person: String,
+}
+
+/// `oneiron::task_verb::sdk_coreference::CoreferenceShareConsentRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CoreferenceShareConsentRequest {
+    #[serde(rename = "local_person")]
+    pub local_person: String,
+    #[serde(rename = "other_person")]
+    pub other_person: String,
+    #[serde(rename = "pact")]
+    pub pact: String,
+}
+
+/// `oneiron::task_verb::sdk_coreference::CoreferenceShareConsentReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CoreferenceShareConsentReceipt {
+    #[serde(rename = "local_person")]
+    pub local_person: String,
+    #[serde(rename = "other_person")]
+    pub other_person: String,
+    #[serde(rename = "pact")]
+    pub pact: String,
+    #[serde(rename = "consent_claim")]
+    pub consent_claim: String,
+}
+
+/// `oneiron::task_verb::sdk_coreference::CoreferenceUnlinkReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CoreferenceUnlinkReceipt {
+    #[serde(rename = "local_person")]
+    pub local_person: String,
+    #[serde(rename = "other_person")]
+    pub other_person: String,
+    #[serde(rename = "unlinked")]
+    pub unlinked: bool,
+    #[serde(rename = "retracted_claims")]
+    pub retracted_claims: Vec<String>,
+    #[serde(rename = "original_claims_retained")]
+    pub original_claims_retained: bool,
+}
+
 /// `oneiron::task_verb::sdk_federation::ConnectIdentity`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ConnectIdentity {
@@ -18827,6 +18911,233 @@ pub struct HooksReplayRequest {
     pub limit: Option<u64>,
 }
 
+/// `oneiron::artifact_hosting::ArtifactPointerChannel`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ArtifactPointerChannel {
+    #[serde(rename = "published")]
+    Published,
+    #[serde(rename = "preview")]
+    Preview,
+}
+
+/// `oneiron::artifact_hosting::ArtifactExportRef`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ArtifactExportRef {
+    #[serde(rename = "ForkHash")]
+    ForkHash(Vec<u8>),
+    #[serde(rename = "BlobVersion")]
+    BlobVersion {
+        #[serde(rename = "artifact_id")]
+        artifact_id: String,
+        #[serde(rename = "version")]
+        version: u64,
+    },
+}
+
+/// `oneiron::artifact_hosting::access::ArtifactServeTier`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ArtifactServeTier {
+    #[serde(rename = "Private")]
+    Private,
+    #[serde(rename = "Public")]
+    Public,
+    #[serde(rename = "LinkToken")]
+    LinkToken(Vec<u8>),
+    #[serde(rename = "WorldMembers")]
+    WorldMembers(u64),
+}
+
+/// `oneiron::artifact_hosting::door_types::ArtifactPublishRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactPublishRequest {
+    #[serde(rename = "artifact")]
+    pub artifact: String,
+    #[serde(rename = "channel")]
+    pub channel: ArtifactPointerChannel,
+    #[serde(rename = "export")]
+    pub export: ArtifactExportRef,
+    #[serde(rename = "serve_tier")]
+    pub serve_tier: ArtifactServeTier,
+    #[serde(rename = "publish_id")]
+    pub publish_id: String,
+    #[serde(rename = "occurred_at")]
+    pub occurred_at: u64,
+}
+
+/// `oneiron::artifact_hosting::door_types::ArtifactPublishApproval`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ArtifactPublishApproval {
+    #[serde(rename = "effect_digest")]
+    pub effect_digest: String,
+}
+
+/// `oneiron::artifact_hosting::ArtifactPublishVerbStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ArtifactPublishVerbStatus {
+    #[serde(rename = "proposed")]
+    Proposed,
+    #[serde(rename = "published")]
+    Published,
+}
+
+/// `oneiron::artifact_hosting::ArtifactPointer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ArtifactPointer {
+    #[serde(rename = "artifact")]
+    pub artifact: String,
+    #[serde(rename = "channel")]
+    pub channel: ArtifactPointerChannel,
+    #[serde(rename = "export")]
+    pub export: ArtifactExportRef,
+    #[serde(rename = "stale_taint_override")]
+    pub stale_taint_override: bool,
+    #[serde(rename = "serve_tier")]
+    pub serve_tier: ArtifactServeTier,
+}
+
+/// `oneiron::artifact_hosting::door_types::ArtifactPublishView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ArtifactPublishView {
+    #[serde(rename = "status")]
+    pub status: ArtifactPublishVerbStatus,
+    #[serde(rename = "pointer", default, skip_serializing_if = "Option::is_none")]
+    pub pointer: Option<ArtifactPointer>,
+    #[serde(
+        rename = "receipt_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub receipt_ref: Option<String>,
+    #[serde(rename = "gate_decision_ref")]
+    pub gate_decision_ref: String,
+}
+
+/// `oneiron::artifact_hosting::door_types::ArtifactPointerRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactPointerRequest {
+    #[serde(rename = "artifact")]
+    pub artifact: String,
+    #[serde(rename = "channel")]
+    pub channel: ArtifactPointerChannel,
+}
+
+/// `oneiron::artifact_hosting::door_types::ArtifactUnpublished`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ArtifactUnpublished {
+    #[serde(rename = "removed")]
+    pub removed: bool,
+}
+
+/// `oneiron::artifact_hosting::door_types::ArtifactLinkToken`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ArtifactLinkToken {
+    #[serde(rename = "serve_tier")]
+    pub serve_tier: ArtifactServeTier,
+    #[serde(rename = "token")]
+    pub token: String,
+}
+
+/// `oneiron::artifact_hosting::door_types::ArtifactPreviewPort`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactPreviewPort {
+    #[serde(rename = "process_ref")]
+    pub process_ref: String,
+    #[serde(rename = "port")]
+    pub port: u16,
+}
+
+/// `oneiron::artifact_hosting::door_types::ArtifactPreviewRegisterRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactPreviewRegisterRequest {
+    #[serde(rename = "session_ref")]
+    pub session_ref: String,
+    #[serde(rename = "lease_ref")]
+    pub lease_ref: String,
+    #[serde(rename = "expires_at")]
+    pub expires_at: u64,
+    #[serde(rename = "preview")]
+    pub preview: ArtifactPreviewPort,
+}
+
+/// `oneiron::artifact_hosting::door_types::ArtifactPreviewStage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ArtifactPreviewStage {
+    #[serde(rename = "draft")]
+    Draft,
+}
+
+/// `oneiron::artifact_hosting::door_types::ArtifactPreviewView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ArtifactPreviewView {
+    #[serde(rename = "session_ref")]
+    pub session_ref: String,
+    #[serde(rename = "lease_ref")]
+    pub lease_ref: String,
+    #[serde(rename = "local_url")]
+    pub local_url: String,
+    #[serde(rename = "stage")]
+    pub stage: ArtifactPreviewStage,
+    #[serde(rename = "private")]
+    pub private: bool,
+    #[serde(rename = "expires_at")]
+    pub expires_at: u64,
+    #[serde(rename = "access_url")]
+    pub access_url: String,
+}
+
+/// `oneiron::artifact_hosting::door_types::ArtifactPreviewRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactPreviewRequest {
+    #[serde(rename = "session_ref")]
+    pub session_ref: String,
+    #[serde(rename = "lease_ref")]
+    pub lease_ref: String,
+}
+
+/// `oneiron::artifact_hosting::door_types::ArtifactPreviewClosed`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ArtifactPreviewClosed {
+    #[serde(rename = "closed")]
+    pub closed: bool,
+}
+
+/// `oneiron::artifact_hosting::door_types::ArtifactPreviewInviteRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactPreviewInviteRequest {
+    #[serde(rename = "session_ref")]
+    pub session_ref: String,
+    #[serde(rename = "lease_ref")]
+    pub lease_ref: String,
+    #[serde(rename = "principal_ref")]
+    pub principal_ref: String,
+}
+
+/// `oneiron::artifact_hosting::door_types::ArtifactPreviewInvitation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ArtifactPreviewInvitation {
+    #[serde(rename = "principal_ref")]
+    pub principal_ref: String,
+    #[serde(rename = "invited")]
+    pub invited: bool,
+}
+
+/// `oneiron::artifact_hosting::door_types::ArtifactPreviewShare`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ArtifactPreviewShare {
+    #[serde(
+        rename = "access_url",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub access_url: Option<String>,
+}
+
 /// `oneiron::blob_artifact::verbs::ArtifactRefRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -21839,6 +22150,87 @@ pub struct RunBranchesView {
     pub task_ref: String,
     #[serde(rename = "branches")]
     pub branches: Vec<RunBranchView>,
+}
+
+/// `oneiron::task_verb::run_doors::ConsultReadRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConsultReadRequest {
+    #[serde(rename = "task_ref")]
+    pub task_ref: String,
+}
+
+/// `oneiron::task_verb::run_doors::ConsultDisposition`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ConsultDisposition {
+    #[serde(rename = "completed")]
+    Completed,
+    #[serde(rename = "rejected")]
+    Rejected,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "expired")]
+    Expired,
+    #[serde(rename = "abandoned")]
+    Abandoned,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+}
+
+/// `oneiron::task_verb::run_doors::ConsultSummaryView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum ConsultSummaryView {
+    #[serde(rename = "answer")]
+    Answer {
+        #[serde(rename = "evidence_refs")]
+        evidence_refs: Vec<ConsultPayloadRef>,
+    },
+    #[serde(rename = "abstained")]
+    Abstained {
+        #[serde(rename = "reason_ref")]
+        reason_ref: ConsultPayloadRef,
+    },
+}
+
+/// `oneiron::task_verb::run_doors::ConsultTerminalView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConsultTerminalView {
+    #[serde(rename = "disposition")]
+    pub disposition: ConsultDisposition,
+    #[serde(
+        rename = "result_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub result_ref: Option<String>,
+    #[serde(rename = "summary", default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<ConsultSummaryView>,
+    #[serde(rename = "finished_at")]
+    pub finished_at: u64,
+    #[serde(rename = "ladder", default, skip_serializing_if = "Option::is_none")]
+    pub ladder: Option<String>,
+    #[serde(
+        rename = "counter_task_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub counter_task_ref: Option<String>,
+}
+
+/// `oneiron::task_verb::run_doors::ConsultInspection`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConsultInspection {
+    #[serde(rename = "task_ref")]
+    pub task_ref: String,
+    #[serde(
+        rename = "deadline_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub deadline_at: Option<u64>,
+    #[serde(rename = "terminal", default, skip_serializing_if = "Option::is_none")]
+    pub terminal: Option<ConsultTerminalView>,
 }
 
 /// `oneiron::workspace_roster::intent::WorkspaceRosterPreset`.

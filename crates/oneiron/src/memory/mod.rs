@@ -27,6 +27,7 @@ pub mod affect;
 mod answer_boundary;
 mod archive_purge;
 mod asset_resolve;
+mod artifact_hosting_doors;
 mod authorship;
 mod birth_position;
 mod booking;
@@ -176,6 +177,9 @@ pub use crate::lens::{
 pub use oneiron_contracts::memory::MEMORY_CODE_HOST_ACTION_REFUSED;
 pub use oneiron_contracts::memory::MEMORY_CODE_IDENTITY_UNSETTLED;
 pub use oneiron_contracts::memory::MEMORY_CODE_INVENTED_REFERENCE;
+// WILL-PLAN L13 row 03: a room's whole off-record stretch, which no
+// consent record admits a session row to manage.
+pub use oneiron_contracts::memory::MEMORY_CODE_ROOM_MANAGEMENT;
 pub use outbound::{
     BRIDGE_OUTBOUND_ATTEMPT_KIND, CALENDAR_INVITE_OUTBOUND_CHANNEL, CALENDAR_INVITE_OUTBOUND_VERB,
     CalendarFreebusyDto, CalendarFreebusyIntervalDto, CalendarInviteSurfaceInput,

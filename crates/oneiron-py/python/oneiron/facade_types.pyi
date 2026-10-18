@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 600 facade rows, 2269 declarations.
-Inputs: 548 of 600 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 531 of 600 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 618 facade rows, 2303 declarations.
+Inputs: 566 of 618 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 549 of 618 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 92; unread shapes: 0.
 """
 
@@ -3659,6 +3659,34 @@ class SharedActPolicyAnswerRequest(TypedDict):
     approve: bool
 class SharedActPolicyChangeRequest(TypedDict):
     change_id: str
+CoreferenceStatus = Literal["proposed", "confirmed"]
+class CoreferenceLinkRequest(TypedDict):
+    local_person: EntityId
+    other_person: EntityId
+    status: CoreferenceStatus
+class CoreferenceLinkReceipt(TypedDict):
+    local_person: EntityId
+    other_person: EntityId
+    status: CoreferenceStatus
+    status_claim: EntityId
+class CoreferencePairRequest(TypedDict):
+    local_person: EntityId
+    other_person: EntityId
+class CoreferenceShareConsentRequest(TypedDict):
+    local_person: EntityId
+    other_person: EntityId
+    pact: str
+class CoreferenceShareConsentReceipt(TypedDict):
+    local_person: EntityId
+    other_person: EntityId
+    pact: str
+    consent_claim: EntityId
+class CoreferenceUnlinkReceipt(TypedDict):
+    local_person: EntityId
+    other_person: EntityId
+    unlinked: bool
+    retracted_claims: list[EntityId]
+    original_claims_retained: bool
 class ConnectIdentity(TypedDict):
     vault: str
     host_key: str
@@ -6076,6 +6104,82 @@ class HooksReplayRequest(TypedDict):
     binding: str
     since: NotRequired[str | None]
     limit: NotRequired[int | None]
+ArtifactPointerChannel = Literal["published", "preview"]
+CodebaseForkHash = list[int]
+class ArtifactExportRefForkHash(TypedDict):
+    ForkHash: CodebaseForkHash
+class ArtifactExportRefBlobVersionBody(TypedDict):
+    artifact_id: EntityId
+    version: int
+class ArtifactExportRefBlobVersion(TypedDict):
+    BlobVersion: ArtifactExportRefBlobVersionBody
+ArtifactExportRef = ArtifactExportRefForkHash | ArtifactExportRefBlobVersion
+ArtifactLinkCapability = list[int]
+class ArtifactServeTierLinkToken(TypedDict):
+    LinkToken: ArtifactLinkCapability
+class ArtifactServeTierWorldMembers(TypedDict):
+    WorldMembers: int
+ArtifactServeTier = Literal["Private", "Public"] | ArtifactServeTierLinkToken | ArtifactServeTierWorldMembers
+class ArtifactPublishRequest(TypedDict):
+    artifact: str
+    channel: ArtifactPointerChannel
+    export: ArtifactExportRef
+    serve_tier: ArtifactServeTier
+    publish_id: EntityId
+    occurred_at: int
+class ArtifactPublishApproval(TypedDict):
+    effect_digest: str
+ArtifactPublishVerbStatus = Literal["proposed", "published"]
+class ArtifactPointer(TypedDict):
+    artifact: str
+    channel: ArtifactPointerChannel
+    export: ArtifactExportRef
+    stale_taint_override: bool
+    serve_tier: ArtifactServeTier
+class ArtifactPublishView(TypedDict):
+    status: ArtifactPublishVerbStatus
+    pointer: NotRequired[ArtifactPointer | None]
+    receipt_ref: NotRequired[str | None]
+    gate_decision_ref: str
+class ArtifactPointerRequest(TypedDict):
+    artifact: str
+    channel: ArtifactPointerChannel
+class ArtifactUnpublished(TypedDict):
+    removed: bool
+class ArtifactLinkToken(TypedDict):
+    serve_tier: ArtifactServeTier
+    token: str
+class ArtifactPreviewPort(TypedDict):
+    process_ref: str
+    port: int
+class ArtifactPreviewRegisterRequest(TypedDict):
+    session_ref: str
+    lease_ref: str
+    expires_at: int
+    preview: ArtifactPreviewPort
+ArtifactPreviewStage = Literal["draft"]
+class ArtifactPreviewView(TypedDict):
+    session_ref: str
+    lease_ref: str
+    local_url: str
+    stage: ArtifactPreviewStage
+    private: bool
+    expires_at: int
+    access_url: str
+class ArtifactPreviewRequest(TypedDict):
+    session_ref: str
+    lease_ref: str
+class ArtifactPreviewClosed(TypedDict):
+    closed: bool
+class ArtifactPreviewInviteRequest(TypedDict):
+    session_ref: str
+    lease_ref: str
+    principal_ref: EntityId
+class ArtifactPreviewInvitation(TypedDict):
+    principal_ref: EntityId
+    invited: bool
+class ArtifactPreviewShare(TypedDict):
+    access_url: NotRequired[str | None]
 class ArtifactRefRequest(TypedDict):
     artifact_ref: str
 ArtifactKind = Literal["document", "sheet", "deck", "code", "canvas", "image", "file"]
@@ -7067,6 +7171,27 @@ class RunBranchesRequest(TypedDict):
 class RunBranchesView(TypedDict):
     task_ref: EntityId
     branches: list[RunBranchView]
+class ConsultReadRequest(TypedDict):
+    task_ref: EntityId
+ConsultDisposition = Literal["completed", "rejected", "failed", "expired", "abandoned", "cancelled"]
+class ConsultSummaryViewAnswer(TypedDict):
+    kind: Literal["answer"]
+    evidence_refs: list[ConsultPayloadRef]
+class ConsultSummaryViewAbstained(TypedDict):
+    kind: Literal["abstained"]
+    reason_ref: ConsultPayloadRef
+ConsultSummaryView = ConsultSummaryViewAnswer | ConsultSummaryViewAbstained
+class ConsultTerminalView(TypedDict):
+    disposition: ConsultDisposition
+    result_ref: NotRequired[EntityId | None]
+    summary: NotRequired[ConsultSummaryView | None]
+    finished_at: int
+    ladder: NotRequired[str | None]
+    counter_task_ref: NotRequired[EntityId | None]
+class ConsultInspection(TypedDict):
+    task_ref: EntityId
+    deadline_at: NotRequired[int | None]
+    terminal: NotRequired[ConsultTerminalView | None]
 class WorkspaceRosterPreset(TypedDict):
     workspace_ref: str
     workspace_vault_id: str

@@ -105,6 +105,8 @@ pub struct SyncServer {
     pub(crate) lens_frames: Arc<crate::lens_frames::LensFrameStore>,
     /// Live NOTE editors explicitly bound by their own principals.
     pub(crate) note_editors: super::NoteEditors,
+    /// Runtime-declared private live ports; never restored after restart.
+    pub(crate) artifact_previews: super::ArtifactPreviews,
     pub(crate) live_voice: crate::voice_host::LiveVoiceSessions,
     pub(crate) asr_sessions: crate::api::AsrSessions,
     /// Process-local connector actor registry for the MCP gateway.
@@ -400,6 +402,7 @@ impl SyncServer {
         super::desktop_seats::clear_stale_asks(&vault);
         Ok(Self {
             note_editors: super::NoteEditors::default(),
+            artifact_previews: super::ArtifactPreviews::default(),
             live_voice: Default::default(),
             asr_sessions: Default::default(),
             lens_frames,
