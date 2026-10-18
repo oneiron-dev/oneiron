@@ -32,14 +32,17 @@ use axum::http::header::CONTENT_DISPOSITION;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use oneiron::memory::{MemoryError, WitnessReceipt, WitnessTurn};
-use oneiron::off_record::{
-    OffRecordBackendClass, OffRecordMode, OffRecordNoticeAct, OffRecordSession,
-    OffRecordSessionRecord, OffRecordTalk, SavedTurns,
-};
+use oneiron::memory::{MemoryError, WitnessReceipt};
+use oneiron::off_record::{OffRecordSession, OffRecordSessionRecord, OffRecordTalk};
 use oneiron::store::GateDecisionId;
+use oneiron::task_verb::sdk::{
+    OffRecordRoomExport as Export, OffRecordRoomExportTurn as ExportTurn,
+    OffRecordRoomNotice as Notice, OffRecordRoomRequest as Stretch,
+    OffRecordRoomSaved as Saved, OffRecordRoomStartRequest as Start,
+    OffRecordRoomSuggestion as Suggestion, OffRecordRoomView as Room,
+    OffRecordRoomWitnessRequest as Witness,
+};
 use oneiron::{EdgeActorClass, EntityId, ErrorKind, Vault};
-use serde::{Deserialize, Serialize};
 
 use super::{parse_entity_id_param, unix_seconds_now};
 use crate::auth::{CoreAuth, CoreScope};
@@ -62,193 +65,13 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/decline-save", post(decline_save))
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Start {
-    /// The room: a conversation whose roster the starter is on.
-    room: String,
-    /// The host's own name for the stretch, 1 to 256 bytes.
-    session_ref: String,
-    /// `local` when inference stays on this device, `remote_provider` when a
-    /// model provider sees the turns.
-    backend: OffRecordBackendClass,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Stretch {
-    room: String,
-    session_ref: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Witness {
-    room: String,
-    session_ref: String,
-    /// The turn, as `POST /v1/core/facade/vault.witness` takes it; leave
-    /// `conversation_ref` empty to write into the stretch's own conversation.
-    turn: WitnessTurn,
-    #[serde(default)]
-    summary: Option<String>,
-}
-
-/// One stretch as everyone in its room sees it.
-#[derive(Debug, Serialize)]
-struct Room {
-    session_ref: String,
-    room: Option<String>,
-    started_by: Option<String>,
-    /// `off_record` or `on_record`.
-    mode: OffRecordMode,
-    backend: OffRecordBackendClass,
-    entered_at: String,
-    closing: bool,
-    /// The room's timeline of saves, exports and save suggestions.
-    notices: Vec<Notice>,
-    /// Agents' save suggestions waiting for a holder's confirm or decline.
-    waiting_suggestions: Vec<Suggestion>,
-}
-
-#[derive(Debug, Serialize)]
-struct Notice {
-    act: OffRecordNoticeAct,
-    by: String,
-    at: String,
-}
-
-#[derive(Debug, Serialize)]
-struct Suggestion {
-    by: String,
-    at: String,
-}
-
-impl Room {
-    fn new(record: OffRecordSessionRecord, session_ref: &str) -> Self {
-        Self {
-            session_ref: session_ref.to_owned(),
-            room: record.room.map(hex),
-            started_by: record.started_by.map(hex),
-            mode: record.mode,
-            backend: record.backend,
-            entered_at: rfc3339_secs(record.entered_at),
-            closing: record.closing,
-            notices: record
-                .notices
-                .into_iter()
-                .map(|notice| Notice {
-                    act: notice.act,
-                    by: hex(notice.by),
-                    at: rfc3339_secs(notice.at),
-                })
-                .collect(),
-            waiting_suggestions: record
-                .suggestions
-                .into_iter()
-                .map(|suggestion| Suggestion {
-                    by: hex(suggestion.by),
-                    at: rfc3339_secs(suggestion.at),
-                })
-                .collect(),
-        }
-    }
-}
-
-/// What one save wrote into this vault.
-#[derive(Debug, Serialize)]
-struct Saved {
-    saved: Vec<SavedTurn>,
-}
-
-#[derive(Debug, Serialize)]
-struct SavedTurn {
-    turn: String,
-    /// Every row that entered the vault, by id.
-    replayed: Vec<String>,
-    /// Each in-room short id beside the vault's own short id for that row.
-    short_ids: Vec<ShortIdPair>,
-}
-
-#[derive(Debug, Serialize)]
-struct ShortIdPair {
-    room: String,
-    vault: String,
-}
-
-impl From<SavedTurns> for Saved {
-    fn from(turns: SavedTurns) -> Self {
-        Self {
-            saved: turns
-                .into_iter()
-                .map(|(turn, outcome)| SavedTurn {
-                    turn: turn.to_hex(),
-                    replayed: outcome.replayed.iter().map(EntityId::to_hex).collect(),
-                    short_ids: outcome
-                        .short_id_mapping
-                        .into_iter()
-                        .map(|(room, vault)| ShortIdPair { room, vault })
-                        .collect(),
-                })
-                .collect(),
-        }
-    }
-}
-
-/// The export file: the talk as the person who took it could see it.
-#[derive(Debug, Serialize)]
-struct Export {
-    session_ref: String,
-    room: Option<String>,
-    exported_at: String,
-    turns: Vec<ExportTurn>,
-}
-
-#[derive(Debug, Serialize)]
-struct ExportTurn {
-    turn: String,
-    speaker: Option<String>,
-    occurred_at: String,
-    saved: bool,
-    messages: Vec<oneiron::off_record::OffRecordTalkMessage>,
-}
-
-impl Export {
-    fn new(talk: OffRecordTalk, session_ref: &str, exported_at: u64) -> Self {
-        Self {
-            session_ref: session_ref.to_owned(),
-            room: talk.room.map(hex),
-            exported_at: rfc3339_secs(exported_at),
-            turns: talk
-                .turns
-                .into_iter()
-                .map(|turn| ExportTurn {
-                    turn: hex(turn.turn),
-                    speaker: turn.speaker.map(hex),
-                    occurred_at: rfc3339_secs(turn.occurred_at),
-                    saved: turn.saved,
-                    messages: turn.messages,
-                })
-                .collect(),
-        }
-    }
-}
-
 async fn read_room(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<Stretch>, QueryRejection>,
 ) -> Reply<Room> {
-    auth.require(CoreScope::Read)?;
-    auth.require_unrestricted_record_scope()?;
-    let (actor, _) = participant(&auth)?;
-    let Query(query) = query.map_err(|error| ApiError::bad_request(error.body_text(), None))?;
-    let room = parse_entity_id_param(&query.room, "room")?;
-    let view = blocking(move || {
-        let session = bind(server.vault(), room, &query.session_ref, actor)?;
-        view(&session, &query.session_ref, actor)
-    })
-    .await?;
-    Ok(Json(view))
+    let Query(request) = query.map_err(|error| ApiError::bad_request(error.body_text(), None))?;
+    Ok(Json(room_status(&server, &auth, request).await?))
 }
 
 async fn start(
@@ -256,10 +79,147 @@ async fn start(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<Start>, JsonRejection>,
 ) -> Reply<Room> {
-    auth.require(CoreScope::Write)?;
-    let actor = person(&auth)?;
-    let request = json(payload)?;
+    Ok(Json(room_start(&server, &auth, json(payload)?).await?))
+}
+
+async fn witness(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<Witness>, JsonRejection>,
+) -> Reply<WitnessReceipt> {
+    Ok(Json(room_witness(&server, &auth, json(payload)?).await?))
+}
+
+async fn save(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<Stretch>, JsonRejection>,
+) -> Reply<Saved> {
+    Ok(Json(room_save(&server, &auth, json(payload)?).await?))
+}
+
+async fn save_from_here(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<Stretch>, JsonRejection>,
+) -> Reply<Room> {
+    Ok(Json(room_save_from_here(&server, &auth, json(payload)?).await?))
+}
+
+async fn export(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<Stretch>, JsonRejection>,
+) -> Result<impl IntoResponse, EnvelopedApiError> {
+    let export = room_export(&server, &auth, json(payload)?).await?;
+    Ok((
+        [(
+            CONTENT_DISPOSITION,
+            "attachment; filename=\"off-record-talk.json\"",
+        )],
+        Json(export),
+    ))
+}
+
+async fn suggest_save(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<Stretch>, JsonRejection>,
+) -> Reply<Room> {
+    Ok(Json(room_suggest_save(&server, &auth, json(payload)?).await?))
+}
+
+async fn confirm_save(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<Stretch>, JsonRejection>,
+) -> Reply<Saved> {
+    Ok(Json(room_confirm_save(&server, &auth, json(payload)?).await?))
+}
+
+async fn decline_save(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<Stretch>, JsonRejection>,
+) -> Reply<Room> {
+    Ok(Json(room_decline_save(&server, &auth, json(payload)?).await?))
+}
+
+fn room_view(record: OffRecordSessionRecord, session_ref: &str) -> Room {
+    Room {
+        session_ref: session_ref.to_owned(),
+        room: record.room.map(hex),
+        started_by: record.started_by.map(hex),
+        mode: record.mode,
+        backend: record.backend,
+        entered_at: rfc3339_secs(record.entered_at),
+        closing: record.closing,
+        notices: record
+            .notices
+            .into_iter()
+            .map(|notice| Notice {
+                act: notice.act,
+                by: hex(notice.by),
+                at: rfc3339_secs(notice.at),
+            })
+            .collect(),
+        waiting_suggestions: record
+            .suggestions
+            .into_iter()
+            .map(|suggestion| Suggestion {
+                by: hex(suggestion.by),
+                at: rfc3339_secs(suggestion.at),
+            })
+            .collect(),
+    }
+}
+
+fn export_view(talk: OffRecordTalk, session_ref: &str, exported_at: u64) -> Export {
+    Export {
+        session_ref: session_ref.to_owned(),
+        room: talk.room.map(hex),
+        exported_at: rfc3339_secs(exported_at),
+        turns: talk
+            .turns
+            .into_iter()
+            .map(|turn| ExportTurn {
+                turn: hex(turn.turn),
+                speaker: turn.speaker.map(hex),
+                occurred_at: rfc3339_secs(turn.occurred_at),
+                saved: turn.saved,
+                messages: turn.messages,
+            })
+            .collect(),
+    }
+}
+
+pub(crate) async fn room_status(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    request: Stretch,
+) -> Result<Room, ApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let (actor, _) = participant(auth)?;
     let room = parse_entity_id_param(&request.room, "room")?;
+    let server = Arc::clone(server);
+    let view = blocking(move || {
+        let session = bind(server.vault(), room, &request.session_ref, actor)?;
+        view(&session, &request.session_ref, actor)
+    })
+    .await?;
+    Ok(view)
+}
+
+pub(crate) async fn room_start(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    request: Start,
+) -> Result<Room, ApiError> {
+    auth.require(CoreScope::Write)?;
+    let actor = person(auth)?;
+    let room = parse_entity_id_param(&request.room, "room")?;
+    let server = Arc::clone(server);
     let view = blocking(move || {
         let session = server
             .vault()
@@ -269,20 +229,20 @@ async fn start(
         self::view(&session, &request.session_ref, actor)
     })
     .await?;
-    Ok(Json(view))
+    Ok(view)
 }
 
-async fn witness(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<Witness>, JsonRejection>,
-) -> Reply<WitnessReceipt> {
+pub(crate) async fn room_witness(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    request: Witness,
+) -> Result<WitnessReceipt, ApiError> {
     auth.require(CoreScope::Write)?;
-    let (actor, class) = participant(&auth)?;
-    let request = json(payload)?;
+    let (actor, class) = participant(auth)?;
     let room = parse_entity_id_param(&request.room, "room")?;
     let credential = auth.verified_slip().cloned();
     let locality = auth.locality();
+    let server = Arc::clone(server);
     let receipt = blocking(move || {
         let vault = server.vault();
         let session = bind(vault, room, &request.session_ref, actor)?;
@@ -298,18 +258,18 @@ async fn witness(
             .map_err(witness_error)
     })
     .await?;
-    Ok(Json(receipt))
+    Ok(receipt)
 }
 
-async fn save(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<Stretch>, JsonRejection>,
-) -> Reply<Saved> {
-    let (actor, class) = holder(&auth)?;
-    let request = json(payload)?;
+pub(crate) async fn room_save(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    request: Stretch,
+) -> Result<Saved, ApiError> {
+    let (actor, class) = holder(auth)?;
     let room = parse_entity_id_param(&request.room, "room")?;
     let credential = auth.verified_slip().cloned();
+    let server = Arc::clone(server);
     let saved = blocking(move || {
         let vault = server.vault();
         let session = bind(vault, room, &request.session_ref, actor)?;
@@ -322,20 +282,20 @@ async fn save(
         .map_err(|error| holder_error(error, class, &request.session_ref))
     })
     .await?;
-    Ok(Json(Saved::from(saved)))
+    Ok(Saved::from(saved))
 }
 
 /// A holder puts the stretch on record: later turns are saved as they land,
 /// while the holder still holds the grant and stays in the room.
-async fn save_from_here(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<Stretch>, JsonRejection>,
-) -> Reply<Room> {
-    let (actor, class) = holder(&auth)?;
-    let request = json(payload)?;
+pub(crate) async fn room_save_from_here(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    request: Stretch,
+) -> Result<Room, ApiError> {
+    let (actor, class) = holder(auth)?;
     let room = parse_entity_id_param(&request.room, "room")?;
     let credential = auth.verified_slip().cloned();
+    let server = Arc::clone(server);
     let view = blocking(move || {
         let vault = server.vault();
         let session = bind(vault, room, &request.session_ref, actor)?;
@@ -347,23 +307,23 @@ async fn save_from_here(
         self::view(&session, &request.session_ref, actor)
     })
     .await?;
-    Ok(Json(view))
+    Ok(view)
 }
 
-async fn export(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<Stretch>, JsonRejection>,
-) -> Result<impl IntoResponse, EnvelopedApiError> {
+pub(crate) async fn room_export(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    request: Stretch,
+) -> Result<Export, ApiError> {
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
-    let actor = person(&auth)?;
-    let request = json(payload)?;
+    let actor = person(auth)?;
     let room = parse_entity_id_param(&request.room, "room")?;
     // The slip was checked with the headers; the body may have arrived long
     // after. The copy is released only if it is still live once the talk is
     // gathered.
     let credential = auth.verified_slip().cloned();
+    let server = Arc::clone(server);
     let export = blocking(move || {
         let talk = bind(server.vault(), room, &request.session_ref, actor)?
             .export_talk_by(actor, credential.as_ref())
@@ -371,37 +331,23 @@ async fn export(
                 ErrorKind::OffRecordPromoteUnauthenticated => ApiError::unauthorized(),
                 _ => engine_error(error, &request.session_ref),
             })?;
-        Ok(Export::new(talk, &request.session_ref, unix_seconds_now()))
+        Ok(export_view(talk, &request.session_ref, unix_seconds_now()))
     })
     .await?;
-    Ok((
-        [(
-            CONTENT_DISPOSITION,
-            "attachment; filename=\"off-record-talk.json\"",
-        )],
-        Json(export),
-    ))
+    Ok(export)
 }
 
-async fn suggest_save(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<Stretch>, JsonRejection>,
-) -> Reply<Room> {
+pub(crate) async fn room_suggest_save(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    request: Stretch,
+) -> Result<Room, ApiError> {
     // An agent without the write grant may still ask, on any slip that writes
     // or proposes, record-bounded too: a suggestion lands nothing until a
     // holder answers it.
-    auth.require_granted(if auth.has_scope(CoreScope::Write) {
-        CoreScope::Write
-    } else {
-        CoreScope::Propose
-    })?;
-    let (actor, class) = participant(&auth)?;
-    if class != EdgeActorClass::Agent {
-        return Err(forbidden("only an agent suggests a save; a person saves or exports").into());
-    }
-    let request = json(payload)?;
+    let actor = suggesting_agent(auth)?;
     let room = parse_entity_id_param(&request.room, "room")?;
+    let server = Arc::clone(server);
     let view = blocking(move || {
         let session = bind(server.vault(), room, &request.session_ref, actor)?;
         session
@@ -410,20 +356,20 @@ async fn suggest_save(
         self::view(&session, &request.session_ref, actor)
     })
     .await?;
-    Ok(Json(view))
+    Ok(view)
 }
 
 /// A holder confirms the waiting save suggestions: their own save of the
 /// whole talk. 409 when no suggestion waits.
-async fn confirm_save(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<Stretch>, JsonRejection>,
-) -> Reply<Saved> {
-    let (actor, class) = holder(&auth)?;
-    let request = json(payload)?;
+pub(crate) async fn room_confirm_save(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    request: Stretch,
+) -> Result<Saved, ApiError> {
+    let (actor, class) = holder(auth)?;
     let room = parse_entity_id_param(&request.room, "room")?;
     let credential = auth.verified_slip().cloned();
+    let server = Arc::clone(server);
     let saved = blocking(move || {
         let vault = server.vault();
         let session = bind(vault, room, &request.session_ref, actor)?;
@@ -435,20 +381,20 @@ async fn confirm_save(
         .ok_or_else(nothing_waits)
     })
     .await?;
-    Ok(Json(Saved::from(saved)))
+    Ok(Saved::from(saved))
 }
 
 /// A holder declines the waiting save suggestions; nothing is saved. 409 when
 /// no suggestion waits.
-async fn decline_save(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<Stretch>, JsonRejection>,
-) -> Reply<Room> {
-    let (actor, class) = holder(&auth)?;
-    let request = json(payload)?;
+pub(crate) async fn room_decline_save(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    request: Stretch,
+) -> Result<Room, ApiError> {
+    let (actor, class) = holder(auth)?;
     let room = parse_entity_id_param(&request.room, "room")?;
     let credential = auth.verified_slip().cloned();
+    let server = Arc::clone(server);
     let view = blocking(move || {
         let vault = server.vault();
         let session = bind(vault, room, &request.session_ref, actor)?;
@@ -463,7 +409,45 @@ async fn decline_save(
         self::view(&session, &request.session_ref, actor)
     })
     .await?;
-    Ok(Json(view))
+    Ok(view)
+}
+
+/// The participant route's authority guard, before a facade hook can fire.
+pub(crate) fn door_admits(auth: &CoreAuth, verb: &str) -> Result<(), ApiError> {
+    match verb {
+        "vault.off_record.rooms.start" => {
+            auth.require(CoreScope::Write)?;
+            person(auth).map(drop)
+        }
+        "vault.off_record.rooms.status" => {
+            auth.require(CoreScope::Read)?;
+            auth.require_unrestricted_record_scope()?;
+            participant(auth).map(drop)
+        }
+        "vault.off_record.rooms.witness" => {
+            auth.require(CoreScope::Write)?;
+            participant(auth).map(drop)
+        }
+        "vault.off_record.rooms.export" => {
+            auth.require(CoreScope::Read)?;
+            auth.require_unrestricted_record_scope()?;
+            person(auth).map(drop)
+        }
+        "vault.off_record.rooms.suggest_save" => suggesting_agent(auth).map(drop),
+        _ => holder(auth).map(drop),
+    }
+}
+
+fn suggesting_agent(auth: &CoreAuth) -> Result<EntityId, ApiError> {
+    auth.require_granted(if auth.has_scope(CoreScope::Write) {
+        CoreScope::Write
+    } else {
+        CoreScope::Propose
+    })?;
+    match participant(auth)? {
+        (actor, EdgeActorClass::Agent) => Ok(actor),
+        _ => Err(forbidden("only an agent suggests a save; a person saves or exports")),
+    }
 }
 
 /// The person or agent the slip names. An owner-grade credential names
@@ -566,7 +550,7 @@ fn view(
 ) -> Result<Room, ApiError> {
     session
         .record_for(actor)
-        .map(|record| Room::new(record, session_ref))
+        .map(|record| room_view(record, session_ref))
         .map_err(|error| engine_error(error, session_ref))
 }
 

@@ -1496,12 +1496,33 @@ class Oneiron:
         def notes(self) -> "Oneiron._VaultOffRecordNotesVerbs": ...
         @property
         def claims(self) -> "Oneiron._VaultOffRecordClaimsVerbs": ...
+        @property
+        def rooms(self) -> "Oneiron._VaultOffRecordRoomsVerbs": ...
     class _VaultOffRecordNotesVerbs:
         def create(self, spec: Facade.OffRecordNoteRequest) -> Facade.EntityRefReceipt:
             """The session's creator or the vault's owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it."""
     class _VaultOffRecordClaimsVerbs:
         def upsert(self, spec: Facade.OffRecordClaimRequest) -> Facade.CommitReceipt:
             """The session's creator or the vault's owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it."""
+    class _VaultOffRecordRoomsVerbs:
+        def status(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomView:
+            """Reads a room's off-record notices and waiting save suggestions as the caller's membership shows them, without the talk."""
+        def start(self, spec: Facade.OffRecordRoomStartRequest) -> Facade.OffRecordRoomView:
+            """A person starts an off-record stretch in a room they belong to, on their own credential."""
+        def witness(self, spec: Facade.OffRecordRoomWitnessRequest) -> Facade.WitnessReceipt:
+            """Witnesses a turn into a room's off-record stretch as the caller, under their live membership and the current saving grant."""
+        def save(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomSaved:
+            """A holder of this vault's write grant saves the visible whole talk so far into this vault, on their own credential."""
+        def save_from_here(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomView:
+            """A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live."""
+        def export(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomExport:
+            """A person exports only their visible room talk as a JSON attachment, posts a content-free notice and writes no vault."""
+        def suggest_save(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomView:
+            """An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms."""
+        def confirm_save(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomSaved:
+            """A holder confirms the room's waiting save suggestions with their own save of the visible whole talk; refuses when none waits."""
+        def decline_save(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomView:
+            """A holder declines the room's waiting save suggestions, posts a content-free notice and saves nothing; refuses when none waits."""
     class _VaultRecordsVerbs:
         def erase_preview(self, spec: Facade.RecordEraseRequest) -> Facade.RecordErasePreview:
             """What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back."""
