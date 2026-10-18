@@ -49,6 +49,7 @@ use crate::models::RungVoices;
 use crate::server::SyncServer;
 
 // The signed authority history doors, under the audit door's owner proof.
+pub(crate) use super::artifact_hosting_doors::*;
 pub(crate) use super::authority_history_doors::*;
 pub(crate) use super::booking_doors::*;
 pub(crate) use super::calendar_doors::*;
@@ -73,10 +74,12 @@ pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
 pub(crate) use super::live_voice_doors::*;
 pub(crate) use super::model_step_doors::*;
+pub(crate) use super::cleanup_doors::*;
 pub(crate) use super::skill_execution_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
 // The owner's guest revoke door (OF-232) too.
+pub(crate) use super::coreference_doors::*;
 pub(crate) use super::federation_connect_doors::*;
 pub(crate) use super::guest_doors::*;
 pub(crate) use super::hub_doors::*;
@@ -121,6 +124,7 @@ pub(crate) use super::craft_candidate_doors::*;
 pub(crate) use super::channel_doors::*;
 pub(crate) use super::content_policy_doors::*;
 pub(crate) use super::gate_policy_doors::*;
+pub(crate) use super::consent_doors::*;
 pub(crate) use super::policy_doors::*;
 // The owner's origin and checkout doors (DOOR-139), likewise.
 pub(crate) use super::origin_doors::*;
@@ -134,6 +138,8 @@ pub(crate) use super::connector_call_doors::*;
 pub(crate) use super::connector_pack_doors::*;
 // The secret use door, whose connector.call sends (OF-560), likewise.
 pub(crate) use super::secret_use_doors::*;
+// An agent run's secret grant doors (DOOR-124), likewise.
+pub(crate) use super::secret_grant_doors::*;
 // The message reaction door (OF-181), likewise.
 pub(crate) use super::reaction_doors::*;
 pub(crate) use super::reply_doors::*;
@@ -1115,6 +1121,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.packs.setup.verify"
         | "vault.authority.handoff_alarms"
         | "vault.authority.handoff_alarms.acknowledge"
+        | "vault.cleanup.run"
+        | "vault.entities.mention"
         | "vault.legal_holds.place"
         | "vault.legal_holds.widen"
         | "vault.legal_holds.list"
@@ -1180,6 +1188,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.agents.spawn.get"
         | "vault.tasks.cancel_force"
         | "vault.runs.branches.get"
+        | "vault.consults.get"
         | "vault.workspace.roster"
         | "vault.booking.page_token"
         | "vault.channel_identities.provision"
@@ -1193,6 +1202,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.policy.owner.get"
         | "vault.policy.owner.configure"
         | "vault.policy.owner.row.change"
+        | "vault.consent.approve_once"
+        | "vault.consent.create_standing_grant"
+        | "vault.consent.registry"
+        | "vault.consent.revoke"
         | "vault.gate.policy.get"
         | "vault.gate.policy.put"
         | "vault.gate.checker.get"
@@ -1212,6 +1225,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.embedding_spaces.probes.delete"
         | "vault.fanout.resume"
         | "vault.fanout.ack"
+        | "vault.federation.coreference.link"
+        | "vault.federation.coreference.confirm"
+        | "vault.federation.coreference.share_consent"
+        | "vault.federation.coreference.unlink"
         | "vault.federation.connect.identity"
         | "vault.federation.connect.grants.mint"
         | "vault.federation.connect.offer"
@@ -1256,6 +1273,18 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.origin.authority.set"
         | "vault.code.origin.publications"
         | "vault.code.checkout.bind"
+        | "vault.artifacts.publish_approval"
+        | "vault.artifacts.publish"
+        | "vault.artifacts.repoint"
+        | "vault.artifacts.pointer"
+        | "vault.artifacts.unpublish"
+        | "vault.artifacts.link_token"
+        | "vault.artifacts.live_preview.register"
+        | "vault.artifacts.live_preview.close"
+        | "vault.artifacts.live_preview.invite"
+        | "vault.artifacts.live_preview.revoke_invite"
+        | "vault.artifacts.live_preview.share"
+        | "vault.artifacts.live_preview.revoke_share"
         | "vault.code.snapshots.ingest"
         | "vault.code.snapshots.get"
         | "vault.code.snapshots.read"
@@ -1267,14 +1296,6 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.merge_queue.land_reviewed"
         | "vault.code.merge_queue.settle_slow"
         | "vault.code.merge_queue.recover"
-        | "vault.off_record.start"
-        | "vault.off_record.status"
-        | "vault.off_record.witness"
-        | "vault.off_record.discard"
-        | "vault.off_record.recall"
-        | "vault.off_record.notes.create"
-        | "vault.off_record.claims.upsert"
-        | "self.off_record.execute"
         | "vault.trusted_contacts.name"
         | "vault.trusted_contacts.dial.set"
         | "vault.trusted_contacts.tier.set"
@@ -1331,6 +1352,19 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.shared.policy.propose"
         | "vault.shared.policy.answer" => {
             super::shared_act_doors::person(server, auth, verb).map(drop)
+        }
+        // The off-record session rows admit their session's manager: the
+        // owner, or a person or agent who starts and keeps their own
+        // (WILL-PLAN L13 row 03). Each door binds the stretch for them again.
+        "vault.off_record.start"
+        | "vault.off_record.status"
+        | "vault.off_record.witness"
+        | "vault.off_record.discard"
+        | "vault.off_record.recall"
+        | "vault.off_record.notes.create"
+        | "vault.off_record.claims.upsert"
+        | "self.off_record.execute" => {
+            super::off_record_doors::off_record_admits(server, auth, verb)
         }
         "self.credential.attenuate" => super::credential_doors::holder(auth).map(drop),
         "vault.artifacts.review_slides" => slide_reviewer(server, auth).map(drop),

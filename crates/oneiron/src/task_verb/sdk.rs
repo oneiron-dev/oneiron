@@ -544,6 +544,7 @@ pub use super::sdk_catalog_fragment::{
 pub use super::sdk_connector::*;
 pub use super::sdk_connector_call::*;
 pub use super::sdk_connector_pack::*;
+pub use super::sdk_coreference::*;
 pub use super::sdk_courtesy_delete::*;
 pub use super::sdk_credential::*;
 pub use super::sdk_diary::*;
@@ -569,6 +570,7 @@ pub use super::sdk_residence::*;
 pub use super::sdk_retrieval::*;
 pub use super::sdk_scratchpad::*;
 pub use super::sdk_secret::*;
+pub use super::sdk_secret_grant::*;
 pub use super::sdk_secret_use::*;
 pub use super::sdk_self::*;
 pub use super::sdk_share::*;

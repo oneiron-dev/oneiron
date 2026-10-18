@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 586 facade rows, 2223 declarations.
-Inputs: 535 of 586 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 518 of 586 fully typed, 68 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 91; unread shapes: 0.
+Census: 614 facade rows, 2294 declarations.
+Inputs: 562 of 614 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 545 of 614 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 92; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -3659,6 +3659,34 @@ class SharedActPolicyAnswerRequest(TypedDict):
     approve: bool
 class SharedActPolicyChangeRequest(TypedDict):
     change_id: str
+CoreferenceStatus = Literal["proposed", "confirmed"]
+class CoreferenceLinkRequest(TypedDict):
+    local_person: EntityId
+    other_person: EntityId
+    status: CoreferenceStatus
+class CoreferenceLinkReceipt(TypedDict):
+    local_person: EntityId
+    other_person: EntityId
+    status: CoreferenceStatus
+    status_claim: EntityId
+class CoreferencePairRequest(TypedDict):
+    local_person: EntityId
+    other_person: EntityId
+class CoreferenceShareConsentRequest(TypedDict):
+    local_person: EntityId
+    other_person: EntityId
+    pact: str
+class CoreferenceShareConsentReceipt(TypedDict):
+    local_person: EntityId
+    other_person: EntityId
+    pact: str
+    consent_claim: EntityId
+class CoreferenceUnlinkReceipt(TypedDict):
+    local_person: EntityId
+    other_person: EntityId
+    unlinked: bool
+    retracted_claims: list[EntityId]
+    original_claims_retained: bool
 class ConnectIdentity(TypedDict):
     vault: str
     host_key: str
@@ -4846,6 +4874,37 @@ class AuthorityHandoffAlarm(TypedDict):
     seen: list[str]
 class HandoffAlarmRequest(TypedDict):
     signer: str
+class CleanupRunRequest(TypedDict):
+    ...
+CleanupPosture = Literal["propose_first", "auto_with_digest"]
+CleanupKind = Literal["claimless_extraction_person", "empty_summary", "completed_task", "completed_attempt", "retained_note"]
+class CleanupCandidate(TypedDict):
+    entity: EntityId
+    kind: CleanupKind
+class CleanupRunView(TypedDict):
+    attempt: str
+    posture: CleanupPosture
+    candidates: list[CleanupCandidate]
+    proposal: NotRequired[EntityId | None]
+    archived: list[EntityId]
+    digest: NotRequired[EntityId | None]
+class EntityResolutionCandidate(TypedDict):
+    subject: EntityId
+    confidence_claim_ref: EntityId
+class EntityMentionRequest(TypedDict):
+    candidates: list[EntityResolutionCandidate]
+    high_collision_mention: NotRequired[bool]
+class ScoredEntityResolutionCandidate(TypedDict):
+    candidate: EntityResolutionCandidate
+    effective_confidence: float
+EntityResolutionRoute = Literal["hard_link", "soft_link", "soft_link_low", "provisional_entity"]
+class EntityResolutionWaterfallDecision(TypedDict):
+    ranked: list[ScoredEntityResolutionCandidate]
+    claims_suppressed: int
+    selected: NotRequired[EntityId | None]
+    selected_effective_confidence: NotRequired[float | None]
+    route: EntityResolutionRoute
+    requires_async_verification: bool
 class LegalHoldTargetRecord(TypedDict):
     record: EntityId
 class LegalHoldTargetGatePartition(TypedDict):
@@ -5341,6 +5400,52 @@ class HostedRelayDecision(TypedDict):
     outbound_halted: bool
     system_notice: NotRequired[str | None]
     system_notices: list[GateSystemNoticeRecord]
+class ApproveOnceRequest(TypedDict):
+    effect_digest: str
+class ConsentActReceipt(TypedDict):
+    decision_ref: str
+    outcome: str
+    reason_code: str
+    grant_ref: NotRequired[str | None]
+    diff_handle: list[int]
+class ActionEnvelopeRequest(TypedDict):
+    project: str
+    audience: list[str]
+    budget: int
+ActionBoundRequest = TypedDict("ActionBoundRequest", {"actor": str, "class": str, "envelope": ActionEnvelopeRequest})
+class DisclosureEnvelopeRequest(TypedDict):
+    selectors: list[str]
+DisclosureBoundRequest = TypedDict("DisclosureBoundRequest", {"audience": list[str], "class": str, "envelope": DisclosureEnvelopeRequest})
+StandingGrantBound = ActionBoundRequest | DisclosureBoundRequest
+class CreateStandingGrantRequest(TypedDict):
+    bound: StandingGrantBound
+class ConsentRegistryQuery(TypedDict):
+    limit: int
+    include_revoked: NotRequired[bool]
+ConsentDomain = Literal["disclosure", "action"]
+ConsentGrantStatus = Literal["active", "revoked"]
+class ConsentRevokeAction(TypedDict):
+    command: str
+    grant_ref: str
+class BypassScopeProject(TypedDict):
+    project: EntityId
+class BypassScopeThread(TypedDict):
+    thread: EntityId
+BypassScope = BypassScopeProject | BypassScopeThread
+class BypassExtent(TypedDict):
+    scope: BypassScope
+    floor_version: int
+class ConsentRegistryDelegation(TypedDict):
+    purpose: str
+    ticket_ref: NotRequired[str | None]
+    approved_by: str
+    wall_expires_at: int
+    status: SupportGrantStatus
+ConsentRegistryRow = TypedDict("ConsentRegistryRow", {"grant_ref": str, "domain": ConsentDomain, "subject": str, "class": str, "selectors": list[str], "scope": NotRequired[Scope | None], "status": ConsentGrantStatus, "created_at": int, "revoke_action": ConsentRevokeAction, "bypass": NotRequired[BypassExtent | None], "delegation": NotRequired[ConsentRegistryDelegation | None]})
+class ConsentRegistry(TypedDict):
+    rows: list[ConsentRegistryRow]
+class RevokeGrantRequest(TypedDict):
+    grant: str
 class PolicyManifestRead(TypedDict):
     manifest_ref: NotRequired[str | None]
 PolicyCriticality = Literal["normal", "critical"]
@@ -5897,6 +6002,57 @@ class SecretUseAnswer(TypedDict):
     result: NotRequired[Any | None]
     failure: NotRequired[str | None]
     receipt: SecretUseRecord
+class LiveRunRequest(TypedDict, Generic[T]):
+    live_run: str
+    spec: T
+class SecretGrantPurposeOperation(TypedDict):
+    kind: Literal["operation"]
+    name: str
+class SecretGrantPurposeConnector(TypedDict):
+    kind: Literal["connector"]
+    name: str
+class SecretGrantPurposeHostDestination(TypedDict):
+    kind: Literal["host_destination"]
+    name: str
+class SecretGrantPurposeLocalFile(TypedDict):
+    kind: Literal["local_file"]
+    effector: str
+    path: str
+    project_id: str
+SecretGrantPurpose = SecretGrantPurposeOperation | SecretGrantPurposeConnector | SecretGrantPurposeHostDestination | SecretGrantPurposeLocalFile
+class SecretGrantMintRequest(TypedDict):
+    handle: str
+    purpose: SecretGrantPurpose
+    ttl_secs: NotRequired[int | None]
+SecretGrantViewStatus = Literal["active", "expired", "revoked", "replaced"]
+class SecretGrantRegistration(TypedDict):
+    path: str
+    project_id: str
+SecretGrantCleanup = Literal["removed", "absent", "kept"]
+class SecretGrantView(TypedDict):
+    grant: str
+    handle: NotRequired[str | None]
+    purpose: SecretGrantPurpose
+    effector: str
+    tier: int
+    generation: int
+    granted_at: int
+    expires_at: int
+    status: SecretGrantViewStatus
+    replaced_by: NotRequired[str | None]
+    lease: NotRequired[str | None]
+    materialization_receipt: NotRequired[str | None]
+    registration: NotRequired[SecretGrantRegistration | None]
+    cleanup: NotRequired[SecretGrantCleanup | None]
+class SecretGrantRenewRequest(TypedDict):
+    grant: str
+    ttl_secs: NotRequired[int | None]
+class SecretGrantTeardownRequest(TypedDict):
+    grant: str
+class SecretGrantUseRequest(TypedDict):
+    grant: str
+    operation: str
+    arguments: NotRequired[Any]
 BornWithField = Literal["prompt", "why", "keep", "intent_prompt"]
 class TravelChoice(TypedDict):
     born_with: NotRequired[list[BornWithField]]
@@ -5948,6 +6104,82 @@ class HooksReplayRequest(TypedDict):
     binding: str
     since: NotRequired[str | None]
     limit: NotRequired[int | None]
+ArtifactPointerChannel = Literal["published", "preview"]
+CodebaseForkHash = list[int]
+class ArtifactExportRefForkHash(TypedDict):
+    ForkHash: CodebaseForkHash
+class ArtifactExportRefBlobVersionBody(TypedDict):
+    artifact_id: EntityId
+    version: int
+class ArtifactExportRefBlobVersion(TypedDict):
+    BlobVersion: ArtifactExportRefBlobVersionBody
+ArtifactExportRef = ArtifactExportRefForkHash | ArtifactExportRefBlobVersion
+ArtifactLinkCapability = list[int]
+class ArtifactServeTierLinkToken(TypedDict):
+    LinkToken: ArtifactLinkCapability
+class ArtifactServeTierWorldMembers(TypedDict):
+    WorldMembers: int
+ArtifactServeTier = Literal["Private", "Public"] | ArtifactServeTierLinkToken | ArtifactServeTierWorldMembers
+class ArtifactPublishRequest(TypedDict):
+    artifact: str
+    channel: ArtifactPointerChannel
+    export: ArtifactExportRef
+    serve_tier: ArtifactServeTier
+    publish_id: EntityId
+    occurred_at: int
+class ArtifactPublishApproval(TypedDict):
+    effect_digest: str
+ArtifactPublishVerbStatus = Literal["proposed", "published"]
+class ArtifactPointer(TypedDict):
+    artifact: str
+    channel: ArtifactPointerChannel
+    export: ArtifactExportRef
+    stale_taint_override: bool
+    serve_tier: ArtifactServeTier
+class ArtifactPublishView(TypedDict):
+    status: ArtifactPublishVerbStatus
+    pointer: NotRequired[ArtifactPointer | None]
+    receipt_ref: NotRequired[str | None]
+    gate_decision_ref: str
+class ArtifactPointerRequest(TypedDict):
+    artifact: str
+    channel: ArtifactPointerChannel
+class ArtifactUnpublished(TypedDict):
+    removed: bool
+class ArtifactLinkToken(TypedDict):
+    serve_tier: ArtifactServeTier
+    token: str
+class ArtifactPreviewPort(TypedDict):
+    process_ref: str
+    port: int
+class ArtifactPreviewRegisterRequest(TypedDict):
+    session_ref: str
+    lease_ref: str
+    expires_at: int
+    preview: ArtifactPreviewPort
+ArtifactPreviewStage = Literal["draft"]
+class ArtifactPreviewView(TypedDict):
+    session_ref: str
+    lease_ref: str
+    local_url: str
+    stage: ArtifactPreviewStage
+    private: bool
+    expires_at: int
+    access_url: str
+class ArtifactPreviewRequest(TypedDict):
+    session_ref: str
+    lease_ref: str
+class ArtifactPreviewClosed(TypedDict):
+    closed: bool
+class ArtifactPreviewInviteRequest(TypedDict):
+    session_ref: str
+    lease_ref: str
+    principal_ref: EntityId
+class ArtifactPreviewInvitation(TypedDict):
+    principal_ref: EntityId
+    invited: bool
+class ArtifactPreviewShare(TypedDict):
+    access_url: NotRequired[str | None]
 class ArtifactRefRequest(TypedDict):
     artifact_ref: str
 ArtifactKind = Literal["document", "sheet", "deck", "code", "canvas", "image", "file"]
@@ -6939,6 +7171,27 @@ class RunBranchesRequest(TypedDict):
 class RunBranchesView(TypedDict):
     task_ref: EntityId
     branches: list[RunBranchView]
+class ConsultReadRequest(TypedDict):
+    task_ref: EntityId
+ConsultDisposition = Literal["completed", "rejected", "failed", "expired", "abandoned", "cancelled"]
+class ConsultSummaryViewAnswer(TypedDict):
+    kind: Literal["answer"]
+    evidence_refs: list[ConsultPayloadRef]
+class ConsultSummaryViewAbstained(TypedDict):
+    kind: Literal["abstained"]
+    reason_ref: ConsultPayloadRef
+ConsultSummaryView = ConsultSummaryViewAnswer | ConsultSummaryViewAbstained
+class ConsultTerminalView(TypedDict):
+    disposition: ConsultDisposition
+    result_ref: NotRequired[EntityId | None]
+    summary: NotRequired[ConsultSummaryView | None]
+    finished_at: int
+    ladder: NotRequired[str | None]
+    counter_task_ref: NotRequired[EntityId | None]
+class ConsultInspection(TypedDict):
+    task_ref: EntityId
+    deadline_at: NotRequired[int | None]
+    terminal: NotRequired[ConsultTerminalView | None]
 class WorkspaceRosterPreset(TypedDict):
     workspace_ref: str
     workspace_vault_id: str
@@ -11447,9 +11700,6 @@ class FoldHistory(TypedDict):
     epochs: list[FoldHistoryEpoch]
     steps: list[FoldHistoryStep]
     next: NotRequired[int | None]
-class LiveRunRequest(TypedDict, Generic[T]):
-    live_run: str
-    spec: T
 class MemorySupersedeInput(TypedDict):
     newId: str
     oldId: str

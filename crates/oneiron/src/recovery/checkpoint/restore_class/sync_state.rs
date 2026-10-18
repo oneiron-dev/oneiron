@@ -92,7 +92,10 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SYNC_QD_E, CONTENT),
     (&t::SYNC_QN_E, CONTENT),
     (&t::SYNC_REASSERT_MARKER, CONTENT),
-    // The sealed bundle's custody and cursors follow the live vault.
+    // The sealed bundle's custody and cursors follow the live vault. So do
+    // the late joiners' pad grants the home keeps with its generations, and
+    // the admissions queued for it (FIX 4271).
+    (&t::SYNC_RESIDENCE_BUNDLE_ACCESS, LIVE),
     (&t::SYNC_RESIDENCE_BUNDLE_GENERATION, LIVE),
     (&t::SYNC_RESIDENCE_BUNDLE_PART, LIVE),
     // The publisher turn's queue is the home's record of whose turn is

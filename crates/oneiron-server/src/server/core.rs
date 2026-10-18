@@ -105,6 +105,8 @@ pub struct SyncServer {
     pub(crate) lens_frames: Arc<crate::lens_frames::LensFrameStore>,
     /// Live NOTE editors explicitly bound by their own principals.
     pub(crate) note_editors: super::NoteEditors,
+    /// Runtime-declared private live ports; never restored after restart.
+    pub(crate) artifact_previews: super::ArtifactPreviews,
     pub(crate) live_voice: crate::voice_host::LiveVoiceSessions,
     /// Process-local connector actor registry for the MCP gateway.
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
@@ -116,6 +118,9 @@ pub struct SyncServer {
     /// The live agent runs a harness may act for over HTTP (OF-181): each
     /// runner's lease proof, its attached credential and its guard.
     pub(crate) live_runs: Arc<super::LiveRuns>,
+    /// The T1 secret destinations each run host registered for its runs
+    /// (DOOR-124): the `self.secrets.*` doors deliver into them.
+    pub(crate) secret_destinations: crate::runtime::SecretDestinations,
     /// The questions connectors asked mid-call, live for their callers
     /// (ONE-2510): every connector host this server builds keeps them here,
     /// and `connector.answer` reads them.
@@ -396,6 +401,7 @@ impl SyncServer {
         super::desktop_seats::clear_stale_asks(&vault);
         Ok(Self {
             note_editors: super::NoteEditors::default(),
+            artifact_previews: super::ArtifactPreviews::default(),
             live_voice: Default::default(),
             lens_frames,
             retained,
@@ -432,6 +438,7 @@ impl SyncServer {
             mcp_code_host: None,
             reader_runner,
             live_runs,
+            secret_destinations: Default::default(),
             connector_elicitations: Arc::default(),
             browser_guest: None,
             desktop_guest: None,

@@ -28,6 +28,7 @@ pub(super) mod action_routes;
 mod affect_doors;
 mod agent_definition_doors;
 mod agent_verbs;
+mod artifact_hosting_doors;
 mod authority_history_doors;
 mod booking_doors;
 mod budget_doors;
@@ -36,15 +37,18 @@ mod call_context;
 mod campaign_split_doors;
 mod channel_doors;
 mod claim_settle_doors;
+mod cleanup_doors;
 mod code_doors;
 mod code_run_doors;
 mod codebase_doors;
 mod connector_call_doors;
 mod connector_pack_doors;
 mod consolidation_doors;
+mod consent_doors;
 mod content_policy_doors;
 mod coordination_doors;
 mod core_write_doors;
+mod coreference_doors;
 mod courtesy_delete_doors;
 mod craft_candidate_doors;
 mod credential_doors;
@@ -82,6 +86,7 @@ mod residence_doors;
 mod result_doors;
 mod retrieval_doors;
 pub(super) mod role_picks;
+mod secret_grant_doors;
 mod secret_lift_doors;
 mod secret_use_doors;
 mod setting_doors;
@@ -1458,10 +1463,13 @@ impl From<MemoryError> for FacadeApiError {
             // It carries its own code so a client can tell the authority door
             // from the gate door, but the status is the same honest 403.
             // FIX 2222: a host credential where no host acts as a person.
+            // WILL-PLAN L13 row 03: a room's whole off-record stretch, which
+            // no consent record admits a session row to manage.
             MEMORY_CODE_FORBIDDEN
             | MEMORY_CODE_LEASE_REQUIRED
             | MEMORY_CODE_OWNER_BINDING_REQUIRED
-            | oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED => StatusCode::FORBIDDEN,
+            | oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED
+            | oneiron::memory::MEMORY_CODE_ROOM_MANAGEMENT => StatusCode::FORBIDDEN,
             // Both are "the store is not in a state that admits this", which
             // is the conflict family the rest of this plane already maps to
             // 409. `VAULT_LOCKED_SINGLE_WRITER` cannot arise server-side — it
