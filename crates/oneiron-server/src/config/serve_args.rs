@@ -271,6 +271,10 @@ pub struct ServeArgs {
     #[arg(long)]
     pub dimensions: Option<usize>,
 
+    /// Measured MRL prefix width: 1 <= fast-dims < dimensions, fixed at vault open.
+    #[arg(long)]
+    pub fast_dims: Option<u16>,
+
     /// LMDB map size in bytes.
     #[arg(long)]
     pub map_size: Option<usize>,
@@ -463,6 +467,7 @@ impl fmt::Debug for ServeArgs {
             .field("allowed_origins", &self.allowed_origins)
             .field("trusted_proxies", &self.trusted_proxies)
             .field("dimensions", &self.dimensions)
+            .field("fast_dims", &self.fast_dims)
             .field("map_size", &self.map_size)
             .field("log_level", &self.log_level)
             .field("dict_search_paths", &self.dict_search_paths)

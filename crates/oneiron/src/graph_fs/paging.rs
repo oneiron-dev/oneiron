@@ -184,6 +184,14 @@ impl GraphFsResolver<'_, '_> {
         let mut hasher = blake3::Hasher::new_keyed(position_key());
         hasher.update(b"oneiron.graph-fs.cursor.v1");
         hasher.update(self.scoped_read.vault().vault_id().as_bytes());
+        let reference = self.options.mount.stable_label();
+        hasher.update(&(reference.len() as u64).to_be_bytes());
+        hasher.update(reference.as_bytes());
+        if let Some((repo, _)) = self.snapshot {
+            hasher.update(repo.as_bytes());
+        }
+        hasher.update(&(self.options.max_entries as u64).to_be_bytes());
+        hasher.update(&(self.options.page_byte_cap as u64).to_be_bytes());
         for field in [self.scoped_read.actor_key().actor_ref(), listing] {
             hasher.update(&(field.len() as u64).to_be_bytes());
             hasher.update(field.as_bytes());

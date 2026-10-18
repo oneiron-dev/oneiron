@@ -421,6 +421,20 @@ impl DecisionHost {
         })
     }
 
+    /// A held-out arm over one exact configured backend, retaining provider
+    /// usage for the engine's priced trial evidence.
+    pub(crate) fn ladder_for_trial(
+        &self,
+        backend: &oneiron::llm::registry::ModelBackendPin,
+        usage: Arc<std::sync::Mutex<Vec<oneiron::LlmUsage>>>,
+    ) -> anyhow::Result<HeldLadder> {
+        let big = self.big_model.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("no [models.decisions.big] fills the Big rung"))?;
+        let exact = big.for_trial(backend, usage)?;
+        let provider = ModelDecisionProvider::new(exact.pin(), Arc::new(exact))?;
+        Ok(HeldLadder { big: Some(Arc::new(provider)), ..HeldLadder::unstaffed() })
+    }
+
     /// A ladder whose one rung is `role`'s seat on the Big rung (OF-568):
     /// asked as the configured big model is, worded and on its meter, but
     /// routed to that role's seat. Every other slot is empty and no person

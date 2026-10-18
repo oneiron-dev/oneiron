@@ -826,6 +826,10 @@ class Oneiron:
     def reveal(self) -> "Oneiron._RevealVerbs": ...
     @property
     def host(self) -> "Oneiron._HostVerbs": ...
+    def mount(self, spec: Facade.GraphFsMountRequest) -> Facade.GraphFsMounted:
+        """Open the caller-scoped live graph or a retained repository snapshot, resolving a snapshot id to its exact fork hash."""
+    @property
+    def graph_fs(self) -> "Oneiron._GraphFsVerbs": ...
     def execute_code(self, spec: Facade.ForeignCodeRunRequest) -> Facade.ForeignCodeRunResult:
         """Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent."""
     def can(self, request: TaskCanAskRequest) -> TaskAskPreflight: ...
@@ -1016,6 +1020,8 @@ class Oneiron:
         @property
         def conversations(self) -> "Oneiron._VaultConversationsVerbs": ...
         @property
+        def models(self) -> "Oneiron._VaultModelsVerbs": ...
+        @property
         def voices(self) -> "Oneiron._VaultVoicesVerbs": ...
         @property
         def graph(self) -> "Oneiron._VaultGraphVerbs": ...
@@ -1043,6 +1049,8 @@ class Oneiron:
             """Reads one entity as a typed view, or none when absent or withheld; the receipt says which."""
         @property
         def refs(self) -> "Oneiron._VaultRefsVerbs": ...
+        @property
+        def vectors(self) -> "Oneiron._VaultVectorsVerbs": ...
         def neighbors(self, input: Facade.NeighborsRequest) -> Facade.ScopedReadResult[list[Facade.NeighborHit]]:
             """The weighted-edge neighbourhood of one entity, filtered by edge kind and minimum weight."""
         @property
@@ -1188,6 +1196,8 @@ class Oneiron:
             """The owner observes a device-local runner budget counter without creating it, including absence after an owner restore."""
         def settlements(self, spec: Facade.RunSettlementsRequest) -> Facade.RunSettlementsView:
             """The owner reads a served run's persisted physical-rung settlement receipts, with reservation, settled units and stamped cost when priced."""
+        @property
+        def rsi(self) -> "Oneiron._VaultBudgetsRsiVerbs": ...
     class _VaultBudgetsLeaseVerbs:
         def __call__(self, spec: Facade.SpendScopeRequest) -> Facade.SpendLeaseView:
             """The owner reads a persisted spend lease, its remaining allowance and the hard ancestor that binds it."""
@@ -1200,6 +1210,20 @@ class Oneiron:
             """The owner reads a held run's notice, saved partial results, exact checkpoints and whether its existing lease permits resume."""
         def resume(self, spec: Facade.BudgetHoldRequest) -> Facade.PartialResultHold:
             """The owner resumes the same held attempts from their checkpoints after their lease has funds; no model substitution or terminal completion."""
+    class _VaultBudgetsRsiVerbs:
+        def __call__(self, spec: Facade.RsiLineRequest) -> Facade.RsiLineView:
+            """The owner reads both RSI lines, every soft and pinned share, and whether new loop work is held. A hold reads as suspended, never as a terminal failure."""
+        def configure(self, spec: Facade.RsiBudgetConfig) -> Facade.RsiLineView:
+            """The owner creates the vault RSI line once: its token limit, its independent exploration exposure limit, and its soft and owner-pinned shares. Reconfiguration cannot erase receipts or spend."""
+        def top_up(self, spec: Facade.RsiTopUp) -> Facade.RsiLineView:
+            """The owner raises one exact limiting RSI line by its units: the token limit, the exploration exposure limit, or one named share. A top-up never lowers a line and never resumes held work by itself."""
+        @property
+        def hold(self) -> "Oneiron._VaultBudgetsRsiHoldVerbs": ...
+    class _VaultBudgetsRsiHoldVerbs:
+        def __call__(self, spec: Facade.RsiLineRequest) -> Facade.RsiLineView:
+            """The owner holds new RSI loop work rather than killing it; admitted reservations can still settle, and pending attempts, candidates and partial outputs stay."""
+        def resume(self, spec: Facade.RsiLineRequest) -> Facade.RsiLineView:
+            """The owner releases the RSI hold on the same line and receipts, so the same pending try continues without a new experiment or a duplicate terminal receipt."""
     class _VaultMessagesVerbs:
         def durability(self, spec: Facade.MessageDurabilityRequest) -> Facade.ScopedReadResult[Facade.MessageDurability | None]:
             """Reads a MESSAGE's completion, terminal-generation receipts and retained document history through the caller's own read lane."""
@@ -1360,14 +1384,19 @@ class Oneiron:
         def resolve(self, spec: Facade.AssetResolveRequest) -> Facade.ScopedReadResult[Facade.AssetResolved]:
             """Serves an admitted ASSET in the reader's declared image, audio or text form, with a handle and committed served-form receipt refs."""
     class _VaultSearchVerbs:
-        def vector(self, spec: Facade.VectorSearchRequest) -> Facade.ScopedReadResult[list[Facade.VectorSearchHit]]:
-            """Searches the text index or one declared embedding space through its query tower, with per-kind raw match evidence and the caller's read receipt."""
+        @property
+        def vector(self) -> "Oneiron._VaultSearchVectorVerbs": ...
         def hybrid(self, input: Facade.HybridSearchRequest) -> Facade.ScopedReadResult[list[Facade.HybridSearchHit]]:
             """Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence."""
         def temporal(self, input: Facade.TemporalSearchRequest) -> Facade.ScopedReadResult[Facade.TemporalSearchResult]:
             """Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds."""
         def bm25(self, input: Facade.QueryBm25Request) -> Facade.ScopedReadResult[list[Facade.LexicalHit]]:
             """BM25 text search over the engine index; surfaceable claims only."""
+    class _VaultSearchVectorVerbs:
+        def __call__(self, input: Facade.VectorSearchRequest) -> Facade.ScopedReadResult[Facade.VectorSearchResult]:
+            """Searches the text index or a declared embedding space with per-kind matches and revision pins; text-index MRL reads report refinement, and explicit voice_hot skips rescore at the reduced voice limit."""
+        def config(self, spec: Facade.EmptyRequest | None = None) -> Facade.ScopedReadResult[Facade.VectorSearchConfig]:
+            """Reads this vault open's persisted dimensions and optional MRL fast_dims prefix; graph shape is configured before open, never changed by a search."""
     class _VaultImagesVerbs:
         def view(self, request: Facade.ImageViewRequest) -> Facade.PulledImage: ...
     class _VaultExplainVerbs:
@@ -1947,6 +1976,10 @@ class Oneiron:
             """Settles a work reservation at its actual spend."""
         def refund_work(self, spec: Facade.ResearchRefundWire) -> Facade.ResearchReservation:
             """Refunds a work reservation nothing was spent on."""
+        def reserve_exploration(self, spec: Facade.ResearchExplorationWire) -> Facade.EntityId:
+            """Reserves exploration exposure for the campaign on its own exposure-denominated RSI line, independently of token work, and returns the reservation's id. Settle or refund it through settle_work and refund_work."""
+        def budget(self, spec: Facade.ResearchArchiveWire) -> Facade.ResearchBudgetView:
+            """Reads the campaign's lease, every reservation it holds or held with its settlement and soft-share overdraft receipt, and the vault RSI lines behind them, including the observable hold state."""
         def record_benchmark(self, spec: Facade.ResearchBenchmarkWire) -> Facade.SelectionBenchmark:
             """Records an estimator version's held-out selection benchmark against the DGM parent formula, once per version; a win of at least 30 cases lets its information gain rank parents."""
     class _VaultResearchArchiveVerbs:
@@ -2650,6 +2683,42 @@ class Oneiron:
     class _VaultConversationsRecordsVerbs:
         def append(self, spec: Facade.DagRecordAppendInput) -> Facade.DagRecordAppendReceipt:
             """Appends one TURN to a conversation's DAG, bylined the caller, with its topology in one transaction; the host lands the turn once."""
+    class _VaultModelsVerbs:
+        @property
+        def catalog(self) -> "Oneiron._VaultModelsCatalogVerbs": ...
+        @property
+        def trials(self) -> "Oneiron._VaultModelsTrialsVerbs": ...
+        @property
+        def bindings(self) -> "Oneiron._VaultModelsBindingsVerbs": ...
+    class _VaultModelsCatalogVerbs:
+        def refresh(self, spec: Facade.ModelCatalogRefresh) -> Facade.ModelCatalogRevision:
+            """Refreshes priced model catalog rows and external-score diffs under an immutable revision; changes no role binding."""
+        def get(self, spec: Facade.ModelCatalogGet) -> Facade.ModelCatalogRevision:
+            """Reads a pinned model catalog revision with its prices, backend offers and score evidence."""
+        def diff(self, spec: Facade.ModelCatalogDiffRequest) -> Facade.ModelCatalogDiff:
+            """Diffs two immutable model catalog revisions, including prices, scores and retired offers."""
+    class _VaultModelsTrialsVerbs:
+        def nominate(self, spec: Facade.ModelTrialNominate) -> Facade.ModelTrialView:
+            """Nominates a question-specific held-out trial at a catalog revision using the caller own labels; external scores grant no authority."""
+        def get(self, spec: Facade.ModelTrialRef) -> Facade.ModelTrialView:
+            """Reads a retained held-out trial, its catalog revision, independent labels and measured cost."""
+        def approve(self, spec: Facade.ModelTrialRef) -> Facade.ModelTrialView:
+            """Approves exploration for a held-out model trial only; leaves its role binding unchanged."""
+        def run(self, spec: Facade.ModelTrialRef) -> Facade.ModelTrialView:
+            """Runs both pinned backend arms through decide and normal inference leases on the original held-out source frontier; records real usage and cost."""
+        def complete(self, spec: Facade.ModelTrialComplete) -> Facade.ModelTrialView:
+            """Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer."""
+    class _VaultModelsBindingsVerbs:
+        def propose(self, spec: Facade.ModelBindingPropose) -> Facade.ModelBindingProposal:
+            """Proposes a role model change from a sufficient held-out trial, retaining catalog revision and real trial cost without activating it."""
+        def get(self, spec: Facade.ModelBindingProposalRef) -> Facade.ModelBindingProposal:
+            """Reads an owner-reviewed model role-binding proposal and its pinned trial evidence."""
+        def read(self, spec: Facade.ModelBindingRead) -> Facade.ModelBinding:
+            """Reads the currently active manifest binding for a model role."""
+        def accept(self, spec: Facade.ModelBindingAccept) -> Facade.ModelBindingProposal:
+            """Accepts a pending model role-binding proposal as the owner after transaction-local incumbent, catalog and trial checks."""
+        def deny(self, spec: Facade.ModelBindingProposalRef) -> Facade.ModelBindingProposal:
+            """Denies a pending model role-binding proposal as the owner without changing the incumbent manifest binding."""
     class _VaultVoicesVerbs:
         @property
         def packs(self) -> "Oneiron._VaultVoicesPacksVerbs": ...
@@ -2774,6 +2843,9 @@ class Oneiron:
             """The bounded preview of one record ref, read through the caller's own scope; unreadable and missing look the same."""
         def links(self, spec: Facade.RecordLinksRequest) -> Facade.RecordLinks:
             """A text, the texts a read surface returned, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read."""
+    class _VaultVectorsVerbs:
+        def put(self, spec: Facade.VectorPutRequest) -> Facade.VectorPutReceipt:
+            """Supplies one full-width vector for a readable record as the authenticated owner; the existing write gate checks model, transform, width, revision staging and graph updates atomically."""
     class _VaultStructuralVerbs:
         def put(self, input: Facade.StructuralPutInput) -> Facade.EntityRefReceipt:
             """Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit."""
@@ -2798,9 +2870,25 @@ class Oneiron:
             """Reminds the recipients whose turn it is to sign a pending document, through the outbound gate, as the caller."""
         def void(self, spec: Facade.EsignVoidRequest) -> Facade.EsignDispatchView:
             """Withdraws a drafted or pending signing document unsealed and tells its recipients why, through the outbound gate, as the caller."""
+        @property
+        def signing(self) -> "Oneiron._VaultEsignSigningVerbs": ...
+        @property
+        def seal(self) -> "Oneiron._VaultEsignSealVerbs": ...
     class _VaultEsignLinksVerbs:
         def issue(self, spec: Facade.EsignLinksIssueRequest) -> Facade.EsignLinksView:
             """The vault owner mints the signing links of a drafted document and receives each new one once, to deliver to its recipient."""
+    class _VaultEsignSigningVerbs:
+        def act(self, spec: Facade.EsignSigningRequest) -> Facade.SigningOutcome:
+            """One recipient ceremony act under the signing capability in the body: load the page, save a field, complete with consent, or reject; an agent caller makes Complete an automated sign act."""
+        def pdf(self, spec: Facade.EsignSigningPdfRequest) -> Facade.EsignSigningPdfView:
+            """One ceremony item under its signing capability, as base64 PDF bytes: the pinned original while signing, the hash-checked sealed output after sealing."""
+        def image(self, spec: Facade.EsignSigningImageRequest) -> Facade.EsignSigningImageView:
+            """Stores one signature image bound to the signing capability recipient and answers the ref a signature field value names."""
+        def signature(self, spec: Facade.EsignSigningSignatureRequest) -> Facade.EsignSigningSignatureView:
+            """Reads back one stored signature image under the signing capability that uploaded it, as base64 bytes."""
+    class _VaultEsignSealVerbs:
+        def get(self, spec: Facade.EsignSealGetRequest) -> Facade.EsignSealView:
+            """Where one signing document seal task stands: its folded status, every seal attempt receipt the queue holds for it, and its sealed manifest once one attempt sealed it."""
     class _VaultConsolidationVerbs:
         def enqueue(self, spec: Facade.ConsolidationEnqueueRequest) -> Facade.DreamerAttemptRef:
             """Enqueues one consolidation attempt and returns its durable job reference."""
@@ -3324,6 +3412,25 @@ class Oneiron:
     class _HostBudgetVerbs:
         def hit(self, spec: Facade.HostBudgetHitRequest) -> Facade.HostBudgetHitResult:
             """Notifies a spent durable budget seat under Suspend, retaining the original line, root payer, cap and accounting for hook follow-up work."""
+    class _GraphFsVerbs:
+        def readdir(self, spec: Facade.GraphFsPathRequest) -> Facade.GraphFsDirectoryView:
+            """List one directory at the mounted reference under the caller read gate, with a sealed continuation."""
+        def read_file(self, spec: Facade.GraphFsPathRequest) -> Facade.GraphFsOutput:
+            """Read a bounded page of file bytes at the mounted reference, with its encoding and sealed continuation."""
+        def read_link(self, spec: Facade.GraphFsLinkRequest) -> Facade.GraphFsLinkView:
+            """Resolve a visible graph link at the mounted reference without following a host filesystem link."""
+        def ls(self, spec: Facade.GraphFsLsRequest) -> Facade.GraphFsOutput:
+            """List names at the mounted reference, using the live temporal index when requested."""
+        def find(self, spec: Facade.GraphFsFindRequest) -> Facade.GraphFsOutput:
+            """Walk visible paths at the mounted reference, or push a live newer-than query into the temporal index."""
+        def grep(self, spec: Facade.GraphFsGrepRequest) -> Facade.GraphFsOutput:
+            """Search visible mounted file bytes, using the live claim text index for supported recursive patterns."""
+        def cat(self, spec: Facade.GraphFsPathRequest) -> Facade.GraphFsOutput:
+            """Read a bounded page of mounted file bytes as UTF-8 or base64 without changing its reference."""
+        def head(self, spec: Facade.GraphFsHeadRequest) -> Facade.GraphFsOutput:
+            """Read the first requested lines at the mounted reference with bounded output and a sealed continuation."""
+        def wc(self, spec: Facade.GraphFsLinkRequest) -> Facade.GraphFsOutput:
+            """Count lines, words and bytes of a visible file at the mounted reference."""
     class _ConnectorVerbs:
         def list(self, spec: Facade.ConnectorListRequest) -> list[Facade.ConnectorEntry]:
             """Every live catalogued connector whose name or summary matches the query."""
