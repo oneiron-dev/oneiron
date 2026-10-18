@@ -1266,6 +1266,8 @@ fn mcp_agent_verb_input(
         "vault.notes.lifecycle" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.set_overrides" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.defaults" => a.spec.clone().ok_or_else(invalid),
+        "self.agents.spawn" => a.spec.clone().ok_or_else(invalid),
+        "self.leader.split" => a.spec.clone().ok_or_else(invalid),
         _ => Err(invalid()),
     }
 }
@@ -2357,6 +2359,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.notes.defaults" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.agents.spawn" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.leader.split" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         _ => return Err(invalid()),
@@ -6717,6 +6725,51 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_notes_defaults(&memory, input)
                 .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.agents.spawn" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.agents.spawn", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::AgentSpawnInput> =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::self_agents_spawn(
+                server,
+                auth,
+                actor
+                    .off_record_session
+                    .as_deref()
+                    .map(oneiron::EntityId::from_hex)
+                    .transpose()
+                    .map_err(|_| invalid())?,
+                input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.leader.split" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.leader.split", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveRunRequest<
+                oneiron::code_run::LeaderSplitInput,
+            > = serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::self_leader_split(
+                server,
+                auth,
+                actor
+                    .off_record_session
+                    .as_deref()
+                    .map(oneiron::EntityId::from_hex)
+                    .transpose()
+                    .map_err(|_| invalid())?,
+                input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

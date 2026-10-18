@@ -6067,7 +6067,11 @@
       "output": "crate::code_run::AgentSpawnOutput",
       "scope": "Write",
       "context": "run",
-      "effect": "AgentsSpawn"
+      "effect": "AgentsSpawn",
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::AgentSpawnInput>",
+        "description": "Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity."
+      }
     },
     {
       "name": "self.leader.advice",
@@ -6091,7 +6095,11 @@
       "output": "crate::code_run::LeaderSplitOutput",
       "scope": "Write",
       "context": "run",
-      "effect": "LeaderSplit"
+      "effect": "LeaderSplit",
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::LeaderSplitInput>",
+        "description": "Splits the attached leader run into a subproject inside its own TASK wrapper; spec may name only the child leader and a narrower scope."
+      }
     },
     {
       "name": "self.skills.call",

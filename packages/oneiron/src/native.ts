@@ -359,6 +359,8 @@ vaultNotesSeal(requestJson: string): string
 vaultNotesLifecycle(requestJson: string): string
 vaultNotesSetOverrides(requestJson: string): string
 vaultNotesDefaults(requestJson: string): string
+selfAgentsSpawn(input: unknown): unknown
+selfLeaderSplit(input: unknown): unknown
 // END GENERATED AGENT VERBS
 
   asActor(actorKey: string): NativeClient

@@ -3325,4 +3325,16 @@ impl NativeClient {
             .map_err(facade_error)?;
         serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
     }
+    #[napi]
+    pub fn self_agents_spawn(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.agents.spawn", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_leader_split(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.leader.split", input)
+            .map_err(facade_error)
+    }
 }

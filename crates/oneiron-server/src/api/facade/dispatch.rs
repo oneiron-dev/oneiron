@@ -7542,6 +7542,56 @@ async fn vault_notes_defaults(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn self_agents_spawn(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.agents.spawn")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.agents.spawn", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.agents.spawn", value).await?;
+    let output = facade_output(
+        super::host_doors::self_agents_spawn(
+            server,
+            auth,
+            call.session()?,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn self_leader_split(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.leader.split")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.leader.split", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.leader.split", value).await?;
+    let output = facade_output(
+        super::host_doors::self_leader_split(
+            server,
+            auth,
+            call.session()?,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 /// Runs facade verb `verb` for `call` over `input`, as its row admits it:
 /// the one verb table every server transport serves. A board, browser or run
 /// row is refused by the context it needs, which no facade call carries; any
@@ -7979,6 +8029,8 @@ pub(crate) async fn call_verb(
         "vault.notes.lifecycle" => vault_notes_lifecycle(server, call, input).await,
         "vault.notes.set_overrides" => vault_notes_set_overrides(server, call, input).await,
         "vault.notes.defaults" => vault_notes_defaults(server, call, input).await,
+        "self.agents.spawn" => self_agents_spawn(server, call, input).await,
+        "self.leader.split" => self_leader_split(server, call, input).await,
         "self.focus.refresh" | "self.focus.subscribe" | "self.focus.unsubscribe" => {
             Err(context_required(verb, VerbContext::Board))
         }
@@ -8032,10 +8084,8 @@ pub(crate) async fn call_verb(
         | "self.unfold"
         | "self.folds"
         | "tasks.refuse"
-        | "self.agents.spawn"
         | "self.leader.advice"
         | "self.leader.pattern"
-        | "self.leader.split"
         | "self.skills.call"
         | "self.team.start"
         | "self.team.record"

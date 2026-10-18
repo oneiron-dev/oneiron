@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 329 facade rows, 1229 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 297.
+// UniFFI census: 331 facade rows, 1247 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 299.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -20044,4 +20044,326 @@ pub struct NoteDefaultsView {
     pub overrides: NoteOverrides,
     #[serde(rename = "defaults")]
     pub defaults: NoteKindDescriptor,
+}
+
+/// `oneiron::code_run::run_verbs::SpawnCare`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SpawnCare {
+    #[serde(rename = "light")]
+    Light,
+    #[serde(rename = "medium")]
+    Medium,
+    #[serde(rename = "high")]
+    High,
+    #[serde(rename = "xhigh")]
+    XHigh,
+    #[serde(rename = "max")]
+    Max,
+}
+
+/// `oneiron::code_run::run_verbs::SpawnKnob` with `T` = `String`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "mode")]
+pub enum SpawnKnobString {
+    #[serde(rename = "seed")]
+    Seed {
+        #[serde(rename = "value")]
+        value: String,
+        #[serde(rename = "weight_runs")]
+        weight_runs: f64,
+    },
+    #[serde(rename = "pin")]
+    Pin {
+        #[serde(rename = "value")]
+        value: String,
+    },
+}
+
+/// `oneiron::code_run::run_verbs::SpawnKnob` with `T` = `U32`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "mode")]
+pub enum SpawnKnobU32 {
+    #[serde(rename = "seed")]
+    Seed {
+        #[serde(rename = "value")]
+        value: u32,
+        #[serde(rename = "weight_runs")]
+        weight_runs: f64,
+    },
+    #[serde(rename = "pin")]
+    Pin {
+        #[serde(rename = "value")]
+        value: u32,
+    },
+}
+
+/// `oneiron::code_run::run_verbs::SpawnPattern`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SpawnPattern {
+    #[serde(rename = "solo")]
+    Solo,
+    #[serde(rename = "ceo_decides")]
+    CeoDecides,
+    #[serde(rename = "committee")]
+    Committee,
+    #[serde(rename = "vote")]
+    Vote,
+    #[serde(rename = "market")]
+    Market,
+    #[serde(rename = "rotation")]
+    Rotation,
+}
+
+/// `oneiron::code_run::run_verbs::SpawnKnob` with `T` = `SpawnPattern`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "mode")]
+pub enum SpawnKnobSpawnPattern {
+    #[serde(rename = "seed")]
+    Seed {
+        #[serde(rename = "value")]
+        value: SpawnPattern,
+        #[serde(rename = "weight_runs")]
+        weight_runs: f64,
+    },
+    #[serde(rename = "pin")]
+    Pin {
+        #[serde(rename = "value")]
+        value: SpawnPattern,
+    },
+}
+
+/// `oneiron::code_run::run_verbs::SpawnKnob` with `T` = `U64`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "mode")]
+pub enum SpawnKnobU64 {
+    #[serde(rename = "seed")]
+    Seed {
+        #[serde(rename = "value")]
+        value: u64,
+        #[serde(rename = "weight_runs")]
+        weight_runs: f64,
+    },
+    #[serde(rename = "pin")]
+    Pin {
+        #[serde(rename = "value")]
+        value: u64,
+    },
+}
+
+/// `oneiron::context_projection::spec::MemoryProjection`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "mode")]
+pub enum MemoryProjection {
+    #[serde(rename = "default")]
+    Default,
+    #[serde(rename = "exclude")]
+    Exclude,
+    #[serde(rename = "scoped")]
+    Scoped {
+        #[serde(rename = "domains")]
+        domains: Vec<String>,
+        #[serde(rename = "limit")]
+        limit: u64,
+    },
+}
+
+/// `oneiron::context_projection::spec::ChatProjection`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "mode")]
+pub enum ChatProjection {
+    #[serde(rename = "default")]
+    Default,
+    #[serde(rename = "exclude")]
+    Exclude,
+    #[serde(rename = "recent")]
+    Recent {
+        #[serde(rename = "last_n")]
+        last_n: u64,
+    },
+}
+
+/// `oneiron::context_projection::spec::ContextSpec`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ContextSpec {
+    #[serde(rename = "layers", default, skip_serializing_if = "Option::is_none")]
+    pub layers: Option<Vec<String>>,
+    #[serde(rename = "memory", default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<MemoryProjection>,
+    #[serde(rename = "chat", default, skip_serializing_if = "Option::is_none")]
+    pub chat: Option<ChatProjection>,
+    #[serde(rename = "briefing", default, skip_serializing_if = "Option::is_none")]
+    pub briefing: Option<String>,
+    #[serde(
+        rename = "_annotation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub annotation: Option<String>,
+}
+
+/// `oneiron::agent_dispatch::comm::CommReach`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CommReach {
+    #[serde(rename = "parent")]
+    Parent,
+    #[serde(rename = "subtree")]
+    Subtree,
+    #[serde(rename = "project")]
+    Project,
+    #[serde(rename = "vault")]
+    Vault,
+}
+
+/// `oneiron::code_run::run_verbs::AgentSpawnInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgentSpawnInput {
+    #[serde(rename = "need")]
+    pub need: String,
+    #[serde(rename = "prompt")]
+    pub prompt: String,
+    #[serde(rename = "intent_key")]
+    pub intent_key: String,
+    #[serde(rename = "agent", default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    #[serde(rename = "care", default, skip_serializing_if = "Option::is_none")]
+    pub care: Option<SpawnCare>,
+    #[serde(rename = "notes", default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    #[serde(rename = "model", default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<SpawnKnobString>,
+    #[serde(rename = "width", default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<SpawnKnobU32>,
+    #[serde(rename = "pattern", default, skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<SpawnKnobSpawnPattern>,
+    #[serde(rename = "budget", default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<SpawnKnobU64>,
+    #[serde(rename = "context", default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<ContextSpec>,
+    #[serde(
+        rename = "context_from",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub context_from: Option<Vec<String>>,
+    #[serde(rename = "depth", default, skip_serializing_if = "Option::is_none")]
+    pub depth: Option<u8>,
+    #[serde(rename = "project", default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(
+        rename = "objectives",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub objectives: Option<Vec<String>>,
+    #[serde(rename = "comm", default, skip_serializing_if = "Option::is_none")]
+    pub comm: Option<CommReach>,
+}
+
+/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `AgentSpawnInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LiveRunRequestAgentSpawnInput {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+    #[serde(rename = "spec")]
+    pub spec: AgentSpawnInput,
+}
+
+/// `oneiron::code_run::run_verbs::AgentSpawnKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AgentSpawnKind {
+    #[serde(rename = "agent_spawn")]
+    AgentSpawn,
+}
+
+/// `oneiron::agent_dispatch::launch::LaunchStatement`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LaunchStatement {
+    #[serde(rename = "agent_count")]
+    pub agent_count: u64,
+    #[serde(rename = "expected")]
+    pub expected: ExpectedSpend,
+    #[serde(rename = "unit")]
+    pub unit: String,
+    #[serde(rename = "cap_units", default, skip_serializing_if = "Option::is_none")]
+    pub cap_units: Option<u64>,
+    #[serde(
+        rename = "available_units",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub available_units: Option<u64>,
+    #[serde(rename = "hard")]
+    pub hard: bool,
+    #[serde(rename = "reserved_units")]
+    pub reserved_units: u64,
+    #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    #[serde(
+        rename = "parent_scope",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub parent_scope: Option<String>,
+    #[serde(rename = "stated_at")]
+    pub stated_at: u64,
+}
+
+/// `oneiron::code_run::run_verbs::AgentSpawnOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum AgentSpawnOutput {
+    #[serde(rename = "queued")]
+    Queued {
+        #[serde(rename = "kind")]
+        kind: AgentSpawnKind,
+        #[serde(rename = "attempt")]
+        attempt: String,
+        #[serde(rename = "launch", default, skip_serializing_if = "Option::is_none")]
+        launch: Option<LaunchStatement>,
+    },
+    #[serde(rename = "proposed_widen")]
+    ProposedWiden {
+        #[serde(rename = "kind")]
+        kind: AgentSpawnKind,
+        #[serde(rename = "proposal")]
+        proposal: String,
+    },
+}
+
+/// `oneiron::code_run::run_verbs::LeaderSplitInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LeaderSplitInput {
+    #[serde(rename = "leader", default, skip_serializing_if = "Option::is_none")]
+    pub leader: Option<String>,
+    #[serde(rename = "slice", default, skip_serializing_if = "Option::is_none")]
+    pub slice: Option<ScopeScope>,
+}
+
+/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `LeaderSplitInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LiveRunRequestLeaderSplitInput {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+    #[serde(rename = "spec")]
+    pub spec: LeaderSplitInput,
+}
+
+/// `oneiron::code_run::run_verbs::LeaderSplitOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LeaderSplitOutput {
+    #[serde(rename = "project")]
+    pub project: String,
+    #[serde(rename = "task")]
+    pub task: String,
+    #[serde(rename = "parent")]
+    pub parent: String,
+    #[serde(rename = "leader")]
+    pub leader: String,
+    #[serde(rename = "depth_remaining")]
+    pub depth_remaining: u8,
 }
