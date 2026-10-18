@@ -76,6 +76,7 @@ vaultWitness(turn: WitnessTurn): WitnessReceipt
 vaultClaimsUpsert(input: unknown): unknown
 vaultRecall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined, as_of: number | undefined, deadline_ms: number | undefined, media: RecallMedia | undefined, query_affect: QueryAffect | undefined): MemoryPack
 vaultExport(input: unknown): unknown
+selfCredentialAttenuate(input: unknown): unknown
 vaultScopeCeiling(input: unknown): unknown
 vaultExportScoped(input: unknown): unknown
 vaultReceipts(limit: number | undefined, kinds: string[] | undefined): FacadeReceipt[]
@@ -443,6 +444,8 @@ vaultSearchBm25(input: unknown): unknown
 vaultNeighbors(input: unknown): unknown
 vaultStructuralPut(input: unknown): unknown
 vaultHabitsCheckin(input: unknown): unknown
+vaultProductivityCreate(input: unknown): unknown
+vaultProductivityTree(input: unknown): unknown
 vaultClaimsAdmit(input: unknown): unknown
 vaultArtifactsCreate(input: unknown): unknown
 vaultEsignCreate(input: unknown): unknown
@@ -480,6 +483,10 @@ vaultArtifactsAppend(input: unknown): unknown
 vaultArtifactsRead(input: unknown): unknown
 vaultConsolidationEnqueue(input: unknown): unknown
 vaultConsolidationStatus(input: unknown): unknown
+vaultConsolidationPromote(input: unknown): unknown
+vaultConsolidationEvidence(input: unknown): unknown
+vaultClaimsVet(input: unknown): unknown
+vaultClaimsVetting(input: unknown): unknown
 vaultMemorySignalExtraction(input: unknown): unknown
 vaultMemorySignalExtractionResult(input: unknown): unknown
 vaultClaimsSeed(input: unknown): unknown

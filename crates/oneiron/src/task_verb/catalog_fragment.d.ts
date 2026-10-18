@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 554 code-mode rows (533 host rows, 21 run rows), 1951 declarations.
-// Replies: 489 fully typed, 61 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 561 code-mode rows (540 host rows, 21 run rows), 1973 declarations.
+// Replies: 494 fully typed, 63 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 93; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 94; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -330,6 +330,9 @@ declare namespace Sdk {
   type Sensitivity = "public" | "private" | "sensitive" | "restricted";
   type SensitivityCeiling = { kind: "bottom" } | { kind: "at_most"; value: Sensitivity };
   type Scope = { worlds?: ScopeAxis<ScopeId>; facets?: ScopeAxis<ScopeId>; bands?: ScopeAxis<number>; audience?: ScopeAxis<ScopeId>; verbs?: ScopeAxis<string>; sensitivity?: SensitivityCeiling };
+  type SlipCaveat = { scope?: Scope | null; expires_at?: number | null; ttl_secs?: number | null; single_use: boolean; records?: string[] | null; channels?: string[] | null; pact?: [ScopeId, number[]] | null };
+  type CredentialAttenuationRequest = { holder_seed: number[]; caveat: SlipCaveat; next_binding_key?: number[] | null };
+  type CredentialAttenuated = { token: string; binding_key: number[] };
   type CredentialCeiling = { kind: "ceiling"; scope: Scope };
   type RecordSelector = { worlds?: RecallWorlds | null; facet_refs?: string[]; kinds?: string[]; project_refs?: string[] };
   type ScopeAxisInput<T> = { kind: "bottom" } | { kind: "all" } | { kind: "some"; values: T[] };
@@ -1627,6 +1630,12 @@ declare namespace Sdk {
   type StructuralEdgeSpec = { edge_kind: string; target_ref: string; weight?: number | null };
   type StructuralPutInput = { id?: string | null; kind: string; body: unknown; text_fields?: TextIndexField[] | null; edges?: StructuralEdgeSpec[] | null; occurred_at: number; learned_at?: number | null };
   type HabitCheckinInput = { habit_ref: string; id?: string | null; data?: unknown | null; occurred_at: number; learned_at?: number | null };
+  type ProductivityCreateRole = "goal" | "milestone" | "habit";
+  type ProductivityCreateRequest = { role: ProductivityCreateRole; label: string; parent_ref?: string | null };
+  type ProductivityTreeRequest = { root_ref: string; max_depth: number };
+  type ProductivityRole = "task" | "goal" | "milestone" | "habit" | "habit_checkin";
+  type ProductivityNode = { task_ref: string; id_hex: string; parent_ref?: string | null; depth: number; role: ProductivityRole; label?: string | null; current_streak?: number | null; longest_streak?: number | null };
+  type ProductivityTree = { root_ref: string; nodes: ProductivityNode[] };
   type AdmitImportedClaimInput = { source_id: string; source_record_id: string; id?: string | null; subject_ref: string; predicate: string; value: unknown; occurred_at: number; learned_at?: number | null };
   type ArtifactCreateRequest = { name: string; media_type: string; content_base64: string; run_ref?: string | null; made_by?: unknown | null };
   type DocumentKind = "document" | "template";
@@ -1799,6 +1808,19 @@ declare namespace Sdk {
   type DreamerAttemptRef = { job_ref: string; state: string; existing: boolean };
   type ConsolidationStatusRequest = { job_ref: string };
   type DreamerAttemptView = { job_ref: string; state: string; kind: string; lease_owner?: string | null; attempt_count: number; run_id?: string | null; last_error?: string | null; created_at: number; updated_at: number };
+  type EvidenceKind = "turn" | "message" | "note" | "asset_text" | "import_record";
+  type CursorSpan = { start: number[]; end: number[] };
+  type EvidenceRef = { kind: EvidenceKind; entity: string; doc: string; at: number[]; span?: CursorSpan | null; quote_sha256?: number[] | null };
+  type GeneratedClaimInput = { claim_ref: string; predicate: string; subject_ref: string; value: unknown; confidence: number; scope: ClaimScope; sensitivity?: number | null; evidence_refs: EvidenceRef[]; claim_evidence_refs?: string[]; supersedes?: string | null; valid_from?: number | null; valid_to?: number | null };
+  type ConsolidationPromoteRequest = { job_ref: string; candidates: GeneratedClaimInput[] };
+  type ConsolidationRejection = { claim_ref: string; reason: string };
+  type PromotionEvidenceReason = "missing" | "not_evidence" | "not_surfaceable" | "unvetted_generated" | "unvetted_taint" | "generated_origin" | "pending_critical_confirmation" | "unsupported_turn_role";
+  type ConsolidationEvidenceHop = { kind: string; entity_ref: string; actor_ref?: string | null };
+  type ConsolidationMessageEvidence = { message_ref: string; start: number; end: number; revision: number[]; frontier?: number[] | null };
+  type ConsolidationEvidenceLocator = { source_ref: string; claim_ref?: string | null; byte_range?: [number, number] | null; content_hash: number[]; messages: ConsolidationMessageEvidence[] };
+  type ConsolidationEvidenceSource = { source_ref: string; source?: string | null; approval?: string | null; lifecycle?: string | null; evidence_taint?: string | null; generated_origin: boolean; writer_ref?: string | null; foreign_world_ref?: string | null; consolidation_eligible: boolean; corroboration_eligible: boolean; first_party_corroboration: boolean; effector_evidence_eligible: boolean; refusal?: PromotionEvidenceReason | null; source_refs: string[]; evidence_refs: EvidenceRef[]; source_meet?: string | null; chain: ConsolidationEvidenceHop[]; locators: ConsolidationEvidenceLocator[] };
+  type ConsolidationPromotion = { job_ref: string; landed: string[]; pended: string[]; held: string[]; rejected: ConsolidationRejection[]; input_evidence: ConsolidationEvidenceSource[]; output_evidence: ConsolidationEvidenceSource[] };
+  type ConsolidationEvidenceRequest = { source_refs: string[] };
   type SignalExtractionRequest = { turn_refs: string[] };
   type SignalExtractionTicket = { job_refs: string[] };
   type SignalExtractionResultRequest = { job_ref: string };
@@ -2088,6 +2110,10 @@ declare namespace self {
     land(input: Sdk.BudgetLandRequest): Promise<Sdk.PartialResultHold | StoredResult>;
   };
   const compact: (input: Sdk.FoldCompactInput) => Promise<Sdk.FoldReply<Sdk.FoldCompactAsked> | StoredResult>;
+  const credential: {
+    /** Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted. */
+    attenuate(input: Sdk.CredentialAttenuationRequest): Promise<Sdk.CredentialAttenuated | StoredResult>;
+  };
   const decisions: {
     asks(input: Sdk.EmptyRequest): Promise<Sdk.DecisionAsk[] | StoredResult>;
   };
@@ -2480,6 +2506,10 @@ declare const vault: Sdk.VaultHost & {
     supersede(input: Sdk.MemorySupersedeInput): Promise<Sdk.MemoryWriteOutput | StoredResult>;
     /** Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance. */
     upsert(input: Sdk.ScopedClaimInput): Promise<Sdk.CommitReceipt | StoredResult>;
+    /** Vets a reviewed generated-origin Auto claim or proposal through the owner Gate and signed settlement; it still contributes zero corroboration. */
+    vet(input: Sdk.ClaimSettleRequest): Promise<Sdk.ClaimSettlement | StoredResult>;
+    /** Reviews an exact generated-origin Auto claim or proposal before owner vetting, returning the content-bound review handle. */
+    vetting(input: Sdk.ClaimProposalReviewRequest): Promise<Sdk.ClaimProposalReview | StoredResult>;
   };
   code: {
     /** Every unit of one tested state of a code file, with the runs of text each operation wrote, and who made each operation and why. */
@@ -2568,6 +2598,10 @@ declare const vault: Sdk.VaultHost & {
   consolidation: {
     /** Enqueues one consolidation attempt and returns its durable job reference. */
     enqueue(input: Sdk.ConsolidationEnqueueRequest): Promise<Sdk.DreamerAttemptRef | StoredResult>;
+    /** Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner. */
+    evidence(input: Sdk.ConsolidationEvidenceRequest): Promise<Sdk.ScopedReadResult<Sdk.ConsolidationEvidenceSource[]> | StoredResult>;
+    /** Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals. */
+    promote(input: Sdk.ConsolidationPromoteRequest): Promise<Sdk.ConsolidationPromotion | StoredResult>;
     /** Reads the status of one consolidation attempt by its durable job reference. */
     status(input: Sdk.ConsolidationStatusRequest): Promise<Sdk.DreamerAttemptView | null | StoredResult>;
   };
@@ -2970,6 +3004,12 @@ declare const vault: Sdk.VaultHost & {
     get(input: Sdk.PersonRequest): Promise<Sdk.PersonRow | StoredResult>;
     /** One page of the people the caller reads, in handle order. */
     list(input: Sdk.PeopleListRequest): Promise<Sdk.PeoplePage | StoredResult>;
+  };
+  productivity: {
+    /** Creates one inert Goal, Milestone or Habit TASK under an optional checked parent; an illegal nesting refuses the whole write. */
+    create(input: Sdk.ProductivityCreateRequest): Promise<Sdk.EntityRefReceipt | StoredResult>;
+    /** The role-labelled TASK tree under one root, read through the caller's lane, with each Habit's derived streak counters. */
+    tree(input: Sdk.ProductivityTreeRequest): Promise<Sdk.ScopedReadResult<Sdk.ProductivityTree | null> | StoredResult>;
   };
   projects: {
     /** The owner's tap that confirms a host-held project card; only the host's own door can complete it. */

@@ -2718,7 +2718,7 @@
      "purpose": "The signed instrument a request was admitted on, kept with the work it queued, so that work's standing is…",
      "surface": {
       "crate-vis": 1,
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -10560,13 +10560,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/claim/scoped_read/edge_admission.rs",
      "purpose": "The one scoped graph projection: exact relation + both endpoints, then limits",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -19219,10 +19219,27 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)",
      "surface": {
       "const": 2,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 4,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CursorSpan",
+      "EvidenceKind",
+      "EvidenceRef",
+      "PromotionEvidenceReason"
+     ],
+     "path": "src/dreamer_promotion/admission.rs",
+     "purpose": "The promotion writer's evidence decision, also exposed by the typed evidence read",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 2,
+      "struct": 2
      }
     },
     {
@@ -22753,7 +22770,7 @@
      "path": "src/entity_doc/mod.rs",
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "mod": 2,
       "re-export": 10
      }
@@ -22789,6 +22806,16 @@
       "enum": 1,
       "fn": 9,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/entity_doc/promotion_evidence.rs",
+     "purpose": "Canonical citation checks on the same document snapshot a promotion commits",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -22916,7 +22943,7 @@
      "path": "src/entity_doc/verbs.rs",
      "purpose": "Stable-cursor edit verbs and the lossless whole-text timeout path",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 6,
       "struct": 3
@@ -24069,13 +24096,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gate/bundle/claim_settle.rs",
      "purpose": "One proposed claim decided on its own (DOOR-115): the owner's approval or decline of a claim named by its…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -30937,7 +30964,7 @@
      "purpose": "One proposed claim's review and settlement (DOOR-115, e2e MEMORY-01): `vault.claims.review` reads one…",
      "surface": {
       "enum": 4,
-      "fn": 3,
+      "fn": 5,
       "struct": 6
      }
     },
@@ -31053,6 +31080,27 @@
      "purpose": "The authorised responder's door to a parked contradiction (OF-023)",
      "surface": {
       "fn": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ConsolidationEvidenceHop",
+      "ConsolidationEvidenceLocator",
+      "ConsolidationEvidenceRequest",
+      "ConsolidationEvidenceSource",
+      "ConsolidationMessageEvidence",
+      "ConsolidationPromoteRequest",
+      "ConsolidationPromotion",
+      "ConsolidationRejection",
+      "GeneratedClaimInput"
+     ],
+     "path": "src/memory/consolidation.rs",
+     "purpose": "Typed promotion and evidence observation over the existing Dreamer writer",
+     "surface": {
+      "fn": 2,
+      "struct": 9
      }
     },
     {
@@ -31438,7 +31486,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 7,
+      "mod": 8,
       "re-export": 43
      }
     },
@@ -31957,7 +32005,26 @@
      "purpose": "Structural puts (habit checkins, imported-claim admission, blob artifacts) and `author_take`",
      "surface": {
       "crate-vis": 2,
-      "re-export": 1
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ProductivityCreateRequest",
+      "ProductivityCreateRole",
+      "ProductivityNode",
+      "ProductivityRole",
+      "ProductivityTree",
+      "ProductivityTreeRequest"
+     ],
+     "path": "src/memory/structural/productivity.rs",
+     "purpose": "Typed productivity roles (DOOR-113): an inert Goal, Milestone or Habit TASK under its checked `ChildOf`…",
+     "surface": {
+      "enum": 2,
+      "fn": 2,
+      "struct": 4
      }
     },
     {
@@ -42345,7 +42412,15 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/side_table/decls/vault_meta_d_l.rs",
+     "path": "src/side_table/decls/vault_meta_d_e.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/side_table/decls/vault_meta_f_l.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -42361,7 +42436,15 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/side_table/decls/vault_meta_s_z.rs",
+     "path": "src/side_table/decls/vault_meta_s.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/side_table/decls/vault_meta_t_z.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -49403,7 +49486,7 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 42,
+      "re-export": 43,
       "struct": 36
      }
     },
@@ -49571,6 +49654,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CredentialAttenuated",
+      "CredentialAttenuationRequest"
+     ],
+     "path": "src/task_verb/sdk_credential.rs",
+     "purpose": "Holder-owned attenuation of the credential a transport admitted",
+     "surface": {
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "DiaryQueryEntry",
       "DiaryQueryOutcome",
       "DiaryQueryRequest"
@@ -49714,7 +49810,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 547
+      "fn": 554
      }
     },
     {
@@ -55635,7 +55731,7 @@
      "purpose": "ORF-2 / OF-361 — the BudgetMem statistical PRE-FILTER: the cheap screen that decides what is worth…"
     },
     "dreamer_promotion": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -55705,7 +55801,7 @@
      "purpose": "Engine-native JS code-mode executor"
     },
     "entity_doc": {
-     "files": 21,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55978,7 +56074,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 163,
+     "files": 165,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56363,7 +56459,7 @@
      "purpose": "What travels with a body when it leaves the vault (OF-491)"
     },
     "side_table": {
-     "files": 10,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56489,7 +56585,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 154,
+     "files": 155,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -56659,7 +56755,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3452,
+   "source_files": 3459,
    "test_files": 902
   },
   "oneiron-android": {
@@ -65073,7 +65169,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 497
+      "fn": 504
      }
     },
     {
@@ -66122,7 +66218,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 498
+      "fn": 505
      }
     },
     {
@@ -69122,6 +69218,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/consolidation_doors.rs",
+     "purpose": "Owner-bound generated-claim promotion, vetting and evidence reads",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/core_write_doors.rs",
      "purpose": "The host doors of `vault.conversations.turns.create`, `vault.conversations.records.append` and `vault.batch`…",
      "surface": {
@@ -69144,6 +69250,16 @@
      "notable": [],
      "path": "src/api/facade/craft_candidate_doors.rs",
      "purpose": "The host doors of the owner's review of residents' craft candidates (OF-490): `vault.craft_candidates` and…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/credential_doors.rs",
+     "purpose": "A holder appends a narrowing to the exact credential this call presented",
      "surface": {
       "crate-vis": 2
      }
@@ -69285,7 +69401,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 96
+      "crate-vis": 98
      }
     },
     {
@@ -76730,7 +76846,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 354,
+     "files": 356,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -77145,7 +77261,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 680,
+   "source_files": 682,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -77720,6 +77836,14 @@
       "ConsentStateMembershipConsent",
       "ConsentStateRosterActor",
       "ConsentStateSpendConsent",
+      "ConsolidationEvidenceHop",
+      "ConsolidationEvidenceLocator",
+      "ConsolidationEvidenceRequest",
+      "ConsolidationEvidenceSource",
+      "ConsolidationMessageEvidence",
+      "ConsolidationPromoteRequest",
+      "ConsolidationPromotion",
+      "ConsolidationRejection",
       "ConsultPayloadRef",
       "ContentPart",
       "ContextDefault",
@@ -77758,6 +77882,8 @@
       "CreateCampaignProgramRequest",
       "CreateNoteFromEntityRequest",
       "CreateNoteRequest",
+      "CredentialAttenuated",
+      "CredentialAttenuationRequest",
       "CredentialCeiling",
       "Criterion",
       "CriticBinding",
@@ -77771,6 +77897,7 @@
       "CritiqueTriage",
       "CritiqueTriageScores",
       "CritiqueVerdict",
+      "CursorSpan",
       "CutDecision",
       "DagRecordAppendInput",
       "DagRecordAppendReceipt",
@@ -77910,6 +78037,8 @@
       "EvalSeat",
       "EvalSourceGroup",
       "EvidenceFloors",
+      "EvidenceKind",
+      "EvidenceRef",
       "EvidenceVersion",
       "ExceptionalWidthCheck",
       "ExpectedSpend",
@@ -77977,6 +78106,7 @@
       "GateDecisionId",
       "GateSystemNoticeAction",
       "GateSystemNoticeRecord",
+      "GeneratedClaimInput",
       "GeneratedLens",
       "GeneratedUiActionDeclaration",
       "GeneratedUiActionTier",
@@ -78457,6 +78587,12 @@
       "PriorRung",
       "PriorSeed",
       "ProbeRequest",
+      "ProductivityCreateRequest",
+      "ProductivityCreateRole",
+      "ProductivityNode",
+      "ProductivityRole",
+      "ProductivityTree",
+      "ProductivityTreeRequest",
       "ProjectBudgetShare",
       "ProjectCardConfirmRequest",
       "ProjectCardDismissal",
@@ -78484,6 +78620,7 @@
       "ProjectTradeoffRouteRequest",
       "PromotionBasis",
       "PromotionDisposition",
+      "PromotionEvidenceReason",
       "ProposalAsk",
       "ProposalAskRefusal",
       "ProposalHeader",
@@ -78693,12 +78830,14 @@
       "ScopedReadResultCalendarEventViewList",
       "ScopedReadResultCalendarFreebusyDto",
       "ScopedReadResultCalendarOccurrenceViewList",
+      "ScopedReadResultConsolidationEvidenceSourceList",
       "ScopedReadResultHybridSearchHitList",
       "ScopedReadResultLensFrameCard",
       "ScopedReadResultOptionalCalendarEventView",
       "ScopedReadResultOptionalNoteEditorBinding",
       "ScopedReadResultOptionalNoteHistoryView",
       "ScopedReadResultOptionalNoteReadView",
+      "ScopedReadResultOptionalProductivityTree",
       "ScopedReadResultOptionalSharedBriefView",
       "ScopedReadResultRecordRefPreview",
       "ScratchpadAppendRequest",
@@ -78861,6 +79000,7 @@
       "SlideReviewUnitInput",
       "SlideUnitRefused",
       "SliderControl",
+      "SlipCaveat",
       "SmartArtNode",
       "SourceTrust",
       "SourceTrustRow",
@@ -79130,8 +79270,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 471,
-      "struct": 1316
+      "enum": 475,
+      "struct": 1336
      }
     },
     {

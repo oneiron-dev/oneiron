@@ -406,6 +406,8 @@ class Oneiron:
         @property
         def budget(self) -> "Oneiron._SelfBudgetVerbs": ...
         @property
+        def credential(self) -> "Oneiron._SelfCredentialVerbs": ...
+        @property
         def off_record(self) -> "Oneiron._SelfOffRecordVerbs": ...
         def use(self, spec: Facade.SecretUseRequest) -> Facade.SecretUseAnswer:
             """Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value."""
@@ -475,6 +477,9 @@ class Oneiron:
             """The caller's own dispatched attempt: its persisted spend allowance, landing reserve, checkpoint and saved hold, without substituting a token meter for money."""
         def land(self, spec: Facade.BudgetLandRequest) -> Facade.PartialResultHold:
             """The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later."""
+    class _SelfCredentialVerbs:
+        def attenuate(self, spec: Facade.CredentialAttenuationRequest) -> Facade.CredentialAttenuated:
+            """Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted."""
     class _SelfOffRecordVerbs:
         def execute(self, spec: Facade.OffRecordExecuteRequest) -> Facade.OffRecordExecuted:
             """The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""
@@ -647,6 +652,8 @@ class Oneiron:
         @property
         def habits(self) -> "Oneiron._VaultHabitsVerbs": ...
         @property
+        def productivity(self) -> "Oneiron._VaultProductivityVerbs": ...
+        @property
         def esign(self) -> "Oneiron._VaultEsignVerbs": ...
         def batch(self, spec: Facade.CoreBatchWriteInput) -> Facade.CoreBatchWriteReceipt:
             """Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade."""
@@ -719,6 +726,10 @@ class Oneiron:
             """The supersession timeline of one claim, oldest first, with the read's narrowing receipt."""
         def admit(self, input: Facade.AdmitImportedClaimInput) -> Facade.CommitReceipt:
             """Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides."""
+        def vet(self, spec: Facade.ClaimSettleRequest) -> Facade.ClaimSettlement:
+            """Vets a reviewed generated-origin Auto claim or proposal through the owner Gate and signed settlement; it still contributes zero corroboration."""
+        def vetting(self, spec: Facade.ClaimProposalReviewRequest) -> Facade.ClaimProposalReview:
+            """Reviews an exact generated-origin Auto claim or proposal before owner vetting, returning the content-bound review handle."""
         def seed(self, input: Facade.ScopedCommitRequest) -> list[Facade.CommitOutcome]:
             """Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt."""
         def supersede(self, spec: Facade.LiveRunRequest[Facade.MemorySupersedeInput]) -> Facade.MemoryWriteOutput:
@@ -1610,6 +1621,11 @@ class Oneiron:
     class _VaultHabitsVerbs:
         def checkin(self, input: Facade.HabitCheckinInput) -> Facade.EntityRefReceipt:
             """Appends one immutable check-in under a Habit TASK."""
+    class _VaultProductivityVerbs:
+        def create(self, spec: Facade.ProductivityCreateRequest) -> Facade.EntityRefReceipt:
+            """Creates one inert Goal, Milestone or Habit TASK under an optional checked parent; an illegal nesting refuses the whole write."""
+        def tree(self, spec: Facade.ProductivityTreeRequest) -> Facade.ScopedReadResult[Facade.ProductivityTree | None]:
+            """The role-labelled TASK tree under one root, read through the caller's lane, with each Habit's derived streak counters."""
     class _VaultEsignVerbs:
         def create(self, spec: Facade.EsignCreateRequest) -> Facade.EsignDraftView:
             """Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act."""
@@ -1631,6 +1647,10 @@ class Oneiron:
             """Enqueues one consolidation attempt and returns its durable job reference."""
         def status(self, spec: Facade.ConsolidationStatusRequest) -> Facade.DreamerAttemptView | None:
             """Reads the status of one consolidation attempt by its durable job reference."""
+        def promote(self, spec: Facade.ConsolidationPromoteRequest) -> Facade.ConsolidationPromotion:
+            """Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals."""
+        def evidence(self, spec: Facade.ConsolidationEvidenceRequest) -> Facade.ScopedReadResult[list[Facade.ConsolidationEvidenceSource]]:
+            """Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner."""
     class _VaultMemoryVerbs:
         @property
         def signal_extraction(self) -> "Oneiron._VaultMemorySignalExtractionVerbs": ...

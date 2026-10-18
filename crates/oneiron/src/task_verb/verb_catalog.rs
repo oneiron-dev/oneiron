@@ -50,6 +50,7 @@ pub enum AgentVerb {
     VaultClaimsUpsert,
     VaultRecall,
     VaultExport,
+    SelfCredentialAttenuate,
     VaultScopeCeiling,
     VaultExportScoped,
     VaultReceipts,
@@ -457,6 +458,8 @@ pub enum AgentVerb {
     VaultNeighbors,
     VaultStructuralPut,
     VaultHabitsCheckin,
+    VaultProductivityCreate,
+    VaultProductivityTree,
     VaultClaimsAdmit,
     VaultArtifactsCreate,
     VaultEsignCreate,
@@ -494,6 +497,10 @@ pub enum AgentVerb {
     VaultArtifactsRead,
     VaultConsolidationEnqueue,
     VaultConsolidationStatus,
+    VaultConsolidationPromote,
+    VaultConsolidationEvidence,
+    VaultClaimsVet,
+    VaultClaimsVetting,
     VaultMemorySignalExtraction,
     VaultMemorySignalExtractionResult,
     VaultClaimsSeed,
@@ -593,6 +600,7 @@ impl AgentVerb {
         Self::VaultClaimsUpsert,
         Self::VaultRecall,
         Self::VaultExport,
+        Self::SelfCredentialAttenuate,
         Self::VaultScopeCeiling,
         Self::VaultExportScoped,
         Self::VaultReceipts,
@@ -1000,6 +1008,8 @@ impl AgentVerb {
         Self::VaultNeighbors,
         Self::VaultStructuralPut,
         Self::VaultHabitsCheckin,
+        Self::VaultProductivityCreate,
+        Self::VaultProductivityTree,
         Self::VaultClaimsAdmit,
         Self::VaultArtifactsCreate,
         Self::VaultEsignCreate,
@@ -1037,6 +1047,10 @@ impl AgentVerb {
         Self::VaultArtifactsRead,
         Self::VaultConsolidationEnqueue,
         Self::VaultConsolidationStatus,
+        Self::VaultConsolidationPromote,
+        Self::VaultConsolidationEvidence,
+        Self::VaultClaimsVet,
+        Self::VaultClaimsVetting,
         Self::VaultMemorySignalExtraction,
         Self::VaultMemorySignalExtractionResult,
         Self::VaultClaimsSeed,
@@ -1139,6 +1153,7 @@ impl AgentVerb {
             Self::VaultClaimsUpsert => "vault.claims.upsert",
             Self::VaultRecall => "vault.recall",
             Self::VaultExport => "vault.export",
+            Self::SelfCredentialAttenuate => "self.credential.attenuate",
             Self::VaultScopeCeiling => "vault.scope.ceiling",
             Self::VaultExportScoped => "vault.export.scoped",
             Self::VaultReceipts => "vault.receipts",
@@ -1552,6 +1567,8 @@ impl AgentVerb {
             Self::VaultNeighbors => "vault.neighbors",
             Self::VaultStructuralPut => "vault.structural.put",
             Self::VaultHabitsCheckin => "vault.habits.checkin",
+            Self::VaultProductivityCreate => "vault.productivity.create",
+            Self::VaultProductivityTree => "vault.productivity.tree",
             Self::VaultClaimsAdmit => "vault.claims.admit",
             Self::VaultArtifactsCreate => "vault.artifacts.create",
             Self::VaultEsignCreate => "vault.esign.create",
@@ -1589,6 +1606,10 @@ impl AgentVerb {
             Self::VaultArtifactsRead => "vault.artifacts.read",
             Self::VaultConsolidationEnqueue => "vault.consolidation.enqueue",
             Self::VaultConsolidationStatus => "vault.consolidation.status",
+            Self::VaultConsolidationPromote => "vault.consolidation.promote",
+            Self::VaultConsolidationEvidence => "vault.consolidation.evidence",
+            Self::VaultClaimsVet => "vault.claims.vet",
+            Self::VaultClaimsVetting => "vault.claims.vetting",
             Self::VaultMemorySignalExtraction => "vault.memory.signal_extraction",
             Self::VaultMemorySignalExtractionResult => "vault.memory.signal_extraction.result",
             Self::VaultClaimsSeed => "vault.claims.seed",
@@ -1691,6 +1712,7 @@ impl AgentVerb {
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
                 | Self::VaultExport
+                | Self::SelfCredentialAttenuate
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
                 | Self::VaultReceipts
@@ -2058,6 +2080,8 @@ impl AgentVerb {
                 | Self::VaultNeighbors
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
+                | Self::VaultProductivityCreate
+                | Self::VaultProductivityTree
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignCreate
@@ -2095,6 +2119,10 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultConsolidationPromote
+                | Self::VaultConsolidationEvidence
+                | Self::VaultClaimsVet
+                | Self::VaultClaimsVetting
                 | Self::VaultMemorySignalExtraction
                 | Self::VaultMemorySignalExtractionResult
                 | Self::VaultClaimsSeed
@@ -2241,6 +2269,7 @@ impl AgentVerb {
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
                 | Self::VaultExport
+                | Self::SelfCredentialAttenuate
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
                 | Self::VaultReceipts
@@ -2608,6 +2637,8 @@ impl AgentVerb {
                 | Self::VaultNeighbors
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
+                | Self::VaultProductivityCreate
+                | Self::VaultProductivityTree
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignCreate
@@ -2645,6 +2676,10 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultConsolidationPromote
+                | Self::VaultConsolidationEvidence
+                | Self::VaultClaimsVet
+                | Self::VaultClaimsVetting
                 | Self::VaultMemorySignalExtraction
                 | Self::VaultMemorySignalExtractionResult
                 | Self::VaultClaimsSeed
@@ -2776,6 +2811,7 @@ impl AgentVerb {
                 | Self::Describe
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
+                | Self::SelfCredentialAttenuate
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
                 | Self::VaultCommit
@@ -2792,6 +2828,7 @@ impl AgentVerb {
                 | Self::VaultSearchHybrid
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
+                | Self::VaultProductivityTree
                 | Self::VaultClaimsSeed
                 | Self::VaultNotesRead
                 | Self::VaultNotesHistory
@@ -3229,6 +3266,7 @@ impl AgentVerb {
                 | Self::VaultWritesPending
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
+                | Self::VaultProductivityCreate
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignCreate
@@ -3266,6 +3304,10 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultConsolidationPromote
+                | Self::VaultConsolidationEvidence
+                | Self::VaultClaimsVet
+                | Self::VaultClaimsVetting
                 | Self::VaultMemorySignalExtraction
                 | Self::VaultMemorySignalExtractionResult
                 | Self::VaultChannelIdentitiesProvision
@@ -3589,6 +3631,7 @@ impl AgentVerb {
                 | Self::VaultDelete
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
+                | Self::VaultProductivityCreate
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignCreate
@@ -3614,6 +3657,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyDeckOracle
                 | Self::VaultArtifactsAppend
                 | Self::VaultConsolidationEnqueue
+                | Self::VaultConsolidationPromote
+                | Self::VaultClaimsVet
                 | Self::VaultMemorySignalExtraction
                 | Self::VaultClaimsSeed
                 | Self::VaultChannelIdentitiesProvision
@@ -3723,6 +3768,7 @@ impl AgentVerb {
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
             Self::VaultExport => &["spec"],
+            Self::SelfCredentialAttenuate => &["spec"],
             Self::VaultScopeCeiling => &["spec"],
             Self::VaultExportScoped => &["spec"],
             Self::VaultReceipts => &["spec"],
@@ -4130,6 +4176,8 @@ impl AgentVerb {
             Self::VaultNeighbors => &["spec"],
             Self::VaultStructuralPut => &["spec"],
             Self::VaultHabitsCheckin => &["spec"],
+            Self::VaultProductivityCreate => &["spec"],
+            Self::VaultProductivityTree => &["spec"],
             Self::VaultClaimsAdmit => &["spec"],
             Self::VaultArtifactsCreate => &["spec"],
             Self::VaultEsignCreate => &["spec"],
@@ -4167,6 +4215,10 @@ impl AgentVerb {
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
             Self::VaultConsolidationStatus => &["spec"],
+            Self::VaultConsolidationPromote => &["spec"],
+            Self::VaultConsolidationEvidence => &["spec"],
+            Self::VaultClaimsVet => &["spec"],
+            Self::VaultClaimsVetting => &["spec"],
             Self::VaultMemorySignalExtraction => &["spec"],
             Self::VaultMemorySignalExtractionResult => &["spec"],
             Self::VaultClaimsSeed => &["spec"],
@@ -4267,6 +4319,7 @@ impl AgentVerb {
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
             Self::VaultExport => &["spec"],
+            Self::SelfCredentialAttenuate => &["spec"],
             Self::VaultScopeCeiling => &["spec"],
             Self::VaultExportScoped => &["spec"],
             Self::VaultReceipts => &["spec"],
@@ -4674,6 +4727,8 @@ impl AgentVerb {
             Self::VaultNeighbors => &["spec"],
             Self::VaultStructuralPut => &["spec"],
             Self::VaultHabitsCheckin => &["spec"],
+            Self::VaultProductivityCreate => &["spec"],
+            Self::VaultProductivityTree => &["spec"],
             Self::VaultClaimsAdmit => &["spec"],
             Self::VaultArtifactsCreate => &["spec"],
             Self::VaultEsignCreate => &["spec"],
@@ -4711,6 +4766,10 @@ impl AgentVerb {
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
             Self::VaultConsolidationStatus => &["spec"],
+            Self::VaultConsolidationPromote => &["spec"],
+            Self::VaultConsolidationEvidence => &["spec"],
+            Self::VaultClaimsVet => &["spec"],
+            Self::VaultClaimsVetting => &["spec"],
             Self::VaultMemorySignalExtraction => &["spec"],
             Self::VaultMemorySignalExtractionResult => &["spec"],
             Self::VaultClaimsSeed => &["spec"],
@@ -4897,6 +4956,9 @@ impl AgentVerb {
             }
             Self::VaultExport => {
                 "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only."
+            }
+            Self::SelfCredentialAttenuate => {
+                "Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted."
             }
             Self::VaultScopeCeiling => {
                 "Reads the caller credential ceiling as a typed ceiling, never as a record position."
@@ -6031,6 +6093,12 @@ impl AgentVerb {
                 "Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit."
             }
             Self::VaultHabitsCheckin => "Appends one immutable check-in under a Habit TASK.",
+            Self::VaultProductivityCreate => {
+                "Creates one inert Goal, Milestone or Habit TASK under an optional checked parent; an illegal nesting refuses the whole write."
+            }
+            Self::VaultProductivityTree => {
+                "The role-labelled TASK tree under one root, read through the caller's lane, with each Habit's derived streak counters."
+            }
             Self::VaultClaimsAdmit => {
                 "Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides."
             }
@@ -6139,6 +6207,18 @@ impl AgentVerb {
             }
             Self::VaultConsolidationStatus => {
                 "Reads the status of one consolidation attempt by its durable job reference."
+            }
+            Self::VaultConsolidationPromote => {
+                "Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals."
+            }
+            Self::VaultConsolidationEvidence => {
+                "Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner."
+            }
+            Self::VaultClaimsVet => {
+                "Vets a reviewed generated-origin Auto claim or proposal through the owner Gate and signed settlement; it still contributes zero corroboration."
+            }
+            Self::VaultClaimsVetting => {
+                "Reviews an exact generated-origin Auto claim or proposal before owner vetting, returning the content-bound review handle."
             }
             Self::VaultMemorySignalExtraction => {
                 "Queues typed extraction of witnessed turns on the configured production Dreamer role; returns durable partition job refs, never caller-authored candidates."

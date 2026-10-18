@@ -1,6 +1,6 @@
 //! Host-signed capability slips with holder-signed offline narrowing and proof.
 use super::{AuthorityFold, MAX_WIRE_BYTES, SlipClaims, canonical, invalid_authority};
-use crate::error::Result;
+use crate::error::Result as EngineResult;
 use crate::federation::Scope;
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
@@ -11,7 +11,7 @@ const MINT_CONTEXT: &[u8] = b"oneiron/capability-slip/v0/mint\0";
 const CAVEAT_CONTEXT: &[u8] = b"oneiron/capability-slip/v0/caveat\0";
 
 /// A narrowing appended by a holder, without contacting the issuing host.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SlipCaveat {
     pub scope: Option<Scope>,
@@ -25,6 +25,7 @@ pub struct SlipCaveat {
         serialize_with = "serialize_pact",
         deserialize_with = "deserialize_pact"
     )]
+    #[schemars(with = "Option<(crate::federation::ScopeId, Vec<u8>)>")]
     pub pact: Option<(crate::EntityId, crate::federation::FederationDirectionScope)>,
 }
 
@@ -73,7 +74,7 @@ impl VerifiedSlip {
     pub fn pact(&self) -> Option<&(crate::EntityId, crate::federation::FederationDirectionScope)> {
         self.pact.as_ref()
     }
-    pub(crate) fn witness_pact(&self, fold: &AuthorityFold) -> Result<()> {
+    pub(crate) fn witness_pact(&self, fold: &AuthorityFold) -> EngineResult<()> {
         let Some((grant, requested)) = &self.pact else {
             return Ok(());
         };
@@ -133,7 +134,7 @@ impl VerifiedSlip {
 }
 
 impl CapabilitySlip {
-    pub(super) fn mint(claims: SlipClaims, issuer: &super::HostSlipIssuer) -> Result<Self> {
+    pub(super) fn mint(claims: SlipClaims, issuer: &super::HostSlipIssuer) -> EngineResult<Self> {
         claims.validate()?;
         let signature = issuer.sign_slip(&mint_transcript(&claims)?);
         Ok(Self {
@@ -150,7 +151,7 @@ impl CapabilitySlip {
         caveat: SlipCaveat,
         holder: &SigningKey,
         next_binding_key: [u8; 32],
-    ) -> Result<()> {
+    ) -> EngineResult<()> {
         if self.caveats.len() >= MAX_CAVEATS {
             return Err(invalid_authority());
         }
@@ -175,7 +176,7 @@ impl CapabilitySlip {
         Ok(())
     }
     /// Narrow without transferring the holder key (for a local holder).
-    pub fn attenuate(&mut self, caveat: SlipCaveat, holder: &SigningKey) -> Result<()> {
+    pub fn attenuate(&mut self, caveat: SlipCaveat, holder: &SigningKey) -> EngineResult<()> {
         self.attenuate_to(caveat, holder, holder.verifying_key().to_bytes())
     }
     pub(super) fn current_binding_key(&self) -> [u8; 32] {
@@ -184,10 +185,10 @@ impl CapabilitySlip {
             .map_or(self.claims.binding_key, |block| block.next_binding_key)
     }
     /// Stable v2 framing around the one canonical JSON slip representation.
-    pub fn to_token(&self) -> Result<String> {
+    pub fn to_token(&self) -> EngineResult<String> {
         Ok(format!("v2.slip.{}", hex(&canonical(self)?)))
     }
-    pub fn from_token(token: &str) -> Result<Self> {
+    pub fn from_token(token: &str) -> EngineResult<Self> {
         let bytes = unhex(
             token
                 .strip_prefix("v2.slip.")
@@ -211,7 +212,7 @@ impl CapabilitySlip {
         now: u64,
         challenge: &[u8],
         holder_signature: &[u8],
-    ) -> Result<VerifiedSlip> {
+    ) -> EngineResult<VerifiedSlip> {
         let verified = self.verify_authority(host_public_key, fold, now)?;
         self.verify_holder(challenge, holder_signature)?;
         Ok(verified)
@@ -224,11 +225,11 @@ impl CapabilitySlip {
         now: u64,
         challenge: &[u8],
         holder_signature: &[u8],
-    ) -> Result<VerifiedSlip> {
+    ) -> EngineResult<VerifiedSlip> {
         self.verify(host_key, fold, now, challenge, holder_signature)
     }
     /// Transcript to sign with the throwaway binding private key for this request.
-    pub fn binding_transcript(&self, challenge: &[u8]) -> Result<Vec<u8>> {
+    pub fn binding_transcript(&self, challenge: &[u8]) -> EngineResult<Vec<u8>> {
         if challenge.is_empty() || challenge.len() > 8192 {
             return Err(invalid_authority());
         }
@@ -248,7 +249,7 @@ impl CapabilitySlip {
         signed_at: u64,
         challenge: &[u8],
         holder_signature: &[u8],
-    ) -> Result<VerifiedSlip> {
+    ) -> EngineResult<VerifiedSlip> {
         let verified = self.verify_authority_with(host_public_key, fold, signed_at, true)?;
         self.verify_holder(challenge, holder_signature)?;
         Ok(verified)
@@ -263,7 +264,7 @@ impl CapabilitySlip {
         fold: &AuthorityFold,
         challenge: &[u8],
         holder_signature: &[u8],
-    ) -> Result<()> {
+    ) -> EngineResult<()> {
         self.claims.validate()?;
         if self.version != 2
             || self.caveats.len() > MAX_CAVEATS
@@ -308,7 +309,7 @@ impl CapabilitySlip {
         }
         self.verify_holder(challenge, holder_signature)
     }
-    fn verify_holder(&self, challenge: &[u8], holder_signature: &[u8]) -> Result<()> {
+    fn verify_holder(&self, challenge: &[u8], holder_signature: &[u8]) -> EngineResult<()> {
         let key = VerifyingKey::from_bytes(&self.current_binding_key())
             .map_err(|_| invalid_authority())?;
         let signature = Signature::from_slice(holder_signature).map_err(|_| invalid_authority())?;
@@ -320,7 +321,7 @@ impl CapabilitySlip {
         host_public_key: &super::AuthorityKey,
         fold: &AuthorityFold,
         now: u64,
-    ) -> Result<VerifiedSlip> {
+    ) -> EngineResult<VerifiedSlip> {
         self.verify_authority_with(host_public_key, fold, now, false)
     }
     fn verify_authority_with(
@@ -329,7 +330,7 @@ impl CapabilitySlip {
         fold: &AuthorityFold,
         now: u64,
         history: bool,
-    ) -> Result<VerifiedSlip> {
+    ) -> EngineResult<VerifiedSlip> {
         self.claims.validate()?;
         if self.version != 2
             || self.caveats.len() > MAX_CAVEATS
@@ -458,7 +459,7 @@ impl CapabilitySlip {
     }
 }
 
-fn mint_transcript(claims: &SlipClaims) -> Result<Vec<u8>> {
+fn mint_transcript(claims: &SlipClaims) -> EngineResult<Vec<u8>> {
     let mut bytes = MINT_CONTEXT.to_vec();
     bytes.extend_from_slice(&canonical(claims)?);
     Ok(bytes)
@@ -468,7 +469,7 @@ fn caveat_transcript(
     prefix: &CapabilitySlip,
     caveat: &SlipCaveat,
     next_key: &[u8; 32],
-) -> Result<Vec<u8>> {
+) -> EngineResult<Vec<u8>> {
     let mut bytes = CAVEAT_CONTEXT.to_vec();
     bytes.extend_from_slice(&canonical(prefix)?);
     bytes.extend_from_slice(&canonical(caveat)?);
@@ -479,7 +480,7 @@ fn caveat_transcript(
 pub(super) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
-pub(super) fn unhex(value: &str) -> Result<Vec<u8>> {
+pub(super) fn unhex(value: &str) -> EngineResult<Vec<u8>> {
     if value.len() > MAX_WIRE_BYTES * 2
         || !value.len().is_multiple_of(2)
         || !value

@@ -231,6 +231,11 @@ export_facade! {
     let output = client.vault_export(format.as_deref())?;
     crate::codec::lift_record("vault.export", &output)
 };
+"self.credential.attenuate" => fn self_credential_attenuate(&self, input: CredentialAttenuationRequest) -> CredentialAttenuated = |client| {
+    let input: oneiron::task_verb::sdk::CredentialAttenuationRequest = crate::codec::lower_record("self.credential.attenuate", input)?;
+    let output = client.self_credential_attenuate(&input)?;
+    crate::codec::lift_record("self.credential.attenuate", &output)
+};
 "vault.scope.ceiling" => fn vault_scope_ceiling(&self) -> CredentialCeiling = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.scope.ceiling")?;
     let output = client.vault_scope_ceiling(&input)?;
@@ -2066,6 +2071,16 @@ export_facade! {
     let output = client.vault_habits_checkin(&input)?;
     Lift::lift(output)
 };
+"vault.productivity.create" => fn vault_productivity_create(&self, input: ProductivityCreateRequest) -> EntityRefReceipt = |client| {
+    let input: oneiron::memory::ProductivityCreateRequest = crate::codec::lower_record("vault.productivity.create", input)?;
+    let output = client.vault_productivity_create(&input)?;
+    Lift::lift(output)
+};
+"vault.productivity.tree" => fn vault_productivity_tree(&self, input: ProductivityTreeRequest) -> ScopedReadResultOptionalProductivityTree = |client| {
+    let input: oneiron::memory::ProductivityTreeRequest = crate::codec::lower_record("vault.productivity.tree", input)?;
+    let output = client.vault_productivity_tree(&input)?;
+    crate::codec::lift_record("vault.productivity.tree", &output)
+};
 "vault.claims.admit" => fn vault_claims_admit(&self, input: AdmitImportedClaimInput) -> CommitReceipt = |client| {
     let input: oneiron::memory::AdmitImportedClaimInput = input.lower()?;
     let output = client.vault_claims_admit(&input)?;
@@ -2250,6 +2265,26 @@ export_facade! {
     let input: oneiron::task_verb::sdk::ConsolidationStatusRequest = job_ref.lower()?;
     let output = client.vault_consolidation_status(&input)?;
     Lift::lift(output)
+};
+"vault.consolidation.promote" => fn vault_consolidation_promote(&self, input: ConsolidationPromoteRequest) -> ConsolidationPromotion = |client| {
+    let input: oneiron::memory::consolidation::ConsolidationPromoteRequest = crate::codec::lower_record("vault.consolidation.promote", input)?;
+    let output = client.vault_consolidation_promote(&input)?;
+    crate::codec::lift_record("vault.consolidation.promote", &output)
+};
+"vault.consolidation.evidence" => fn vault_consolidation_evidence(&self, input: ConsolidationEvidenceRequest) -> ScopedReadResultConsolidationEvidenceSourceList = |client| {
+    let input: oneiron::memory::consolidation::ConsolidationEvidenceRequest = crate::codec::lower_record("vault.consolidation.evidence", input)?;
+    let output = client.vault_consolidation_evidence(&input)?;
+    crate::codec::lift_record("vault.consolidation.evidence", &output)
+};
+"vault.claims.vet" => fn vault_claims_vet(&self, input: ClaimSettleRequest) -> ClaimSettlement = |client| {
+    let input: oneiron::memory::ClaimSettleRequest = crate::codec::lower_record("vault.claims.vet", input)?;
+    let output = client.vault_claims_vet(&input)?;
+    crate::codec::lift_record("vault.claims.vet", &output)
+};
+"vault.claims.vetting" => fn vault_claims_vetting(&self, input: ClaimProposalReviewRequest) -> ClaimProposalReview = |client| {
+    let input: oneiron::memory::ClaimProposalReviewRequest = crate::codec::lower_record("vault.claims.vetting", input)?;
+    let output = client.vault_claims_vetting(&input)?;
+    crate::codec::lift_record("vault.claims.vetting", &output)
 };
 "vault.memory.signal_extraction" => fn vault_memory_signal_extraction(&self, input: SignalExtractionRequest) -> SignalExtractionTicket = |client| {
     let input: oneiron::memory::SignalExtractionRequest = crate::codec::lower_record("vault.memory.signal_extraction", input)?;

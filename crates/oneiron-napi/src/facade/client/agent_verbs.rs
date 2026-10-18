@@ -367,6 +367,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_credential_attenuate(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.credential.attenuate", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_scope_ceiling(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.scope.ceiling", input)
@@ -3725,6 +3734,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_productivity_create(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.productivity.create", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_productivity_tree(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.productivity.tree", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_claims_admit(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.claims.admit", input)
@@ -4297,6 +4324,39 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.consolidation.status", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consolidation_promote(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consolidation.promote", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consolidation_evidence(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consolidation.evidence", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_claims_vet(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.claims.vet", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_claims_vetting(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.claims.vetting", input)
             .map_err(facade_error)
     }
     #[napi]
