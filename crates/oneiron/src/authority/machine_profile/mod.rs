@@ -14,8 +14,9 @@
 //! revisions, those a key the owner holds signed and the admitted answers,
 //! form a chain of their own, so a custodian's later demote, removal or
 //! conflicting revision never reaches it. An admitted answer that saw a
-//! chain's head supersedes it causally, an anchor's included. Which chains this install trusts is local: the accepted roster
-//! revisions, plus the pinned anchor's chain (world privacy P6b, contract §4).
+//! chain's head supersedes it causally, an anchor's included. Which chains
+//! this install trusts is local: the accepted roster revisions, plus the
+//! pinned anchor's chain (world privacy P6b, contract §4).
 //! Poison applies within one admitter's chains for admission, and across the
 //! trusted chains for trust; an untrusted admitter's poison never touches a
 //! trusted chain, and its keys never speak for the machine.

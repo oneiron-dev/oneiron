@@ -61,7 +61,8 @@ pub(super) async fn create_link(
         // refuses it.
         Some(ownership) => {
             let owner = super::owner_routes::owner(&auth, &server)?;
-            let surface = super::owner_routes::machine_routes::act_surface(&server, &auth, &headers);
+            let surface =
+                super::owner_routes::machine_routes::act_surface(&server, &auth, &headers);
             with_issuer(&server, |issuer| {
                 server.vault().issue_machine_pairing_link(
                     issuer,

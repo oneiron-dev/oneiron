@@ -40,32 +40,14 @@ pub(in crate::authority) struct ActProof {
     pub(in crate::authority) saw: Arc<BTreeSet<AuthorityEntryHash>>,
 }
 
-/// A target's revision as a deciding surface shows it (C5): the digest of
-/// its chains' heads in one fold state, zero for a machine no chain names.
-pub(in crate::authority) fn answer_revision_of(
-    chains: Option<&BTreeMap<MachineAdmitter, MachineChain>>,
-) -> [u8; 32] {
-    machine_answer_revision(
-        chains
-            .into_iter()
-            .flat_map(BTreeMap::values)
-            .map(|chain| chain.head.entry),
-    )
-}
-
 impl FoldedMachine {
     /// This machine's revision as a deciding surface shows the owner (C5):
-    /// the digest of its chains' heads, the roster's and every anchor's, as
-    /// the fold state that folds the answer reads them.
+    /// the digest of its live chains' heads, the roster's and every
+    /// anchor's, zero for none. The writer compares an answer's `seen` with
+    /// it; replicas derive what an answer supersedes from its parents.
     #[must_use]
     pub fn answer_revision(&self) -> [u8; 32] {
         machine_answer_revision(self.chains().map(|(_, chain)| chain.entry))
-    }
-
-    /// Every chain head the answer revision names: the rows an owner answer
-    /// takes as parents, so its fold state holds what the owner saw.
-    pub(in crate::authority) fn answer_heads(&self) -> BTreeSet<AuthorityEntryHash> {
-        self.chains().map(|(_, chain)| chain.entry).collect()
     }
 }
 
@@ -86,9 +68,13 @@ impl MachineRevision {
 /// It requires no cosign, the carrier admitted by the one carrier rule in
 /// the act's parent state, pin-free, with no root-key exception (FIX 2222:
 /// the host root acts as nobody; C4: an unprofiled target never carries its
-/// own answer), the act's owner live there, `seen` naming exactly the
-/// target's heads that state holds, and the carrier's next sequence. The
-/// target's own checks stay: its key no authority, its row no actor, its
+/// own answer), the act's owner live there, and the carrier's next sequence.
+/// The act's target is the profile's machine (its shape check). What the
+/// answer supersedes is every revision of the target its parent state
+/// holds, derived here, never read off the surface's `seen`, which the
+/// writer compared (C5): so a replica judges it without any surface's view,
+/// and a stranger anchor's row a replica may not store is never a parent.
+/// The target's own checks stay: its key no authority, its row no actor, its
 /// proof its own, its revision above its roster chain. A carrier this install
 /// does not count lands the answer restriction only, as a revision past its
 /// floor does.
@@ -130,11 +116,6 @@ pub(in crate::authority) fn apply_owner_answer(
         return Err(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
     let target = state.machines.get(&profile.machine);
-    // Revision integrity (C5): the act names the heads it saw, which its
-    // parents carry, so it supersedes them causally.
-    if act.seen != answer_revision_of(target) {
-        return Err(AuthorityFoldIssue::InvalidEntry(hash));
-    }
     // Key possession: a machine carrying its own answer signs with the key
     // the answer names; it never proves a new key for itself.
     if carrier == profile.machine && profile.machine_key != key {

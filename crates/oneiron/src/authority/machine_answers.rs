@@ -248,9 +248,11 @@ impl Vault {
 
     /// Signs and lands one owner answer in the caller's transaction, carried
     /// by this install: the answer names the target's revision the owner
-    /// saw, and its parents carry the main-log heads, the carrier's standing
-    /// rows and every head of the target, so it supersedes what he saw (C5).
-    /// The fold is the judge: an answer it refused never reports success.
+    /// saw, and its parents carry the main-log heads and the carrier's and
+    /// the target's standing rows (the pinned anchor's mark among them), so
+    /// it supersedes every head of the target it saw (C5). It names no
+    /// stranger anchor's row, which a replica may not store. The fold is the
+    /// judge: an answer it refused never reports success.
     pub(super) fn append_owner_answer_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -282,7 +284,7 @@ impl Vault {
         profile.validate()?;
         let mut parents = fold.append_heads.clone();
         parents.extend(standing_rows(fold, carrier));
-        parents.extend(target.map(FoldedMachine::answer_heads).unwrap_or_default());
+        parents.extend(standing_rows(fold, profile.machine));
         if parents.len() > MAX_PARENTS {
             return Err(answer_parent_bound(parents.len()));
         }
