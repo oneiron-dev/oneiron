@@ -2287,6 +2287,7 @@
      "path": "src/authority/federation_activation.rs",
      "purpose": "Grant activation under the folded pact states",
      "surface": {
+      "crate-vis": 1,
       "fn": 2
      }
     },
@@ -22923,6 +22924,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/foreign_world.rs",
+     "purpose": "Where a guest's content lands here (FIX 3497)",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -23016,9 +23028,9 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 23,
       "mod": 2,
-      "re-export": 16
+      "re-export": 17
      }
     },
     {
@@ -45006,7 +45018,7 @@
      "path": "src/sync/client/federated.rs",
      "purpose": "Federated admission and staged vault-import confirmation",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 5
      }
@@ -46149,7 +46161,7 @@
      "path": "src/sync/row_birth.rs",
      "purpose": "Rule A row births on sync",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -46172,7 +46184,7 @@
      "path": "src/sync/selector/admission.rs",
      "purpose": "Federated import admission: window admit, claim revalidation, entity copy, authority-log door, and tombstone…",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 26,
       "enum": 1,
       "fn": 2
      }
@@ -53880,7 +53892,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 34,
+     "files": 35,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54785,7 +54797,7 @@
    },
    "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3332,
+   "source_files": 3333,
    "test_files": 902
   },
   "oneiron-android": {
@@ -57718,7 +57730,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 50,
+      "const": 51,
       "crate-vis": 1
      }
     },
