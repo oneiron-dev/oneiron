@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 308 facade rows, 1192 declarations.
-Inputs: 265 of 308 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 265 of 308 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 309 facade rows, 1211 declarations.
+Inputs: 266 of 309 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 266 of 309 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 72; unread shapes: 0.
 """
 
@@ -2711,6 +2711,7 @@ class WeaveReceipt(TypedDict):
     validation_overlap: float
     claim: EntityId
     claim_approval: ClaimApprovalStatus
+    gate_decision: str
     at: int
 class PruneReasonDominatedBody(TypedDict):
     by: AttemptId
@@ -3111,6 +3112,7 @@ class CourtesyDeleteIncoming(TypedDict):
     requester: str
     worlds: list[CourtesyDeleteAskedWorld]
     epoch_cutoff: int
+    candidates: list[str]
     requested: str
     received: str
     answer: NotRequired[CourtesyDeleteChoice | None]
@@ -5378,6 +5380,90 @@ class ArtifactCreateRequest(TypedDict):
     content_base64: str
     run_ref: NotRequired[str | None]
     made_by: NotRequired[Any | None]
+DocumentKind = Literal["document", "template"]
+class EsignItem(TypedDict):
+    artifact_ref: str
+    original_version: int
+RecipientRole = Literal["signer", "approver", "viewer", "cc"]
+class EsignRecipient(TypedDict):
+    id: str
+    email: str
+    name: str
+    role: RecipientRole
+    order: int
+    expires_at: int
+    principal_ref: NotRequired[str | None]
+    automated: bool
+    natural_person: NotRequired[str | None]
+class FieldGeometry(TypedDict):
+    page: int
+    x_percent: float
+    y_percent: float
+    width_percent: float
+    height_percent: float
+class FieldMetaSignature(TypedDict):
+    kind: Literal["signature"]
+class FieldMetaInitials(TypedDict):
+    kind: Literal["initials"]
+class FieldMetaName(TypedDict):
+    kind: Literal["name"]
+class FieldMetaEmail(TypedDict):
+    kind: Literal["email"]
+class FieldMetaDate(TypedDict):
+    kind: Literal["date"]
+class FieldMetaText(TypedDict):
+    kind: Literal["text"]
+    max_bytes: int
+class FieldMetaCheckbox(TypedDict):
+    kind: Literal["checkbox"]
+class FieldMetaSelect(TypedDict):
+    kind: Literal["select"]
+    options: list[str]
+FieldMeta = FieldMetaSignature | FieldMetaInitials | FieldMetaName | FieldMetaEmail | FieldMetaDate | FieldMetaText | FieldMetaCheckbox | FieldMetaSelect
+class EsignField(TypedDict):
+    id: str
+    item: int
+    recipient: str
+    required: bool
+    geometry: FieldGeometry
+    meta: FieldMeta
+class EsignNoticeSwitches(TypedDict):
+    invite: bool
+    pending: bool
+    completed: bool
+    rejection: bool
+    void: bool
+    expiry: bool
+class EsignLifecycleRules(TypedDict):
+    expiry_after_seconds: int
+    first_reminder_after_seconds: int
+    repeat_reminder_every_seconds: int
+    reminder_cap_seconds: int
+    notices: EsignNoticeSwitches
+class EsignDocument(TypedDict):
+    schema_version: int
+    kind: DocumentKind
+    title: str
+    sequential: bool
+    expires_at: int
+    items: list[EsignItem]
+    recipients: list[EsignRecipient]
+    fields: list[EsignField]
+    full_trail_appendix: bool
+    lifecycle: NotRequired[EsignLifecycleRules | None]
+    project: NotRequired[EntityId | None]
+class EsignCreateRequest(TypedDict):
+    document_ref: str
+    draft: EsignDocument
+DocumentStatus = Literal["draft", "pending", "completed", "rejected", "voided", "expired"]
+class EsignDraftView(TypedDict):
+    document_ref: str
+    status: DocumentStatus
+    title: str
+    expires_at: int
+    project_ref: NotRequired[str | None]
+    recipients: list[str]
+    fields: int
 class CoreWriteTextField(TypedDict):
     field: str
     value: str
@@ -5573,12 +5659,26 @@ class XlsxNumberFormatCode(TypedDict):
     kind: Literal["code"]
     code: str
 XlsxNumberFormat = XlsxNumberFormatBuiltin | XlsxNumberFormatCode
+class XlsxAlignment(TypedDict):
+    horizontal: NotRequired[str | None]
+    vertical: NotRequired[str | None]
+    wrap_text: NotRequired[bool | None]
+    shrink_to_fit: NotRequired[bool | None]
+    indent: NotRequired[int | None]
+    rotation: NotRequired[int | None]
+    reading_order: NotRequired[int | None]
+class XlsxProtection(TypedDict):
+    locked: NotRequired[bool | None]
+    hidden: NotRequired[bool | None]
 class XlsxFormat(TypedDict):
     base: int
+    cell_style: NotRequired[str | None]
     font: NotRequired[XlsxFont | None]
     fill: NotRequired[XlsxFill | None]
     border: NotRequired[XlsxBorder | None]
     number_format: NotRequired[XlsxNumberFormat | None]
+    alignment: NotRequired[XlsxAlignment | None]
+    protection: NotRequired[XlsxProtection | None]
 class BodyFormat(TypedDict):
     id: str
     format: XlsxFormat
@@ -5605,18 +5705,31 @@ class AssetRef(TypedDict):
     hash: Digest
     kind: StepAssetKind
     description: str
-ChartKind = Literal["bar", "line", "pie"]
+class HeldMedia(TypedDict):
+    part: str
+    hash: Digest
+ChartKind = Literal["bar", "line", "pie", "area", "scatter", "doughnut", "radar"]
 class ChartSeries(TypedDict):
     name: str
     values: list[float | None]
+    family: NotRequired[ChartKind | None]
+    x: NotRequired[list[float | None] | None]
+ChartSource = Literal["workbook", "literal", "cached"]
 ConnectorPreset = Literal["straight", "elbow", "curved"]
 class ConnectorEnd(TypedDict):
     node: NodeId
     site: int
+class SmartArtNode(TypedDict):
+    text: str
+    level: int
 class NodePayloadPictureBody(TypedDict):
     image: AssetRef
 class NodePayloadPicture(TypedDict):
     picture: NodePayloadPictureBody
+class NodePayloadHeldPictureBody(TypedDict):
+    media: HeldMedia
+class NodePayloadHeldPicture(TypedDict):
+    held_picture: NodePayloadHeldPictureBody
 class NodePayloadTableBody(TypedDict):
     header: list[str]
     rows: list[list[str | None]]
@@ -5626,15 +5739,29 @@ class NodePayloadChartBody(TypedDict):
     family: ChartKind
     categories: list[str]
     series: list[ChartSeries]
+    source: NotRequired[ChartSource]
 class NodePayloadChart(TypedDict):
     chart: NodePayloadChartBody
 class NodePayloadConnectorBody(TypedDict):
-    preset: ConnectorPreset
+    preset: NotRequired[ConnectorPreset | None]
     start: NotRequired[ConnectorEnd | None]
     end: NotRequired[ConnectorEnd | None]
 class NodePayloadConnector(TypedDict):
     connector: NodePayloadConnectorBody
-NodePayload = NodePayloadPicture | NodePayloadTable | NodePayloadChart | NodePayloadConnector
+class NodePayloadSmartArtBody(TypedDict):
+    nodes: list[SmartArtNode]
+class NodePayloadSmartArt(TypedDict):
+    smart_art: NodePayloadSmartArtBody
+class NodePayloadOleBody(TypedDict):
+    prog_id: NotRequired[str | None]
+    preview: NotRequired[HeldMedia | None]
+class NodePayloadOle(TypedDict):
+    ole: NodePayloadOleBody
+class NodePayloadCustomGeometryBody(TypedDict):
+    paths: int
+class NodePayloadCustomGeometry(TypedDict):
+    custom_geometry: NodePayloadCustomGeometryBody
+NodePayload = NodePayloadPicture | NodePayloadHeldPicture | NodePayloadTable | NodePayloadChart | NodePayloadConnector | NodePayloadSmartArt | NodePayloadOle | NodePayloadCustomGeometry
 class Run(TypedDict):
     text: str
     bold: NotRequired[bool | None]
@@ -5966,11 +6093,16 @@ class ProposalAsk(TypedDict):
     ask: EntityId
     forks: list[EntityId]
     at: int
+class ProposalAskRefusal(TypedDict):
+    forks: list[EntityId]
+    reason: str
+    at: int
 class OfficeBodyProposal(TypedDict):
     header: ProposalHeader
     members: list[ProposalMember]
     settlement: NotRequired[ProposalSettlement | None]
     asks: NotRequired[list[ProposalAsk]]
+    ask_refused: NotRequired[ProposalAskRefusal | None]
 SettleVerdict = Literal["accept", "reject"]
 class ApproveScopeThisActor(TypedDict):
     this_actor: str

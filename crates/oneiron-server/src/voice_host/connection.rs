@@ -11,12 +11,14 @@ use std::io;
 use std::pin::Pin;
 use std::time::Duration;
 
+use oneiron::claim::ScopedReadReceipt;
 use oneiron::policy_model::PolicyEnforcementAction;
 use oneiron::speculative::SpeculativeFireDecision;
 use oneiron::store::GateSystemNoticeRecord;
 use oneiron::voice_cascade::uds::MAX_FRAME_BYTES;
 use oneiron::voice_cascade::{
-    AsrUpdate, Brain, CascadeControl, ControlEvent, RetrievalContext, TtsSeamClient,
+    AsrUpdate, Brain, CascadeControl, ControlEvent, GenerationEpoch, RetrievalContext,
+    TtsSeamClient, TurnMemories,
 };
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -114,8 +116,24 @@ enum Response {
         generation: u64,
         notice: GateSystemNoticeRecord,
     },
+    /// What a turn's memories read found, heard and withheld, for the
+    /// owner's client to show. Its receipts split across `parts` frames,
+    /// numbered from 1, each with the turn's counts.
+    Memories {
+        generation: u64,
+        found: usize,
+        heard: usize,
+        withheld: usize,
+        part: usize,
+        parts: usize,
+        receipts: Vec<ScopedReadReceipt>,
+    },
     SessionEnded,
 }
+
+/// The receipts' share of one `memories` frame, the rest of the frame's
+/// limit left for its other fields.
+const MEMORIES_PART_BYTES: usize = MAX_FRAME_BYTES / 2;
 
 type Pending<'a> =
     Pin<Box<dyn Future<Output = (String, u64, Result<AsrUpdate, HostError>)> + Send + 'a>>;
@@ -268,7 +286,12 @@ impl VoiceHost {
                             }
                             Response::GenerationEnd { generation: generation.value() }
                         }
-                        WireOut::Control(Some(out)) => control_out(out),
+                        WireOut::Control(Some(out)) => {
+                            let mut frames = control_frames(out).into_iter();
+                            let Some(first) = frames.next() else { continue };
+                            outbox.extend(frames);
+                            first
+                        }
                         WireOut::Playout(None) | WireOut::Control(None) => continue,
                     },
                     // The bridge before wire input: it drives the live hearing's
@@ -485,12 +508,14 @@ const FAREWELL: Duration = Duration::from_secs(1);
 async fn farewell(wire: &mut WireMedia, write: &mut OwnedWriteHalf) {
     let frames = async {
         while let Some(out) = wire.queued_control() {
-            let mut bytes = serde_json::to_vec(&control_out(out)).map_err(io::Error::other)?;
-            if bytes.len() > MAX_FRAME_BYTES {
-                continue;
+            for response in control_frames(out) {
+                let mut bytes = serde_json::to_vec(&response).map_err(io::Error::other)?;
+                if bytes.len() > MAX_FRAME_BYTES {
+                    continue;
+                }
+                bytes.push(b'\n');
+                write.write_all(&bytes).await?;
             }
-            bytes.push(b'\n');
-            write.write_all(&bytes).await?;
         }
         Ok::<_, io::Error>(())
     };
@@ -499,17 +524,69 @@ async fn farewell(wire: &mut WireMedia, write: &mut OwnedWriteHalf) {
     }
 }
 
-fn control_out(out: ControlOut) -> Response {
+/// One control as its wire frames: one, or a turn's memories receipt split.
+fn control_frames(out: ControlOut) -> Vec<Response> {
     match out {
-        ControlOut::Flush(generation) => Response::Flush {
+        ControlOut::Flush(generation) => vec![Response::Flush {
             generation: generation.value(),
-        },
+        }],
         ControlOut::Event(event) => control_response(event),
     }
 }
 
-fn control_response(event: ControlEvent) -> Response {
-    match event {
+/// A turn's memories receipt as frames under the wire's limit, its
+/// receipts packed in order and none dropped for size. A frame one receipt
+/// alone overfills cannot go on the wire; it is logged and left out, so the
+/// call goes on.
+fn memories_frames(generation: GenerationEpoch, memories: TurnMemories) -> Vec<Response> {
+    let TurnMemories {
+        found,
+        heard,
+        receipts,
+    } = memories;
+    let withheld = receipts
+        .iter()
+        .map(|receipt| receipt.suppressed_count)
+        .sum();
+    let mut packed: Vec<Vec<ScopedReadReceipt>> = vec![Vec::new()];
+    let mut size = 0;
+    for receipt in receipts {
+        let bytes = serde_json::to_vec(&receipt).map_or(0, |bytes| bytes.len()) + 1;
+        if size + bytes > MEMORIES_PART_BYTES && packed.last().is_some_and(|part| !part.is_empty())
+        {
+            packed.push(Vec::new());
+            size = 0;
+        }
+        size += bytes;
+        if let Some(part) = packed.last_mut() {
+            part.push(receipt);
+        }
+    }
+    let parts = packed.len();
+    packed
+        .into_iter()
+        .enumerate()
+        .map(|(at, receipts)| Response::Memories {
+            generation: generation.value(),
+            found,
+            heard,
+            withheld,
+            part: at + 1,
+            parts,
+            receipts,
+        })
+        .filter(|frame| {
+            let fits = serde_json::to_vec(frame).is_ok_and(|bytes| bytes.len() < MAX_FRAME_BYTES);
+            if !fits {
+                tracing::warn!("voice wire: a memories receipt frame exceeds the wire's limit");
+            }
+            fits
+        })
+        .collect()
+}
+
+fn control_response(event: ControlEvent) -> Vec<Response> {
+    vec![match event {
         ControlEvent::PlayoutStop { generation, reason } => Response::PlayoutStop {
             generation: generation.value(),
             reason: wire::stop_reason(reason),
@@ -530,7 +607,11 @@ fn control_response(event: ControlEvent) -> Response {
             generation: generation.value(),
             notice,
         },
-    }
+        ControlEvent::Memories {
+            generation,
+            memories,
+        } => return memories_frames(generation, memories),
+    }]
 }
 
 fn response_error(error: &HostError) -> Response {

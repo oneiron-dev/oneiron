@@ -18,6 +18,7 @@
 mod apply;
 mod card;
 mod channel;
+mod connector_reach;
 mod grant;
 mod group;
 mod live;
@@ -25,6 +26,7 @@ mod manifest;
 mod member;
 mod plan;
 mod reach;
+mod retire;
 mod run;
 mod seed;
 mod skill;
