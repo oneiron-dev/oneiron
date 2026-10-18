@@ -1110,6 +1110,20 @@ export class Oneiron {
       /** The owner observes the stored projection receipt for an anchored attempt outcome; an absent receipt means projection has not committed, never a successful empty projection. */
       projection: (input: Facade.LearningProjectionRequest): Facade.LearningProjectionView => this.#call(() => this.#client.vaultLearningProjection(input) as Facade.LearningProjectionView),
     },
+    seal: {
+      /** Confess an attempt's objectives without changing any score; named flaws and uncertainty create durable directed rechecks. */
+      confess: (input: Facade.AttemptConfession): Facade.SealReceiptView => this.#call(() => this.#client.vaultSealConfess(input) as Facade.SealReceiptView),
+      /** Draw a passing sealed attempt once at the current audit rate, saving the rate and selection before any checker runs. */
+      audit: (input: Facade.SealAttemptRequest): Facade.SealReceiptView => this.#call(() => this.#client.vaultSealAudit(input) as Facade.SealReceiptView),
+      /** Read a sealed attempt, its stamped audit draw, directed and random check completions, weighted findings and separate honesty reward. */
+      receipt: (input: Facade.SealAttemptRequest): Facade.SealReceiptView | null => this.#call(() => this.#client.vaultSealReceipt(input) as Facade.SealReceiptView | null),
+      /** Read pending directed rechecks and random audits, optionally for one attempt, without executing a checker. */
+      pending: (input: Facade.SealPendingRequest): Facade.SealCheckRequest[] => this.#call(() => this.#client.vaultSealPending(input) as Facade.SealCheckRequest[]),
+      /** Queue the existing Coach seal checker under its ordinary lease, Grant and budget; the returned job never grants extra authority. */
+      run: (input: Facade.SealRunRequest): Facade.SealRunReceipt => this.#call(() => this.#client.vaultSealRun(input) as Facade.SealRunReceipt),
+      /** Attest an independent external seal check as the owner; admit immutable findings and project them using the request's stamped rate. */
+      complete: (input: Facade.SealCompleteRequest): Facade.SealReceiptView => this.#call(() => this.#client.vaultSealComplete(input) as Facade.SealReceiptView),
+    },
     settings: {
       /** The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type. */
       learning: Object.assign((input: Facade.LearningSettingsRequest): Facade.LearningSettingsView => this.#call(() => this.#client.vaultSettingsLearning(input) as Facade.LearningSettingsView), {

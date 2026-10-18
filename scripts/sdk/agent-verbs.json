@@ -5140,6 +5140,96 @@
       "openapi": true
     },
     {
+      "name": "vault.seal.confess",
+      "description": "Confess an attempt's objectives without changing any score; named flaws and uncertainty create durable directed rechecks.",
+      "input": "crate::self_heal::audit::AttemptConfession",
+      "output": "crate::self_heal::audit::doors::SealReceiptView",
+      "call": "crate::self_heal::audit::doors::confess_as_owner(memory.vault(), &memory.embedded_owner(\"vault.seal.confess\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.seal.audit",
+      "description": "Draw a passing sealed attempt once at the current audit rate, saving the rate and selection before any checker runs.",
+      "input": "crate::self_heal::audit::doors::SealAttemptRequest",
+      "output": "crate::self_heal::audit::doors::SealReceiptView",
+      "call": "crate::self_heal::audit::doors::audit_as_owner(memory.vault(), &memory.embedded_owner(\"vault.seal.audit\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.seal.receipt",
+      "description": "Read a sealed attempt, its stamped audit draw, directed and random check completions, weighted findings and separate honesty reward.",
+      "input": "crate::self_heal::audit::doors::SealAttemptRequest",
+      "output": "Option<crate::self_heal::audit::doors::SealReceiptView>",
+      "call": "crate::self_heal::audit::doors::receipt_as_owner(memory.vault(), &memory.embedded_owner(\"vault.seal.receipt\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.seal.pending",
+      "description": "Read pending directed rechecks and random audits, optionally for one attempt, without executing a checker.",
+      "input": "crate::self_heal::audit::doors::SealPendingRequest",
+      "output": "Vec<crate::self_heal::audit::SealCheckRequest>",
+      "call": "crate::self_heal::audit::doors::pending_as_owner(memory.vault(), &memory.embedded_owner(\"vault.seal.pending\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.seal.run",
+      "description": "Queue the existing Coach seal checker under its ordinary lease, Grant and budget; the returned job never grants extra authority.",
+      "input": "crate::self_heal::audit::doors::SealRunRequest",
+      "output": "crate::self_heal::audit::doors::SealRunReceipt",
+      "call": "crate::self_heal::audit::doors::run_as_owner(memory.vault(), &memory.embedded_owner(\"vault.seal.run\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.seal.complete",
+      "description": "Attest an independent external seal check as the owner; admit immutable findings and project them using the request's stamped rate.",
+      "input": "crate::self_heal::audit::doors::SealCompleteRequest",
+      "output": "crate::self_heal::audit::doors::SealReceiptView",
+      "call": "crate::self_heal::audit::doors::complete_as_owner(memory.vault(), &memory.embedded_owner(\"vault.seal.complete\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.settings.learning",
       "description": "The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type.",
       "input": "crate::learning_setting_doors::LearningSettingsRequest",

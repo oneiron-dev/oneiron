@@ -1065,6 +1065,24 @@ impl OneironClient {
                 "vault.learning.projection" => remote_agent_verb_output::<
                     oneiron::learning::doors::LearningProjectionView,
                 >(client, verb, &input),
+                "vault.seal.confess" => remote_agent_verb_output::<
+                    oneiron::self_heal::audit::doors::SealReceiptView,
+                >(client, verb, &input),
+                "vault.seal.audit" => remote_agent_verb_output::<
+                    oneiron::self_heal::audit::doors::SealReceiptView,
+                >(client, verb, &input),
+                "vault.seal.receipt" => remote_agent_verb_output::<
+                    Option<oneiron::self_heal::audit::doors::SealReceiptView>,
+                >(client, verb, &input),
+                "vault.seal.pending" => remote_agent_verb_output::<
+                    Vec<oneiron::self_heal::audit::SealCheckRequest>,
+                >(client, verb, &input),
+                "vault.seal.run" => remote_agent_verb_output::<
+                    oneiron::self_heal::audit::doors::SealRunReceipt,
+                >(client, verb, &input),
+                "vault.seal.complete" => remote_agent_verb_output::<
+                    oneiron::self_heal::audit::doors::SealReceiptView,
+                >(client, verb, &input),
                 "vault.settings.learning" => remote_agent_verb_output::<
                     oneiron::learning_setting_doors::LearningSettingsView,
                 >(client, verb, &input),
@@ -6498,6 +6516,78 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.learning.projection", value)
+    }
+    pub fn vault_seal_confess(
+        &self,
+        input: &oneiron::self_heal::audit::AttemptConfession,
+    ) -> Result<oneiron::self_heal::audit::doors::SealReceiptView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.seal.confess", value)
+    }
+    pub fn vault_seal_audit(
+        &self,
+        input: &oneiron::self_heal::audit::doors::SealAttemptRequest,
+    ) -> Result<oneiron::self_heal::audit::doors::SealReceiptView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.seal.audit", value)
+    }
+    pub fn vault_seal_receipt(
+        &self,
+        input: &oneiron::self_heal::audit::doors::SealAttemptRequest,
+    ) -> Result<Option<oneiron::self_heal::audit::doors::SealReceiptView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.seal.receipt", value)
+    }
+    pub fn vault_seal_pending(
+        &self,
+        input: &oneiron::self_heal::audit::doors::SealPendingRequest,
+    ) -> Result<Vec<oneiron::self_heal::audit::SealCheckRequest>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.seal.pending", value)
+    }
+    pub fn vault_seal_run(
+        &self,
+        input: &oneiron::self_heal::audit::doors::SealRunRequest,
+    ) -> Result<oneiron::self_heal::audit::doors::SealRunReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.seal.run", value)
+    }
+    pub fn vault_seal_complete(
+        &self,
+        input: &oneiron::self_heal::audit::doors::SealCompleteRequest,
+    ) -> Result<oneiron::self_heal::audit::doors::SealReceiptView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.seal.complete", value)
     }
     pub fn vault_settings_learning(
         &self,
