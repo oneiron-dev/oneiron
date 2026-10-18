@@ -1099,7 +1099,18 @@ class Oneiron:
             """An Admin with the add_member power takes back a pending invitation."""
     class _VaultFederationVerbs:
         @property
+        def coreference(self) -> "Oneiron._VaultFederationCoreferenceVerbs": ...
+        @property
         def connect(self) -> "Oneiron._VaultFederationConnectVerbs": ...
+    class _VaultFederationCoreferenceVerbs:
+        def link(self, spec: Facade.CoreferenceLinkRequest) -> Facade.CoreferenceLinkReceipt:
+            """The owner atomically links two people with proposed or confirmed identity status, without pooling their claims or granting reads."""
+        def confirm(self, spec: Facade.CoreferencePairRequest) -> Facade.CoreferenceLinkReceipt:
+            """The owner atomically confirms cross-vault identity without changing either person or their claims."""
+        def share_consent(self, spec: Facade.CoreferenceShareConsentRequest) -> Facade.CoreferenceShareConsentReceipt:
+            """The owner consents to exporting an existing identity link into exactly one named federation pact."""
+        def unlink(self, spec: Facade.CoreferencePairRequest) -> Facade.CoreferenceUnlinkReceipt:
+            """The owner atomically removes both identity-link orientations and retracts link metadata while retaining the original claims."""
     class _VaultFederationConnectVerbs:
         def identity(self, spec: Facade.EmptyRequest) -> Facade.ConnectIdentity:
             """The owner reads this vault identity and the host key used for reciprocal Connect consent."""
@@ -1418,6 +1429,20 @@ class Oneiron:
         def replay(self, spec: Facade.HooksReplayRequest) -> list[Facade.HookReplayRow]:
             """The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands."""
     class _VaultArtifactsVerbs:
+        def publish_approval(self, spec: Facade.ArtifactPublishRequest) -> Facade.ArtifactPublishApproval:
+            """Computes the exact publication approval digest for the existing owner approve-once door; it grants nothing."""
+        def publish(self, spec: Facade.ArtifactPublishRequest) -> Facade.ArtifactPublishView:
+            """Publishes one immutable code fork or numbered blob export with an explicit audience through the existing Gate, returning its pointer and durable receipt ref."""
+        def repoint(self, spec: Facade.ArtifactPublishRequest) -> Facade.ArtifactPublishView:
+            """Repoints one artifact channel to an exact immutable export through the publication Gate; use a new publish id, and earlier receipts survive."""
+        def pointer(self, spec: Facade.ArtifactPointerRequest) -> Facade.ArtifactPointer | None:
+            """Reads the current artifact channel pin and audience under the owner credential; null when absent or withheld."""
+        def unpublish(self, spec: Facade.ArtifactPointerRequest) -> Facade.ArtifactUnpublished:
+            """Removes one artifact channel pointer without deleting its immutable export or earlier publication receipts."""
+        def link_token(self, spec: Facade.EmptyRequest) -> Facade.ArtifactLinkToken:
+            """Mints a serving-only link token and its digest tier; publication still requires a separate exact Gate authorization."""
+        @property
+        def live_preview(self) -> "Oneiron._VaultArtifactsLivePreviewVerbs": ...
         def view(self, request: Facade.ArtifactRefRequest) -> Facade.ArtifactView | None: ...
         def units(self, spec: Facade.ArtifactUnitsRequest) -> Facade.ArtifactUnitsView:
             """Inspects real DOCX blocks, XLSX cells and PPTX shapes in one version; other kinds explicitly report no annotation unit adapter."""
@@ -1450,6 +1475,21 @@ class Oneiron:
             """Appends one version of bytes to a blob artifact's append-only chain."""
         def read(self, input: Facade.ReadBlobVersionRequest) -> Facade.BlobContent | None:
             """Reads one version of a blob artifact's bytes."""
+    class _VaultArtifactsLivePreviewVerbs:
+        def register(self, spec: Facade.ArtifactPreviewRegisterRequest) -> Facade.ArtifactPreviewView:
+            """Opens a draft-labelled, owner-private live preview only for the exact process, port and lease already declared by the trusted session runtime."""
+        def read(self, spec: Facade.ArtifactPreviewRequest) -> Facade.ArtifactPreviewView | None:
+            """Reads a live draft endpoint and a caller-specific preview URL as the owner or a named invitee; uninvited callers are refused."""
+        def close(self, spec: Facade.ArtifactPreviewRequest) -> Facade.ArtifactPreviewClosed:
+            """Closes one owner-private preview lease, invalidating its old URLs, streams and upgrades without changing any published artifact pin."""
+        def invite(self, spec: Facade.ArtifactPreviewInviteRequest) -> Facade.ArtifactPreviewInvitation:
+            """Invites one named principal to a private live preview under the lease owner proof; no public audience is created."""
+        def revoke_invite(self, spec: Facade.ArtifactPreviewInviteRequest) -> Facade.ArtifactPreviewInvitation:
+            """Revokes one private preview invitation and its personal credentials, including active streams."""
+        def share(self, spec: Facade.ArtifactPreviewRequest) -> Facade.ArtifactPreviewShare:
+            """Mints a revocable sharing URL for one private live preview, replacing any earlier sharing URL; no artifact is published."""
+        def revoke_share(self, spec: Facade.ArtifactPreviewRequest) -> Facade.ArtifactPreviewShare:
+            """Revokes the private preview sharing URL and streams that used it while preserving separate owner and invitee credentials."""
     class _VaultArtifactsAnchorsVerbs:
         def pin(self, spec: Facade.AnnotationPinRequest) -> Facade.AnnotationAnchorView:
             """Pins an exact readable locator and quote in an artifact version; opening a thread makes the pin durable."""
