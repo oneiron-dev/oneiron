@@ -68,7 +68,8 @@ pub enum NotificationKind {
     /// A built proactivity digest; `source.result` names its id.
     Digest,
     /// A decision waiting on its recipient; `source.producer` names what
-    /// asks and `source.result` the thing to answer.
+    /// asks, `source.result` the thing to answer and `source.detail`, when
+    /// the producer gives it, why it asks.
     Ask,
 }
 
@@ -104,6 +105,10 @@ pub struct NotificationSource {
     pub run: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<String>,
+    /// The producer's own words on the event, for the inbox to show as they
+    /// are: a takeover ask's reason. Never part of the row's identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 /// The stored NOTIFICATION body.
@@ -327,6 +332,7 @@ impl Vault {
                     .result_ref
                     .as_ref()
                     .map(|result| result.as_str().to_owned()),
+                detail: None,
             },
             subject_refs: record
                 .task_ref
