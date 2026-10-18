@@ -1417,6 +1417,30 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.results.status",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::result_doors::ResultRunRequest,
+                >(),
+            ),
+            (
+                "vault.results.recover",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::result_doors::ResultRunRequest,
+                >(),
+            ),
+            (
+                "vault.results.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::result_doors::ResultOccurrenceRequest,
+                >(),
+            ),
+            (
+                "vault.results.slice",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::result_doors::ResultSliceRequest,
+                >(),
+            ),
+            (
                 "vault.code.repo_diff",
                 crate::code_run::vault_read::request_schema::<
                     crate::code_document::CodeRepoDiffRequest,
@@ -3002,6 +3026,10 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.artifacts.threads.assign",
     "vault.artifacts.threads.state",
     "vault.code.model_heal_count",
+    "vault.results.status",
+    "vault.results.recover",
+    "vault.results.read",
+    "vault.results.slice",
     "vault.code.export",
     "vault.code.origin.authority.get",
     "vault.code.origin.authority.set",
@@ -3324,6 +3352,18 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.code.model_heal_count" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_run_doors::CodeRunModelHealCountView,
+        >(),
+        "vault.results.status" => crate::code_run::vault_read::request_schema::<
+            crate::memory::result_doors::ResultRunStatus,
+        >(),
+        "vault.results.recover" => crate::code_run::vault_read::request_schema::<
+            crate::memory::result_doors::ResultRunStatus,
+        >(),
+        "vault.results.read" => crate::code_run::vault_read::request_schema::<
+            crate::memory::result_doors::ResultReadView,
+        >(),
+        "vault.results.slice" => crate::code_run::vault_read::request_schema::<
+            crate::memory::result_doors::ResultSliceView,
         >(),
         "vault.code.export" => crate::code_run::vault_read::request_schema::<
             crate::memory::origin_doors::CodeExportResult,
@@ -5424,6 +5464,34 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.model_heal_count" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.results.status" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.results.recover" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.results.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.results.slice" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -8026,6 +8094,19 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::code_run_doors::CodeRunModelHealCountRequest =
                 decode(value.clone())?;
         }
+        "vault.results.status" => {
+            let _input: crate::memory::result_doors::ResultRunRequest = decode(value.clone())?;
+        }
+        "vault.results.recover" => {
+            let _input: crate::memory::result_doors::ResultRunRequest = decode(value.clone())?;
+        }
+        "vault.results.read" => {
+            let _input: crate::memory::result_doors::ResultOccurrenceRequest =
+                decode(value.clone())?;
+        }
+        "vault.results.slice" => {
+            let _input: crate::memory::result_doors::ResultSliceRequest = decode(value.clone())?;
+        }
         "vault.code.repo_diff" => {
             let _input: crate::code_document::CodeRepoDiffRequest = decode(value.clone())?;
         }
@@ -9413,6 +9494,10 @@ pub fn invoke(
         "vault.code.model_heal_count" => {
             encode(vault_code_model_heal_count(memory, decode(value)?)?)
         }
+        "vault.results.status" => encode(vault_results_status(memory, decode(value)?)?),
+        "vault.results.recover" => encode(vault_results_recover(memory, decode(value)?)?),
+        "vault.results.read" => encode(vault_results_read(memory, decode(value)?)?),
+        "vault.results.slice" => encode(vault_results_slice(memory, decode(value)?)?),
         "vault.code.repo_diff" => encode(vault_code_repo_diff(memory, decode(value)?)?),
         "vault.code.export" => encode(vault_code_export(memory, decode(value)?)?),
         "vault.code.origin.authority.get" => {
@@ -12165,6 +12250,30 @@ pub fn vault_code_model_heal_count(
         &memory.embedded_owner("vault.code.model_heal_count")?,
         input,
     )
+}
+pub fn vault_results_status(
+    memory: &Memory<'_>,
+    input: crate::memory::result_doors::ResultRunRequest,
+) -> MemoryResult<crate::memory::result_doors::ResultRunStatus> {
+    memory.result_status_as_owner(&memory.embedded_owner("vault.results.status")?, input)
+}
+pub fn vault_results_recover(
+    memory: &Memory<'_>,
+    input: crate::memory::result_doors::ResultRunRequest,
+) -> MemoryResult<crate::memory::result_doors::ResultRunStatus> {
+    memory.result_status_as_owner(&memory.embedded_owner("vault.results.recover")?, input)
+}
+pub fn vault_results_read(
+    memory: &Memory<'_>,
+    input: crate::memory::result_doors::ResultOccurrenceRequest,
+) -> MemoryResult<crate::memory::result_doors::ResultReadView> {
+    memory.result_read_as_owner(&memory.embedded_owner("vault.results.read")?, input)
+}
+pub fn vault_results_slice(
+    memory: &Memory<'_>,
+    input: crate::memory::result_doors::ResultSliceRequest,
+) -> MemoryResult<crate::memory::result_doors::ResultSliceView> {
+    memory.result_slice_as_owner(&memory.embedded_owner("vault.results.slice")?, input)
 }
 pub fn vault_code_repo_diff(
     memory: &Memory<'_>,

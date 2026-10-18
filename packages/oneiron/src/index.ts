@@ -1113,6 +1113,16 @@ export class Oneiron {
         recover: (input: Facade.MergeQueueRepoRequest): Facade.MergeQueuePointersView => this.#call(() => this.#client.vaultCodeMergeQueueRecover(input) as Facade.MergeQueuePointersView),
       },
     },
+    results: {
+      /** The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run. */
+      status: (input: Facade.ResultRunRequest): Facade.ResultRunStatus => this.#call(() => this.#client.vaultResultsStatus(input) as Facade.ResultRunStatus),
+      /** The owner reopens retained result status after restart; it never resumes the producer or replays an effect to regenerate output. */
+      recover: (input: Facade.ResultRunRequest): Facade.ResultRunStatus => this.#call(() => this.#client.vaultResultsRecover(input) as Facade.ResultRunStatus),
+      /** The owner reads one exact retained result occurrence card under its current taint and source-row fence, never by content authority alone. */
+      read: (input: Facade.ResultOccurrenceRequest): Facade.ResultReadView => this.#call(() => this.#client.vaultResultsRead(input) as Facade.ResultReadView),
+      /** The owner reads a typed byte or line range of one exact result occurrence, with bounded continuations and current taint withholding. */
+      slice: (input: Facade.ResultSliceRequest): Facade.ResultSliceView => this.#call(() => this.#client.vaultResultsSlice(input) as Facade.ResultSliceView),
+    },
     agents: {
       /** The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched. */
       create: (input: Facade.AgentDefinitionCreateRequest): Facade.AgentDefinitionView => this.#call(() => this.#client.vaultAgentsCreate(input) as Facade.AgentDefinitionView),

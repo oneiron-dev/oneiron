@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 505 facade rows, 1886 declarations.
-Inputs: 455 of 505 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 449 of 505 fully typed, 56 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 509 facade rows, 1910 declarations.
+Inputs: 459 of 509 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 453 of 509 fully typed, 56 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 89; unread shapes: 0.
 """
 
@@ -5287,6 +5287,122 @@ class CodeRunModelHealCountRequest(TypedDict):
 class CodeRunModelHealCountView(TypedDict):
     model_id: str
     healed_turns: int
+class ResultRunRequest(TypedDict):
+    run_id: EntityId
+class ResultEffectRecord(TypedDict):
+    seq: int
+    effect: str
+    action_digest: NotRequired[str | None]
+    started_at_ms: int
+    finished_at_ms: int
+class ResultRetainedBody(TypedDict):
+    blake3: str
+    bytes: int
+class ResultBodyStatus(TypedDict):
+    occurrence: EntityId
+    complete: bool
+    retained: NotRequired[ResultRetainedBody | None]
+ResultBodyKind = Literal["text", "binary"]
+ResultTaintState = Literal["clean", "tainted_live", "tainted_stale"]
+class ResultTaint(TypedDict):
+    state: ResultTaintState
+    secret: NotRequired[str | None]
+class ResultTaintReference(TypedDict):
+    secret_ref: str
+    generation: int
+class ResultOccurrenceManifest(TypedDict):
+    run_id: EntityId
+    occurrence: EntityId
+    path: str
+    handle: str
+    blake3: str
+    bytes: int
+    kind: ResultBodyKind
+    lines: int
+    complete: bool
+    taint: ResultTaint
+    taint_refs: list[ResultTaintReference]
+    source_rows: NotRequired[list[EntityId] | None]
+class ResultRunStatus(TypedDict):
+    run_id: EntityId
+    replay_present: bool
+    checkpoint_count: int
+    effects: list[ResultEffectRecord]
+    bodies: list[ResultBodyStatus]
+    occurrences: list[ResultOccurrenceManifest]
+class ResultOccurrenceRequest(TypedDict):
+    run_id: EntityId
+    occurrence: EntityId
+ResultFacet = Literal["slice", "search", "query", "chunks"]
+class ResultCard(TypedDict):
+    handle: str
+    bytes: int
+    kind: ResultBodyKind
+    lines: int
+    complete: bool
+    preview: str
+    name: NotRequired[str | None]
+    taint: ResultTaint
+    more: list[ResultFacet]
+class ResultReadRefusal(TypedDict):
+    denied: str
+    reasonCodes: list[str]
+    error: NotRequired[str | None]
+    bytes: NotRequired[int | None]
+class ResultReadViewAvailable(TypedDict):
+    status: Literal["available"]
+    manifest: ResultOccurrenceManifest
+    card: ResultCard
+class ResultReadViewDenied(TypedDict):
+    status: Literal["denied"]
+    refusal: ResultReadRefusal
+ResultReadView = ResultReadViewAvailable | ResultReadViewDenied
+class ResultByteSelection(TypedDict):
+    bytes: list[int]
+class ResultLineCursor(TypedDict):
+    offset: int
+    line: int
+class ResultLineSelection(TypedDict):
+    lines: list[int]
+    cursor: NotRequired[ResultLineCursor | None]
+ResultSliceSelection = ResultByteSelection | ResultLineSelection
+class ResultSliceRequest(TypedDict):
+    run_id: EntityId
+    occurrence: EntityId
+    selection: ResultSliceSelection
+class ResultWithheld(TypedDict):
+    withheld: ResultTaintState
+    ref: str
+    bytes: int
+    lines: NotRequired[int | None]
+    kind: ResultBodyKind
+    taint: ResultTaint
+    reason: str
+class ResultSliceContent(TypedDict):
+    ref: str
+    start: int
+    end: int
+    done: bool
+    text: NotRequired[str | None]
+    base64: NotRequired[str | None]
+    lossy: NotRequired[bool | None]
+    lines: NotRequired[list[int] | None]
+    next: NotRequired[ResultSliceSelection | None]
+class ResultSliceScanning(TypedDict):
+    ref: str
+    done: bool
+    scanned: list[int]
+    limit: str
+    next: ResultSliceSelection
+ResultSlicePage = ResultWithheld | ResultSliceContent | ResultSliceScanning
+class ResultSliceViewAvailable(TypedDict):
+    status: Literal["available"]
+    manifest: ResultOccurrenceManifest
+    page: ResultSlicePage
+class ResultSliceViewDenied(TypedDict):
+    status: Literal["denied"]
+    refusal: ResultReadRefusal
+ResultSliceView = ResultSliceViewAvailable | ResultSliceViewDenied
 class CodeTreeRequest(TypedDict):
     revision_ref: NotRequired[str | None]
     repo: NotRequired[str | None]
@@ -9623,7 +9739,6 @@ class MessageResultSource(TypedDict):
     run_id: EntityId
     occurrence: EntityId
     path: str
-ResultFacet = Literal["slice", "search", "query", "chunks"]
 class MessageResultAttachment(TypedDict):
     source: MessageResultSource
     handle: str

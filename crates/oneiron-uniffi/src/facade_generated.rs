@@ -1316,6 +1316,26 @@ export_facade! {
     let output = client.vault_code_model_heal_count(&input)?;
     crate::codec::lift_record("vault.code.model_heal_count", &output)
 };
+"vault.results.status" => fn vault_results_status(&self, input: ResultRunRequest) -> ResultRunStatus = |client| {
+    let input: oneiron::memory::result_doors::ResultRunRequest = crate::codec::lower_record("vault.results.status", input)?;
+    let output = client.vault_results_status(&input)?;
+    crate::codec::lift_record("vault.results.status", &output)
+};
+"vault.results.recover" => fn vault_results_recover(&self, input: ResultRunRequest) -> ResultRunStatus = |client| {
+    let input: oneiron::memory::result_doors::ResultRunRequest = crate::codec::lower_record("vault.results.recover", input)?;
+    let output = client.vault_results_recover(&input)?;
+    crate::codec::lift_record("vault.results.recover", &output)
+};
+"vault.results.read" => fn vault_results_read(&self, input: ResultOccurrenceRequest) -> ResultReadView = |client| {
+    let input: oneiron::memory::result_doors::ResultOccurrenceRequest = crate::codec::lower_record("vault.results.read", input)?;
+    let output = client.vault_results_read(&input)?;
+    crate::codec::lift_record("vault.results.read", &output)
+};
+"vault.results.slice" => fn vault_results_slice(&self, input: ResultSliceRequest) -> ResultSliceView = |client| {
+    let input: oneiron::memory::result_doors::ResultSliceRequest = crate::codec::lower_record("vault.results.slice", input)?;
+    let output = client.vault_results_slice(&input)?;
+    crate::codec::lift_record("vault.results.slice", &output)
+};
 "vault.code.repo_diff" => fn vault_code_repo_diff(&self, input: CodeRepoDiffRequest) -> Option<CodeRepoDiffView> = |client| {
     let input: oneiron::code_document::CodeRepoDiffRequest = crate::codec::lower_record("vault.code.repo_diff", input)?;
     let output = client.vault_code_repo_diff(&input)?;

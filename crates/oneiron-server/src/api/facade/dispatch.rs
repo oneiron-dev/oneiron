@@ -6112,6 +6112,90 @@ async fn vault_code_model_heal_count(
         facade_hooks_post(server, hooks, output).await?,
     ))
 }
+async fn vault_results_status(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.results.status")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.results.status", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.results.status", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_results_status(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_results_recover(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.results.recover")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.results.recover", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.results.recover", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_results_recover(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_results_read(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.results.read")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.results.read", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.results.read", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_results_read(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_results_slice(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.results.slice")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.results.slice", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.results.slice", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_results_slice(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_code_repo_diff(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -12155,6 +12239,10 @@ pub(crate) async fn call_verb(
         "vault.code.proposal_submit" => vault_code_proposal_submit(server, call, input).await,
         "vault.code.oplog" => vault_code_oplog(server, call, input).await,
         "vault.code.model_heal_count" => vault_code_model_heal_count(server, call, input).await,
+        "vault.results.status" => vault_results_status(server, call, input).await,
+        "vault.results.recover" => vault_results_recover(server, call, input).await,
+        "vault.results.read" => vault_results_read(server, call, input).await,
+        "vault.results.slice" => vault_results_slice(server, call, input).await,
         "vault.code.repo_diff" => vault_code_repo_diff(server, call, input).await,
         "vault.code.export" => vault_code_export(server, call, input).await,
         "vault.code.origin.authority.get" => {

@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 562 code-mode rows (541 host rows, 21 run rows), 1975 declarations.
-// Replies: 495 fully typed, 63 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 566 code-mode rows (545 host rows, 21 run rows), 2000 declarations.
+// Replies: 499 fully typed, 63 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 94; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1104,6 +1104,31 @@ declare namespace Sdk {
   type CodeMutationLog = { repo: EntityId; entries: CodeMutationEntry[] };
   type CodeRunModelHealCountRequest = { model_id: string };
   type CodeRunModelHealCountView = { model_id: string; healed_turns: number };
+  type ResultRunRequest = { run_id: EntityId };
+  type ResultEffectRecord = { seq: number; effect: string; action_digest?: string | null; started_at_ms: number; finished_at_ms: number };
+  type ResultRetainedBody = { blake3: string; bytes: number };
+  type ResultBodyStatus = { occurrence: EntityId; complete: boolean; retained?: ResultRetainedBody | null };
+  type ResultBodyKind = "text" | "binary";
+  type ResultTaintState = "clean" | "tainted_live" | "tainted_stale";
+  type ResultTaint = { state: ResultTaintState; secret?: string | null };
+  type ResultTaintReference = { secret_ref: string; generation: number };
+  type ResultOccurrenceManifest = { run_id: EntityId; occurrence: EntityId; path: string; handle: string; blake3: string; bytes: number; kind: ResultBodyKind; lines: number; complete: boolean; taint: ResultTaint; taint_refs: ResultTaintReference[]; source_rows?: EntityId[] | null };
+  type ResultRunStatus = { run_id: EntityId; replay_present: boolean; checkpoint_count: number; effects: ResultEffectRecord[]; bodies: ResultBodyStatus[]; occurrences: ResultOccurrenceManifest[] };
+  type ResultOccurrenceRequest = { run_id: EntityId; occurrence: EntityId };
+  type ResultFacet = "slice" | "search" | "query" | "chunks";
+  type ResultCard = { handle: string; bytes: number; kind: ResultBodyKind; lines: number; complete: boolean; preview: string; name?: string | null; taint: ResultTaint; more: ResultFacet[] };
+  type ResultReadRefusal = { denied: string; reasonCodes: string[]; error?: string | null; bytes?: number | null };
+  type ResultReadView = { status: "available"; manifest: ResultOccurrenceManifest; card: ResultCard } | { status: "denied"; refusal: ResultReadRefusal };
+  type ResultByteSelection = { bytes: number[] };
+  type ResultLineCursor = { offset: number; line: number };
+  type ResultLineSelection = { lines: number[]; cursor?: ResultLineCursor | null };
+  type ResultSliceSelection = ResultByteSelection | ResultLineSelection;
+  type ResultSliceRequest = { run_id: EntityId; occurrence: EntityId; selection: ResultSliceSelection };
+  type ResultWithheld = { withheld: ResultTaintState; ref: string; bytes: number; lines?: number | null; kind: ResultBodyKind; taint: ResultTaint; reason: string };
+  type ResultSliceContent = { ref: string; start: number; end: number; done: boolean; text?: string | null; base64?: string | null; lossy?: boolean | null; lines?: number[] | null; next?: ResultSliceSelection | null };
+  type ResultSliceScanning = { ref: string; done: boolean; scanned: number[]; limit: string; next: ResultSliceSelection };
+  type ResultSlicePage = ResultWithheld | ResultSliceContent | ResultSliceScanning;
+  type ResultSliceView = { status: "available"; manifest: ResultOccurrenceManifest; page: ResultSlicePage } | { status: "denied"; refusal: ResultReadRefusal };
   type CodeTreeRequest = { revision_ref?: string | null; repo?: string | null; snapshot_ref?: string | null };
   type CodeRepoDiffRequest = { before: CodeTreeRequest; after: CodeTreeRequest };
   type CodeFileChange = "added" | "removed" | "modified" | "renamed";
@@ -3119,6 +3144,16 @@ declare const vault: Sdk.VaultHost & {
     open(input: Sdk.ResidenceOpenRequest): Promise<Sdk.ResidenceOpenAnswer | StoredResult>;
     /** Drops the opened-item caches one of the owner's machines last touched before a time. A machine this host does not reach answers state queued, naming the directive. */
     prune(input: Sdk.ResidencePruneRequest): Promise<Sdk.ResidencePruneAnswer | StoredResult>;
+  };
+  results: {
+    /** The owner reads one exact retained result occurrence card under its current taint and source-row fence, never by content authority alone. */
+    read(input: Sdk.ResultOccurrenceRequest): Promise<Sdk.ResultReadView | StoredResult>;
+    /** The owner reopens retained result status after restart; it never resumes the producer or replays an effect to regenerate output. */
+    recover(input: Sdk.ResultRunRequest): Promise<Sdk.ResultRunStatus | StoredResult>;
+    /** The owner reads a typed byte or line range of one exact result occurrence, with bounded continuations and current taint withholding. */
+    slice(input: Sdk.ResultSliceRequest): Promise<Sdk.ResultSliceView | StoredResult>;
+    /** The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run. */
+    status(input: Sdk.ResultRunRequest): Promise<Sdk.ResultRunStatus | StoredResult>;
   };
   rooms: {
     /** Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed. */

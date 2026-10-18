@@ -4144,6 +4144,66 @@
       "openapi": true
     },
     {
+      "name": "vault.results.status",
+      "description": "The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run.",
+      "input": "crate::memory::result_doors::ResultRunRequest",
+      "output": "crate::memory::result_doors::ResultRunStatus",
+      "call": "memory.result_status_as_owner(&memory.embedded_owner(\"vault.results.status\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.results.recover",
+      "description": "The owner reopens retained result status after restart; it never resumes the producer or replays an effect to regenerate output.",
+      "input": "crate::memory::result_doors::ResultRunRequest",
+      "output": "crate::memory::result_doors::ResultRunStatus",
+      "call": "memory.result_status_as_owner(&memory.embedded_owner(\"vault.results.recover\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.results.read",
+      "description": "The owner reads one exact retained result occurrence card under its current taint and source-row fence, never by content authority alone.",
+      "input": "crate::memory::result_doors::ResultOccurrenceRequest",
+      "output": "crate::memory::result_doors::ResultReadView",
+      "call": "memory.result_read_as_owner(&memory.embedded_owner(\"vault.results.read\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.results.slice",
+      "description": "The owner reads a typed byte or line range of one exact result occurrence, with bounded continuations and current taint withholding.",
+      "input": "crate::memory::result_doors::ResultSliceRequest",
+      "output": "crate::memory::result_doors::ResultSliceView",
+      "call": "memory.result_slice_as_owner(&memory.embedded_owner(\"vault.results.slice\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.code.repo_diff",
       "description": "Every file changed between two repository trees, each a code revision or a git snapshot: added, removed, modified or renamed, each unit with the operations that wrote it.",
       "input": "crate::code_document::CodeRepoDiffRequest",

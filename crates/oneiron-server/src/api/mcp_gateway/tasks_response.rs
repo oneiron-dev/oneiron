@@ -1112,6 +1112,10 @@ fn mcp_agent_verb_input(
         "vault.code.proposal_submit" => a.spec.clone().ok_or_else(invalid),
         "vault.code.oplog" => a.spec.clone().ok_or_else(invalid),
         "vault.code.model_heal_count" => a.spec.clone().ok_or_else(invalid),
+        "vault.results.status" => a.spec.clone().ok_or_else(invalid),
+        "vault.results.recover" => a.spec.clone().ok_or_else(invalid),
+        "vault.results.read" => a.spec.clone().ok_or_else(invalid),
+        "vault.results.slice" => a.spec.clone().ok_or_else(invalid),
         "vault.code.repo_diff" => a.spec.clone().ok_or_else(invalid),
         "vault.code.export" => a.spec.clone().ok_or_else(invalid),
         "vault.code.origin.authority.get" => a.spec.clone().ok_or_else(invalid),
@@ -2309,6 +2313,18 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.model_heal_count" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.results.status" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.results.recover" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.results.read" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.results.slice" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.repo_diff" => {
@@ -7477,6 +7493,78 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_model_heal_count(server, auth, input)
                     .await
                     .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.results.status" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.results.status", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::result_doors::ResultRunRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_results_status(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.results.recover" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.results.recover", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::result_doors::ResultRunRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_results_recover(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.results.read" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.results.read", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::result_doors::ResultOccurrenceRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_results_read(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.results.slice" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.results.slice", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::result_doors::ResultSliceRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_results_slice(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

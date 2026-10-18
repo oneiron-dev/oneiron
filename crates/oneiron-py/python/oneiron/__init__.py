@@ -690,6 +690,9 @@ class Oneiron:
         def code(self) -> "Oneiron._VaultCodeVerbs":
             return Oneiron._VaultCodeVerbs(self._client)
         @property
+        def results(self) -> "Oneiron._VaultResultsVerbs":
+            return Oneiron._VaultResultsVerbs(self._client)
+        @property
         def agents(self) -> "Oneiron._VaultAgentsVerbs":
             return Oneiron._VaultAgentsVerbs(self._client)
         @property
@@ -2075,6 +2078,21 @@ class Oneiron:
         def recover(self, spec):
             """Reconcile an interrupted landing or rollback with its persisted mutation receipts. Owner only. Unreceipted divergence refuses; nothing is approved or rebased."""
             return json.loads(_translate(lambda: self._client.vault_code_merge_queue_recover(json.dumps(spec))))
+    class _VaultResultsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def status(self, spec):
+            """The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run."""
+            return json.loads(_translate(lambda: self._client.vault_results_status(json.dumps(spec))))
+        def recover(self, spec):
+            """The owner reopens retained result status after restart; it never resumes the producer or replays an effect to regenerate output."""
+            return json.loads(_translate(lambda: self._client.vault_results_recover(json.dumps(spec))))
+        def read(self, spec):
+            """The owner reads one exact retained result occurrence card under its current taint and source-row fence, never by content authority alone."""
+            return json.loads(_translate(lambda: self._client.vault_results_read(json.dumps(spec))))
+        def slice(self, spec):
+            """The owner reads a typed byte or line range of one exact result occurrence, with bounded continuations and current taint withholding."""
+            return json.loads(_translate(lambda: self._client.vault_results_slice(json.dumps(spec))))
     class _VaultAgentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
