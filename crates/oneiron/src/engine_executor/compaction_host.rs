@@ -415,10 +415,7 @@ impl EngineNativeExecutor<'_> {
         crate::compaction::admit_self_landing(vault, log, gated, execution)
             .and_then(|landing| {
                 crate::compaction::CompactionDriver::check_self_landing(
-                    gated,
-                    job.run_id,
-                    byline,
-                    &landing,
+                    gated, job.run_id, byline, &landing,
                 )?;
                 Ok(Some(landing.execution))
             })
