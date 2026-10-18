@@ -14167,6 +14167,14 @@
       }
     },
     {
+      "name": "tasks.consult.result",
+      "input": "crate::task_verb::run_doors::ConsultLandRequest",
+      "output": "crate::task_verb::run_doors::ConsultLandReply",
+      "scope": "Write",
+      "context": "run",
+      "effect": "ConsultResult"
+    },
+    {
       "name": "tasks.refuse",
       "input": "crate::code_run::TaskRefuseInput",
       "output": "crate::code_run::TaskRefuseOutput",
