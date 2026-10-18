@@ -53,9 +53,9 @@ impl CitationPin {
 #[cfg(feature = "sync")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PinMerge {
-    /// The pin was new here, and is held now.
+    /// The pin, or its actor's erase, was new here, and is held now.
     Written,
-    /// This vault already held the same pin.
+    /// This vault already held the same pin, or its erased twin.
     Held,
     /// This vault holds another pin for the same quote, and it stands.
     Conflict,
@@ -541,7 +541,9 @@ impl Vault {
     /// machines, in the caller's write transaction (FIX 853). A pin is
     /// written once: an equal one is held, and a different one for the same
     /// quote leaves the one held here standing. Erase wins: a pin of a
-    /// message or reply this vault erased is refused. Where this vault holds
+    /// message or reply this vault erased is refused, and a pin's actor this
+    /// vault erased, or its twin's erased actor, stays erased
+    /// ([`CitationPin::erased_wins`], FIX 4247). Where this vault holds
     /// the message's document, the pin must quote it at its version, as
     /// [`Self::pin_entity_text`] proves one. Where it holds none, the pin
     /// stands on its own quote.
@@ -559,13 +561,21 @@ impl Vault {
                 return Ok(PinMerge::Refused("erased here"));
             }
         }
+        let mut pin = pin.clone();
+        pin.actor = pin.actor.erased_here(self, txn)?;
+        let pin = &pin;
         let key = HexPair(HexId(message), HexId(citation));
         if let Some(prior) = ENTITY_DOC_PIN.get(&self.store, txn, &key)? {
-            return Ok(if prior == *pin {
-                PinMerge::Held
-            } else {
-                PinMerge::Conflict
-            });
+            let mut held = prior.clone();
+            held.actor = held.actor.erased_here(self, txn)?;
+            let Some(stands) = held.erased_wins(pin) else {
+                return Ok(PinMerge::Conflict);
+            };
+            if *stands == prior {
+                return Ok(PinMerge::Held);
+            }
+            ENTITY_DOC_PIN.put(&self.store, txn, &key, stands)?;
+            return Ok(PinMerge::Written);
         }
         let entity_type =
             crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &message)?
