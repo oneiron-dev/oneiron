@@ -22880,6 +22880,23 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "CheckpointReadRequest",
+      "CheckpointResumeView",
+      "CheckpointStepView",
+      "CheckpointView"
+     ],
+     "path": "src/engine_executor/checkpoint_read.rs",
+     "purpose": "Checkpoint read (DOOR-141 B): one page of a code run's committed step checkpoints and the replies its parked…",
+     "surface": {
+      "const": 2,
+      "fn": 1,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/engine_executor/code_check.rs",
      "purpose": "Shadow mode: before a generated program runs, it is type-checked against the declarations its prompt teaches",
@@ -22981,7 +22998,7 @@
      "purpose": "Engine-native JS code-mode executor",
      "surface": {
       "crate-vis": 2,
-      "mod": 2,
+      "mod": 3,
       "re-export": 5
      }
     },
@@ -31039,6 +31056,7 @@
       "crate-vis": 2,
       "enum": 2,
       "fn": 2,
+      "re-export": 1,
       "struct": 6
      }
     },
@@ -31071,6 +31089,20 @@
      "purpose": "Import-free, hash-pinned schema validator compartment (base mode)",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SettledStepRequest",
+      "SettledStepView"
+     ],
+     "path": "src/llm/step/settled.rs",
+     "purpose": "Settled-step point read (DOOR-141 A): one committed model step of a Dreamer attempt, as its terminal…",
+     "surface": {
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -31968,13 +32000,16 @@
      "notable": [
       "ConsolidationAttemptInput",
       "DreamerAttemptRef",
-      "DreamerAttemptView"
+      "DreamerAttemptView",
+      "DreamerParkCauseView",
+      "DreamerParkedAttemptView"
      ],
      "path": "src/memory/dreamer.rs",
      "purpose": "Consolidation enqueue, dreamer attempt status, and claim seeding",
      "surface": {
+      "enum": 1,
       "fn": 3,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -51171,7 +51206,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 711
+      "fn": 713
      }
     },
     {
@@ -57539,7 +57574,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 27,
+     "files": 28,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -57798,7 +57833,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 101,
+     "files": 102,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -58500,7 +58535,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3568,
+   "source_files": 3570,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67030,7 +67065,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 675
+      "fn": 677
      }
     },
     {
@@ -68079,7 +68114,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 676
+      "fn": 678
      }
     },
     {
@@ -71412,7 +71447,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 123
+      "crate-vis": 124
      }
     },
     {
@@ -71623,6 +71658,16 @@
      "purpose": "OF-495: role holders' tradeoff picks (ROLES-EVERYWHERE)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/run_read_doors.rs",
+     "purpose": "Owner-only reads of committed run state (DOOR-141 A/B): a settled model step and a code run's checkpoints…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -79131,7 +79176,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 385,
+     "files": 386,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -79553,7 +79598,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 723,
+   "source_files": 724,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -80090,6 +80135,10 @@
       "ChatProjection",
       "CheckoutDoorBindRequest",
       "CheckoutDoorBinding",
+      "CheckpointReadRequest",
+      "CheckpointResumeView",
+      "CheckpointStepView",
+      "CheckpointView",
       "ClaimApprovalStatus",
       "ClaimChangeVerdict",
       "ClaimDemoteActionInput",
@@ -80447,6 +80496,8 @@
       "DoorsLearningCellView",
       "DoorsLearningEvidenceView",
       "DreamerAttemptView",
+      "DreamerParkCauseView",
+      "DreamerParkedAttemptView",
       "DreamingModeInput",
       "EditNoteRequest",
       "EffectReceipt",
@@ -81654,6 +81705,8 @@
       "SetNoteOverridesRequest",
       "SettleVerb",
       "SettleVerdict",
+      "SettledStepRequest",
+      "SettledStepView",
       "ShapeApplyItem",
       "ShapeApplyReceipt",
       "ShapeApplyRequest",
@@ -82182,8 +82235,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 620,
-      "struct": 1811
+      "enum": 621,
+      "struct": 1818
      }
     },
     {
