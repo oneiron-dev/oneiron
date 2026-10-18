@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 861 facade rows, 2974 declarations.
-Inputs: 809 of 861 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 777 of 861 fully typed, 84 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 868 facade rows, 2995 declarations.
+Inputs: 816 of 868 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 784 of 868 fully typed, 84 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 101; unread shapes: 0.
 """
 
@@ -14,6 +14,122 @@ from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
 
 T = TypeVar("T")
 
+CommitmentObligorKind = Literal["owner", "agent", "third_party"]
+class CommitmentObligor(TypedDict):
+    kind: CommitmentObligorKind
+    entity_ref: str
+class CommitmentContent(TypedDict):
+    text: str
+    payload_ref: NotRequired[str | None]
+class CommitmentQuotaWindow(TypedDict):
+    kind: Literal["iso_week"]
+    tz: str
+class CommitmentScheduleOnce(TypedDict):
+    kind: Literal["once"]
+    due: int
+class CommitmentScheduleInterval(TypedDict):
+    kind: Literal["interval"]
+    period: int
+    anchor: int
+class CommitmentScheduleQuota(TypedDict):
+    kind: Literal["quota"]
+    count: int
+    window: CommitmentQuotaWindow
+class CommitmentScheduleRrule(TypedDict):
+    kind: Literal["rrule"]
+    rrule_string: str
+    tz: str
+CommitmentSchedule = CommitmentScheduleOnce | CommitmentScheduleInterval | CommitmentScheduleQuota | CommitmentScheduleRrule
+CommitmentStrength = Literal["stated_intention", "decision", "commitment"]
+CommitmentBirthKind = Literal["run_tree_node", "brief", "surface_action"]
+class CommitmentBirthProvenance(TypedDict):
+    kind: CommitmentBirthKind
+    reference: str
+class CommitmentCreateRequest(TypedDict):
+    id: NotRequired[str | None]
+    obligor: CommitmentObligor
+    beneficiary: str
+    content: CommitmentContent
+    schedule: CommitmentSchedule
+    lead_seconds: NotRequired[int | None]
+    strength: CommitmentStrength
+    birth_provenance: CommitmentBirthProvenance
+    occurred_at: int
+    learned_at: NotRequired[int | None]
+    evidence_turn_refs: list[str]
+CommitmentStatus = Literal["open", "fulfilled", "released", "lapsed", "superseded"]
+class CommitmentOccurrence(TypedDict):
+    due_at: int
+    window_start: int
+    window_end: int
+    ordinal: int
+class CommitmentFulfillmentSourceUserDone(TypedDict):
+    kind: Literal["user_done"]
+class CommitmentFulfillmentSourceBriefCompletion(TypedDict):
+    kind: Literal["brief_completion"]
+    brief_ref: str
+class CommitmentFulfillmentSourceChecklistTick(TypedDict):
+    kind: Literal["checklist_tick"]
+CommitmentFulfillmentSource = CommitmentFulfillmentSourceUserDone | CommitmentFulfillmentSourceBriefCompletion | CommitmentFulfillmentSourceChecklistTick
+class CommitmentLifecycleReceipt(TypedDict):
+    fulfillment_source: NotRequired[CommitmentFulfillmentSource | None]
+    commitment_ref: str
+    status: CommitmentStatus
+    learned_at: int
+    evidence_turn_refs: list[str]
+class CommitmentView(TypedDict):
+    commitment_ref: str
+    obligor: CommitmentObligor
+    beneficiary: str
+    content: CommitmentContent
+    schedule: CommitmentSchedule
+    lead_seconds: NotRequired[int | None]
+    strength: CommitmentStrength
+    status: CommitmentStatus
+    birth_provenance: CommitmentBirthProvenance
+    series_ref: NotRequired[str | None]
+    occurrence: NotRequired[CommitmentOccurrence | None]
+    occurred_at: int
+    learned_at: int
+    evidence_turn_refs: list[str]
+    receipt: CommitmentLifecycleReceipt
+class CommitmentIndexOutcomeIndexed(TypedDict):
+    outcome: Literal["indexed"]
+    project_at: int
+    next_due: int
+class CommitmentIndexOutcomeStoredRrule(TypedDict):
+    outcome: Literal["stored_rrule"]
+    route: str
+CommitmentIndexOutcome = CommitmentIndexOutcomeIndexed | CommitmentIndexOutcomeStoredRrule
+class CommitmentCreateReceipt(TypedDict):
+    commitment: CommitmentView
+    index: CommitmentIndexOutcome
+class CommitmentRefRequest(TypedDict):
+    commitment_ref: str
+CommitmentWakePhase = Literal["lead", "due"]
+class CommitmentWakeProposal(TypedDict):
+    proposal_ref: str
+    instance_ref: str
+    phase: CommitmentWakePhase
+    fire_at: int
+    due_at: int
+    occurred_at: int
+    idempotency_key: str
+    trigger_ref: str
+    verb: str
+    channel: str
+    target: str
+    on_behalf_of: NotRequired[str | None]
+    content_ref: NotRequired[str | None]
+    dedupe_key: NotRequired[str | None]
+    approval: str
+class CommitmentFulfillRequest(TypedDict):
+    commitment_ref: str
+    source: CommitmentFulfillmentSource
+    evidence_turn_refs: list[str]
+class CommitmentCloseRequest(TypedDict):
+    commitment_ref: str
+    evidence_turn_refs: list[str]
 class WebFetchRequest(TypedDict):
     url: str
 RendererKind = Literal["readability", "headless", "firecrawl"]

@@ -1,6 +1,111 @@
 {
   "verbs": [
     {
+      "name": "vault.commitments.create",
+      "description": "Creates an authored commitment series and its due index atomically, without approving a reminder.",
+      "input": "crate::memory::commitment_doors::CommitmentCreateRequest",
+      "output": "crate::memory::commitment_doors::CommitmentCreateReceipt",
+      "call": "memory.commitments_create_as(&memory.embedded_owner(\"vault.commitments.create\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.commitments.get",
+      "description": "Reads a commitment with its schedule, birth provenance, separate occurrence and learning times, and lifecycle receipt.",
+      "input": "crate::memory::commitment_doors::CommitmentRefRequest",
+      "output": "crate::memory::commitment_doors::CommitmentView",
+      "call": "memory.commitments_get_as(&memory.embedded_owner(\"vault.commitments.get\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.commitments.instances",
+      "description": "Lists the materialized occurrences of a commitment series, including closed obligations.",
+      "input": "crate::memory::commitment_doors::CommitmentRefRequest",
+      "output": "Vec<crate::memory::commitment_doors::CommitmentView>",
+      "call": "memory.commitments_instances_as(&memory.embedded_owner(\"vault.commitments.instances\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.commitments.proposals",
+      "description": "Observes real timer-wake reminder proposals and their run approval keys without authorizing delivery.",
+      "input": "crate::memory::commitment_doors::CommitmentRefRequest",
+      "output": "Vec<crate::memory::commitment_doors::CommitmentWakeProposal>",
+      "call": "memory.commitments_proposals_as(&memory.embedded_owner(\"vault.commitments.proposals\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.commitments.fulfill",
+      "description": "Explicitly confirms an obligation fulfilled with witness evidence through the existing fulfillment dispatcher.",
+      "input": "crate::memory::commitment_doors::CommitmentFulfillRequest",
+      "output": "crate::memory::commitment_doors::CommitmentView",
+      "call": "memory.commitments_fulfill_as(&memory.embedded_owner(\"vault.commitments.fulfill\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.commitments.release",
+      "description": "Explicitly releases an obligation with witness evidence and clears its due phases in the same transaction.",
+      "input": "crate::memory::commitment_doors::CommitmentCloseRequest",
+      "output": "crate::memory::commitment_doors::CommitmentView",
+      "call": "memory.commitments_release_as(&memory.embedded_owner(\"vault.commitments.release\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.commitments.supersede",
+      "description": "Explicitly supersedes an obligation with witness evidence and clears its due phases in the same transaction.",
+      "input": "crate::memory::commitment_doors::CommitmentCloseRequest",
+      "output": "crate::memory::commitment_doors::CommitmentView",
+      "call": "memory.commitments_supersede_as(&memory.embedded_owner(\"vault.commitments.supersede\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "fetch",
       "description": "Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links.",
       "input": "crate::web_fetch::WebFetchRequest",
