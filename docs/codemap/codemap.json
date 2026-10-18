@@ -15099,12 +15099,34 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ActionBoundRequest",
+      "ActionEnvelopeRequest",
+      "ApproveOnceRequest",
+      "ConsentActReceipt",
+      "CreateStandingGrantRequest",
+      "DisclosureBoundRequest",
+      "DisclosureEnvelopeRequest",
+      "RevokeGrantRequest",
+      "StandingGrantBound"
+     ],
+     "path": "src/consent/lifecycle.rs",
+     "purpose": "Typed public consent lifecycle calls",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/consent/mod.rs",
      "purpose": "DEC-0006 unified consent-mode — bounded standing grants",
      "surface": {
       "crate-vis": 4,
-      "mod": 1,
+      "mod": 2,
       "re-export": 10
      }
     },
@@ -50100,7 +50122,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 49,
+      "re-export": 50,
       "struct": 36
      }
     },
@@ -50441,7 +50463,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 636
+      "fn": 644
      }
     },
     {
@@ -50856,6 +50878,28 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "SecretGrantCleanup",
+      "SecretGrantMintRequest",
+      "SecretGrantPurpose",
+      "SecretGrantRegistration",
+      "SecretGrantRenewRequest",
+      "SecretGrantTeardownRequest",
+      "SecretGrantUseRequest",
+      "SecretGrantView",
+      "SecretGrantViewStatus"
+     ],
+     "path": "src/task_verb/sdk_secret_grant.rs",
+     "purpose": "`self.secrets.*` (DOOR-124, e2e SECRETS-03): the typed lifecycle of a secret grant, over the engine's grant…",
+     "surface": {
+      "enum": 3,
+      "fn": 4,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "SecretUseAnswer",
       "SecretUseRecord",
       "SecretUseRequest",
@@ -50864,6 +50908,7 @@
      "path": "src/task_verb/sdk_secret_use.rs",
      "purpose": "`self.use`: an agent hands a secret to one trusted operation by its handle, and reads the operation's…",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 4,
       "struct": 3
@@ -56425,7 +56470,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 21,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57433,7 +57478,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 163,
+     "files": 164,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -57603,7 +57648,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3510,
+   "source_files": 3512,
    "test_files": 902
   },
   "oneiron-android": {
@@ -66110,7 +66155,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 586
+      "fn": 594
      }
     },
     {
@@ -67159,7 +67204,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 587
+      "fn": 595
      }
     },
     {
@@ -70179,6 +70224,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/consent_doors.rs",
+     "purpose": "Consent lifecycle host doors, on the same owner proof as Gate policy",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/consolidation_doors.rs",
      "purpose": "Owner-bound generated-claim promotion, vetting and evidence reads",
      "surface": {
@@ -70382,7 +70437,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 112
+      "crate-vis": 114
      }
     },
     {
@@ -70583,6 +70638,16 @@
      "purpose": "OF-495: role holders' tradeoff picks (ROLES-EVERYWHERE)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/secret_grant_doors.rs",
+     "purpose": "The host doors of `self.secrets.*` (DOOR-124, e2e SECRETS-03): an agent run's secret grants, minted…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -76785,7 +76850,7 @@
      "purpose": "—",
      "surface": {
       "mod": 1,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -76847,6 +76912,23 @@
      "surface": {
       "fn": 10,
       "struct": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RunSecretDestinations",
+      "SecretDestination",
+      "SecretDestinations",
+      "ServedSecretDelivery"
+     ],
+     "path": "src/runtime/secret_destinations.rs",
+     "purpose": "T1 host delivery (DOOR-124, FIX 4490): the secret destinations a run host registers for one run, and the…",
+     "surface": {
+      "const": 1,
+      "fn": 5,
+      "struct": 4
      }
     },
     {
@@ -77013,7 +77095,7 @@
      "path": "src/server/live_runs.rs",
      "purpose": "The live agent runs a harness may act for over HTTP (OF-181)",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 33
      }
     },
     {
@@ -78002,7 +78084,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 372,
+     "files": 374,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -78338,7 +78420,7 @@
      "purpose": "The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a…"
     },
     "runtime": {
-     "files": 9,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78424,7 +78506,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 703,
+   "source_files": 706,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -78622,6 +78704,8 @@
       "AcceptRescopeConnect",
       "AccessStatus",
       "ActExecution",
+      "ActionBoundRequest",
+      "ActionEnvelopeRequest",
       "ActorCeiling",
       "AdmissionBasis",
       "AdmissionConsent",
@@ -78711,6 +78795,7 @@
       "AnswerRecord",
       "AnswerSheetAtom",
       "AnsweringAuthority",
+      "ApproveOnceRequest",
       "ApproveScope",
       "ArchiveAxis",
       "ArchiveCampaignProgramRequest",
@@ -78795,6 +78880,8 @@
       "BundleVerdict",
       "BundledSkillPermissions",
       "ButtonControl",
+      "BypassExtent",
+      "BypassScope",
       "CalendarEventCreateRequest",
       "CalendarEventCreated",
       "CalendarEventView",
@@ -79013,10 +79100,18 @@
       "ConnectorSendTaskOutcome",
       "ConnectorToolResult",
       "ConnectorView",
+      "ConsentActReceipt",
       "ConsentAnswer",
       "ConsentDenial",
+      "ConsentDomain",
+      "ConsentGrantStatus",
       "ConsentNeed",
       "ConsentPart",
+      "ConsentRegistry",
+      "ConsentRegistryDelegation",
+      "ConsentRegistryQuery",
+      "ConsentRegistryRow",
+      "ConsentRevokeAction",
       "ConsentSet",
       "ConsentStateAdmissionConsent",
       "ConsentStateMembershipConsent",
@@ -79071,6 +79166,7 @@
       "CreateCampaignProgramRequest",
       "CreateNoteFromEntityRequest",
       "CreateNoteRequest",
+      "CreateStandingGrantRequest",
       "CredentialAttenuated",
       "CredentialAttenuationRequest",
       "CredentialCeiling",
@@ -79180,6 +79276,8 @@
       "DiaryReviewAnswer",
       "DiaryReviewState",
       "DiscardedProposal",
+      "DisclosureBoundRequest",
+      "DisclosureEnvelopeRequest",
       "DisclosureOfferRequest",
       "DisclosureOffered",
       "DocumentKind",
@@ -79554,6 +79652,10 @@
       "LiveRunRequestAgentSpawnInput",
       "LiveRunRequestLeaderSplitInput",
       "LiveRunRequestMemorySupersedeInput",
+      "LiveRunRequestSecretGrantMintRequest",
+      "LiveRunRequestSecretGrantRenewRequest",
+      "LiveRunRequestSecretGrantTeardownRequest",
+      "LiveRunRequestSecretGrantUseRequest",
       "LiveRunRequestSkillCallInput",
       "LiveRunRequestTaskRefuseInput",
       "LiveVoiceAckKind",
@@ -80152,6 +80254,7 @@
       "RevealWaitAnswer",
       "RevealWaitRequest",
       "Reversibility",
+      "RevokeGrantRequest",
       "RoleHolder",
       "RoleRank",
       "RoomClaimOutcome",
@@ -80259,6 +80362,15 @@
       "SearchAxis",
       "SearchEvidence",
       "SeatInventory",
+      "SecretGrantCleanup",
+      "SecretGrantMintRequest",
+      "SecretGrantPurpose",
+      "SecretGrantRegistration",
+      "SecretGrantRenewRequest",
+      "SecretGrantTeardownRequest",
+      "SecretGrantUseRequest",
+      "SecretGrantView",
+      "SecretGrantViewStatus",
       "SecretLiftClose",
       "SecretLiftHistoryProposal",
       "SecretLiftProgress",
@@ -80477,6 +80589,7 @@
       "SpendSignal",
       "SpendState",
       "SpentKind",
+      "StandingGrantBound",
       "StateFamilyRef",
       "StatusDotAtom",
       "SteerReceipt",
@@ -80782,8 +80895,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 566,
-      "struct": 1594
+      "enum": 573,
+      "struct": 1618
      }
     },
     {

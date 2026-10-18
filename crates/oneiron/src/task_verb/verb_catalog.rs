@@ -252,6 +252,10 @@ pub enum AgentVerb {
     VaultPolicyOwnerRowChange,
     VaultPolicyOutboundDecide,
     VaultPolicyRelayDecide,
+    VaultConsentApproveOnce,
+    VaultConsentCreateStandingGrant,
+    VaultConsentRegistry,
+    VaultConsentRevoke,
     VaultGatePolicyGet,
     VaultGatePolicyPut,
     VaultGatePolicyPropose,
@@ -283,6 +287,10 @@ pub enum AgentVerb {
     RevealWait,
     RevealDescribe,
     SelfUse,
+    SelfSecretsMaterialize,
+    SelfSecretsRenew,
+    SelfSecretsTeardown,
+    SelfSecretsUse,
     VaultSharesCreate,
     VaultSharesRevoke,
     VaultSharesView,
@@ -884,6 +892,10 @@ impl AgentVerb {
         Self::VaultPolicyOwnerRowChange,
         Self::VaultPolicyOutboundDecide,
         Self::VaultPolicyRelayDecide,
+        Self::VaultConsentApproveOnce,
+        Self::VaultConsentCreateStandingGrant,
+        Self::VaultConsentRegistry,
+        Self::VaultConsentRevoke,
         Self::VaultGatePolicyGet,
         Self::VaultGatePolicyPut,
         Self::VaultGatePolicyPropose,
@@ -915,6 +927,10 @@ impl AgentVerb {
         Self::RevealWait,
         Self::RevealDescribe,
         Self::SelfUse,
+        Self::SelfSecretsMaterialize,
+        Self::SelfSecretsRenew,
+        Self::SelfSecretsTeardown,
+        Self::SelfSecretsUse,
         Self::VaultSharesCreate,
         Self::VaultSharesRevoke,
         Self::VaultSharesView,
@@ -1523,6 +1539,10 @@ impl AgentVerb {
             Self::VaultPolicyOwnerRowChange => "vault.policy.owner.row.change",
             Self::VaultPolicyOutboundDecide => "vault.policy.outbound.decide",
             Self::VaultPolicyRelayDecide => "vault.policy.relay.decide",
+            Self::VaultConsentApproveOnce => "vault.consent.approve_once",
+            Self::VaultConsentCreateStandingGrant => "vault.consent.create_standing_grant",
+            Self::VaultConsentRegistry => "vault.consent.registry",
+            Self::VaultConsentRevoke => "vault.consent.revoke",
             Self::VaultGatePolicyGet => "vault.gate.policy.get",
             Self::VaultGatePolicyPut => "vault.gate.policy.put",
             Self::VaultGatePolicyPropose => "vault.gate.policy.propose",
@@ -1556,6 +1576,10 @@ impl AgentVerb {
             Self::RevealWait => "reveal.wait",
             Self::RevealDescribe => "reveal.describe",
             Self::SelfUse => "self.use",
+            Self::SelfSecretsMaterialize => "self.secrets.materialize",
+            Self::SelfSecretsRenew => "self.secrets.renew",
+            Self::SelfSecretsTeardown => "self.secrets.teardown",
+            Self::SelfSecretsUse => "self.secrets.use",
             Self::VaultSharesCreate => "vault.shares.create",
             Self::VaultSharesRevoke => "vault.shares.revoke",
             Self::VaultSharesView => "vault.shares.view",
@@ -2160,6 +2184,10 @@ impl AgentVerb {
                 | Self::VaultPolicyOwnerRowChange
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
+                | Self::VaultConsentApproveOnce
+                | Self::VaultConsentCreateStandingGrant
+                | Self::VaultConsentRegistry
+                | Self::VaultConsentRevoke
                 | Self::VaultGatePolicyGet
                 | Self::VaultGatePolicyPut
                 | Self::VaultGatePolicyPropose
@@ -2191,6 +2219,10 @@ impl AgentVerb {
                 | Self::RevealWait
                 | Self::RevealDescribe
                 | Self::SelfUse
+                | Self::SelfSecretsMaterialize
+                | Self::SelfSecretsRenew
+                | Self::SelfSecretsTeardown
+                | Self::SelfSecretsUse
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
@@ -2799,6 +2831,10 @@ impl AgentVerb {
                 | Self::VaultPolicyOwnerRowChange
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
+                | Self::VaultConsentApproveOnce
+                | Self::VaultConsentCreateStandingGrant
+                | Self::VaultConsentRegistry
+                | Self::VaultConsentRevoke
                 | Self::VaultGatePolicyGet
                 | Self::VaultGatePolicyPut
                 | Self::VaultGatePolicyPropose
@@ -2830,6 +2866,10 @@ impl AgentVerb {
                 | Self::RevealWait
                 | Self::RevealDescribe
                 | Self::SelfUse
+                | Self::SelfSecretsMaterialize
+                | Self::SelfSecretsRenew
+                | Self::SelfSecretsTeardown
+                | Self::SelfSecretsUse
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
@@ -3493,6 +3533,10 @@ impl AgentVerb {
                 | Self::VaultPolicyOwnerRowChange
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
+                | Self::VaultConsentApproveOnce
+                | Self::VaultConsentCreateStandingGrant
+                | Self::VaultConsentRegistry
+                | Self::VaultConsentRevoke
                 | Self::VaultGatePolicyGet
                 | Self::VaultGatePolicyPut
                 | Self::VaultGatePolicyPropose
@@ -3524,6 +3568,10 @@ impl AgentVerb {
                 | Self::RevealWait
                 | Self::RevealDescribe
                 | Self::SelfUse
+                | Self::SelfSecretsMaterialize
+                | Self::SelfSecretsRenew
+                | Self::SelfSecretsTeardown
+                | Self::SelfSecretsUse
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
@@ -4014,6 +4062,9 @@ impl AgentVerb {
                 | Self::VaultPolicyOwnerRowChange
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
+                | Self::VaultConsentApproveOnce
+                | Self::VaultConsentCreateStandingGrant
+                | Self::VaultConsentRevoke
                 | Self::VaultGatePolicyPut
                 | Self::VaultGatePolicyPropose
                 | Self::VaultGateCheckerSet
@@ -4032,6 +4083,10 @@ impl AgentVerb {
                 | Self::VaultDisclosureOffer
                 | Self::Reveal
                 | Self::SelfUse
+                | Self::SelfSecretsMaterialize
+                | Self::SelfSecretsRenew
+                | Self::SelfSecretsTeardown
+                | Self::SelfSecretsUse
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultArtifactsThreadsOpen
@@ -4520,6 +4575,10 @@ impl AgentVerb {
             Self::VaultPolicyOwnerRowChange => &["spec"],
             Self::VaultPolicyOutboundDecide => &["spec"],
             Self::VaultPolicyRelayDecide => &["spec"],
+            Self::VaultConsentApproveOnce => &["spec"],
+            Self::VaultConsentCreateStandingGrant => &["spec"],
+            Self::VaultConsentRegistry => &["spec"],
+            Self::VaultConsentRevoke => &["spec"],
             Self::VaultGatePolicyGet => &["spec"],
             Self::VaultGatePolicyPut => &["spec"],
             Self::VaultGatePolicyPropose => &["spec"],
@@ -4551,6 +4610,10 @@ impl AgentVerb {
             Self::RevealWait => &["spec"],
             Self::RevealDescribe => &["spec"],
             Self::SelfUse => &["spec"],
+            Self::SelfSecretsMaterialize => &["spec"],
+            Self::SelfSecretsRenew => &["spec"],
+            Self::SelfSecretsTeardown => &["spec"],
+            Self::SelfSecretsUse => &["spec"],
             Self::VaultSharesCreate => &["spec"],
             Self::VaultSharesRevoke => &["spec"],
             Self::VaultSharesView => &["spec"],
@@ -5153,6 +5216,10 @@ impl AgentVerb {
             Self::VaultPolicyOwnerRowChange => &["spec"],
             Self::VaultPolicyOutboundDecide => &["spec"],
             Self::VaultPolicyRelayDecide => &["spec"],
+            Self::VaultConsentApproveOnce => &["spec"],
+            Self::VaultConsentCreateStandingGrant => &["spec"],
+            Self::VaultConsentRegistry => &["spec"],
+            Self::VaultConsentRevoke => &["spec"],
             Self::VaultGatePolicyGet => &["spec"],
             Self::VaultGatePolicyPut => &["spec"],
             Self::VaultGatePolicyPropose => &["spec"],
@@ -5184,6 +5251,10 @@ impl AgentVerb {
             Self::RevealWait => &["spec"],
             Self::RevealDescribe => &["spec"],
             Self::SelfUse => &["spec"],
+            Self::SelfSecretsMaterialize => &["spec"],
+            Self::SelfSecretsRenew => &["spec"],
+            Self::SelfSecretsTeardown => &["spec"],
+            Self::SelfSecretsUse => &["spec"],
             Self::VaultSharesCreate => &["spec"],
             Self::VaultSharesRevoke => &["spec"],
             Self::VaultSharesView => &["spec"],
@@ -6255,6 +6326,18 @@ impl AgentVerb {
             Self::VaultPolicyRelayDecide => {
                 "Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer."
             }
+            Self::VaultConsentApproveOnce => {
+                "The owner approves exactly one engine-emitted effect digest; no standing grant is created."
+            }
+            Self::VaultConsentCreateStandingGrant => {
+                "The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision."
+            }
+            Self::VaultConsentRegistry => {
+                "The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants."
+            }
+            Self::VaultConsentRevoke => {
+                "The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted."
+            }
             Self::VaultGatePolicyGet => {
                 "The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions."
             }
@@ -6347,6 +6430,18 @@ impl AgentVerb {
             }
             Self::SelfUse => {
                 "Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value."
+            }
+            Self::SelfSecretsMaterialize => {
+                "Mints a value-free grant on a secret for this credential's attached run, to one purpose: an operation or connector (door), a host destination (leased) or a declared file (local); the answer never holds the value."
+            }
+            Self::SelfSecretsRenew => {
+                "Renews a grant the attached run holds: a fresh grant at the secret's current generation in its place, never a longer life for bytes already handed out."
+            }
+            Self::SelfSecretsTeardown => {
+                "Tears down a grant the attached run holds, whatever its state: revokes it and its lease, removes its file or clears its destination, and says what the cleanup found."
+            }
+            Self::SelfSecretsUse => {
+                "Hands the secret a door grant redeems to one trusted operation or connector call, for the attached run; a grant minted before a rotation refuses until renewed, and the answer never holds the value."
             }
             Self::VaultSharesCreate => {
                 "The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels."

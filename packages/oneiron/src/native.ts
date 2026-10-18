@@ -278,6 +278,10 @@ vaultPolicyOwnerConfigure(input: unknown): unknown
 vaultPolicyOwnerRowChange(input: unknown): unknown
 vaultPolicyOutboundDecide(input: unknown): unknown
 vaultPolicyRelayDecide(input: unknown): unknown
+vaultConsentApproveOnce(input: unknown): unknown
+vaultConsentCreateStandingGrant(input: unknown): unknown
+vaultConsentRegistry(input: unknown): unknown
+vaultConsentRevoke(input: unknown): unknown
 vaultGatePolicyGet(input: unknown): unknown
 vaultGatePolicyPut(input: unknown): unknown
 vaultGatePolicyPropose(input: unknown): unknown
@@ -309,6 +313,10 @@ reveal(input: unknown): unknown
 revealWait(input: unknown): unknown
 revealDescribe(input: unknown): unknown
 selfUse(input: unknown): unknown
+selfSecretsMaterialize(input: unknown): unknown
+selfSecretsRenew(input: unknown): unknown
+selfSecretsTeardown(input: unknown): unknown
+selfSecretsUse(input: unknown): unknown
 vaultSharesCreate(input: unknown): unknown
 vaultSharesRevoke(input: unknown): unknown
 vaultSharesView(input: unknown): unknown

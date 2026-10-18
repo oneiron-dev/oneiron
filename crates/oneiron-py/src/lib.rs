@@ -2453,6 +2453,41 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_consent_approve_once(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.consent.approve_once")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.consent.approve_once", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_consent_create_standing_grant(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.consent.create_standing_grant")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.consent.create_standing_grant", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_consent_registry(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.consent.registry")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.consent.registry", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_consent_revoke(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.consent.revoke")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.consent.revoke", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_gate_policy_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.gate.policy.get")?;
         let output = py
@@ -2697,6 +2732,34 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "self.use")?;
         let output = py
             .detach(|| self.inner.agent_verb("self.use", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_secrets_materialize(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.secrets.materialize")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.secrets.materialize", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_secrets_renew(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.secrets.renew")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.secrets.renew", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_secrets_teardown(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.secrets.teardown")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.secrets.teardown", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_secrets_use(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.secrets.use")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.secrets.use", input))
             .map_err(raise)?;
         encode(&output)
     }

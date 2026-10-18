@@ -11,6 +11,11 @@ mod routes;
 mod usage;
 pub use usage::VaultUsage;
 pub mod seat_login;
+mod secret_destinations;
+pub use self::secret_destinations::{
+    RunSecretDestinations, SECRET_DESTINATION_ENV_PREFIX, SecretDestination, SecretDestinations,
+    ServedSecretDelivery,
+};
 
 pub use self::config::RuntimeConfig;
 pub use self::defaults::{

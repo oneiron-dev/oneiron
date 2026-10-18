@@ -121,6 +121,7 @@ pub(crate) use super::craft_candidate_doors::*;
 pub(crate) use super::channel_doors::*;
 pub(crate) use super::content_policy_doors::*;
 pub(crate) use super::gate_policy_doors::*;
+pub(crate) use super::consent_doors::*;
 pub(crate) use super::policy_doors::*;
 // The owner's origin and checkout doors (DOOR-139), likewise.
 pub(crate) use super::origin_doors::*;
@@ -134,6 +135,8 @@ pub(crate) use super::connector_call_doors::*;
 pub(crate) use super::connector_pack_doors::*;
 // The secret use door, whose connector.call sends (OF-560), likewise.
 pub(crate) use super::secret_use_doors::*;
+// An agent run's secret grant doors (DOOR-124), likewise.
+pub(crate) use super::secret_grant_doors::*;
 // The message reaction door (OF-181), likewise.
 pub(crate) use super::reaction_doors::*;
 pub(crate) use super::reply_doors::*;
@@ -1193,6 +1196,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.policy.owner.get"
         | "vault.policy.owner.configure"
         | "vault.policy.owner.row.change"
+        | "vault.consent.approve_once"
+        | "vault.consent.create_standing_grant"
+        | "vault.consent.registry"
+        | "vault.consent.revoke"
         | "vault.gate.policy.get"
         | "vault.gate.policy.put"
         | "vault.gate.checker.get"

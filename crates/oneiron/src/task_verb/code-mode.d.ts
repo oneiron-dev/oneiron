@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 641 code-mode rows (620 host rows, 21 run rows), 2308 declarations.
-// Replies: 563 fully typed, 74 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 649 code-mode rows (628 host rows, 21 run rows), 2336 declarations.
+// Replies: 570 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 94; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 95; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -1083,6 +1083,24 @@ declare namespace Sdk {
   type RelayResolution = "pattern_decided" | "model_decided" | "pattern_gated_allow" | "log_only" | "no_policy_in_play" | "vault_side_decided" | "unresolved";
   type HostedPassEvidence = { version: string; policy_hash: string; verify_content_hash: number[] };
   type HostedRelayDecision = { service_identity: string; verdict?: PolicyClassifyVerdict | null; degraded?: RelayBoundaryDegrade | null; resolution?: RelayResolution | null; hosted_evidence?: HostedPassEvidence | null; receipt_ref?: string | null; final_content?: string | null; outbound_halted: boolean; system_notice?: string | null; system_notices: GateSystemNoticeRecord[] };
+  type ApproveOnceRequest = { effect_digest: string };
+  type ConsentActReceipt = { decision_ref: string; outcome: string; reason_code: string; grant_ref?: string | null; diff_handle: number[] };
+  type ActionEnvelopeRequest = { project: string; audience: string[]; budget: number };
+  type ActionBoundRequest = { actor: string; class: string; envelope: ActionEnvelopeRequest };
+  type DisclosureEnvelopeRequest = { selectors: string[] };
+  type DisclosureBoundRequest = { audience: string[]; class: string; envelope: DisclosureEnvelopeRequest };
+  type StandingGrantBound = ActionBoundRequest | DisclosureBoundRequest;
+  type CreateStandingGrantRequest = { bound: StandingGrantBound };
+  type ConsentRegistryQuery = { limit: number; include_revoked?: boolean };
+  type ConsentDomain = "disclosure" | "action";
+  type ConsentGrantStatus = "active" | "revoked";
+  type ConsentRevokeAction = { command: string; grant_ref: string };
+  type BypassScope = { project: EntityId } | { thread: EntityId };
+  type BypassExtent = { scope: BypassScope; floor_version: number };
+  type ConsentRegistryDelegation = { purpose: string; ticket_ref?: string | null; approved_by: string; wall_expires_at: number; status: SupportGrantStatus };
+  type ConsentRegistryRow = { grant_ref: string; domain: ConsentDomain; subject: string; class: string; selectors: string[]; scope?: Scope | null; status: ConsentGrantStatus; created_at: number; revoke_action: ConsentRevokeAction; bypass?: BypassExtent | null; delegation?: ConsentRegistryDelegation | null };
+  type ConsentRegistry = { rows: ConsentRegistryRow[] };
+  type RevokeGrantRequest = { grant: string };
   type PolicyManifestRead = { manifest_ref?: string | null };
   type PolicyCriticality = "normal" | "critical";
   type PolicySensitivity = "normal" | "sensitive";
@@ -1217,6 +1235,16 @@ declare namespace Sdk {
   type SecretUseStatus = "answered" | "failed" | "withheld";
   type SecretUseRecord = { handle: string; generation: number; effector: string; operation: string; decision: string; used_at: number };
   type SecretUseAnswer = { status: SecretUseStatus; result?: unknown | null; failure?: string | null; receipt: SecretUseRecord };
+  type LiveRunRequest<T> = { live_run: string; spec: T };
+  type SecretGrantPurpose = { kind: "operation"; name: string } | { kind: "connector"; name: string } | { kind: "host_destination"; name: string } | { kind: "local_file"; effector: string; path: string; project_id: string };
+  type SecretGrantMintRequest = { handle: string; purpose: SecretGrantPurpose; ttl_secs?: number | null };
+  type SecretGrantViewStatus = "active" | "expired" | "revoked" | "replaced";
+  type SecretGrantRegistration = { path: string; project_id: string };
+  type SecretGrantCleanup = "removed" | "absent" | "kept";
+  type SecretGrantView = { grant: string; handle?: string | null; purpose: SecretGrantPurpose; effector: string; tier: number; generation: number; granted_at: number; expires_at: number; status: SecretGrantViewStatus; replaced_by?: string | null; lease?: string | null; materialization_receipt?: string | null; registration?: SecretGrantRegistration | null; cleanup?: SecretGrantCleanup | null };
+  type SecretGrantRenewRequest = { grant: string; ttl_secs?: number | null };
+  type SecretGrantTeardownRequest = { grant: string };
+  type SecretGrantUseRequest = { grant: string; operation: string; arguments?: unknown };
   type BornWithField = "prompt" | "why" | "keep" | "intent_prompt";
   type TravelChoice = { born_with?: BornWithField[] };
   type ShareCreateRequest = { share_id?: string | null; recipient: string; brief_ref: string; world_refs?: string[]; facet_refs?: string[]; include_unscoped?: boolean; expires_at?: number | null; travel?: TravelChoice | null; mention?: MentionProvenance | null };
@@ -2583,6 +2611,16 @@ declare namespace self {
     /** Attaches the caller's own credential to its leased live run and returns the handle required by the public fold and history calls. */
     attach(input: Sdk.RunAttachRequest): Promise<Sdk.RunAttached | StoredResult>;
   };
+  const secrets: {
+    /** Mints a value-free grant on a secret for this credential's attached run, to one purpose: an operation or connector (door), a host destination (leased) or a declared file (local); the answer never holds the value. */
+    materialize(input: Sdk.LiveRunRequest<Sdk.SecretGrantMintRequest>): Promise<Sdk.SecretGrantView | StoredResult>;
+    /** Renews a grant the attached run holds: a fresh grant at the secret's current generation in its place, never a longer life for bytes already handed out. */
+    renew(input: Sdk.LiveRunRequest<Sdk.SecretGrantRenewRequest>): Promise<Sdk.SecretGrantView | StoredResult>;
+    /** Tears down a grant the attached run holds, whatever its state: revokes it and its lease, removes its file or clears its destination, and says what the cleanup found. */
+    teardown(input: Sdk.LiveRunRequest<Sdk.SecretGrantTeardownRequest>): Promise<Sdk.SecretGrantView | StoredResult>;
+    /** Hands the secret a door grant redeems to one trusted operation or connector call, for the attached run; a grant minted before a rotation refuses until renewed, and the answer never holds the value. */
+    use(input: Sdk.LiveRunRequest<Sdk.SecretGrantUseRequest>): Promise<Sdk.SecretUseAnswer | StoredResult>;
+  };
   const skills: {
     call(input: Sdk.SkillCallInput): Promise<unknown>;
     /** Every loadable callable helper skill and its call contract: what it takes and returns. */
@@ -2967,6 +3005,16 @@ declare const vault: Sdk.VaultHost & {
       /** The owner stops one connector event subscription; the agent's key for the channel stays. */
       revoke(input: Sdk.ChannelSubscriptionRevokeRequest): Promise<Sdk.ChannelSubscriptionRevoked | StoredResult>;
     };
+  };
+  consent: {
+    /** The owner approves exactly one engine-emitted effect digest; no standing grant is created. */
+    approve_once(input: Sdk.ApproveOnceRequest): Promise<Sdk.ConsentActReceipt | StoredResult>;
+    /** The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision. */
+    create_standing_grant(input: Sdk.CreateStandingGrantRequest): Promise<Sdk.ConsentActReceipt | StoredResult>;
+    /** The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants. */
+    registry(input: Sdk.ConsentRegistryQuery): Promise<Sdk.ConsentRegistry | StoredResult>;
+    /** The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted. */
+    revoke(input: Sdk.RevokeGrantRequest): Promise<Sdk.ConsentActReceipt | StoredResult>;
   };
   consolidation: {
     /** Enqueues one consolidation attempt and returns its durable job reference. */
