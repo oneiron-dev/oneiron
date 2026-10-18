@@ -46109,7 +46109,7 @@
      "purpose": "Grant-checked, per-item residence projections over a window document",
      "surface": {
       "const": 2,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 14,
       "re-export": 10,
       "struct": 2
@@ -46156,7 +46156,7 @@
      "purpose": "The home's custody of the vault's sealed cloud bundle (DEC-0005 \"Sealed copies\", FIX 922)",
      "surface": {
       "const": 2,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 12,
       "struct": 3
@@ -55100,6 +55100,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "MachineDeviceClass",
       "MachineEncryptionKey",
       "MachineOwnership",
       "MachineProfile",
@@ -55110,8 +55111,8 @@
      "surface": {
       "const": 4,
       "crate-vis": 5,
-      "enum": 2,
-      "fn": 5,
+      "enum": 3,
+      "fn": 6,
       "struct": 2
      }
     },
