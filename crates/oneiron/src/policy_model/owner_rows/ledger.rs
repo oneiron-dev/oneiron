@@ -17,7 +17,7 @@ const RECEIPT_PLACE: &str = "side:OWNER_POLICY_CHANGE_RECEIPT";
 /// Where the side-row wall says it found a secret in a proposal (OF-067).
 const PROPOSAL_PLACE: &str = "side:OWNER_POLICY_CHANGE_PROPOSAL";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyRowReceipt {
     pub receipt_id: String,

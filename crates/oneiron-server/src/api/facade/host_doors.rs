@@ -113,6 +113,7 @@ pub(crate) use super::craft_candidate_doors::*;
 // The app's policy-action doors (OF-181), likewise.
 pub(crate) use super::channel_doors::*;
 pub(crate) use super::gate_policy_doors::*;
+pub(crate) use super::content_policy_doors::*;
 pub(crate) use super::policy_doors::*;
 // The owner's origin and checkout doors (DOOR-139), likewise.
 pub(crate) use super::origin_doors::*;
@@ -1141,6 +1142,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.channel_identities.route_inbound"
         | "vault.delivery_window.policy.put"
         | "vault.delivery_window.policy.retract"
+        | "vault.policy.owner.get"
+        | "vault.policy.owner.configure"
+        | "vault.policy.owner.row.change"
         | "vault.gate.policy.get"
         | "vault.gate.policy.put"
         | "vault.gate.checker.get"

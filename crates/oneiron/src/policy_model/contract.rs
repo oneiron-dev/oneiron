@@ -21,7 +21,7 @@ use crate::llm::ResponseFormat;
 ///
 /// `non_exhaustive` on purpose: a new preset is how this list grows, and a
 /// downstream exhaustive match would turn that into a breaking change.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum PolicyOutputContract {

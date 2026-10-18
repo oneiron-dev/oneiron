@@ -43,6 +43,7 @@ mod connector_pack_doors;
 mod consolidation_doors;
 mod core_write_doors;
 mod courtesy_delete_doors;
+mod content_policy_doors;
 mod craft_candidate_doors;
 mod credential_doors;
 mod critic_review_doors;

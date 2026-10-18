@@ -1086,6 +1086,31 @@ export_facade! {
     let output = client.vault_embedding_spaces_probes_delete(&input)?;
     crate::codec::lift_record("vault.embedding_spaces.probes.delete", &output)
 };
+"vault.policy.owner.get" => fn vault_policy_owner_get(&self) -> OwnerPolicyConfigurationView = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.policy.owner.get")?;
+    let output = client.vault_policy_owner_get(&input)?;
+    crate::codec::lift_record("vault.policy.owner.get", &output)
+};
+"vault.policy.owner.configure" => fn vault_policy_owner_configure(&self, input: OwnerPolicyConfigureRequest) -> OwnerPolicyConfigurationReceipt = |client| {
+    let input: oneiron::policy_manifest_doors::OwnerPolicyConfigureRequest = crate::codec::lower_record("vault.policy.owner.configure", input)?;
+    let output = client.vault_policy_owner_configure(&input)?;
+    crate::codec::lift_record("vault.policy.owner.configure", &output)
+};
+"vault.policy.owner.row.change" => fn vault_policy_owner_row_change(&self, input: PolicyRowChangeRequest) -> PolicyRowReceipt = |client| {
+    let input: oneiron::policy_model::doors::PolicyRowChangeRequest = crate::codec::lower_record("vault.policy.owner.row.change", input)?;
+    let output = client.vault_policy_owner_row_change(&input)?;
+    crate::codec::lift_record("vault.policy.owner.row.change", &output)
+};
+"vault.policy.outbound.decide" => fn vault_policy_outbound_decide(&self, input: PolicyOutboundRequest) -> PolicyModelEnforcement = |client| {
+    let input: oneiron::policy_model::doors::PolicyOutboundRequest = crate::codec::lower_record("vault.policy.outbound.decide", input)?;
+    let output = client.vault_policy_outbound_decide(&input)?;
+    crate::codec::lift_record("vault.policy.outbound.decide", &output)
+};
+"vault.policy.relay.decide" => fn vault_policy_relay_decide(&self, input: PolicyOutboundRequest) -> HostedRelayDecision = |client| {
+    let input: oneiron::policy_model::doors::PolicyOutboundRequest = crate::codec::lower_record("vault.policy.relay.decide", input)?;
+    let output = client.vault_policy_relay_decide(&input)?;
+    crate::codec::lift_record("vault.policy.relay.decide", &output)
+};
 "vault.gate.policy.get" => fn vault_gate_policy_get(&self, input: PolicyManifestRead) -> PolicyManifestsView = |client| {
     let input: oneiron::policy_manifest_doors::PolicyManifestRead = crate::codec::lower_record("vault.gate.policy.get", input)?;
     let output = client.vault_gate_policy_get(&input)?;

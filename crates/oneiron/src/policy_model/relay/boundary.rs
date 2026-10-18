@@ -73,11 +73,24 @@ impl Vault {
         safeguard: Option<RelaySafeguardTier<'_>>,
         verdicts: &dyn VaultSideVerdictSource,
     ) -> Result<RelayBoundaryPass> {
+        self.relay_boundary_pass_with_receipt(request, domain, registry, config, safeguard, verdicts)
+            .await.map(|(pass, _)| pass)
+    }
+
+    /// The same relay pass, beside the exact ledger row it wrote, if any.
+    pub async fn relay_boundary_pass_with_receipt(
+        &self,
+        request: PolicyClassifyRequest,
+        domain: &AttestedRelayDomain,
+        registry: &EdgeServiceRegistry,
+        config: &PolicyModelConfig,
+        safeguard: Option<RelaySafeguardTier<'_>>,
+        verdicts: &dyn VaultSideVerdictSource,
+    ) -> Result<(RelayBoundaryPass, Option<String>)> {
         let verify_at = self.relay_verify_at(&request, domain, config)?;
-        self.relay_boundary_pass_at(
+        self.relay_boundary_pass_at_receipted(
             request, domain, registry, config, safeguard, verdicts, verify_at,
-        )
-        .await
+        ).await
     }
 
     /// The identity-free binding a CloudVault reuse is verified at, pinned
@@ -110,6 +123,22 @@ impl Vault {
         verdicts: &dyn VaultSideVerdictSource,
         verify_at: Option<PolicyContentBinding>,
     ) -> Result<RelayBoundaryPass> {
+        self.relay_boundary_pass_at_receipted(
+            request, domain, registry, config, safeguard, verdicts, verify_at,
+        ).await.map(|(pass, _)| pass)
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    async fn relay_boundary_pass_at_receipted(
+        &self,
+        request: PolicyClassifyRequest,
+        domain: &AttestedRelayDomain,
+        registry: &EdgeServiceRegistry,
+        config: &PolicyModelConfig,
+        safeguard: Option<RelaySafeguardTier<'_>>,
+        verdicts: &dyn VaultSideVerdictSource,
+        verify_at: Option<PolicyContentBinding>,
+    ) -> Result<(RelayBoundaryPass, Option<String>)> {
         let hosted = registry.hosted_legal_policy(domain.service_identity());
         let patterns = registry.compiled_patterns(domain.service_identity());
         let mut receipt_breach = None;
@@ -139,7 +168,7 @@ impl Vault {
         // ledger would record a halt-worthy degrade against a pass whose
         // `must_halt_relay` is false, and the relay would proceed on an allow
         // its own receipt disowns.
-        let recorded = self.record_relay_receipt(RelayReceipt {
+        let (recorded, receipt_ref) = self.record_relay_receipt(RelayReceipt {
             request: &request,
             domain,
             pass: &pass,
@@ -148,7 +177,7 @@ impl Vault {
             config,
             verify_at,
         })?;
-        Ok(recorded.unwrap_or(pass))
+        Ok((recorded.unwrap_or(pass), receipt_ref))
     }
 }
 
@@ -237,7 +266,7 @@ impl Vault {
         let owner_model_skipped = owner.model_skipped();
         Ok(DualPlanePass {
             owner: owner.verdict,
-            relay: moved.unwrap_or(relay),
+            relay: moved.map(|(pass, _)| pass).unwrap_or(relay),
             owner_model_skipped,
         })
     }
@@ -350,12 +379,12 @@ impl Vault {
             hosted,
             config,
             verify_at: None,
-        })
+        }).map(|(pass, _)| pass)
     }
 }
 
 impl Vault {
-    fn record_relay_receipt(&self, receipt: RelayReceipt<'_>) -> Result<Option<RelayBoundaryPass>> {
+    fn record_relay_receipt(&self, receipt: RelayReceipt<'_>) -> Result<(Option<RelayBoundaryPass>, Option<String>)> {
         #[cfg(test)]
         super::super::in_force::before_settling(
             super::super::in_force::SettlingDoor::RelayBoundary,
@@ -505,21 +534,23 @@ impl Vault {
         reason_codes: Vec<String>,
         notices: Vec<GateSystemNoticeRecord>,
         row: RelayReceiptRow,
-    ) -> Result<Option<RelayBoundaryPass>> {
-        if let Some(moved) = self.relay_pass_moved_in_txn(wtxn, receipt)? {
-            return Ok(Some(moved));
+    ) -> Result<(Option<RelayBoundaryPass>, Option<String>)> {
+        if let Some((moved, receipt_ref)) = self.relay_pass_moved_in_txn(wtxn, receipt)? {
+            return Ok((Some(moved), Some(receipt_ref)));
         }
-        if row == RelayReceiptRow::Always {
-            self.append_policy_model_gate_receipt_in_txn(
+        let receipt_ref = if row == RelayReceiptRow::Always {
+            Some(self.append_policy_model_gate_receipt_in_txn(
                 wtxn,
                 receipt.request,
                 verdict,
                 outcome,
                 reason_codes,
                 notices,
-            )?;
-        }
-        Ok(None)
+            )?)
+        } else {
+            None
+        };
+        Ok((None, receipt_ref))
     }
 
     /// The `PolicyBindingMovedMidPass` degrade that replaces `receipt.pass`,
@@ -547,7 +578,7 @@ impl Vault {
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         receipt: &RelayReceipt<'_>,
-    ) -> Result<Option<RelayBoundaryPass>> {
+    ) -> Result<Option<(RelayBoundaryPass, String)>> {
         let reused = reuses_vault_side(receipt.pass);
         if receipt.hosted.is_none() || (!reused && receipt.pass.boundary_verdict().is_none()) {
             return Ok(None);
@@ -585,7 +616,7 @@ impl Vault {
         reason_codes: Vec<String>,
         notices: Vec<GateSystemNoticeRecord>,
         row: RelayReceiptRow,
-    ) -> Result<Option<RelayBoundaryPass>> {
+    ) -> Result<(Option<RelayBoundaryPass>, Option<String>)> {
         let mut wtxn = self.store.env.write_txn()?;
         let moved = self.append_relay_receipt_binding_checked_in_txn(
             &mut wtxn,
@@ -608,7 +639,7 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         receipt: &RelayReceipt<'_>,
         fresh: PolicyContentBinding,
-    ) -> Result<RelayBoundaryPass> {
+    ) -> Result<(RelayBoundaryPass, String)> {
         // Minted through the one constructor that raises a degrade,
         // so the halt is resolved against the host's outage policy
         // exactly as it would have been mid-pass — a binding move is
@@ -683,7 +714,7 @@ impl Vault {
         )
         .into_iter()
         .collect();
-        self.append_policy_model_gate_receipt_in_txn(
+        let receipt_ref = self.append_policy_model_gate_receipt_in_txn(
             wtxn,
             receipt.request,
             &degraded,
@@ -693,7 +724,7 @@ impl Vault {
             codes,
             notices,
         )?;
-        Ok(moved_pass)
+        Ok((moved_pass, receipt_ref))
     }
 }
 

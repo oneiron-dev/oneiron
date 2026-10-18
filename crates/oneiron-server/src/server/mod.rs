@@ -18,6 +18,7 @@ mod note_editors;
 #[cfg(unix)]
 mod organs;
 mod oversight;
+mod policy_doors;
 mod presence;
 mod read_shape;
 mod reader_runner;
@@ -48,6 +49,7 @@ pub(crate) use self::note_editors::NoteEditors;
 pub(crate) use self::organs::organ_dir;
 pub use self::oversight::OversightStartError;
 pub(crate) use self::oversight::{HEALER_OVERSIGHT_EVERY, HealerOversight};
+pub use self::policy_doors::HostedPolicyRelay;
 pub use self::read_shape::RetrievalQueryCheck;
 pub(crate) use self::read_shape::{QueryDoor, query_caller};
 pub(crate) use self::reader_runner::{READER_CHILD_READ_ONLY, ReaderRunner, ReaderSeats};

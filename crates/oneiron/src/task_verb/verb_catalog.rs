@@ -221,6 +221,11 @@ pub enum AgentVerb {
     VaultEmbeddingSpacesProbesList,
     VaultEmbeddingSpacesProbesPut,
     VaultEmbeddingSpacesProbesDelete,
+    VaultPolicyOwnerGet,
+    VaultPolicyOwnerConfigure,
+    VaultPolicyOwnerRowChange,
+    VaultPolicyOutboundDecide,
+    VaultPolicyRelayDecide,
     VaultGatePolicyGet,
     VaultGatePolicyPut,
     VaultGatePolicyPropose,
@@ -785,6 +790,11 @@ impl AgentVerb {
         Self::VaultEmbeddingSpacesProbesList,
         Self::VaultEmbeddingSpacesProbesPut,
         Self::VaultEmbeddingSpacesProbesDelete,
+        Self::VaultPolicyOwnerGet,
+        Self::VaultPolicyOwnerConfigure,
+        Self::VaultPolicyOwnerRowChange,
+        Self::VaultPolicyOutboundDecide,
+        Self::VaultPolicyRelayDecide,
         Self::VaultGatePolicyGet,
         Self::VaultGatePolicyPut,
         Self::VaultGatePolicyPropose,
@@ -1356,6 +1366,11 @@ impl AgentVerb {
             Self::VaultEmbeddingSpacesProbesList => "vault.embedding_spaces.probes.list",
             Self::VaultEmbeddingSpacesProbesPut => "vault.embedding_spaces.probes.put",
             Self::VaultEmbeddingSpacesProbesDelete => "vault.embedding_spaces.probes.delete",
+            Self::VaultPolicyOwnerGet => "vault.policy.owner.get",
+            Self::VaultPolicyOwnerConfigure => "vault.policy.owner.configure",
+            Self::VaultPolicyOwnerRowChange => "vault.policy.owner.row.change",
+            Self::VaultPolicyOutboundDecide => "vault.policy.outbound.decide",
+            Self::VaultPolicyRelayDecide => "vault.policy.relay.decide",
             Self::VaultGatePolicyGet => "vault.gate.policy.get",
             Self::VaultGatePolicyPut => "vault.gate.policy.put",
             Self::VaultGatePolicyPropose => "vault.gate.policy.propose",
@@ -1925,6 +1940,11 @@ impl AgentVerb {
                 | Self::VaultEmbeddingSpacesProbesList
                 | Self::VaultEmbeddingSpacesProbesPut
                 | Self::VaultEmbeddingSpacesProbesDelete
+                | Self::VaultPolicyOwnerGet
+                | Self::VaultPolicyOwnerConfigure
+                | Self::VaultPolicyOwnerRowChange
+                | Self::VaultPolicyOutboundDecide
+                | Self::VaultPolicyRelayDecide
                 | Self::VaultGatePolicyGet
                 | Self::VaultGatePolicyPut
                 | Self::VaultGatePolicyPropose
@@ -2496,6 +2516,11 @@ impl AgentVerb {
                 | Self::VaultEmbeddingSpacesProbesList
                 | Self::VaultEmbeddingSpacesProbesPut
                 | Self::VaultEmbeddingSpacesProbesDelete
+                | Self::VaultPolicyOwnerGet
+                | Self::VaultPolicyOwnerConfigure
+                | Self::VaultPolicyOwnerRowChange
+                | Self::VaultPolicyOutboundDecide
+                | Self::VaultPolicyRelayDecide
                 | Self::VaultGatePolicyGet
                 | Self::VaultGatePolicyPut
                 | Self::VaultGatePolicyPropose
@@ -3116,6 +3141,11 @@ impl AgentVerb {
                 | Self::VaultEmbeddingSpacesProbesList
                 | Self::VaultEmbeddingSpacesProbesPut
                 | Self::VaultEmbeddingSpacesProbesDelete
+                | Self::VaultPolicyOwnerGet
+                | Self::VaultPolicyOwnerConfigure
+                | Self::VaultPolicyOwnerRowChange
+                | Self::VaultPolicyOutboundDecide
+                | Self::VaultPolicyRelayDecide
                 | Self::VaultGatePolicyGet
                 | Self::VaultGatePolicyPut
                 | Self::VaultGatePolicyPropose
@@ -3585,6 +3615,10 @@ impl AgentVerb {
                 | Self::VaultEmbeddingSpacesMoveAbandon
                 | Self::VaultEmbeddingSpacesProbesPut
                 | Self::VaultEmbeddingSpacesProbesDelete
+                | Self::VaultPolicyOwnerConfigure
+                | Self::VaultPolicyOwnerRowChange
+                | Self::VaultPolicyOutboundDecide
+                | Self::VaultPolicyRelayDecide
                 | Self::VaultGatePolicyPut
                 | Self::VaultGatePolicyPropose
                 | Self::VaultGateCheckerSet
@@ -4040,6 +4074,11 @@ impl AgentVerb {
             Self::VaultEmbeddingSpacesProbesList => &[],
             Self::VaultEmbeddingSpacesProbesPut => &["spec"],
             Self::VaultEmbeddingSpacesProbesDelete => &["spec"],
+            Self::VaultPolicyOwnerGet => &["spec"],
+            Self::VaultPolicyOwnerConfigure => &["spec"],
+            Self::VaultPolicyOwnerRowChange => &["spec"],
+            Self::VaultPolicyOutboundDecide => &["spec"],
+            Self::VaultPolicyRelayDecide => &["spec"],
             Self::VaultGatePolicyGet => &["spec"],
             Self::VaultGatePolicyPut => &["spec"],
             Self::VaultGatePolicyPropose => &["spec"],
@@ -4605,6 +4644,11 @@ impl AgentVerb {
             Self::VaultEmbeddingSpacesProbesList => &[],
             Self::VaultEmbeddingSpacesProbesPut => &["spec"],
             Self::VaultEmbeddingSpacesProbesDelete => &["spec"],
+            Self::VaultPolicyOwnerGet => &["spec"],
+            Self::VaultPolicyOwnerConfigure => &["spec"],
+            Self::VaultPolicyOwnerRowChange => &["spec"],
+            Self::VaultPolicyOutboundDecide => &["spec"],
+            Self::VaultPolicyRelayDecide => &["spec"],
             Self::VaultGatePolicyGet => &["spec"],
             Self::VaultGatePolicyPut => &["spec"],
             Self::VaultGatePolicyPropose => &["spec"],
@@ -5576,6 +5620,21 @@ impl AgentVerb {
             }
             Self::VaultEmbeddingSpacesProbesDelete => {
                 "Removes one stored embedding space probe by its id."
+            }
+            Self::VaultPolicyOwnerGet => {
+                "The owner reads the content-policy configuration, default manifest hash and effective off/on state."
+            }
+            Self::VaultPolicyOwnerConfigure => {
+                "The owner configures or toggles content policy against the current manifest hash without changing other policy tables."
+            }
+            Self::VaultPolicyOwnerRowChange => {
+                "The owner adds, edits or removes a scoped content-policy row through its existing holder-governed writer and receives its change receipt."
+            }
+            Self::VaultPolicyOutboundDecide => {
+                "Decide an outbound candidate under owner policy with system notices and hash-only receipts; Warn and Skipped preserve its exact bytes."
+            }
+            Self::VaultPolicyRelayDecide => {
+                "Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer."
             }
             Self::VaultGatePolicyGet => {
                 "The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions."
