@@ -51,6 +51,15 @@ pub trait NativeMailHost {
         headers: &BTreeMap<String, String>,
     ) -> Result<EmailProviderInbound>;
 }
+/// A live cold-send offer as the owner's card shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ColdSendOffer {
+    pub scope: RampScope,
+    /// What every actor can send now, and with the standing grant accepting
+    /// the offer mints (ARCH-0070 `shape:reach-line`). It informs the tap
+    /// and never blocks it.
+    pub reach_line: String,
+}
 pub struct NativeMailAdapter<H> {
     domain: String,
     mode: NativeMailRunMode,
@@ -165,6 +174,20 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
         } else {
             Ok(None)
         }
+    }
+
+    /// [`Self::cold_send_graduation_offer`] with the reach line its
+    /// acceptance carries.
+    pub fn cold_send_offer_card(
+        &self,
+        vault: &Vault,
+        identity_ref: EntityId,
+    ) -> Result<Option<ColdSendOffer>> {
+        let Some(scope) = self.cold_send_graduation_offer(vault, identity_ref)? else {
+            return Ok(None);
+        };
+        let reach_line = vault.ramp_offer_reach(&scope)?.line;
+        Ok(Some(ColdSendOffer { scope, reach_line }))
     }
 
     /// Production ingress: verified bytes -> untrusted semantic envelope ->

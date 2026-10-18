@@ -58,17 +58,8 @@ impl VoiceCascadeSession {
         if self.ended || !self.retrieval.is_open(handle) {
             return Ok(None);
         }
-        if event.text.len() > 8 * 1024
-            || event.tokens.len() > 256
-            || event
-                .tokens
-                .iter()
-                .fold(0usize, |size, token| size.saturating_add(token.text.len()))
-                > 8 * 1024
-            || event.error.as_ref().is_some_and(|error| error.len() > 1024)
-        {
-            return Err(invalid("ASR preparation exceeds limits"));
-        }
+        // Rule 5: an observation is prepared whole, whatever its length; only
+        // its shape is checked.
         event.validate()?;
         if !matches!(event.kind, AsrEventKind::Partial | AsrEventKind::Final) {
             return Err(invalid("only partial/final ASR may be prepared"));
