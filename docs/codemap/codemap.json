@@ -32216,7 +32216,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DeckPreview",
@@ -32224,7 +32224,7 @@
       "DeckPreviewSlide"
      ],
      "path": "src/office_body/pptx/preview.rs",
-     "purpose": "`vault.artifacts.body.deck.preview`: the asked slides of a deck's head, drawn by the host's review renderer…",
+     "purpose": "`vault.artifacts.body.deck.preview`: the asked slides of a deck's head, or of an open fork's merge candidate…",
      "surface": {
       "fn": 1,
       "struct": 3
@@ -58843,7 +58843,7 @@
      "path": "src/edit/mod.rs",
      "purpose": "Narrow value and text edits in place (ARCH-0077, \"Edit in place with passthrough\"): `set_text`…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 3,
       "fn": 1,
       "mod": 1,
@@ -58897,20 +58897,20 @@
      "path": "src/edit/structure/mod.rs",
      "purpose": "Structural edits (ONE-2529; ARCH-0077, \"Edit in place with passthrough\"): `add_shape` from a preset…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 3,
       "fn": 5,
       "struct": 5
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/edit/structure/slides/app_props.rs",
-     "purpose": "The app properties (`docProps/app.xml`) a slide's removal would leave stale (FIX 2377): the slide…",
+     "purpose": "The app properties (`docProps/app.xml`) a slide's addition, copy or removal would leave stale (FIX 2377, FIX…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 9
      }
     },
     {
@@ -58940,7 +58940,7 @@
      "path": "src/edit/structure/slides/mod.rs",
      "purpose": "Slide-level structural edits: `duplicate_slide`, with relationship-aware cloning under a tested policy, and…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -59252,7 +59252,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 10,
+      "fn": 11,
       "struct": 7
      }
     },
