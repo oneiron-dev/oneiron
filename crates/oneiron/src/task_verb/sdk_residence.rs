@@ -276,6 +276,6 @@ pub fn residence_host_only<I, T>(_memory: &Memory<'_>, verb: &str, _input: &I) -
     Err(MemoryError::new(
         MEMORY_CODE_MODEL_UNAVAILABLE,
         format!("{verb} acts on a machine's own sync connection; an embedded vault reaches none"),
-        &["Call it through a server that runs the named machine's sync connection."],
+        &[super::sdk_host::SERVED_CLIENT_HINT],
     ))
 }

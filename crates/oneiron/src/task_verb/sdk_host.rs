@@ -289,6 +289,13 @@ pub fn revoke_channel_subscription_embedded(
     revoke_channel_subscription_as_owner(memory.vault(), &owner, &input)
 }
 
+/// The one hint every bare-vault host refusal gives: the engine's own
+/// in-process served client reaches the served door under the caller's own
+/// credential, so the act works wherever the engine runs.
+pub(crate) const SERVED_CLIENT_HINT: &str = "Use the in-process served client \
+     (connect_in_process / EmbeddedEngine::client) under your own credential, or a remote \
+     client of a server that serves it.";
+
 /// A row only a host's own state answers, refused on an embedded handle.
 pub fn host_only<T, I>(_memory: &Memory<'_>, verb: &str, _input: &I) -> MemoryResult<T> {
     Err(MemoryError::new(
@@ -296,7 +303,7 @@ pub fn host_only<T, I>(_memory: &Memory<'_>, verb: &str, _input: &I) -> MemoryRe
         format!(
             "{verb} runs on a server's own model seats, decision ladder or hook sandbox; an embedded vault has none"
         ),
-        &["Call it through a remote client of a server that serves it."],
+        &[SERVED_CLIENT_HINT],
     ))
 }
 

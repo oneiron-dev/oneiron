@@ -192,7 +192,7 @@ pub fn connect_host_only<T, I>(memory: &Memory<'_>, verb: &str, _input: &I) -> M
     Err(MemoryError::new(
         MEMORY_CODE_INVALID_STATE,
         format!("{verb} requires the serving host's signer and federation transport"),
-        &["Call through the vault's authenticated server."],
+        &[super::sdk_host::SERVED_CLIENT_HINT],
     ))
 }
 

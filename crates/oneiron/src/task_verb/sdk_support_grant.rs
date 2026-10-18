@@ -247,7 +247,7 @@ fn host_signs<T>(memory: &Memory<'_>, verb: &str) -> MemoryResult<T> {
     Err(MemoryError::new(
         MEMORY_CODE_INVALID_STATE,
         format!("{verb} is signed with the host's own key; an embedded vault holds none"),
-        &["Call it through a remote client of the server that hosts the vault."],
+        &[super::sdk_host::SERVED_CLIENT_HINT],
     ))
 }
 
