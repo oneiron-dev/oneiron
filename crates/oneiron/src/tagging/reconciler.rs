@@ -82,8 +82,9 @@ impl TaggingPass {
         self.traces
             .iter()
             .filter_map(|trace| match trace.outcome {
-                TaggingOutcome::Failed { retry_at, .. }
-                | TaggingOutcome::Deferred { retry_at } => Some(retry_at),
+                TaggingOutcome::Failed { retry_at, .. } | TaggingOutcome::Deferred { retry_at } => {
+                    Some(retry_at)
+                }
                 _ => None,
             })
             .min()

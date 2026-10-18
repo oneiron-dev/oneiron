@@ -194,7 +194,10 @@ impl PreparedWake {
             }
             attempts.insert(*attempt.id.as_bytes());
             if let Some(dedupe_key) = &attempt.dedupe_key {
-                rounds.insert(*attempt.id.as_bytes(), (attempt.kind.clone(), dedupe_key.clone()));
+                rounds.insert(
+                    *attempt.id.as_bytes(),
+                    (attempt.kind.clone(), dedupe_key.clone()),
+                );
             }
             // A malformed queued row is not a source grant. Its own executor
             // still refuses it, without failing unrelated wake work here.
@@ -539,7 +542,12 @@ impl PreparedWake {
                 };
                 continue;
             }
-            if away || plan.turn_ids.iter().any(|id| refused_texts.contains_key(id)) {
+            if away
+                || plan
+                    .turn_ids
+                    .iter()
+                    .any(|id| refused_texts.contains_key(id))
+            {
                 *outcome = AttemptPreparation::ResidencyDeferred;
                 continue;
             }
