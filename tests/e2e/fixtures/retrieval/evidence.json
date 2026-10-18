@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "oracle": "Author-authored orthogonal vectors: the weak probe has no strong direction in the corpus; the strong probe points at two almost parallel rows. No engine score formulas or output snapshots.",
+  "embedder": {
+    "modelKey": "retrieval-oracle-v1",
+    "modelId": "e2e/retrieval-oracle@1",
+    "dimensions": 4,
+    "probeText": "oneiron embedder probe",
+    "probeVector": [
+      1,
+      0,
+      0,
+      0
+    ],
+    "usageInputTokens": 8
+  },
+  "confidence": 0.875,
+  "salience": 0.5,
+  "occurredAt": 1785542400,
+  "learnedAt": 1785628800,
+  "claims": [
+    {
+      "label": "weak-observation",
+      "predicate": "profile.retrieval_weak_a",
+      "value": "The cedar drawer contains a wool scarf.",
+      "vector": [
+        0.125,
+        1,
+        0,
+        0
+      ]
+    },
+    {
+      "label": "unrelated-observation",
+      "predicate": "profile.retrieval_weak_b",
+      "value": "A copper tray rests beside the linen basket.",
+      "vector": [
+        0,
+        1,
+        0,
+        0
+      ]
+    },
+    {
+      "label": "strong-a",
+      "predicate": "profile.retrieval_strong_a",
+      "value": "The northern marker is beside the amber cabinet.",
+      "vector": [
+        0,
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "label": "strong-b",
+      "predicate": "profile.retrieval_strong_b",
+      "value": "The eastern marker is beside the violet cabinet.",
+      "vector": [
+        0,
+        0,
+        1,
+        0.015625
+      ]
+    }
+  ],
+  "weak": {
+    "query": "orbital basalt compass",
+    "vector": [
+      1,
+      0,
+      0,
+      0
+    ],
+    "expected": "abstain"
+  },
+  "anomalous": [
+    {
+      "label": "control-characters",
+      "query": "orbital\u0001basalt\u0007compass",
+      "vector": [
+        1,
+        0,
+        0,
+        0
+      ],
+      "expected": "abstain"
+    },
+    {
+      "label": "repeated-character",
+      "query": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+      "vector": [
+        1,
+        0,
+        0,
+        0
+      ],
+      "expected": "abstain"
+    }
+  ],
+  "strong": {
+    "query": "silicate comet bearing",
+    "vector": [
+      0,
+      0,
+      1,
+      0
+    ],
+    "requiredLabels": [
+      "strong-a",
+      "strong-b"
+    ],
+    "expected": "evidence"
+  },
+  "expectations": {
+    "storedSource": "user_stated",
+    "storedApproval": "auto",
+    "storedLifecycle": "active",
+    "storedStale": false,
+    "noKeywordMatches": true,
+    "noGenerator": true,
+    "noFactWritesOnRead": true
+  },
+  "constants": {
+    "tokenBudget": 2048,
+    "resultLimit": 4,
+    "normalFlowBudgetMs": 30000,
+    "privateClock": false,
+    "engineDefaultsChanged": false
+  }
+}
