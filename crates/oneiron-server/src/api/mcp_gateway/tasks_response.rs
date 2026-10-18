@@ -555,11 +555,14 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
 
 /// What one MCP row's credential surface is built from beside its call
 /// context: where its TASKs are born, the invocation its hooks cross under,
-/// and a code-mode call's host origin.
+/// a code-mode call's host origin, and the task-work turn the row holds.
 struct McpRowSurface {
     position: oneiron::federation::record_scope::BirthPosition,
     invocation: oneiron::runtime_hooks::InvocationId,
     origin: Option<oneiron::memory::HostWriteOrigin>,
+    /// The turn the dispatch awaited for a task-work row (Rule 5): every
+    /// surface built for the row runs on it and waits for no other.
+    task_work_turn: Option<Arc<oneiron::work_line::TaskWorkTurn>>,
 }
 
 impl McpRowSurface {
@@ -584,6 +587,10 @@ impl McpRowSurface {
         .with_invocation(self.invocation);
         let memory = match self.origin.clone() {
             Some(origin) => memory.with_host_origin(origin),
+            None => memory,
+        };
+        let memory = match &self.task_work_turn {
+            Some(turn) => memory.with_task_work_turn(Arc::clone(turn)),
             None => memory,
         };
         // OF-063: the off-record session the request named; inside an anonymous
@@ -2330,10 +2337,27 @@ async fn execute_agent_verb_listing(
     let invocation = actor
         .invocation
         .unwrap_or_else(oneiron::runtime_hooks::InvocationId::mint);
+    // Rule 5: a task-work row, or a row whose engine call produces task work,
+    // takes its one turn here, for MCP and code mode alike, binds it on the
+    // surface its row runs on and holds it through its hooks and its row.
+    let task_work_turn = if oneiron::task_verb::sdk::AgentVerb::from_name(tool)
+        .is_some_and(oneiron::task_verb::sdk::AgentVerb::is_task_work)
+        || matches!(
+            tool,
+            "tasks.accept"
+                | "vault.projects.route_tradeoff"
+                | "vault.artifacts.body.fork.merge"
+                | "vault.artifacts.body.proposal.settle"
+        ) {
+        Some(Arc::new(server.admit_task_work(actor.actor_ref).await))
+    } else {
+        None
+    };
     let surface = McpRowSurface {
         position,
         invocation,
         origin,
+        task_work_turn: task_work_turn.clone(),
     };
     // The direct caller's own proof, on the rows whose HTTP door binds it
     // outside a room turn (OF-417, OF-365).
@@ -2343,15 +2367,6 @@ async fn execute_agent_verb_listing(
         actor,
         surface.memory(server, actor, producers),
     )?;
-    // Rule 5: a task-work row takes its one turn here, for MCP and code mode
-    // alike, and holds it through its hooks and its row.
-    let _turn = if oneiron::task_verb::sdk::AgentVerb::from_name(tool)
-        .is_some_and(oneiron::task_verb::sdk::AgentVerb::is_task_work)
-    {
-        Some(server.admit_task_work(actor.actor_ref).await)
-    } else {
-        None
-    };
     let hooks = super::verb_hooks::mcp_row_hooks_pre(server, tool, actor, &memory, input).await?;
     let (output, source, carrier, epoch) = execute_agent_verb_row(
         server,
@@ -2367,6 +2382,8 @@ async fn execute_agent_verb_listing(
     let output = crate::api::facade::row_hooks_post(server, hooks, output)
         .await
         .map_err(mcp_facade_error)?;
+    // The row's turn ends after its post hooks.
+    drop(task_work_turn);
     Ok((output, source, carrier, epoch))
 }
 

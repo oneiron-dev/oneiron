@@ -840,6 +840,26 @@ fn facade_invoke(
     value: serde_json::Value,
     producers: &oneiron::memory::ProducerRows,
 ) -> Result<serde_json::Value, FacadeApiError> {
+    facade_invoke_in_turn(server, call, actor, class, verb, value, producers, None)
+}
+
+/// [`facade_invoke`] on the task-work turn the dispatch awaited for the call
+/// (Rule 5), bound on the surface the verb runs on: the engine's task work
+/// runs on that turn and waits for no other.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the generated dispatch passes facade_invoke's inputs plus the turn it awaited"
+)]
+fn facade_invoke_in_turn(
+    server: &SyncServer,
+    call: &FacadeCall<'_>,
+    actor: EntityId,
+    class: EdgeActorClass,
+    verb: &str,
+    value: serde_json::Value,
+    producers: &oneiron::memory::ProducerRows,
+    turn: Option<Arc<oneiron::work_line::TaskWorkTurn>>,
+) -> Result<serde_json::Value, FacadeApiError> {
     let auth = call.auth();
     let memory = facade_invocation(
         credential_memory(&server.vault, Some(auth), actor, class)
@@ -847,6 +867,10 @@ fn facade_invoke(
             .listing_producers(producers),
         call,
     )?;
+    let memory = match turn {
+        Some(turn) => memory.with_task_work_turn(turn),
+        None => memory,
+    };
     let memory = facade_task_decisions(server, verb, memory)?;
     let memory = facade_rewrites_admitted(server, auth, &value, memory);
     // Settlement's run of the call enters its boundary here as the drain's.

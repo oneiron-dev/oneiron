@@ -303,14 +303,18 @@ pub(crate) fn answer_as_agent(
     line: Option<&RunAdmission>,
 ) -> MemoryResult<(Value, Vec<EntityId>)> {
     // The agent's task work waits its turn in the vault's line (Rule 5), as
-    // a served caller's does.
-    let _turn = verb
+    // a served caller's does, and runs on it.
+    let turn = verb
         .is_task_work()
-        .then(|| server.vault.admit_task_work_blocking(actor.entity_ref()));
+        .then(|| Arc::new(server.vault.admit_task_work_blocking(actor.entity_ref())));
     let producers = ProducerRows::default();
     let memory = agent_memory(server, actor, origin, invocation)
         .with_task_decisions(server.decision_host().task_decisions()?)
         .listing_producers(&producers);
+    let memory = match turn {
+        Some(turn) => memory.with_task_work_turn(turn),
+        None => memory,
+    };
     let name = verb.as_str();
     let output = if served_by_host(verb) {
         verb_hook_boundary::row(&memory, name, input, |input| {
