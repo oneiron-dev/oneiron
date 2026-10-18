@@ -738,6 +738,10 @@ pub enum NotificationKind {
     Digest,
     #[serde(rename = "ask")]
     Ask,
+    #[serde(rename = "world_privacy_changed")]
+    WorldPrivacyChanged,
+    #[serde(rename = "world_privacy_proposed")]
+    WorldPrivacyProposed,
 }
 
 /// `oneiron::inbox::notification::NotificationSource`.
@@ -27022,6 +27026,8 @@ pub enum SelfEffect {
     AgentVerb,
     #[serde(rename = "ConnectorAnswer")]
     ConnectorAnswer,
+    #[serde(rename = "WorldPrivacySet")]
+    WorldPrivacySet,
     #[serde(rename = "Fold")]
     Fold,
     #[serde(rename = "ReaderSpawn")]

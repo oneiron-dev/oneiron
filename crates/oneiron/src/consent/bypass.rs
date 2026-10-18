@@ -8,7 +8,8 @@
 //! scope. After that nothing inside the scope asks again. Every act under it
 //! is receipted as bypassed, and one revoke from the registry ends it.
 //!
-//! No bypass covers an erase. None skips another Owner's objection window
+//! No bypass covers an erase, nor a world's privacy widen (FIX 4480): like
+//! erase, it is irreversible in effect. None skips another Owner's objection window
 //! either: a shared-vault act waits on its own act record
 //! ([`Vault::start_authority_act`]), which a consent verdict never settles.
 
@@ -228,7 +229,8 @@ pub(super) fn live_bypasses_in_txn(
 
 /// The live bypass that covers this op, if one does. It covers only a
 /// catastrophe-floor op of its own class, inside its own scope, by an actor
-/// and envelope its bound contains, and never an erase. A mixed op's
+/// and envelope its bound contains, and never an erase or a world's privacy
+/// widen, which no bypass covers (FIX 4480). A mixed op's
 /// disclosure half still needs an ordinary standing grant.
 pub(super) fn covering_bypass<'a>(
     effect: &ComposedEffect,
@@ -239,7 +241,7 @@ pub(super) fn covering_bypass<'a>(
     let catastrophe = effect
         .catastrophe()
         .filter(|class| floor.contains(*class))?;
-    if effect.is_erase() {
+    if effect.is_erase() || !catastrophe.bypassable() {
         return None;
     }
     let action = effect.action_requirement()?;
@@ -384,6 +386,10 @@ impl Vault {
         let allows = floor.member_named(bound.class().as_str()).ok_or_else(|| {
             invalid_bound("a bypass grant covers one class on the catastrophe floor")
         })?;
+        // Like erase, no bypass covers a world's privacy widen (FIX 4480).
+        if !allows.bypassable() {
+            return Err(invalid_bound(crate::gate::consent_floor_refusal(allows)));
+        }
         let in_scope = match scope {
             BypassScope::Project(id) => {
                 crate::workspace_roster::is_project_entity(&self.store, txn, id)?
