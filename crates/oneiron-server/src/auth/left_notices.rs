@@ -10,6 +10,10 @@
 //! one this vault minted and the device holds its key, spends the nonce, and
 //! answers only the person's own loss-of-access notices, each signed by this
 //! host's root key (FIX 2053). A host holding no signing key answers none.
+//! Beside the notices rides the signed ReRoot chain from where the person's
+//! env stands to that key, so a device that never folded a re-root still
+//! verifies them.
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use axum::Json;
@@ -17,9 +21,9 @@ use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::routing::post;
-use oneiron::authority::{CapabilitySlip, HostSlipIssuer};
+use oneiron::authority::{AuthorityEntryHash, CapabilitySlip, HostSlipIssuer};
 use oneiron::federation::{RemovalExportCopy, SignedSharedActOutcome};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::{BindingProof, parse_signature};
 use crate::error::{ApiError, ApiErrorDetails, EnvelopedApiError};
@@ -43,6 +47,51 @@ pub(crate) fn left_notice_routes() -> Router<Arc<SyncServer>> {
 #[derive(Debug, Serialize)]
 struct LeftNotices {
     notices: Vec<SignedSharedActOutcome>,
+    /// The signed ReRoot rows, hex, parents first, that hand this host's
+    /// root on from where the person's env stands to the key that signed
+    /// `notices` (FIX 2053): empty when that env already folded them.
+    handoff: Vec<String>,
+}
+
+/// Where the person's authority chain stands (FIX 2053): the heads its env
+/// folded, hex, so only the handoff past them rides. A request that names
+/// none gets the whole chain.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeftNoticesAsk {
+    #[serde(default)]
+    authority_heads: Vec<String>,
+}
+
+/// The heads `ask` names, each 64 hex; a malformed one is a bad request,
+/// refused before the nonce is spent.
+fn member_heads(
+    ask: Option<Json<LeftNoticesAsk>>,
+) -> Result<BTreeSet<AuthorityEntryHash>, ApiError> {
+    let Some(Json(ask)) = ask else {
+        return Ok(BTreeSet::new());
+    };
+    let parse = |head: &str| -> Option<AuthorityEntryHash> {
+        if head.len() != 64 || !head.is_ascii() {
+            return None;
+        }
+        let mut hash = [0; 32];
+        for (byte, pair) in hash.iter_mut().zip(head.as_bytes().chunks_exact(2)) {
+            *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
+        }
+        Some(hash)
+    };
+    ask.authority_heads
+        .iter()
+        .map(|head| {
+            parse(head).ok_or_else(|| {
+                ApiError::bad_request(
+                    "authority_heads must be 64 hex each",
+                    Some("authority_heads"),
+                )
+            })
+        })
+        .collect()
 }
 
 /// The archives export-first removals kept for the person, still within
@@ -153,9 +202,11 @@ fn with_notice_issuer<T>(
 async fn left_notices(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
+    ask: Option<Json<LeftNoticesAsk>>,
 ) -> Result<Json<LeftNotices>, EnvelopedApiError> {
+    let heads = member_heads(ask)?;
     let (slip, proof, signature) = left_proof(&headers)?;
-    let notices = tokio::task::spawn_blocking(move || {
+    let (notices, handoff) = tokio::task::spawn_blocking(move || {
         with_notice_issuer(&server, |issuer| {
             server.vault().removed_member_notices_signed(
                 issuer,
@@ -163,10 +214,15 @@ async fn left_notices(
                 proof.timestamp,
                 &signature,
                 proof.nonce.as_bytes(),
+                &heads,
             )
         })
     })
     .await
     .map_err(|_| ApiError::unauthorized())??;
-    Ok(Json(LeftNotices { notices }))
+    let handoff = handoff
+        .iter()
+        .map(|row| row.iter().map(|byte| format!("{byte:02x}")).collect())
+        .collect();
+    Ok(Json(LeftNotices { notices, handoff }))
 }

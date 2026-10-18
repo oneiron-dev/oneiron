@@ -6,12 +6,23 @@
 //! the archives export-first removals delivered to them (OF-150, FIX 1300),
 //! each retrievable for its 90-day term. It grants no other read: no proof
 //! is minted and no scope is consulted. Every notice is signed by the host
-//! root key (FIX 2053); there is no unsigned answer.
+//! root key (FIX 2053); there is no unsigned answer. Beside the notices
+//! rides the handoff from where the person's env stands to that key, so a
+//! device whose env never folded a re-root still verifies them.
+use std::collections::{BTreeMap, BTreeSet};
+
 use super::*;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::federation::{RemovalExportCopy, SignedSharedActOutcome};
+
+/// Which signed rows ride beside a removed person's notices as the handoff
+/// to the root that signed them (FIX 2053, a call; canon is silent on that
+/// delivery): the ReRoot chain alone. The rest of the log names grants,
+/// machines and settings, which only the owner's machines read.
+const LEAVE_NOTICE_HANDOFF_EVIDENCE: fn(&AuthorityOp) -> bool =
+    |op| matches!(op, AuthorityOp::ReRoot { .. });
 
 impl Vault {
     /// The holder of `slip` proves possession of its binding key over the
@@ -22,7 +33,10 @@ impl Vault {
     /// Answers the slip holder's own MemberLeft, MemberRemoved and
     /// role-losing Owner notices, and the vault's deletion, each signed in
     /// this snapshot by `issuer`, which must stand as this vault's live host
-    /// root. The nonce is spent once, only when every notice is signed.
+    /// root. Beside them, the signed handoff to `issuer` from where the
+    /// holder's chain stands, `member_heads` being the heads its env folded
+    /// (FIX 2053): the ReRoot rows, parents first, it did not fold. The
+    /// nonce is spent once, only when every notice is signed.
     pub fn removed_member_notices_signed(
         &self,
         issuer: &HostSlipIssuer,
@@ -30,7 +44,8 @@ impl Vault {
         request_timestamp: u64,
         signature: &[u8],
         request_nonce: &[u8],
-    ) -> Result<Vec<SignedSharedActOutcome>> {
+        member_heads: &BTreeSet<AuthorityEntryHash>,
+    ) -> Result<(Vec<SignedSharedActOutcome>, Vec<Vec<u8>>)> {
         let mut txn = self.store.env.write_txn()?;
         let person =
             self.left_person_in_txn(&mut txn, slip, request_timestamp, signature, request_nonce)?;
@@ -42,8 +57,81 @@ impl Vault {
             .iter()
             .map(|outcome| issuer.sign_shared_act_outcome(authority_vault_id, outcome))
             .collect::<Result<Vec<_>>>()?;
+        let handoff =
+            self.leave_notice_handoff_in_txn(&txn, &fold, &issuer.public_key(), member_heads)?;
         txn.commit()?;
-        Ok(notices)
+        Ok((notices, handoff))
+    }
+
+    /// The signed handoff a removed person's notices ride with (FIX 2053):
+    /// the ReRoot rows `fold` settled that hand the root on to `signer`, in
+    /// chain order from the genesis root's own handoff, less those at or
+    /// below `member_heads`, which the person's env folded. When this vault
+    /// does not hold one of those heads, or the request named none, it
+    /// cannot tell where that chain stands and the whole chain rides: never
+    /// more rows than the handoffs this vault settled.
+    fn leave_notice_handoff_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fold: &AuthorityFold,
+        signer: &AuthorityKey,
+        member_heads: &BTreeSet<AuthorityEntryHash>,
+    ) -> Result<Vec<Vec<u8>>> {
+        // A vault no handoff ever re-rooted has none to send.
+        if fold.retired_keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        let history = super::history_transfer::history_in_txn(self, txn)?;
+        // Each settled handoff, by the key it handed the root to.
+        let mut handoffs = BTreeMap::new();
+        for (hash, (bytes, entry)) in &history {
+            if LEAVE_NOTICE_HANDOFF_EVIDENCE(&entry.op)
+                && fold.valid_entries.contains(hash)
+                && let AuthorityOp::ReRoot { new_device } = &entry.op
+            {
+                handoffs.insert(&new_device.key, (*hash, bytes, entry));
+            }
+        }
+        // Walk back from the signer, each handoff to the key that signed it.
+        let mut chain = Vec::new();
+        let mut key = signer;
+        while let Some((hash, bytes, entry)) = handoffs.get(key) {
+            if chain.len() == handoffs.len() {
+                break;
+            }
+            chain.push((*hash, (*bytes).clone()));
+            key = entry.signer_key();
+        }
+        chain.reverse();
+        if !member_heads.is_empty() && member_heads.iter().all(|head| history.contains_key(head)) {
+            let mut folded = BTreeSet::new();
+            let mut stack: Vec<_> = member_heads.iter().copied().collect();
+            while let Some(hash) = stack.pop() {
+                if folded.insert(hash)
+                    && let Some((_, entry)) = history.get(&hash)
+                {
+                    stack.extend(entry.parent_hashes.iter().copied());
+                }
+            }
+            chain.retain(|(hash, _)| !folded.contains(hash));
+        }
+        Ok(chain.into_iter().map(|(_, bytes)| bytes).collect())
+    }
+
+    /// The heads this vault's authority fold stands at: what a removed
+    /// member's leave-notice request names, so its home sends only the
+    /// handoff past them (FIX 2053).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    #[cfg(feature = "sync")]
+    pub(crate) fn leave_notice_heads(&self) -> Result<BTreeSet<AuthorityEntryHash>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(self
+            .authority_view_readonly_in_txn(&txn)?
+            .append_heads
+            .clone())
     }
 
     /// The archives export-first removals delivered to the holder of `slip`
