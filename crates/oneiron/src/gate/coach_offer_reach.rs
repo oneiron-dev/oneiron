@@ -308,3 +308,100 @@ pub(super) fn offer_question_authorized(
             != Some(PolicyApprovalCeiling::Proposed)
         && offer_reach_granted(policy)
 }
+
+/// Whether `row` binds the Coach to its offer-ask effector, whatever its
+/// ceiling.
+fn binds_coach_reach(row: &Value, actor_ref: &str) -> bool {
+    row.as_map().is_some_and(|fields| {
+        let field = |key: &str| {
+            fields
+                .iter()
+                .find(|(name, _)| name.as_str() == Some(key))
+                .and_then(|(_, value)| value.as_str())
+        };
+        field(ACTOR_REF_KEY) == Some(actor_ref)
+            && field(GRANT_EFFECTOR_KEY).map(str::trim) == Some(COACH_OFFER_ASK_EFFECTOR)
+    })
+}
+
+/// The live manifest with the Coach's reach row joined to its scoped-grant
+/// table, or `None` when a row already binds the Coach to this effector: an
+/// owner's revocation stands.
+fn with_coach_reach_row(live: &[u8], actor_ref: &str) -> Result<Option<Vec<u8>>> {
+    let Value::Map(mut entries) =
+        rmpv::decode::read_value(&mut &live[..]).map_err(|_| invalid("decode live policy"))?
+    else {
+        return Err(invalid("live policy is not a map"));
+    };
+    let at = entries
+        .iter()
+        .position(|(key, _)| key.as_str() == Some(POLICY_SCOPED_GRANTS_KEY));
+    let mut rows = match at.map(|at| std::mem::replace(&mut entries[at].1, Value::Nil)) {
+        None | Some(Value::Nil) => Vec::new(),
+        Some(Value::Array(rows)) => rows,
+        Some(single @ Value::Map(_)) => vec![single],
+        Some(_) => return Err(invalid("policy scoped grants are not a list")),
+    };
+    if rows.iter().any(|row| binds_coach_reach(row, actor_ref)) {
+        return Ok(None);
+    }
+    rows.push(reach_row(actor_ref)?);
+    match at {
+        Some(at) => entries[at].1 = Value::Array(rows),
+        None => entries.push((Value::from(POLICY_SCOPED_GRANTS_KEY), Value::Array(rows))),
+    }
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &Value::Map(entries))
+        .map_err(|_| invalid("encode live policy"))?;
+    Ok(Some(data))
+}
+
+impl Vault {
+    /// Whether the live policy grants the Coach its offer-ask reach.
+    pub fn coach_offer_reach(&self) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        Ok(offer_reach_granted(&super::resolve_policy_manifest(
+            &self.store,
+            &txn,
+        )?))
+    }
+
+    /// Owner act (OF-577): adds the Coach's reach row to the trusted policy
+    /// pack the Dreamer grant edits, for a vault whose pack was seeded before
+    /// the row shipped or that the owner edited since. Returns whether the
+    /// policy changed. A row already binding the Coach to this effector stands
+    /// as the owner left it, revoked or not. Refuses, changing nothing, when
+    /// the edit would not open the reach or would move other policy.
+    pub fn grant_coach_offer_reach(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        now: u64,
+    ) -> Result<bool> {
+        let actor_ref = crate::dreamer_runner::authority::coach_actor_id()?.to_hex();
+        let mut txn = self.store.env.write_txn()?;
+        owner.revalidate_in_txn(self, &txn)?;
+        let (id, body) = super::dreamer_grant::grant_target(&self.store, &txn)?;
+        let Some(data) = with_coach_reach_row(&body, &actor_ref)? else {
+            return Ok(false);
+        };
+        let before = super::resolve_policy_manifest(&self.store, &txn)?;
+        let retention = super::resolve_gate_decision_retention(&self.store, &txn)?;
+        self.write_owner_policy_manifest_in_txn(owner, &mut txn, id, data, now)?;
+        let after = super::resolve_policy_manifest(&self.store, &txn)?;
+        if after.is_fail_closed()
+            || after.diagnostics().loaded_manifest_forces_fail_closed()
+            || after.carry_forward_confidence != before.carry_forward_confidence
+            || super::resolve_gate_decision_retention(&self.store, &txn)? != retention
+            || !offer_reach_granted(&after)
+        {
+            // Dropping the transaction leaves the policy as it was.
+            return Err(Error::InvalidConfig(
+                "the Coach's offer-ask grant would not take without changing other policy; \
+                 the owner's policy rows keep the Coach out or conflict"
+                    .into(),
+            ));
+        }
+        txn.commit()?;
+        Ok(true)
+    }
+}

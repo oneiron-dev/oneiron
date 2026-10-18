@@ -79,7 +79,7 @@ fn reach_in(
 /// The trusted pack the grant edits, and its body: the one owner-authored
 /// pack, else the seeded default, else (a vault with no trusted pack) the
 /// shipped default at its id.
-fn grant_target(store: &Store, txn: &heed::RoTxn<'_>) -> Result<(EntityId, Vec<u8>)> {
+pub(super) fn grant_target(store: &Store, txn: &heed::RoTxn<'_>) -> Result<(EntityId, Vec<u8>)> {
     let default_id = super::default_policy_manifest_id()?;
     let mut owner_packs = Vec::new();
     let mut seeded = None;
