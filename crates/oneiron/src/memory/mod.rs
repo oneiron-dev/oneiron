@@ -28,19 +28,24 @@ mod answer_boundary;
 mod archive_purge;
 mod artifact_hosting_doors;
 mod asset_resolve;
+mod asset_doors;
 mod authorship;
 mod birth_position;
 mod booking;
 mod claim_admission;
 mod claim_conflict;
 mod claim_stale;
+pub mod commitment_doors;
 mod conflict_settle;
 pub mod consolidation;
+pub mod coping_doors;
 mod diagnostics;
 mod diary_read;
 mod dreamer_revert;
 mod people_verbs;
+pub mod run_review;
 mod skill_authoring;
+pub mod wellness_doors;
 pub(crate) use booking::booking_error;
 pub(crate) use outbound::facade_error_from_outbound_dispatch;
 pub(crate) mod booking_publication;
@@ -60,9 +65,11 @@ mod credential_key;
 mod dreamer;
 mod entity_delete;
 mod entity_erase;
+pub mod erase_sweep;
 mod export;
 mod expression_preference;
 pub mod extraction;
+pub mod foreign_code;
 pub mod hook_regen_doors;
 mod inspection;
 mod key_value;
@@ -87,6 +94,7 @@ pub mod result_doors;
 mod room_turn;
 mod scoped_export;
 mod search_hybrid;
+mod search_vector;
 mod search_temporal;
 mod session_writes;
 mod shape_doors;
@@ -95,6 +103,7 @@ mod structural;
 mod subscriptions;
 mod support;
 mod transcript;
+mod web_fetch;
 mod witness;
 
 #[cfg(test)]
@@ -104,6 +113,8 @@ mod tests_regressions;
 
 pub use answer_boundary::AnswerAdmission;
 pub use archive_purge::{ArchivePurgeEntry, ArchivePurgePreview};
+pub use search_vector::{VectorSearchRequest, VectorSearchHit};
+pub use asset_doors::{AssetIngestRequest, AssetIngestReceipt, AssetResolveRequest, AssetResolved};
 pub use asset_resolve::{
     AssetConsumer, HydratedAsset, IMAGE_FULL, ImageHandle, ImagePick, ImageViewRequest,
     LandedImage, PixelRegion, PulledImage, ResolvedAsset, ServedAssetForm, hydrated_asset,

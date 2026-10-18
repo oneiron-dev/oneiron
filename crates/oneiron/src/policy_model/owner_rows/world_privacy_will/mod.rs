@@ -18,7 +18,8 @@
 //!   By default any one holder's yes applies it as his own act.
 //! - **"Widen needs every owner"** ([`unanimity`]): when it is on, a widen
 //!   lands only once every live Owner said yes; the author's own act counts
-//!   as his. Tightening stays any one holder.
+//!   as his. Tightening stays any one holder. Any one live Owner turns it on;
+//!   turning it off while it is on takes every live Owner.
 //! - **A foreign world** follows its owning vault's settings (DEC-0005 fix
 //!   11): an agent here gets a typed refusal naming that rule.
 
@@ -32,7 +33,7 @@ mod undo;
 pub use answer::WorldPrivacyAnswer;
 pub use record::{WorldPrivacyRequest, WorldPrivacyRequestKind, WorldPrivacyRequestStatus};
 pub use sdk::{WorldPrivacySetInput, WorldPrivacySetOutput, WorldReadInput, WorldSealedInput};
-pub use unanimity::WidenUnanimity;
+pub use unanimity::{WidenUnanimity, WidenUnanimityOffRequest, WidenUnanimityOutcome};
 
 use crate::authority::{
     ActAuthority, ActSurface, PolicyRevision, PrivacyDirection, WorldEditAuthor, WorldPrivacy,
