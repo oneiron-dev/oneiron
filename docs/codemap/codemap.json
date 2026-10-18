@@ -30917,6 +30917,59 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/code_doors/leases.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/code_doors/mod.rs",
+     "purpose": "Typed symbol lease, proposal submit and mutation oplog doors (DOOR-137)",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/code_doors/proposals.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeMutationEntry",
+      "CodeMutationLog",
+      "CodeMutationState",
+      "CodeProposalSubmitRequest",
+      "CodeProposalSubmitted",
+      "CodeRepoRequest",
+      "CodeSymbolLeaseView",
+      "CodeSymbolsDeclareRequest",
+      "CodeSymbolsDeclared",
+      "CodeSymbolsReleased",
+      "CodeSymbolsTaskRequest"
+     ],
+     "path": "src/memory/code_doors/types.rs",
+     "purpose": "—",
+     "surface": {
+      "enum": 1,
+      "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/codebase_doors/mod.rs",
      "purpose": "Typed code snapshot doors (DOOR-118): the import of one committed local Git tree, its pinned manifest, its…",
      "surface": {
@@ -31307,7 +31360,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 5,
+      "mod": 6,
       "re-export": 41
      }
     },
@@ -49473,7 +49526,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 503
+      "fn": 508
      }
     },
     {
@@ -55624,7 +55677,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 153,
+     "files": 157,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56305,7 +56358,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3430,
+   "source_files": 3434,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64718,7 +64771,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 453
+      "fn": 458
      }
     },
     {
@@ -65766,7 +65819,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 454
+      "fn": 459
      }
     },
     {
@@ -68726,6 +68779,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/code_doors.rs",
+     "purpose": "Credential-bound host projections of the typed symbol lease, proposal submit and oplog doors (DOOR-137)",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/codebase_doors.rs",
      "purpose": "Credential-bound host projections of the typed code snapshot doors (DOOR-118)",
      "surface": {
@@ -68909,7 +68972,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 91
+      "crate-vis": 92
      }
     },
     {
@@ -76294,7 +76357,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 347,
+     "files": 348,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -76709,7 +76772,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 672,
+   "source_files": 673,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -77170,13 +77233,20 @@
       "CodeExportResult",
       "CodeFileChange",
       "CodeFileDiffView",
+      "CodeMutationEntry",
+      "CodeMutationLog",
+      "CodeMutationState",
+      "CodeOpProvenance",
       "CodeOperationView",
+      "CodeProposalSubmitRequest",
+      "CodeProposalSubmitted",
       "CodeProposalView",
       "CodeProposalViewRequest",
       "CodeProposedStamp",
       "CodeRepoDiffRequest",
       "CodeRepoDiffView",
       "CodeRepoPointer",
+      "CodeRepoRequest",
       "CodeSnapshotDefinition",
       "CodeSnapshotDefinitionsRequest",
       "CodeSnapshotDefinitionsView",
@@ -77189,6 +77259,11 @@
       "CodeSpanView",
       "CodeStateRequest",
       "CodeStateView",
+      "CodeSymbolLeaseView",
+      "CodeSymbolsDeclareRequest",
+      "CodeSymbolsDeclared",
+      "CodeSymbolsReleased",
+      "CodeSymbolsTaskRequest",
       "CodeTreeRequest",
       "CodeUnitBlameView",
       "CodeUnitVersionView",
@@ -77293,6 +77368,7 @@
       "CredentialCeiling",
       "Criterion",
       "CriticBinding",
+      "CriticLens",
       "CriticPrediction",
       "CriticReviewOutcome",
       "CriticReviewSubmit",
@@ -77662,6 +77738,7 @@
       "LensApproval",
       "LensAtomWire",
       "LensBackingTargetKind",
+      "LensCatalog",
       "LensDeactivateRequest",
       "LensDefaultRequest",
       "LensDossierSource",
@@ -78571,8 +78648,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 450,
-      "struct": 1215
+      "enum": 451,
+      "struct": 1228
      }
     },
     {
