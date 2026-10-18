@@ -23,13 +23,16 @@ use std::collections::BTreeMap;
 use crate::Vault;
 use crate::authority::VerifiedSlip;
 use crate::batch::BatchOp;
+use crate::code_run::ResultOccurrence;
 use crate::conversation::MembershipWindow;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, OffRecordError, Result};
+use crate::memory::MessageResultAttachment;
 use crate::off_record::promote::PromoteOutcome;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE};
 use crate::session_overlay::{JournalEntry, JournalRole};
+use crate::side_table::{self, Raw, SideTable};
 
 use super::registry::{KeptMessage, OffRecordSessionEntryState, session_entry_state};
 use super::session::{OffRecordSession, OffRecordSessionVault};
@@ -46,6 +49,18 @@ const MAX_ROOM_NOTICES: usize = 1024;
 /// The prefix of every room stretch's registry key. A stretch the owner
 /// enters alone may not take a name that starts with it.
 pub(super) const ROOM_KEY_PREFIX: &str = "room:";
+
+/// The taint sidecar of one result occurrence, keyed by the occurrence under
+/// its body's handle. Only presence is read here: a room keeps no view of
+/// custody rotation, so any taint row is live taint. The codec stays with
+/// `code_run`.
+const RESULT_TAINTS: SideTable<String, Vec<u8>, Raw> =
+    SideTable::new(&side_table::CODE_RUN_RAW_OUTPUT_TAINT);
+
+/// The secret scan's mark on one result occurrence, keyed as its taint
+/// sidecar is.
+const RESULT_SECRETS: SideTable<String, String, Raw> =
+    SideTable::new(&side_table::CODE_RUN_RAW_OUTPUT_SECRET);
 
 /// Every turn saved by one act, each with what it wrote.
 pub type SavedTurns = Vec<(EntityId, PromoteOutcome)>;
@@ -369,7 +384,35 @@ impl OffRecordSession<'_> {
             }
         }
         drop(snapshot);
+        // A result is shown as the room's marks stand now, never as it was
+        // said.
+        for (message, (_, _, shown)) in &mut talk.messages {
+            if let Some(shown) = shown
+                && let Some(result) = shown.result.take()
+            {
+                shown.result = Some(self.shown_talk_result(*message, result)?);
+            }
+        }
         Ok(talk)
+    }
+
+    /// `result` as MESSAGE `message` of this stretch shows it now: its
+    /// preview withheld while a mark in the room taints the producer's
+    /// occurrence of the body or the MESSAGE's own. A room keeps no view of
+    /// custody rotation, so any mark is live taint, as a run in it reads one.
+    fn shown_talk_result(
+        &self,
+        message: EntityId,
+        result: MessageResultAttachment,
+    ) -> Result<MessageResultAttachment> {
+        let output = result.output()?;
+        let mut marked = false;
+        for owner in [result.source.run_id, message] {
+            let key = ResultOccurrence::of(Some(owner), &output)?.mark_key(&output.handle);
+            marked |= self.side_table_get(&RESULT_SECRETS, &key)?.is_some()
+                || self.side_table_get(&RESULT_TAINTS, &key)?.is_some();
+        }
+        Ok(result.as_shown(marked))
     }
 
     /// One message of this stretch as the vault holds it now. Only the
@@ -637,7 +680,9 @@ pub(super) fn not_in_room(session_ref: &str, actor: EntityId) -> Error {
 }
 
 /// Decodes a MESSAGE body (the witness door's canonical encoding) and keeps
-/// it only when it is part of the visible transcript.
+/// it only when it is part of the visible transcript. Its result is as the
+/// MESSAGE says it, which a talk copy shows only as the room's marks stand
+/// when it is gathered; a reserved value that is no result is none.
 pub(super) fn visible_message(body: &[u8]) -> Result<Option<OffRecordTalkMessage>> {
     let malformed = || Error::InvariantViolation("an off-record MESSAGE body does not decode");
     let mut cursor = body;
@@ -646,13 +691,14 @@ pub(super) fn visible_message(body: &[u8]) -> Result<Option<OffRecordTalkMessage
     else {
         return Err(malformed());
     };
-    let (mut author, mut message_type, mut content, mut is_visible, mut order) =
-        (None, None, None, None, None);
+    let (mut author, mut message_type, mut content, mut metadata, mut is_visible, mut order) =
+        (None, None, None, None, None, None);
     for (key, value) in entries {
         match key.as_str() {
             Some("author") => author = value.as_str().map(str::to_owned),
             Some("type") => message_type = value.as_str().map(str::to_owned),
             Some("content") => content = value.as_str().map(str::to_owned),
+            Some("metadata") => metadata = Some(crate::serialize::msgpack_value_to_json(&value)),
             Some("is_visible") => is_visible = value.as_bool(),
             Some("order") => order = value.as_u64(),
             _ => {}
@@ -666,5 +712,8 @@ pub(super) fn visible_message(body: &[u8]) -> Result<Option<OffRecordTalkMessage
         message_type: message_type.ok_or_else(malformed)?,
         content: content.ok_or_else(malformed)?,
         order: order.ok_or_else(malformed)?,
+        result: MessageResultAttachment::from_metadata(metadata.as_ref())
+            .ok()
+            .flatten(),
     }))
 }

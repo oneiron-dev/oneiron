@@ -27,17 +27,13 @@ pub(super) fn evidence(request: &PdfPreparation<'_>) -> Result<([u8; 32], Vec<St
     let (mut previous, mut at) = ([0; 32], 0);
     let mut lines = Vec::new();
     for (i, (row, bytes)) in request.audit.iter().zip(encoded_rows).enumerate() {
+        // The actor and its user agent are kept whole, however long (Rule 5):
+        // the trail pages them.
         if row.sequence != i as u64
             || row.previous_sha256 != previous
             || row.at < at
             || row.actor.actor.is_empty()
-            || row.actor.actor.len() > 4096
             || row.actor.ip.as_ref().is_some_and(|v| v.len() > 256)
-            || row
-                .actor
-                .user_agent
-                .as_ref()
-                .is_some_and(|v| v.len() > 4096)
         {
             return Err(PdfPreparationError::InvalidEvidence);
         }

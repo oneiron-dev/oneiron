@@ -264,11 +264,15 @@ impl LimitsConfig {
             pack_script_output_bytes,
             pack_script_output_rows,
             judge_rubric_bytes,
+            maintenance_row_items,
+            maintenance_text_bytes,
+            maintenance_scan_rows,
             judge_instructions_bytes,
             judge_replay_text_bytes,
             contribution_judge_task_bytes,
             contribution_judge_answer_bytes,
             callable_nest_depth,
+            esign_pdf_bytes,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -334,6 +338,9 @@ impl LimitsConfig {
             (EngineLimit::PackScriptOutputBytes, pack_script_output_bytes),
             (EngineLimit::PackScriptOutputRows, pack_script_output_rows),
             (EngineLimit::JudgeRubricBytes, judge_rubric_bytes),
+            (EngineLimit::MaintenanceRowItems, maintenance_row_items),
+            (EngineLimit::MaintenanceTextBytes, maintenance_text_bytes),
+            (EngineLimit::MaintenanceScanRows, maintenance_scan_rows),
             (
                 EngineLimit::JudgeInstructionsBytes,
                 judge_instructions_bytes,
@@ -348,6 +355,7 @@ impl LimitsConfig {
                 contribution_judge_answer_bytes,
             ),
             (EngineLimit::CallableNestDepth, callable_nest_depth),
+            (EngineLimit::EsignPdfBytes, esign_pdf_bytes),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
@@ -483,9 +491,13 @@ pub(super) struct LimitsConfigOverride {
     pub(super) pack_script_output_bytes: Option<u64>,
     pub(super) pack_script_output_rows: Option<u64>,
     pub(super) judge_rubric_bytes: Option<u64>,
+    pub(super) maintenance_row_items: Option<u64>,
+    pub(super) maintenance_text_bytes: Option<u64>,
+    pub(super) maintenance_scan_rows: Option<u64>,
     pub(super) judge_instructions_bytes: Option<u64>,
     pub(super) judge_replay_text_bytes: Option<u64>,
     pub(super) contribution_judge_task_bytes: Option<u64>,
     pub(super) contribution_judge_answer_bytes: Option<u64>,
     pub(super) callable_nest_depth: Option<u64>,
+    pub(super) esign_pdf_bytes: Option<u64>,
 }

@@ -96,8 +96,9 @@ any XML parser runs. XLSX and PPTX ops take
 `{archive_bytes, entries, part_bytes, expanded_bytes, xml_depth, xml_nodes}`, checked before
 decompression and again after it. A package over a ceiling refuses as `invalid_document`.
 The PPTX comment ops take one `{max_archive_bytes, max_entries, max_part_bytes,
-max_expanded_bytes, max_author_name_bytes, max_xml_bytes, max_xml_attributes,
-max_xml_namespaces, max_xml_depth, max_xml_nodes}`: the package's ceilings, then each XML part's.
+max_expanded_bytes, max_xml_bytes, max_xml_attributes, max_xml_namespaces, max_xml_depth,
+max_xml_nodes}`: the package's ceilings, then each XML part's. A comment author's name has no
+bound of its own; it is attribute text inside those.
 How many edits one call carries is not bounded here. The vault measures a comment proposal's
 edits against its `[limits] pptx_comment_patches` row (10,000), asks past it, and serves the
 proposal whole.

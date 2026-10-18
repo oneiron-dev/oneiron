@@ -231,11 +231,15 @@ pub enum JudgeOutcomeLink {
         receipts: Vec<String>,
     },
     /// A named or live goal axis: the share of these receipts whose anchored
-    /// observation on the axis succeeded.
+    /// observation on the axis succeeded, measured under the goal revision
+    /// the question was asked under.
     Axis {
         skill: String,
         axis: String,
         receipts: Vec<String>,
+        /// The goal revision frozen with the question; `None` when it was
+        /// asked under no goal.
+        goal_revision: Option<String>,
     },
     /// An honesty finding: whether the run's sealed audit found a flaw its
     /// confession hid.
@@ -832,10 +836,12 @@ fn outcome_link(kind: &str, state: &Value) -> Option<JudgeOutcomeLink> {
         }),
         "live_axis" => {
             let case = state.get("case")?;
+            let axis = state.get("axis")?;
             Some(JudgeOutcomeLink::Axis {
                 skill: text(case, "skill")?,
-                axis: text(state.get("axis")?, "name")?,
+                axis: text(axis, "name")?,
                 receipts: receipts(case)?,
+                goal_revision: text(axis, "goal_revision"),
             })
         }
         "honesty" => Some(JudgeOutcomeLink::Audit {
@@ -855,6 +861,7 @@ fn outcome_link(kind: &str, state: &Value) -> Option<JudgeOutcomeLink> {
                 skill: text(state, "skill")?,
                 axis: axis.to_owned(),
                 receipts: receipts(state)?,
+                goal_revision: text(state, "goal_revision"),
             })
         }
     }
@@ -984,7 +991,9 @@ impl Anchors {
                 skill,
                 axis,
                 receipts,
-            } => axis_rate(vault, skill, axis, receipts)?.map(|rate| shaped(like, rate)),
+                goal_revision,
+            } => axis_rate(vault, skill, axis, goal_revision.as_deref(), receipts)?
+                .map(|rate| shaped(like, rate)),
             JudgeOutcomeLink::Audit { receipt } => {
                 hidden_flaw(vault, receipt)?.map(DecisionAnswer::Noul)
             }
@@ -1037,9 +1046,17 @@ impl Anchors {
 
 /// The share of `receipts` whose anchored observation on the skill's `axis`
 /// succeeded: a person's verdict, a world outcome or an audit, never a
-/// model's judgment. `None` until each receipt has one, and while two
-/// observations of one receipt disagree.
-fn axis_rate(vault: &Vault, skill: &str, axis: &str, receipts: &[String]) -> Result<Option<f64>> {
+/// model's judgment. Only an observation measured under `goal_revision`, the
+/// revision the question was asked under, counts: a renamed or redefined
+/// axis is another question. `None` until each receipt has one, and while
+/// two observations of one receipt disagree.
+fn axis_rate(
+    vault: &Vault,
+    skill: &str,
+    axis: &str,
+    goal_revision: Option<&str>,
+    receipts: &[String],
+) -> Result<Option<f64>> {
     let Ok(skill) = EntityId::from_hex(skill) else {
         return Ok(None);
     };
@@ -1062,6 +1079,7 @@ fn axis_rate(vault: &Vault, skill: &str, axis: &str, receipts: &[String]) -> Res
                 &txn,
                 &(*digest, receipt.clone()),
             )? && !row.on_judge_model
+                && row.goal_revision.as_deref() == goal_revision
                 && let Observation::Success(success) = row.observation
             {
                 seen.insert(success);

@@ -30,6 +30,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::NOTE_HEAD, CONTENT),
     (&t::NOTE_HEAD_DOC, CONTENT),
     (&t::NOTE_KIND, LIVE),
+    (&t::NOTE_OVERRIDE, CONTENT),
     (&t::NOTE_PROPOSAL_BUNDLE, CONTENT),
     (&t::NOTE_RECEIPT, CONTENT),
     (&t::NOTE_SEAL, CONTENT),

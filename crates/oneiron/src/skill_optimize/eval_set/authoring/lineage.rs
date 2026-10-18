@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::CandidateLabel;
 use crate::Vault;
-use crate::edit_distance::attribution::{amendment_evidence, amendment_judgments};
+use crate::edit_distance::attribution::amendments_by_attempt;
 use crate::edit_distance::delta::amendment_delta;
 use crate::edit_distance::reservoir::AMENDMENT_RECEIPT_ID_PREFIX;
 use crate::edit_distance::{ProposalArtifactRef, finalized_proposal_text};
@@ -16,7 +16,8 @@ use crate::error::Result;
 use crate::receipt::{FIELD_EXECUTOR_SEAT, ReceiptRecord};
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::skill_optimize::{
-    EvalLabelKind, EvalSeat, PreferredResponse, ResponsePairPick, response_pair_picks,
+    EvalLabelKind, EvalSeat, PreferredResponse, ResponsePairPick, model_role_seat,
+    response_pair_picks,
 };
 
 /// The root spelling of a TURN a candidate's text came from, as the training
@@ -69,28 +70,29 @@ pub(in crate::skill_optimize::eval_set) struct LineageReader {
 }
 
 impl LineageReader {
-    /// Reads the links. The judged amendments are the ledger's index of
-    /// amendment receipts; a verdict itself is never read as an outcome.
+    /// Reads the links. The amendments are the evidence ledger's grounded
+    /// attempt joins, judged or not: an unjudged but measured amendment
+    /// labels as a judged one does, and a judge's verdict never is the label.
     pub(in crate::skill_optimize::eval_set) fn read(vault: &Vault) -> Result<Self> {
         let mut amendments: BTreeMap<String, Vec<AmendmentLink>> = BTreeMap::new();
-        for judgment in amendment_judgments(vault)? {
-            let Some(artifact) = amendment_artifact(&judgment.receipt_id) else {
-                continue;
-            };
-            let Some(evidence) = amendment_evidence(vault, &judgment.receipt_id)? else {
-                continue;
-            };
-            let Some(attempt) = evidence.attempt_receipt else {
-                continue;
-            };
-            let outcome = amendment_delta(vault, &judgment.receipt_id)?
-                .map(|delta| if delta.d_norm > 0.0 { AMENDED } else { KEPT });
-            amendments.entry(attempt).or_default().push(AmendmentLink {
-                receipt: judgment.receipt_id,
-                artifact,
-                outcome,
-                at: evidence.at,
-            });
+        for (attempt, evidence) in amendments_by_attempt(vault)? {
+            let mut links = Vec::new();
+            for evidence in evidence {
+                let Some(artifact) = amendment_artifact(&evidence.receipt_id) else {
+                    continue;
+                };
+                let outcome = amendment_delta(vault, &evidence.receipt_id)?
+                    .map(|delta| if delta.d_norm > 0.0 { AMENDED } else { KEPT });
+                links.push(AmendmentLink {
+                    receipt: evidence.receipt_id,
+                    artifact,
+                    outcome,
+                    at: evidence.at,
+                });
+            }
+            if !links.is_empty() {
+                amendments.insert(attempt, links);
+            }
         }
         Ok(Self {
             amendments,
@@ -187,11 +189,17 @@ fn world_label(value: &str, reference: &str, at: u64) -> CandidateLabel {
     }
 }
 
-/// The seat a pack receipt records: the template seat its run was configured
-/// with (`executor_seat`, a `provider/name@revision` model id), less its
-/// revision, since a seat outlives its checkpoint. `None` when the receipt
-/// names none, or one no seat name can hold.
+/// The seat a pack receipt records: the role seat of the functional role its
+/// executor ran as (OF-578), the seat a training offer for that role reads.
+/// A receipt no role ran keeps the template seat its run was configured with
+/// (`executor_seat`, a `provider/name@revision` model id), less its revision,
+/// since a seat outlives its checkpoint. `None` when the receipt names
+/// neither, records a role it cannot decode, or names one no seat name can
+/// hold.
 pub(super) fn receipt_seat(receipt: &ReceiptRecord) -> Option<EvalSeat> {
+    if let Some(role) = receipt.executor_role().ok()? {
+        return Some(model_role_seat(role));
+    }
     let configured = receipt.fields.get(FIELD_EXECUTOR_SEAT)?;
     let model = configured
         .rsplit_once('@')
