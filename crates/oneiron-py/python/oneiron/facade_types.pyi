@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 655 facade rows, 2404 declarations.
-Inputs: 603 of 655 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 585 of 655 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 93; unread shapes: 0.
+Census: 669 facade rows, 2447 declarations.
+Inputs: 617 of 669 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 598 of 669 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 94; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -43,6 +43,76 @@ class ReportReceipt(TypedDict):
     duplicate_of: NotRequired[str | None]
     route: ReportRoute
     disclosure: ReportDisclosure
+FeedbackCategory = Literal["bug", "papercut", "confusion", "feature-wish"]
+class FeedbackPreviewRequest(TypedDict):
+    issue_ref: str
+    category: FeedbackCategory
+    include_text: NotRequired[bool]
+class FeedbackSubjectPreview(TypedDict):
+    issue_ref: str
+    subject_ref: str
+    publisher_ref: str
+    disclosure: ReportDisclosure
+    includes_text: bool
+    digest: str
+    encoding: str
+    bundle: Any
+    destination: str
+    approval: str
+    previewed_at: int
+class FeedbackSendSubjectRequest(TypedDict):
+    issue_ref: str
+    category: FeedbackCategory
+    include_text: NotRequired[bool]
+    digest: str
+    approval: str
+    previewed_at: int
+class FeedbackSubjectSent(TypedDict):
+    issue_ref: str
+    subject_ref: str
+    publisher_ref: str
+    digest: str
+    outcome: str
+    gate_reasons: list[str]
+    approval_receipt_ref: str
+    logical_send_ref: str
+ReportDisclosureChoice = Literal["approve_once", "stop_asking_for_publisher", "deny"]
+class ReportDisclosureRequest(TypedDict):
+    issue_ref: str
+    choice: ReportDisclosureChoice
+class ReportReview(TypedDict):
+    status: ReportStatus
+    quality_score: NotRequired[float | None]
+    duplicate_of: NotRequired[str | None]
+class ReportIssue(TypedDict):
+    issue_ref: str
+    actor_ref: str
+    request: ReportRequest
+    received_at: int
+    route: ReportRoute
+    review: ReportReview
+    disclosure: ReportDisclosure
+class ReportRouteRequest(TypedDict):
+    subject_ref: str
+    route: ReportRoute
+class ReportRouteReceipt(TypedDict):
+    subject_ref: str
+    route: ReportRoute
+    updated: bool
+class ReportOutboundRequest(TypedDict):
+    issue_ref: str
+class ReportSignatureView(TypedDict):
+    issue_ref: str
+    subject_hash: str
+    category: IssueCategory
+    kind: ReportKind
+class ReportPayloadView(TypedDict):
+    route: ReportRoute
+    signature: ReportSignatureView
+    disclosed: NotRequired[ReportRequest | None]
+class ReportOutboundView(TypedDict):
+    issue_ref: str
+    payload: NotRequired[ReportPayloadView | None]
 class ScratchpadRecallRequest(TypedDict):
     session_id: str
     query: str
@@ -4677,6 +4747,84 @@ class ResearchArchive(TypedDict):
     rounds: list[SelectionReceipt]
     promotions: list[PromotionBasis]
     incumbent: EntityId
+class ArchiveAxesProposal(TypedDict):
+    receipt: EntityId
+    descriptor: ArchiveDescriptor
+class CampaignArchiveInstall(TypedDict):
+    root: EntityId
+    task: EntityId
+    project: EntityId
+    goal_ref: EntityId
+    quality_metric: ArchiveQualityMetric
+    sample_outputs: list[ArchiveOutputRef]
+    proposal: ArchiveAxesProposal
+class ArchiveCellAxes(TypedDict):
+    kind: Literal["axes"]
+    bins: list[str]
+class ArchiveCellCluster(TypedDict):
+    kind: Literal["cluster"]
+    index: int
+ArchiveCell = ArchiveCellAxes | ArchiveCellCluster
+class CampaignArchiveBest(TypedDict):
+    cell: ArchiveCell
+    output: ArchiveOutputRef
+    score: float
+    placement_receipt: EntityId
+    scoring_receipt: EntityId
+class CampaignArchiveView(TypedDict):
+    descriptor_revision: str
+    pin: CampaignArchivePin
+    best: list[CampaignArchiveBest]
+    needs_axes_reproposal: bool
+class ArchiveCellJudgment(TypedDict):
+    receipt: EntityId
+    pin_version: str
+    output: ArchiveOutputRef
+    cell: ArchiveCell
+class CampaignArchivePlacementJudgment(TypedDict):
+    kind: Literal["judgment"]
+    judgment: ArchiveCellJudgment
+class CampaignArchivePlacementEmbedding(TypedDict):
+    kind: Literal["embedding"]
+    output: ArchiveOutputRef
+    receipt: EntityId
+    model_revision: str
+    embedding: list[float]
+CampaignArchivePlacement = CampaignArchivePlacementJudgment | CampaignArchivePlacementEmbedding
+class ArchiveOutputScore(TypedDict):
+    receipt: EntityId
+    pin_version: str
+    output: ArchiveOutputRef
+    quality: float
+class CampaignArchiveOutput(TypedDict):
+    root: EntityId
+    descriptor_revision: str
+    placement: CampaignArchivePlacement
+    score: ArchiveOutputScore
+class CampaignArchiveRequest(TypedDict):
+    root: EntityId
+class CampaignArchiveRecord(TypedDict):
+    project: EntityId
+    pin: CampaignArchivePin
+    placements: list[ArchiveCellJudgment]
+    scores: list[ArchiveOutputScore]
+class CampaignArchiveReproposal(TypedDict):
+    root: EntityId
+    new_root: EntityId
+    proposal: ArchiveAxesProposal
+class CampaignArchiveCoverage(TypedDict):
+    root: EntityId
+    candidate: EntityId
+    incumbent: EntityId
+    descriptor_revision: str
+    incumbent_outputs: list[ArchiveOutputRef]
+    candidate_outputs: list[ArchiveOutputRef]
+class CampaignArchiveAdmission(TypedDict):
+    descriptor_revision: str
+    candidate: EntityId
+    required_cells: list[ArchiveCell]
+    covered_cells: list[ArchiveCell]
+    admitted: bool
 class EvalInventoryWire(TypedDict):
     at: NotRequired[int | None]
 FamilyPurpose = Literal["development", "judge_audit", "sealed_confirmation"]
@@ -6664,6 +6812,57 @@ class CodeRunModelHealCountRequest(TypedDict):
 class CodeRunModelHealCountView(TypedDict):
     model_id: str
     healed_turns: int
+class CodeWaitTarget(TypedDict):
+    run_id: EntityId
+    wait_id: EntityId
+    generation: int
+    step_hash: str
+    effect_digest: str
+CodeWaitChoice = Literal["approve_once", "approve_and_stop_asking", "deny"]
+class CodeWaitResolveRequest(TypedDict):
+    target: CodeWaitTarget
+    answer: CodeWaitChoice
+    word_ref: EntityId
+CodeWaitState = Literal["waiting", "settling", "settled", "consumed"]
+class CodeWaitAnswerView(TypedDict):
+    answer: CodeWaitChoice
+    word_ref: EntityId
+    decision_ref: str
+    answered_at_ms: int
+CodeWaitSettleOutcome = Literal["delivered", "refused", "delivery_unknown"]
+class CodeWaitLedgerLinks(TypedDict):
+    prior_ref: NotRequired[str | None]
+    word_ref: NotRequired[EntityId | None]
+    facts_digest: str
+class CodeWaitSettlementView(TypedDict):
+    receipt_ref: str
+    outcome: CodeWaitSettleOutcome
+    reason_codes: list[str]
+    settled_at_ms: int
+    ledger: NotRequired[CodeWaitLedgerLinks | None]
+class CodeWaitConsumptionView(TypedDict):
+    receipt_ref: str
+    step: int
+    resumed_path: str
+    result_handle: str
+    consumed_at_ms: int
+    ledger: NotRequired[CodeWaitLedgerLinks | None]
+class CodeWaitReceiptView(TypedDict):
+    target: CodeWaitTarget
+    state: CodeWaitState
+    verb: str
+    connector: str
+    tool: str
+    hold_reasons: list[str]
+    ask_ref: NotRequired[EntityId | None]
+    allowed_answers: list[CodeWaitChoice]
+    answer: NotRequired[CodeWaitAnswerView | None]
+    settlement: NotRequired[CodeWaitSettlementView | None]
+    consumption: NotRequired[CodeWaitConsumptionView | None]
+    already_answered: bool
+class CodeWaitReceiptRequest(TypedDict):
+    run_id: EntityId
+    wait_id: EntityId
 class ResultRunRequest(TypedDict):
     run_id: EntityId
 class ResultEffectRecord(TypedDict):
@@ -7324,6 +7523,35 @@ class PlannedSpawnObservation(TypedDict):
     critics: list[CriticObservation]
     learning: list[LearningObservation]
     issues: list[ObservationIssue]
+class SpawnAskKnobSeed(TypedDict, Generic[T]):
+    mode: Literal["seed"]
+    value: T
+    weight_runs: float
+class SpawnAskKnobPin(TypedDict, Generic[T]):
+    mode: Literal["pin"]
+    value: T
+SpawnAskKnob = SpawnAskKnobSeed[T] | SpawnAskKnobPin[T]
+class SpawnIntentRequest(TypedDict):
+    intent_key: str
+    prompt: str
+    requested_type: NotRequired[TypeStamp | None]
+    need: str
+    care: NotRequired[str | None]
+    notes: NotRequired[str | None]
+    model: NotRequired[SpawnAskKnob[str] | None]
+    width: NotRequired[SpawnAskKnob[int] | None]
+    pattern: NotRequired[SpawnAskKnob[str] | None]
+    budget_cap_units: NotRequired[SpawnAskKnob[int] | None]
+class SpawnIntentReply(TypedDict):
+    intent_key: str
+    phase: SpawnPhase
+    placed: NotRequired[TypeStamp | None]
+    refusal: NotRequired[str | None]
+    root_attempt: NotRequired[EntityId | None]
+    member_attempts: list[EntityId]
+    team_ref: NotRequired[str | None]
+    agent_def_ref: NotRequired[EntityId | None]
+    plan: NotRequired[PlanObservation | None]
 class CancelForceRequest(TypedDict):
     task_ref: EntityId
     reason: NotRequired[str | None]

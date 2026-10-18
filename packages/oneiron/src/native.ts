@@ -31,6 +31,11 @@ import type {
 export interface NativeClient {
 // BEGIN GENERATED AGENT VERBS
 report(input: unknown): unknown
+feedbackPreview(input: unknown): unknown
+feedbackSend(input: unknown): unknown
+vaultReportsDisclosure(input: unknown): unknown
+vaultReportsRoute(input: unknown): unknown
+vaultReportsOutbound(input: unknown): unknown
 selfFocusScratchpadRecall(input: unknown): unknown
 selfFocusScratchpadAppend(input: unknown): unknown
 selfFocusScratchpadSeal(input: unknown): unknown
@@ -244,6 +249,12 @@ vaultRecordsErasePreview(input: unknown): unknown
 vaultRecordsEraseConfirm(input: unknown): unknown
 vaultResearchCreateChild(input: unknown): unknown
 vaultResearchArchive(input: unknown): unknown
+vaultResearchArchiveInstall(input: unknown): unknown
+vaultResearchArchiveRecord(input: unknown): unknown
+vaultResearchArchiveGet(input: unknown): unknown
+vaultResearchArchiveBest(input: unknown): unknown
+vaultResearchArchiveRepropose(input: unknown): unknown
+vaultResearchArchiveCoverage(input: unknown): unknown
 vaultEvalsInventory(input: unknown): unknown
 vaultEvalsCohortsSetup(input: unknown): unknown
 vaultResearchBind(input: unknown): unknown
@@ -368,6 +379,8 @@ vaultCodeSymbolsRelease(input: unknown): unknown
 vaultCodeProposalSubmit(input: unknown): unknown
 vaultCodeOplog(input: unknown): unknown
 vaultCodeModelHealCount(input: unknown): unknown
+vaultCodeWaitsResolve(input: unknown): unknown
+vaultCodeWaitsReceipt(input: unknown): unknown
 vaultResultsStatus(input: unknown): unknown
 vaultResultsRecover(input: unknown): unknown
 vaultResultsRead(input: unknown): unknown
@@ -407,6 +420,7 @@ vaultWorkflowsStatus(input: unknown): unknown
 vaultTaskTypesPin(input: unknown): unknown
 vaultTaskTypesGet(input: unknown): unknown
 vaultAgentsSpawnGet(input: unknown): unknown
+vaultAgentsSpawn(input: unknown): unknown
 vaultTasksCancelForce(input: unknown): unknown
 vaultRunsBranchesGet(input: unknown): unknown
 vaultConsultsGet(input: unknown): unknown

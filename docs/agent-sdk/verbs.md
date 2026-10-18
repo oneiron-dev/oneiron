@@ -7,6 +7,11 @@ Names are stable: a new export or rename must update the engine catalog,
 both bindings and their export-census tests in one change.
 
 - `report`
+- `feedback.preview`
+- `feedback.send`
+- `vault.reports.disclosure`
+- `vault.reports.route`
+- `vault.reports.outbound`
 - `self.focus.scratchpad.recall`
 - `self.focus.scratchpad.append`
 - `self.focus.scratchpad.seal`
@@ -220,6 +225,12 @@ both bindings and their export-census tests in one change.
 - `vault.records.erase_confirm`
 - `vault.research.create_child`
 - `vault.research.archive`
+- `vault.research.archive.install`
+- `vault.research.archive.record`
+- `vault.research.archive.get`
+- `vault.research.archive.best`
+- `vault.research.archive.repropose`
+- `vault.research.archive.coverage`
 - `vault.evals.inventory`
 - `vault.evals.cohorts.setup`
 - `vault.research.bind`
@@ -344,6 +355,8 @@ both bindings and their export-census tests in one change.
 - `vault.code.proposal_submit`
 - `vault.code.oplog`
 - `vault.code.model_heal_count`
+- `vault.code.waits.resolve`
+- `vault.code.waits.receipt`
 - `vault.results.status`
 - `vault.results.recover`
 - `vault.results.read`
@@ -383,6 +396,7 @@ both bindings and their export-census tests in one change.
 - `vault.task_types.pin`
 - `vault.task_types.get`
 - `vault.agents.spawn.get`
+- `vault.agents.spawn`
 - `vault.tasks.cancel_force`
 - `vault.runs.branches.get`
 - `vault.consults.get`

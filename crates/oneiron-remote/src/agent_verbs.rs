@@ -38,6 +38,21 @@ impl OneironClient {
                 "report" => remote_agent_verb_output::<oneiron::feedback::ReportReceipt>(
                     client, verb, &input,
                 ),
+                "feedback.preview" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::FeedbackSubjectPreview,
+                >(client, verb, &input),
+                "feedback.send" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::FeedbackSubjectSent,
+                >(client, verb, &input),
+                "vault.reports.disclosure" => {
+                    remote_agent_verb_output::<oneiron::feedback::ReportIssue>(client, verb, &input)
+                }
+                "vault.reports.route" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ReportRouteReceipt,
+                >(client, verb, &input),
+                "vault.reports.outbound" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ReportOutboundView,
+                >(client, verb, &input),
                 "self.focus.scratchpad.recall" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ScratchpadRecallReply,
                 >(client, verb, &input),
@@ -701,6 +716,24 @@ impl OneironClient {
                 "vault.research.archive" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ResearchArchive,
                 >(client, verb, &input),
+                "vault.research.archive.install" => remote_agent_verb_output::<
+                    oneiron::autoreason_campaign::archive::CampaignArchiveView,
+                >(client, verb, &input),
+                "vault.research.archive.record" => remote_agent_verb_output::<
+                    oneiron::autoreason_campaign::archive::CampaignArchiveView,
+                >(client, verb, &input),
+                "vault.research.archive.get" => remote_agent_verb_output::<
+                    oneiron::autoreason_campaign::archive::CampaignArchiveRecord,
+                >(client, verb, &input),
+                "vault.research.archive.best" => remote_agent_verb_output::<
+                    oneiron::autoreason_campaign::archive::CampaignArchiveView,
+                >(client, verb, &input),
+                "vault.research.archive.repropose" => remote_agent_verb_output::<
+                    oneiron::autoreason_campaign::archive::CampaignArchiveView,
+                >(client, verb, &input),
+                "vault.research.archive.coverage" => remote_agent_verb_output::<
+                    oneiron::autoreason_campaign::archive::CampaignArchiveAdmission,
+                >(client, verb, &input),
                 "vault.evals.inventory" => remote_agent_verb_output::<
                     oneiron::skill_optimize::EvalAuthoringInventory,
                 >(client, verb, &input),
@@ -1083,6 +1116,12 @@ impl OneironClient {
                 "vault.code.model_heal_count" => remote_agent_verb_output::<
                     oneiron::memory::code_run_doors::CodeRunModelHealCountView,
                 >(client, verb, &input),
+                "vault.code.waits.resolve" => remote_agent_verb_output::<
+                    oneiron::memory::code_wait_doors::CodeWaitReceiptView,
+                >(client, verb, &input),
+                "vault.code.waits.receipt" => remote_agent_verb_output::<
+                    Option<oneiron::memory::code_wait_doors::CodeWaitReceiptView>,
+                >(client, verb, &input),
                 "vault.results.status" => remote_agent_verb_output::<
                     oneiron::memory::result_doors::ResultRunStatus,
                 >(client, verb, &input),
@@ -1201,6 +1240,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.agents.spawn.get" => remote_agent_verb_output::<
                     oneiron::team::doors::PlannedSpawnObservation,
+                >(client, verb, &input),
+                "vault.agents.spawn" => remote_agent_verb_output::<
+                    oneiron::team::doors::SpawnIntentReply,
                 >(client, verb, &input),
                 "vault.tasks.cancel_force" => remote_agent_verb_output::<
                     oneiron::task_verb::run_doors::CancelForceReceipt,
@@ -2090,6 +2132,66 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("report", value)
+    }
+    pub fn feedback_preview(
+        &self,
+        input: &oneiron::task_verb::sdk::FeedbackPreviewRequest,
+    ) -> Result<oneiron::task_verb::sdk::FeedbackSubjectPreview, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("feedback.preview", value)
+    }
+    pub fn feedback_send(
+        &self,
+        input: &oneiron::task_verb::sdk::FeedbackSendSubjectRequest,
+    ) -> Result<oneiron::task_verb::sdk::FeedbackSubjectSent, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("feedback.send", value)
+    }
+    pub fn vault_reports_disclosure(
+        &self,
+        input: &oneiron::task_verb::sdk::ReportDisclosureRequest,
+    ) -> Result<oneiron::feedback::ReportIssue, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.reports.disclosure", value)
+    }
+    pub fn vault_reports_route(
+        &self,
+        input: &oneiron::task_verb::sdk::ReportRouteRequest,
+    ) -> Result<oneiron::task_verb::sdk::ReportRouteReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.reports.route", value)
+    }
+    pub fn vault_reports_outbound(
+        &self,
+        input: &oneiron::task_verb::sdk::ReportOutboundRequest,
+    ) -> Result<oneiron::task_verb::sdk::ReportOutboundView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.reports.outbound", value)
     }
     pub fn self_focus_scratchpad_recall(
         &self,
@@ -4737,6 +4839,78 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.research.archive", value)
     }
+    pub fn vault_research_archive_install(
+        &self,
+        input: &oneiron::autoreason_campaign::archive::CampaignArchiveInstall,
+    ) -> Result<oneiron::autoreason_campaign::archive::CampaignArchiveView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.research.archive.install", value)
+    }
+    pub fn vault_research_archive_record(
+        &self,
+        input: &oneiron::autoreason_campaign::archive::CampaignArchiveOutput,
+    ) -> Result<oneiron::autoreason_campaign::archive::CampaignArchiveView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.research.archive.record", value)
+    }
+    pub fn vault_research_archive_get(
+        &self,
+        input: &oneiron::autoreason_campaign::archive::CampaignArchiveRequest,
+    ) -> Result<oneiron::autoreason_campaign::archive::CampaignArchiveRecord, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.research.archive.get", value)
+    }
+    pub fn vault_research_archive_best(
+        &self,
+        input: &oneiron::autoreason_campaign::archive::CampaignArchiveRequest,
+    ) -> Result<oneiron::autoreason_campaign::archive::CampaignArchiveView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.research.archive.best", value)
+    }
+    pub fn vault_research_archive_repropose(
+        &self,
+        input: &oneiron::autoreason_campaign::archive::CampaignArchiveReproposal,
+    ) -> Result<oneiron::autoreason_campaign::archive::CampaignArchiveView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.research.archive.repropose", value)
+    }
+    pub fn vault_research_archive_coverage(
+        &self,
+        input: &oneiron::autoreason_campaign::archive::CampaignArchiveCoverage,
+    ) -> Result<oneiron::autoreason_campaign::archive::CampaignArchiveAdmission, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.research.archive.coverage", value)
+    }
     pub fn vault_evals_inventory(
         &self,
         input: &oneiron::task_verb::sdk::EvalInventoryWire,
@@ -6242,6 +6416,30 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.code.model_heal_count", value)
     }
+    pub fn vault_code_waits_resolve(
+        &self,
+        input: &oneiron::memory::code_wait_doors::CodeWaitResolveRequest,
+    ) -> Result<oneiron::memory::code_wait_doors::CodeWaitReceiptView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.waits.resolve", value)
+    }
+    pub fn vault_code_waits_receipt(
+        &self,
+        input: &oneiron::memory::code_wait_doors::CodeWaitReceiptRequest,
+    ) -> Result<Option<oneiron::memory::code_wait_doors::CodeWaitReceiptView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.waits.receipt", value)
+    }
     pub fn vault_results_status(
         &self,
         input: &oneiron::memory::result_doors::ResultRunRequest,
@@ -6711,6 +6909,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.agents.spawn.get", value)
+    }
+    pub fn vault_agents_spawn(
+        &self,
+        input: &oneiron::team::doors::SpawnIntentRequest,
+    ) -> Result<oneiron::team::doors::SpawnIntentReply, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.agents.spawn", value)
     }
     pub fn vault_tasks_cancel_force(
         &self,
