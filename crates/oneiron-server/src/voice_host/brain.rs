@@ -124,7 +124,11 @@ struct Memories {
 
 /// What a turn's memories read gives: the memories heard, what the read
 /// found, heard and withheld, and the live speakers of the call's room.
-type TurnRead = (Option<Memories>, Option<TurnMemories>, Option<RoomLiveSpeakerEntries>);
+type TurnRead = (
+    Option<Memories>,
+    Option<TurnMemories>,
+    Option<RoomLiveSpeakerEntries>,
+);
 
 impl ChatBrain {
     /// A server with no chat seat refuses.

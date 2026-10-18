@@ -187,10 +187,7 @@ impl Memory<'_> {
         // it derives from, every one of them; a non-person's
         // text that derives from none names no input, so it has no birth.
         let birth = if type_byte == ENTITY_TYPE_ASSET_TEXT {
-            let inputs: Vec<_> = sources
-                .iter()
-                .map(|(source, _)| *source)
-                .collect();
+            let inputs: Vec<_> = sources.iter().map(|(source, _)| *source).collect();
             RowBirth::written(
                 WriteActor::new(self.actor, self.actor_class),
                 MadeByClass::of_writer(self.actor_class),

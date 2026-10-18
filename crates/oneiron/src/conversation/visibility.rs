@@ -146,9 +146,7 @@ impl AudienceCache {
                 }
                 Err(error) => return Err(error),
             }
-            if crate::workspace_roster::project_room_audience_in(vault, txn, room, &[])?
-                .is_some()
-            {
+            if crate::workspace_roster::project_room_audience_in(vault, txn, room, &[])?.is_some() {
                 if !project_audience_readable_in(vault, txn, room, audience, h.occurred_start)? {
                     return Ok(false);
                 }
