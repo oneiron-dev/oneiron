@@ -58,6 +58,15 @@ describe(input: unknown): unknown
 tasksCreate(input: unknown): unknown
 tasksWave(input: unknown): unknown
 vaultFanoutLaunch(input: unknown): unknown
+selfBudget(input: unknown): unknown
+selfBudgetLand(input: unknown): unknown
+vaultBudgetsLeaseOpen(input: unknown): unknown
+vaultBudgetsLease(input: unknown): unknown
+vaultBudgetsLeaseTopUp(input: unknown): unknown
+vaultBudgetsHold(input: unknown): unknown
+vaultBudgetsHoldResume(input: unknown): unknown
+vaultBudgetsLocal(input: unknown): unknown
+vaultBudgetsSettlements(input: unknown): unknown
 vaultFanoutResume(input: unknown): unknown
 vaultFanoutResumeAs(input: unknown): unknown
 vaultFanoutAck(input: unknown): unknown
@@ -201,6 +210,8 @@ vaultSecretsLiftHistory(input: unknown): unknown
 vaultWidenProposals(input: unknown): unknown
 vaultWidenProposalsApprove(input: unknown): unknown
 vaultWidenProposalsDecline(input: unknown): unknown
+vaultClaimsReview(input: unknown): unknown
+vaultClaimsSettle(input: unknown): unknown
 vaultCraftCandidates(input: unknown): unknown
 vaultCraftCandidatesAnswer(input: unknown): unknown
 vaultSettingsWakePolicySet(input: unknown): unknown
@@ -325,6 +336,7 @@ vaultBookingPageToken(input: unknown): unknown
 vaultCalendarRead(input: unknown): unknown
 vaultCalendarSearch(input: unknown): unknown
 vaultCalendarFreebusy(input: unknown): unknown
+vaultCalendarTranscriptIngest(input: unknown): unknown
 vaultClaimsList(input: unknown): unknown
 vaultClaimsHistory(input: unknown): unknown
 vaultDelete(input: unknown): unknown
@@ -406,6 +418,13 @@ vaultNotesDefaults(requestJson: string): string
 vaultTasksLinearMapping(input: unknown): unknown
 vaultTasksLinearMappingEdit(input: unknown): unknown
 vaultTasksLinearProvenance(input: unknown): unknown
+selfRunAttach(input: unknown): unknown
+selfFoldsDescribe(input: unknown): unknown
+selfHistory(input: unknown): unknown
+selfFold(input: unknown): unknown
+selfCompact(input: unknown): unknown
+selfUnfold(input: unknown): unknown
+selfFolds(input: unknown): unknown
 selfAgentsSpawn(input: unknown): unknown
 selfLeaderSplit(input: unknown): unknown
 // END GENERATED AGENT VERBS

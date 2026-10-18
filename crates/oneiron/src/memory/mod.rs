@@ -29,8 +29,8 @@ mod asset_resolve;
 mod authorship;
 mod birth_position;
 mod booking;
-mod claim_conflict;
 mod claim_admission;
+mod claim_conflict;
 mod conflict_settle;
 mod diary_read;
 mod dreamer_revert;
@@ -40,8 +40,8 @@ pub(crate) use booking::booking_error;
 pub(crate) use outbound::facade_error_from_outbound_dispatch;
 pub(crate) mod booking_publication;
 mod campaign;
-pub mod channel_doors;
 pub mod caps;
+pub mod channel_doors;
 mod chat;
 mod claims;
 mod conversation_list;
@@ -70,8 +70,8 @@ mod recall;
 mod report;
 mod result_attachment;
 mod room_turn;
-mod shape_doors;
 mod scoped_export;
+mod shape_doors;
 mod structural;
 mod subscriptions;
 mod support;
@@ -101,14 +101,19 @@ pub use chat::{
     ChatAbstentionReason, ChatComposeRequest, ChatComposer, ChatDepth, ChatOptions, ChatResponse,
     ChatScope, ComposedChatAnswer,
 };
+pub use claim_admission::{
+    AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput, ScopedCommitRequest,
+};
 pub(crate) use claim_conflict::claim_conflict_ruling_gate_refs_in_txn;
 pub use claim_conflict::{
     ClaimConflictBundle, ClaimConflictMember, ClaimConflictQuestion, ClaimConflictReceipt,
 };
-pub use claim_admission::{AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput, ScopedCommitRequest};
 pub use claims::{
-    ClaimInput, CommitOutcome, CommitReceipt, DeleteReceipt, MULTI_CARDINALITY_PREDICATES,
-    MemoryReceipt, PendingWrite, RecordRefusal, RefusalReason, SafeDeleteReason,
+    ClaimChangeVerdict, ClaimInput, ClaimProposalReview, ClaimProposalReviewRequest,
+    ClaimSettleDecision, ClaimSettleRequest, ClaimSettlement, ClaimSettlementAnswer,
+    ClaimSettlementReason, ClaimSettlementRevert, ClaimSettlementVerdict, CommitOutcome,
+    CommitReceipt, DeleteReceipt, MULTI_CARDINALITY_PREDICATES, MemoryReceipt, PendingWrite,
+    RecordRefusal, RefusalReason, SafeDeleteReason,
 };
 pub use conversation_list::{ConversationListFilter, ConversationListPage, ConversationListRow};
 pub use diary_read::{
@@ -172,6 +177,11 @@ pub use result_attachment::{
     MESSAGE_RESULT_METADATA_KEY, MessageResultAttachment, MessageResultSource,
 };
 pub use room_turn::RoomTurnHandle;
+pub use scoped_export::{
+    ChannelCeiling, CredentialCeiling, ExportChannel, RecordPosition, RecordSelector,
+    ScopeAxisInput, ScopeSensitivityBand, ScopeSensitivityInput, ScopedExport, ScopedExportRecord,
+    ScopedExportRequest,
+};
 pub use skill_authoring::SkillAuthoringReceipt;
 pub(crate) use skill_authoring::{skill_author_in_txn, skill_author_proof_is_live_in_txn};
 pub(crate) use structural::append_agent_diary_in_txn;
@@ -179,7 +189,6 @@ pub use structural::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, EntityRefReceipt, EntityView,
     HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput, TextIndexField,
 };
-pub use scoped_export::{ChannelCeiling, CredentialCeiling, ExportChannel, RecordPosition, RecordSelector, ScopeAxisInput, ScopeSensitivityBand, ScopeSensitivityInput, ScopedExport, ScopedExportRecord, ScopedExportRequest};
 pub use subscriptions::{MemorySubscriptionOwner, ScopedView};
 pub use support::{HostWriteOrigin, Memory, RewriteAdmit, parse_actor_key, resolve_entity_ref};
 pub use transcript::{

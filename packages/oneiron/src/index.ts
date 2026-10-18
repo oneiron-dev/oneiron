@@ -287,6 +287,11 @@ export class Oneiron {
       /** Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it. */
       ask: (input: Facade.GrantAskRequest): Facade.GrantAskReceipt => this.#call(() => this.#client.selfGrantsAsk(input) as Facade.GrantAskReceipt),
     },
+    /** The caller's own dispatched attempt: its persisted spend allowance, landing reserve, checkpoint and saved hold, without substituting a token meter for money. */
+    budget: Object.assign((input: Facade.SelfBudgetRequest): Facade.AgentBudgetView => this.#call(() => this.#client.selfBudget(input) as Facade.AgentBudgetView), {
+      /** The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later. */
+      land: (input: Facade.BudgetLandRequest): Facade.PartialResultHold => this.#call(() => this.#client.selfBudgetLand(input) as Facade.PartialResultHold),
+    }),
     /** Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value. */
     use: (input: Facade.SecretUseRequest): Facade.SecretUseAnswer => this.#call(() => this.#client.selfUse(input) as Facade.SecretUseAnswer),
     skills: {
@@ -300,6 +305,23 @@ export class Oneiron {
     decisions: {
       asks: (input: Facade.EmptyRequest = {}): Facade.DecisionAsk[] => this.#call(() => this.#client.selfDecisionsAsks(input) as Facade.DecisionAsk[]),
     },
+    run: {
+      /** Attaches the caller's own credential to its leased live run and returns the handle required by the public fold and history calls. */
+      attach: (input: Facade.RunAttachRequest): Facade.RunAttached => this.#call(() => this.#client.selfRunAttach(input) as Facade.RunAttached),
+    },
+    /** Lists the attached run's landed folds, pending marks and outstanding compact ask. */
+    folds: Object.assign((input: Facade.FoldRunRequest): Facade.FoldReply<Facade.FoldList> => this.#call(() => this.#client.selfFolds(input) as Facade.FoldReply<Facade.FoldList>), {
+      /** Reads one pending mark or landed fold of the attached run, with its Generated stub, source ids and retained result handles. */
+      describe: (input: Facade.FoldUnfoldRequest): Facade.FoldReply<Facade.FoldDescription> => this.#call(() => this.#client.selfFoldsDescribe(input) as Facade.FoldReply<Facade.FoldDescription>),
+    }),
+    /** Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled. */
+    history: (input: Facade.FoldHistoryRequest): Facade.FoldHistory => this.#call(() => this.#client.selfHistory(input) as Facade.FoldHistory),
+    /** Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands. */
+    fold: (input: Facade.FoldMarkRequest): Facade.FoldReply<Facade.FoldMarked> => this.#call(() => this.#client.selfFold(input) as Facade.FoldReply<Facade.FoldMarked>),
+    /** Asks the attached run to fold its pending marks in one batch at its next step boundary; read self.history for landed folds and epochs. */
+    compact: (input: Facade.FoldCompactRequest): Facade.FoldReply<Facade.FoldCompactAsked> => this.#call(() => this.#client.selfCompact(input) as Facade.FoldReply<Facade.FoldCompactAsked>),
+    /** Appends a fold of the attached run after its current tail, without replacing the earlier stub. */
+    unfold: (input: Facade.FoldUnfoldRequest): Facade.FoldReply<Facade.FoldUnfolded> => this.#call(() => this.#client.selfUnfold(input) as Facade.FoldReply<Facade.FoldUnfolded>),
     agents: {
       /** Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity. */
       spawn: (input: Facade.LiveRunRequest<Facade.AgentSpawnInput>): Facade.AgentSpawnOutput => this.#call(() => this.#client.selfAgentsSpawn(input) as Facade.AgentSpawnOutput),
@@ -334,6 +356,24 @@ export class Oneiron {
       /** The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied. */
       ack: (input: Facade.FanoutAckRequest): Facade.FanoutLaunchView => this.#call(() => this.#client.vaultFanoutAck(input) as Facade.FanoutLaunchView),
     },
+    budgets: {
+      /** The owner reads a persisted spend lease, its remaining allowance and the hard ancestor that binds it. */
+      lease: Object.assign((input: Facade.SpendScopeRequest): Facade.SpendLeaseView => this.#call(() => this.#client.vaultBudgetsLease(input) as Facade.SpendLeaseView), {
+        /** The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit. */
+        open: (input: Facade.OpenSpendLeaseRequest): Facade.SpendLeaseView => this.#call(() => this.#client.vaultBudgetsLeaseOpen(input) as Facade.SpendLeaseView),
+        /** The owner raises a hard lease to a shown replacement maximum; replay adds nothing twice and a child's increase stays within its ancestor's cap. */
+        top_up: (input: Facade.TopUpSpendLeaseRequest): Facade.SpendLeaseView => this.#call(() => this.#client.vaultBudgetsLeaseTopUp(input) as Facade.SpendLeaseView),
+      }),
+      /** The owner reads a held run's notice, saved partial results, exact checkpoints and whether its existing lease permits resume. */
+      hold: Object.assign((input: Facade.BudgetHoldRequest): Facade.PartialResultHold | null => this.#call(() => this.#client.vaultBudgetsHold(input) as Facade.PartialResultHold | null), {
+        /** The owner resumes the same held attempts from their checkpoints after their lease has funds; no model substitution or terminal completion. */
+        resume: (input: Facade.BudgetHoldRequest): Facade.PartialResultHold => this.#call(() => this.#client.vaultBudgetsHoldResume(input) as Facade.PartialResultHold),
+      }),
+      /** The owner observes a device-local runner budget counter without creating it, including absence after an owner restore. */
+      local: (input: Facade.LocalRunnerBudgetRequest): Facade.LocalRunnerBudgetView => this.#call(() => this.#client.vaultBudgetsLocal(input) as Facade.LocalRunnerBudgetView),
+      /** The owner reads a served run's persisted physical-rung settlement receipts, with reservation, settled units and stamped cost when priced. */
+      settlements: (input: Facade.RunSettlementsRequest): Facade.RunSettlementsView => this.#call(() => this.#client.vaultBudgetsSettlements(input) as Facade.RunSettlementsView),
+    },
     /**
    * Witnesses one conversational turn.
    *
@@ -344,6 +384,10 @@ export class Oneiron {
     claims: {
       /** Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance. */
       upsert: (input: Facade.ScopedClaimInput): Facade.CommitReceipt => this.#call(() => this.#client.vaultClaimsUpsert(input) as Facade.CommitReceipt),
+      /** The owner reviews one proposed claim: the claim as the owner may read it, its opener and tray row, and the review_id that settles exactly this content. */
+      review: (input: Facade.ClaimProposalReviewRequest): Facade.ClaimProposalReview => this.#call(() => this.#client.vaultClaimsReview(input) as Facade.ClaimProposalReview),
+      /** The owner approves or rejects exactly the reviewed proposed claim through the gate and keeps its Settlement; a claim changed since its review_id is refused. */
+      settle: (input: Facade.ClaimSettleRequest): Facade.ClaimSettlement => this.#call(() => this.#client.vaultClaimsSettle(input) as Facade.ClaimSettlement),
       /** Retracts one active claim: a deliberate withdrawal that preserves the record. */
       retract: (input: Facade.ClaimRefRequest): Facade.CommitReceipt => this.#call(() => this.#client.vaultClaimsRetract(input) as Facade.CommitReceipt),
       /** Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt. */
@@ -1027,6 +1071,10 @@ export class Oneiron {
       search: (input: Facade.CalendarSearchRequest): Facade.ScopedReadResult<Facade.CalendarEventView[]> => this.#call(() => this.#client.vaultCalendarSearch(input) as Facade.ScopedReadResult<Facade.CalendarEventView[]>),
       /** Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt. */
       freebusy: (input: Facade.CalendarFreebusyRequest): Facade.ScopedReadResult<Facade.CalendarFreebusyDto> => this.#call(() => this.#client.vaultCalendarFreebusy(input) as Facade.ScopedReadResult<Facade.CalendarFreebusyDto>),
+      transcript: {
+        /** Ingests an uploaded UTF-8 transcript as the caller, retaining source labels and atomically closing its SESSION with ordered TURNs and extraction wake receipts. */
+        ingest: (input: Facade.TranscriptFileDropInput): Facade.TranscriptIngestOutcome => this.#call(() => this.#client.vaultCalendarTranscriptIngest(input) as Facade.TranscriptIngestOutcome),
+      },
     },
     /** Deletes one entity under a named reason; an owner verb that only a verified human may call. */
     delete: (input: Facade.SafeDeleteRequest): Facade.DeleteReceipt => this.#call(() => this.#client.vaultDelete(input) as Facade.DeleteReceipt),

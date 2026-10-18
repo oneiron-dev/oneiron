@@ -346,6 +346,9 @@ class Oneiron:
         @property
         def grants(self) -> "Oneiron._SelfGrantsVerbs":
             return Oneiron._SelfGrantsVerbs(self._client)
+        @property
+        def budget(self) -> "Oneiron._SelfBudgetVerbs":
+            return Oneiron._SelfBudgetVerbs(self._client)
         def use(self, spec):
             """Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value."""
             return json.loads(_translate(lambda: self._client.self_use(json.dumps(spec))))
@@ -355,6 +358,24 @@ class Oneiron:
         @property
         def decisions(self) -> "Oneiron._SelfDecisionsVerbs":
             return Oneiron._SelfDecisionsVerbs(self._client)
+        @property
+        def run(self) -> "Oneiron._SelfRunVerbs":
+            return Oneiron._SelfRunVerbs(self._client)
+        @property
+        def folds(self) -> "Oneiron._SelfFoldsVerbs":
+            return Oneiron._SelfFoldsVerbs(self._client)
+        def history(self, spec):
+            """Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled."""
+            return json.loads(_translate(lambda: self._client.self_history(json.dumps(spec))))
+        def fold(self, spec):
+            """Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands."""
+            return json.loads(_translate(lambda: self._client.self_fold(json.dumps(spec))))
+        def compact(self, spec):
+            """Asks the attached run to fold its pending marks in one batch at its next step boundary; read self.history for landed folds and epochs."""
+            return json.loads(_translate(lambda: self._client.self_compact(json.dumps(spec))))
+        def unfold(self, spec):
+            """Appends a fold of the attached run after its current tail, without replacing the earlier stub."""
+            return json.loads(_translate(lambda: self._client.self_unfold(json.dumps(spec))))
         @property
         def agents(self) -> "Oneiron._SelfAgentsVerbs":
             return Oneiron._SelfAgentsVerbs(self._client)
@@ -436,6 +457,15 @@ class Oneiron:
         def ask(self, spec):
             """Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it."""
             return json.loads(_translate(lambda: self._client.self_grants_ask(json.dumps(spec))))
+    class _SelfBudgetVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """The caller's own dispatched attempt: its persisted spend allowance, landing reserve, checkpoint and saved hold, without substituting a token meter for money."""
+            return json.loads(_translate(lambda: self._client.self_budget(json.dumps(spec))))
+        def land(self, spec):
+            """The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later."""
+            return json.loads(_translate(lambda: self._client.self_budget_land(json.dumps(spec))))
     class _SelfSkillsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -453,6 +483,21 @@ class Oneiron:
             self._client = client
         def asks(self, spec=None):
             return json.loads(_translate(lambda: self._client.self_decisions_asks(json.dumps({} if spec is None else spec))))
+    class _SelfRunVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def attach(self, spec):
+            """Attaches the caller's own credential to its leased live run and returns the handle required by the public fold and history calls."""
+            return json.loads(_translate(lambda: self._client.self_run_attach(json.dumps(spec))))
+    class _SelfFoldsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Lists the attached run's landed folds, pending marks and outstanding compact ask."""
+            return json.loads(_translate(lambda: self._client.self_folds(json.dumps(spec))))
+        def describe(self, spec):
+            """Reads one pending mark or landed fold of the attached run, with its Generated stub, source ids and retained result handles."""
+            return json.loads(_translate(lambda: self._client.self_folds_describe(json.dumps(spec))))
     class _SelfAgentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -477,6 +522,9 @@ class Oneiron:
         @property
         def fanout(self) -> "Oneiron._VaultFanoutVerbs":
             return Oneiron._VaultFanoutVerbs(self._client)
+        @property
+        def budgets(self) -> "Oneiron._VaultBudgetsVerbs":
+            return Oneiron._VaultBudgetsVerbs(self._client)
         def witness(self, turn: dict[str, Any]) -> dict[str, Any]:
             """Witnesses one conversational turn.
 
@@ -743,12 +791,54 @@ class Oneiron:
         def ack(self, spec):
             """The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied."""
             return json.loads(_translate(lambda: self._client.vault_fanout_ack(json.dumps(spec))))
+    class _VaultBudgetsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def lease(self) -> "Oneiron._VaultBudgetsLeaseVerbs":
+            return Oneiron._VaultBudgetsLeaseVerbs(self._client)
+        @property
+        def hold(self) -> "Oneiron._VaultBudgetsHoldVerbs":
+            return Oneiron._VaultBudgetsHoldVerbs(self._client)
+        def local(self, spec):
+            """The owner observes a device-local runner budget counter without creating it, including absence after an owner restore."""
+            return json.loads(_translate(lambda: self._client.vault_budgets_local(json.dumps(spec))))
+        def settlements(self, spec):
+            """The owner reads a served run's persisted physical-rung settlement receipts, with reservation, settled units and stamped cost when priced."""
+            return json.loads(_translate(lambda: self._client.vault_budgets_settlements(json.dumps(spec))))
+    class _VaultBudgetsLeaseVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """The owner reads a persisted spend lease, its remaining allowance and the hard ancestor that binds it."""
+            return json.loads(_translate(lambda: self._client.vault_budgets_lease(json.dumps(spec))))
+        def open(self, spec):
+            """The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit."""
+            return json.loads(_translate(lambda: self._client.vault_budgets_lease_open(json.dumps(spec))))
+        def top_up(self, spec):
+            """The owner raises a hard lease to a shown replacement maximum; replay adds nothing twice and a child's increase stays within its ancestor's cap."""
+            return json.loads(_translate(lambda: self._client.vault_budgets_lease_top_up(json.dumps(spec))))
+    class _VaultBudgetsHoldVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """The owner reads a held run's notice, saved partial results, exact checkpoints and whether its existing lease permits resume."""
+            return json.loads(_translate(lambda: self._client.vault_budgets_hold(json.dumps(spec))))
+        def resume(self, spec):
+            """The owner resumes the same held attempts from their checkpoints after their lease has funds; no model substitution or terminal completion."""
+            return json.loads(_translate(lambda: self._client.vault_budgets_hold_resume(json.dumps(spec))))
     class _VaultClaimsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def upsert(self, spec):
             """Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance."""
             return json.loads(_translate(lambda: self._client.vault_claims_upsert(json.dumps(spec))))
+        def review(self, spec):
+            """The owner reviews one proposed claim: the claim as the owner may read it, its opener and tray row, and the review_id that settles exactly this content."""
+            return json.loads(_translate(lambda: self._client.vault_claims_review(json.dumps(spec))))
+        def settle(self, spec):
+            """The owner approves or rejects exactly the reviewed proposed claim through the gate and keeps its Settlement; a claim changed since its review_id is refused."""
+            return json.loads(_translate(lambda: self._client.vault_claims_settle(json.dumps(spec))))
         def retract(self, input: dict[str, Any]) -> Any:
             """Retracts one active claim: a deliberate withdrawal that preserves the record."""
             return json.loads(_translate(lambda: self._client.vault_claims_retract(json.dumps(input, allow_nan=False))))
@@ -1862,6 +1952,15 @@ class Oneiron:
         def freebusy(self, spec):
             """Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt."""
             return json.loads(_translate(lambda: self._client.vault_calendar_freebusy(json.dumps(spec))))
+        @property
+        def transcript(self) -> "Oneiron._VaultCalendarTranscriptVerbs":
+            return Oneiron._VaultCalendarTranscriptVerbs(self._client)
+    class _VaultCalendarTranscriptVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def ingest(self, spec):
+            """Ingests an uploaded UTF-8 transcript as the caller, retaining source labels and atomically closing its SESSION with ordered TURNs and extraction wake receipts."""
+            return json.loads(_translate(lambda: self._client.vault_calendar_transcript_ingest(json.dumps(spec))))
     class _VaultWritesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

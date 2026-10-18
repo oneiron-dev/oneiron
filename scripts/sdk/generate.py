@@ -17,13 +17,17 @@ MANIFEST = json.loads((Path(__file__).with_name('agent-verbs.json')).read_text()
 # keeps the run's own input and binding. The name, scope and reply stay one row.
 HOST_RUN_ROWS = [row for row in MANIFEST['verbs'] if 'host' in row]
 for row in HOST_RUN_ROWS:
-    if row.get('context') != 'run' or set(row['host']) != {'input', 'description'}:
-        raise ValueError(f'{row["name"]}: a host projection names the run row public input and description')
+    host = row['host']
+    if (row.get('context') != 'run' or not {'input', 'description'} <= set(host)
+            or set(host) - {'input', 'description', 'host_door_caller', 'host_door_session'}
+            or any(not isinstance(host[key], bool) for key in ('host_door_caller', 'host_door_session') if key in host)):
+        raise ValueError(f'{row["name"]}: a host projection names the run row public input and description, with optional caller and session flags')
 ROWS = [row for row in MANIFEST['verbs'] if 'call' in row] + [
     {'name': row['name'], 'input': row['host']['input'], 'output': row['output'],
      'description': row['host']['description'], 'scope': row['scope'],
      'call': f'crate::task_verb::sdk::host_only(memory, "{row["name"]}", &input)?',
-     'host_door': True, 'host_door_session': True,
+     'host_door': True, 'host_door_session': row['host'].get('host_door_session', True),
+     'host_door_caller': row['host'].get('host_door_caller', False),
      'admission': {'unrestricted_record_scope': True}, 'section': False}
     for row in HOST_RUN_ROWS
 ]
@@ -123,6 +127,13 @@ for row in ROWS:
     if row.get('task_work') and (row.get('host_door') or row.get('server_door') or row.get('admission', {}).get('owner_grade')
                                  or 'rows' in row.get('admission', {}).get('readable', []) or row.get('context', 'memory') != 'memory'):
         raise ValueError(f'{row["name"]}: task work is a plain memory row')
+    # DOOR-115: `openapi` publishes a facade row in the server's OpenAPI
+    # document, at `POST /v1/core/facade/<name>`, with its typed request
+    # (`input_schema`) and its typed answer (`output_schema`, read from the
+    # row's `output` type, which derives `JsonSchema`). Only a facade row has
+    # that route.
+    if row.get('openapi') and row.get('context', 'memory') != 'memory':
+        raise ValueError(f'{row["name"]}: only a facade row is published in OpenAPI')
 # OF-063: `refs` lists a row's typed record-ref slots as JSON pointers into its
 # input, `*` taking every item of an array. The row's generated engine fn checks
 # that each ref there resolves under the writer's own scoped read before the
@@ -1330,6 +1341,16 @@ def outputs():
     for r in SCHEMA_ROWS:
         core += f'({json.dumps(r["name"])}, crate::code_run::vault_read::request_schema::<{r["input"]}>()),\n'
     core += "])); SCHEMAS.get(verb) }\n"
+    # DOOR-115: the rows the OpenAPI document publishes, and each one's answer
+    # schema, read from its `output` type as `input_schema` reads its input.
+    openapi_rows = [r for r in ROWS if r.get('openapi')]
+    core += "/// The facade rows the server's OpenAPI document publishes, each beside its\n/// [`input_schema`] and [`output_schema`].\n"
+    core += "pub const OPENAPI_ROWS: &[&str] = &[" + ''.join(f'{json.dumps(r["name"])},' for r in openapi_rows) + "];\n"
+    core += "/// The JSON schema of an [`OPENAPI_ROWS`] row's answer; `None` for any other row.\n"
+    core += "pub fn output_schema(verb: &str) -> Option<serde_json::Value> { Some(match verb {\n"
+    for r in openapi_rows:
+        core += f'{json.dumps(r["name"])} => crate::code_run::vault_read::request_schema::<{r["output"]}>(),\n'
+    core += "_ => return None, }) }\n"
     core += "pub fn mcp_arguments_schema(verb: &str) -> Option<serde_json::Value> { mcp_arguments_schema_from_input(verb, input_schema(verb)?) }\n"
     core += "pub fn mcp_arguments_schema_from_input(verb: &str, schema: &serde_json::Value) -> Option<serde_json::Value> { let mut properties = serde_json::Map::new(); let required: &[&str] = match verb {\n"
     for r in mcp_rows():

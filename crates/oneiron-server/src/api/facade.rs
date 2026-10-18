@@ -28,9 +28,11 @@ pub(super) mod action_routes;
 mod agent_definition_doors;
 mod agent_verbs;
 mod booking_doors;
+mod budget_doors;
 mod call_context;
 mod campaign_split_doors;
 mod channel_doors;
+mod claim_settle_doors;
 mod connector_call_doors;
 mod core_write_doors;
 mod courtesy_delete_doors;
@@ -41,11 +43,12 @@ pub(super) mod decision_role_asks;
 mod dispatch;
 mod embedding_space_doors;
 mod fanout_doors;
+mod fold_doors;
 mod gate_policy_doors;
 mod graph_ask_doors;
 mod guest_doors;
-mod hub_doors;
 pub(super) mod host_doors;
+mod hub_doors;
 mod legal_hold_doors;
 mod linear_doors;
 mod live_run_doors;
@@ -911,15 +914,24 @@ fn facade_invoke_in_turn(
 /// These doors act only on the caller's presented proof, never on host-root fallback authority.
 fn facade_scoped_credential(auth: &CoreAuth) -> Result<(), FacadeApiError> {
     if auth.verified_slip().is_none() {
-        return Err(FacadeApiError::forbidden("a verified caller credential is required", ["Present the paired caller credential."]));
+        return Err(FacadeApiError::forbidden(
+            "a verified caller credential is required",
+            ["Present the paired caller credential."],
+        ));
     }
     Ok(())
 }
 
 fn facade_scoped_export_credential(auth: &CoreAuth) -> Result<(), FacadeApiError> {
     facade_scoped_credential(auth)?;
-    if !auth.verified_slip().is_some_and(|proof| proof.allows_verb("export")) {
-        return Err(FacadeApiError::forbidden("the credential does not grant export", ["Use a credential with the export verb class."]));
+    if !auth
+        .verified_slip()
+        .is_some_and(|proof| proof.allows_verb("export"))
+    {
+        return Err(FacadeApiError::forbidden(
+            "the credential does not grant export",
+            ["Use a credential with the export verb class."],
+        ));
     }
     Ok(())
 }
@@ -930,10 +942,21 @@ fn facade_claim_position(
     server: &SyncServer,
     call: &FacadeCall<'_>,
 ) -> Result<BirthPosition, FacadeApiError> {
-    let facet = call.session()?.map(|session| {
-        server.vault.session_facet(session).map_err(MemoryError::from)?
-            .ok_or_else(|| FacadeApiError::forbidden("the named session has no write facet", ["Name a session with a facet."]))
-    }).transpose()?;
+    let facet = call
+        .session()?
+        .map(|session| {
+            server
+                .vault
+                .session_facet(session)
+                .map_err(MemoryError::from)?
+                .ok_or_else(|| {
+                    FacadeApiError::forbidden(
+                        "the named session has no write facet",
+                        ["Name a session with a facet."],
+                    )
+                })
+        })
+        .transpose()?;
     Ok(BirthPosition { world: None, facet })
 }
 

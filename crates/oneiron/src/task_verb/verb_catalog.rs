@@ -32,6 +32,15 @@ pub enum AgentVerb {
     TasksCreate,
     TasksWave,
     VaultFanoutLaunch,
+    SelfBudget,
+    SelfBudgetLand,
+    VaultBudgetsLeaseOpen,
+    VaultBudgetsLease,
+    VaultBudgetsLeaseTopUp,
+    VaultBudgetsHold,
+    VaultBudgetsHoldResume,
+    VaultBudgetsLocal,
+    VaultBudgetsSettlements,
     VaultFanoutResume,
     VaultFanoutResumeAs,
     VaultFanoutAck,
@@ -175,6 +184,8 @@ pub enum AgentVerb {
     VaultWidenProposals,
     VaultWidenProposalsApprove,
     VaultWidenProposalsDecline,
+    VaultClaimsReview,
+    VaultClaimsSettle,
     VaultCraftCandidates,
     VaultCraftCandidatesAnswer,
     VaultSettingsWakePolicySet,
@@ -339,6 +350,7 @@ pub enum AgentVerb {
     VaultCalendarRead,
     VaultCalendarSearch,
     VaultCalendarFreebusy,
+    VaultCalendarTranscriptIngest,
     VaultClaimsList,
     VaultClaimsHistory,
     VaultDelete,
@@ -420,6 +432,13 @@ pub enum AgentVerb {
     VaultTasksLinearMapping,
     VaultTasksLinearMappingEdit,
     VaultTasksLinearProvenance,
+    SelfRunAttach,
+    SelfFoldsDescribe,
+    SelfHistory,
+    SelfFold,
+    SelfCompact,
+    SelfUnfold,
+    SelfFolds,
     SelfAgentsSpawn,
     SelfLeaderSplit,
 }
@@ -456,6 +475,15 @@ impl AgentVerb {
         Self::TasksCreate,
         Self::TasksWave,
         Self::VaultFanoutLaunch,
+        Self::SelfBudget,
+        Self::SelfBudgetLand,
+        Self::VaultBudgetsLeaseOpen,
+        Self::VaultBudgetsLease,
+        Self::VaultBudgetsLeaseTopUp,
+        Self::VaultBudgetsHold,
+        Self::VaultBudgetsHoldResume,
+        Self::VaultBudgetsLocal,
+        Self::VaultBudgetsSettlements,
         Self::VaultFanoutResume,
         Self::VaultFanoutResumeAs,
         Self::VaultFanoutAck,
@@ -599,6 +627,8 @@ impl AgentVerb {
         Self::VaultWidenProposals,
         Self::VaultWidenProposalsApprove,
         Self::VaultWidenProposalsDecline,
+        Self::VaultClaimsReview,
+        Self::VaultClaimsSettle,
         Self::VaultCraftCandidates,
         Self::VaultCraftCandidatesAnswer,
         Self::VaultSettingsWakePolicySet,
@@ -763,6 +793,7 @@ impl AgentVerb {
         Self::VaultCalendarRead,
         Self::VaultCalendarSearch,
         Self::VaultCalendarFreebusy,
+        Self::VaultCalendarTranscriptIngest,
         Self::VaultClaimsList,
         Self::VaultClaimsHistory,
         Self::VaultDelete,
@@ -844,6 +875,13 @@ impl AgentVerb {
         Self::VaultTasksLinearMapping,
         Self::VaultTasksLinearMappingEdit,
         Self::VaultTasksLinearProvenance,
+        Self::SelfRunAttach,
+        Self::SelfFoldsDescribe,
+        Self::SelfHistory,
+        Self::SelfFold,
+        Self::SelfCompact,
+        Self::SelfUnfold,
+        Self::SelfFolds,
         Self::SelfAgentsSpawn,
         Self::SelfLeaderSplit,
     ];
@@ -883,6 +921,15 @@ impl AgentVerb {
             Self::TasksCreate => "tasks.create",
             Self::TasksWave => "tasks.wave",
             Self::VaultFanoutLaunch => "vault.fanout.launch",
+            Self::SelfBudget => "self.budget",
+            Self::SelfBudgetLand => "self.budget.land",
+            Self::VaultBudgetsLeaseOpen => "vault.budgets.lease.open",
+            Self::VaultBudgetsLease => "vault.budgets.lease",
+            Self::VaultBudgetsLeaseTopUp => "vault.budgets.lease.top_up",
+            Self::VaultBudgetsHold => "vault.budgets.hold",
+            Self::VaultBudgetsHoldResume => "vault.budgets.hold.resume",
+            Self::VaultBudgetsLocal => "vault.budgets.local",
+            Self::VaultBudgetsSettlements => "vault.budgets.settlements",
             Self::VaultFanoutResume => "vault.fanout.resume",
             Self::VaultFanoutResumeAs => "vault.fanout.resume_as",
             Self::VaultFanoutAck => "vault.fanout.ack",
@@ -1028,6 +1075,8 @@ impl AgentVerb {
             Self::VaultWidenProposals => "vault.widen_proposals",
             Self::VaultWidenProposalsApprove => "vault.widen_proposals.approve",
             Self::VaultWidenProposalsDecline => "vault.widen_proposals.decline",
+            Self::VaultClaimsReview => "vault.claims.review",
+            Self::VaultClaimsSettle => "vault.claims.settle",
             Self::VaultCraftCandidates => "vault.craft_candidates",
             Self::VaultCraftCandidatesAnswer => "vault.craft_candidates.answer",
             Self::VaultSettingsWakePolicySet => "vault.settings.wake_policy.set",
@@ -1194,6 +1243,7 @@ impl AgentVerb {
             Self::VaultCalendarRead => "vault.calendar.read",
             Self::VaultCalendarSearch => "vault.calendar.search",
             Self::VaultCalendarFreebusy => "vault.calendar.freebusy",
+            Self::VaultCalendarTranscriptIngest => "vault.calendar.transcript.ingest",
             Self::VaultClaimsList => "vault.claims.list",
             Self::VaultClaimsHistory => "vault.claims.history",
             Self::VaultDelete => "vault.delete",
@@ -1279,6 +1329,13 @@ impl AgentVerb {
             Self::VaultTasksLinearMapping => "vault.tasks.linear.mapping",
             Self::VaultTasksLinearMappingEdit => "vault.tasks.linear.mapping.edit",
             Self::VaultTasksLinearProvenance => "vault.tasks.linear.provenance",
+            Self::SelfRunAttach => "self.run.attach",
+            Self::SelfFoldsDescribe => "self.folds.describe",
+            Self::SelfHistory => "self.history",
+            Self::SelfFold => "self.fold",
+            Self::SelfCompact => "self.compact",
+            Self::SelfUnfold => "self.unfold",
+            Self::SelfFolds => "self.folds",
             Self::SelfAgentsSpawn => "self.agents.spawn",
             Self::SelfLeaderSplit => "self.leader.split",
         }
@@ -1314,6 +1371,15 @@ impl AgentVerb {
                 | Self::TasksCreate
                 | Self::TasksWave
                 | Self::VaultFanoutLaunch
+                | Self::SelfBudget
+                | Self::SelfBudgetLand
+                | Self::VaultBudgetsLeaseOpen
+                | Self::VaultBudgetsLease
+                | Self::VaultBudgetsLeaseTopUp
+                | Self::VaultBudgetsHold
+                | Self::VaultBudgetsHoldResume
+                | Self::VaultBudgetsLocal
+                | Self::VaultBudgetsSettlements
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -1457,6 +1523,8 @@ impl AgentVerb {
                 | Self::VaultWidenProposals
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
+                | Self::VaultClaimsReview
+                | Self::VaultClaimsSettle
                 | Self::VaultCraftCandidates
                 | Self::VaultCraftCandidatesAnswer
                 | Self::VaultSettingsWakePolicySet
@@ -1581,6 +1649,7 @@ impl AgentVerb {
                 | Self::VaultCalendarRead
                 | Self::VaultCalendarSearch
                 | Self::VaultCalendarFreebusy
+                | Self::VaultCalendarTranscriptIngest
                 | Self::VaultClaimsList
                 | Self::VaultClaimsHistory
                 | Self::VaultDelete
@@ -1662,6 +1731,13 @@ impl AgentVerb {
                 | Self::VaultTasksLinearMapping
                 | Self::VaultTasksLinearMappingEdit
                 | Self::VaultTasksLinearProvenance
+                | Self::SelfRunAttach
+                | Self::SelfFoldsDescribe
+                | Self::SelfHistory
+                | Self::SelfFold
+                | Self::SelfCompact
+                | Self::SelfUnfold
+                | Self::SelfFolds
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
         )
@@ -1745,6 +1821,15 @@ impl AgentVerb {
                 | Self::TasksCreate
                 | Self::TasksWave
                 | Self::VaultFanoutLaunch
+                | Self::SelfBudget
+                | Self::SelfBudgetLand
+                | Self::VaultBudgetsLeaseOpen
+                | Self::VaultBudgetsLease
+                | Self::VaultBudgetsLeaseTopUp
+                | Self::VaultBudgetsHold
+                | Self::VaultBudgetsHoldResume
+                | Self::VaultBudgetsLocal
+                | Self::VaultBudgetsSettlements
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -1888,6 +1973,8 @@ impl AgentVerb {
                 | Self::VaultWidenProposals
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
+                | Self::VaultClaimsReview
+                | Self::VaultClaimsSettle
                 | Self::VaultCraftCandidates
                 | Self::VaultCraftCandidatesAnswer
                 | Self::VaultSettingsWakePolicySet
@@ -2012,6 +2099,7 @@ impl AgentVerb {
                 | Self::VaultCalendarRead
                 | Self::VaultCalendarSearch
                 | Self::VaultCalendarFreebusy
+                | Self::VaultCalendarTranscriptIngest
                 | Self::VaultClaimsList
                 | Self::VaultClaimsHistory
                 | Self::VaultDelete
@@ -2093,6 +2181,13 @@ impl AgentVerb {
                 | Self::VaultTasksLinearMapping
                 | Self::VaultTasksLinearMappingEdit
                 | Self::VaultTasksLinearProvenance
+                | Self::SelfRunAttach
+                | Self::SelfFoldsDescribe
+                | Self::SelfHistory
+                | Self::SelfFold
+                | Self::SelfCompact
+                | Self::SelfUnfold
+                | Self::SelfFolds
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
         )
@@ -2221,6 +2316,15 @@ impl AgentVerb {
                 | Self::Steer
                 | Self::TasksWave
                 | Self::VaultFanoutLaunch
+                | Self::SelfBudget
+                | Self::SelfBudgetLand
+                | Self::VaultBudgetsLeaseOpen
+                | Self::VaultBudgetsLease
+                | Self::VaultBudgetsLeaseTopUp
+                | Self::VaultBudgetsHold
+                | Self::VaultBudgetsHoldResume
+                | Self::VaultBudgetsLocal
+                | Self::VaultBudgetsSettlements
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -2358,6 +2462,8 @@ impl AgentVerb {
                 | Self::VaultWidenProposals
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
+                | Self::VaultClaimsReview
+                | Self::VaultClaimsSettle
                 | Self::VaultCraftCandidates
                 | Self::VaultCraftCandidatesAnswer
                 | Self::VaultSettingsWakePolicySet
@@ -2518,6 +2624,7 @@ impl AgentVerb {
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
                 | Self::VaultBookingPageToken
+                | Self::VaultCalendarTranscriptIngest
                 | Self::VaultDelete
                 | Self::VaultWritesPending
                 | Self::VaultStructuralPut
@@ -2586,6 +2693,13 @@ impl AgentVerb {
                 | Self::VaultTasksLinearMapping
                 | Self::VaultTasksLinearMappingEdit
                 | Self::VaultTasksLinearProvenance
+                | Self::SelfRunAttach
+                | Self::SelfFoldsDescribe
+                | Self::SelfHistory
+                | Self::SelfFold
+                | Self::SelfCompact
+                | Self::SelfUnfold
+                | Self::SelfFolds
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
         )
@@ -2612,6 +2726,10 @@ impl AgentVerb {
                 | Self::Steer
                 | Self::TasksCreate
                 | Self::TasksWave
+                | Self::SelfBudgetLand
+                | Self::VaultBudgetsLeaseOpen
+                | Self::VaultBudgetsLeaseTopUp
+                | Self::VaultBudgetsHoldResume
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -2709,6 +2827,7 @@ impl AgentVerb {
                 | Self::VaultSecretsLiftHistory
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
+                | Self::VaultClaimsSettle
                 | Self::VaultCraftCandidatesAnswer
                 | Self::VaultSettingsWakePolicySet
                 | Self::VaultSettingsInferenceDefaultsReplace
@@ -2798,6 +2917,7 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultCalendarTranscriptIngest
                 | Self::VaultDelete
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
@@ -2843,6 +2963,10 @@ impl AgentVerb {
                 | Self::VaultNotesSeal
                 | Self::VaultNotesSetOverrides
                 | Self::VaultTasksLinearMappingEdit
+                | Self::SelfRunAttach
+                | Self::SelfFold
+                | Self::SelfCompact
+                | Self::SelfUnfold
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
         )
@@ -2909,6 +3033,15 @@ impl AgentVerb {
             Self::TasksCreate => &["spec", "label", "assignee", "intent_key", "brief", "ttl"],
             Self::TasksWave => &["spec"],
             Self::VaultFanoutLaunch => &["spec"],
+            Self::SelfBudget => &["spec"],
+            Self::SelfBudgetLand => &["spec"],
+            Self::VaultBudgetsLeaseOpen => &["spec"],
+            Self::VaultBudgetsLease => &["spec"],
+            Self::VaultBudgetsLeaseTopUp => &["spec"],
+            Self::VaultBudgetsHold => &["spec"],
+            Self::VaultBudgetsHoldResume => &["spec"],
+            Self::VaultBudgetsLocal => &["spec"],
+            Self::VaultBudgetsSettlements => &["spec"],
             Self::VaultFanoutResume => &["spec"],
             Self::VaultFanoutResumeAs => &["spec"],
             Self::VaultFanoutAck => &["spec"],
@@ -3052,6 +3185,8 @@ impl AgentVerb {
             Self::VaultWidenProposals => &["spec"],
             Self::VaultWidenProposalsApprove => &["spec"],
             Self::VaultWidenProposalsDecline => &["spec"],
+            Self::VaultClaimsReview => &["spec"],
+            Self::VaultClaimsSettle => &["spec"],
             Self::VaultCraftCandidates => &["spec"],
             Self::VaultCraftCandidatesAnswer => &["spec"],
             Self::VaultSettingsWakePolicySet => &["spec"],
@@ -3216,6 +3351,7 @@ impl AgentVerb {
             Self::VaultCalendarRead => &["spec"],
             Self::VaultCalendarSearch => &["spec"],
             Self::VaultCalendarFreebusy => &["spec"],
+            Self::VaultCalendarTranscriptIngest => &["spec"],
             Self::VaultClaimsList => &["spec"],
             Self::VaultClaimsHistory => &["spec"],
             Self::VaultDelete => &["spec"],
@@ -3297,6 +3433,13 @@ impl AgentVerb {
             Self::VaultTasksLinearMapping => &["spec"],
             Self::VaultTasksLinearMappingEdit => &["spec"],
             Self::VaultTasksLinearProvenance => &["spec"],
+            Self::SelfRunAttach => &["spec"],
+            Self::SelfFoldsDescribe => &["spec"],
+            Self::SelfHistory => &["spec"],
+            Self::SelfFold => &["spec"],
+            Self::SelfCompact => &["spec"],
+            Self::SelfUnfold => &["spec"],
+            Self::SelfFolds => &["spec"],
             Self::SelfAgentsSpawn => &["spec"],
             Self::SelfLeaderSplit => &["spec"],
         }
@@ -3334,6 +3477,15 @@ impl AgentVerb {
             Self::TasksCreate => &["spec"],
             Self::TasksWave => &["spec"],
             Self::VaultFanoutLaunch => &["spec"],
+            Self::SelfBudget => &["spec"],
+            Self::SelfBudgetLand => &["spec"],
+            Self::VaultBudgetsLeaseOpen => &["spec"],
+            Self::VaultBudgetsLease => &["spec"],
+            Self::VaultBudgetsLeaseTopUp => &["spec"],
+            Self::VaultBudgetsHold => &["spec"],
+            Self::VaultBudgetsHoldResume => &["spec"],
+            Self::VaultBudgetsLocal => &["spec"],
+            Self::VaultBudgetsSettlements => &["spec"],
             Self::VaultFanoutResume => &["spec"],
             Self::VaultFanoutResumeAs => &["spec"],
             Self::VaultFanoutAck => &["spec"],
@@ -3477,6 +3629,8 @@ impl AgentVerb {
             Self::VaultWidenProposals => &["spec"],
             Self::VaultWidenProposalsApprove => &["spec"],
             Self::VaultWidenProposalsDecline => &["spec"],
+            Self::VaultClaimsReview => &["spec"],
+            Self::VaultClaimsSettle => &["spec"],
             Self::VaultCraftCandidates => &["spec"],
             Self::VaultCraftCandidatesAnswer => &["spec"],
             Self::VaultSettingsWakePolicySet => &["spec"],
@@ -3641,6 +3795,7 @@ impl AgentVerb {
             Self::VaultCalendarRead => &["spec"],
             Self::VaultCalendarSearch => &["spec"],
             Self::VaultCalendarFreebusy => &["spec"],
+            Self::VaultCalendarTranscriptIngest => &["spec"],
             Self::VaultClaimsList => &["spec"],
             Self::VaultClaimsHistory => &["spec"],
             Self::VaultDelete => &["spec"],
@@ -3722,6 +3877,13 @@ impl AgentVerb {
             Self::VaultTasksLinearMapping => &["spec"],
             Self::VaultTasksLinearMappingEdit => &["spec"],
             Self::VaultTasksLinearProvenance => &["spec"],
+            Self::SelfRunAttach => &["spec"],
+            Self::SelfFoldsDescribe => &["spec"],
+            Self::SelfHistory => &["spec"],
+            Self::SelfFold => &["spec"],
+            Self::SelfCompact => &["spec"],
+            Self::SelfUnfold => &["spec"],
+            Self::SelfFolds => &["spec"],
             Self::SelfAgentsSpawn => &["spec"],
             Self::SelfLeaderSplit => &["spec"],
         }
@@ -3809,6 +3971,33 @@ impl AgentVerb {
             }
             Self::VaultFanoutLaunch => {
                 "One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by the vault owner, its creator, or a live lead/board holder of its project, anything else reads as none."
+            }
+            Self::SelfBudget => {
+                "The caller's own dispatched attempt: its persisted spend allowance, landing reserve, checkpoint and saved hold, without substituting a token meter for money."
+            }
+            Self::SelfBudgetLand => {
+                "The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later."
+            }
+            Self::VaultBudgetsLeaseOpen => {
+                "The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit."
+            }
+            Self::VaultBudgetsLease => {
+                "The owner reads a persisted spend lease, its remaining allowance and the hard ancestor that binds it."
+            }
+            Self::VaultBudgetsLeaseTopUp => {
+                "The owner raises a hard lease to a shown replacement maximum; replay adds nothing twice and a child's increase stays within its ancestor's cap."
+            }
+            Self::VaultBudgetsHold => {
+                "The owner reads a held run's notice, saved partial results, exact checkpoints and whether its existing lease permits resume."
+            }
+            Self::VaultBudgetsHoldResume => {
+                "The owner resumes the same held attempts from their checkpoints after their lease has funds; no model substitution or terminal completion."
+            }
+            Self::VaultBudgetsLocal => {
+                "The owner observes a device-local runner budget counter without creating it, including absence after an owner restore."
+            }
+            Self::VaultBudgetsSettlements => {
+                "The owner reads a served run's persisted physical-rung settlement receipts, with reservation, settled units and stamped cost when priced."
             }
             Self::VaultFanoutResume => {
                 "The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible."
@@ -4216,6 +4405,12 @@ impl AgentVerb {
             }
             Self::VaultWidenProposalsDecline => {
                 "The owner, as the board above, declines one context-widen proposal for good; the decline stays on record."
+            }
+            Self::VaultClaimsReview => {
+                "The owner reviews one proposed claim: the claim as the owner may read it, its opener and tray row, and the review_id that settles exactly this content."
+            }
+            Self::VaultClaimsSettle => {
+                "The owner approves or rejects exactly the reviewed proposed claim through the gate and keeps its Settlement; a claim changed since its review_id is refused."
             }
             Self::VaultCraftCandidates => {
                 "The owner lists the craft notes residents' dreaming proposed about themselves that wait on a verdict, newest first, or one resident's, each with the content hash an answer pins."
@@ -4647,6 +4842,9 @@ impl AgentVerb {
             Self::VaultCalendarFreebusy => {
                 "Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt."
             }
+            Self::VaultCalendarTranscriptIngest => {
+                "Ingests an uploaded UTF-8 transcript as the caller, retaining source labels and atomically closing its SESSION with ordered TURNs and extraction wake receipts."
+            }
             Self::VaultClaimsList => {
                 "Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt."
             }
@@ -4883,6 +5081,27 @@ impl AgentVerb {
             }
             Self::VaultTasksLinearProvenance => {
                 "One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts."
+            }
+            Self::SelfRunAttach => {
+                "Attaches the caller's own credential to its leased live run and returns the handle required by the public fold and history calls."
+            }
+            Self::SelfFoldsDescribe => {
+                "Reads one pending mark or landed fold of the attached run, with its Generated stub, source ids and retained result handles."
+            }
+            Self::SelfHistory => {
+                "Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled."
+            }
+            Self::SelfFold => {
+                "Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands."
+            }
+            Self::SelfCompact => {
+                "Asks the attached run to fold its pending marks in one batch at its next step boundary; read self.history for landed folds and epochs."
+            }
+            Self::SelfUnfold => {
+                "Appends a fold of the attached run after its current tail, without replacing the earlier stub."
+            }
+            Self::SelfFolds => {
+                "Lists the attached run's landed folds, pending marks and outstanding compact ask."
             }
             Self::SelfAgentsSpawn => {
                 "Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity."

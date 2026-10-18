@@ -158,6 +158,60 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.budget",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_dispatch::budget_doors::SelfBudgetRequest,
+                >(),
+            ),
+            (
+                "self.budget.land",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_dispatch::budget_doors::BudgetLandRequest,
+                >(),
+            ),
+            (
+                "vault.budgets.lease.open",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_dispatch::budget_doors::OpenSpendLeaseRequest,
+                >(),
+            ),
+            (
+                "vault.budgets.lease",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_dispatch::budget_doors::SpendScopeRequest,
+                >(),
+            ),
+            (
+                "vault.budgets.lease.top_up",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_dispatch::budget_doors::TopUpSpendLeaseRequest,
+                >(),
+            ),
+            (
+                "vault.budgets.hold",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_dispatch::budget_doors::BudgetHoldRequest,
+                >(),
+            ),
+            (
+                "vault.budgets.hold.resume",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_dispatch::budget_doors::BudgetHoldRequest,
+                >(),
+            ),
+            (
+                "vault.budgets.local",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_dispatch::budget_doors::LocalRunnerBudgetRequest,
+                >(),
+            ),
+            (
+                "vault.budgets.settlements",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_dispatch::budget_doors::RunSettlementsRequest,
+                >(),
+            ),
+            (
                 "vault.fanout.resume",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::FanoutResumeRequest,
@@ -903,6 +957,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<
                     crate::agent_dispatch::widen_doors::WidenProposalAnswer,
                 >(),
+            ),
+            (
+                "vault.claims.review",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::ClaimProposalReviewRequest,
+                >(),
+            ),
+            (
+                "vault.claims.settle",
+                crate::code_run::vault_read::request_schema::<crate::memory::ClaimSettleRequest>(),
             ),
             (
                 "vault.craft_candidates",
@@ -1696,6 +1760,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.calendar.transcript.ingest",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::transcript::TranscriptFileDropInput,
+                >(),
+            ),
+            (
                 "vault.claims.list",
                 crate::code_run::vault_read::request_schema::<crate::memory::ClaimListFilter>(),
             ),
@@ -2117,6 +2187,48 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.run.attach",
+                crate::code_run::vault_read::request_schema::<
+                    crate::code_run::fold_api::RunAttachRequest,
+                >(),
+            ),
+            (
+                "self.folds.describe",
+                crate::code_run::vault_read::request_schema::<
+                    crate::code_run::fold_api::FoldUnfoldRequest,
+                >(),
+            ),
+            (
+                "self.history",
+                crate::code_run::vault_read::request_schema::<
+                    crate::code_run::fold_api::FoldHistoryRequest,
+                >(),
+            ),
+            (
+                "self.fold",
+                crate::code_run::vault_read::request_schema::<
+                    crate::code_run::fold_api::FoldMarkRequest,
+                >(),
+            ),
+            (
+                "self.compact",
+                crate::code_run::vault_read::request_schema::<
+                    crate::code_run::fold_api::FoldCompactRequest,
+                >(),
+            ),
+            (
+                "self.unfold",
+                crate::code_run::vault_read::request_schema::<
+                    crate::code_run::fold_api::FoldUnfoldRequest,
+                >(),
+            ),
+            (
+                "self.folds",
+                crate::code_run::vault_read::request_schema::<
+                    crate::code_run::fold_api::FoldRunRequest,
+                >(),
+            ),
+            (
                 "self.agents.spawn",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::LiveRunRequest<crate::code_run::AgentSpawnInput>,
@@ -2150,23 +2262,6 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.edges.put",
                 crate::code_run::vault_read::request_schema::<crate::code_run::MemoryEdgeInput>(),
-            ),
-            (
-                "self.fold",
-                crate::code_run::vault_read::request_schema::<crate::compaction::FoldMarkInput>(),
-            ),
-            (
-                "self.compact",
-                crate::code_run::vault_read::request_schema::<crate::compaction::FoldCompactInput>(
-                ),
-            ),
-            (
-                "self.unfold",
-                crate::code_run::vault_read::request_schema::<crate::compaction::FoldUnfoldInput>(),
-            ),
-            (
-                "self.folds",
-                crate::code_run::vault_read::request_schema::<crate::compaction::FoldsInput>(),
             ),
             (
                 "tasks.refuse",
@@ -2213,6 +2308,21 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
         ])
     });
     SCHEMAS.get(verb)
+}
+/// The facade rows the server's OpenAPI document publishes, each beside its
+/// [`input_schema`] and [`output_schema`].
+pub const OPENAPI_ROWS: &[&str] = &["vault.claims.review", "vault.claims.settle"];
+/// The JSON schema of an [`OPENAPI_ROWS`] row's answer; `None` for any other row.
+pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
+    Some(match verb {
+        "vault.claims.review" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::ClaimProposalReview>()
+        }
+        "vault.claims.settle" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::ClaimSettlement>()
+        }
+        _ => return None,
+    })
 }
 pub fn mcp_arguments_schema(verb: &str) -> Option<serde_json::Value> {
     mcp_arguments_schema_from_input(verb, input_schema(verb)?)
@@ -2476,6 +2586,69 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.fanout.launch" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.budget" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.budget.land" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.lease.open" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.lease" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.lease.top_up" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.hold" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.hold.resume" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.local" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.settlements" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -3443,6 +3616,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.claims.review" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.claims.settle" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.craft_candidates" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -4337,6 +4524,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.calendar.transcript.ingest" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.claims.list" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -4904,6 +5098,55 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "self.run.attach" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.folds.describe" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.history" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.fold" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.compact" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.unfold" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.folds" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "self.agents.spawn" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -5025,6 +5268,42 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.fanout.launch" => {
             let _input: crate::task_verb::sdk::FanoutLaunchRequest = decode(value.clone())?;
+        }
+        "self.budget" => {
+            let _input: crate::agent_dispatch::budget_doors::SelfBudgetRequest =
+                decode(value.clone())?;
+        }
+        "self.budget.land" => {
+            let _input: crate::agent_dispatch::budget_doors::BudgetLandRequest =
+                decode(value.clone())?;
+        }
+        "vault.budgets.lease.open" => {
+            let _input: crate::agent_dispatch::budget_doors::OpenSpendLeaseRequest =
+                decode(value.clone())?;
+        }
+        "vault.budgets.lease" => {
+            let _input: crate::agent_dispatch::budget_doors::SpendScopeRequest =
+                decode(value.clone())?;
+        }
+        "vault.budgets.lease.top_up" => {
+            let _input: crate::agent_dispatch::budget_doors::TopUpSpendLeaseRequest =
+                decode(value.clone())?;
+        }
+        "vault.budgets.hold" => {
+            let _input: crate::agent_dispatch::budget_doors::BudgetHoldRequest =
+                decode(value.clone())?;
+        }
+        "vault.budgets.hold.resume" => {
+            let _input: crate::agent_dispatch::budget_doors::BudgetHoldRequest =
+                decode(value.clone())?;
+        }
+        "vault.budgets.local" => {
+            let _input: crate::agent_dispatch::budget_doors::LocalRunnerBudgetRequest =
+                decode(value.clone())?;
+        }
+        "vault.budgets.settlements" => {
+            let _input: crate::agent_dispatch::budget_doors::RunSettlementsRequest =
+                decode(value.clone())?;
         }
         "vault.fanout.resume" => {
             let _input: crate::task_verb::sdk::FanoutResumeRequest = decode(value.clone())?;
@@ -5487,6 +5766,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.widen_proposals.decline" => {
             let _input: crate::agent_dispatch::widen_doors::WidenProposalAnswer =
                 decode(value.clone())?;
+        }
+        "vault.claims.review" => {
+            let _input: crate::memory::ClaimProposalReviewRequest = decode(value.clone())?;
+        }
+        "vault.claims.settle" => {
+            let _input: crate::memory::ClaimSettleRequest = decode(value.clone())?;
         }
         "vault.craft_candidates" => {
             let _input: crate::actor_claims::CraftCandidatesRequest = decode(value.clone())?;
@@ -5990,6 +6275,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.calendar.freebusy" => {
             let _input: crate::task_verb::sdk::CalendarFreebusyRequest = decode(value.clone())?;
         }
+        "vault.calendar.transcript.ingest" => {
+            let _input: crate::calendar::transcript::TranscriptFileDropInput =
+                decode(value.clone())?;
+        }
         "vault.claims.list" => {
             let input: crate::memory::ClaimListFilter = decode(value.clone())?;
             crate::memory::caps::check_limit_nonzero(input.limit)?;
@@ -6266,6 +6555,27 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.tasks.linear.provenance" => {
             let _input: crate::linear_sync::LinearProvenanceRequest = decode(value.clone())?;
         }
+        "self.run.attach" => {
+            let _input: crate::code_run::fold_api::RunAttachRequest = decode(value.clone())?;
+        }
+        "self.folds.describe" => {
+            let _input: crate::code_run::fold_api::FoldUnfoldRequest = decode(value.clone())?;
+        }
+        "self.history" => {
+            let _input: crate::code_run::fold_api::FoldHistoryRequest = decode(value.clone())?;
+        }
+        "self.fold" => {
+            let _input: crate::code_run::fold_api::FoldMarkRequest = decode(value.clone())?;
+        }
+        "self.compact" => {
+            let _input: crate::code_run::fold_api::FoldCompactRequest = decode(value.clone())?;
+        }
+        "self.unfold" => {
+            let _input: crate::code_run::fold_api::FoldUnfoldRequest = decode(value.clone())?;
+        }
+        "self.folds" => {
+            let _input: crate::code_run::fold_api::FoldRunRequest = decode(value.clone())?;
+        }
         "self.agents.spawn" => {
             let _input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::AgentSpawnInput> =
                 decode(value.clone())?;
@@ -6325,6 +6635,15 @@ pub fn invoke(
         "tasks.create" => encode(tasks_create(memory, decode(value)?)?),
         "tasks.wave" => encode(tasks_wave(memory, decode(value)?)?),
         "vault.fanout.launch" => encode(vault_fanout_launch(memory, decode(value)?)?),
+        "self.budget" => encode(self_budget(memory, decode(value)?)?),
+        "self.budget.land" => encode(self_budget_land(memory, decode(value)?)?),
+        "vault.budgets.lease.open" => encode(vault_budgets_lease_open(memory, decode(value)?)?),
+        "vault.budgets.lease" => encode(vault_budgets_lease(memory, decode(value)?)?),
+        "vault.budgets.lease.top_up" => encode(vault_budgets_lease_top_up(memory, decode(value)?)?),
+        "vault.budgets.hold" => encode(vault_budgets_hold(memory, decode(value)?)?),
+        "vault.budgets.hold.resume" => encode(vault_budgets_hold_resume(memory, decode(value)?)?),
+        "vault.budgets.local" => encode(vault_budgets_local(memory, decode(value)?)?),
+        "vault.budgets.settlements" => encode(vault_budgets_settlements(memory, decode(value)?)?),
         "vault.fanout.resume" => encode(vault_fanout_resume(memory, decode(value)?)?),
         "vault.fanout.resume_as" => encode(vault_fanout_resume_as(memory, decode(value)?)?),
         "vault.fanout.ack" => encode(vault_fanout_ack(memory, decode(value)?)?),
@@ -6572,6 +6891,8 @@ pub fn invoke(
         "vault.widen_proposals.decline" => {
             encode(vault_widen_proposals_decline(memory, decode(value)?)?)
         }
+        "vault.claims.review" => encode(vault_claims_review(memory, decode(value)?)?),
+        "vault.claims.settle" => encode(vault_claims_settle(memory, decode(value)?)?),
         "vault.craft_candidates" => encode(vault_craft_candidates(memory, decode(value)?)?),
         "vault.craft_candidates.answer" => {
             encode(vault_craft_candidates_answer(memory, decode(value)?)?)
@@ -6738,6 +7059,9 @@ pub fn invoke(
         "vault.calendar.read" => encode(vault_calendar_read(memory, decode(value)?)?),
         "vault.calendar.search" => encode(vault_calendar_search(memory, decode(value)?)?),
         "vault.calendar.freebusy" => encode(vault_calendar_freebusy(memory, decode(value)?)?),
+        "vault.calendar.transcript.ingest" => {
+            encode(vault_calendar_transcript_ingest(memory, decode(value)?)?)
+        }
         "vault.claims.list" => encode(vault_claims_list(memory, decode(value)?)?),
         "vault.claims.history" => encode(vault_claims_history(memory, decode(value)?)?),
         "vault.delete" => encode(vault_delete(memory, decode(value)?)?),
@@ -6903,6 +7227,13 @@ pub fn invoke(
         "vault.tasks.linear.provenance" => {
             encode(vault_tasks_linear_provenance(memory, decode(value)?)?)
         }
+        "self.run.attach" => encode(self_run_attach(memory, decode(value)?)?),
+        "self.folds.describe" => encode(self_folds_describe(memory, decode(value)?)?),
+        "self.history" => encode(self_history(memory, decode(value)?)?),
+        "self.fold" => encode(self_fold(memory, decode(value)?)?),
+        "self.compact" => encode(self_compact(memory, decode(value)?)?),
+        "self.unfold" => encode(self_unfold(memory, decode(value)?)?),
+        "self.folds" => encode(self_folds(memory, decode(value)?)?),
         "self.agents.spawn" => encode(self_agents_spawn(memory, decode(value)?)?),
         "self.leader.split" => encode(self_leader_split(memory, decode(value)?)?),
         _ => Err(MemoryError::bad_request("unknown SDK agent verb")),
@@ -7332,6 +7663,90 @@ pub fn vault_fanout_launch(
     input: crate::task_verb::sdk::FanoutLaunchRequest,
 ) -> MemoryResult<Option<crate::task_verb::sdk::FanoutLaunchView>> {
     crate::task_verb::sdk::read_fanout_launch(memory, input)
+}
+pub fn self_budget(
+    memory: &Memory<'_>,
+    input: crate::agent_dispatch::budget_doors::SelfBudgetRequest,
+) -> MemoryResult<crate::agent_dispatch::budget_doors::AgentBudgetView> {
+    crate::agent_dispatch::budget_doors::self_budget(memory, &input)
+}
+pub fn self_budget_land(
+    memory: &Memory<'_>,
+    input: crate::agent_dispatch::budget_doors::BudgetLandRequest,
+) -> MemoryResult<crate::agent_dispatch::PartialResultHold> {
+    crate::agent_dispatch::budget_doors::land_for_budget(memory, &input)
+}
+pub fn vault_budgets_lease_open(
+    memory: &Memory<'_>,
+    input: crate::agent_dispatch::budget_doors::OpenSpendLeaseRequest,
+) -> MemoryResult<crate::agent_dispatch::budget_doors::SpendLeaseView> {
+    crate::agent_dispatch::budget_doors::open_spend_lease_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.lease.open")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_lease(
+    memory: &Memory<'_>,
+    input: crate::agent_dispatch::budget_doors::SpendScopeRequest,
+) -> MemoryResult<crate::agent_dispatch::budget_doors::SpendLeaseView> {
+    crate::agent_dispatch::budget_doors::spend_lease_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.lease")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_lease_top_up(
+    memory: &Memory<'_>,
+    input: crate::agent_dispatch::budget_doors::TopUpSpendLeaseRequest,
+) -> MemoryResult<crate::agent_dispatch::budget_doors::SpendLeaseView> {
+    crate::agent_dispatch::budget_doors::top_up_spend_lease_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.lease.top_up")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_hold(
+    memory: &Memory<'_>,
+    input: crate::agent_dispatch::budget_doors::BudgetHoldRequest,
+) -> MemoryResult<Option<crate::agent_dispatch::PartialResultHold>> {
+    crate::agent_dispatch::budget_doors::budget_hold_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.hold")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_hold_resume(
+    memory: &Memory<'_>,
+    input: crate::agent_dispatch::budget_doors::BudgetHoldRequest,
+) -> MemoryResult<crate::agent_dispatch::PartialResultHold> {
+    crate::agent_dispatch::budget_doors::resume_budget_hold_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.hold.resume")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_local(
+    memory: &Memory<'_>,
+    input: crate::agent_dispatch::budget_doors::LocalRunnerBudgetRequest,
+) -> MemoryResult<crate::agent_dispatch::budget_doors::LocalRunnerBudgetView> {
+    crate::agent_dispatch::budget_doors::local_runner_budget_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.local")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_settlements(
+    memory: &Memory<'_>,
+    input: crate::agent_dispatch::budget_doors::RunSettlementsRequest,
+) -> MemoryResult<crate::agent_dispatch::budget_doors::RunSettlementsView> {
+    crate::task_verb::sdk::host_only(memory, "vault.budgets.settlements", &input)
 }
 pub fn vault_fanout_resume(
     memory: &Memory<'_>,
@@ -8524,6 +8939,18 @@ pub fn vault_widen_proposals_decline(
     )
     .map_err(crate::memory::MemoryError::from)
 }
+pub fn vault_claims_review(
+    memory: &Memory<'_>,
+    input: crate::memory::ClaimProposalReviewRequest,
+) -> MemoryResult<crate::memory::ClaimProposalReview> {
+    memory.claim_review_as_owner(&memory.embedded_owner("vault.claims.review")?, &input)
+}
+pub fn vault_claims_settle(
+    memory: &Memory<'_>,
+    input: crate::memory::ClaimSettleRequest,
+) -> MemoryResult<crate::memory::ClaimSettlement> {
+    memory.claim_settle_as_owner(&memory.embedded_owner("vault.claims.settle")?, &input)
+}
 pub fn vault_craft_candidates(
     memory: &Memory<'_>,
     input: crate::actor_claims::CraftCandidatesRequest,
@@ -9700,6 +10127,18 @@ pub fn vault_calendar_freebusy(
 ) -> MemoryResult<crate::claim::ScopedReadResult<crate::memory::CalendarFreebusyDto>> {
     memory.calendar_freebusy(&input.calendars, input.range.to_time_range())
 }
+pub fn vault_calendar_transcript_ingest(
+    memory: &Memory<'_>,
+    input: crate::calendar::transcript::TranscriptFileDropInput,
+) -> MemoryResult<crate::calendar::transcript::TranscriptIngestOutcome> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.calendar.transcript.ingest",
+        &input,
+        &["/source_blob_ref"],
+    )?;
+    memory.calendar_transcript_ingest(&input)
+}
 pub fn vault_claims_list(
     memory: &Memory<'_>,
     input: crate::memory::ClaimListFilter,
@@ -10492,6 +10931,48 @@ pub fn vault_tasks_linear_provenance(
         &["/task_ref"],
     )?;
     memory.linear_provenance(&input)
+}
+pub fn self_run_attach(
+    memory: &Memory<'_>,
+    input: crate::code_run::fold_api::RunAttachRequest,
+) -> MemoryResult<crate::code_run::fold_api::RunAttached> {
+    crate::code_run::fold_api::host_required(memory, &input)
+}
+pub fn self_folds_describe(
+    memory: &Memory<'_>,
+    input: crate::code_run::fold_api::FoldUnfoldRequest,
+) -> MemoryResult<crate::compaction::FoldReply<crate::compaction::FoldDescription>> {
+    crate::code_run::fold_api::host_required(memory, &input)
+}
+pub fn self_history(
+    memory: &Memory<'_>,
+    input: crate::code_run::fold_api::FoldHistoryRequest,
+) -> MemoryResult<crate::engine_executor::history::FoldHistory> {
+    crate::code_run::fold_api::host_required(memory, &input)
+}
+pub fn self_fold(
+    memory: &Memory<'_>,
+    input: crate::code_run::fold_api::FoldMarkRequest,
+) -> MemoryResult<crate::compaction::FoldReply<crate::compaction::FoldMarked>> {
+    crate::task_verb::sdk::host_only(memory, "self.fold", &input)
+}
+pub fn self_compact(
+    memory: &Memory<'_>,
+    input: crate::code_run::fold_api::FoldCompactRequest,
+) -> MemoryResult<crate::compaction::FoldReply<crate::compaction::FoldCompactAsked>> {
+    crate::task_verb::sdk::host_only(memory, "self.compact", &input)
+}
+pub fn self_unfold(
+    memory: &Memory<'_>,
+    input: crate::code_run::fold_api::FoldUnfoldRequest,
+) -> MemoryResult<crate::compaction::FoldReply<crate::compaction::FoldUnfolded>> {
+    crate::task_verb::sdk::host_only(memory, "self.unfold", &input)
+}
+pub fn self_folds(
+    memory: &Memory<'_>,
+    input: crate::code_run::fold_api::FoldRunRequest,
+) -> MemoryResult<crate::compaction::FoldReply<crate::compaction::FoldList>> {
+    crate::task_verb::sdk::host_only(memory, "self.folds", &input)
 }
 pub fn self_agents_spawn(
     memory: &Memory<'_>,

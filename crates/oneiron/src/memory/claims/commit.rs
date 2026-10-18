@@ -77,7 +77,14 @@ impl Memory<'_> {
         before_txn: impl FnOnce(),
         in_writer: &dyn Fn(&heed::RoTxn<'_>) -> Result<(), Error>,
     ) -> MemoryResult<CommitReceipt> {
-        self.commit_one_guarded_with_birth(input, auto_supersede, forced_approval, before_txn, in_writer, None)
+        self.commit_one_guarded_with_birth(
+            input,
+            auto_supersede,
+            forced_approval,
+            before_txn,
+            in_writer,
+            None,
+        )
     }
 
     pub(in crate::memory) fn commit_one_guarded_with_birth(
@@ -315,7 +322,12 @@ impl Memory<'_> {
                     )?;
                     if let Some(birth) = birth {
                         content.update_claim(id, |txn| {
-                            crate::provenance::birth::stamp_birth_if_absent_in_txn(&self.vault.store, txn, &id, birth)
+                            crate::provenance::birth::stamp_birth_if_absent_in_txn(
+                                &self.vault.store,
+                                txn,
+                                &id,
+                                birth,
+                            )
                         })?;
                     }
                     if let Some(old_id) = prior {

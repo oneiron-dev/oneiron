@@ -477,11 +477,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                     );
                     if let (Some(seat), Ok(mut seats)) = (seat, seats.lock()) {
                         let ended = outcome.as_ref().is_ok_and(|outcome| {
-                            matches!(
-                                outcome.status,
-                                EngineExecutorStatus::Complete
-                                    | EngineExecutorStatus::HardStepLimitReached
-                            )
+                            matches!(outcome.status, EngineExecutorStatus::Complete)
                         });
                         seats.put(run_id, seat, ended);
                     }

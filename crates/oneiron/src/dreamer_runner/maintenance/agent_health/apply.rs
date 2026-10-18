@@ -411,7 +411,8 @@ impl Vault {
     /// The owner applies the `prompt_inject` the Coach drafted on one card,
     /// as they approve it in `approval` (FIX 3694): the failed attempt the
     /// card names goes on as a new attempt, from a checkpoint of its run,
-    /// with the Coach's proposal as its approved prompt. The checkpoint is
+    /// with the approved prompt: the Coach's proposal, or the owner's own
+    /// edit of it, kept beside the draft it edits. The checkpoint is
     /// resolved first, from its own reads; then one write transaction
     /// revalidates the owner, reads the card and its standing ask again,
     /// checks them, and applies the approval
@@ -423,8 +424,8 @@ impl Vault {
     ///
     /// [`Error::EntityNotFound`] for an unknown card; [`Error::InvalidConfig`]
     /// when the approval no longer matches the card (another ask, no
-    /// `prompt_inject` draft, other bytes than its proposal, evidence that
-    /// grew since the ask, an attempt that moved), and for each continuation
+    /// `prompt_inject` draft, evidence that grew since the ask, an attempt
+    /// that moved), for an empty prompt, and for each continuation
     /// refusal, whose message is exactly its code; owner revalidation
     /// errors; the queue's refusals; storage errors.
     pub fn apply_coach_prompt_inject_on_agent_health_card(
@@ -437,6 +438,9 @@ impl Vault {
             .agent_health_card(&approval.card)?
             .ok_or(Error::EntityNotFound)?;
         Self::prompt_inject_ask(&card, approval)?;
+        if approval.prompt.trim().is_empty() {
+            return Err(refused("the prompt is empty"));
+        }
         let attempt = card
             .attempt
             .ok_or_else(|| refused("this card names no failed attempt"))?;
@@ -460,10 +464,11 @@ impl Vault {
             if card.attempt != Some(attempt) {
                 return Err(refused("the card's failed attempt moved since you read it"));
             }
-            let ask = Self::prompt_inject_ask(&card, approval)?;
+            let (ask, proposal) = Self::prompt_inject_ask(&card, approval)?;
             let bound = crate::agent_dispatch::PromptInjectApproval {
                 card: &handle,
                 ask: &ask.attempt,
+                proposal,
                 diagnostic: ask.diagnostic,
                 subject: card.subject,
                 task: card.task,
@@ -496,14 +501,14 @@ impl Vault {
         })
     }
 
-    /// The ask the owner read, still standing on `card`, with a
-    /// `prompt_inject` draft whose proposal is exactly the approved prompt
-    /// (v1: the owner approves the Coach's bytes, never edited ones), asked
-    /// over the card's evidence as it stands.
+    /// The ask the owner read, still standing on `card`, with its
+    /// `prompt_inject` draft's proposal, asked over the card's evidence as it
+    /// stands. The approved prompt may differ from the proposal: the owner's
+    /// own edit is their approval, and the draft stays beside it as evidence.
     fn prompt_inject_ask<'a>(
         card: &'a AgentHealthCard,
         approval: &crate::agent_dispatch::ConcernPromptInjectRequest,
-    ) -> Result<&'a AgentHealthCoachAsk> {
+    ) -> Result<(&'a AgentHealthCoachAsk, &'a str)> {
         let Some(standing) = card
             .coach
             .as_ref()
@@ -523,16 +528,11 @@ impl Vault {
                 "the Coach's answer on this card proposes no prompt injection",
             ));
         };
-        if draft.proposal != approval.prompt {
-            return Err(refused(
-                "the prompt is not the one the Coach proposed on this card",
-            ));
-        }
         if standing.diagnostic != card.diagnostics.last().copied() {
             return Err(refused(
                 "the card's evidence moved since the Coach was asked",
             ));
         }
-        Ok(standing)
+        Ok((standing, &draft.proposal))
     }
 }
