@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 438 facade rows, 1661 declarations.
-Inputs: 390 of 438 fully typed, 48 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 388 of 438 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 440 facade rows, 1671 declarations.
+Inputs: 392 of 440 fully typed, 48 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 390 of 440 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 77; unread shapes: 0.
 """
 
@@ -6162,6 +6162,66 @@ class CallableCardView(TypedDict):
     reference: str
     arguments: Any
     returns: Any
+class AiReplyReader(TypedDict):
+    definition: str
+    task_family: NotRequired[str | None]
+class ContextPackRetrievalBudgetControls(TypedDict):
+    claims: NotRequired[int | None]
+    turns: NotRequired[int | None]
+    summaries: NotRequired[int | None]
+    facets: NotRequired[int | None]
+    other: NotRequired[int | None]
+    selected_edges: NotRequired[int | None]
+class ContextPackBudgetControls(TypedDict):
+    token_budget: NotRequired[int | None]
+    max_item_tokens: NotRequired[int | None]
+    max_field_chars: NotRequired[int | None]
+    retrieval: NotRequired[ContextPackRetrievalBudgetControls | None]
+class AiReplyCompanion(TypedDict):
+    person_ref: NotRequired[str | None]
+    persona_ref: NotRequired[str | None]
+    expression: NotRequired[str | None]
+class AiReplyStanding(TypedDict):
+    world_ref: NotRequired[str | None]
+    token_budget: int
+    block_tokens: NotRequired[int | None]
+class AiReplyRequest(TypedDict):
+    model: str
+    conversation_id: str
+    message: str
+    session_id: NotRequired[str | None]
+    reader: NotRequired[AiReplyReader | None]
+    budget: NotRequired[ContextPackBudgetControls | None]
+    limit: NotRequired[int | None]
+    pinned_refs: NotRequired[list[str]]
+    companion: NotRequired[AiReplyCompanion | None]
+    standing: NotRequired[AiReplyStanding | None]
+    reasoning_effort: NotRequired[str | None]
+class AiReplyL2Base(TypedDict):
+    content_hash: str
+    body: str
+class AiReply(TypedDict):
+    reply: str
+    model: str
+    receipt_refs: list[str]
+    l2_base: NotRequired[AiReplyL2Base | None]
+class ContextReceiptFields(TypedDict):
+    persona_compile_stamp: str
+    activated_memory_ids: list[str]
+    board_state_ref: str
+    substrate_ref: NotRequired[str | None]
+    model: NotRequired[str | None]
+    reasoning_effort: NotRequired[str | None]
+    prompt_input_ref: NotRequired[str | None]
+    disclosure_stamp: NotRequired[str | None]
+class ContextEmitReceipt(TypedDict):
+    receipt_ref: str
+    occurred_at: int
+    actor: str
+    conversation_id: str
+    request_digest: str
+    result_digest: str
+    context: ContextReceiptFields
 class AiOptionsRequest(TypedDict):
     operation: NotRequired[str | None]
     inputs: NotRequired[list[str]]

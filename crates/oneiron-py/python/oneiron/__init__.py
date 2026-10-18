@@ -890,6 +890,9 @@ class Oneiron:
         def get(self, spec):
             """One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none."""
             return json.loads(_translate(lambda: self._client.vault_receipts_get(json.dumps(spec))))
+        def context(self, spec):
+            """Read the frozen context of one actual reply emit, as its actor or the live vault owner; never rebuild the assembly."""
+            return json.loads(_translate(lambda: self._client.vault_receipts_context(json.dumps(spec))))
     class _VaultImagesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2423,6 +2426,9 @@ class Oneiron:
     class _AiVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def reply(self, spec):
+            """Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs."""
+            return json.loads(_translate(lambda: self._client.ai_reply(json.dumps(spec))))
         def options(self, spec):
             """The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."""
             return json.loads(_translate(lambda: self._client.ai_options(json.dumps(spec))))

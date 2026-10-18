@@ -311,6 +311,8 @@ pub enum AgentVerb {
     SelfSkillsSave,
     SelfSkillsFork,
     SelfSkillsCallables,
+    AiReply,
+    VaultReceiptsContext,
     AiOptions,
     AiImage,
     AiSpeech,
@@ -795,6 +797,8 @@ impl AgentVerb {
         Self::SelfSkillsSave,
         Self::SelfSkillsFork,
         Self::SelfSkillsCallables,
+        Self::AiReply,
+        Self::VaultReceiptsContext,
         Self::AiOptions,
         Self::AiImage,
         Self::AiSpeech,
@@ -1286,6 +1290,8 @@ impl AgentVerb {
             Self::SelfSkillsSave => "self.skills.save",
             Self::SelfSkillsFork => "self.skills.fork",
             Self::SelfSkillsCallables => "self.skills.callables",
+            Self::AiReply => "ai.reply",
+            Self::VaultReceiptsContext => "vault.receipts.context",
             Self::AiOptions => "ai.options",
             Self::AiImage => "ai.image",
             Self::AiSpeech => "ai.speech",
@@ -1773,6 +1779,8 @@ impl AgentVerb {
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
                 | Self::SelfSkillsCallables
+                | Self::AiReply
+                | Self::VaultReceiptsContext
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
@@ -2264,6 +2272,8 @@ impl AgentVerb {
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
                 | Self::SelfSkillsCallables
+                | Self::AiReply
+                | Self::VaultReceiptsContext
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
@@ -2796,6 +2806,8 @@ impl AgentVerb {
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
                 | Self::SelfSkillsCallables
+                | Self::AiReply
+                | Self::VaultReceiptsContext
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
@@ -3147,6 +3159,7 @@ impl AgentVerb {
                 | Self::VaultWorkspaceWorkCompanionSet
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
+                | Self::AiReply
                 | Self::AiImage
                 | Self::AiSpeech
                 | Self::AiTranscribe
@@ -3585,6 +3598,8 @@ impl AgentVerb {
             Self::SelfSkillsSave => &["spec"],
             Self::SelfSkillsFork => &["spec"],
             Self::SelfSkillsCallables => &[],
+            Self::AiReply => &["spec"],
+            Self::VaultReceiptsContext => &["spec"],
             Self::AiOptions => &["spec"],
             Self::AiImage => &["spec"],
             Self::AiSpeech => &["spec"],
@@ -4070,6 +4085,8 @@ impl AgentVerb {
             Self::SelfSkillsSave => &["spec"],
             Self::SelfSkillsFork => &["spec"],
             Self::SelfSkillsCallables => &[],
+            Self::AiReply => &["spec"],
+            Self::VaultReceiptsContext => &["spec"],
             Self::AiOptions => &["spec"],
             Self::AiImage => &["spec"],
             Self::AiSpeech => &["spec"],
@@ -5123,6 +5140,12 @@ impl AgentVerb {
             }
             Self::SelfSkillsCallables => {
                 "Every loadable callable helper skill and its call contract: what it takes and returns."
+            }
+            Self::AiReply => {
+                "Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs."
+            }
+            Self::VaultReceiptsContext => {
+                "Read the frozen context of one actual reply emit, as its actor or the live vault owner; never rebuild the assembly."
             }
             Self::AiOptions => {
                 "The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."
