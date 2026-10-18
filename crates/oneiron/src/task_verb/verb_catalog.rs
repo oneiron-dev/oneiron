@@ -656,6 +656,19 @@ pub enum AgentVerb {
     AiVoiceEnd,
     AiVoiceClose,
     AiAnonymousChat,
+    VaultModelsCatalogRefresh,
+    VaultModelsCatalogGet,
+    VaultModelsCatalogDiff,
+    VaultModelsTrialsNominate,
+    VaultModelsTrialsGet,
+    VaultModelsTrialsApprove,
+    VaultModelsTrialsRun,
+    VaultModelsTrialsComplete,
+    VaultModelsBindingsPropose,
+    VaultModelsBindingsGet,
+    VaultModelsBindingsRead,
+    VaultModelsBindingsAccept,
+    VaultModelsBindingsDeny,
     AiOptions,
     AiImage,
     AiSpeech,
@@ -1595,6 +1608,19 @@ impl AgentVerb {
         Self::AiVoiceEnd,
         Self::AiVoiceClose,
         Self::AiAnonymousChat,
+        Self::VaultModelsCatalogRefresh,
+        Self::VaultModelsCatalogGet,
+        Self::VaultModelsCatalogDiff,
+        Self::VaultModelsTrialsNominate,
+        Self::VaultModelsTrialsGet,
+        Self::VaultModelsTrialsApprove,
+        Self::VaultModelsTrialsRun,
+        Self::VaultModelsTrialsComplete,
+        Self::VaultModelsBindingsPropose,
+        Self::VaultModelsBindingsGet,
+        Self::VaultModelsBindingsRead,
+        Self::VaultModelsBindingsAccept,
+        Self::VaultModelsBindingsDeny,
         Self::AiOptions,
         Self::AiImage,
         Self::AiSpeech,
@@ -2555,6 +2581,19 @@ impl AgentVerb {
             Self::AiVoiceEnd => "ai.voice.end",
             Self::AiVoiceClose => "ai.voice.close",
             Self::AiAnonymousChat => "ai.anonymous_chat",
+            Self::VaultModelsCatalogRefresh => "vault.models.catalog.refresh",
+            Self::VaultModelsCatalogGet => "vault.models.catalog.get",
+            Self::VaultModelsCatalogDiff => "vault.models.catalog.diff",
+            Self::VaultModelsTrialsNominate => "vault.models.trials.nominate",
+            Self::VaultModelsTrialsGet => "vault.models.trials.get",
+            Self::VaultModelsTrialsApprove => "vault.models.trials.approve",
+            Self::VaultModelsTrialsRun => "vault.models.trials.run",
+            Self::VaultModelsTrialsComplete => "vault.models.trials.complete",
+            Self::VaultModelsBindingsPropose => "vault.models.bindings.propose",
+            Self::VaultModelsBindingsGet => "vault.models.bindings.get",
+            Self::VaultModelsBindingsRead => "vault.models.bindings.read",
+            Self::VaultModelsBindingsAccept => "vault.models.bindings.accept",
+            Self::VaultModelsBindingsDeny => "vault.models.bindings.deny",
             Self::AiOptions => "ai.options",
             Self::AiImage => "ai.image",
             Self::AiSpeech => "ai.speech",
@@ -3497,6 +3536,19 @@ impl AgentVerb {
                 | Self::AiVoiceEnd
                 | Self::AiVoiceClose
                 | Self::AiAnonymousChat
+                | Self::VaultModelsCatalogRefresh
+                | Self::VaultModelsCatalogGet
+                | Self::VaultModelsCatalogDiff
+                | Self::VaultModelsTrialsNominate
+                | Self::VaultModelsTrialsGet
+                | Self::VaultModelsTrialsApprove
+                | Self::VaultModelsTrialsRun
+                | Self::VaultModelsTrialsComplete
+                | Self::VaultModelsBindingsPropose
+                | Self::VaultModelsBindingsGet
+                | Self::VaultModelsBindingsRead
+                | Self::VaultModelsBindingsAccept
+                | Self::VaultModelsBindingsDeny
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
@@ -4463,6 +4515,19 @@ impl AgentVerb {
                 | Self::AiVoiceEnd
                 | Self::AiVoiceClose
                 | Self::AiAnonymousChat
+                | Self::VaultModelsCatalogRefresh
+                | Self::VaultModelsCatalogGet
+                | Self::VaultModelsCatalogDiff
+                | Self::VaultModelsTrialsNominate
+                | Self::VaultModelsTrialsGet
+                | Self::VaultModelsTrialsApprove
+                | Self::VaultModelsTrialsRun
+                | Self::VaultModelsTrialsComplete
+                | Self::VaultModelsBindingsPropose
+                | Self::VaultModelsBindingsGet
+                | Self::VaultModelsBindingsRead
+                | Self::VaultModelsBindingsAccept
+                | Self::VaultModelsBindingsDeny
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
@@ -5512,6 +5577,19 @@ impl AgentVerb {
                 | Self::AiVoiceEnd
                 | Self::AiVoiceClose
                 | Self::AiAnonymousChat
+                | Self::VaultModelsCatalogRefresh
+                | Self::VaultModelsCatalogGet
+                | Self::VaultModelsCatalogDiff
+                | Self::VaultModelsTrialsNominate
+                | Self::VaultModelsTrialsGet
+                | Self::VaultModelsTrialsApprove
+                | Self::VaultModelsTrialsRun
+                | Self::VaultModelsTrialsComplete
+                | Self::VaultModelsBindingsPropose
+                | Self::VaultModelsBindingsGet
+                | Self::VaultModelsBindingsRead
+                | Self::VaultModelsBindingsAccept
+                | Self::VaultModelsBindingsDeny
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
@@ -6160,6 +6238,14 @@ impl AgentVerb {
                 | Self::AiVoiceTool
                 | Self::AiVoiceEnd
                 | Self::AiVoiceClose
+                | Self::VaultModelsCatalogRefresh
+                | Self::VaultModelsTrialsNominate
+                | Self::VaultModelsTrialsApprove
+                | Self::VaultModelsTrialsRun
+                | Self::VaultModelsTrialsComplete
+                | Self::VaultModelsBindingsPropose
+                | Self::VaultModelsBindingsAccept
+                | Self::VaultModelsBindingsDeny
                 | Self::AiImage
                 | Self::AiSpeech
                 | Self::VaultVoicesPacksPut
@@ -7016,6 +7102,19 @@ impl AgentVerb {
             Self::AiVoiceEnd => &["spec"],
             Self::AiVoiceClose => &["spec"],
             Self::AiAnonymousChat => &["spec"],
+            Self::VaultModelsCatalogRefresh => &["spec"],
+            Self::VaultModelsCatalogGet => &["spec"],
+            Self::VaultModelsCatalogDiff => &["spec"],
+            Self::VaultModelsTrialsNominate => &["spec"],
+            Self::VaultModelsTrialsGet => &["spec"],
+            Self::VaultModelsTrialsApprove => &["spec"],
+            Self::VaultModelsTrialsRun => &["spec"],
+            Self::VaultModelsTrialsComplete => &["spec"],
+            Self::VaultModelsBindingsPropose => &["spec"],
+            Self::VaultModelsBindingsGet => &["spec"],
+            Self::VaultModelsBindingsRead => &["spec"],
+            Self::VaultModelsBindingsAccept => &["spec"],
+            Self::VaultModelsBindingsDeny => &["spec"],
             Self::AiOptions => &["spec"],
             Self::AiImage => &["spec"],
             Self::AiSpeech => &["spec"],
@@ -7956,6 +8055,19 @@ impl AgentVerb {
             Self::AiVoiceEnd => &["spec"],
             Self::AiVoiceClose => &["spec"],
             Self::AiAnonymousChat => &["spec"],
+            Self::VaultModelsCatalogRefresh => &["spec"],
+            Self::VaultModelsCatalogGet => &["spec"],
+            Self::VaultModelsCatalogDiff => &["spec"],
+            Self::VaultModelsTrialsNominate => &["spec"],
+            Self::VaultModelsTrialsGet => &["spec"],
+            Self::VaultModelsTrialsApprove => &["spec"],
+            Self::VaultModelsTrialsRun => &["spec"],
+            Self::VaultModelsTrialsComplete => &["spec"],
+            Self::VaultModelsBindingsPropose => &["spec"],
+            Self::VaultModelsBindingsGet => &["spec"],
+            Self::VaultModelsBindingsRead => &["spec"],
+            Self::VaultModelsBindingsAccept => &["spec"],
+            Self::VaultModelsBindingsDeny => &["spec"],
             Self::AiOptions => &["spec"],
             Self::AiImage => &["spec"],
             Self::AiSpeech => &["spec"],
@@ -10154,6 +10266,45 @@ impl AgentVerb {
             }
             Self::AiAnonymousChat => {
                 "One standalone memory-free turn on the house configuration or a plain model, with ephemeral policy notices; use the HTTP SDK, not a recorded MCP or code-mode call."
+            }
+            Self::VaultModelsCatalogRefresh => {
+                "Refreshes priced model catalog rows and external-score diffs under an immutable revision; changes no role binding."
+            }
+            Self::VaultModelsCatalogGet => {
+                "Reads a pinned model catalog revision with its prices, backend offers and score evidence."
+            }
+            Self::VaultModelsCatalogDiff => {
+                "Diffs two immutable model catalog revisions, including prices, scores and retired offers."
+            }
+            Self::VaultModelsTrialsNominate => {
+                "Nominates a question-specific held-out trial at a catalog revision using the caller own labels; external scores grant no authority."
+            }
+            Self::VaultModelsTrialsGet => {
+                "Reads a retained held-out trial, its catalog revision, independent labels and measured cost."
+            }
+            Self::VaultModelsTrialsApprove => {
+                "Approves exploration for a held-out model trial only; leaves its role binding unchanged."
+            }
+            Self::VaultModelsTrialsRun => {
+                "Runs both pinned backend arms through decide and normal inference leases on the original held-out source frontier; records real usage and cost."
+            }
+            Self::VaultModelsTrialsComplete => {
+                "Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer."
+            }
+            Self::VaultModelsBindingsPropose => {
+                "Proposes a role model change from a sufficient held-out trial, retaining catalog revision and real trial cost without activating it."
+            }
+            Self::VaultModelsBindingsGet => {
+                "Reads an owner-reviewed model role-binding proposal and its pinned trial evidence."
+            }
+            Self::VaultModelsBindingsRead => {
+                "Reads the currently active manifest binding for a model role."
+            }
+            Self::VaultModelsBindingsAccept => {
+                "Accepts a pending model role-binding proposal as the owner after transaction-local incumbent, catalog and trial checks."
+            }
+            Self::VaultModelsBindingsDeny => {
+                "Denies a pending model role-binding proposal as the owner without changing the incumbent manifest binding."
             }
             Self::AiOptions => {
                 "The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."

@@ -571,6 +571,8 @@ class Oneiron:
         @property
         def conversations(self) -> "Oneiron._VaultConversationsVerbs": ...
         @property
+        def models(self) -> "Oneiron._VaultModelsVerbs": ...
+        @property
         def voices(self) -> "Oneiron._VaultVoicesVerbs": ...
         @property
         def graph(self) -> "Oneiron._VaultGraphVerbs": ...
@@ -2225,6 +2227,42 @@ class Oneiron:
     class _VaultConversationsRecordsVerbs:
         def append(self, spec: Facade.DagRecordAppendInput) -> Facade.DagRecordAppendReceipt:
             """Appends one TURN to a conversation's DAG, bylined the caller, with its topology in one transaction; the host lands the turn once."""
+    class _VaultModelsVerbs:
+        @property
+        def catalog(self) -> "Oneiron._VaultModelsCatalogVerbs": ...
+        @property
+        def trials(self) -> "Oneiron._VaultModelsTrialsVerbs": ...
+        @property
+        def bindings(self) -> "Oneiron._VaultModelsBindingsVerbs": ...
+    class _VaultModelsCatalogVerbs:
+        def refresh(self, spec: Facade.ModelCatalogRefresh) -> Facade.ModelCatalogRevision:
+            """Refreshes priced model catalog rows and external-score diffs under an immutable revision; changes no role binding."""
+        def get(self, spec: Facade.ModelCatalogGet) -> Facade.ModelCatalogRevision:
+            """Reads a pinned model catalog revision with its prices, backend offers and score evidence."""
+        def diff(self, spec: Facade.ModelCatalogDiffRequest) -> Facade.ModelCatalogDiff:
+            """Diffs two immutable model catalog revisions, including prices, scores and retired offers."""
+    class _VaultModelsTrialsVerbs:
+        def nominate(self, spec: Facade.ModelTrialNominate) -> Facade.ModelTrialView:
+            """Nominates a question-specific held-out trial at a catalog revision using the caller own labels; external scores grant no authority."""
+        def get(self, spec: Facade.ModelTrialRef) -> Facade.ModelTrialView:
+            """Reads a retained held-out trial, its catalog revision, independent labels and measured cost."""
+        def approve(self, spec: Facade.ModelTrialRef) -> Facade.ModelTrialView:
+            """Approves exploration for a held-out model trial only; leaves its role binding unchanged."""
+        def run(self, spec: Facade.ModelTrialRef) -> Facade.ModelTrialView:
+            """Runs both pinned backend arms through decide and normal inference leases on the original held-out source frontier; records real usage and cost."""
+        def complete(self, spec: Facade.ModelTrialComplete) -> Facade.ModelTrialView:
+            """Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer."""
+    class _VaultModelsBindingsVerbs:
+        def propose(self, spec: Facade.ModelBindingPropose) -> Facade.ModelBindingProposal:
+            """Proposes a role model change from a sufficient held-out trial, retaining catalog revision and real trial cost without activating it."""
+        def get(self, spec: Facade.ModelBindingProposalRef) -> Facade.ModelBindingProposal:
+            """Reads an owner-reviewed model role-binding proposal and its pinned trial evidence."""
+        def read(self, spec: Facade.ModelBindingRead) -> Facade.ModelBinding:
+            """Reads the currently active manifest binding for a model role."""
+        def accept(self, spec: Facade.ModelBindingAccept) -> Facade.ModelBindingProposal:
+            """Accepts a pending model role-binding proposal as the owner after transaction-local incumbent, catalog and trial checks."""
+        def deny(self, spec: Facade.ModelBindingProposalRef) -> Facade.ModelBindingProposal:
+            """Denies a pending model role-binding proposal as the owner without changing the incumbent manifest binding."""
     class _VaultVoicesVerbs:
         @property
         def packs(self) -> "Oneiron._VaultVoicesPacksVerbs": ...

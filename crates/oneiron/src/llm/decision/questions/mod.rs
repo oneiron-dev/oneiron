@@ -38,6 +38,10 @@ pub use outcomes::{
 pub(crate) use recipe::run_graph_question_with_proposals;
 pub use recipe::{GraphQuestionInput, GraphQuestionRef, run_graph_question};
 pub use records::*;
+pub(crate) use store::read_question_in_txn;
+pub(crate) use refresh::answer_records_in_txn;
+pub(crate) use outcomes::calibration_pairs_in_txn;
+pub(crate) use graph_ask::{trial_unit_context, trial_unit_context_in_txn};
 pub(crate) use refresh::principal_actor;
 pub use refresh::{
     RefreshBatch, RefreshFailure, answer_records, refresh_due_questions,
