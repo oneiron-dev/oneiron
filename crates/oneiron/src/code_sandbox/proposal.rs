@@ -5,6 +5,10 @@ use super::{
     paths::{SandboxMount, SandboxVirtualPath},
 };
 use crate::{ClaimApprovalStatus, ClaimCandidate, EntityId, Error, Result};
+use std::io::Read;
+
+mod body;
+pub use body::{SandboxProposalBody, SandboxProposalBodyReader, SandboxProposalBodyWriter};
 
 /// Single write intent emitted by a propose-only guest.
 #[derive(Debug, Clone, PartialEq)]
@@ -56,17 +60,18 @@ impl SandboxProposalKind {
     }
 }
 
-/// One proposed file write under the virtual `/mnt` ABI.
+/// One proposed file write under the virtual `/mnt` ABI. Its bytes are a
+/// spooled body, never an in-memory copy of the file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxFileWriteProposal {
     pub path: SandboxVirtualPath,
-    pub bytes: Vec<u8>,
+    pub body: SandboxProposalBody,
 }
 
 impl SandboxFileWriteProposal {
     #[must_use]
-    pub const fn new(path: SandboxVirtualPath, bytes: Vec<u8>) -> Self {
-        Self { path, bytes }
+    pub const fn new(path: SandboxVirtualPath, body: SandboxProposalBody) -> Self {
+        Self { path, body }
     }
 }
 
@@ -101,21 +106,81 @@ pub struct SandboxFileEditProposal {
     pub edit: crate::code_document::CodeFileEdit,
 }
 impl SandboxFileWriteProposal {
+    /// The same operation as [`crate::code_document::CodeFileEdit::between`],
+    /// read from the body in frames: the shared prefix and suffix are
+    /// compared where they lie, and only the changed span is read whole.
     pub fn lower_to_edit(&self, base: &[u8]) -> Result<Option<SandboxFileEditProposal>> {
-        if base == self.bytes {
+        let body = &self.body;
+        if body.is(base) {
             return Ok(None);
         }
         let old = std::str::from_utf8(base)
             .map_err(|_| Error::InvalidClaimBody("code edit base is not UTF-8"))?;
-        let new = std::str::from_utf8(&self.bytes)
+        let shared = usize::try_from(body.len()).map_or(base.len(), |len| len.min(base.len()));
+        let mut frame = vec![0; LOWER_FRAME];
+        let mut reader = body.reader();
+        let mut prefix = 0;
+        while prefix < shared {
+            let want = LOWER_FRAME.min(shared - prefix);
+            reader.read_exact(&mut frame[..want])?;
+            let same = frame[..want]
+                .iter()
+                .zip(&base[prefix..prefix + want])
+                .take_while(|(a, b)| a == b)
+                .count();
+            prefix += same;
+            if same < want {
+                break;
+            }
+        }
+        // Equal bytes share their char boundaries, so one boundary in the
+        // base is a boundary in the body too.
+        while !old.is_char_boundary(prefix) {
+            prefix -= 1;
+        }
+        let mut suffix = 0;
+        while suffix < shared - prefix {
+            let want = LOWER_FRAME.min(shared - prefix - suffix);
+            let tail = body.read_range(body.len() - (suffix + want) as u64, want)?;
+            let same = tail
+                .iter()
+                .rev()
+                .zip(base[..base.len() - suffix].iter().rev())
+                .take_while(|(a, b)| a == b)
+                .count();
+            suffix += same;
+            if same < want {
+                break;
+            }
+        }
+        while !old.is_char_boundary(base.len() - suffix) {
+            suffix -= 1;
+        }
+        let changed = usize::try_from(body.len() - (prefix + suffix) as u64)
+            .map_err(|_| Error::InvalidClaimBody("code edit span exceeds host memory"))?;
+        // The prefix and suffix are the base's own text; the body is UTF-8
+        // exactly when its changed span is.
+        let replacement = String::from_utf8(body.read_range(prefix as u64, changed)?)
             .map_err(|_| Error::InvalidClaimBody("code edit output is not UTF-8"))?;
+        let expected = &old[prefix..old.len() - suffix];
+        let start = old[..prefix].chars().count();
         Ok(Some(SandboxFileEditProposal {
             path: self.path.clone(),
             base_content_hash: *blake3::hash(base).as_bytes(),
-            edit: crate::code_document::CodeFileEdit::between(self.path.relative_path(), old, new),
+            edit: crate::code_document::CodeFileEdit {
+                path: self.path.relative_path().to_owned(),
+                start,
+                end: start + expected.chars().count(),
+                expected: expected.to_owned(),
+                replacement,
+                new_path: None,
+            },
         }))
     }
 }
+
+/// One comparison buffer while a write is lowered; never a size bound.
+const LOWER_FRAME: usize = 1024 * 1024;
 
 /// One proposed memory claim from a propose-only guest.
 #[derive(Debug, Clone, PartialEq)]

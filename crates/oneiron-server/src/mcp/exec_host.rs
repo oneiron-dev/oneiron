@@ -138,6 +138,13 @@ pub enum McpCodeExecutionError {
     RunBinding(String),
     #[error("execute_code run failed: {0}")]
     Run(String),
+    /// A model call no provider answered stopped the run (FIX 3194): its
+    /// step is kept, and the same `run_ref` enters it again from its next
+    /// step once `retry_after` seconds have passed.
+    #[error(
+        "execute_code run stopped: no provider answered a model call; call again with the same run_ref in {retry_after} s"
+    )]
+    ProviderUnavailable { retry_after: u64 },
 }
 
 impl McpCodeExecutionError {
@@ -150,6 +157,7 @@ impl McpCodeExecutionError {
             Self::RunWaitedOut => "code_run_waited_out",
             Self::RunBinding(_) => "code_run_binding_failed",
             Self::Run(_) => "code_run_failed",
+            Self::ProviderUnavailable { .. } => "model_unavailable",
         }
     }
 }
@@ -544,10 +552,13 @@ fn run_engine_native_code_mode(
         None,
         seat.as_ref(),
     )
-    .map_err(|error| match error {
-        EngineRunError::Binding(error) => McpCodeExecutionError::RunBinding(error),
-        EngineRunError::Run(error) => McpCodeExecutionError::Run(error.to_string()),
-        EngineRunError::Payer(fault) => McpCodeExecutionError::RunBinding(fault.to_string()),
+    .map_err(|error| match error.provider_outage() {
+        Some(retry_after) => McpCodeExecutionError::ProviderUnavailable { retry_after },
+        None => match error {
+            EngineRunError::Binding(error) => McpCodeExecutionError::RunBinding(error),
+            EngineRunError::Run(error) => McpCodeExecutionError::Run(error.to_string()),
+            EngineRunError::Payer(fault) => McpCodeExecutionError::RunBinding(fault.to_string()),
+        },
     })
 }
 
@@ -568,6 +579,17 @@ impl EngineRunError {
     pub(crate) fn llm(&self) -> Option<&oneiron::LlmError> {
         match self {
             Self::Run(oneiron::engine_executor::EngineExecutorError::Llm(error)) => Some(error),
+            _ => None,
+        }
+    }
+
+    /// The seconds until a host door's model call that no provider answered
+    /// may be sent again, when that outage is why the run stopped (FIX 3194).
+    pub(crate) fn provider_outage(&self) -> Option<u64> {
+        match self {
+            Self::Run(oneiron::engine_executor::EngineExecutorError::Engine(
+                oneiron::Error::ProviderUnavailable { retry_after },
+            )) => Some(*retry_after),
             _ => None,
         }
     }

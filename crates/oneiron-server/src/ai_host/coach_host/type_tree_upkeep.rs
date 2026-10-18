@@ -1,9 +1,11 @@
 //! The host side of type-tree upkeep (ARCH-0079 #task-type, OF-541): the
 //! engine recounts, splits and merges the vault tree in closed form; the
 //! Coach's own seat names each new split type, from the decision it was split
-//! out on. The Coach pays for the calls.
+//! out on. The Coach pays for the calls. The host's replay judge, when one is
+//! registered, rules on the open tree revision with both trees in view.
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::dreamer_runner::maintenance::type_tree_upkeep::{MAX_TYPE_NAME_CHARS, TypeNamer};
+use oneiron::skill_optimize::HeldOutReplayNotes;
 use oneiron::task_type::TaskTypeNode;
 use oneiron::{EntityId, LlmMessageRole};
 
@@ -37,9 +39,11 @@ pub(super) fn run(
     let namer = HostNamer {
         models: HostModels::open(server, run_id, PURPOSE, BUDGET_UNITS)?,
     };
+    // No judge: the pass still reshapes and proposes, and nothing rules.
+    let judge = crate::replay_judge::registered().map(|judge| judge as &dyn HeldOutReplayNotes);
     let report = server
         .vault()
-        .run_coach_type_tree_upkeep(admitted, &namer, now)?;
+        .run_coach_type_tree_upkeep(admitted, &namer, judge, now)?;
     tracing::debug!(?report, "the Coach kept the type tree");
     Ok(())
 }
