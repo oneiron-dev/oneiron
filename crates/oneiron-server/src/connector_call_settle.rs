@@ -31,7 +31,7 @@ use oneiron::outbound_intent_ledger::IntentLedgerError;
 use oneiron::task_verb::sdk::ConnectorCallReply;
 
 use crate::connector_call_host::ServedConnectorCallHost;
-use crate::server::SyncServer;
+use crate::server::{HousekeepingAdmission, SyncServer, admit_every_pass};
 
 /// How often the settler drains the pending connector calls, after the pass
 /// it runs at startup.
@@ -66,16 +66,32 @@ impl SyncServer {
     /// connectors, hooks or model slots: a held call may outlive the config
     /// that made it.
     pub(crate) fn spawn_connector_settler(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(settle_forever(Arc::clone(self)))
+        self.spawn_connector_settler_admitted(admit_every_pass())
+    }
+
+    /// Starts the settler on a host with a write freeze: each pass is
+    /// admitted through `admit` and holds that admission on its blocking
+    /// thread through every expiry, repair, send and delivery it writes. A
+    /// refused pass settles nothing and waits its interval.
+    pub(crate) fn spawn_connector_settler_admitted(
+        self: &Arc<Self>,
+        admit: HousekeepingAdmission,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(settle_forever(Arc::clone(self), admit))
     }
 }
 
-async fn settle_forever(server: Arc<SyncServer>) {
+async fn settle_forever(server: Arc<SyncServer>, admit: HousekeepingAdmission) {
     let mut backoffs = Backoffs::default();
     loop {
+        let Some(admission) = admit() else {
+            tokio::time::sleep(CONNECTOR_SETTLE_INTERVAL).await;
+            continue;
+        };
         let pass = Arc::clone(&server);
         let mut held = std::mem::take(&mut backoffs);
         let outcome = tokio::task::spawn_blocking(move || {
+            let _admission = admission;
             let settled =
                 settle_connector_calls(&pass, &mut held).map_err(|error| error.to_string());
             (held, settled)

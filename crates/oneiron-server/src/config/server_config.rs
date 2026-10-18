@@ -344,7 +344,10 @@ pub struct ServeConfig {
     pub line: LineConfig,
     /// Deployment posture handed to the engine through [`Self::vault_config`].
     pub privacy_posture: HostingPrivacyPosture,
-    pub failure_signal_export: bool,
+    /// The owner's "Help improve Oneiron" choice, as given: `None` takes the
+    /// deployment's default, on when hosted and off on self-host
+    /// ([`oneiron::config::failure_signals::default_exports`]).
+    pub failure_signal_export: Option<bool>,
     pub failure_signal_training: bool,
     /// Opaque host-managed KMS key reference. `Some` only for the managed
     /// posture; relay and self-host keep no host reference at all. Never key
@@ -426,7 +429,7 @@ impl Default for ServeConfig {
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
             privacy_posture: HostingPrivacyPosture::SelfHostLocal,
-            failure_signal_export: false,
+            failure_signal_export: None,
             failure_signal_training: false,
             hosted_kms_key_ref: None,
             hooks: true,

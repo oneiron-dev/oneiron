@@ -395,7 +395,9 @@ pub struct ServeArgs {
     /// hosting is opt-in.
     #[arg(long, value_parser = parse_privacy_posture)]
     pub privacy_posture: Option<HostingPrivacyPosture>,
-    /// Failure-signal participation for self-hosted deployments (default off).
+    /// "Help improve Oneiron": send the content-free failure counts and the
+    /// Coach's code-fix records. Default on for a hosted vault, which can
+    /// turn it off; off on self-host until set true.
     #[arg(long, action = clap::ArgAction::Set)]
     pub failure_signal_export: Option<bool>,
     /// Separate, explicit training consent (default off in every tier).
