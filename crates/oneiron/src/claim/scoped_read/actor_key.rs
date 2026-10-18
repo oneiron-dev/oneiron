@@ -72,8 +72,11 @@ pub(crate) struct RoomTurnCeiling {
     /// The turn's Scope terms, shared by the turn and every lane built from
     /// it; see [`TurnTerms`].
     pub(crate) terms: TurnTerms,
-    /// The room's members, sorted and unique: each row must pass the
-    /// all-of-audience rule for every one of them (ARCH-0006a).
+    /// The room's audience, sorted and unique: its members and the entry
+    /// refs of its live speakers (FIX 1388/1389). Each row must pass the
+    /// all-of-audience rule for every one of them (ARCH-0006a). It projects
+    /// who hears the room and never proves membership: standing, worlds,
+    /// the clearance meet's members and peer reads are the members' alone.
     pub(crate) roster: Vec<EntityId>,
     /// Every other member's read key: a row the room reads must be one each
     /// of them may read too, private principal rows and NOTEs included.
@@ -278,7 +281,8 @@ impl RoomTurnCeiling {
         }
     }
 
-    /// Whether every member of `roster` already binds this ceiling.
+    /// Whether every id of `roster`, a member or a live entry ref, already
+    /// binds this ceiling.
     pub(crate) fn binds_all(&self, roster: &[EntityId]) -> bool {
         roster
             .iter()

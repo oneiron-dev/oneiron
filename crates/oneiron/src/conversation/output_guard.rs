@@ -64,6 +64,13 @@ impl ContainerOutputGuard {
         }
     }
 
+    /// The live-call arm: a voice call went live in `container` (FIX 1388
+    /// C1), so nothing marked before now goes out into it. Its speakers'
+    /// entries may already stand, and then no new TASK announces them.
+    pub(crate) fn changed(&self, container: EntityId) {
+        self.lock().move_mark(container);
+    }
+
     fn mark(&self) -> OutputMark {
         OutputMark(self.lock().order)
     }

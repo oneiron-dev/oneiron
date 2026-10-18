@@ -194,6 +194,7 @@ impl Store {
             proactivity_updates: tokio::sync::watch::channel(0).0,
             proactivity_suspended: Mutex::new(None),
             container_output: Default::default(),
+            live_speakers: Default::default(),
             #[cfg(feature = "sync")]
             attempt_updates: tokio::sync::broadcast::channel(256).0,
             #[cfg(feature = "sync")]

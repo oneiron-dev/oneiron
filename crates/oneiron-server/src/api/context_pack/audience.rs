@@ -7,9 +7,10 @@ use super::RoomAudience;
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
 
-/// Room `room_id`'s members under the caller's own read, and the audience they make. A room
-/// the caller cannot read is one that does not exist; members read its roster by membership,
-/// as their room turns do.
+/// Room `room_id`'s members under the caller's own read, and the audience they make with the
+/// room's live voice speakers, read in one snapshot. A room the caller cannot read is one that
+/// does not exist; members read its roster by membership, as their room turns do. A live call
+/// whose speakers are not all entered yet holds the read, typed (FIX 1388/1389 C2).
 pub(crate) fn resolve_core_room(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
@@ -19,24 +20,22 @@ pub(crate) fn resolve_core_room(
     let principal = auth
         .principal_ref()
         .and_then(|id| oneiron::EntityId::from_hex(id).ok());
-    let room_members = room_id
-        .map(|room| {
-            vault
-                .room_audience_members_under(scoped_read, room, principal)
-                .map_err(|error| core_engine_error("room audience failed", error))
-        })
-        .transpose()?;
-    let room = room_members
-        .as_deref()
-        .map(|members| RoomAudience::resolve(vault, auth, members))
-        .transpose()?;
-    Ok((room_members, room))
+    let Some(room) = room_id else {
+        return Ok((None, None));
+    };
+    let (members, live) = vault
+        .room_audience_with_live_under(scoped_read, room, principal)
+        .map_err(|error| core_engine_error("room audience failed", error))?;
+    let room = RoomAudience::resolve(vault, auth, &members, live)?;
+    Ok((Some(members), Some(room)))
 }
 
 /// The caller's read narrowed to the audience it speaks to: a room's met world set, roster and
 /// its own agents' reads; else the caller and each contact present, through the contact's one
 /// linked PERSON; else the read as it is. A speaker that entered the room unplaced is met by its
-/// entry fact, under the cut it entered at, in either branch (OF-365 P5).
+/// entry fact, under the cut it entered at, in either branch (OF-365 P5). A room's branch also
+/// meets the entry of every speaker its live voice calls must place, whether the request names
+/// them or not (FIX 1388/1389 C1).
 pub(crate) fn narrow_to_core_audience<'a>(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
@@ -62,6 +61,11 @@ pub(crate) fn narrow_to_core_audience<'a>(
                 .flat_map(oneiron::InterlocutorSet::non_owner)
                 .filter_map(oneiron::interlocutor::Interlocutor::audience_ref),
         );
+        for entry in room.live.entry_refs() {
+            if !audience.contains(entry) {
+                audience.push(*entry);
+            }
+        }
         return Ok(scoped_read
             .for_audience(&audience)
             .with_peer_reads(room.agent_reads()));

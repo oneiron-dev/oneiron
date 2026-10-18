@@ -23,6 +23,22 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
             ],
         );
     }
+    // A room's assembly held on a live voice call names the room and the
+    // call; the generic conversation-state answer would drop both.
+    if matches!(
+        error,
+        oneiron::Error::Record(oneiron::error::RecordError::RoomLiveSpeakersIncomplete(_))
+    ) {
+        return ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::InvalidState {
+                state: Some("room_live_speakers_incomplete".to_owned()),
+            },
+            [
+                "A voice call live in this room has no stored roster, or a speaker it must place is not entered yet; its host records them on its next roster refresh. Assemble again after that.",
+            ],
+        );
+    }
     // A room refusal names the speaker, or the join, it refused; the
     // generic scope answer would drop them.
     if let oneiron::Error::Record(oneiron::error::RecordError::RoomJoinRefused { .. }) = error {

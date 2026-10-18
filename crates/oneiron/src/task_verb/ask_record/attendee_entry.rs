@@ -5,7 +5,8 @@
 //! revision, asker or device: that is what lets P5 ask once. It freezes the
 //! engine's entry time, which is the attendee's history cut, and the route of
 //! an unplaced speaker's identity ask, so an interrupted entry is raised by
-//! the next call rather than asked twice.
+//! the next call rather than asked twice. A speaker entered with no ask, one
+//! its roster placed or one in a project room, has no route.
 
 use super::*;
 use crate::conversation::{ContainerAttendee, ContainerAttendeeEvent};
@@ -30,7 +31,8 @@ pub(crate) struct AttendeeEntryFact {
     /// When the identity ask lapses unanswered (engine seconds).
     pub(crate) until: u64,
     /// The identity ask's route: the ask group its asker admits it under on
-    /// the node that recorded the entry. `None` for a PERSON.
+    /// the node that recorded the entry. `None` for a PERSON, and for a
+    /// speaker entered with no ask, which offers no candidates.
     pub(crate) ask_group: Option<EntityId>,
     /// Engine time of the first entry: the attendee's history cut.
     pub(crate) entered_at: u64,
@@ -60,7 +62,7 @@ impl AttendeeEntryFact {
                     }
                 }
                 let distinct: std::collections::BTreeSet<_> = self.candidates.iter().collect();
-                if self.ask_group.is_none()
+                if (self.ask_group.is_none() && !self.candidates.is_empty())
                     || self.candidates.len() > MAX_ATTENDEE_CANDIDATES
                     || distinct.len() != self.candidates.len()
                 {
@@ -118,6 +120,15 @@ fn identity_intent(session_key: &str, speaker_key: &str, revision: u64) -> Resul
     ))
 }
 
+/// What a first entry asks.
+#[derive(Clone, Copy)]
+enum EntryAsk {
+    /// A speaker's "who is this?", whose route the fact freezes.
+    Identity,
+    /// Nothing.
+    Unasked,
+}
+
 /// Records `event` as its attendee's first entry into its container, once.
 /// A later event for the same attendee replays the stored fact: its entry
 /// time, revision, candidates and route stay the first entry's.
@@ -127,22 +138,48 @@ pub(crate) fn admit_attendee_entry_in_txn(
     asker: EntityId,
     event: &ContainerAttendeeEvent,
 ) -> Result<AttendeeEntryAdmission> {
+    admit_in_txn(vault, txn, asker, event, EntryAsk::Identity)
+}
+
+/// [`admit_attendee_entry_in_txn`] with no identity ask: for a speaker its
+/// roster placed, or one entering a project room. A first entry has no
+/// route and no candidates, and none is ever pending. A stored entry
+/// replays as it stands; an ask it once routed stays its own history.
+pub(crate) fn admit_unasked_attendee_entry_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    asker: EntityId,
+    event: &ContainerAttendeeEvent,
+) -> Result<AttendeeEntryAdmission> {
+    admit_in_txn(vault, txn, asker, event, EntryAsk::Unasked)
+}
+
+fn admit_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    asker: EntityId,
+    event: &ContainerAttendeeEvent,
+    ask: EntryAsk,
+) -> Result<AttendeeEntryAdmission> {
     let entry_ref = attendee_entry_id(event.container, &event.attendee)?;
     let (fact, first) = match read::<AttendeeEntryFact>(vault, txn, entry_ref, ATTENDEE_ENTRY)? {
         Some(stored) => (stored, false),
         None => {
             let entered_at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
-            let ask_group = match &event.attendee {
-                ContainerAttendee::Person(_) => None,
-                ContainerAttendee::Speaker {
-                    session_key,
-                    speaker_key,
-                } => Some(group_id(
+            let ask_group = match (&event.attendee, ask) {
+                (
+                    ContainerAttendee::Speaker {
+                        session_key,
+                        speaker_key,
+                    },
+                    EntryAsk::Identity,
+                ) => Some(group_id(
                     vault,
                     txn,
                     asker,
                     &identity_intent(session_key, speaker_key, event.roster_revision)?,
                 )?),
+                _ => None,
             };
             let fact = AttendeeEntryFact {
                 container: event.container,
@@ -167,13 +204,14 @@ pub(crate) fn admit_attendee_entry_in_txn(
             (fact, true)
         }
     };
-    let ask_pending = match (&fact.attendee, fact.ask_group) {
+    let ask_pending = match (&fact.attendee, fact.ask_group, ask) {
         (
             ContainerAttendee::Speaker {
                 session_key,
                 speaker_key,
             },
             Some(route),
+            EntryAsk::Identity,
         ) => {
             group_id(
                 vault,

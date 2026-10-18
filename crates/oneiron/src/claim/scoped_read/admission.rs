@@ -306,14 +306,17 @@ impl<'a> ScopedRead<'a> {
     }
 
     /// The ceiling `turn` puts on a row `txn` serves; `None` once the caller
-    /// is off the room's roster here. The roster is read in this snapshot.
-    /// While everyone on it already binds the ceiling this read holds, only
-    /// their clearances can have narrowed, so this snapshot's clearance meets
-    /// into the turn. A member it does not bind yet rebuilds the room from
-    /// this snapshot and conjoins it. Either way a refresh narrows the turn,
-    /// for this read and every later one, and never widens it. A thread's
-    /// ceiling (`turn.branch`) re-proves standing on that thread instead,
-    /// which its Ready receipt gives an agent off the room (OF-529).
+    /// is off the room's roster here. The roster is read in this snapshot,
+    /// and with it the room's live speakers (FIX 1388/1389), whose incomplete
+    /// call holds the read before any held ceiling serves it. While everyone
+    /// on the roster and every live entry already binds the ceiling this read
+    /// holds, only clearances can have narrowed, so this snapshot's clearance
+    /// meets into the turn. A member or entry it does not bind yet rebuilds
+    /// the room from this snapshot and conjoins it. Either way a refresh
+    /// narrows the turn, for this read and every later one, and never widens
+    /// it. A thread's ceiling (`turn.branch`) re-proves standing on that
+    /// thread instead, which its Ready receipt gives an agent off the room
+    /// (OF-529), and takes no live entry.
     fn room_ceiling_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -349,15 +352,28 @@ impl<'a> ScopedRead<'a> {
             )?,
             None => roster,
         };
+        let live = match turn.branch {
+            Some(_) => None,
+            None => Some(self.vault.room_live_speaker_entries_in(txn, turn.room)?),
+        };
         let mut held = self
             .room_ceiling
             .lock()
             .map_err(|_| Error::InvariantViolation("room ceiling lock"))?;
         let current = held.get_or_insert_with(|| Arc::new(turn.clone()));
-        if current.binds_all(&roster) {
+        if current.binds_all(&roster)
+            && live
+                .as_ref()
+                .is_none_or(|live| current.binds_all(live.entry_refs()))
+        {
             if current.terms.p7() {
+                // The members' clearance alone: an entry ref is no member.
                 let clearance = crate::context_board::room_clearance_in(self.vault, txn, &roster)?;
                 current.terms.meet_clearance(clearance.as_ref());
+                if let Some(live) = &live {
+                    let unknown = self.vault.live_speaker_clearance_in(txn, live)?;
+                    current.terms.meet_clearance(unknown.as_ref());
+                }
             }
             return Ok(Some(Arc::clone(current)));
         }

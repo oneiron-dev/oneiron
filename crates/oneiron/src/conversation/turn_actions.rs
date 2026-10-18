@@ -563,8 +563,9 @@ impl Memory<'_> {
     /// turn before it. No stream may be open on the MESSAGE, and Continue
     /// needs it incomplete. Retry on a project room's indexed turn is judged
     /// by its room regeneration permit, once its agent is known. The
-    /// transcript of a conversation with a roster is read as its current
-    /// audience reads it (FIX 1389): the reply goes out into that room.
+    /// transcript of a conversation with a roster or a live call is read as
+    /// its current audience reads it (FIX 1389, FIX 3525): the reply goes
+    /// out into that room.
     fn resolve_turn_action(
         &self,
         action: TurnAction,
@@ -607,17 +608,22 @@ impl Memory<'_> {
                     &[],
                 ));
             }
+            // A live call puts its speakers in the room's audience, members
+            // or none.
             let roster = crate::context_board::room_roster_in(vault, &txn, conversation)?;
             (
                 conversation,
-                roster.is_some_and(|members| !members.is_empty()),
+                roster.is_some_and(|members| !members.is_empty())
+                    || vault.room_has_live_call(conversation),
             )
         };
         // The history the model reads meets the room's current audience, as a
         // new turn's does: its roster, their met worlds and clearance, every
-        // other member's own read and each member's entry cut, with no P7,
-        // which binds a turn. A room the actor no longer reads refuses as
-        // unknown. With no roster, no one but the actor reads the reply.
+        // other member's own read, each member's entry cut and each live
+        // speaker's entry, with no P7, which binds a turn. A room the actor no
+        // longer reads refuses as unknown, and an incomplete live call holds.
+        // With no roster and no live call, no one but the actor reads the
+        // reply.
         let walk = if roomed {
             self.for_room_projection(conversation)?
                 .memory()

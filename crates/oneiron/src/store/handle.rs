@@ -309,6 +309,10 @@ pub struct StoreCore {
     /// The container output guard: each container's last attendee-entry
     /// mark (OF-365 P5). Per vault, in memory, never persisted.
     pub(crate) container_output: crate::conversation::ContainerOutputGuard,
+    /// The voice calls live in each room, by host token (FIX 1388/1389 C1).
+    /// Per vault, in memory, never persisted: hosts register again after a
+    /// restart.
+    pub(crate) live_speakers: crate::conversation::LiveSpeakers,
     /// Content-free local invalidations. Readers always re-read committed rows.
     #[cfg(feature = "sync")]
     pub(crate) attempt_updates: tokio::sync::broadcast::Sender<()>,
