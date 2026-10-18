@@ -1,4 +1,5 @@
 mod agent_verb;
+mod connector_answer;
 mod coordination;
 mod emission;
 mod envelope;
@@ -541,6 +542,7 @@ impl<'a> HostSelfDispatcher<'a> {
             }
             SelfCall::WakePolicyWrite(call) => self.dispatch_wake_policy_write(call),
             SelfCall::AgentVerb(call) => self.dispatch_agent_verb(call, site),
+            SelfCall::ConnectorAnswer(request) => self.dispatch_connector_answer(request, site),
             SelfCall::Fold(call) => self.dispatch_fold(&call, site),
             SelfCall::ReaderSpawn(call) => self.dispatch_reader_spawn(*call, site),
             SelfCall::ReaderReport(call) => self.dispatch_reader_report(call),

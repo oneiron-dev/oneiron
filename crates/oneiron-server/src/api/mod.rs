@@ -115,7 +115,7 @@ mod facade;
 // generated dispatch, under the credential its connection bound.
 pub(crate) use self::facade::{
     FacadeApiError, FacadeCall, ai_speech_for_run, call_verb as facade_call_verb,
-    connector_call_as, self_use_as,
+    connector_answer_as, connector_call_as, self_use_as,
 };
 mod feedback_inbox;
 pub(crate) use self::feedback_inbox::FloodCap;

@@ -3793,6 +3793,14 @@
       "section": false
     },
     {
+      "name": "connector.answer",
+      "input": "crate::task_verb::sdk::ConnectorAnswerRequest",
+      "output": "crate::task_verb::sdk::ConnectorCallReply",
+      "scope": "Write",
+      "context": "run",
+      "effect": "ConnectorAnswer"
+    },
+    {
       "name": "self.browser.open",
       "description": "Opens a URL in the run's own browser session and observes the page; a long page's observation comes in pages, read on with observe and its next cursor.",
       "input": "oneiron_browser::OpenInput",
