@@ -102,6 +102,7 @@ pub(crate) use super::embedding_space_doors::*;
 pub(crate) use super::budget_doors::*;
 pub(crate) use super::fanout_doors::*;
 // The owner's learned-setting doors, likewise.
+pub(crate) use super::learning_doors::*;
 pub(crate) use super::setting_doors::*;
 // The owner's historical secret lift sweep door (OF-067), likewise.
 pub(crate) use super::secret_lift_doors::*;
@@ -1111,6 +1112,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.decisions.bands.read"
         | "vault.decisions.bands.learn"
         | "vault.decisions.bands.enforce"
+        | "vault.learning.read"
+        | "vault.learning.projection"
         | "vault.settings.learning"
         | "vault.settings.learning.put"
         | "vault.settings.learning.clear"
@@ -1138,6 +1141,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.workflows.status"
         | "vault.task_types.pin"
         | "vault.task_types.get"
+        | "vault.agents.spawn.get"
         | "vault.workspace.roster"
         | "vault.booking.page_token"
         | "vault.channel_identities.provision"

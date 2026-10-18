@@ -1217,6 +1217,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.learning.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::learning::doors::LearningReadRequest,
+                >(),
+            ),
+            (
+                "vault.learning.projection",
+                crate::code_run::vault_read::request_schema::<
+                    crate::learning::doors::LearningProjectionRequest,
+                >(),
+            ),
+            (
                 "vault.settings.learning",
                 crate::code_run::vault_read::request_schema::<
                     crate::learning_setting_doors::LearningSettingsRequest,
@@ -1661,6 +1673,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.task_types.get",
                 crate::code_run::vault_read::request_schema::<crate::team::doors::TaskTypeTreeRead>(
+                ),
+            ),
+            (
+                "vault.agents.spawn.get",
+                crate::code_run::vault_read::request_schema::<crate::team::doors::PlannedSpawnRead>(
                 ),
             ),
             (
@@ -3172,6 +3189,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.gate.policy.propose",
     "vault.gate.checker.get",
     "vault.gate.checker.set",
+    "vault.learning.read",
+    "vault.learning.projection",
     "vault.claims.review",
     "vault.claims.settle",
     "vault.artifacts.units",
@@ -3206,6 +3225,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.workflows.status",
     "vault.task_types.pin",
     "vault.task_types.get",
+    "vault.agents.spawn.get",
     "vault.workspace.establish",
     "vault.workspace.members.onboard",
     "vault.workspace.roster",
@@ -3517,6 +3537,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.gate.checker.set" => crate::code_run::vault_read::request_schema::<
             crate::policy_manifest_doors::GateCheckerReceipt,
         >(),
+        "vault.learning.read" => crate::code_run::vault_read::request_schema::<
+            crate::learning::doors::LearningCellView,
+        >(),
+        "vault.learning.projection" => crate::code_run::vault_read::request_schema::<
+            crate::learning::doors::LearningProjectionView,
+        >(),
         "vault.claims.review" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ClaimProposalReview>()
         }
@@ -3618,6 +3644,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.task_types.get" => crate::code_run::vault_read::request_schema::<
             crate::team::doors::TaskTypeTreeReadReply,
+        >(),
+        "vault.agents.spawn.get" => crate::code_run::vault_read::request_schema::<
+            crate::team::doors::PlannedSpawnObservation,
         >(),
         "vault.workspace.establish" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::WorkspacePresetReceipt,
@@ -5473,6 +5502,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.learning.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.learning.projection" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.settings.learning" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -6007,6 +6050,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.task_types.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.agents.spawn.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -8420,6 +8470,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.gate.checker.set" => {
             let _input: crate::policy_manifest_doors::GateCheckerSet = decode(value.clone())?;
         }
+        "vault.learning.read" => {
+            let _input: crate::learning::doors::LearningReadRequest = decode(value.clone())?;
+        }
+        "vault.learning.projection" => {
+            let _input: crate::learning::doors::LearningProjectionRequest = decode(value.clone())?;
+        }
         "vault.settings.learning" => {
             let _input: crate::learning_setting_doors::LearningSettingsRequest =
                 decode(value.clone())?;
@@ -8683,6 +8739,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.task_types.get" => {
             let _input: crate::team::doors::TaskTypeTreeRead = decode(value.clone())?;
+        }
+        "vault.agents.spawn.get" => {
+            let _input: crate::team::doors::PlannedSpawnRead = decode(value.clone())?;
         }
         "vault.workspace.establish" => {
             let _input: crate::task_verb::sdk::WorkspacePresetRequest = decode(value.clone())?;
@@ -9972,6 +10031,8 @@ pub fn invoke(
         "vault.gate.policy.propose" => encode(vault_gate_policy_propose(memory, decode(value)?)?),
         "vault.gate.checker.get" => encode(vault_gate_checker_get(memory, decode(value)?)?),
         "vault.gate.checker.set" => encode(vault_gate_checker_set(memory, decode(value)?)?),
+        "vault.learning.read" => encode(vault_learning_read(memory, decode(value)?)?),
+        "vault.learning.projection" => encode(vault_learning_projection(memory, decode(value)?)?),
         "vault.settings.learning" => encode(vault_settings_learning(memory, decode(value)?)?),
         "vault.settings.learning.put" => {
             encode(vault_settings_learning_put(memory, decode(value)?)?)
@@ -10107,6 +10168,7 @@ pub fn invoke(
         "vault.workflows.status" => encode(vault_workflows_status(memory, decode(value)?)?),
         "vault.task_types.pin" => encode(vault_task_types_pin(memory, decode(value)?)?),
         "vault.task_types.get" => encode(vault_task_types_get(memory, decode(value)?)?),
+        "vault.agents.spawn.get" => encode(vault_agents_spawn_get(memory, decode(value)?)?),
         "vault.workspace.establish" => encode(vault_workspace_establish(memory, decode(value)?)?),
         "vault.workspace.members.onboard" => {
             encode(vault_workspace_members_onboard(memory, decode(value)?)?)
@@ -12531,6 +12593,28 @@ pub fn vault_gate_checker_set(
     )
     .map_err(crate::memory::MemoryError::from)
 }
+pub fn vault_learning_read(
+    memory: &Memory<'_>,
+    input: crate::learning::doors::LearningReadRequest,
+) -> MemoryResult<crate::learning::doors::LearningCellView> {
+    crate::learning::doors::read_learning_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.learning.read")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_learning_projection(
+    memory: &Memory<'_>,
+    input: crate::learning::doors::LearningProjectionRequest,
+) -> MemoryResult<crate::learning::doors::LearningProjectionView> {
+    crate::learning::doors::learning_projection_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.learning.projection")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
 pub fn vault_settings_learning(
     memory: &Memory<'_>,
     input: crate::learning_setting_doors::LearningSettingsRequest,
@@ -13185,6 +13269,16 @@ pub fn vault_task_types_get(
     crate::team::doors::read_tree_as(
         memory.vault(),
         &memory.embedded_owner("vault.task_types.get")?,
+        input,
+    )
+}
+pub fn vault_agents_spawn_get(
+    memory: &Memory<'_>,
+    input: crate::team::doors::PlannedSpawnRead,
+) -> MemoryResult<crate::team::doors::PlannedSpawnObservation> {
+    crate::team::doors::observe_spawn_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.agents.spawn.get")?,
         input,
     )
 }

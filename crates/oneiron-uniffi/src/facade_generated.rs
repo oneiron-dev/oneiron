@@ -1136,6 +1136,16 @@ export_facade! {
     let output = client.vault_gate_checker_set(&input)?;
     crate::codec::lift_record("vault.gate.checker.set", &output)
 };
+"vault.learning.read" => fn vault_learning_read(&self, input: LearningReadRequest) -> LearningCellView = |client| {
+    let input: oneiron::learning::doors::LearningReadRequest = crate::codec::lower_record("vault.learning.read", input)?;
+    let output = client.vault_learning_read(&input)?;
+    crate::codec::lift_record("vault.learning.read", &output)
+};
+"vault.learning.projection" => fn vault_learning_projection(&self, input: LearningProjectionRequest) -> LearningProjectionView = |client| {
+    let input: oneiron::learning::doors::LearningProjectionRequest = crate::codec::lower_record("vault.learning.projection", input)?;
+    let output = client.vault_learning_projection(&input)?;
+    crate::codec::lift_record("vault.learning.projection", &output)
+};
 "vault.settings.learning" => fn vault_settings_learning(&self, input: LearningSettingsRequest) -> LearningSettingsView = |client| {
     let input: oneiron::learning_setting_doors::LearningSettingsRequest = crate::codec::lower_record("vault.settings.learning", input)?;
     let output = client.vault_settings_learning(&input)?;
@@ -1525,6 +1535,11 @@ export_facade! {
     let input: oneiron::team::doors::TaskTypeTreeRead = crate::codec::lower_record("vault.task_types.get", input)?;
     let output = client.vault_task_types_get(&input)?;
     crate::codec::lift_record("vault.task_types.get", &output)
+};
+"vault.agents.spawn.get" => fn vault_agents_spawn_get(&self, input: PlannedSpawnRead) -> PlannedSpawnObservation = |client| {
+    let input: oneiron::team::doors::PlannedSpawnRead = crate::codec::lower_record("vault.agents.spawn.get", input)?;
+    let output = client.vault_agents_spawn_get(&input)?;
+    crate::codec::lift_record("vault.agents.spawn.get", &output)
 };
 "vault.workspace.establish" => fn vault_workspace_establish(&self, input: WorkspacePresetRequest) -> WorkspacePresetReceipt = |client| {
     let input: oneiron::task_verb::sdk::WorkspacePresetRequest = crate::codec::lower_record("vault.workspace.establish", input)?;

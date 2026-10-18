@@ -63,7 +63,8 @@ pub(super) fn doc_from_snapshot(bytes: &[u8]) -> Result<LoroDoc> {
 
 /// Hash every operation in peer/counter order. JSON export for an ID span is
 /// deterministic in Loro. Sorting dependency IDs also removes arrival order.
-/// Ref identities, file content and actor/session messages are all covered.
+/// Ref identities, file content and session messages are all covered; the
+/// messages name no actor (FIX 3520).
 pub(super) fn frontier(doc: &LoroDoc, repo: &str, id: [u8; 32]) -> Result<CodeDocumentFrontier> {
     let meta = doc.get_map("meta");
     let path = meta

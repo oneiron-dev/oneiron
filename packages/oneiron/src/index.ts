@@ -915,6 +915,12 @@ export class Oneiron {
         set: (input: Facade.GateCheckerSet): Facade.GateCheckerReceipt => this.#call(() => this.#client.vaultGateCheckerSet(input) as Facade.GateCheckerReceipt),
       },
     },
+    learning: {
+      /** The owner reads a measured learning cell, its explicit prior, derived UNTESTED mark, projector heads and anchored evidence; borrowed provenance stays separate from own runs. */
+      read: (input: Facade.LearningReadRequest): Facade.LearningCellView => this.#call(() => this.#client.vaultLearningRead(input) as Facade.LearningCellView),
+      /** The owner observes the stored projection receipt for an anchored attempt outcome; an absent receipt means projection has not committed, never a successful empty projection. */
+      projection: (input: Facade.LearningProjectionRequest): Facade.LearningProjectionView => this.#call(() => this.#client.vaultLearningProjection(input) as Facade.LearningProjectionView),
+    },
     settings: {
       /** The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type. */
       learning: Object.assign((input: Facade.LearningSettingsRequest): Facade.LearningSettingsView => this.#call(() => this.#client.vaultSettingsLearning(input) as Facade.LearningSettingsView), {
@@ -1162,6 +1168,10 @@ export class Oneiron {
       get: (input: Facade.AgentDefinitionRequest): Facade.AgentDefinitionView => this.#call(() => this.#client.vaultAgentsGet(input) as Facade.AgentDefinitionView),
       /** The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision. */
       update: (input: Facade.AgentDefinitionUpdateRequest): Facade.AgentDefinitionView => this.#call(() => this.#client.vaultAgentsUpdate(input) as Facade.AgentDefinitionView),
+      spawn: {
+        /** The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning. */
+        get: (input: Facade.PlannedSpawnRead): Facade.PlannedSpawnObservation => this.#call(() => this.#client.vaultAgentsSpawnGet(input) as Facade.PlannedSpawnObservation),
+      },
       /** The agent's travelling AgentPack folder (files base64) and what stayed home. */
       export_pack: (request: Facade.AgentPackExportRequest): Facade.AgentPackExport => this.#call(() => {  const result = JSON.parse(this.#client.vaultAgentsExportPack(keyedJson(request))) as Facade.AgentPackExport; return result }),
     },

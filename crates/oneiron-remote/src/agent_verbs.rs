@@ -738,6 +738,12 @@ impl OneironClient {
                 "vault.gate.checker.set" => remote_agent_verb_output::<
                     oneiron::policy_manifest_doors::GateCheckerReceipt,
                 >(client, verb, &input),
+                "vault.learning.read" => remote_agent_verb_output::<
+                    oneiron::learning::doors::LearningCellView,
+                >(client, verb, &input),
+                "vault.learning.projection" => remote_agent_verb_output::<
+                    oneiron::learning::doors::LearningProjectionView,
+                >(client, verb, &input),
                 "vault.settings.learning" => remote_agent_verb_output::<
                     oneiron::learning_setting_doors::LearningSettingsView,
                 >(client, verb, &input),
@@ -977,6 +983,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.task_types.get" => remote_agent_verb_output::<
                     oneiron::team::doors::TaskTypeTreeReadReply,
+                >(client, verb, &input),
+                "vault.agents.spawn.get" => remote_agent_verb_output::<
+                    oneiron::team::doors::PlannedSpawnObservation,
                 >(client, verb, &input),
                 "vault.workspace.establish" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::WorkspacePresetReceipt,
@@ -4526,6 +4535,30 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.gate.checker.set", value)
     }
+    pub fn vault_learning_read(
+        &self,
+        input: &oneiron::learning::doors::LearningReadRequest,
+    ) -> Result<oneiron::learning::doors::LearningCellView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.learning.read", value)
+    }
+    pub fn vault_learning_projection(
+        &self,
+        input: &oneiron::learning::doors::LearningProjectionRequest,
+    ) -> Result<oneiron::learning::doors::LearningProjectionView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.learning.projection", value)
+    }
     pub fn vault_settings_learning(
         &self,
         input: &oneiron::learning_setting_doors::LearningSettingsRequest,
@@ -5471,6 +5504,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.task_types.get", value)
+    }
+    pub fn vault_agents_spawn_get(
+        &self,
+        input: &oneiron::team::doors::PlannedSpawnRead,
+    ) -> Result<oneiron::team::doors::PlannedSpawnObservation, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.agents.spawn.get", value)
     }
     pub fn vault_workspace_establish(
         &self,

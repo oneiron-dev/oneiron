@@ -127,7 +127,7 @@ pub fn render_op(op: &CodeOpAttribution) -> String {
         op.operation.to_hex(),
         op.sequence,
         op.session_id.to_hex(),
-        op.actor.entity_ref().to_hex(),
+        op.actor_ref(),
         id(op.provenance.turn),
         id(op.provenance.activity),
         id(op.provenance.intent),
