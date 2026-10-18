@@ -33,6 +33,10 @@ pub enum AgentVerb {
     VaultShapeApply,
     SelfMessage,
     SelfGrantsAsk,
+    VaultCompanionsAccessRequestsAnswer,
+    VaultPersonasPreview,
+    VaultPersonasExport,
+    VaultPersonasEdit,
     SelfMemoryDiaryQuery,
     Cancel,
     Steer,
@@ -232,6 +236,7 @@ pub enum AgentVerb {
     VaultResidenceOpen,
     VaultResidenceIndex,
     VaultResidencePrune,
+    VaultResidenceDirectives,
     VaultOffRecordStart,
     VaultOffRecordStatus,
     VaultOffRecordWitness,
@@ -787,6 +792,10 @@ impl AgentVerb {
         Self::VaultShapeApply,
         Self::SelfMessage,
         Self::SelfGrantsAsk,
+        Self::VaultCompanionsAccessRequestsAnswer,
+        Self::VaultPersonasPreview,
+        Self::VaultPersonasExport,
+        Self::VaultPersonasEdit,
         Self::SelfMemoryDiaryQuery,
         Self::Cancel,
         Self::Steer,
@@ -986,6 +995,7 @@ impl AgentVerb {
         Self::VaultResidenceOpen,
         Self::VaultResidenceIndex,
         Self::VaultResidencePrune,
+        Self::VaultResidenceDirectives,
         Self::VaultOffRecordStart,
         Self::VaultOffRecordStatus,
         Self::VaultOffRecordWitness,
@@ -1544,6 +1554,10 @@ impl AgentVerb {
             Self::VaultShapeApply => "vault.shape.apply",
             Self::SelfMessage => "self.message",
             Self::SelfGrantsAsk => "self.grants.ask",
+            Self::VaultCompanionsAccessRequestsAnswer => "vault.companions.access_requests.answer",
+            Self::VaultPersonasPreview => "vault.personas.preview",
+            Self::VaultPersonasExport => "vault.personas.export",
+            Self::VaultPersonasEdit => "vault.personas.edit",
             Self::SelfMemoryDiaryQuery => "self.memory.diary.query",
             Self::Cancel => "cancel",
             Self::Steer => "steer",
@@ -1747,6 +1761,7 @@ impl AgentVerb {
             Self::VaultResidenceOpen => "vault.residence.open",
             Self::VaultResidenceIndex => "vault.residence.index",
             Self::VaultResidencePrune => "vault.residence.prune",
+            Self::VaultResidenceDirectives => "vault.residence.directives",
             Self::VaultOffRecordStart => "vault.off_record.start",
             Self::VaultOffRecordStatus => "vault.off_record.status",
             Self::VaultOffRecordWitness => "vault.off_record.witness",
@@ -2313,6 +2328,10 @@ impl AgentVerb {
                 | Self::VaultShapeApply
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
+                | Self::VaultCompanionsAccessRequestsAnswer
+                | Self::VaultPersonasPreview
+                | Self::VaultPersonasExport
+                | Self::VaultPersonasEdit
                 | Self::SelfMemoryDiaryQuery
                 | Self::Cancel
                 | Self::Steer
@@ -2512,6 +2531,7 @@ impl AgentVerb {
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
                 | Self::VaultResidencePrune
+                | Self::VaultResidenceDirectives
                 | Self::VaultOffRecordStart
                 | Self::VaultOffRecordStatus
                 | Self::VaultOffRecordWitness
@@ -3089,6 +3109,10 @@ impl AgentVerb {
                 | Self::VaultShapeApply
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
+                | Self::VaultCompanionsAccessRequestsAnswer
+                | Self::VaultPersonasPreview
+                | Self::VaultPersonasExport
+                | Self::VaultPersonasEdit
                 | Self::SelfMemoryDiaryQuery
                 | Self::Cancel
                 | Self::Steer
@@ -3288,6 +3312,7 @@ impl AgentVerb {
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
                 | Self::VaultResidencePrune
+                | Self::VaultResidenceDirectives
                 | Self::VaultOffRecordStart
                 | Self::VaultOffRecordStatus
                 | Self::VaultOffRecordWitness
@@ -3828,6 +3853,7 @@ impl AgentVerb {
                 | Self::VaultSharedEraseAsks
                 | Self::VaultTrustedContactsList
                 | Self::VaultTrustedContactsConcernAsks
+                | Self::VaultResidenceDirectives
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
@@ -3941,6 +3967,10 @@ impl AgentVerb {
                 | Self::VaultShapeApply
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
+                | Self::VaultCompanionsAccessRequestsAnswer
+                | Self::VaultPersonasPreview
+                | Self::VaultPersonasExport
+                | Self::VaultPersonasEdit
                 | Self::SelfMemoryDiaryQuery
                 | Self::Steer
                 | Self::TasksWave
@@ -4128,6 +4158,7 @@ impl AgentVerb {
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
                 | Self::VaultResidencePrune
+                | Self::VaultResidenceDirectives
                 | Self::VaultOffRecordStart
                 | Self::VaultOffRecordStatus
                 | Self::VaultOffRecordWitness
@@ -4644,6 +4675,9 @@ impl AgentVerb {
                 | Self::VaultShapeApply
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
+                | Self::VaultCompanionsAccessRequestsAnswer
+                | Self::VaultPersonasExport
+                | Self::VaultPersonasEdit
                 | Self::Cancel
                 | Self::Steer
                 | Self::TasksCreate
@@ -5132,6 +5166,10 @@ impl AgentVerb {
             Self::VaultShapeApply => &["spec"],
             Self::SelfMessage => &["spec"],
             Self::SelfGrantsAsk => &["spec"],
+            Self::VaultCompanionsAccessRequestsAnswer => &["spec"],
+            Self::VaultPersonasPreview => &["spec"],
+            Self::VaultPersonasExport => &["spec"],
+            Self::VaultPersonasEdit => &["spec"],
             Self::SelfMemoryDiaryQuery => &["spec"],
             Self::Cancel => &["task_ref"],
             Self::Steer => &["spec"],
@@ -5348,6 +5386,7 @@ impl AgentVerb {
             Self::VaultResidenceOpen => &["spec"],
             Self::VaultResidenceIndex => &["spec"],
             Self::VaultResidencePrune => &["spec"],
+            Self::VaultResidenceDirectives => &["spec"],
             Self::VaultOffRecordStart => &["spec"],
             Self::VaultOffRecordStatus => &["spec"],
             Self::VaultOffRecordWitness => &["spec"],
@@ -5904,6 +5943,10 @@ impl AgentVerb {
             Self::VaultShapeApply => &["spec"],
             Self::SelfMessage => &["spec"],
             Self::SelfGrantsAsk => &["spec"],
+            Self::VaultCompanionsAccessRequestsAnswer => &["spec"],
+            Self::VaultPersonasPreview => &["spec"],
+            Self::VaultPersonasExport => &["spec"],
+            Self::VaultPersonasEdit => &["spec"],
             Self::SelfMemoryDiaryQuery => &["spec"],
             Self::Cancel => &["task_ref"],
             Self::Steer => &["spec"],
@@ -6103,6 +6146,7 @@ impl AgentVerb {
             Self::VaultResidenceOpen => &["spec"],
             Self::VaultResidenceIndex => &["spec"],
             Self::VaultResidencePrune => &["spec"],
+            Self::VaultResidenceDirectives => &["spec"],
             Self::VaultOffRecordStart => &["spec"],
             Self::VaultOffRecordStatus => &["spec"],
             Self::VaultOffRecordWitness => &["spec"],
@@ -6712,6 +6756,18 @@ impl AgentVerb {
             Self::SelfGrantsAsk => {
                 "Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it."
             }
+            Self::VaultCompanionsAccessRequestsAnswer => {
+                "The owner approves or denies one pending companion-profile request, atomically recording the answer and its exact grant."
+            }
+            Self::VaultPersonasPreview => {
+                "Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp."
+            }
+            Self::VaultPersonasExport => {
+                "Issues the exact previewed mode-A persona copy after explicit row strikes; a changed preview refuses stale consent."
+            }
+            Self::VaultPersonasEdit => {
+                "Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version."
+            }
             Self::SelfMemoryDiaryQuery => {
                 "Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log."
             }
@@ -7296,6 +7352,9 @@ impl AgentVerb {
             }
             Self::VaultResidencePrune => {
                 "Drops the opened-item caches one of the owner's machines last touched before a time. A machine this host does not reach answers state queued, naming the directive."
+            }
+            Self::VaultResidenceDirectives => {
+                "The owner reads the residence directives this replica holds and each machine's result as received here; a null result means not received here, not that the machine is idle."
             }
             Self::VaultOffRecordStart => {
                 "The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous; nothing of it reaches the vault unless the owner promotes or saves it."

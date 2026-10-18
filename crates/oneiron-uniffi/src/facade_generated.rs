@@ -145,6 +145,26 @@ export_facade! {
     let output = client.self_grants_ask(&input)?;
     crate::codec::lift_record("self.grants.ask", &output)
 };
+"vault.companions.access_requests.answer" => fn vault_companions_access_requests_answer(&self, input: CompanionAccessRequestAnswerRequest) -> CompanionAccessRequestAnswered = |client| {
+    let input: oneiron::task_verb::sdk::CompanionAccessRequestAnswerRequest = crate::codec::lower_record("vault.companions.access_requests.answer", input)?;
+    let output = client.vault_companions_access_requests_answer(&input)?;
+    crate::codec::lift_record("vault.companions.access_requests.answer", &output)
+};
+"vault.personas.preview" => fn vault_personas_preview(&self, input: PersonaSnapshotPreviewRequest) -> PersonaSnapshotPreview = |client| {
+    let input: oneiron::task_verb::sdk::PersonaSnapshotPreviewRequest = crate::codec::lower_record("vault.personas.preview", input)?;
+    let output = client.vault_personas_preview(&input)?;
+    crate::codec::lift_record("vault.personas.preview", &output)
+};
+"vault.personas.export" => fn vault_personas_export(&self, input: PersonaSnapshotCopyRequest) -> PersonaSnapshotExportedCopy = |client| {
+    let input: oneiron::persona_snapshot::PersonaSnapshotCopyRequest = crate::codec::lower_record("vault.personas.export", input)?;
+    let output = client.vault_personas_export(&input)?;
+    crate::codec::lift_record("vault.personas.export", &output)
+};
+"vault.personas.edit" => fn vault_personas_edit(&self, input: PersonaSnapshotCopyEditRequest) -> PersonaSnapshotExportedCopy = |client| {
+    let input: oneiron::persona_snapshot::PersonaSnapshotCopyEditRequest = crate::codec::lower_record("vault.personas.edit", input)?;
+    let output = client.vault_personas_edit(&input)?;
+    crate::codec::lift_record("vault.personas.edit", &output)
+};
 "self.memory.diary.query" => fn self_memory_diary_query(&self, input: DiaryQueryRequest) -> DiaryQueryOutcome = |client| {
     let input: oneiron::task_verb::sdk::DiaryQueryRequest = crate::codec::lower_record("self.memory.diary.query", input)?;
     let output = client.self_memory_diary_query(&input)?;
@@ -1140,6 +1160,11 @@ export_facade! {
     let input: oneiron::task_verb::sdk::ResidencePruneRequest = crate::codec::lower_record("vault.residence.prune", input)?;
     let output = client.vault_residence_prune(&input)?;
     crate::codec::lift_record("vault.residence.prune", &output)
+};
+"vault.residence.directives" => fn vault_residence_directives(&self, input: ResidenceDirectivesRequest) -> Vec<ResidenceDirectiveView> = |client| {
+    let input: oneiron::task_verb::sdk::ResidenceDirectivesRequest = crate::codec::lower_record("vault.residence.directives", input)?;
+    let output = client.vault_residence_directives(&input)?;
+    crate::codec::lift_record("vault.residence.directives", &output)
 };
 "vault.off_record.start" => fn vault_off_record_start(&self, input: OffRecordStartRequest) -> OffRecordSessionView = |client| {
     let input: oneiron::task_verb::sdk::OffRecordStartRequest = crate::codec::lower_record("vault.off_record.start", input)?;

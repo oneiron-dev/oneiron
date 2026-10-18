@@ -503,6 +503,42 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_companions_access_requests_answer(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(input_json, "vault.companions.access_requests.answer")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.companions.access_requests.answer", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_personas_preview(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.personas.preview")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.personas.preview", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_personas_export(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.personas.export")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.personas.export", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_personas_edit(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.personas.edit")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.personas.edit", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn self_memory_diary_query(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "self.memory.diary.query")?;
         let output = py
@@ -2234,6 +2270,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.residence.prune")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.residence.prune", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_residence_directives(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.residence.directives")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.residence.directives", input))
             .map_err(raise)?;
         encode(&output)
     }

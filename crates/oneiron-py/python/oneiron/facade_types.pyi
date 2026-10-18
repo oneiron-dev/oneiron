@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 723 facade rows, 2580 declarations.
-Inputs: 671 of 723 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 648 of 723 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 728 facade rows, 2599 declarations.
+Inputs: 676 of 728 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 653 of 728 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 95; unread shapes: 0.
 """
 
@@ -669,6 +669,84 @@ class GrantAskReceipt(TypedDict):
     request: str
     asked: str
     status: str
+CompanionAccessRequestAnswer = Literal["approve", "deny"]
+class CompanionAccessRequestAnswerRequest(TypedDict):
+    request: EntityId
+    answer: CompanionAccessRequestAnswer
+class CompanionProfileRequestedScope(TypedDict):
+    kind: Literal["companion_profile"]
+    person_ref: EntityId
+    facet_ref: NotRequired[EntityId | None]
+AccessRequestStatus = Literal["PENDING", "APPROVED", "DENIED"]
+class CompanionAccessRequestAnswered(TypedDict):
+    request: EntityId
+    principal_ref: EntityId
+    capability: str
+    scope: CompanionProfileRequestedScope
+    status: AccessRequestStatus
+    grant_ref: NotRequired[EntityId | None]
+    decided_by: NotRequired[EntityId | None]
+    decided_at: NotRequired[int | None]
+class PersonaSnapshotPreviewRequest(TypedDict):
+    subject: EntityId
+class PersonaSnapshotPreviewRow(TypedDict):
+    row_id: str
+    kind: str
+    text: str
+    provenance_refs: list[str]
+    attribution: NotRequired[str | None]
+    struck: bool
+class PersonaSnapshotPreview(TypedDict):
+    subject: EntityId
+    stamp: str
+    identity_line: str
+    rows: list[PersonaSnapshotPreviewRow]
+    compiled_at: str
+    stale_after_secs: int
+class PersonaSnapshotCopyRequest(TypedDict):
+    subject: EntityId
+    stamp: str
+    strike: NotRequired[list[str]]
+    unstrike: NotRequired[list[str]]
+class PersonaSnapshotMemoryPackRow(TypedDict):
+    row_id: str
+    kind: str
+    text: str
+    subject_ref: NotRequired[EntityId | None]
+    provenance_refs: NotRequired[list[str] | None]
+    salience: NotRequired[float | None]
+    attribution: NotRequired[str | None]
+class PersonaSnapshotMemoryPack(TypedDict):
+    schema: str
+    kind: str
+    subject_ref: EntityId
+    identity_line: NotRequired[str | None]
+    audience_ref: NotRequired[str | None]
+    takes_included: bool
+    compiled_at_secs: int
+    stale_after_secs: int
+    persona_compile_stamp: str
+    rows: list[PersonaSnapshotMemoryPackRow]
+class PersonaSnapshotExportedCopy(TypedDict):
+    export_id: EntityId
+    subject: EntityId
+    stamp: str
+    previous_export_id: NotRequired[EntityId | None]
+    memory_pack: PersonaSnapshotMemoryPack
+    markdown: str
+    included_row_ids: list[str]
+    struck_row_ids: list[str]
+    compiled_at: str
+    stale_after_secs: int
+class PersonaSnapshotTextEdit(TypedDict):
+    row_id: str
+    text: str
+class PersonaSnapshotCopyEditRequest(TypedDict):
+    export_id: EntityId
+    stamp: str
+    edits: list[PersonaSnapshotTextEdit]
+    strike: NotRequired[list[str]]
+    unstrike: NotRequired[list[str]]
 class DiaryQueryRequest(TypedDict):
     agent: str
     reason: str
@@ -4641,6 +4719,36 @@ class ResidencePruneAnswerApplied(ResidencePruned):
 class ResidencePruneAnswerQueued(ResidenceQueued):
     state: Literal["queued"]
 ResidencePruneAnswer = ResidencePruneAnswerApplied | ResidencePruneAnswerQueued
+class ResidenceDirectivesRequest(TypedDict):
+    machine: NotRequired[EntityId | None]
+    directive: NotRequired[EntityId | None]
+class ResidenceActViewSyncAll(TypedDict):
+    kind: Literal["sync_all"]
+class ResidenceActViewSyncOpened(TypedDict):
+    kind: Literal["sync_opened"]
+class ResidenceActViewOpen(TypedDict):
+    kind: Literal["open"]
+    window: str
+    item: EntityId
+class ResidenceActViewIndex(TypedDict):
+    kind: Literal["index"]
+class ResidenceActViewPrune(TypedDict):
+    kind: Literal["prune"]
+    before: int
+ResidenceActView = ResidenceActViewSyncAll | ResidenceActViewSyncOpened | ResidenceActViewOpen | ResidenceActViewIndex | ResidenceActViewPrune
+ResidenceResultStatusName = Literal["applied", "refused"]
+class ResidenceResultView(TypedDict):
+    finished_at: int
+    status: ResidenceResultStatusName
+    count: int
+    reason: NotRequired[str | None]
+class ResidenceDirectiveView(TypedDict):
+    directive: EntityId
+    machine: EntityId
+    issued_at: int
+    act: ResidenceActView
+    entry: str
+    result: NotRequired[ResidenceResultView | None]
 OffRecordEnterMode = Literal["off_record", "anonymous"]
 OffRecordBackendClass = Literal["local", "remote_provider"]
 class OffRecordStartRequest(TypedDict):

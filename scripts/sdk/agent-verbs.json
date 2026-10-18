@@ -434,6 +434,66 @@
       "section": false
     },
     {
+      "name": "vault.companions.access_requests.answer",
+      "description": "The owner approves or denies one pending companion-profile request, atomically recording the answer and its exact grant.",
+      "input": "crate::task_verb::sdk::CompanionAccessRequestAnswerRequest",
+      "output": "crate::task_verb::sdk::CompanionAccessRequestAnswered",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.companions.access_requests.answer\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.personas.preview",
+      "description": "Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp.",
+      "input": "crate::task_verb::sdk::PersonaSnapshotPreviewRequest",
+      "output": "crate::task_verb::sdk::PersonaSnapshotPreview",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.personas.preview\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.personas.export",
+      "description": "Issues the exact previewed mode-A persona copy after explicit row strikes; a changed preview refuses stale consent.",
+      "input": "crate::persona_snapshot::PersonaSnapshotCopyRequest",
+      "output": "crate::task_verb::sdk::PersonaSnapshotExportedCopy",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.personas.export\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.personas.edit",
+      "description": "Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version.",
+      "input": "crate::persona_snapshot::PersonaSnapshotCopyEditRequest",
+      "output": "crate::task_verb::sdk::PersonaSnapshotExportedCopy",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.personas.edit\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "self.memory.diary.query",
       "description": "Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log.",
       "input": "crate::task_verb::sdk::DiaryQueryRequest",
@@ -2401,6 +2461,7 @@
       "output": "crate::task_verb::sdk::HubHookQualificationReceipt",
       "call": "crate::task_verb::sdk::hub_hooks_qualify_embedded(memory, &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -3661,6 +3722,22 @@
       "section": false
     },
     {
+      "name": "vault.residence.directives",
+      "description": "The owner reads the residence directives this replica holds and each machine's result as received here; a null result means not received here, not that the machine is idle.",
+      "input": "crate::task_verb::sdk::ResidenceDirectivesRequest",
+      "output": "Vec<crate::task_verb::sdk::ResidenceDirectiveView>",
+      "call": "crate::task_verb::sdk::residence_directives(memory, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "validate": "input.validate()?;"
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.off_record.start",
       "description": "The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous; nothing of it reaches the vault unless the owner promotes or saves it.",
       "input": "crate::task_verb::sdk::OffRecordStartRequest",
@@ -3823,6 +3900,7 @@
       "output": "crate::task_verb::sdk::ResearchChildReceipt",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.research.create_child\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -3943,6 +4021,7 @@
       "output": "crate::skill_optimize::EvalAuthoringReport",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.evals.cohorts.setup\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -5902,6 +5981,7 @@
       },
       "section": false,
       "host_door": true,
+      "host_door_lists": true,
       "openapi": true
     },
     {
@@ -9418,6 +9498,7 @@
       "output": "crate::task_verb::sdk::BookingPageTokenResponse",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.page_token\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -12546,6 +12627,7 @@
       "call": "crate::code_run::fold_api::host_required(memory, &input)?",
       "host_door": true,
       "host_door_caller": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true

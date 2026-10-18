@@ -407,6 +407,10 @@ class Oneiron:
         @property
         def shape(self) -> "Oneiron._VaultShapeVerbs": ...
         @property
+        def companions(self) -> "Oneiron._VaultCompanionsVerbs": ...
+        @property
+        def personas(self) -> "Oneiron._VaultPersonasVerbs": ...
+        @property
         def fanout(self) -> "Oneiron._VaultFanoutVerbs": ...
         @property
         def budgets(self) -> "Oneiron._VaultBudgetsVerbs": ...
@@ -543,8 +547,6 @@ class Oneiron:
         @property
         def messages(self) -> "Oneiron._VaultMessagesVerbs": ...
         @property
-        def companions(self) -> "Oneiron._VaultCompanionsVerbs": ...
-        @property
         def voices(self) -> "Oneiron._VaultVoicesVerbs": ...
         @property
         def graph(self) -> "Oneiron._VaultGraphVerbs": ...
@@ -617,6 +619,26 @@ class Oneiron:
             """The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing."""
         def apply(self, spec: Facade.ShapeApplyRequest) -> Facade.ShapeApplyReceipt:
             """Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item."""
+    class _VaultCompanionsVerbs:
+        @property
+        def access_requests(self) -> "Oneiron._VaultCompanionsAccessRequestsVerbs": ...
+        @property
+        def sharing(self) -> "Oneiron._VaultCompanionsSharingVerbs": ...
+    class _VaultCompanionsAccessRequestsVerbs:
+        def answer(self, spec: Facade.CompanionAccessRequestAnswerRequest) -> Facade.CompanionAccessRequestAnswered:
+            """The owner approves or denies one pending companion-profile request, atomically recording the answer and its exact grant."""
+    class _VaultCompanionsSharingVerbs:
+        def get(self, spec: Facade.CompanionSharingRequest) -> Facade.CompanionSharingView:
+            """One contact's clearance in a companion's source vault, for the principal who controls that vault."""
+        def set(self, spec: Facade.CompanionSharingSetRequest) -> Facade.CompanionSharingView:
+            """The owner's standing yes to one frozen clearance offer for a companion's contact."""
+    class _VaultPersonasVerbs:
+        def preview(self, spec: Facade.PersonaSnapshotPreviewRequest) -> Facade.PersonaSnapshotPreview:
+            """Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp."""
+        def export(self, spec: Facade.PersonaSnapshotCopyRequest) -> Facade.PersonaSnapshotExportedCopy:
+            """Issues the exact previewed mode-A persona copy after explicit row strikes; a changed preview refuses stale consent."""
+        def edit(self, spec: Facade.PersonaSnapshotCopyEditRequest) -> Facade.PersonaSnapshotExportedCopy:
+            """Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version."""
     class _VaultFanoutVerbs:
         def spawn(self, spec: Facade.LiveRunRequest[Facade.FanoutBatchInput]) -> Facade.FanoutBatchView:
             """Admits input-order child slots under this credential's attached live run, through the frozen fan-out approval gate and one shared parent spend tree."""
@@ -1169,6 +1191,8 @@ class Oneiron:
             """The thin index one of the owner's machines holds, window by window: what exists, never a body. A machine this host does not reach answers state queued, naming the directive."""
         def prune(self, spec: Facade.ResidencePruneRequest) -> Facade.ResidencePruneAnswer:
             """Drops the opened-item caches one of the owner's machines last touched before a time. A machine this host does not reach answers state queued, naming the directive."""
+        def directives(self, spec: Facade.ResidenceDirectivesRequest) -> list[Facade.ResidenceDirectiveView]:
+            """The owner reads the residence directives this replica holds and each machine's result as received here; a null result means not received here, not that the machine is idle."""
     class _VaultOffRecordVerbs:
         def start(self, spec: Facade.OffRecordStartRequest) -> Facade.OffRecordSessionView:
             """The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous; nothing of it reaches the vault unless the owner promotes or saves it."""
@@ -1848,14 +1872,6 @@ class Oneiron:
     class _VaultMessagesVerbs:
         def react(self, spec: Facade.MessageReactionRequest) -> Facade.MessageReactionReceipt:
             """Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress."""
-    class _VaultCompanionsVerbs:
-        @property
-        def sharing(self) -> "Oneiron._VaultCompanionsSharingVerbs": ...
-    class _VaultCompanionsSharingVerbs:
-        def get(self, spec: Facade.CompanionSharingRequest) -> Facade.CompanionSharingView:
-            """One contact's clearance in a companion's source vault, for the principal who controls that vault."""
-        def set(self, spec: Facade.CompanionSharingSetRequest) -> Facade.CompanionSharingView:
-            """The owner's standing yes to one frozen clearance offer for a companion's contact."""
     class _VaultVoicesVerbs:
         @property
         def packs(self) -> "Oneiron._VaultVoicesPacksVerbs": ...

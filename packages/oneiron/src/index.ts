@@ -273,6 +273,26 @@ export class Oneiron {
       /** Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item. */
       apply: (input: Facade.ShapeApplyRequest): Facade.ShapeApplyReceipt => this.#call(() => this.#client.vaultShapeApply(input) as Facade.ShapeApplyReceipt),
     },
+    companions: {
+      access_requests: {
+        /** The owner approves or denies one pending companion-profile request, atomically recording the answer and its exact grant. */
+        answer: (input: Facade.CompanionAccessRequestAnswerRequest): Facade.CompanionAccessRequestAnswered => this.#call(() => this.#client.vaultCompanionsAccessRequestsAnswer(input) as Facade.CompanionAccessRequestAnswered),
+      },
+      sharing: {
+        /** One contact's clearance in a companion's source vault, for the principal who controls that vault. */
+        get: (input: Facade.CompanionSharingRequest): Facade.CompanionSharingView => this.#call(() => this.#client.vaultCompanionsSharingGet(input) as Facade.CompanionSharingView),
+        /** The owner's standing yes to one frozen clearance offer for a companion's contact. */
+        set: (input: Facade.CompanionSharingSetRequest): Facade.CompanionSharingView => this.#call(() => this.#client.vaultCompanionsSharingSet(input) as Facade.CompanionSharingView),
+      },
+    },
+    personas: {
+      /** Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp. */
+      preview: (input: Facade.PersonaSnapshotPreviewRequest): Facade.PersonaSnapshotPreview => this.#call(() => this.#client.vaultPersonasPreview(input) as Facade.PersonaSnapshotPreview),
+      /** Issues the exact previewed mode-A persona copy after explicit row strikes; a changed preview refuses stale consent. */
+      export: (input: Facade.PersonaSnapshotCopyRequest): Facade.PersonaSnapshotExportedCopy => this.#call(() => this.#client.vaultPersonasExport(input) as Facade.PersonaSnapshotExportedCopy),
+      /** Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version. */
+      edit: (input: Facade.PersonaSnapshotCopyEditRequest): Facade.PersonaSnapshotExportedCopy => this.#call(() => this.#client.vaultPersonasEdit(input) as Facade.PersonaSnapshotExportedCopy),
+    },
     fanout: {
       /** Admits input-order child slots under this credential's attached live run, through the frozen fan-out approval gate and one shared parent spend tree. */
       spawn: (input: Facade.LiveRunRequest<Facade.FanoutBatchInput>): Facade.FanoutBatchView => this.#call(() => this.#client.vaultFanoutSpawn(input) as Facade.FanoutBatchView),
@@ -838,6 +858,8 @@ export class Oneiron {
       index: (input: Facade.ResidenceMachineRequest): Facade.ResidenceIndexAnswer => this.#call(() => this.#client.vaultResidenceIndex(input) as Facade.ResidenceIndexAnswer),
       /** Drops the opened-item caches one of the owner's machines last touched before a time. A machine this host does not reach answers state queued, naming the directive. */
       prune: (input: Facade.ResidencePruneRequest): Facade.ResidencePruneAnswer => this.#call(() => this.#client.vaultResidencePrune(input) as Facade.ResidencePruneAnswer),
+      /** The owner reads the residence directives this replica holds and each machine's result as received here; a null result means not received here, not that the machine is idle. */
+      directives: (input: Facade.ResidenceDirectivesRequest): Facade.ResidenceDirectiveView[] => this.#call(() => this.#client.vaultResidenceDirectives(input) as Facade.ResidenceDirectiveView[]),
     },
     off_record: {
       /** The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous; nothing of it reaches the vault unless the owner promotes or saves it. */
@@ -1539,14 +1561,6 @@ export class Oneiron {
     messages: {
       /** Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress. */
       react: (input: Facade.MessageReactionRequest): Facade.MessageReactionReceipt => this.#call(() => this.#client.vaultMessagesReact(input) as Facade.MessageReactionReceipt),
-    },
-    companions: {
-      sharing: {
-        /** One contact's clearance in a companion's source vault, for the principal who controls that vault. */
-        get: (input: Facade.CompanionSharingRequest): Facade.CompanionSharingView => this.#call(() => this.#client.vaultCompanionsSharingGet(input) as Facade.CompanionSharingView),
-        /** The owner's standing yes to one frozen clearance offer for a companion's contact. */
-        set: (input: Facade.CompanionSharingSetRequest): Facade.CompanionSharingView => this.#call(() => this.#client.vaultCompanionsSharingSet(input) as Facade.CompanionSharingView),
-      },
     },
     voices: {
       packs: {

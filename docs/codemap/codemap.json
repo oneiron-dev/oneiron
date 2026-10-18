@@ -134,7 +134,7 @@
      "purpose": "Durable request/response lifecycle",
      "surface": {
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -153,7 +153,7 @@
      "path": "src/access_grant/vault_doors.rs",
      "purpose": "Vault doors for AccessGrant put, create, revoke, read, and calendar registry",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 7
      }
     },
@@ -3001,13 +3001,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "re-export": 42
      }
     },
@@ -3047,7 +3047,7 @@
      "path": "src/authority/owner_act.rs",
      "purpose": "The L02 side of the owner-act record (mesh contract §3): the one rule every owner act's carrier is judged…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 11,
       "enum": 2,
       "fn": 4,
       "struct": 1
@@ -4006,7 +4006,7 @@
      "path": "src/authority/world_privacy_door.rs",
      "purpose": "The signed half of the owner's world-settings door, and the one judge every egress door asks: may a world be…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 9,
       "struct": 1
@@ -12291,6 +12291,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/code_run/dispatcher/world_privacy_set.rs",
+     "purpose": "`vault.worlds.privacy.set` (FIX 4480): the run's agent asks to change a world's settings through the vault's…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "FoldCompactRequest",
       "FoldHistoryRequest",
@@ -15403,10 +15413,10 @@
      "path": "src/consent/effect.rs",
      "purpose": "—",
      "surface": {
-      "const": 3,
+      "const": 4,
       "crate-vis": 7,
       "enum": 4,
-      "fn": 31,
+      "fn": 32,
       "struct": 5
      }
     },
@@ -25137,7 +25147,7 @@
      "path": "src/gate/input.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -29840,7 +29850,7 @@
      "path": "src/llm/decision/asks.rs",
      "purpose": "The person's queue, kept durable: every request the ladder's last rung queues becomes an ask put to a role…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 26,
       "struct": 4
      }
@@ -30013,7 +30023,7 @@
      "path": "src/llm/decision/mod.rs",
      "purpose": "Typed question records and shared outcome projection",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "mod": 2,
       "re-export": 16
      }
@@ -36776,8 +36786,23 @@
      "path": "src/persona_snapshot/compile.rs",
      "purpose": "Tier-A clamp, row build, fingerprint, and Vault compile pass",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PersonaSnapshotCopyEditRequest",
+      "PersonaSnapshotCopyRequest",
+      "PersonaSnapshotTextEdit"
+     ],
+     "path": "src/persona_snapshot/copy.rs",
+     "purpose": "Owner edits to accepted mode-A copies, never to their source claims",
+     "surface": {
+      "fn": 2,
+      "struct": 3
      }
     },
     {
@@ -36787,6 +36812,7 @@
      "path": "src/persona_snapshot/export.rs",
      "purpose": "Owner-consented export, MemoryPack-lite and markdown renders, export-record persistence",
      "surface": {
+      "crate-vis": 1,
       "fn": 4
      }
     },
@@ -36799,7 +36825,7 @@
      "surface": {
       "crate-vis": 2,
       "mod": 1,
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -37731,7 +37757,7 @@
       "crate-vis": 2,
       "enum": 1,
       "fn": 5,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -37783,7 +37809,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "WorldPrivacyReceipt"
@@ -37791,9 +37817,107 @@
      "path": "src/policy_model/owner_rows/world_privacy_switch.rs",
      "purpose": "The owner's settings for one world: where it may be read, where its sealed copies may rest, and its model…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 9,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/policy_model/owner_rows/world_privacy_will/agent.rs",
+     "purpose": "An agent's change of a world's settings (FIX 4480)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WorldPrivacyAnswer"
+     ],
+     "path": "src/policy_model/owner_rows/world_privacy_will/answer.rs",
+     "purpose": "A holder's answer to a world-privacy request (FIX 4480): accept or decline an agent's proposal, confirm or…",
+     "surface": {
+      "enum": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WorldPrivacyOutcome"
+     ],
+     "path": "src/policy_model/owner_rows/world_privacy_will/mod.rs",
+     "purpose": "Who changes a world's settings, and how (FIX 4480: the owner's rulings of 10-19 01:23 and 02:0x, under…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 7,
+      "enum": 1,
+      "fn": 2,
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "WorldPrivacyRequest",
+      "WorldPrivacyRequestKind",
+      "WorldPrivacyRequestStatus"
+     ],
+     "path": "src/policy_model/owner_rows/world_privacy_will/record.rs",
+     "purpose": "The typed world-privacy request (FIX 4480): an agent's proposal of a tighten no Grant line names, or a…",
+     "surface": {
+      "crate-vis": 8,
+      "enum": 2,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WorldPrivacySetInput",
+      "WorldPrivacySetOutput",
+      "WorldReadInput",
+      "WorldSealedInput"
+     ],
+     "path": "src/policy_model/owner_rows/world_privacy_will/sdk.rs",
+     "purpose": "`vault.worlds.privacy.set`, the agent's door (FIX 4480): its input names a world, the settings and the…",
+     "surface": {
+      "enum": 3,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WidenUnanimity"
+     ],
+     "path": "src/policy_model/owner_rows/world_privacy_will/unanimity.rs",
+     "purpose": "\"Widen needs every owner\" (FIX 4480, the several-holders ruling): one per-vault policy row with a per-world…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/policy_model/owner_rows/world_privacy_will/undo.rs",
+     "purpose": "The one-tap undo of an agent's tighten (FIX 4480): the tapping holder's own act (`by: Owner`), bound to the…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -41493,7 +41617,7 @@
      "path": "src/runtime_hooks/replay.rs",
      "purpose": "`hooks.replay` (ARCH-0080 §6): runs a hook's body over past entries and shows each outcome beside the one…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 3,
       "fn": 2,
       "struct": 1
@@ -45047,7 +45171,7 @@
      "purpose": "Connector packs use the engine's real wire probes, never a publisher's grade",
      "surface": {
       "crate-vis": 2,
-      "fn": 2,
+      "fn": 3,
       "struct": 7
      }
     },
@@ -45627,7 +45751,7 @@
      "path": "src/skill_optimize/eval_set/authoring/apply.rs",
      "purpose": "The plan the eval-authoring skill answers with, checked whole against its inventory and applied in order…",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 8
      }
     },
@@ -45677,7 +45801,7 @@
      "path": "src/skill_optimize/eval_set/cut_audit.rs",
      "purpose": "The near-copy audit every cohort cut commits with (ARCH-0053: \"At each cut, a near-copy audit runs across…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 1,
       "struct": 7
@@ -51035,7 +51159,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 57,
+      "re-export": 58,
       "struct": 36
      }
     },
@@ -51363,7 +51487,7 @@
      "path": "src/task_verb/sdk_eval_cohort.rs",
      "purpose": "Owner setup of sealed cohorts through the eval-authoring mechanism",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -51468,7 +51592,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 748
+      "fn": 753
      }
     },
     {
@@ -51563,7 +51687,7 @@
      "purpose": "Typed owner doors over configured hubs, foreign publishers and pinned imports",
      "surface": {
       "enum": 2,
-      "fn": 17,
+      "fn": 18,
       "struct": 20
      }
     },
@@ -51718,6 +51842,29 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CompanionAccessRequestAnswer",
+      "CompanionAccessRequestAnswerRequest",
+      "CompanionAccessRequestAnswered",
+      "CompanionProfileRequestedScope",
+      "PersonaSnapshotExportedCopy",
+      "PersonaSnapshotMemoryPack",
+      "PersonaSnapshotMemoryPackRow",
+      "PersonaSnapshotPreview",
+      "PersonaSnapshotPreviewRequest",
+      "PersonaSnapshotPreviewRow"
+     ],
+     "path": "src/task_verb/sdk_persona.rs",
+     "purpose": "Typed owner doors for profile request answers and accepted persona copies",
+     "surface": {
+      "enum": 2,
+      "fn": 4,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "EraseHeldBytes",
       "EraseLfsChunk",
       "EraseSameBytesRow",
@@ -51787,9 +51934,12 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "ResidenceActView",
+      "ResidenceDirectiveView",
+      "ResidenceDirectivesRequest",
       "ResidenceIndex",
       "ResidenceIndexAnswer",
       "ResidenceIndexEntry",
@@ -51805,14 +51955,16 @@
       "ResidencePruneAnswer",
       "ResidencePruneRequest",
       "ResidencePruned",
-      "ResidenceQueued"
+      "ResidenceQueued",
+      "ResidenceResultStatusName",
+      "ResidenceResultView"
      ],
      "path": "src/task_verb/sdk_residence.rs",
      "purpose": "The owner's residence controls (OF-534, FIX 531): a machine's residence mode, opening one item there, its…",
      "surface": {
-      "enum": 5,
-      "fn": 2,
-      "struct": 11
+      "enum": 7,
+      "fn": 5,
+      "struct": 14
      }
     },
     {
@@ -57558,7 +57710,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 86,
+     "files": 87,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58265,7 +58417,7 @@
      "purpose": "The content-free panic report a host installs before it opens a vault"
     },
     "persona_snapshot": {
-     "files": 7,
+     "files": 8,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -58279,7 +58431,7 @@
      "purpose": "—"
     },
     "policy_model": {
-     "files": 49,
+     "files": 56,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -58671,7 +58823,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 173,
+     "files": 174,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -58841,7 +58993,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3592,
+   "source_files": 3602,
    "test_files": 902
   },
   "oneiron-android": {
@@ -59218,6 +59370,7 @@
      "kind": "src",
      "notable": [
       "ModelOrder",
+      "PrivacyDirection",
       "ReadLocation",
       "SealedCopies",
       "WorldPrivacy",
@@ -59228,8 +59381,8 @@
      "surface": {
       "const": 3,
       "crate-vis": 2,
-      "enum": 3,
-      "fn": 2,
+      "enum": 4,
+      "fn": 3,
       "struct": 2
      }
     },
@@ -67372,7 +67525,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 712
+      "fn": 717
      }
     },
     {
@@ -68421,7 +68574,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 713
+      "fn": 718
      }
     },
     {
@@ -70554,7 +70707,7 @@
      "path": "src/api/booking/page_token.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -71784,7 +71937,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 127
+      "crate-vis": 128
      }
     },
     {
@@ -71911,6 +72064,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/persona_doors.rs",
+     "purpose": "Profile request answers and mode-A copy edits under the owner's own proof",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/policy_doors.rs",
      "purpose": "The host doors of the app's policy actions (OF-181): `vault.settings.wake_policy.set`…",
      "surface": {
@@ -71958,13 +72121,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/residence_doors.rs",
      "purpose": "The host doors of the owner's residence rows (OF-534, FIX 531): `vault.residence.mode`, `.open`, `.index`…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -73353,6 +73516,16 @@
      "notable": [],
      "path": "src/api/owner_routes/wire_health_routes.rs",
      "purpose": "`/v1/owner/wire-health`: the health check past a threshold (OF-520)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/world_privacy_routes.rs",
+     "purpose": "`/v1/owner/worlds/privacy`: a holder answers the world-privacy requests agents raised (FIX 4480)",
      "surface": {
       "crate-vis": 1
      }
@@ -79543,7 +79716,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 389,
+     "files": 391,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -79972,7 +80145,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 730,
+   "source_files": 732,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -80169,6 +80342,7 @@
       "AcceptConnect",
       "AcceptRescopeConnect",
       "AccessFactorPolicy",
+      "AccessRequestStatus",
       "AccessStatus",
       "ActExecution",
       "ActionBoundRequest",
@@ -80644,6 +80818,10 @@
       "CollectionAtom",
       "CommReach",
       "CommandOutput",
+      "CompanionAccessRequestAnswer",
+      "CompanionAccessRequestAnswerRequest",
+      "CompanionAccessRequestAnswered",
+      "CompanionProfileRequestedScope",
       "CompanionSharingRequest",
       "CompanionSharingSetRequest",
       "CompanionSharingStored",
@@ -81649,6 +81827,15 @@
       "PersonKind",
       "PersonRequest",
       "PersonRow",
+      "PersonaSnapshotCopyEditRequest",
+      "PersonaSnapshotCopyRequest",
+      "PersonaSnapshotExportedCopy",
+      "PersonaSnapshotMemoryPack",
+      "PersonaSnapshotMemoryPackRow",
+      "PersonaSnapshotPreview",
+      "PersonaSnapshotPreviewRequest",
+      "PersonaSnapshotPreviewRow",
+      "PersonaSnapshotTextEdit",
       "PinnedPack",
       "PinnedRef",
       "PixelRegion",
@@ -81884,6 +82071,9 @@
       "ResearchTarget",
       "ResearchWeaveWire",
       "ResearchWorkWire",
+      "ResidenceActView",
+      "ResidenceDirectiveView",
+      "ResidenceDirectivesRequest",
       "ResidenceIndex",
       "ResidenceIndexAnswer",
       "ResidenceIndexEntry",
@@ -81900,6 +82090,8 @@
       "ResidencePruneRequest",
       "ResidencePruned",
       "ResidenceQueued",
+      "ResidenceResultStatusName",
+      "ResidenceResultView",
       "ResolveRecordRefRequest",
       "ResolvedRole",
       "ResolvedTeam",
@@ -82683,8 +82875,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 634,
-      "struct": 1879
+      "enum": 639,
+      "struct": 1893
      }
     },
     {
