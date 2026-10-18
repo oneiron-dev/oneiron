@@ -30302,8 +30302,7 @@
      "path": "src/llm/decision/held.rs",
      "purpose": "What a component that outlives one call holds to ask typed questions (a worker thread, a provider a host…",
      "surface": {
-      "crate-vis": 2,
-      "fn": 2,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -30420,9 +30419,9 @@
      "path": "src/llm/decision/mod.rs",
      "purpose": "Typed question records and shared outcome projection",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 2,
       "mod": 2,
-      "re-export": 16
+      "re-export": 17
      }
     },
     {
@@ -40625,7 +40624,7 @@
      "path": "src/receipt/family.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 13,
       "struct": 2
      }
@@ -40754,6 +40753,16 @@
       "crate-vis": 19,
       "mod": 1,
       "re-export": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/receipt/off_device.rs",
+     "purpose": "A caller off this device and the receipt family (FIX 1119, FIX 1120): the rows each receipt names, by its…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -42588,7 +42597,7 @@
      "path": "src/runtime_hooks/store.rs",
      "purpose": "The runner's durable rows: cursors, the run memo, saved intents, the Hook receipts and the run index…",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -52740,6 +52749,8 @@
       "HookReplayOutcome",
       "HookReplayRow",
       "HooksReplayRequest",
+      "PackBytesFile",
+      "PackFileDecodeError",
       "PackFileInput",
       "PackPutOutcome",
       "PackPutReceipt",
@@ -52750,16 +52761,17 @@
       "PackSetupReceipt",
       "PackSetupRequest",
       "PackSetupStoreSecret",
-      "PackSetupVerifyRequest"
+      "PackSetupVerifyRequest",
+      "PackTextFile"
      ],
      "path": "src/task_verb/sdk_host.rs",
      "purpose": "The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put`…",
      "surface": {
       "const": 4,
       "crate-vis": 1,
-      "enum": 6,
-      "fn": 25,
-      "struct": 27
+      "enum": 7,
+      "fn": 27,
+      "struct": 29
      }
     },
     {
@@ -59798,7 +59810,7 @@
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)"
     },
     "receipt": {
-     "files": 32,
+     "files": 33,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -60276,7 +60288,7 @@
    },
    "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3678,
+   "source_files": 3679,
    "test_files": 902
   },
   "oneiron-android": {
@@ -71849,7 +71861,7 @@
      "path": "src/api/ai/media.rs",
      "purpose": "The `ai.*` verbs past text: `GET /v1/ai/options`, `POST /v1/ai/image`, `/video`, `/speech`, `/transcribe`…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 17
      }
     },
     {
@@ -73417,7 +73429,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 147
+      "crate-vis": 148
      }
     },
     {
@@ -76304,7 +76316,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 12,
       "re-export": 21,
       "struct": 1
@@ -76656,7 +76668,7 @@
      "path": "src/commands/serve.rs",
      "purpose": "The unmanaged serve path: open the vault, build the server and its workers, serve until a stop signal, then…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 1,
       "struct": 1
      }
@@ -83791,6 +83803,7 @@
       "OwnerPolicyConfigureRequest",
       "PackAdapter",
       "PackAttributionFields",
+      "PackBytesFile",
       "PackCandidateReason",
       "PackConnectorReceipt",
       "PackFileInput",
@@ -83826,6 +83839,7 @@
       "PackSetupStoreSecret",
       "PackSetupVerifyRequest",
       "PackSetupView",
+      "PackTextFile",
       "PairedInterval",
       "PairedReading",
       "Paragraph",
@@ -85031,8 +85045,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 753,
-      "struct": 2304
+      "enum": 754,
+      "struct": 2305
      }
     },
     {
