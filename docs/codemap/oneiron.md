@@ -1146,10 +1146,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commitment_wake/wake_event.rs` | src | m | 2 struct · 1 enum · 11 fn · 7 const · 25 crate-vis | CommitmentWakeDue, CommitmentWakeEvent, CommitmentWakePhase | Commitment wake event vocabulary and tagged-payload codec |
 | `src/commitment_wake/wake_fire.rs` | src | s | 2 enum · 1 fn · 2 crate-vis | CommitmentWakeFireOutcome, CommitmentWakeSkip | Atomic fire-once door from the due index to the Dreamer queue |
 | `src/commitment_wake/wake_proposal.rs` | src | m | 2 struct · 1 enum · 1 trait · 2 fn · 2 crate-vis | CommitmentWakeExecutor, CommitmentWakeProposalDraft, CommitmentWakeProposalPlanner, CommitmentWakeProposalSkip | Proposal planner, deterministic claim id, and the wrapper executor |
-| `src/compaction.rs` | src | m | 3 struct · 1 enum · 10 fn · 1 const · 1 mod · 8 re-export · 12 crate-vis | CompactionPacket, CompactionPayloadKind, CompactionSnapshotRef, ValidatedCompactionPacket | DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must… |
+| `src/compaction.rs` | src | m | 3 struct · 1 enum · 10 fn · 1 const · 1 mod · 8 re-export · 13 crate-vis | CompactionPacket, CompactionPayloadKind, CompactionSnapshotRef, ValidatedCompactionPacket | DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must… |
 | `src/compaction/driver/integration.rs` | src | s | 2 fn · 4 crate-vis | — | Transactional epoch integration, typed executor coverage, and swap plans |
 | `src/compaction/driver/log.rs` | src | s | 2 fn · 2 crate-vis | — | The driver's entries for a host that numbers its own log: an executor run, whose watermark is its own step… |
-| `src/compaction/driver/mod.rs` | src | L | 8 struct · 3 enum · 1 trait · 24 fn · 2 const · 5 crate-vis | CompactionBackend, CompactionBackendRegistry, CompactionDirective, CompactionDriver, CompactionProduct, CompactionRequest, CompactionSignal, CompactionTierClass +4 | RT-05 in-engine compaction backend, margin law, and single-flight driver |
+| `src/compaction/driver/mod.rs` | src | L | 8 struct · 3 enum · 1 trait · 24 fn · 2 const · 6 crate-vis | CompactionBackend, CompactionBackendRegistry, CompactionDirective, CompactionDriver, CompactionProduct, CompactionRequest, CompactionSignal, CompactionTierClass +4 | RT-05 in-engine compaction backend, margin law, and single-flight driver |
 | `src/compaction/epoch.rs` | src | L | 1 struct · 2 fn · 5 const · 20 crate-vis | EpochSummaryBody | Epoch-summary codec and transactional lineage mint |
 | `src/compaction/epoch_floor.rs` | src | s | 4 crate-vis | — | Where a removed epoch summary leaves the count (OF-013) |
 | `src/compaction/epoch_intent.rs` | src | s | 6 crate-vis | — | The intent a compaction epoch is born from (ARCH-0035 Rule A; owner 2026-09-17: a summary's birth names the… |
@@ -1157,7 +1157,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/compaction/fold_words.rs` | src | s | 5 crate-vis | — | Where a fold's words go when a record they came from is withdrawn (Docs Q23, Q24) |
 | `src/compaction/folds.rs` | src | m | 15 struct · 3 enum · 12 fn · 1 crate-vis | FoldCompactAsk, FoldCompactAsked, FoldCompactInput, FoldDescription, FoldLedger, FoldList, FoldMark, FoldMarkInput +10 | Folds (ARCH-0067 §2.2): an agent marks spans of its own run's log at any time, `self.compact` folds every… |
 | `src/compaction/gate.rs` | src | m | 4 struct · 3 enum · 8 fn · 4 crate-vis | CompactionCheck, CompactionGateFailure, CompactionGatePolicy, CompactionOff, CompactionRefusal, CompactionSuppression, GatedCompaction | The deterministic pre-swap gate (agent-runtime-v1 §d7) |
-| `src/compaction/hooks.rs` | src | s | 1 struct · 3 fn · 1 const | CompactHooks | `host.compact` (ARCH-0080 §5) around one compaction pass |
+| `src/compaction/hooks.rs` | src | s | 1 struct · 4 fn · 1 const · 1 crate-vis | CompactHooks | `host.compact` (ARCH-0080 §5) around one compaction pass |
 | `src/compaction/output.rs` | src | m | 5 struct · 2 enum · 15 fn · 1 crate-vis | OutputAffordance, OutputContextEntry, OutputContextView, OutputDecayPolicy, OutputRef, OutputTier, OutputWorkingContext | Recoverable output references and local derived summaries (ARCH-0026) |
 | `src/compaction/output/tests.rs` | test | s | — | — | — |
 | `src/compaction/packet_source.rs` | src | s | 1 struct · 1 enum · 1 fn · 1 crate-vis | CompactionHostLog, CompactionSource | The packet door's source bindings (FIX 4465) |
@@ -1633,7 +1633,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_wake/driver/hooks.rs` | src | s | 3 crate-vis | — | `host.wake` (ARCH-0080 §5) around one wake pass |
 | `src/dreamer_wake/grain.rs` | src | s | 1 struct · 3 fn · 2 crate-vis | WakeGrain | Vault-local turn cadence and the last queued projector image |
 | `src/dreamer_wake/legibility.rs` | src | s | 1 struct · 2 fn | BudgetLegibilityEnvelope | Budget legibility envelope derived from one BudgetGuard read |
-| `src/dreamer_wake/mod.rs` | src | s | 1 mod · 11 re-export · 12 crate-vis | — | Dreamer wake-pass driver (ONE-1288, DREAM-001 residual) |
+| `src/dreamer_wake/mod.rs` | src | s | 1 mod · 11 re-export · 13 crate-vis | — | Dreamer wake-pass driver (ONE-1288, DREAM-001 residual) |
 | `src/dreamer_wake/nightly.rs` | src | s | 4 crate-vis | — | Budgeted interest-queue spending |
 | `src/dreamer_wake/policy.rs` | src | m | 8 struct · 5 enum · 8 fn · 6 crate-vis | AgentWakePolicy, AgentWakeRole, AgentWakeSignals, AgentWakeTriggers, CadencePrecedence, DreamerWakePolicy, WakeIdleState, WakePolicyDecision +5 | Row-backed wake admission |
 | `src/dreamer_wake/policy/tests.rs` | test | s | — | — | — |
@@ -3278,8 +3278,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/runtime_hooks/filter.rs` | src | s | 6 crate-vis | — | The filters a fact passes in Rust before any sandbox starts (ARCH-0080 §4 Filters) |
 | `src/runtime_hooks/grant.rs` | src | s | 1 struct · 5 fn · 2 crate-vis | HookGrant | Every hook has a grant (ARCH-0080 §6) |
 | `src/runtime_hooks/host.rs` | src | s | 1 struct · 2 fn · 1 const | BudgetHit | `host.budget.hit` (ARCH-0080 §5): a budget line spent under its exhaustion policy |
+| `src/runtime_hooks/host_doors.rs` | src | s | 7 struct · 1 enum · 5 fn | HostBudgetAccounting, HostBudgetHitRequest, HostBudgetHitResult, HostCompactRequest, HostCompactResult, HostWakeKind, HostWakeRequest, HostWakeResult | Typed host triggers (ARCH-0080 §5) |
 | `src/runtime_hooks/lineage.rs` | src | s | 2 struct · 1 enum · 2 fn · 5 crate-vis | HookCheck, HookCheckReason, LineageLink | Causal lineage and the cycle check (ARCH-0080 §4 Lineage and loops) |
-| `src/runtime_hooks/mod.rs` | src | s | 2 mod · 11 re-export · 5 crate-vis | — | Runtime hooks (ARCH-0080) |
+| `src/runtime_hooks/mod.rs` | src | s | 3 mod · 11 re-export · 5 crate-vis | — | Runtime hooks (ARCH-0080) |
 | `src/runtime_hooks/outcome.rs` | src | s | 6 struct · 1 enum · 1 fn · 4 crate-vis | BlockRequest, EnqueuedDreamer, EnqueuedTask, HookOutcome, ProposedClaim, ProposedEdge, ProposedNote | The one outcome a hook body returns (ARCH-0080 §4 Outcomes) |
 | `src/runtime_hooks/read.rs` | src | m | 6 crate-vis | — | The hook's scoped read (ARCH-0080 §6): every row a hook sees comes through the reader's `ScopedRead` lane… |
 | `src/runtime_hooks/regen.rs` | src | m | 6 struct · 2 enum · 1 trait · 9 fn · 1 crate-vis | HookContractStamp, HookGoldenDiff, HookGoldenFingerprint, HookRegenFailure, HookRegenFailurePhase, HookRegenOutcome, HookRegenRecord, HookRegenRequest +1 | Hook regen (ARCH-0080 §8, slice 3): the shape of lens regen (OF-321), with records typed for hooks |
@@ -4075,7 +4076,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/sdk_fanout_launch.rs` | src | s | 5 struct · 1 enum · 7 fn | FanoutAckRequest, FanoutLaunchHold, FanoutLaunchRequest, FanoutLaunchRuling, FanoutLaunchView, FanoutResumeRequest | The fan-out launch doors (OF-393): `vault.fanout.launch` reads one held or launched fan-out… |
 | `src/task_verb/sdk_federation.rs` | src | s | 19 struct · 1 enum · 1 fn · 1 crate-vis | AcceptConnect, AcceptRescopeConnect, ConnectAccepted, ConnectDelivery, ConnectDisconnected, ConnectExportRequest, ConnectGrant, ConnectIdentity +12 | Typed Connect, reciprocal re-scope, disconnect and foreign-world delivery |
 | `src/task_verb/sdk_feedback.rs` | src | m | 11 struct · 7 fn | FeedbackPreviewRequest, FeedbackSendSubjectRequest, FeedbackSubjectPreview, FeedbackSubjectSent, ReportDisclosureRequest, ReportOutboundRequest, ReportOutboundView, ReportPayloadView +3 | Subject-bound feedback over one report issue: its publisher disclosure, its content-free outbound payload… |
-| `src/task_verb/sdk_generated.rs` | src | XL | 864 fn · 4 const | — | — |
+| `src/task_verb/sdk_generated.rs` | src | XL | 867 fn · 4 const | — | — |
 | `src/task_verb/sdk_goal_optimize.rs` | src | m | 15 struct · 12 fn | ProjectGoalIntakeCompleteRequest, ProjectGoalIntakeReceipt, ProjectGoalView, SkillOptimizeGoalBindRequest, SkillOptimizeGoalRequest, SkillOptimizeGoalRevision, SkillOptimizeGoalView, SkillOptimizeMeasureRequest +7 | Full witnessed goal intake and explicit optimizer proposal/admission doors |
 | `src/task_verb/sdk_guest_document.rs` | src | s | 3 struct · 1 fn · 1 crate-vis | GuestDocumentContext, GuestDocumentEnvelope, GuestDocumentShareRequest | Typed guest document sharing over live Connect grants (ARCH-0043) |
 | `src/task_verb/sdk_guest_revoke.rs` | src | s | 1 struct · 2 fn | GuestRevokeRequest | The input and answer of the owner's guest revoke row (OF-232): `vault.guests.revoke`, a host door |

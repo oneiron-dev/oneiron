@@ -14449,7 +14449,7 @@
      "purpose": "DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must…",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 10,
       "mod": 1,
@@ -14500,7 +14500,7 @@
      "purpose": "RT-05 in-engine compaction backend, margin law, and single-flight driver",
      "surface": {
       "const": 2,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 3,
       "fn": 24,
       "struct": 8,
@@ -14628,7 +14628,8 @@
      "purpose": "`host.compact` (ARCH-0080 §5) around one compaction pass",
      "surface": {
       "const": 1,
-      "fn": 3,
+      "crate-vis": 1,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -21063,7 +21064,7 @@
      "path": "src/dreamer_wake/mod.rs",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "mod": 1,
       "re-export": 11
      }
@@ -41926,6 +41927,27 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "HostBudgetAccounting",
+      "HostBudgetHitRequest",
+      "HostBudgetHitResult",
+      "HostCompactRequest",
+      "HostCompactResult",
+      "HostWakeKind",
+      "HostWakeRequest",
+      "HostWakeResult"
+     ],
+     "path": "src/runtime_hooks/host_doors.rs",
+     "purpose": "Typed host triggers (ARCH-0080 §5)",
+     "surface": {
+      "enum": 1,
+      "fn": 5,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "HookCheck",
       "HookCheckReason",
       "LineageLink"
@@ -41947,7 +41969,7 @@
      "purpose": "Runtime hooks (ARCH-0080)",
      "surface": {
       "crate-vis": 5,
-      "mod": 2,
+      "mod": 3,
       "re-export": 11
      }
     },
@@ -52126,7 +52148,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 864
+      "fn": 867
      }
     },
     {
@@ -59238,7 +59260,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 28,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59646,7 +59668,7 @@
    },
    "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3640,
+   "source_files": 3641,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68190,7 +68212,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 833
+      "fn": 836
      }
     },
     {
@@ -69252,7 +69274,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 834
+      "fn": 837
      }
     },
     {
@@ -70773,7 +70795,7 @@
      "path": "src/ai_host/compaction.rs",
      "purpose": "Compaction for code mode's runs (agent-runtime-v1 §d7)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -70926,7 +70948,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "fn": 22,
       "re-export": 1,
       "struct": 2
@@ -72715,7 +72737,17 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 140
+      "crate-vis": 141
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/host_trigger_doors.rs",
+     "purpose": "The owner's typed host triggers",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -80575,7 +80607,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 404,
+     "files": 405,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -81004,7 +81036,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 750,
+   "source_files": 751,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -81451,6 +81483,7 @@
       "BriefKindStamp",
       "BriefStamp",
       "BudgetDenied",
+      "BudgetExhaustionPolicy",
       "BudgetHoldNotice",
       "BudgetHoldRequest",
       "BudgetHoldState",
@@ -81712,6 +81745,7 @@
       "CollectionAtom",
       "CommReach",
       "CommandOutput",
+      "CompactionWindowMessage",
       "CompanionAccessRequestAnswer",
       "CompanionAccessRequestAnswerRequest",
       "CompanionAccessRequestAnswered",
@@ -82321,9 +82355,17 @@
       "HookReplayRow",
       "HookSelector",
       "HooksReplayRequest",
+      "HostBudgetAccounting",
+      "HostBudgetHitRequest",
+      "HostBudgetHitResult",
+      "HostCompactRequest",
+      "HostCompactResult",
       "HostPin",
       "HostPinKind",
       "HostRuleRef",
+      "HostWakeKind",
+      "HostWakeRequest",
+      "HostWakeResult",
       "HostedOutagePolicy",
       "HostedPassEvidence",
       "HostedPlaneAttestation",
@@ -84048,8 +84090,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 696,
-      "struct": 2150
+      "enum": 698,
+      "struct": 2158
      }
     },
     {
