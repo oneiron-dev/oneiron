@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 743 code-mode rows (722 host rows, 21 run rows), 2586 declarations.
-// Replies: 659 fully typed, 80 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 749 code-mode rows (728 host rows, 21 run rows), 2602 declarations.
+// Replies: 665 fully typed, 80 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 97; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1278,6 +1278,22 @@ declare namespace Sdk {
   type LateCreditShare = { subject: EntityId; origin_skill?: EntityId | null; chain: UsedProvenanceEdge[]; decay: number; weight: number };
   type LateCreditReceipt = { receipt_id: string; attempt_receipt: string; outcome_receipt: string; anchor: Anchor; succeeded: boolean; axis: string; at: number; goal_revision?: string | null; attribution: PackAttributionFields; direct_subjects: EntityId[]; shares: LateCreditShare[] };
   type LearningProjectionView = { receipt?: LateCreditReceipt | null };
+  type ObjectiveConfession = { objective: string; met: boolean; flaw?: string | null; uncertainty?: string | null };
+  type AttemptConfession = { attempt: AttemptId; subject: EntityId; type_ref: CellTypeRef; objectives: ObjectiveConfession[] };
+  type AuditDraw = { rate: number; sample: number; at: number };
+  type SealCheckKind = "confession_recheck" | "random_audit";
+  type SealCheckRequest = { reference: string; attempt: AttemptId; kind: SealCheckKind; result_ref: string; objectives: ObjectiveConfession[]; rate: number; created_at: number };
+  type ObjectiveFinding = { objective: string; flaw_present: boolean; evidence_ref: string };
+  type SealCheckOutcome = { judge_revision: string; checked_at: number; findings: ObjectiveFinding[] };
+  type SealCheckReceipt = { request: SealCheckRequest; outcome?: SealCheckOutcome | null };
+  type SealedAttemptReceipt = { confession: AttemptConfession; executor: string; result_ref: string; sealed_at: number; passing: boolean; draw?: AuditDraw | null; checks: SealCheckReceipt[] };
+  type SealAssessment = { weighted_flaws: number; weighted_hidden_flaws: number; confirmed_confessions: number; false_confessions: number };
+  type SealReceiptView = { receipt: SealedAttemptReceipt; assessment: SealAssessment; honesty_reward: number };
+  type SealAttemptRequest = { attempt: AttemptId };
+  type SealPendingRequest = { attempt?: AttemptId | null };
+  type SealRunRequest = Record<string, never>;
+  type SealRunReceipt = { job: AttemptId };
+  type SealCompleteRequest = { attempt: AttemptId; kind: SealCheckKind; outcome: SealCheckOutcome };
   type LearningSettingsRequest = { key?: string | null };
   type LearningSettingSpecView = { key: string; min: number; max: number; seed: number; value: number };
   type LearningSettingMode = "seed" | "pin";
@@ -4123,6 +4139,20 @@ declare const vault: Sdk.VaultHost & {
     ceiling(input: Sdk.EmptyRequest): Promise<Sdk.CredentialCeiling | StoredResult>;
     /** Reads a positively stamped record position through the caller credential and existing read gate, with its narrowing receipt. */
     position(input: Sdk.RecordPositionRequest): Promise<Sdk.ScopedReadResult<Sdk.RecordPosition | null> | StoredResult>;
+  };
+  seal: {
+    /** Draw a passing sealed attempt once at the current audit rate, saving the rate and selection before any checker runs. */
+    audit(input: Sdk.SealAttemptRequest): Promise<Sdk.SealReceiptView | StoredResult>;
+    /** Attest an independent external seal check as the owner; admit immutable findings and project them using the request's stamped rate. */
+    complete(input: Sdk.SealCompleteRequest): Promise<Sdk.SealReceiptView | StoredResult>;
+    /** Confess an attempt's objectives without changing any score; named flaws and uncertainty create durable directed rechecks. */
+    confess(input: Sdk.AttemptConfession): Promise<Sdk.SealReceiptView | StoredResult>;
+    /** Read pending directed rechecks and random audits, optionally for one attempt, without executing a checker. */
+    pending(input: Sdk.SealPendingRequest): Promise<Sdk.SealCheckRequest[] | StoredResult>;
+    /** Read a sealed attempt, its stamped audit draw, directed and random check completions, weighted findings and separate honesty reward. */
+    receipt(input: Sdk.SealAttemptRequest): Promise<Sdk.SealReceiptView | null | StoredResult>;
+    /** Queue the existing Coach seal checker under its ordinary lease, Grant and budget; the returned job never grants extra authority. */
+    run(input: Sdk.SealRunRequest): Promise<Sdk.SealRunReceipt | StoredResult>;
   };
   search: ((input: Sdk.MemorySearchInput) => Promise<Sdk.MemorySearchOutput | StoredResult>) & {
     /** BM25 text search over the engine index; surfaceable claims only. */

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 703 facade rows, 2534 declarations.
-Inputs: 651 of 703 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 628 of 703 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 709 facade rows, 2550 declarations.
+Inputs: 657 of 709 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 634 of 709 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 95; unread shapes: 0.
 """
 
@@ -6221,6 +6221,69 @@ class LateCreditReceipt(TypedDict):
     shares: list[LateCreditShare]
 class LearningProjectionView(TypedDict):
     receipt: NotRequired[LateCreditReceipt | None]
+class ObjectiveConfession(TypedDict):
+    objective: str
+    met: bool
+    flaw: NotRequired[str | None]
+    uncertainty: NotRequired[str | None]
+class AttemptConfession(TypedDict):
+    attempt: AttemptId
+    subject: EntityId
+    type_ref: CellTypeRef
+    objectives: list[ObjectiveConfession]
+class AuditDraw(TypedDict):
+    rate: float
+    sample: float
+    at: int
+SealCheckKind = Literal["confession_recheck", "random_audit"]
+class SealCheckRequest(TypedDict):
+    reference: str
+    attempt: AttemptId
+    kind: SealCheckKind
+    result_ref: str
+    objectives: list[ObjectiveConfession]
+    rate: float
+    created_at: int
+class ObjectiveFinding(TypedDict):
+    objective: str
+    flaw_present: bool
+    evidence_ref: str
+class SealCheckOutcome(TypedDict):
+    judge_revision: str
+    checked_at: int
+    findings: list[ObjectiveFinding]
+class SealCheckReceipt(TypedDict):
+    request: SealCheckRequest
+    outcome: NotRequired[SealCheckOutcome | None]
+class SealedAttemptReceipt(TypedDict):
+    confession: AttemptConfession
+    executor: str
+    result_ref: str
+    sealed_at: int
+    passing: bool
+    draw: NotRequired[AuditDraw | None]
+    checks: list[SealCheckReceipt]
+class SealAssessment(TypedDict):
+    weighted_flaws: float
+    weighted_hidden_flaws: float
+    confirmed_confessions: int
+    false_confessions: int
+class SealReceiptView(TypedDict):
+    receipt: SealedAttemptReceipt
+    assessment: SealAssessment
+    honesty_reward: float
+class SealAttemptRequest(TypedDict):
+    attempt: AttemptId
+class SealPendingRequest(TypedDict):
+    attempt: NotRequired[AttemptId | None]
+class SealRunRequest(TypedDict):
+    ...
+class SealRunReceipt(TypedDict):
+    job: AttemptId
+class SealCompleteRequest(TypedDict):
+    attempt: AttemptId
+    kind: SealCheckKind
+    outcome: SealCheckOutcome
 class LearningSettingsRequest(TypedDict):
     key: NotRequired[str | None]
 class LearningSettingSpecView(TypedDict):

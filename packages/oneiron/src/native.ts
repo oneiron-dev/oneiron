@@ -326,6 +326,12 @@ vaultGateCheckerGet(input: unknown): unknown
 vaultGateCheckerSet(input: unknown): unknown
 vaultLearningRead(input: unknown): unknown
 vaultLearningProjection(input: unknown): unknown
+vaultSealConfess(input: unknown): unknown
+vaultSealAudit(input: unknown): unknown
+vaultSealReceipt(input: unknown): unknown
+vaultSealPending(input: unknown): unknown
+vaultSealRun(input: unknown): unknown
+vaultSealComplete(input: unknown): unknown
 vaultSettingsLearning(input: unknown): unknown
 vaultSettingsLearningPut(input: unknown): unknown
 vaultSettingsLearningClear(input: unknown): unknown

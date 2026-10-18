@@ -2590,6 +2590,42 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_seal_confess(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.seal.confess", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_seal_audit(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.seal.audit", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_seal_receipt(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.seal.receipt", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_seal_pending(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.seal.pending", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_seal_run(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.seal.run", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_seal_complete(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.seal.complete", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_settings_learning(
         &self,
         input: serde_json::Value,

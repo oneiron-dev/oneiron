@@ -1481,6 +1481,36 @@ export_facade! {
     let output = client.vault_learning_projection(&input)?;
     crate::codec::lift_record("vault.learning.projection", &output)
 };
+"vault.seal.confess" => fn vault_seal_confess(&self, input: AttemptConfession) -> SealReceiptView = |client| {
+    let input: oneiron::self_heal::audit::AttemptConfession = crate::codec::lower_record("vault.seal.confess", input)?;
+    let output = client.vault_seal_confess(&input)?;
+    crate::codec::lift_record("vault.seal.confess", &output)
+};
+"vault.seal.audit" => fn vault_seal_audit(&self, input: SealAttemptRequest) -> SealReceiptView = |client| {
+    let input: oneiron::self_heal::audit::doors::SealAttemptRequest = crate::codec::lower_record("vault.seal.audit", input)?;
+    let output = client.vault_seal_audit(&input)?;
+    crate::codec::lift_record("vault.seal.audit", &output)
+};
+"vault.seal.receipt" => fn vault_seal_receipt(&self, input: SealAttemptRequest) -> Option<SealReceiptView> = |client| {
+    let input: oneiron::self_heal::audit::doors::SealAttemptRequest = crate::codec::lower_record("vault.seal.receipt", input)?;
+    let output = client.vault_seal_receipt(&input)?;
+    crate::codec::lift_record("vault.seal.receipt", &output)
+};
+"vault.seal.pending" => fn vault_seal_pending(&self, input: SealPendingRequest) -> Vec<SealCheckRequest> = |client| {
+    let input: oneiron::self_heal::audit::doors::SealPendingRequest = crate::codec::lower_record("vault.seal.pending", input)?;
+    let output = client.vault_seal_pending(&input)?;
+    crate::codec::lift_record("vault.seal.pending", &output)
+};
+"vault.seal.run" => fn vault_seal_run(&self) -> SealRunReceipt = |client| {
+    let input: oneiron::self_heal::audit::doors::SealRunRequest = crate::codec::lower_empty("vault.seal.run")?;
+    let output = client.vault_seal_run(&input)?;
+    crate::codec::lift_record("vault.seal.run", &output)
+};
+"vault.seal.complete" => fn vault_seal_complete(&self, input: SealCompleteRequest) -> SealReceiptView = |client| {
+    let input: oneiron::self_heal::audit::doors::SealCompleteRequest = crate::codec::lower_record("vault.seal.complete", input)?;
+    let output = client.vault_seal_complete(&input)?;
+    crate::codec::lift_record("vault.seal.complete", &output)
+};
 "vault.settings.learning" => fn vault_settings_learning(&self, input: LearningSettingsRequest) -> LearningSettingsView = |client| {
     let input: oneiron::learning_setting_doors::LearningSettingsRequest = crate::codec::lower_record("vault.settings.learning", input)?;
     let output = client.vault_settings_learning(&input)?;

@@ -6879,6 +6879,130 @@ async fn vault_learning_projection(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_seal_confess(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.seal.confess")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.seal.confess", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.seal.confess", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_seal_confess(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_seal_audit(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.seal.audit")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.seal.audit", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.seal.audit", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_seal_audit(server, auth, facade_input(hooks.args.clone())?).await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_seal_receipt(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.seal.receipt")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.seal.receipt", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.seal.receipt", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_seal_receipt(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_seal_pending(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.seal.pending")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.seal.pending", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.seal.pending", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_seal_pending(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_seal_run(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.seal.run")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.seal.run", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.seal.run", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_seal_run(server, auth, facade_input(hooks.args.clone())?).await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_seal_complete(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.seal.complete")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.seal.complete", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.seal.complete", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_seal_complete(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_settings_learning(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -16913,6 +17037,12 @@ pub(crate) async fn call_verb(
         "vault.gate.checker.set" => vault_gate_checker_set(server, call, input).await,
         "vault.learning.read" => vault_learning_read(server, call, input).await,
         "vault.learning.projection" => vault_learning_projection(server, call, input).await,
+        "vault.seal.confess" => vault_seal_confess(server, call, input).await,
+        "vault.seal.audit" => vault_seal_audit(server, call, input).await,
+        "vault.seal.receipt" => vault_seal_receipt(server, call, input).await,
+        "vault.seal.pending" => vault_seal_pending(server, call, input).await,
+        "vault.seal.run" => vault_seal_run(server, call, input).await,
+        "vault.seal.complete" => vault_seal_complete(server, call, input).await,
         "vault.settings.learning" => vault_settings_learning(server, call, input).await,
         "vault.settings.learning.put" => vault_settings_learning_put(server, call, input).await,
         "vault.settings.learning.clear" => vault_settings_learning_clear(server, call, input).await,
