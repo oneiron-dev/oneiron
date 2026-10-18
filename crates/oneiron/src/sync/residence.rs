@@ -15,7 +15,8 @@ pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
 pub use authority_tail::{
     AUTHORITY_CHECKPOINT_PART_MAX, AUTHORITY_TAIL_PAGE_MAX, AuthorityCheckpointPart,
     AuthorityPageImport, authority_append_for, authority_checkpoint_part_for, authority_range_for,
-    authority_tail_for, authority_wanted, held_authority_entries, import_authority_page,
+    authority_tail_for, authority_wanted, held_authority_entries, held_authority_history,
+    import_authority_page,
 };
 pub use bundle::{
     SEALED_BUNDLE_PUT_PART_MAX, SEALED_BUNDLE_READ_PART_MAX, SealedBundleEntry, SealedBundleObject,

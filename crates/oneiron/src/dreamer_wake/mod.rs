@@ -66,6 +66,34 @@ pub(crate) fn erase_in_txn(
     Ok(())
 }
 
+/// The window demotion hook (OF-534), in the remover's transaction before
+/// any row or edge of `gone` goes. Each TURN it removes leaves the sieve's
+/// working state and the projection, unerased: its audits and history stay,
+/// and so do PEOPLE `about` lines, since a demoted fact still stands. A kept
+/// TURN that loses a MESSAGE here keeps both and owes no read: its words
+/// are whole at home, and reading the part left would read a fragment.
+#[cfg(feature = "sync")]
+pub(crate) fn demote_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    gone: &std::collections::BTreeSet<crate::EntityId>,
+) -> crate::Result<()> {
+    use crate::ports::EntityStoreRead;
+    let mut turns = std::collections::BTreeSet::new();
+    for id in gone {
+        if store
+            .port_entity_record(txn, id)?
+            .is_some_and(|row| row.entity_type == crate::registry::ENTITY_TYPE_TURN)
+        {
+            turns.insert(*id);
+        }
+    }
+    for turn in &turns {
+        sieve::demote_turn_in_txn(store, txn, turn)?;
+    }
+    projector::demote_turns_in_txn(store, txn, &turns)
+}
+
 /// The publication hook: a TURN, or a MESSAGE inside one, whose text a
 /// write changed or may have changed (a document write, its restore, an
 /// idle revision, a re-put of the row, a regeneration that clears its stale

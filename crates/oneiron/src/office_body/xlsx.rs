@@ -41,8 +41,6 @@ const FORMATS: &str = "formats";
 /// The longest id of a cell format the body composes.
 const MAX_FORMAT_ID: usize = 64;
 pub(super) const SCHEMA: u32 = 2;
-/// The most stored cells a live body holds.
-const MAX_CELLS: usize = 200_000;
 
 /// A typed read of the body at one frontier.
 #[derive(Debug, Clone, PartialEq)]
@@ -208,17 +206,8 @@ pub enum XlsxBodyOp {
     },
 }
 
-/// Write the imported workbook into a fresh document.
+/// Write the imported workbook into a fresh document, every cell of it.
 pub(super) fn import(doc: &LoroDoc, book: &XlsxBook) -> Result<()> {
-    if book
-        .sheets
-        .iter()
-        .map(|sheet| sheet.cells.len())
-        .sum::<usize>()
-        > MAX_CELLS
-    {
-        return Err(invalid("the workbook holds more cells than a live body"));
-    }
     let office = doc.get_map(OFFICE);
     office.insert("kind", "xlsx").map_err(loro)?;
     office.insert("schema", i64::from(SCHEMA)).map_err(loro)?;
