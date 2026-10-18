@@ -360,9 +360,12 @@ suite.test(test, "PORTABILITY-07", "Folder source rescan lifecycle should work",
   expect(sourceId(await recallItem(engine, facts.firstQuery))).toBe(first);
   expect((await engine.client.call("vault.notes.lifecycle", { note_ref: first })).status).toBe("active");
   expect((await readdir(folder)).sort()).toEqual(["first.md", "second.md", "third.md"]);
-  expect(new Uint8Array(await readFile(firstPath))).toEqual(firstText);
-  expect(new Uint8Array(await readFile(secondPath))).toEqual(editedText);
-  expect(new Uint8Array(await readFile(thirdPath))).toEqual(thirdText);
+  const firstBytes: Uint8Array = new Uint8Array(await readFile(firstPath));
+  expect(firstBytes).toEqual(firstText);
+  const secondBytes: Uint8Array = new Uint8Array(await readFile(secondPath));
+  expect(secondBytes).toEqual(editedText);
+  const thirdBytes: Uint8Array = new Uint8Array(await readFile(thirdPath));
+  expect(thirdBytes).toEqual(thirdText);
   await engine.close();
 });
 
