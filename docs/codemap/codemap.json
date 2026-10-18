@@ -52389,8 +52389,12 @@
      "bucket": "L",
      "kind": "src",
      "notable": [
+      "BoardFrameReply",
       "BoardRefreshRequest",
+      "BoardSubscriptionReply",
       "BoardSubscriptionRequest",
+      "BoardWakeReply",
+      "BoardWakeRequest",
       "CompanionSharingRequest",
       "CompanionSharingSetRequest",
       "DescribeRequest",
@@ -52433,7 +52437,7 @@
       "enum": 1,
       "fn": 13,
       "re-export": 63,
-      "struct": 36
+      "struct": 40
      }
     },
     {
@@ -52869,7 +52873,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 969
+      "fn": 971
      }
     },
     {
@@ -69121,7 +69125,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 938
+      "fn": 942
      }
     },
     {
@@ -70184,7 +70188,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 939
+      "fn": 943
      }
     },
     {
@@ -73174,6 +73178,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/board_stream_doors.rs",
+     "purpose": "Public run-bound board STREAM doors: `self.focus.refresh`, `self.focus.subscribe`, `self.focus.unsubscribe`…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/booking_doors.rs",
      "purpose": "Typed booking-page discovery, published lifecycle and constraint front",
      "surface": {
@@ -73687,7 +73701,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 152
+      "crate-vis": 153
      }
     },
     {
@@ -81690,7 +81704,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 417,
+     "files": 418,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -82119,7 +82133,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 768,
+   "source_files": 769,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -82533,6 +82547,13 @@
       "BlockChange",
       "BlockedCategory",
       "BlockedReportView",
+      "BoardFrameReply",
+      "BoardRefreshRequest",
+      "BoardStreamFrame",
+      "BoardSubscriptionReply",
+      "BoardSubscriptionRequest",
+      "BoardWakeReply",
+      "BoardWakeRequest",
       "BodyBlockKind",
       "BodyCell",
       "BodyConflict",
@@ -83221,6 +83242,7 @@
       "DeliveryWindowRule",
       "DeliveryWindowTimeWindow",
       "DeliveryWindowVerbClass",
+      "DeltaRow",
       "DenyConsentRequest",
       "DerivationEnvelopeView",
       "DerivationKind",
@@ -83460,6 +83482,7 @@
       "ForkRecord",
       "ForkState",
       "ForkStatus",
+      "FrameKind",
       "FrozenTrialCase",
       "GateCheckerReceipt",
       "GateCheckerSet",
@@ -83855,6 +83878,9 @@
       "LinkedText",
       "LiveRunRequestAgentSpawnInput",
       "LiveRunRequestBatchInput",
+      "LiveRunRequestBoardRefreshRequest",
+      "LiveRunRequestBoardSubscriptionRequest",
+      "LiveRunRequestBoardWakeRequest",
       "LiveRunRequestClickInput",
       "LiveRunRequestCropInput",
       "LiveRunRequestExpectInput",
@@ -85126,6 +85152,7 @@
       "StreamFinalityReason",
       "StreamSyncVisibility",
       "SubgoalStatus",
+      "SubscriptionScope",
       "SufficiencyCard",
       "SufficiencyInput",
       "SufficiencyVerdict",
@@ -85376,6 +85403,7 @@
       "WaitForOutput",
       "WakeCadenceReceipt",
       "WakeCadenceView",
+      "WakeEnvelope",
       "WakeIdleState",
       "WakePolicyDecision",
       "WakePolicySetRequest",
@@ -85492,8 +85520,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 777,
-      "struct": 2398
+      "enum": 779,
+      "struct": 2410
      }
     },
     {
