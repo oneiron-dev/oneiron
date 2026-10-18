@@ -96,12 +96,18 @@ pub(super) struct FoldJob {
     pub(super) ids: Vec<String>,
     /// A handle to each step's output and every stored result the span names.
     pub(super) handles: Vec<String>,
+    /// What ran its pass, when its backend writes as its agent (FIX 4465).
+    pub(super) execution: Option<crate::compaction::CompactionExecution>,
 }
 
 /// What a flight answered.
 struct FlightOutcome {
     epoch: Option<PassOutcome>,
     folds: Vec<(FoldJob, PassOutcome)>,
+    /// What ran the epoch pass, when its backend writes as its agent.
+    epoch_execution: Option<crate::compaction::CompactionExecution>,
+    /// Why the flight could not be written as its agent: it kept its window.
+    unavailable: Option<crate::compaction::SelfCompactionUnavailable>,
 }
 
 /// A landed flight: the epoch pass, if it ran one, and each fold of its
@@ -111,6 +117,8 @@ pub(super) struct FinishedFlight {
     pub(super) folds: Vec<(FoldJob, Result<GatedCompaction, String>)>,
     /// The epoch pass's `host.compact` chain, for its post-hooks.
     pub(super) hooks: CompactHooks,
+    /// What ran a self-written epoch pass: its landing's receipt (FIX 4465).
+    pub(super) epoch_execution: Option<crate::compaction::CompactionExecution>,
 }
 
 /// What a caller can know about a run's compaction after a call.
@@ -127,6 +135,12 @@ pub struct CompactionReport {
     pub last_swap: Option<(u64, u64, u64)>,
     /// Why compaction did not run, typed.
     pub suppressed: Option<CompactionSuppression>,
+    /// What ran the last self-written epoch pass the seat took back, landed
+    /// or not (FIX 4465): writer, model, usage and home. Its landing's
+    /// coverage row and fold record keep the durable copy.
+    pub last_self_pass: Option<crate::compaction::CompactionExecution>,
+    /// Why the last flight could not be written as its agent, typed.
+    pub self_unavailable: Option<crate::compaction::SelfCompactionUnavailable>,
 }
 
 /// Why a run parked at its window budget.
@@ -281,11 +295,18 @@ impl RunCompaction {
                     detail: "the compaction pass ended without an answer".to_owned(),
                 })),
                 folds: Vec::new(),
+                epoch_execution: None,
+                unavailable: None,
             },
         };
         seat.flight = None;
         let hooks = std::mem::take(&mut seat.hooks);
         self.report.in_flight = false;
+        self.report.self_unavailable = outcome.unavailable;
+        if outcome.epoch_execution.is_some() {
+            self.report.last_self_pass = outcome.epoch_execution.clone();
+        }
+        let epoch_execution = outcome.epoch_execution;
         let epoch = outcome.epoch.map(|outcome| match outcome {
             PassOutcome::Accepted(gated) => Ok(*gated),
             PassOutcome::Rejected(failure) => {
@@ -327,6 +348,7 @@ impl RunCompaction {
             epoch,
             folds,
             hooks,
+            epoch_execution,
         })
     }
 
@@ -415,10 +437,31 @@ impl RunCompaction {
                             let backend = Arc::clone(seat.driver.backend());
                             let policy = seat.policy;
                             let vectors = seat.vectors.clone().filter(|_| seat.overlay);
+                            let session_bound = seat.session_bound;
                             let (sender, receiver) = channel();
                             seat.spawn.spawn(Box::new(move || {
+                                // FIX 4465: a backend writing as its agent
+                                // freezes what this flight wears, or says
+                                // why it cannot; that flight keeps its
+                                // window, never handed to another writer.
+                                if let Err(why) = backend.prepare_flight(session_bound) {
+                                    let refused = || PassOutcome::Refused(why.refusal());
+                                    let epoch = request.as_ref().map(|_| refused());
+                                    let folds =
+                                        folds.into_iter().map(|job| (job, refused())).collect();
+                                    let _ = sender.send(FlightOutcome {
+                                        epoch,
+                                        folds,
+                                        epoch_execution: None,
+                                        unavailable: Some(why),
+                                    });
+                                    return;
+                                }
+                                let mut epoch_execution = None;
                                 let epoch = request.as_ref().map(|request| {
-                                    let mut outcome = run_pass(&*backend, request, &policy);
+                                    let (mut outcome, execution) =
+                                        run_pass(&*backend, request, &policy);
+                                    epoch_execution = execution;
                                     // A room's summary takes its vector here,
                                     // off the step loop; its mint stages it.
                                     if let (PassOutcome::Accepted(gated), Some(vectors)) =
@@ -430,12 +473,19 @@ impl RunCompaction {
                                 });
                                 let folds = folds
                                     .into_iter()
-                                    .map(|job| {
-                                        let outcome = run_pass(&*backend, &job.request, &policy);
+                                    .map(|mut job| {
+                                        let (outcome, execution) =
+                                            run_pass(&*backend, &job.request, &policy);
+                                        job.execution = execution;
                                         (job, outcome)
                                     })
                                     .collect();
-                                let _ = sender.send(FlightOutcome { epoch, folds });
+                                let _ = sender.send(FlightOutcome {
+                                    epoch,
+                                    folds,
+                                    epoch_execution,
+                                    unavailable: None,
+                                });
                             }));
                             seat.flight = Some(receiver);
                             seat.hooks = hooks;
@@ -470,32 +520,57 @@ impl RunCompaction {
 }
 
 /// Up to `policy.tries` tries; each retry names the check the last failed.
+/// A backend writing as its agent (FIX 4465) answers what ran each try: the
+/// answering try's record comes back, stamped with the accepted summary's
+/// snapshot, and each try the gate refused before it keeps its own usage
+/// line, so no try is counted twice.
 fn run_pass(
     backend: &dyn CompactionBackend,
     request: &CompactionRequest,
     policy: &CompactionGatePolicy,
-) -> PassOutcome {
+) -> (PassOutcome, Option<crate::compaction::CompactionExecution>) {
     let mut retry: Option<CompactionCheck> = None;
     let mut last = None;
+    let mut spent: Option<crate::compaction::CompactionExecution> = None;
+    let mut rejected = Vec::new();
     for _ in 0..policy.tries.max(1) {
-        let product = match backend.compact(request, retry) {
-            Ok(product) => product,
-            Err(refusal) => return PassOutcome::Refused(refusal),
+        let (product, execution) = match backend.compact_as_writer(request, retry) {
+            Ok(answer) => answer,
+            Err(refusal) => {
+                let spent = spent.map(|spent| spent.with_rejected(rejected));
+                return (PassOutcome::Refused(refusal), spent);
+            }
         };
         match gate_compaction(request, &product, policy) {
-            Ok(gated) => return PassOutcome::Accepted(Box::new(gated)),
+            Ok(gated) => {
+                if let Some(prior) = spent.take() {
+                    rejected.push(prior.usage);
+                }
+                let execution =
+                    execution.map(|execution| execution.accepted(gated.summary_text(), rejected));
+                return (PassOutcome::Accepted(Box::new(gated)), execution);
+            }
             Err(failure) => {
+                if let Some(execution) = execution
+                    && let Some(prior) = spent.replace(execution)
+                {
+                    rejected.push(prior.usage);
+                }
                 retry = Some(failure.check);
                 last = Some(failure);
             }
         }
     }
+    let spent = spent.map(|spent| spent.with_rejected(rejected));
     match last {
-        Some(failure) => PassOutcome::Rejected(failure),
-        None => PassOutcome::Refused(CompactionRefusal {
-            suppression: CompactionSuppression::TurnScoped { check: None },
-            detail: "the compaction pass made no try".to_owned(),
-        }),
+        Some(failure) => (PassOutcome::Rejected(failure), spent),
+        None => (
+            PassOutcome::Refused(CompactionRefusal {
+                suppression: CompactionSuppression::TurnScoped { check: None },
+                detail: "the compaction pass made no try".to_owned(),
+            }),
+            spent,
+        ),
     }
 }
 

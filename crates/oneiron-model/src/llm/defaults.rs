@@ -69,6 +69,39 @@ pub const fn locality_rank(locality: ModelLocality) -> u8 {
     }
 }
 
+/// What an agent's own compaction reads (FIX 4465): its retained turns on
+/// the cheap compaction route wearing its home, or a fork of its live
+/// context. The row picks the model and context per wake; WHO writes is the
+/// agent's `memory_profile.compaction_backend`, never this row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SelfCompactionSource {
+    RetainedTurns,
+    LiveFork,
+}
+
+impl SelfCompactionSource {
+    /// The stable name a receipt and a report carry.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::RetainedTurns => "retained_turns",
+            Self::LiveFork => "live_fork",
+        }
+    }
+}
+
+/// The self-compaction row: the context a self-written compaction reads and
+/// the widest destination its call may be served at. The model is the
+/// agent's own compaction model, else the house's. A delegated edit may not
+/// widen `locality`, as with every other row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SelfCompactionDefault {
+    pub source: SelfCompactionSource,
+    pub locality: ModelLocality,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PurposeDefaultTable {
@@ -78,6 +111,8 @@ pub struct PurposeDefaultTable {
     /// Owner-authored widest extraction destination. A nonlocal route also
     /// needs a separate host predicate for the actual request before dispatch.
     pub extraction_max_locality: ModelLocality,
+    /// How an agent that writes its own compaction is served each wake.
+    pub self_compaction: SelfCompactionDefault,
 }
 
 /// Checked copy of the editable wire rows. Callers cannot index incomplete maps.
@@ -155,6 +190,11 @@ impl PurposeDefaultTable {
 
     pub fn voice(&self, lane: VoiceLane) -> &PurposeDefault {
         &self.voice[&lane]
+    }
+
+    /// The row a self-written compaction is served by, read once per flight.
+    pub fn self_compaction(&self) -> &SelfCompactionDefault {
+        &self.self_compaction
     }
 
     /// Choose a concrete speech backend before starting work. Authenticated

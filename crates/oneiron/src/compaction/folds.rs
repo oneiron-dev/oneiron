@@ -283,6 +283,11 @@ pub struct FoldRecord {
     /// The result handles the span covers: each step's output and every
     /// stored result its turns name.
     pub handles: Vec<String>,
+    /// What ran a self-written fold (FIX 4465): its writer, the model, the
+    /// provider's usage, the home it wore and its admitted packet's
+    /// snapshot. `None` for every other writer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<super::CompactionExecution>,
 }
 
 /// The most ids a stub lists itself; `describe({fold})` lists them all.

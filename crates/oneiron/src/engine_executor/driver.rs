@@ -186,18 +186,20 @@ impl<'a> EngineNativeExecutor<'a> {
     ) -> EngineExecutorResult<crate::compaction::SwapPlan> {
         self.admit_compaction_read()?;
         let placement = crate::compaction::EpochPlacement::default();
-        self.integrate_in(driver, byline, placement, gated, accumulated)
+        self.integrate_in(driver, byline, placement, gated, accumulated, None)
     }
 
     /// The run seat's swap: its summary is born at the run's `placement`.
+    /// A self-written summary (FIX 4465) brings what ran it, `writer`.
     pub(super) fn integrate_placed(
         &mut self,
         driver: &mut crate::compaction::CompactionDriver,
         byline: crate::WriteActor,
         placement: crate::compaction::EpochPlacement,
         gated: crate::compaction::GatedCompaction,
+        writer: Option<crate::compaction::CompactionExecution>,
     ) -> EngineExecutorResult<crate::compaction::SwapPlan> {
-        self.integrate_in(driver, byline, placement, gated, &[])
+        self.integrate_in(driver, byline, placement, gated, &[], writer)
     }
 
     fn integrate_in(
@@ -207,6 +209,7 @@ impl<'a> EngineNativeExecutor<'a> {
         placement: crate::compaction::EpochPlacement,
         gated: crate::compaction::GatedCompaction,
         accumulated: &[crate::compaction::CompactionWindowMessage],
+        writer: Option<crate::compaction::CompactionExecution>,
     ) -> EngineExecutorResult<crate::compaction::SwapPlan> {
         self.verify_storage_dispatcher_binding()?;
         let run_id = self.output_run.ok_or(crate::Error::InvalidConfig(
@@ -225,6 +228,37 @@ impl<'a> EngineNativeExecutor<'a> {
             .into());
         }
         let span = crate::code_run::ExecutorOutputSpan::from_replay(&record, &request)?;
+        let last = request
+            .window
+            .last()
+            .expect("integrated window is nonempty")
+            .turn;
+        // FIX 4465: a self-written summary lands only on its packet, admitted
+        // through the packet door's host-log binding against this run's
+        // retained steps. A room's run keeps its window: its receipts have no
+        // room store yet.
+        let landing = match (writer, &self.storage) {
+            (None, _) => None,
+            (Some(execution), ExecutorStorage::Canonical(vault)) => {
+                Some(crate::compaction::admit_self_landing(
+                    vault,
+                    crate::compaction::CompactionHostLog {
+                        run_ref: self.gated_write.run_ref(),
+                        run_id,
+                        first: request.turn_start,
+                        last,
+                    },
+                    &gated,
+                    execution,
+                )?)
+            }
+            (Some(_), ExecutorStorage::Session(_)) => {
+                return Err(crate::Error::InvalidConfig(
+                    "a self-written compaction lands no room receipt yet".into(),
+                )
+                .into());
+            }
+        };
         // The last committed step was not part of the preceding request's
         // history. Synchronize it BEFORE the mint, even across a soft yield.
         self.sync_output_context(&record)?;
@@ -236,6 +270,7 @@ impl<'a> EngineNativeExecutor<'a> {
                 gated,
                 accumulated,
                 &span,
+                landing,
             )?,
             // A room's run lands through its own handle, on the route it
             // captured at entry: the summary stays in the room's overlay and
@@ -254,11 +289,6 @@ impl<'a> EngineNativeExecutor<'a> {
         };
         // This is only an in-memory cache; the next assembly re-derives it
         // from the typed row joined to the committed SUMMARY.
-        let last = request
-            .window
-            .last()
-            .expect("integrated window is nonempty")
-            .turn;
         self.output_context.compact_span(request.turn_start, last);
         Ok(plan)
     }

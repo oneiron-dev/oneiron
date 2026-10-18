@@ -69,6 +69,8 @@ mod folds;
 mod gate;
 mod hooks;
 pub mod output;
+mod packet_source;
+mod self_writer;
 mod stored_epoch;
 mod withdrawn;
 
@@ -110,6 +112,12 @@ pub(crate) use gate::{
     compaction_input_tokens, compaction_pin_input_tokens, compaction_step_input_tokens,
 };
 pub use hooks::{CompactHooks, HOST_COMPACT, compact_invocation};
+pub use packet_source::{CompactionHostLog, CompactionSource, admit_compaction_source};
+pub use self_writer::{
+    CompactionExecution, CompactionHomeRef, CompactionUsage, SelfCompactionUnavailable,
+    compaction_usage_projection,
+};
+pub(crate) use self_writer::{SelfLanding, admit_self_landing};
 pub(crate) use stored_epoch::{StoredEpoch, stored_epoch_in};
 pub(crate) use withdrawn::{WithdrawnKeyframe, erased_form, scrub_withdrawn_epoch_in_txn};
 #[cfg(feature = "sync")]
@@ -230,6 +238,9 @@ pub struct CompactionPacket {
 pub struct ValidatedCompactionPacket {
     packet: CompactionPacket,
     payload_kind: CompactionPayloadKind,
+    /// The run and span a host-log packet was admitted against; `None` for
+    /// a conversation's.
+    host_log: Option<packet_source::HostLogWitness>,
 }
 
 impl ValidatedCompactionPacket {
@@ -276,6 +287,11 @@ impl ValidatedCompactionPacket {
     pub fn working_set_refs(&self) -> &[EntityId] {
         &self.packet.working_set_refs
     }
+
+    /// The run and span a host-log packet was admitted against.
+    pub(crate) const fn host_log(&self) -> Option<packet_source::HostLogWitness> {
+        self.host_log
+    }
 }
 
 /// The ONE compaction handoff admission door.
@@ -314,6 +330,7 @@ pub fn admit_compaction_packet(
     Ok(ValidatedCompactionPacket {
         packet: p,
         payload_kind,
+        host_log: None,
     })
 }
 

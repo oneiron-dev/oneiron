@@ -570,13 +570,16 @@ impl EpochMint {
 }
 
 /// The extra write shares the summary mint transaction. Failure of EITHER
-/// operation rolls back both, leaving the driver request retryable.
+/// operation rolls back both, leaving the driver request retryable. A
+/// self-written summary's `writer` receipt (FIX 4465) is linked from its
+/// birth; the byline stays the agent's.
 pub(super) fn mint_epoch_summary_with(
     vault: &Vault,
     session_ref: &EntityId,
     byline: WriteActor,
     request: &CompactionRequest,
     product: &CompactionProduct,
+    writer: Option<&super::CompactionExecution>,
     extra: impl FnOnce(&mut heed::RwTxn<'_>, &EpochMint) -> Result<()>,
 ) -> Result<(u64, EntityId)> {
     mint_epoch_summary_guarded(
@@ -585,6 +588,7 @@ pub(super) fn mint_epoch_summary_with(
         byline,
         request,
         product,
+        writer,
         |_| Ok(()),
         extra,
     )
@@ -595,12 +599,17 @@ pub(super) fn mint_epoch_summary_with(
 /// record lands its summary in base only while its participant, its saver
 /// and its route still stand, exactly as its other base writes do. A refused
 /// landing writes nothing.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the mint's arguments plus its landing guard and a self-written receipt"
+)]
 pub(super) fn mint_epoch_summary_guarded(
     vault: &Vault,
     session_ref: &EntityId,
     byline: WriteActor,
     request: &CompactionRequest,
     product: &CompactionProduct,
+    writer: Option<&super::CompactionExecution>,
     landing: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     extra: impl FnOnce(&mut heed::RwTxn<'_>, &EpochMint) -> Result<()>,
 ) -> Result<(u64, EntityId)> {
@@ -696,10 +705,10 @@ pub(super) fn mint_epoch_summary_guarded(
             &live,
         );
         let trigger = super::epoch_intent::run_trigger_in(&vault.store, wtxn, request)?;
-        batch = batch.made_by(
-            &summary_id,
-            super::epoch_intent::epoch_birth(request, byline, at, intent_id, trigger),
-        );
+        let birth = super::epoch_intent::epoch_birth(request, byline, at, intent_id, trigger)
+            .map(|birth| super::self_writer::link_writer(birth, writer))
+            .transpose()?;
+        batch = batch.made_by(&summary_id, birth);
         batch.apply(wtxn)?;
         // Explicitly scheduled for embedding inside the mint transaction, so
         // the ratified "vector-indexed, RAPTOR-retrievable" contract is a
