@@ -87,7 +87,7 @@ where
             &[],
         ));
     }
-    let (actor, class) = facade_actor(auth).map_err(FacadeApiError::into_memory_error)?;
+    let (actor, class) = facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
     let refused = || {
         MemoryError::new(
             MEMORY_CODE_FORBIDDEN,

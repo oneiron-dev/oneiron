@@ -46,7 +46,7 @@ pub(crate) async fn vault_shape_apply(
         .await
         .map_err(|_| internal(VERB))?;
     }
-    let (actor, class) = super::facade_actor(auth).map_err(|_| {
+    let (actor, class) = super::facade_actor(&server, auth).map_err(|_| {
         MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             format!("{VERB} applies as the vault owner or an authenticated principal"),

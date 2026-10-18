@@ -672,20 +672,72 @@ export class Oneiron {
       /** An Admin with the add_member power takes back a pending invitation. */
       withdraw_invitation: (input: Facade.SharedInvitationWithdrawRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersWithdrawInvitation(input) as Facade.SharedActExecutionReceipt),
     },
+    federation: {
+      connect: {
+        /** The owner reads this vault identity and the host key used for reciprocal Connect consent. */
+        identity: (input: Facade.EmptyRequest): Facade.ConnectIdentity => this.#call(() => this.#client.vaultFederationConnectIdentity(input) as Facade.ConnectIdentity),
+        grants: {
+          /** The owner mints an inert Connect guest grant inside the named local-world ceiling. */
+          mint: (input: Facade.MintConnectGrant): Facade.ConnectGrant => this.#call(() => this.#client.vaultFederationConnectGrantsMint(input) as Facade.ConnectGrant),
+        },
+        /** The owner asks the host to sign one disclosed Connect half without activating it. */
+        offer: (input: Facade.OfferConnect): Facade.Offer => this.#call(() => this.#client.vaultFederationConnectOffer(input) as Facade.Offer),
+        /** The owner accepts the peer host signed Connect half and receives the matching host counter-half. */
+        accept: (input: Facade.AcceptConnect): Facade.ConnectAccepted => this.#call(() => this.#client.vaultFederationConnectAccept(input) as Facade.ConnectAccepted),
+        /** The owner narrows the current outbound scope without breaking the reciprocal relationship. */
+        narrow: (input: Facade.NarrowConnect): Facade.ConnectPactReceipt => this.#call(() => this.#client.vaultFederationConnectNarrow(input) as Facade.ConnectPactReceipt),
+        rescope: {
+          /** The owner discloses both directions at a new epoch and asks the host to sign a reciprocal re-scope proposal. */
+          offer: (input: Facade.RescopeConnect): Facade.RescopeOffer => this.#call(() => this.#client.vaultFederationConnectRescopeOffer(input) as Facade.RescopeOffer),
+          /** The owner accepts the peer host signed re-scope and receives the matching signed counter-half. */
+          accept: (input: Facade.AcceptRescopeConnect): Facade.ConnectRescoped => this.#call(() => this.#client.vaultFederationConnectRescopeAccept(input) as Facade.ConnectRescoped),
+        },
+        /** The owner unilaterally ends both directions of a pact without claiming to erase the peer retained copy. */
+        disconnect: (input: Facade.ConnectPactRequest): Facade.ConnectDisconnected => this.#call(() => this.#client.vaultFederationConnectDisconnect(input) as Facade.ConnectDisconnected),
+        /** The owner exports one grant-filtered named-world update signed by the host for its live pact and epoch. */
+        export: (input: Facade.ConnectExportRequest): Facade.ConnectDelivery => this.#call(() => this.#client.vaultFederationConnectExport(input) as Facade.ConnectDelivery),
+        /** The owner admits a peer host signed update through guest admission into the retained foreign-world vault. */
+        rejoin: (input: Facade.ConnectDelivery): Facade.ConnectRejoined => this.#call(() => this.#client.vaultFederationConnectRejoin(input) as Facade.ConnectRejoined),
+      },
+    },
+    trusted_contacts: {
+      /** The vault owner names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again. */
+      name: (input: Facade.TrustedContactNameRequest): Facade.TrustedContact => this.#call(() => this.#client.vaultTrustedContactsName(input) as Facade.TrustedContact),
+      /** A live person lists every trusted-contact relation they are a side of: those they named and those naming them, under their own credential. */
+      list: (input: Facade.TrustedContactsRequest): Facade.TrustedContact[] => this.#call(() => this.#client.vaultTrustedContactsList(input) as Facade.TrustedContact[]),
+      /** The named contact, a live person under their own credential, accepts the naming version they were shown and attests they are an adult; the relation is live only after this. */
+      consent: (input: Facade.TrustedContactConsentRequest): Facade.TrustedContact => this.#call(() => this.#client.vaultTrustedContactsConsent(input) as Facade.TrustedContact),
+      /** Either side of a trusted-contact relation ends it under their own credential; no notice staged from it is sent after this returns, and its open asks close. */
+      revoke: (input: Facade.TrustedContactRevokeRequest): Facade.TrustedContact => this.#call(() => this.#client.vaultTrustedContactsRevoke(input) as Facade.TrustedContact),
+      dial: {
+        /** The vault owner changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands. */
+        set: (input: Facade.TrustedContactDialRequest): Facade.TrustedContact => this.#call(() => this.#client.vaultTrustedContactsDialSet(input) as Facade.TrustedContact),
+      },
+      tier: {
+        /** The vault owner names the trusted-contact tier (concern or imminent) of one RouteToHelp policy row; a row never named is a concern. */
+        set: (input: Facade.TrustedContactTierRequest): Facade.TrustedContactTierSet => this.#call(() => this.#client.vaultTrustedContactsTierSet(input) as Facade.TrustedContactTierSet),
+      },
+      concern: {
+        /** The vault owner reads their open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled. */
+        asks: (input: Facade.TrustedContactAsksRequest): Facade.TrustedContactAsk[] => this.#call(() => this.#client.vaultTrustedContactsConcernAsks(input) as Facade.TrustedContactAsk[]),
+        /** The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing. */
+        authorize: (input: Facade.TrustedContactAuthorizeRequest): Facade.TrustedContactAuthorization => this.#call(() => this.#client.vaultTrustedContactsConcernAuthorize(input) as Facade.TrustedContactAuthorization),
+      },
+    },
     guests: {
       revoke: (input: Facade.GuestRevokeRequest): Facade.GuestRevokeResponse => this.#call(() => this.#client.vaultGuestsRevoke(input) as Facade.GuestRevokeResponse),
       /** The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device. */
       mint_slip: (input: Facade.GuestSlipMintRequest): Facade.GuestSlipMinted => this.#call(() => this.#client.vaultGuestsMintSlip(input) as Facade.GuestSlipMinted),
     },
     residence: {
-      /** Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. */
-      mode: (input: Facade.ResidenceModeRequest): Facade.ResidenceModeChanged => this.#call(() => this.#client.vaultResidenceMode(input) as Facade.ResidenceModeChanged),
-      /** Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors. */
-      open: (input: Facade.ResidenceOpenRequest): Facade.ResidenceOpened => this.#call(() => this.#client.vaultResidenceOpen(input) as Facade.ResidenceOpened),
-      /** The thin index one of the owner's machines holds, window by window: what exists, never a body. */
-      index: (input: Facade.ResidenceMachineRequest): Facade.ResidenceIndex => this.#call(() => this.#client.vaultResidenceIndex(input) as Facade.ResidenceIndex),
-      /** Drops the opened-item caches one of the owner's machines last touched before a time. */
-      prune: (input: Facade.ResidencePruneRequest): Facade.ResidencePruned => this.#call(() => this.#client.vaultResidencePrune(input) as Facade.ResidencePruned),
+      /** Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive. */
+      mode: (input: Facade.ResidenceModeRequest): Facade.ResidenceModeAnswer => this.#call(() => this.#client.vaultResidenceMode(input) as Facade.ResidenceModeAnswer),
+      /** Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors. A machine this host does not reach answers state queued, naming the directive. */
+      open: (input: Facade.ResidenceOpenRequest): Facade.ResidenceOpenAnswer => this.#call(() => this.#client.vaultResidenceOpen(input) as Facade.ResidenceOpenAnswer),
+      /** The thin index one of the owner's machines holds, window by window: what exists, never a body. A machine this host does not reach answers state queued, naming the directive. */
+      index: (input: Facade.ResidenceMachineRequest): Facade.ResidenceIndexAnswer => this.#call(() => this.#client.vaultResidenceIndex(input) as Facade.ResidenceIndexAnswer),
+      /** Drops the opened-item caches one of the owner's machines last touched before a time. A machine this host does not reach answers state queued, naming the directive. */
+      prune: (input: Facade.ResidencePruneRequest): Facade.ResidencePruneAnswer => this.#call(() => this.#client.vaultResidencePrune(input) as Facade.ResidencePruneAnswer),
     },
     off_record: {
       /** The owner enters an off-record session, off record or anonymous, as the owner route does; nothing of it reaches the vault unless the owner promotes or saves it. */
@@ -998,6 +1050,20 @@ export class Oneiron {
       blame: (request: Facade.CodeStateRequest): Facade.CodeBlameView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeBlame(keyedJson(request))) as Facade.CodeBlameView | null; return result === null ? null : result }),
       /** One repo proposal's semantic change from its base, under the provenance it was proposed with. */
       proposal_view: (request: Facade.CodeProposalViewRequest): Facade.CodeProposalView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeProposalView(keyedJson(request))) as Facade.CodeProposalView | null; return result === null ? null : result }),
+      symbols: {
+        /** Declare the current repository symbols a task will touch, held by the caller until host time plus ttl_seconds. Owner only. An overlap waits behind the tasks it names, never refused; it grants no write, approval or landing. */
+        declare: (input: Facade.CodeSymbolsDeclareRequest): Facade.CodeSymbolsDeclared => this.#call(() => this.#client.vaultCodeSymbolsDeclare(input) as Facade.CodeSymbolsDeclared),
+        /** Renew the live symbol declaration the caller holds for one task by its declared lifetime. Owner only. */
+        renew: (input: Facade.CodeSymbolsTaskRequest): Facade.CodeSymbolLeaseView => this.#call(() => this.#client.vaultCodeSymbolsRenew(input) as Facade.CodeSymbolLeaseView),
+        /** Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing. */
+        release: (input: Facade.CodeSymbolsTaskRequest): Facade.CodeSymbolsReleased => this.#call(() => this.#client.vaultCodeSymbolsRelease(input) as Facade.CodeSymbolsReleased),
+        /** Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language. */
+        definitions: (input: Facade.CodeSnapshotDefinitionsRequest): Facade.CodeSnapshotDefinitionsView => this.#call(() => this.#client.vaultCodeSymbolsDefinitions(input) as Facade.CodeSnapshotDefinitionsView),
+      },
+      /** Stage one file change of a repository as a Proposed proposal with its retained base, under the review lens catalog the owner sends. Owner only. The engine mints the proposal id; nothing is approved, queued or landed. */
+      proposal_submit: (input: Facade.CodeProposalSubmitRequest): Facade.CodeProposalSubmitted => this.#call(() => this.#client.vaultCodeProposalSubmit(input) as Facade.CodeProposalSubmitted),
+      /** Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal. */
+      oplog: (input: Facade.CodeRepoRequest): Facade.CodeMutationLog => this.#call(() => this.#client.vaultCodeOplog(input) as Facade.CodeMutationLog),
       /** Every file changed between two trees of a repository, unit by unit, with the operations that wrote each. */
       repo_diff: (request: Facade.CodeRepoDiffRequest): Facade.CodeRepoDiffView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeRepoDiff(keyedJson(request))) as Facade.CodeRepoDiffView | null; return result === null ? null : result }),
       /** Export one already-finalized and reviewed document revision through the existing origin publication protocol. */
@@ -1024,9 +1090,21 @@ export class Oneiron {
         /** Read one UTF-8 file and its SHA-256 from the frozen blobs of a pinned code snapshot, never from the folder on disk. Owner only. */
         read: (input: Facade.CodeSnapshotReadRequest): Facade.CodeSnapshotPinnedFile | null => this.#call(() => this.#client.vaultCodeSnapshotsRead(input) as Facade.CodeSnapshotPinnedFile | null),
       },
-      symbols: {
-        /** Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language. */
-        definitions: (input: Facade.CodeSnapshotDefinitionsRequest): Facade.CodeSnapshotDefinitionsView => this.#call(() => this.#client.vaultCodeSymbolsDefinitions(input) as Facade.CodeSnapshotDefinitionsView),
+      merge_queue: {
+        /** Queue stored repository proposals as one batch on the queue green commit, one to six per call, with no batching window. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed. */
+        enqueue: (input: Facade.MergeQueueEnqueueRequest): Facade.MergeQueueBatchView => this.#call(() => this.#client.vaultCodeMergeQueueEnqueue(input) as Facade.MergeQueueBatchView),
+        /** Materialize every nonempty subset of one queued batch as a journaled detached speculative worktree. Owner only. Head and green do not move. */
+        stage: (input: Facade.MergeQueueBatchRequest): Facade.MergeQueueBatchView => this.#call(() => this.#client.vaultCodeMergeQueueStage(input) as Facade.MergeQueueBatchView),
+        /** Read the queue head and green Git commits, the named batches in request order and the stored contract verdicts they name. Owner only. It never recovers or settles, and a verdict is no check execution receipt. */
+        observe: (input: Facade.MergeQueueObserveRequest): Facade.MergeQueueObservation => this.#call(() => this.#client.vaultCodeMergeQueueObserve(input) as Facade.MergeQueueObservation),
+        /** Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. No durable parent or child link is written. */
+        requeue_survivors: (input: Facade.MergeQueueBatchRequest): Facade.MergeQueueRequeueView => this.#call(() => this.#client.vaultCodeMergeQueueRequeueSurvivors(input) as Facade.MergeQueueRequeueView),
+        /** Advance the fast-tested head by one ready batch through reviewed-stack admission alone. Owner only. Each proposal still needs unanimous critic approval and exact bytes and base; the owner proof approves nothing. */
+        land_reviewed: (input: Facade.MergeQueueBatchRequest): Facade.MergeQueueBatchView => this.#call(() => this.#client.vaultCodeMergeQueueLandReviewed(input) as Facade.MergeQueueBatchView),
+        /** Settle stored slow results in landing order: green advances past passing ones, and a red one rolls the ungreen suffix back. Owner only. The caller names no commit or result. */
+        settle_slow: (input: Facade.MergeQueueRepoRequest): Facade.MergeQueuePointersView => this.#call(() => this.#client.vaultCodeMergeQueueSettleSlow(input) as Facade.MergeQueuePointersView),
+        /** Reconcile an interrupted landing or rollback with its persisted mutation receipts. Owner only. Unreceipted divergence refuses; nothing is approved or rebased. */
+        recover: (input: Facade.MergeQueueRepoRequest): Facade.MergeQueuePointersView => this.#call(() => this.#client.vaultCodeMergeQueueRecover(input) as Facade.MergeQueuePointersView),
       },
     },
     agents: {
@@ -1239,6 +1317,8 @@ export class Oneiron {
       links: (input: Facade.RecordLinksRequest): Facade.RecordLinks => this.#call(() => this.#client.vaultRefsLinks(input) as Facade.RecordLinks),
     },
     search: {
+      /** Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence. */
+      hybrid: (input: Facade.HybridSearchRequest): Facade.ScopedReadResult<Facade.HybridSearchHit[]> => this.#call(() => this.#client.vaultSearchHybrid(input) as Facade.ScopedReadResult<Facade.HybridSearchHit[]>),
       /** BM25 text search over the engine index; surfaceable claims only. */
       bm25: (input: Facade.QueryBm25Request): Facade.ScopedReadResult<Facade.LexicalHit[]> => this.#call(() => this.#client.vaultSearchBm25(input) as Facade.ScopedReadResult<Facade.LexicalHit[]>),
     },

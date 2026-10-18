@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 454 facade rows, 1742 declarations.
-Inputs: 405 of 454 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 401 of 454 fully typed, 53 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 86; unread shapes: 0.
+Census: 485 facade rows, 1830 declarations.
+Inputs: 436 of 485 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 431 of 485 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 88; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -1502,6 +1502,11 @@ class MemoryProvenance(TypedDict):
     source: str
     source_revision_ids: list[str]
     evidence_turn_ids: list[str]
+class MemoryStaleStamp(TypedDict):
+    stale_since: NotRequired[int | None]
+    age_secs: NotRequired[int | None]
+    reason: str
+    pact_epoch: int
 class CitedMessage(TypedDict):
     short_id: str
     value_text: str
@@ -1515,6 +1520,7 @@ class MemoryItem(TypedDict):
     confidence: float
     hedge_bucket: str
     provenance: MemoryProvenance
+    stale: NotRequired[MemoryStaleStamp | None]
     world: NotRequired[str | None]
     facet: NotRequired[str | None]
     project_ref: NotRequired[str | None]
@@ -3251,12 +3257,189 @@ class SharedActPolicyAnswerRequest(TypedDict):
     approve: bool
 class SharedActPolicyChangeRequest(TypedDict):
     change_id: str
+class ConnectIdentity(TypedDict):
+    vault: str
+    host_key: str
+class MintConnectGrant(TypedDict):
+    peer_vault: str
+    authority_scope: Scope
+    expires_at: NotRequired[int | None]
+class ConnectGrant(TypedDict):
+    grant: str
+    guest_actor: str
+    resolved_scope: Scope
+    expires_at: NotRequired[int | None]
+TypeByteFamily = Literal["Conversation", "People", "World", "Content", "AgentsAndSurfacing", "CoreOverflow", "AuthorityPolicyCustody", "AuditObservability", "OutboundCommunicationConsent", "RegistriesDerived", "Productivity", "Code", "Documents", "Companion", "PackOverflow"]
+class SelectorRangeFamily(TypedDict):
+    Family: TypeByteFamily
+SelectorRange = Literal["Semantic", "Core", "Maintenance"] | SelectorRangeFamily
+class FederationDirectionScope(TypedDict):
+    worlds: ScopeAxis[ScopeId]
+    facets: ScopeAxis[ScopeId]
+    bands: ScopeAxis[SelectorRange]
+class OfferConnect(TypedDict):
+    peer_vault: str
+    grant: str
+    outbound: FederationDirectionScope
+    inbound: FederationDirectionScope
+class FederationPactScope(TypedDict):
+    lo_to_hi: FederationDirectionScope
+    hi_to_lo: FederationDirectionScope
+Offer = TypedDict("Offer", {"pact": str, "nonce": str, "from": str, "to": str, "scope": FederationPactScope, "signer": str, "signature": str})
+class AcceptConnect(TypedDict):
+    offer: Offer
+    grant: str
+class ConnectAccepted(TypedDict):
+    pact: str
+    status: str
+    peer_key: str
+    counter: Offer
+class NarrowConnect(TypedDict):
+    pact: str
+    epoch: int
+    outbound: FederationDirectionScope
+FederationPactStatus = Literal["Active", "Suspended", "Promoted", "Disconnected", "Dissolved"]
+class ConnectPactReceipt(TypedDict):
+    pact: str
+    status: FederationPactStatus
+    epoch: int
+    scope: FederationPactScope
+    effective_scope: FederationDirectionScope
+class RescopeConnect(TypedDict):
+    pact: str
+    epoch: int
+    outbound: FederationDirectionScope
+    inbound: FederationDirectionScope
+RescopeOffer = TypedDict("RescopeOffer", {"pact": str, "epoch": int, "nonce": str, "from": str, "to": str, "scope": FederationPactScope, "signer": str, "signature": str})
+class AcceptRescopeConnect(TypedDict):
+    offer: RescopeOffer
+class ConnectRescoped(TypedDict):
+    receipt: ConnectPactReceipt
+    counter: RescopeOffer
+class ConnectPactRequest(TypedDict):
+    pact: str
+GuestCopyState = Literal["unknown"]
+class ConnectDisconnected(TypedDict):
+    receipt: ConnectPactReceipt
+    outbound_access: bool
+    inbound_access: bool
+    sync_stopped: bool
+    copied_bytes_recallable: bool
+    recipient_copy_state: GuestCopyState
+class ConnectExportRequest(TypedDict):
+    pact: str
+    window_key: str
+    world_ref: EntityId
+    facets: NotRequired[list[EntityId]]
+    bands: NotRequired[list[SelectorRange]]
+class ConnectWindow(TypedDict):
+    pact: str
+    epoch: int
+    source_vault: str
+    recipient_vault: str
+    world_ref: EntityId
+    facets: list[EntityId]
+    bands: list[SelectorRange]
+    window_key: str
+    update: list[int]
+class ConnectDelivery(TypedDict):
+    body: ConnectWindow
+    signature: str
+ConnectRejoinStatus = Literal["imported", "deferred"]
+class ConnectRejoined(TypedDict):
+    pact: str
+    epoch: int
+    world_ref: EntityId
+    status: ConnectRejoinStatus
+    request: NotRequired[str | None]
+class TrustedContactReach(TypedDict):
+    sender: EntityId
+    channel: str
+    verb: str
+    target: str
+TrustedContactDial = Literal["ask_first", "just_call"]
+class TrustedContactNameRequest(TypedDict):
+    contact_ref: str
+    reach: TrustedContactReach
+    dial: TrustedContactDial
+class TrustedContactAcceptance(TypedDict):
+    at: int
+    adult: bool
+TrustedContactParty = Literal["person", "contact"]
+class TrustedContactRevocation(TypedDict):
+    at: int
+    by: TrustedContactParty
+class TrustedContact(TypedDict):
+    person: EntityId
+    contact: EntityId
+    reach: TrustedContactReach
+    dial: TrustedContactDial
+    version: int
+    named_at: int
+    accepted: NotRequired[TrustedContactAcceptance | None]
+    revoked: NotRequired[TrustedContactRevocation | None]
+class TrustedContactsRequest(TypedDict):
+    ...
+class TrustedContactConsentRequest(TypedDict):
+    person_ref: str
+    version: int
+    adult: bool
+class TrustedContactRevokeRequest(TypedDict):
+    person_ref: str
+    contact_ref: str
+class TrustedContactDialRequest(TypedDict):
+    contact_ref: str
+    dial: TrustedContactDial
+TrustedContactTier = Literal["concern", "imminent"]
+class TrustedContactTierRequest(TypedDict):
+    row_ref: str
+    tier: TrustedContactTier
+class TrustedContactTierSet(TypedDict):
+    row_ref: str
+    tier: TrustedContactTier
+class TrustedContactAsksRequest(TypedDict):
+    ...
+class TrustedContactAnswer(TypedDict):
+    yes: bool
+    at: int
+    notified: bool
+class TrustedContactAsk(TypedDict):
+    ask: EntityId
+    person: EntityId
+    contact: EntityId
+    version: int
+    tier: TrustedContactTier
+    asked_at: int
+    answer: NotRequired[TrustedContactAnswer | None]
+    superseded: NotRequired[int | None]
+class TrustedContactAuthorizeRequest(TypedDict):
+    ask_ref: str
+    yes: bool
+TrustedContactAuthorizationOutcome = Literal["staged", "declined", "superseded"]
+class GateSystemNoticeAction(TypedDict):
+    label: str
+    target: str
+class GateSystemNoticeRecord(TypedDict):
+    notice_type: str
+    channel: str
+    voice: str
+    audience: str
+    body: str
+    row_ref: NotRequired[str | None]
+    setting_change_offer: NotRequired[GateSystemNoticeAction | None]
+    policy_plane: NotRequired[str | None]
+    policy_version: NotRequired[str | None]
+    docs_url: NotRequired[str | None]
+class TrustedContactAuthorization(TypedDict):
+    ask_ref: str
+    yes: bool
+    outcome: TrustedContactAuthorizationOutcome
+    system_notices: list[GateSystemNoticeRecord]
 class GuestRevokeRequest(TypedDict):
     grant_ref: EntityId
     peer: NotRequired[str | None]
 GuestPactStanding = Literal["unpacted", "active", "suspended", "promoted", "disconnected", "dissolved"]
 NotRecallable = bool
-GuestCopyState = Literal["unknown"]
 GuestDeletionRequestStatus = Literal["not_requested", "queued", "sent"]
 class GuestRevokeDisclosure(TypedDict):
     copied_bytes_recallable: NotRecallable
@@ -3295,6 +3478,14 @@ class ResidenceModeChanged(TypedDict):
     retained: list[str]
     unsynced: list[str]
     pruned_items: int
+class ResidenceQueued(TypedDict):
+    directive: EntityId
+    machine: EntityId
+class ResidenceModeAnswerApplied(ResidenceModeChanged):
+    state: Literal["applied"]
+class ResidenceModeAnswerQueued(ResidenceQueued):
+    state: Literal["queued"]
+ResidenceModeAnswer = ResidenceModeAnswerApplied | ResidenceModeAnswerQueued
 class NoteReadSpan(TypedDict):
     start: int
     end: int
@@ -3329,6 +3520,11 @@ class ResidenceOpened(TypedDict):
     bytes: int
     source: NoteReadSource
     note: NotRequired[NoteReadView | None]
+class ResidenceOpenAnswerApplied(ResidenceOpened):
+    state: Literal["applied"]
+class ResidenceOpenAnswerQueued(ResidenceQueued):
+    state: Literal["queued"]
+ResidenceOpenAnswer = ResidenceOpenAnswerApplied | ResidenceOpenAnswerQueued
 class ResidenceMachineRequest(TypedDict):
     machine: EntityId
 class ResidenceIndexEntry(TypedDict):
@@ -3340,11 +3536,21 @@ class ResidenceIndexWindowView(TypedDict):
     items: list[ResidenceIndexEntry]
 class ResidenceIndex(TypedDict):
     windows: list[ResidenceIndexWindowView]
+class ResidenceIndexAnswerApplied(ResidenceIndex):
+    state: Literal["applied"]
+class ResidenceIndexAnswerQueued(ResidenceQueued):
+    state: Literal["queued"]
+ResidenceIndexAnswer = ResidenceIndexAnswerApplied | ResidenceIndexAnswerQueued
 class ResidencePruneRequest(TypedDict):
     machine: EntityId
     before: int
 class ResidencePruned(TypedDict):
     dropped: int
+class ResidencePruneAnswerApplied(ResidencePruned):
+    state: Literal["applied"]
+class ResidencePruneAnswerQueued(ResidenceQueued):
+    state: Literal["queued"]
+ResidencePruneAnswer = ResidencePruneAnswerApplied | ResidencePruneAnswerQueued
 OffRecordEnterMode = Literal["off_record", "anonymous"]
 OffRecordBackendClass = Literal["local", "remote_provider"]
 class OffRecordStartRequest(TypedDict):
@@ -5006,6 +5212,76 @@ class CodeProposalView(TypedDict):
     changes: list[CodeChangeView]
     landed: NotRequired[CodeOperationView | None]
     rendered: str
+class CodeSymbolsDeclareRequest(TypedDict):
+    repo: EntityId
+    task: EntityId
+    symbols: list[EntityId]
+    ttl_seconds: int
+class CodeSymbolLeaseView(TypedDict):
+    task: EntityId
+    holder: EntityId
+    symbols: list[EntityId]
+    expires_at: int
+    held: bool
+class CodeSymbolsDeclared(TypedDict):
+    declaration: CodeSymbolLeaseView
+    blockers: list[EntityId]
+class CodeSymbolsTaskRequest(TypedDict):
+    task: EntityId
+class CodeSymbolsReleased(TypedDict):
+    task: EntityId
+    released: bool
+class CodeOpProvenance(TypedDict):
+    turn: NotRequired[EntityId | None]
+    activity: NotRequired[EntityId | None]
+    intent: NotRequired[EntityId | None]
+    substrate_ref: NotRequired[EntityId | None]
+    reasoning_effort: NotRequired[str | None]
+class CriticLens(TypedDict):
+    id: str
+    prompt_contract: str
+    output_schema: str
+    hard_check: bool
+    domain: str
+class LensCatalog(TypedDict):
+    schema_version: int
+    lenses: list[CriticLens]
+class CodeProposalSubmitRequest(TypedDict):
+    repo: EntityId
+    session: EntityId
+    provenance_claim: EntityId
+    path: str
+    content: list[int]
+    message: str
+    op_provenance: CodeOpProvenance
+    catalog: LensCatalog
+class CodeProposalSubmitted(TypedDict):
+    proposal: EntityId
+    repo: EntityId
+    actor: EntityId
+    session: EntityId
+    provenance_claim: EntityId
+    base: str
+    status: RepoProposalStatus
+class CodeRepoRequest(TypedDict):
+    repo: EntityId
+CodeMutationState = Literal["prepared", "applied", "failed"]
+class CodeMutationEntry(TypedDict):
+    repo_ref: str
+    seq: int
+    operation_kind: str
+    operation_subject: NotRequired[str | None]
+    actor: NotRequired[EntityId | None]
+    session: NotRequired[EntityId | None]
+    started_at_ms: int
+    finished_at_ms: NotRequired[int | None]
+    pre_action_fork_hash: str
+    expected_post_action_fork_hash: NotRequired[str | None]
+    status: CodeMutationState
+    failure: NotRequired[str | None]
+class CodeMutationLog(TypedDict):
+    repo: EntityId
+    entries: list[CodeMutationEntry]
 class CodeTreeRequest(TypedDict):
     revision_ref: NotRequired[str | None]
     repo: NotRequired[str | None]
@@ -5138,6 +5414,87 @@ class CodeSnapshotDefinitionsView(TypedDict):
     repo: EntityId
     snapshot: str
     definitions: list[CodeSnapshotDefinition]
+class MergeQueueEnqueueRequest(TypedDict):
+    repo: EntityId
+    proposals: list[EntityId]
+    base_green: str
+BatchState = Literal["Queued", "Staged", "Ready", "Landing", "HeadAdvanced", "GreenAdvanced", "Quarantined", "RollingBack", "RolledBack", "Cancelled"]
+class MergeQueuePathView(TypedDict):
+    mask: int
+    commit: str
+    tree: str
+    verdict_ref: NotRequired[str | None]
+class Quarantine(TypedDict):
+    proposal_ids: list[str]
+    failing_mask: int
+    verdict: str
+class AffectedTests(TypedDict):
+    packages: list[str]
+    targets: dict[str, list[str]]
+class MergeQueueBatchView(TypedDict):
+    batch_ref: str
+    baseline_ref: str
+    expected_head: str
+    base_green: str
+    proposals: list[str]
+    state: BatchState
+    paths: list[MergeQueuePathView]
+    landed_head: NotRequired[str | None]
+    slow_verdict_ref: NotRequired[str | None]
+    quarantine: NotRequired[Quarantine | None]
+    selected_tests: AffectedTests
+class MergeQueueBatchRequest(TypedDict):
+    repo: EntityId
+    batch_ref: str
+class MergeQueueObserveRequest(TypedDict):
+    repo: EntityId
+    batches: list[str]
+class CommandOutput(TypedDict):
+    status: int
+    stdout: list[int]
+    stderr: list[int]
+class ContractDiffRemovedPublicNameBody(TypedDict):
+    name: str
+class ContractDiffRemovedPublicName(TypedDict):
+    RemovedPublicName: ContractDiffRemovedPublicNameBody
+class ContractDiffSchemaDriftBody(TypedDict):
+    contract: str
+    pointer: str
+    before: NotRequired[Any | None]
+    after: NotRequired[Any | None]
+class ContractDiffSchemaDrift(TypedDict):
+    SchemaDrift: ContractDiffSchemaDriftBody
+class ContractDiffOutputDriftBody(TypedDict):
+    contract: str
+    before: NotRequired[CommandOutput | None]
+    after: NotRequired[CommandOutput | None]
+class ContractDiffOutputDrift(TypedDict):
+    OutputDrift: ContractDiffOutputDriftBody
+ContractDiff = ContractDiffRemovedPublicName | ContractDiffSchemaDrift | ContractDiffOutputDrift
+class ContractVerdict(TypedDict):
+    schema_version: int
+    id: str
+    baseline_id: str
+    candidate: str
+    tests_passed: bool
+    diffs: list[ContractDiff]
+class MergeQueueObservation(TypedDict):
+    repo: EntityId
+    head_commit: str
+    green_commit: str
+    pending_slow_batch_refs: list[str]
+    batches: list[MergeQueueBatchView]
+    verdicts: list[ContractVerdict]
+class MergeQueueRequeueView(TypedDict):
+    source_batch_ref: str
+    batch: NotRequired[MergeQueueBatchView | None]
+class MergeQueueRepoRequest(TypedDict):
+    repo: EntityId
+class MergeQueuePointersView(TypedDict):
+    repo: EntityId
+    head_commit: str
+    green_commit: str
+    pending_slow_batch_refs: list[str]
 class ArtifactExportRequest(TypedDict):
     artifact_ref: str
     version: NotRequired[int | None]
@@ -7154,6 +7511,34 @@ class RecordLinks(TypedDict):
     texts: list[LinkedText]
     narrowing: NotRequired[ScopedReadReceipt | None]
     next_after: NotRequired[str | None]
+class HybridPprQuery(TypedDict):
+    seeds: list[str]
+    depth: int
+class HybridTemporalQuery(TypedDict):
+    start: int
+    end: int
+class RetrievalBlendWeights(TypedDict):
+    recency: float
+    salience: float
+    confidence: float
+    gravity: float
+class HybridRankReplay(TypedDict):
+    now: int
+    blend_weights: RetrievalBlendWeights
+class HybridSearchRequest(TypedDict):
+    query: NotRequired[str | None]
+    query_vector: NotRequired[list[float] | None]
+    phonetic_codes: NotRequired[list[str]]
+    ppr: NotRequired[HybridPprQuery | None]
+    temporal: NotRequired[HybridTemporalQuery | None]
+    replay: NotRequired[HybridRankReplay | None]
+    limit: int
+class HybridSearchHit(TypedDict):
+    entity_ref: str
+    source_revision_ref: NotRequired[str | None]
+    score: float
+    access_factor: NotRequired[float | None]
+    components: list[RetrievalScoreComponent]
 class QueryBm25Request(TypedDict):
     query: str
     limit: int

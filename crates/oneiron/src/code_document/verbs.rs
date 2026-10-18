@@ -120,20 +120,30 @@ pub struct CodeBlameView {
 
 impl Memory<'_> {
     /// The tested state a request names; `None` when the file or the
-    /// revision is not there, or the revision did not test the file.
+    /// revision is not there or withheld, or the revision did not test the
+    /// file.
     fn code_state(
         &self,
         request: &CodeStateRequest,
     ) -> MemoryResult<Option<(CodeDocumentFrontier, CodeStateView)>> {
         let vault = self.vault();
         let frontier = match &request.revision_ref {
-            Some(revision) => vault
-                .get_code_revision(&EntityId::from_hex(revision)?)?
-                .and_then(|revision| {
-                    revision.file_frontiers.into_values().find(|frontier| {
-                        frontier.repo == request.repo && frontier.path == request.path
-                    })
-                }),
+            Some(revision) => {
+                let id = EntityId::from_hex(revision)?;
+                let Some(revision) = vault.get_code_revision(&id)? else {
+                    return Ok(None);
+                };
+                // The revision is read through the caller's credential, so a
+                // withheld revision answers as an absent one (FIX 4344).
+                if self.get_entity(&id.to_hex())?.value.is_none() {
+                    return Ok(None);
+                }
+                self.produced_from([id]);
+                revision
+                    .file_frontiers
+                    .into_values()
+                    .find(|frontier| frontier.repo == request.repo && frontier.path == request.path)
+            }
             None => vault.code_document_frontier(&request.repo, &request.path)?,
         };
         Ok(frontier.map(|frontier| {

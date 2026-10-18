@@ -16,7 +16,7 @@ async fn report(
     auth.require_lane_record_scope()?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("report", &value)?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let hooks = facade_hooks_pre(server, call, "report", value).await?;
     let value = hooks.args.clone();
     let (output, listed) = server
@@ -45,7 +45,7 @@ async fn self_focus_scratchpad_recall(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -67,7 +67,7 @@ async fn self_focus_scratchpad_append(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -89,7 +89,7 @@ async fn self_focus_scratchpad_seal(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -111,7 +111,7 @@ async fn self_memory_diary(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -133,7 +133,7 @@ async fn self_memory_diary_reads(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -155,7 +155,7 @@ async fn self_memory_diary_review(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -177,7 +177,7 @@ async fn self_identity_answer(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -199,7 +199,7 @@ async fn self_identity_settle(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -221,7 +221,7 @@ async fn self_inbox_list(
     auth.require(CoreScope::Read)?;
     auth.require_lane_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -243,7 +243,7 @@ async fn self_inbox_mark(
     auth.require(CoreScope::Write)?;
     auth.require_lane_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -265,7 +265,7 @@ async fn self_inbox_concern(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -287,7 +287,7 @@ async fn self_inbox_concern_outcome(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -309,7 +309,7 @@ async fn self_inbox_concern_move(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -331,7 +331,7 @@ async fn vault_people_list(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -353,7 +353,7 @@ async fn vault_people_get(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -375,7 +375,7 @@ async fn vault_shape_read(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -397,7 +397,7 @@ async fn vault_shape_plan(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -439,7 +439,7 @@ async fn self_message(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -462,7 +462,7 @@ async fn self_grants_ask(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -505,7 +505,7 @@ async fn cancel(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "cancel",
@@ -525,7 +525,7 @@ async fn steer(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(server, call, actor, class, "steer", value, &producers)?;
     Ok(FacadeCallOutput::listed(output, &producers))
@@ -551,7 +551,7 @@ async fn describe(
             rows: Some(rows),
         });
     }
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_admit_readable_ref(&server.vault, auth, &value, "task_ref")?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_readable_task_rows(
@@ -579,7 +579,7 @@ async fn tasks_create(
     auth.require_granted(CoreScope::Write)?;
     let position = facade_landing(server, call)?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let (server, owned) = (Arc::clone(server), call.owned());
     tokio::task::spawn_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
         let call = owned.call();
@@ -628,7 +628,7 @@ async fn vault_fanout_launch(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -650,7 +650,7 @@ async fn self_budget(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(server, call, actor, class, "self.budget", value, &producers)?;
     Ok(FacadeCallOutput::listed(output, &producers))
@@ -664,7 +664,7 @@ async fn self_budget_land(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -907,7 +907,7 @@ async fn tasks_update(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "tasks.update",
@@ -941,7 +941,7 @@ async fn tasks_accept(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "tasks.accept",
@@ -971,7 +971,7 @@ async fn vault_witness(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -994,7 +994,7 @@ async fn vault_claims_upsert(
     auth.require_granted(CoreScope::Write)?;
     let position = facade_claim_position(server, call)?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke_born(
         server,
@@ -1029,7 +1029,7 @@ async fn vault_recall(
     auth.require_lane_record_scope()?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.recall", &value)?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let hooks = facade_hooks_pre(server, call, "vault.recall", value).await?;
     let value = hooks.args.clone();
     let (output, listed) = server
@@ -1081,7 +1081,7 @@ async fn vault_export(
             .vault
             .export_with_verified_host_owner_listing(&input, proof, auth.locality())?
     } else {
-        let (actor, class) = facade_actor(auth)?;
+        let (actor, class) = facade_actor(server, auth)?;
         let producers = oneiron::memory::ProducerRows::default();
         let output = server
             .vault
@@ -1137,7 +1137,7 @@ async fn vault_scope_ceiling(
     auth.require(CoreScope::Read)?;
     facade_scoped_credential(auth)?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -1159,7 +1159,7 @@ async fn vault_export_scoped(
     auth.require(CoreScope::Read)?;
     facade_scoped_export_credential(auth)?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -1181,7 +1181,7 @@ async fn vault_receipts(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -1203,7 +1203,7 @@ async fn vault_images_view(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -1225,7 +1225,7 @@ async fn vault_receipts_get(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -1289,7 +1289,7 @@ async fn vault_kv_get(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -1311,7 +1311,7 @@ async fn vault_kv_put(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -1333,7 +1333,7 @@ async fn vault_kv_delete(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -1355,7 +1355,7 @@ async fn vault_kv_search(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -1377,7 +1377,7 @@ async fn vault_kv_namespaces(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -1399,7 +1399,7 @@ async fn vault_campaign_program_create(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -1421,7 +1421,7 @@ async fn vault_campaign_program_read(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -1443,7 +1443,7 @@ async fn vault_campaign_program_update(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -1465,7 +1465,7 @@ async fn vault_campaign_program_archive(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -1487,7 +1487,7 @@ async fn vault_weave_report(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -2465,7 +2465,7 @@ async fn vault_inspection_resolve(
     auth.require(CoreScope::Read)?;
     auth.require_lane_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -3077,6 +3077,459 @@ async fn vault_shared_policy_change(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_federation_connect_identity(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.federation.connect.identity")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.federation.connect.identity", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.federation.connect.identity", value).await?;
+    let (output, listed) = super::host_doors::vault_federation_connect_identity(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_federation_connect_grants_mint(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.federation.connect.grants.mint")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.federation.connect.grants.mint", &value)?;
+    let hooks =
+        facade_hooks_pre(server, call, "vault.federation.connect.grants.mint", value).await?;
+    let (output, listed) = super::host_doors::vault_federation_connect_grants_mint(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_federation_connect_offer(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.federation.connect.offer")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.federation.connect.offer", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.federation.connect.offer", value).await?;
+    let (output, listed) = super::host_doors::vault_federation_connect_offer(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_federation_connect_accept(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.federation.connect.accept")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.federation.connect.accept", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.federation.connect.accept", value).await?;
+    let (output, listed) = super::host_doors::vault_federation_connect_accept(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_federation_connect_narrow(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.federation.connect.narrow")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.federation.connect.narrow", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.federation.connect.narrow", value).await?;
+    let (output, listed) = super::host_doors::vault_federation_connect_narrow(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_federation_connect_rescope_offer(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.federation.connect.rescope.offer")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.federation.connect.rescope.offer", &value)?;
+    let hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.federation.connect.rescope.offer",
+        value,
+    )
+    .await?;
+    let (output, listed) = super::host_doors::vault_federation_connect_rescope_offer(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_federation_connect_rescope_accept(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.federation.connect.rescope.accept")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.federation.connect.rescope.accept", &value)?;
+    let hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.federation.connect.rescope.accept",
+        value,
+    )
+    .await?;
+    let (output, listed) = super::host_doors::vault_federation_connect_rescope_accept(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_federation_connect_disconnect(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.federation.connect.disconnect")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.federation.connect.disconnect", &value)?;
+    let hooks =
+        facade_hooks_pre(server, call, "vault.federation.connect.disconnect", value).await?;
+    let (output, listed) = super::host_doors::vault_federation_connect_disconnect(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_federation_connect_export(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.federation.connect.export")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.federation.connect.export", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.federation.connect.export", value).await?;
+    let (output, listed) = super::host_doors::vault_federation_connect_export(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_federation_connect_rejoin(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.federation.connect.rejoin")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.federation.connect.rejoin", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.federation.connect.rejoin", value).await?;
+    let (output, listed) = super::host_doors::vault_federation_connect_rejoin(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_trusted_contacts_name(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.trusted_contacts.name")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.name", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.trusted_contacts.name", value).await?;
+    let (output, listed) = super::host_doors::vault_trusted_contacts_name(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_trusted_contacts_list(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.trusted_contacts.list")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.list", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.trusted_contacts.list", value).await?;
+    let (output, listed) = super::host_doors::vault_trusted_contacts_list(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_trusted_contacts_consent(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.trusted_contacts.consent")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.consent", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.trusted_contacts.consent", value).await?;
+    let (output, listed) = super::host_doors::vault_trusted_contacts_consent(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_trusted_contacts_revoke(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.trusted_contacts.revoke")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.revoke", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.trusted_contacts.revoke", value).await?;
+    let (output, listed) = super::host_doors::vault_trusted_contacts_revoke(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_trusted_contacts_dial_set(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.trusted_contacts.dial.set")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.dial.set", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.trusted_contacts.dial.set", value).await?;
+    let (output, listed) = super::host_doors::vault_trusted_contacts_dial_set(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_trusted_contacts_tier_set(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.trusted_contacts.tier.set")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.tier.set", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.trusted_contacts.tier.set", value).await?;
+    let (output, listed) = super::host_doors::vault_trusted_contacts_tier_set(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_trusted_contacts_concern_asks(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.trusted_contacts.concern.asks")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.concern.asks", &value)?;
+    let hooks =
+        facade_hooks_pre(server, call, "vault.trusted_contacts.concern.asks", value).await?;
+    let (output, listed) = super::host_doors::vault_trusted_contacts_concern_asks(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_trusted_contacts_concern_authorize(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.trusted_contacts.concern.authorize")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.concern.authorize", &value)?;
+    let hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.trusted_contacts.concern.authorize",
+        value,
+    )
+    .await?;
+    let (output, listed) = super::host_doors::vault_trusted_contacts_concern_authorize(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_guests_revoke(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -3464,7 +3917,7 @@ async fn vault_research_archive(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -3531,7 +3984,7 @@ async fn vault_research_bind(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -3553,7 +4006,7 @@ async fn vault_research_fork(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -3575,7 +4028,7 @@ async fn vault_research_weave(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -3597,7 +4050,7 @@ async fn vault_research_measure_search(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -3619,7 +4072,7 @@ async fn vault_research_measure_held_out(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -3665,7 +4118,7 @@ async fn vault_research_mark_invalid(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -3687,7 +4140,7 @@ async fn vault_research_prune(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -3709,7 +4162,7 @@ async fn vault_research_select(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -3731,7 +4184,7 @@ async fn vault_research_promotion_basis(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -3753,7 +4206,7 @@ async fn vault_research_reserve_confirmation(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -3775,7 +4228,7 @@ async fn vault_research_promote(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -3797,7 +4250,7 @@ async fn vault_research_reserve_work(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -3819,7 +4272,7 @@ async fn vault_research_settle_work(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -3841,7 +4294,7 @@ async fn vault_research_refund_work(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -3863,7 +4316,7 @@ async fn vault_research_record_benchmark(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -4500,7 +4953,7 @@ async fn vault_gate_policy_propose(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -4726,7 +5179,7 @@ async fn vault_claims_review(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     facade_outside_room_turn(call, "vault.claims.review")?;
-    let caller = facade_actor(auth)?;
+    let caller = facade_actor(server, auth)?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.claims.review", &value)?;
     let hooks = facade_hooks_pre(server, call, "vault.claims.review", value).await?;
@@ -4753,7 +5206,7 @@ async fn vault_claims_settle(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     facade_outside_room_turn(call, "vault.claims.settle")?;
-    let caller = facade_actor(auth)?;
+    let caller = facade_actor(server, auth)?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.claims.settle", &value)?;
     let hooks = facade_hooks_pre(server, call, "vault.claims.settle", value).await?;
@@ -4903,7 +5356,7 @@ async fn vault_lenses_propose(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -4976,7 +5429,7 @@ async fn vault_lenses_list(
         auth.require_record_scope_carried(worlds, facets)?;
     }
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -5032,7 +5485,7 @@ async fn vault_disclosure_offer(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -5054,7 +5507,7 @@ async fn reveal(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(server, call, actor, class, "reveal", value, &producers)?;
     Ok(FacadeCallOutput::listed(output, &producers))
@@ -5068,7 +5521,7 @@ async fn reveal_wait(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(server, call, actor, class, "reveal.wait", value, &producers)?;
     Ok(FacadeCallOutput::listed(output, &producers))
@@ -5082,7 +5535,7 @@ async fn reveal_describe(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -5104,7 +5557,7 @@ async fn self_use(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     facade_outside_room_turn(call, "self.use")?;
-    let caller = facade_actor(auth)?;
+    let caller = facade_actor(server, auth)?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("self.use", &value)?;
     let hooks = facade_hooks_pre(server, call, "self.use", value).await?;
@@ -5131,7 +5584,7 @@ async fn vault_shares_create(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -5215,7 +5668,7 @@ async fn vault_artifacts_view(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -5237,7 +5690,7 @@ async fn vault_artifacts_units(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.artifacts.units",
@@ -5265,7 +5718,7 @@ async fn vault_artifacts_anchors_pin(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.artifacts.anchors.pin",
@@ -5293,7 +5746,7 @@ async fn vault_artifacts_threads_open(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.artifacts.threads.open",
@@ -5321,7 +5774,7 @@ async fn vault_artifacts_threads_comment(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.artifacts.threads.comment",
@@ -5349,7 +5802,7 @@ async fn vault_artifacts_threads_read(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.artifacts.threads.read",
@@ -5377,7 +5830,7 @@ async fn vault_artifacts_threads_list(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.artifacts.threads.list",
@@ -5405,7 +5858,7 @@ async fn vault_artifacts_threads_assign(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.artifacts.threads.assign",
@@ -5434,7 +5887,7 @@ async fn vault_artifacts_threads_state(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.artifacts.threads.state",
@@ -5462,7 +5915,7 @@ async fn vault_code_diff(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -5484,7 +5937,7 @@ async fn vault_code_blame(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -5506,7 +5959,7 @@ async fn vault_code_proposal_view(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -5519,6 +5972,122 @@ async fn vault_code_proposal_view(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_code_symbols_declare(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.symbols.declare")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.symbols.declare", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.symbols.declare", value).await?;
+    let (output, listed) = super::host_doors::vault_code_symbols_declare(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_symbols_renew(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.symbols.renew")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.symbols.renew", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.symbols.renew", value).await?;
+    let (output, listed) = super::host_doors::vault_code_symbols_renew(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_symbols_release(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.symbols.release")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.symbols.release", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.symbols.release", value).await?;
+    let (output, listed) = super::host_doors::vault_code_symbols_release(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_proposal_submit(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.proposal_submit")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.proposal_submit", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.proposal_submit", value).await?;
+    let (output, listed) = super::host_doors::vault_code_proposal_submit(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_oplog(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.oplog")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.oplog", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.oplog", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_code_oplog(server, auth, facade_input(hooks.args.clone())?).await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_code_repo_diff(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -5528,7 +6097,7 @@ async fn vault_code_repo_diff(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -5753,6 +6322,181 @@ async fn vault_code_symbols_definitions(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_code_merge_queue_enqueue(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.merge_queue.enqueue")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.merge_queue.enqueue", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.merge_queue.enqueue", value).await?;
+    let (output, listed) = super::host_doors::vault_code_merge_queue_enqueue(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_merge_queue_stage(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.merge_queue.stage")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.merge_queue.stage", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.merge_queue.stage", value).await?;
+    let (output, listed) = super::host_doors::vault_code_merge_queue_stage(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_merge_queue_observe(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.merge_queue.observe")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.merge_queue.observe", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.merge_queue.observe", value).await?;
+    let (output, listed) = super::host_doors::vault_code_merge_queue_observe(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_merge_queue_requeue_survivors(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.merge_queue.requeue_survivors")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.merge_queue.requeue_survivors", &value)?;
+    let hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.code.merge_queue.requeue_survivors",
+        value,
+    )
+    .await?;
+    let (output, listed) = super::host_doors::vault_code_merge_queue_requeue_survivors(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_merge_queue_land_reviewed(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.merge_queue.land_reviewed")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.merge_queue.land_reviewed", &value)?;
+    let hooks =
+        facade_hooks_pre(server, call, "vault.code.merge_queue.land_reviewed", value).await?;
+    let (output, listed) = super::host_doors::vault_code_merge_queue_land_reviewed(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_merge_queue_settle_slow(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.merge_queue.settle_slow")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.merge_queue.settle_slow", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.merge_queue.settle_slow", value).await?;
+    let (output, listed) = super::host_doors::vault_code_merge_queue_settle_slow(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_merge_queue_recover(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.merge_queue.recover")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.merge_queue.recover", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.merge_queue.recover", value).await?;
+    let (output, listed) = super::host_doors::vault_code_merge_queue_recover(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_artifacts_export(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -5762,7 +6506,7 @@ async fn vault_artifacts_export(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -5915,7 +6659,7 @@ async fn vault_agents_export_pack(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -5937,7 +6681,7 @@ async fn vault_artifacts_born_from(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -5959,7 +6703,7 @@ async fn vault_artifacts_proposals(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -5981,7 +6725,7 @@ async fn vault_artifacts_waits(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6003,7 +6747,7 @@ async fn vault_artifacts_release_wait(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6091,7 +6835,7 @@ async fn vault_artifacts_propose_deck(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6113,7 +6857,7 @@ async fn vault_artifacts_propose_output(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6135,7 +6879,7 @@ async fn vault_artifacts_keep(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6157,7 +6901,7 @@ async fn vault_artifacts_discard(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6179,7 +6923,7 @@ async fn vault_artifacts_undo(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6201,7 +6945,7 @@ async fn can(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let turn = Arc::new(server.admit_task_work(actor).await);
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke_in_turn(
@@ -6225,7 +6969,7 @@ async fn peek(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(server, call, actor, class, "peek", value, &producers)?;
     Ok(FacadeCallOutput::listed(output, &producers))
@@ -6239,7 +6983,7 @@ async fn ask(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let turn = Arc::new(server.admit_task_work(actor).await);
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke_in_turn(
@@ -6263,7 +7007,7 @@ async fn wait(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let turn = Arc::new(server.admit_task_work(actor).await);
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke_in_turn(
@@ -6287,7 +7031,7 @@ async fn tasks_answer(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let turn = Arc::new(server.admit_task_work(actor).await);
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke_in_turn(
@@ -6311,7 +7055,7 @@ async fn tasks_outcomes(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6333,7 +7077,7 @@ async fn vault_rooms_list(
     auth.require(CoreScope::Read)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6355,7 +7099,7 @@ async fn vault_rooms_messages(
     auth.require(CoreScope::Read)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6377,7 +7121,7 @@ async fn vault_rooms_participants(
     auth.require(CoreScope::Read)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6399,7 +7143,7 @@ async fn vault_rooms_render(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6421,7 +7165,7 @@ async fn vault_rooms_find(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6443,7 +7187,7 @@ async fn vault_rooms_get(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6465,7 +7209,7 @@ async fn vault_rooms_trunk(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6487,7 +7231,7 @@ async fn vault_rooms_reply_strips(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6509,7 +7253,7 @@ async fn vault_rooms_claim(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6531,7 +7275,7 @@ async fn vault_rooms_speak(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6554,7 +7298,7 @@ async fn vault_projects_propose(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6576,7 +7320,7 @@ async fn vault_projects_proposals(
     auth.require(CoreScope::Read)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6598,7 +7342,7 @@ async fn vault_projects_dismiss_card(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6645,7 +7389,7 @@ async fn vault_projects_roster_write(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6667,7 +7411,7 @@ async fn vault_projects_goal_intake(
     auth.require(CoreScope::Read)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6689,7 +7433,7 @@ async fn vault_rooms_join(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6711,7 +7455,7 @@ async fn vault_rooms_invite(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6733,7 +7477,7 @@ async fn vault_rooms_consent(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6755,7 +7499,7 @@ async fn vault_rooms_offer(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6777,7 +7521,7 @@ async fn vault_rooms_offer_answer(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6800,7 +7544,7 @@ async fn vault_rooms_offer_vote(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6822,7 +7566,7 @@ async fn vault_rooms_offer_reopen(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6844,7 +7588,7 @@ async fn vault_rooms_offers(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6866,7 +7610,7 @@ async fn vault_projects_goal_revisions(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6888,7 +7632,7 @@ async fn vault_projects_goal_dismiss(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6910,7 +7654,7 @@ async fn vault_projects_route_tradeoff(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let turn = Arc::new(server.admit_task_work(actor).await);
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke_in_turn(
@@ -6935,7 +7679,7 @@ async fn vault_conversations_turn_continue(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -6957,7 +7701,7 @@ async fn vault_conversations_turn_retry(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -7000,7 +7744,7 @@ async fn vault_rooms_host(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -7022,7 +7766,7 @@ async fn vault_rooms_host_pin(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -7044,7 +7788,7 @@ async fn vault_rooms_host_hand(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -7066,7 +7810,7 @@ async fn vault_rooms_sharing(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -7088,7 +7832,7 @@ async fn vault_companions_sharing_get(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -7110,7 +7854,7 @@ async fn vault_companions_sharing_set(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -7132,7 +7876,7 @@ async fn vault_workspace_work_companion_get(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -7154,7 +7898,7 @@ async fn vault_workspace_work_companion_set(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -7176,7 +7920,7 @@ async fn self_skills_save(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -7198,7 +7942,7 @@ async fn self_skills_fork(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -7220,7 +7964,7 @@ async fn self_skills_callables(
     auth.require(CoreScope::Read)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -7282,7 +8026,7 @@ async fn ai_reply(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     facade_outside_room_turn(call, "ai.reply")?;
-    let caller = facade_actor(auth)?;
+    let caller = facade_actor(server, auth)?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("ai.reply", &value)?;
     let hooks = facade_hooks_pre(server, call, "ai.reply", value).await?;
@@ -7310,7 +8054,7 @@ async fn vault_receipts_context(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -7823,7 +8567,7 @@ async fn connector_list(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -7845,7 +8589,7 @@ async fn connector_status(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -7867,7 +8611,7 @@ async fn connector_call(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     facade_outside_room_turn(call, "connector.call")?;
-    let caller = facade_actor(auth)?;
+    let caller = facade_actor(server, auth)?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("connector.call", &value)?;
     let hooks = facade_hooks_pre(server, call, "connector.call", value).await?;
@@ -7894,7 +8638,7 @@ async fn connector_schema(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -7916,7 +8660,7 @@ async fn connector_call_status(
     auth.require(CoreScope::Read)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -7938,7 +8682,7 @@ async fn vault_commit(
     auth.require_granted(CoreScope::Write)?;
     let position = facade_claim_position(server, call)?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke_born(
         server,
@@ -7961,7 +8705,7 @@ async fn vault_remember(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -7983,7 +8727,7 @@ async fn vault_claims_retract(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -8005,7 +8749,7 @@ async fn vault_forget(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -8051,7 +8795,7 @@ async fn vault_calendar_create(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -8097,7 +8841,7 @@ async fn vault_calendar_occurrences(
     auth.require(CoreScope::Read)?;
     auth.require_lane_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -8143,7 +8887,7 @@ async fn vault_calendar_read(
     auth.require(CoreScope::Read)?;
     auth.require_lane_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -8165,7 +8909,7 @@ async fn vault_calendar_search(
     auth.require(CoreScope::Read)?;
     auth.require_lane_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -8187,7 +8931,7 @@ async fn vault_calendar_freebusy(
     auth.require(CoreScope::Read)?;
     auth.require_lane_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -8209,7 +8953,7 @@ async fn vault_calendar_transcript_ingest(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.calendar.transcript.ingest",
@@ -8237,7 +8981,7 @@ async fn vault_claims_list(
     auth.require(CoreScope::Read)?;
     auth.require_lane_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -8259,7 +9003,7 @@ async fn vault_claims_history(
     auth.require(CoreScope::Read)?;
     auth.require_lane_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -8281,7 +9025,7 @@ async fn vault_delete(
     auth.require(CoreScope::Write)?;
     auth.require_unnarrowed_facets()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -8303,7 +9047,7 @@ async fn vault_writes_pending(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -8325,7 +9069,7 @@ async fn vault_hydrate(
     auth.require(CoreScope::Read)?;
     auth.require_lane_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -8347,7 +9091,7 @@ async fn vault_get(
     auth.require(CoreScope::Read)?;
     auth.require_lane_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(server, call, actor, class, "vault.get", value, &producers)?;
     Ok(FacadeCallOutput::listed(output, &producers))
@@ -8361,7 +9105,7 @@ async fn vault_refs_resolve(
     auth.require(CoreScope::Read)?;
     auth.require_lane_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -8383,7 +9127,7 @@ async fn vault_refs_links(
     auth.require(CoreScope::Read)?;
     auth.require_lane_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -8391,6 +9135,28 @@ async fn vault_refs_links(
         actor,
         class,
         "vault.refs.links",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_search_hybrid(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.search.hybrid",
         value,
         &producers,
     )?;
@@ -8405,7 +9171,7 @@ async fn vault_search_bm25(
     auth.require(CoreScope::Read)?;
     auth.require_lane_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -8427,7 +9193,7 @@ async fn vault_neighbors(
     auth.require(CoreScope::Read)?;
     auth.require_lane_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -8449,7 +9215,7 @@ async fn vault_structural_put(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -8471,7 +9237,7 @@ async fn vault_habits_checkin(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -8493,7 +9259,7 @@ async fn vault_claims_admit(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -8515,7 +9281,7 @@ async fn vault_artifacts_create(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -8537,7 +9303,7 @@ async fn vault_esign_create(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -8559,7 +9325,7 @@ async fn vault_esign_get(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -8581,7 +9347,7 @@ async fn vault_esign_links_issue(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -8603,7 +9369,7 @@ async fn vault_esign_send_for_signature(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -8625,7 +9391,7 @@ async fn vault_esign_remind(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -8647,7 +9413,7 @@ async fn vault_esign_void(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -8669,7 +9435,7 @@ async fn vault_conversations_create(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -8759,7 +9525,7 @@ async fn vault_artifacts_put(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -8781,7 +9547,7 @@ async fn vault_artifacts_body_import(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.artifacts.body.import",
@@ -8809,7 +9575,7 @@ async fn vault_artifacts_body_head(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.artifacts.body.head",
@@ -8837,7 +9603,7 @@ async fn vault_artifacts_body_read(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.artifacts.body.read",
@@ -8865,7 +9631,7 @@ async fn vault_artifacts_body_commits(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.artifacts.body.commits",
@@ -8893,7 +9659,7 @@ async fn vault_artifacts_body_edit(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.artifacts.body.edit",
@@ -8921,7 +9687,7 @@ async fn vault_artifacts_body_fork_open(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.artifacts.body.fork.open",
@@ -8949,7 +9715,7 @@ async fn vault_artifacts_body_fork_edit(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.artifacts.body.fork.edit",
@@ -8977,7 +9743,7 @@ async fn vault_artifacts_body_fork_diff(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.artifacts.body.fork.diff",
@@ -9005,7 +9771,7 @@ async fn vault_artifacts_body_fork_merge(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.artifacts.body.fork.merge",
@@ -9035,7 +9801,7 @@ async fn vault_artifacts_body_fork_discard(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.artifacts.body.fork.discard",
@@ -9063,7 +9829,7 @@ async fn vault_artifacts_body_proposal_read(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.artifacts.body.proposal.read",
@@ -9091,7 +9857,7 @@ async fn vault_artifacts_body_proposal_settle(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.artifacts.body.proposal.settle",
@@ -9121,7 +9887,7 @@ async fn vault_artifacts_body_export(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.artifacts.body.export",
@@ -9149,7 +9915,7 @@ async fn vault_artifacts_body_preview(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.artifacts.body.preview",
@@ -9177,7 +9943,7 @@ async fn vault_artifacts_body_deck_review(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.artifacts.body.deck.review",
@@ -9205,7 +9971,7 @@ async fn vault_artifacts_body_deck_merge(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.artifacts.body.deck.merge",
@@ -9233,7 +9999,7 @@ async fn vault_artifacts_body_deck_export(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.artifacts.body.deck.export",
@@ -9261,7 +10027,7 @@ async fn vault_artifacts_body_deck_gate(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -9283,7 +10049,7 @@ async fn vault_artifacts_body_deck_oracle(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -9329,7 +10095,7 @@ async fn vault_artifacts_append(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.artifacts.append",
@@ -9357,7 +10123,7 @@ async fn vault_artifacts_read(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.artifacts.read",
@@ -9385,7 +10151,7 @@ async fn vault_consolidation_enqueue(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -9407,7 +10173,7 @@ async fn vault_consolidation_status(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -9429,7 +10195,7 @@ async fn vault_memory_signal_extraction(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     facade_outside_room_turn(call, "vault.memory.signal_extraction")?;
-    let caller = facade_actor(auth)?;
+    let caller = facade_actor(server, auth)?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.memory.signal_extraction", &value)?;
     let hooks = facade_hooks_pre(server, call, "vault.memory.signal_extraction", value).await?;
@@ -9457,7 +10223,7 @@ async fn vault_memory_signal_extraction_result(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     facade_outside_room_turn(call, "vault.memory.signal_extraction.result")?;
-    let caller = facade_actor(auth)?;
+    let caller = facade_actor(server, auth)?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.memory.signal_extraction.result", &value)?;
     let hooks =
@@ -9486,7 +10252,7 @@ async fn vault_claims_seed(
     auth.require_granted(CoreScope::Write)?;
     let position = facade_claim_position(server, call)?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke_born(
         server,
@@ -9659,7 +10425,7 @@ async fn vault_channel_identities_get(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -9681,7 +10447,7 @@ async fn vault_channel_identities_selection_rules(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -9733,7 +10499,7 @@ async fn vault_channel_identities_select(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -9755,7 +10521,7 @@ async fn vault_channel_identities_passports_get(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -9777,7 +10543,7 @@ async fn vault_channel_identities_passports_list(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -9823,7 +10589,7 @@ async fn vault_delivery_window_policy_list(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -9870,7 +10636,7 @@ async fn vault_delivery_window_evaluate(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -9892,7 +10658,7 @@ async fn connector_outbound_schedule(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -9914,7 +10680,7 @@ async fn vault_notes_create(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -9936,7 +10702,7 @@ async fn vault_notes_from_entity(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.notes.from_entity",
@@ -9964,7 +10730,7 @@ async fn vault_notes_read(
     auth.require(CoreScope::Read)?;
     auth.require_lane_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -9986,7 +10752,7 @@ async fn vault_notes_history(
     auth.require(CoreScope::Read)?;
     auth.require_lane_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -10008,7 +10774,7 @@ async fn vault_notes_editor_bind(
     auth.require(CoreScope::Read)?;
     auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.notes.editor.bind")?;
-    let caller = facade_actor(auth)?;
+    let caller = facade_actor(server, auth)?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.notes.editor.bind", &value)?;
     let hooks = facade_hooks_pre(server, call, "vault.notes.editor.bind", value).await?;
@@ -10035,7 +10801,7 @@ async fn vault_notes_editor_close(
     auth.require(CoreScope::Read)?;
     auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.notes.editor.close")?;
-    let caller = facade_actor(auth)?;
+    let caller = facade_actor(server, auth)?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.notes.editor.close", &value)?;
     let hooks = facade_hooks_pre(server, call, "vault.notes.editor.close", value).await?;
@@ -10062,7 +10828,7 @@ async fn vault_notes_edit(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.notes.edit",
@@ -10090,7 +10856,7 @@ async fn vault_notes_seal(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.notes.seal",
@@ -10118,7 +10884,7 @@ async fn vault_notes_lifecycle(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.notes.lifecycle",
@@ -10146,7 +10912,7 @@ async fn vault_notes_set_overrides(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.notes.set_overrides",
@@ -10174,7 +10940,7 @@ async fn vault_notes_defaults(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.notes.defaults",
@@ -10202,7 +10968,7 @@ async fn vault_tasks_linear_mapping(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.tasks.linear.mapping",
@@ -10230,7 +10996,7 @@ async fn vault_tasks_linear_mapping_edit(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     facade_outside_room_turn(call, "vault.tasks.linear.mapping.edit")?;
-    let caller = facade_actor(auth)?;
+    let caller = facade_actor(server, auth)?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.tasks.linear.mapping.edit", &value)?;
     let hooks = facade_hooks_pre(server, call, "vault.tasks.linear.mapping.edit", value).await?;
@@ -10257,7 +11023,7 @@ async fn vault_tasks_linear_provenance(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
+    let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
         call,
         "vault.tasks.linear.provenance",
@@ -10285,7 +11051,7 @@ async fn self_run_attach(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     facade_outside_room_turn(call, "self.run.attach")?;
-    let caller = facade_actor(auth)?;
+    let caller = facade_actor(server, auth)?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("self.run.attach", &value)?;
     let hooks = facade_hooks_pre(server, call, "self.run.attach", value).await?;
@@ -10312,7 +11078,7 @@ async fn self_folds_describe(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     facade_outside_room_turn(call, "self.folds.describe")?;
-    let caller = facade_actor(auth)?;
+    let caller = facade_actor(server, auth)?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("self.folds.describe", &value)?;
     let hooks = facade_hooks_pre(server, call, "self.folds.describe", value).await?;
@@ -10339,7 +11105,7 @@ async fn self_history(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     facade_outside_room_turn(call, "self.history")?;
-    let caller = facade_actor(auth)?;
+    let caller = facade_actor(server, auth)?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("self.history", &value)?;
     let hooks = facade_hooks_pre(server, call, "self.history", value).await?;
@@ -10391,7 +11157,7 @@ async fn self_fold(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     facade_outside_room_turn(call, "self.fold")?;
-    let caller = facade_actor(auth)?;
+    let caller = facade_actor(server, auth)?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("self.fold", &value)?;
     let hooks = facade_hooks_pre(server, call, "self.fold", value).await?;
@@ -10418,7 +11184,7 @@ async fn self_compact(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     facade_outside_room_turn(call, "self.compact")?;
-    let caller = facade_actor(auth)?;
+    let caller = facade_actor(server, auth)?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("self.compact", &value)?;
     let hooks = facade_hooks_pre(server, call, "self.compact", value).await?;
@@ -10445,7 +11211,7 @@ async fn self_unfold(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     facade_outside_room_turn(call, "self.unfold")?;
-    let caller = facade_actor(auth)?;
+    let caller = facade_actor(server, auth)?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("self.unfold", &value)?;
     let hooks = facade_hooks_pre(server, call, "self.unfold", value).await?;
@@ -10472,7 +11238,7 @@ async fn self_folds(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     facade_outside_room_turn(call, "self.folds")?;
-    let caller = facade_actor(auth)?;
+    let caller = facade_actor(server, auth)?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("self.folds", &value)?;
     let hooks = facade_hooks_pre(server, call, "self.folds", value).await?;
@@ -10714,6 +11480,54 @@ pub(crate) async fn call_verb(
         "vault.shared.policy.propose" => vault_shared_policy_propose(server, call, input).await,
         "vault.shared.policy.answer" => vault_shared_policy_answer(server, call, input).await,
         "vault.shared.policy.change" => vault_shared_policy_change(server, call, input).await,
+        "vault.federation.connect.identity" => {
+            vault_federation_connect_identity(server, call, input).await
+        }
+        "vault.federation.connect.grants.mint" => {
+            vault_federation_connect_grants_mint(server, call, input).await
+        }
+        "vault.federation.connect.offer" => {
+            vault_federation_connect_offer(server, call, input).await
+        }
+        "vault.federation.connect.accept" => {
+            vault_federation_connect_accept(server, call, input).await
+        }
+        "vault.federation.connect.narrow" => {
+            vault_federation_connect_narrow(server, call, input).await
+        }
+        "vault.federation.connect.rescope.offer" => {
+            vault_federation_connect_rescope_offer(server, call, input).await
+        }
+        "vault.federation.connect.rescope.accept" => {
+            vault_federation_connect_rescope_accept(server, call, input).await
+        }
+        "vault.federation.connect.disconnect" => {
+            vault_federation_connect_disconnect(server, call, input).await
+        }
+        "vault.federation.connect.export" => {
+            vault_federation_connect_export(server, call, input).await
+        }
+        "vault.federation.connect.rejoin" => {
+            vault_federation_connect_rejoin(server, call, input).await
+        }
+        "vault.trusted_contacts.name" => vault_trusted_contacts_name(server, call, input).await,
+        "vault.trusted_contacts.list" => vault_trusted_contacts_list(server, call, input).await,
+        "vault.trusted_contacts.consent" => {
+            vault_trusted_contacts_consent(server, call, input).await
+        }
+        "vault.trusted_contacts.revoke" => vault_trusted_contacts_revoke(server, call, input).await,
+        "vault.trusted_contacts.dial.set" => {
+            vault_trusted_contacts_dial_set(server, call, input).await
+        }
+        "vault.trusted_contacts.tier.set" => {
+            vault_trusted_contacts_tier_set(server, call, input).await
+        }
+        "vault.trusted_contacts.concern.asks" => {
+            vault_trusted_contacts_concern_asks(server, call, input).await
+        }
+        "vault.trusted_contacts.concern.authorize" => {
+            vault_trusted_contacts_concern_authorize(server, call, input).await
+        }
         "vault.guests.revoke" => vault_guests_revoke(server, call, input).await,
         "vault.guests.mint_slip" => vault_guests_mint_slip(server, call, input).await,
         "vault.residence.mode" => vault_residence_mode(server, call, input).await,
@@ -10865,6 +11679,11 @@ pub(crate) async fn call_verb(
         "vault.code.diff" => vault_code_diff(server, call, input).await,
         "vault.code.blame" => vault_code_blame(server, call, input).await,
         "vault.code.proposal_view" => vault_code_proposal_view(server, call, input).await,
+        "vault.code.symbols.declare" => vault_code_symbols_declare(server, call, input).await,
+        "vault.code.symbols.renew" => vault_code_symbols_renew(server, call, input).await,
+        "vault.code.symbols.release" => vault_code_symbols_release(server, call, input).await,
+        "vault.code.proposal_submit" => vault_code_proposal_submit(server, call, input).await,
+        "vault.code.oplog" => vault_code_oplog(server, call, input).await,
         "vault.code.repo_diff" => vault_code_repo_diff(server, call, input).await,
         "vault.code.export" => vault_code_export(server, call, input).await,
         "vault.code.origin.authority.get" => {
@@ -10882,6 +11701,25 @@ pub(crate) async fn call_verb(
         "vault.code.snapshots.read" => vault_code_snapshots_read(server, call, input).await,
         "vault.code.symbols.definitions" => {
             vault_code_symbols_definitions(server, call, input).await
+        }
+        "vault.code.merge_queue.enqueue" => {
+            vault_code_merge_queue_enqueue(server, call, input).await
+        }
+        "vault.code.merge_queue.stage" => vault_code_merge_queue_stage(server, call, input).await,
+        "vault.code.merge_queue.observe" => {
+            vault_code_merge_queue_observe(server, call, input).await
+        }
+        "vault.code.merge_queue.requeue_survivors" => {
+            vault_code_merge_queue_requeue_survivors(server, call, input).await
+        }
+        "vault.code.merge_queue.land_reviewed" => {
+            vault_code_merge_queue_land_reviewed(server, call, input).await
+        }
+        "vault.code.merge_queue.settle_slow" => {
+            vault_code_merge_queue_settle_slow(server, call, input).await
+        }
+        "vault.code.merge_queue.recover" => {
+            vault_code_merge_queue_recover(server, call, input).await
         }
         "vault.artifacts.export" => vault_artifacts_export(server, call, input).await,
         "vault.agents.create" => vault_agents_create(server, call, input).await,
@@ -11017,6 +11855,7 @@ pub(crate) async fn call_verb(
         "vault.get" => vault_get(server, call, input).await,
         "vault.refs.resolve" => vault_refs_resolve(server, call, input).await,
         "vault.refs.links" => vault_refs_links(server, call, input).await,
+        "vault.search.hybrid" => vault_search_hybrid(server, call, input).await,
         "vault.search.bm25" => vault_search_bm25(server, call, input).await,
         "vault.neighbors" => vault_neighbors(server, call, input).await,
         "vault.structural.put" => vault_structural_put(server, call, input).await,
