@@ -1629,6 +1629,27 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_support_grants_mint(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.support_grants.mint")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.support_grants.mint", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_support_grants_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.support_grants.list")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.support_grants.list", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_support_grants_revoke(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.support_grants.revoke")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.support_grants.revoke", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_residence_mode(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.residence.mode")?;
         let output = py

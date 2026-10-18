@@ -555,6 +555,8 @@ class Oneiron:
         @property
         def guests(self) -> "Oneiron._VaultGuestsVerbs": ...
         @property
+        def support_grants(self) -> "Oneiron._VaultSupportGrantsVerbs": ...
+        @property
         def residence(self) -> "Oneiron._VaultResidenceVerbs": ...
         @property
         def off_record(self) -> "Oneiron._VaultOffRecordVerbs": ...
@@ -1021,6 +1023,13 @@ class Oneiron:
         def revoke(self, spec: Facade.GuestRevokeRequest) -> Facade.GuestRevokeResponse: ...
         def mint_slip(self, spec: Facade.GuestSlipMintRequest) -> Facade.GuestSlipMinted:
             """The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."""
+    class _VaultSupportGrantsVerbs:
+        def mint(self, spec: Facade.SupportGrantMintRequest) -> Facade.SupportGrantMintAnswer:
+            """The owner mints our support person or agent a time-limited, revocable grant, bound to that party's own key, inside explicit bounds."""
+        def list(self, spec: Facade.SupportGrantListRequest) -> Facade.SupportGrantList:
+            """The owner lists the vault's support grants, newest first, with each one's bounds, deadline, status and revoke command."""
+        def revoke(self, spec: Facade.SupportGrantRevokeRequest) -> Facade.SupportGrantRevokeAnswer:
+            """The owner revokes one support grant; what support already read is not recalled."""
     class _VaultResidenceVerbs:
         def mode(self, spec: Facade.ResidenceModeRequest) -> Facade.ResidenceModeAnswer:
             """Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive."""

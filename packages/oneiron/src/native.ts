@@ -183,6 +183,9 @@ vaultTrustedContactsConcernAsks(input: unknown): unknown
 vaultTrustedContactsConcernAuthorize(input: unknown): unknown
 vaultGuestsRevoke(input: unknown): unknown
 vaultGuestsMintSlip(input: unknown): unknown
+vaultSupportGrantsMint(input: unknown): unknown
+vaultSupportGrantsList(input: unknown): unknown
+vaultSupportGrantsRevoke(input: unknown): unknown
 vaultResidenceMode(input: unknown): unknown
 vaultResidenceOpen(input: unknown): unknown
 vaultResidenceIndex(input: unknown): unknown

@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 484 facade rows, 1752 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 9; generated in and out: 448.
+// UniFFI census: 487 facade rows, 1761 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 9; generated in and out: 451.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -10039,6 +10039,156 @@ pub struct GuestSlipMinted {
     pub slip: String,
     #[serde(rename = "expires_at")]
     pub expires_at: u64,
+}
+
+/// `oneiron::authority::support_grant::SupportHolderClass`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SupportHolderClass {
+    #[serde(rename = "human")]
+    Human,
+    #[serde(rename = "agent")]
+    Agent,
+}
+
+/// `oneiron::task_verb::sdk_support_grant::SupportGrantMintRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SupportGrantMintRequest {
+    #[serde(rename = "holder")]
+    pub holder: String,
+    #[serde(rename = "holder_class")]
+    pub holder_class: SupportHolderClass,
+    #[serde(rename = "holder_key")]
+    pub holder_key: String,
+    #[serde(rename = "scope")]
+    pub scope: Scope,
+    #[serde(rename = "records", default, skip_serializing_if = "Option::is_none")]
+    pub records: Option<Vec<String>>,
+    #[serde(rename = "ttl_secs", default, skip_serializing_if = "Option::is_none")]
+    pub ttl_secs: Option<u64>,
+    #[serde(rename = "purpose")]
+    pub purpose: String,
+    #[serde(
+        rename = "ticket_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ticket_ref: Option<String>,
+}
+
+/// `oneiron::authority::support_grant::SupportGrantStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SupportGrantStatus {
+    #[serde(rename = "active")]
+    Active,
+    #[serde(rename = "expired")]
+    Expired,
+    #[serde(rename = "revoked")]
+    Revoked,
+    #[serde(rename = "ended")]
+    Ended,
+}
+
+/// `oneiron::task_verb::sdk_support_grant::SupportGrantView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SupportGrantView {
+    #[serde(rename = "grant_ref")]
+    pub grant_ref: String,
+    #[serde(rename = "holder")]
+    pub holder: String,
+    #[serde(rename = "holder_class")]
+    pub holder_class: String,
+    #[serde(rename = "scope")]
+    pub scope: Scope,
+    #[serde(rename = "records", default, skip_serializing_if = "Option::is_none")]
+    pub records: Option<Vec<String>>,
+    #[serde(rename = "purpose")]
+    pub purpose: String,
+    #[serde(
+        rename = "ticket_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ticket_ref: Option<String>,
+    #[serde(rename = "approved_by")]
+    pub approved_by: String,
+    #[serde(rename = "approved_at")]
+    pub approved_at: u64,
+    #[serde(rename = "wall_expires_at")]
+    pub wall_expires_at: u64,
+    #[serde(rename = "status")]
+    pub status: SupportGrantStatus,
+    #[serde(rename = "revoke_command")]
+    pub revoke_command: String,
+}
+
+/// `oneiron::task_verb::sdk_support_grant::SupportGrantMintAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SupportGrantMintAnswer {
+    #[serde(rename = "slip")]
+    pub slip: String,
+    #[serde(rename = "grant")]
+    pub grant: SupportGrantView,
+    #[serde(rename = "decision_ref")]
+    pub decision_ref: String,
+}
+
+/// `oneiron::task_verb::sdk_support_grant::SupportGrantListRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SupportGrantListRequest {
+    #[serde(
+        rename = "include_inactive",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub include_inactive: Option<bool>,
+    #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+/// `oneiron::task_verb::sdk_support_grant::SupportGrantList`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SupportGrantList {
+    #[serde(rename = "grants")]
+    pub grants: Vec<SupportGrantView>,
+}
+
+/// `oneiron::task_verb::sdk_support_grant::SupportGrantRevokeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SupportGrantRevokeRequest {
+    #[serde(rename = "grant_ref")]
+    pub grant_ref: String,
+}
+
+/// `oneiron::task_verb::sdk_support_grant::SupportGrantRevokeAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SupportGrantRevokeAnswer {
+    #[serde(rename = "grant_ref")]
+    pub grant_ref: String,
+    #[serde(rename = "holder")]
+    pub holder: String,
+    #[serde(rename = "changed")]
+    pub changed: bool,
+    #[serde(
+        rename = "revoked_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub revoked_at: Option<u64>,
+    #[serde(
+        rename = "decision_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub decision_ref: Option<String>,
+    #[serde(rename = "delivered_recallable")]
+    pub delivered_recallable: bool,
 }
 
 /// `oneiron::task_verb::sdk_residence::ResidenceModeName`.

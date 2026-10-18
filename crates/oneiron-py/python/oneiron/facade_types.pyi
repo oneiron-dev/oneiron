@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 484 facade rows, 1827 declarations.
-Inputs: 435 of 484 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 430 of 484 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 487 facade rows, 1836 declarations.
+Inputs: 438 of 487 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 433 of 487 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 88; unread shapes: 0.
 """
 
@@ -3454,6 +3454,48 @@ class GuestSlipMinted(TypedDict):
     slip_id: str
     slip: str
     expires_at: int
+SupportHolderClass = Literal["human", "agent"]
+class SupportGrantMintRequest(TypedDict):
+    holder: EntityId
+    holder_class: SupportHolderClass
+    holder_key: str
+    scope: Scope
+    records: NotRequired[list[EntityId]]
+    ttl_secs: NotRequired[int | None]
+    purpose: str
+    ticket_ref: NotRequired[str | None]
+SupportGrantStatus = Literal["active", "expired", "revoked", "ended"]
+class SupportGrantView(TypedDict):
+    grant_ref: str
+    holder: EntityId
+    holder_class: str
+    scope: Scope
+    records: NotRequired[list[str]]
+    purpose: str
+    ticket_ref: NotRequired[str | None]
+    approved_by: str
+    approved_at: int
+    wall_expires_at: int
+    status: SupportGrantStatus
+    revoke_command: str
+class SupportGrantMintAnswer(TypedDict):
+    slip: str
+    grant: SupportGrantView
+    decision_ref: str
+class SupportGrantListRequest(TypedDict):
+    include_inactive: NotRequired[bool]
+    limit: NotRequired[int | None]
+class SupportGrantList(TypedDict):
+    grants: list[SupportGrantView]
+class SupportGrantRevokeRequest(TypedDict):
+    grant_ref: str
+class SupportGrantRevokeAnswer(TypedDict):
+    grant_ref: str
+    holder: EntityId
+    changed: bool
+    revoked_at: NotRequired[int | None]
+    decision_ref: NotRequired[str | None]
+    delivered_recallable: bool
 ResidenceModeName = Literal["opened", "all"]
 class ResidenceModeRequest(TypedDict):
     machine: EntityId

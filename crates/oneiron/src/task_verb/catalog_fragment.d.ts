@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 541 code-mode rows (520 host rows, 21 run rows), 1916 declarations.
-// Replies: 476 fully typed, 61 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 544 code-mode rows (523 host rows, 21 run rows), 1925 declarations.
+// Replies: 479 fully typed, 61 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 93; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -706,6 +706,15 @@ declare namespace Sdk {
   type GuestRevokeResponse = { grant_ref: EntityId; guest_ref: EntityId; changed: boolean; revoked_at: number; revoked_slip_refs?: string[]; pact_standing: GuestPactStanding; disclosure: GuestRevokeDisclosure; courtesy_targets?: GuestRevokeCourtesyTargetView[] };
   type GuestSlipMintRequest = { grant_ref: EntityId; holder_key: string; expires_at: number };
   type GuestSlipMinted = { slip_id: string; slip: string; expires_at: number };
+  type SupportHolderClass = "human" | "agent";
+  type SupportGrantMintRequest = { holder: EntityId; holder_class: SupportHolderClass; holder_key: string; scope: Scope; records?: EntityId[]; ttl_secs?: number | null; purpose: string; ticket_ref?: string | null };
+  type SupportGrantStatus = "active" | "expired" | "revoked" | "ended";
+  type SupportGrantView = { grant_ref: string; holder: EntityId; holder_class: string; scope: Scope; records?: string[]; purpose: string; ticket_ref?: string | null; approved_by: string; approved_at: number; wall_expires_at: number; status: SupportGrantStatus; revoke_command: string };
+  type SupportGrantMintAnswer = { slip: string; grant: SupportGrantView; decision_ref: string };
+  type SupportGrantListRequest = { include_inactive?: boolean; limit?: number | null };
+  type SupportGrantList = { grants: SupportGrantView[] };
+  type SupportGrantRevokeRequest = { grant_ref: string };
+  type SupportGrantRevokeAnswer = { grant_ref: string; holder: EntityId; changed: boolean; revoked_at?: number | null; decision_ref?: string | null; delivered_recallable: boolean };
   type ResidenceModeName = "opened" | "all";
   type ResidenceModeRequest = { machine: EntityId; mode: ResidenceModeName };
   type ResidenceModeChanged = { mode: ResidenceModeName; retained: string[]; unsynced: string[]; pruned_items: number };
@@ -3202,6 +3211,14 @@ declare const vault: Sdk.VaultHost & {
   structural: {
     /** Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit. */
     put(input: Sdk.StructuralPutInput): Promise<Sdk.EntityRefReceipt | StoredResult>;
+  };
+  support_grants: {
+    /** The owner lists the vault's support grants, newest first, with each one's bounds, deadline, status and revoke command. */
+    list(input: Sdk.SupportGrantListRequest): Promise<Sdk.SupportGrantList | StoredResult>;
+    /** The owner mints our support person or agent a time-limited, revocable grant, bound to that party's own key, inside explicit bounds. */
+    mint(input: Sdk.SupportGrantMintRequest): Promise<Sdk.SupportGrantMintAnswer | StoredResult>;
+    /** The owner revokes one support grant; what support already read is not recalled. */
+    revoke(input: Sdk.SupportGrantRevokeRequest): Promise<Sdk.SupportGrantRevokeAnswer | StoredResult>;
   };
   tasks: {
     linear: {

@@ -514,6 +514,15 @@ impl OneironClient {
                 "vault.guests.mint_slip" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::GuestSlipMinted,
                 >(client, verb, &input),
+                "vault.support_grants.mint" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SupportGrantMintAnswer,
+                >(client, verb, &input),
+                "vault.support_grants.list" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SupportGrantList,
+                >(client, verb, &input),
+                "vault.support_grants.revoke" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SupportGrantRevokeAnswer,
+                >(client, verb, &input),
                 "vault.residence.mode" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ResidenceModeAnswer,
                 >(client, verb, &input),
@@ -3476,6 +3485,42 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.guests.mint_slip", value)
+    }
+    pub fn vault_support_grants_mint(
+        &self,
+        input: &oneiron::task_verb::sdk::SupportGrantMintRequest,
+    ) -> Result<oneiron::task_verb::sdk::SupportGrantMintAnswer, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.support_grants.mint", value)
+    }
+    pub fn vault_support_grants_list(
+        &self,
+        input: &oneiron::task_verb::sdk::SupportGrantListRequest,
+    ) -> Result<oneiron::task_verb::sdk::SupportGrantList, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.support_grants.list", value)
+    }
+    pub fn vault_support_grants_revoke(
+        &self,
+        input: &oneiron::task_verb::sdk::SupportGrantRevokeRequest,
+    ) -> Result<oneiron::task_verb::sdk::SupportGrantRevokeAnswer, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.support_grants.revoke", value)
     }
     pub fn vault_residence_mode(
         &self,

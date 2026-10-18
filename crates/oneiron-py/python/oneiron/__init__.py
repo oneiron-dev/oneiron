@@ -624,6 +624,9 @@ class Oneiron:
         def guests(self) -> "Oneiron._VaultGuestsVerbs":
             return Oneiron._VaultGuestsVerbs(self._client)
         @property
+        def support_grants(self) -> "Oneiron._VaultSupportGrantsVerbs":
+            return Oneiron._VaultSupportGrantsVerbs(self._client)
+        @property
         def residence(self) -> "Oneiron._VaultResidenceVerbs":
             return Oneiron._VaultResidenceVerbs(self._client)
         @property
@@ -1411,6 +1414,18 @@ class Oneiron:
         def mint_slip(self, spec):
             """The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."""
             return json.loads(_translate(lambda: self._client.vault_guests_mint_slip(json.dumps(spec))))
+    class _VaultSupportGrantsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def mint(self, spec):
+            """The owner mints our support person or agent a time-limited, revocable grant, bound to that party's own key, inside explicit bounds."""
+            return json.loads(_translate(lambda: self._client.vault_support_grants_mint(json.dumps(spec))))
+        def list(self, spec):
+            """The owner lists the vault's support grants, newest first, with each one's bounds, deadline, status and revoke command."""
+            return json.loads(_translate(lambda: self._client.vault_support_grants_list(json.dumps(spec))))
+        def revoke(self, spec):
+            """The owner revokes one support grant; what support already read is not recalled."""
+            return json.loads(_translate(lambda: self._client.vault_support_grants_revoke(json.dumps(spec))))
     class _VaultResidenceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
