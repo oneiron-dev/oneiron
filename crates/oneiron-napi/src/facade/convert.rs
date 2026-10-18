@@ -502,8 +502,9 @@ pub(super) fn memory_pack_from_engine(
 }
 
 /// Lowers the boundary media query onto the engine's wire type; an unknown
-/// kind is the caller's `BAD_REQUEST`.
-pub(super) fn recall_media_to_engine(
+/// kind is the caller's `BAD_REQUEST`. The legacy `NapiVault` context pack
+/// lowers its `media` here too, so both carry the one served shape.
+pub(crate) fn recall_media_to_engine(
     media: super::dtos::NapiRecallMedia,
 ) -> Result<oneiron::code_run::vault_read::ContextPackMediaQuery, oneiron::memory::MemoryError> {
     use oneiron::code_run::vault_read::MediaQueryKind;

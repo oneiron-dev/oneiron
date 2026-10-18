@@ -24,6 +24,7 @@ pub mod transaction;
 mod xfrm;
 pub(crate) mod xml;
 
+pub(crate) use structure::recount_slide_text;
 pub use structure::{
     ConnectorPreset, NewConnector, NewGroup, NewPicture, NewShape, Preset, StructureEdit,
     StructureReport, structure_patch,

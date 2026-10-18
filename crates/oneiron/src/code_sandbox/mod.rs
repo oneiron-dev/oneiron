@@ -49,6 +49,7 @@ pub use self::paths::{
 pub use self::proposal::{
     SandboxClaimProposal, SandboxDirectoryOpaqueProposal, SandboxFileDeleteProposal,
     SandboxFileEditProposal, SandboxFileRenameProposal, SandboxFileWriteProposal,
+    SandboxProposalBody, SandboxProposalBodyReader, SandboxProposalBodyWriter,
     SandboxProposalDelta, SandboxProposalKind, SandboxProposalWrite,
 };
 

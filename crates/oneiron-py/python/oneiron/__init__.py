@@ -1368,7 +1368,7 @@ class Oneiron:
             """Records the deck oracle's receipt for its export profile."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_body_deck_oracle(json.dumps(request, allow_nan=False))))
         def preview(self, request: dict[str, Any]) -> dict[str, Any]:
-            """The asked slides of a deck's head, drawn by the host's review renderer (provisional)."""
+            """The asked slides of a deck's head or a fork's merge candidate, drawn by the host's review renderer (provisional)."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_body_deck_preview(json.dumps(request, allow_nan=False))))
     class _VaultCodeVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -1433,6 +1433,9 @@ class Oneiron:
         def join(self, spec):
             """Files and decides a request to take part in a room or one of its threads."""
             return json.loads(_translate(lambda: self._client.vault_rooms_join(json.dumps(spec))))
+        def invite(self, spec):
+            """The vault's owner invites a person into an ordinary room: files her join with the owner's admission yes, which holds until she answers yes through vault.rooms.consent."""
+            return json.loads(_translate(lambda: self._client.vault_rooms_invite(json.dumps(spec))))
         def consent(self, spec):
             """One party's answer to a join that waits on it, after which the join is decided again."""
             return json.loads(_translate(lambda: self._client.vault_rooms_consent(json.dumps(spec))))
@@ -1664,6 +1667,27 @@ class Oneiron:
         def create(self, spec):
             """Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act."""
             return json.loads(_translate(lambda: self._client.vault_esign_create(json.dumps(spec))))
+        def get(self, spec):
+            """Reads one signing document as its trail folds: its status, recipients, filled fields and its hash-chained audit trail."""
+            return json.loads(_translate(lambda: self._client.vault_esign_get(json.dumps(spec))))
+        @property
+        def links(self) -> "Oneiron._VaultEsignLinksVerbs":
+            return Oneiron._VaultEsignLinksVerbs(self._client)
+        def send_for_signature(self, spec):
+            """Sends a drafted signing document to its recipients through the outbound gate, as the caller; an agent sends only within its principal envelope."""
+            return json.loads(_translate(lambda: self._client.vault_esign_send_for_signature(json.dumps(spec))))
+        def remind(self, spec):
+            """Reminds the recipients whose turn it is to sign a pending document, through the outbound gate, as the caller."""
+            return json.loads(_translate(lambda: self._client.vault_esign_remind(json.dumps(spec))))
+        def void(self, spec):
+            """Withdraws a drafted or pending signing document unsealed and tells its recipients why, through the outbound gate, as the caller."""
+            return json.loads(_translate(lambda: self._client.vault_esign_void(json.dumps(spec))))
+    class _VaultEsignLinksVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def issue(self, spec):
+            """The vault owner mints the signing links of a drafted document and receives each new one once, to deliver to its recipient."""
+            return json.loads(_translate(lambda: self._client.vault_esign_links_issue(json.dumps(spec))))
     class _VaultConsolidationVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

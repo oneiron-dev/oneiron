@@ -321,25 +321,6 @@ side_tables! {
     /// This machine's residence choice (sync all or sync what it opened) and when it was made;
     /// node-local, never synced. Key: ().
     SYNC_RESIDENCE_DEVICE_MODE: SyncState b"rs:mode" Raw;
-    /// The home's label beside a shelved sealed packet (OF-534 G7): u64be arrival ‖ the window
-    /// label its sender named. Key: hex64 (tag) ":" hex64 (packet digest).
-    SYNC_RESIDENCE_SEALED_LABEL: SyncState b"rsh:" Raw;
-    /// The home's next sealed-packet arrival number (u64be). Key: ().
-    SYNC_RESIDENCE_SEALED_NEXT: SyncState b"rsn" Raw;
-    /// The encoded Loro version vector of the last sealed packet this machine put on its home
-    /// for one window. Key: window key.
-    SYNC_RESIDENCE_SEALED_PUT: SyncState b"rsp:" Raw;
-    /// The home this machine relays sealed packets through (its machine id, 16 bytes, zeros for a
-    /// home that proved none) and the last arrival number it took them in through there (u64be).
-    /// Key: ().
-    SYNC_RESIDENCE_SEALED_TAKEN: SyncState b"rst" Raw;
-    /// A sealed packet the home stages from parts until its last one (OF-534 G7): u64be vault
-    /// second of its latest part ‖ the window label its sender named, and beside it each part's
-    /// bytes. Key: hex64 (blake3 of the whole packet), then ":" hex16 (offset) per part.
-    SYNC_RESIDENCE_SEALED_STAGE: SyncState b"rsu:" Raw;
-    /// The machines that asked the home for a replacement of one sealed window, lacking an
-    /// update's base (OF-534 G7), 16 bytes each. Key: window label.
-    SYNC_RESIDENCE_SEALED_WANT: SyncState b"rsw:" Raw;
     /// Recorded-clock seconds (u64be) of an opened thin item's last touch, which ages its read
     /// cache for pruning. Key: hex32 (entity id).
     SYNC_RESIDENCE_ITEM_TOUCH: SyncState b"rt:e:" Raw;

@@ -34,11 +34,11 @@ world guest {
         // @json
         args: string,
     }
-    record file-proposal { path: string, bytes: list<u8> }
     record file-delete-proposal { path: string }
     record file-rename-proposal { origin: string, destination: string }
+    // A proposed file's bytes never ride in the step result: they stream
+    // through the proposal imports below.
     variant proposal-delta {
-        file-write(file-proposal),
         claim-candidate(claim-input),
         file-delete(file-delete-proposal),
         file-rename(file-rename-proposal),
@@ -66,6 +66,18 @@ world guest {
     import output-text: func(target: string, start: bool, frame: string) -> result<u64, string>;
     // @js oneiron.output.bytes @abi
     import output-bytes: func(path: string, frame: list<u8>) -> result<u64, string>;
+    // A proposed file, streamed: bootstrap's own wiring behind propose.file.
+    // `proposal-open` names the file and returns its id, `proposal-chunk`
+    // appends one frame of at most one message, and `proposal-close` settles
+    // it, replying with its byte count. One file is open at a time; the guest
+    // never holds a file whole, and a file has no size bound. Foreign-only:
+    // the first-party build links none of the three.
+    // @js oneiron.propose.open @abi
+    import proposal-open: func(path: string) -> result<u64, string>;
+    // @js oneiron.propose.chunk @abi
+    import proposal-chunk: func(proposal: u64, frame: list<u8>) -> result<u64, string>;
+    // @js oneiron.propose.close @abi
+    import proposal-close: func(proposal: u64) -> result<u64, string>;
 
     // First-party-only imports. Foreign components must not import these;
     // their writes are exported as proposals and never linked as host effects.
