@@ -70,7 +70,7 @@ const OFF_TOPIC_BUDGET: Duration = Duration::from_secs(30);
 
 /// Host-configured event type. Configuration for the type (duration, pool,
 /// flex policy) is ONE-1823's `EventTypeConfig`; the key alone lives here.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, schemars::JsonSchema)]
 #[serde(transparent)]
 pub struct EventTypeKey(pub String);
 
@@ -120,7 +120,7 @@ impl std::error::Error for BookingError {}
 // temporal type.
 // -------------------------------------------------------------------------
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct TimeRangeWire {
     start: u64,
@@ -187,7 +187,7 @@ mod opt_time_range_serde {
 // -------------------------------------------------------------------------
 
 /// Weekday axis of a normalized constraint.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ConstraintWeekday {
     Monday,
@@ -200,7 +200,7 @@ pub enum ConstraintWeekday {
 }
 
 /// Half-open local-minute-of-day window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LocalMinuteWindow {
     /// Inclusive, `0..1440`.
     pub start_minute: u16,
@@ -212,7 +212,7 @@ pub struct LocalMinuteWindow {
 /// source text and no model explanation, so free text cannot ride it into a
 /// solve. An empty weekday or window vector means "no restriction on that
 /// axis".
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConstraintObject {
     pub schema_version: u16,
@@ -221,6 +221,7 @@ pub struct ConstraintObject {
     #[serde(default)]
     pub local_time_windows: Vec<LocalMinuteWindow>,
     #[serde(with = "opt_time_range_serde")]
+    #[schemars(with = "Option<TimeRangeWire>")]
     pub utc_window: Option<TimeRange>,
     pub allow_flex_pool: bool,
 }

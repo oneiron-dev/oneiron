@@ -266,6 +266,14 @@ export class Oneiron {
         query: (input: Facade.DiaryQueryRequest): Facade.DiaryQueryOutcome => this.#call(() => this.#client.selfMemoryDiaryQuery(input) as Facade.DiaryQueryOutcome),
       }),
     },
+    standing: {
+      /** This agent's configured standing block in one world: its handle, name and token floor. */
+      get: (input: Facade.OwnStandingBlockRequest): Facade.StandingBlockView => this.#call(() => this.#client.selfStandingGet(input) as Facade.StandingBlockView),
+      /** Every standing block configured for this agent, one per world, in world order. */
+      list: (input: Facade.EmptyRequest = {}): Facade.StandingBlockView[] => this.#call(() => this.#client.selfStandingList(input) as Facade.StandingBlockView[]),
+      /** This agent proposes one persona field's new text for its standing block, as a Generated claim its gate settles; compiled text is never edited. */
+      edit: (input: Facade.StandingBlockEditRequest): Facade.StandingBlockEditReceipt => this.#call(() => this.#client.selfStandingEdit(input) as Facade.StandingBlockEditReceipt),
+    },
     identity: {
       /** A vault owner's tap on an identity choice card: who a person named in their conversations is. */
       answer: (input: Facade.IdentityAnswerRequest): Facade.IdentitySettled => this.#call(() => this.#client.selfIdentityAnswer(input) as Facade.IdentitySettled),
@@ -337,6 +345,38 @@ export class Oneiron {
     }),
     /** Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled. */
     history: (input: Facade.FoldHistoryRequest): Facade.FoldHistory => this.#call(() => this.#client.selfHistory(input) as Facade.FoldHistory),
+    browser: {
+      /** Opens a URL in the attached run's own browser session and observes the page; a long page's observation comes in pages, read on with observe and its next cursor. */
+      open: (input: Facade.LiveRunRequest<Facade.OpenInput>): Facade.ObservationPage => this.#call(() => this.#client.selfBrowserOpen(input) as Facade.ObservationPage),
+      /** Observes the current page of the attached run's browser session, in pages read on with observe and an answer's next cursor; the verbs follow a tab an act opens, or a closed tab's opener, and name the move as switched. */
+      observe: (input: Facade.LiveRunRequest<Facade.ObserveInput>): Facade.ObservationPage => this.#call(() => this.#client.selfBrowserObserve(input) as Facade.ObservationPage),
+      /** Finds the page rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page. */
+      find: (input: Facade.LiveRunRequest<Facade.FindInput>): Facade.FindOutput => this.#call(() => this.#client.selfBrowserFind(input) as Facade.FindOutput),
+      /** Clicks one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor. */
+      click: (input: Facade.LiveRunRequest<Facade.ClickInput>): Facade.ObservationPage => this.#call(() => this.#client.selfBrowserClick(input) as Facade.ObservationPage),
+      /** Clicks a point of a held screenshot, mapped onto the viewport; a long page's observation comes in pages, read on with observe and its next cursor. */
+      click_at: (input: Facade.LiveRunRequest<Facade.PointInput>): Facade.ObservationPage => this.#call(() => this.#client.selfBrowserClickAt(input) as Facade.ObservationPage),
+      /** Types text into one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor. */
+      type: (input: Facade.LiveRunRequest<Facade.TypeInput>): Facade.ObservationPage => this.#call(() => this.#client.selfBrowserType(input) as Facade.ObservationPage),
+      /** Picks the option of a select element by its label, text or value; a long page's observation comes in pages, read on with observe and its next cursor. */
+      select: (input: Facade.LiveRunRequest<Facade.SelectInput>): Facade.ObservationPage => this.#call(() => this.#client.selfBrowserSelect(input) as Facade.ObservationPage),
+      /** Waits until a page row its refs name, or else some row matching a role and name, is there; many rows come in pages, read on with find and its next cursor. */
+      wait_for: (input: Facade.LiveRunRequest<Facade.WaitForInput>): Facade.WaitForOutput => this.#call(() => this.#client.selfBrowserWaitFor(input) as Facade.WaitForOutput),
+      /** Checks that a page row is present or absent, and holds a given value. */
+      expect: (input: Facade.LiveRunRequest<Facade.ExpectInput>): Facade.ExpectOutput => this.#call(() => this.#client.selfBrowserExpect(input) as Facade.ExpectOutput),
+      /** Takes a screenshot the session holds, by image ref and never captioned. */
+      screenshot: (input: Facade.LiveRunRequest<Facade.ScreenshotInput>): Facade.ScreenshotOutput => this.#call(() => this.#client.selfBrowserScreenshot(input) as Facade.ScreenshotOutput),
+      /** Reads back a held image by its ref. */
+      view: (input: Facade.LiveRunRequest<Facade.ViewInput>): Facade.ImageOutput => this.#call(() => this.#client.selfBrowserView(input) as Facade.ImageOutput),
+      /** Crops a held image to a rectangle. */
+      crop: (input: Facade.LiveRunRequest<Facade.CropInput>): Facade.ImageOutput => this.#call(() => this.#client.selfBrowserCrop(input) as Facade.ImageOutput),
+      /** Zooms into a rectangle of a held image. */
+      zoom: (input: Facade.LiveRunRequest<Facade.ZoomInput>): Facade.ImageOutput => this.#call(() => this.#client.selfBrowserZoom(input) as Facade.ImageOutput),
+      /** Runs one batched program of browser steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor. */
+      batch: (input: Facade.LiveRunRequest<Facade.BatchInput>): Facade.BatchOutput => this.#call(() => this.#client.selfBrowserBatch(input) as Facade.BatchOutput),
+      /** Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record. */
+      handover: (input: Facade.LiveRunRequest<Facade.HandoverInput>): Facade.HandoverOutput => this.#call(() => this.#client.selfBrowserHandover(input) as Facade.HandoverOutput),
+    },
     /** Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands. */
     fold: (input: Facade.FoldMarkRequest): Facade.FoldReply<Facade.FoldMarked> => this.#call(() => this.#client.selfFold(input) as Facade.FoldReply<Facade.FoldMarked>),
     /** Asks the attached run to fold its pending marks in one batch at its next step boundary; read self.history for landed folds and epochs. */
@@ -483,6 +523,16 @@ export class Oneiron {
         /** The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction. */
         consolidate: (input: Facade.AffectClaimConsolidateRequest): Facade.AffectClaimConsolidation => this.#call(() => this.#client.vaultAffectClaimsConsolidate(input) as Facade.AffectClaimConsolidation),
       },
+    },
+    tagging: {
+      /** Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker and failure reason. */
+      status: (input: Facade.TaggingTurnRequest): Facade.TaggingStatusView => this.#call(() => this.#client.vaultTaggingStatus(input) as Facade.TaggingStatusView),
+      /** Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them. */
+      tags: (input: Facade.TaggingTurnRequest): Facade.TaggingTagsView => this.#call(() => this.#client.vaultTaggingTags(input) as Facade.TaggingTagsView),
+      /** Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome. */
+      history: (input: Facade.TaggingTurnRequest): Facade.TaggingHistoryView => this.#call(() => this.#client.vaultTaggingHistory(input) as Facade.TaggingHistoryView),
+      /** Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller. */
+      mentions: (input: Facade.TaggingMentionsRequest): Facade.TaggingMentionsView => this.#call(() => this.#client.vaultTaggingMentions(input) as Facade.TaggingMentionsView),
     },
     /** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */
     export: Object.assign((format?: string): MemoryExport => this.#call(() => this.#client.vaultExport({format: format}) as MemoryExport), {
@@ -890,7 +940,20 @@ export class Oneiron {
       /** The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave. */
       create_child: (input: Facade.ResearchChildWire): Facade.ResearchChildReceipt => this.#call(() => this.#client.vaultResearchCreateChild(input) as Facade.ResearchChildReceipt),
       /** Reads the complete retained campaign record, including every pruned, buggy and woven candidate, original search and held-out evidence, selection rounds and promotion receipts, under the controller gate. */
-      archive: (input: Facade.ResearchArchiveWire): Facade.ResearchArchive => this.#call(() => this.#client.vaultResearchArchive(input) as Facade.ResearchArchive),
+      archive: Object.assign((input: Facade.ResearchArchiveWire): Facade.ResearchArchive => this.#call(() => this.#client.vaultResearchArchive(input) as Facade.ResearchArchive), {
+        /** Installs one immutable campaign output descriptor from a receipted Coach proposal under the current human goal; categorical axes and embedding clusters share the engine validator. */
+        install: (input: Facade.CampaignArchiveInstall): Facade.CampaignArchiveView => this.#call(() => this.#client.vaultResearchArchiveInstall(input) as Facade.CampaignArchiveView),
+        /** Records original placement and quality receipts for one output revision; categorical judgment or pinned embedding placement competes only within its own cell. */
+        record: (input: Facade.CampaignArchiveOutput): Facade.CampaignArchiveView => this.#call(() => this.#client.vaultResearchArchiveRecord(input) as Facade.CampaignArchiveView),
+        /** Reads the installed campaign output descriptor and every original placement and scoring receipt, including losing outputs, under the research controller gate. */
+        get: (input: Facade.CampaignArchiveRequest): Facade.CampaignArchiveRecord => this.#call(() => this.#client.vaultResearchArchiveGet(input) as Facade.CampaignArchiveRecord),
+        /** Rebuilds one best output per cell under the immutable descriptor revision and reports whether bunching warrants a new campaign proposal. */
+        best: (input: Facade.CampaignArchiveRequest): Facade.CampaignArchiveView => this.#call(() => this.#client.vaultResearchArchiveBest(input) as Facade.CampaignArchiveView),
+        /** Installs a receipted descriptor proposal in a new bound campaign when the old archive is bunched; the old descriptor, goal and cell winners remain unchanged. */
+        repropose: (input: Facade.CampaignArchiveReproposal): Facade.CampaignArchiveView => this.#call(() => this.#client.vaultResearchArchiveRepropose(input) as Facade.CampaignArchiveView),
+        /** Pins the incumbent and candidate replay output refs and projects the human goal coverage floor; promotion rechecks these receipts and rejects any lost incumbent cell. */
+        coverage: (input: Facade.CampaignArchiveCoverage): Facade.CampaignArchiveAdmission => this.#call(() => this.#client.vaultResearchArchiveCoverage(input) as Facade.CampaignArchiveAdmission),
+      }),
       /** Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it. */
       bind: (input: Facade.ResearchBindWire): Facade.ResearchBinding => this.#call(() => this.#client.vaultResearchBind(input) as Facade.ResearchBinding),
       /** Records a variation or debug child the campaign's controller enqueued under a measured or buggy parent. */
@@ -1015,6 +1078,8 @@ export class Oneiron {
     consent: {
       /** The owner approves exactly one engine-emitted effect digest; no standing grant is created. */
       approve_once: (input: Facade.ApproveOnceRequest): Facade.ConsentActReceipt => this.#call(() => this.#client.vaultConsentApproveOnce(input) as Facade.ConsentActReceipt),
+      /** The owner denies exactly one engine-emitted effect digest and records the refusal without granting authority. */
+      deny: (input: Facade.DenyConsentRequest): Facade.ConsentActReceipt => this.#call(() => this.#client.vaultConsentDeny(input) as Facade.ConsentActReceipt),
       /** The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision. */
       create_standing_grant: (input: Facade.CreateStandingGrantRequest): Facade.ConsentActReceipt => this.#call(() => this.#client.vaultConsentCreateStandingGrant(input) as Facade.ConsentActReceipt),
       /** The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants. */
@@ -1321,12 +1386,28 @@ export class Oneiron {
       get: (input: Facade.AgentDefinitionRequest): Facade.AgentDefinitionView => this.#call(() => this.#client.vaultAgentsGet(input) as Facade.AgentDefinitionView),
       /** The owner edits the expected definition version and optional refusal dial through the existing immutable-field and ceiling gates; refusal decisions read the live dial. */
       update: (input: Facade.AgentDefinitionUpdateRequest): Facade.AgentDefinitionView => this.#call(() => this.#client.vaultAgentsUpdate(input) as Facade.AgentDefinitionView),
+      dreaming: {
+        /** The owner reads one agent's dreaming choice: its stored mode, the mode in force and its own dreaming model slot. */
+        get: (input: Facade.AgentDreamingRequest): Facade.AgentDreamingView => this.#call(() => this.#client.vaultAgentsDreamingGet(input) as Facade.AgentDreamingView),
+        /** The owner sets one agent's dreaming choice on the revision read: its own model, the vault weaver's, or off; sharing a model never shares its diary. */
+        set: (input: Facade.AgentDreamingSetRequest): Facade.AgentDreamingView => this.#call(() => this.#client.vaultAgentsDreamingSet(input) as Facade.AgentDreamingView),
+      },
       spawn: {
         /** The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning. */
         get: (input: Facade.PlannedSpawnRead): Facade.PlannedSpawnObservation => this.#call(() => this.#client.vaultAgentsSpawnGet(input) as Facade.PlannedSpawnObservation),
       },
       /** The agent's travelling AgentPack folder (files base64) and what stayed home. */
       export_pack: (request: Facade.AgentPackExportRequest): Facade.AgentPackExport => this.#call(() => {  const result = JSON.parse(this.#client.vaultAgentsExportPack(keyedJson(request))) as Facade.AgentPackExport; return result }),
+    },
+    standing_blocks: {
+      /** The owner configures one agent's standing block in one world with its name and token floor; reopening the same pair answers the stored handle. */
+      configure: (input: Facade.StandingBlockConfigureRequest): Facade.StandingBlockView => this.#call(() => this.#client.vaultStandingBlocksConfigure(input) as Facade.StandingBlockView),
+      /** The owner gives a configured standing block a new name and token floor; an unconfigured pair is refused, never implicitly opened. */
+      reconfigure: (input: Facade.StandingBlockConfigureRequest): Facade.StandingBlockView => this.#call(() => this.#client.vaultStandingBlocksReconfigure(input) as Facade.StandingBlockView),
+      /** The owner reads one agent's configured standing block in one world: its handle, name and token floor. */
+      get: (input: Facade.StandingBlockRequest): Facade.StandingBlockView => this.#call(() => this.#client.vaultStandingBlocksGet(input) as Facade.StandingBlockView),
+      /** The owner lists every standing block configured for one agent, one per world, in world order. */
+      list: (input: Facade.StandingBlocksRequest): Facade.StandingBlockView[] => this.#call(() => this.#client.vaultStandingBlocksList(input) as Facade.StandingBlockView[]),
     },
     workflows: {
       /** The owner saves an ordered composition of live AGENT_DEF steps at a new WORKFLOW id at revision 1; an occupied id is refused and no attempt is dispatched. */
@@ -1541,6 +1622,8 @@ export class Oneiron {
     /** Retracts claims by exact claim or by subject and predicate; never a hard delete. */
     forget: (input: Facade.ForgetRequest): Facade.CommitReceipt[] => this.#call(() => this.#client.vaultForget(input) as Facade.CommitReceipt[]),
     booking: {
+      /** Parses one scheduling constraint on a live published booking page as the caller, returning public slot controls, an email continuation or a deflect; this never holds or confirms a booking. */
+      constraint_turn: (input: Facade.BookingConstraintTurnRequest): Facade.BookingConstraintTurnResponse => this.#call(() => this.#client.vaultBookingConstraintTurn(input) as Facade.BookingConstraintTurnResponse),
       /** The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority. */
       page_token: (input: Facade.BookingPageTokenRequest): Facade.BookingPageTokenResponse => this.#call(() => this.#client.vaultBookingPageToken(input) as Facade.BookingPageTokenResponse),
     },
@@ -1714,6 +1797,8 @@ export class Oneiron {
     notes: {
       /** Creates a NOTE of a registered kind, its first authored text as its birth. */
       create: (input: Facade.CreateNoteRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesCreate(input) as Facade.EntityRefReceipt),
+      /** Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target. */
+      author_take: (input: Facade.AuthorTakeRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesAuthorTake(input) as Facade.EntityRefReceipt),
       /** Creates a NOTE of a registered kind from an existing entity. */
       from_entity: (input: Facade.CreateNoteFromEntityRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesFromEntity(input) as Facade.EntityRefReceipt),
       /** Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot. */
