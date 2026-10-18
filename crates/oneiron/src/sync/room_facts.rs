@@ -73,6 +73,13 @@ const OFFER: &str = "offer/";
 /// and the joins and offer cards it changed that their window lacks.
 const DIRTY: SideTable<String, (), Raw> = SideTable::new(&side_table::SYNC_ROOM_FACT_DIRTY);
 
+/// Whether an import that leaves this machine's join or card fuller than the
+/// window's copy queues its carrier for the live mirror's next drain, in the
+/// write that marks it (FIX 3325; a call, canon is silent). The drain is
+/// event-driven: no timer is added. `false` leaves the merge for the
+/// carrier's next mirror.
+const ROOM_FACT_IMPORT_REPAIR: bool = true;
+
 fn refused(reason: &'static str) -> Error {
     Error::InvalidConfig(format!("room side row refused: {reason}"))
 }
@@ -377,14 +384,18 @@ pub(crate) fn mirror_carriers(
 
 /// The carriers whose windows take the side rows the doors behind `rows`,
 /// just committed here, wrote: each room turn's room, the turn, the turn it
-/// answers and the root of its thread.
+/// answers and the root of its thread. A room among `rows` is its own
+/// carrier: a merge queues it by its id (FIX 3325).
 pub(crate) fn committed_carriers(vault: &Vault, rows: &BTreeSet<EntityId>) -> Vec<(EntityId, u8)> {
     let Ok(rtxn) = vault.store.env.read_txn() else {
         return Vec::new();
     };
     let mut carriers = BTreeSet::new();
     for id in rows {
-        if let Ok(found) = replicated_side_carriers_in(vault, &rtxn, *id) {
+        if vault.get_entity_type_in_txn(&rtxn, id).ok().flatten() == Some(ENTITY_TYPE_CONVERSATION)
+        {
+            carriers.insert((*id, ENTITY_TYPE_CONVERSATION));
+        } else if let Ok(found) = replicated_side_carriers_in(vault, &rtxn, *id) {
             carriers.extend(found);
         }
     }
@@ -470,7 +481,8 @@ fn responses_for(doc: &LoroDoc, parents: &BTreeSet<EntityId>) -> Vec<(EntityId, 
 /// card whose window copy lacks part of this machine's is marked, so the
 /// next mirror of its carrier writes the merge back; the mark clears once
 /// the window's copy holds all of it. So is a card this machine replaced as
-/// a carried one became current (FIX 3322).
+/// a carried one became current (FIX 3322). The same write queues the
+/// carrier for the live mirror ([`ROOM_FACT_IMPORT_REPAIR`]).
 fn merge_rows(vault: &Vault, doc: &LoroDoc, window: &str, rows: Vec<(String, Option<Vec<u8>>)>) {
     let mut carried = Vec::new();
     let mut cleared = Vec::new();
@@ -516,9 +528,18 @@ fn merge_rows(vault: &Vault, doc: &LoroDoc, window: &str, rows: Vec<(String, Opt
                 } else {
                     DIRTY.put(&vault.store, wtxn, map_key, &())?;
                 }
-                if let (Some(replaced), Some((carrier, _))) = (replaced, row.merged_place()) {
-                    let replaced = shared_key_at(OFFER, carrier, &replaced);
+                let carrier = row.merged_place().map(|(carrier, _)| carrier);
+                if let (Some(replaced), Some(carrier)) = (&replaced, carrier) {
+                    let replaced = shared_key_at(OFFER, carrier, replaced);
                     DIRTY.put(&vault.store, wtxn, &replaced, &())?;
+                }
+                // FIX 3325: the merge goes back at the live mirror's next
+                // drain, not at the room's next mirror.
+                if ROOM_FACT_IMPORT_REPAIR
+                    && (!holds || replaced.is_some())
+                    && let Some(carrier) = carrier
+                {
+                    crate::batch::queue_committed_rows(vault, wtxn, BTreeSet::from([carrier]));
                 }
                 merged += logged(window, map_key, merge);
                 continue;
