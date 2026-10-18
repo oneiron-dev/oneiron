@@ -249,6 +249,11 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         .and_then(crate::calendar::CalendarInviteAdmission::page_grant)
         .or_else(|| required_grant_id(&prepared.authorization));
     let posting_gate = vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
+    // DOOR-079 1a: a held connector call a code consent wait owns is
+    // admitted under that wait's answer, proved from the rows under this
+    // writer: its code-bound approval, its bound bytes, its original
+    // caller's own credential. Any other effect admits as before.
+    let code_wait = crate::outbound_consent::code_wait_admission_in_txn(vault, &wtxn, &prepared)?;
     let mut governance = gate::evaluate_external_effect_policy(
         &vault.store,
         &mut wtxn,
@@ -259,7 +264,10 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
             PreparedAuthorization::ScopedMcp { prepared, .. } => Some(prepared),
             PreparedAuthorization::None => None,
         },
-        gate::ApprovalContext::FirstAdmission,
+        code_wait.map_or(
+            gate::ApprovalContext::FirstAdmission,
+            |(_, binding_digest)| gate::ApprovalContext::CodeWait(binding_digest),
+        ),
     )?;
     if governance.outcome() != GateOutcome::Allow {
         let (decision_id, decision) =
@@ -516,6 +524,17 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         gate::record_external_effect_policy(&vault.store, &mut wtxn, co)?;
     }
     insert_pending_in_txn(vault, &mut wtxn, &pending)?;
+    // The wait's admission commits with the spend, the decision and the
+    // Pending row, or not at all.
+    if let Some((wait_id, _)) = code_wait {
+        crate::code_run::record_code_consent_admission_in_txn(
+            vault,
+            &mut wtxn,
+            wait_id,
+            pending.id,
+            decision_id,
+        )?;
+    }
     if let Some(admission) = invite_admission {
         admission
             .commit_in_txn(vault, &mut wtxn, dedupe_now)

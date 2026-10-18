@@ -495,6 +495,11 @@ pub struct HostWriteOrigin {
     /// turn from (OF-560), read from the served receipt, never from the
     /// guest. `None` when no ladder stamped the turn.
     model_provider: Option<String>,
+    /// Where a code-mode `connector.call` sits in its durable run (DOOR-079
+    /// 1a), built by the dispatcher from the executor's own bridge position,
+    /// never from the guest: a hold for consent alone binds a code consent
+    /// wait to it.
+    code_consent: Option<crate::code_run::CodeConsentCallSite>,
 }
 
 impl HostWriteOrigin {
@@ -503,7 +508,15 @@ impl HostWriteOrigin {
             envelope,
             task_host: None,
             model_provider: None,
+            code_consent: None,
         }
+    }
+
+    /// This origin with the call's place in its durable run, for a call a
+    /// code consent wait may bind.
+    pub(crate) fn with_code_consent(mut self, site: crate::code_run::CodeConsentCallSite) -> Self {
+        self.code_consent = Some(site);
+        self
     }
 
     /// This origin with the provider the run's last turn was served from.
@@ -803,6 +816,32 @@ impl Memory<'_> {
     /// The signed instrument a host bound, if any.
     pub(crate) fn invocation_slip(&self) -> Option<&crate::authority::InvocationSlipBinding> {
         self.invocation_slip.as_ref()
+    }
+
+    /// The code-mode call site the bound origin carries, if any (DOOR-079
+    /// 1a): only the dispatcher puts one there.
+    pub(crate) fn code_consent_site(&self) -> Option<&crate::code_run::CodeConsentCallSite> {
+        self.host_origin.as_ref()?.code_consent.as_ref()
+    }
+
+    /// The original caller a code consent wait keeps (DOOR-079 1a): this
+    /// surface's actor and, when its host bound one, the exact instrument its
+    /// request was admitted on, with the door it came in by. Every caller
+    /// shape that reaches a dispatcher is kept as it is: an embedded or host
+    /// surface keeps no credential, and its grant alone limits the settle. It
+    /// reads neither where the caller sits nor the hook-only rebuild rule.
+    pub(crate) fn code_consent_principal(&self) -> crate::code_run::CodeConsentPrincipal {
+        crate::code_run::CodeConsentPrincipal {
+            actor_ref: self.actor,
+            credential: self.invocation_slip.clone().map(|witness| {
+                crate::code_run::CodeConsentSavedCredential {
+                    instrument: self.credential_instrument.clone(),
+                    door: self.credential_door.clone(),
+                    witness,
+                }
+            }),
+            opener_slip: None,
+        }
     }
 
     /// Marks this surface as a transport caller's, with a slip or without

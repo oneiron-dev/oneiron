@@ -172,6 +172,11 @@ pub struct Vault {
     /// The step loops leased attempts run on this handle, each under the
     /// root token a hard queue control stops it by (FIX 600). In memory only.
     pub(crate) attempt_cancels: crate::engine_executor::AttemptCancels,
+    /// The served host that drives an answered code consent wait's effect
+    /// (DOOR-079 1a), installed once per open vault, never process-global
+    /// ([`Vault::install_code_consent_effect_host`]). In memory only.
+    pub(crate) code_consent_host:
+        std::sync::OnceLock<std::sync::Arc<dyn crate::code_run::CodeConsentEffectHost>>,
     /// The deadline tests' slow retrieval stage, armed per vault.
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) slow_retrieval_stage:

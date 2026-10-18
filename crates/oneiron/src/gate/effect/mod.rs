@@ -44,6 +44,11 @@ pub(crate) enum ApprovalContext {
     Observe,
     FirstAdmission,
     Retry(crate::outbound_intent_ledger::AdmittedApproval),
+    /// The first admission of a held effect a code consent wait owns
+    /// (DOOR-079 1a): its one-shot approval is the one the wait's answer
+    /// minted under the wait's binding digest, which the admission writer
+    /// proved from the rows. It removes only that consent ask.
+    CodeWait([u8; 32]),
 }
 
 /// Uneffected external-policy decision. The chokepoint may debit the returned
@@ -121,6 +126,17 @@ pub(crate) fn external_effect_approval_digest(
     effect: &ExternalEffectGateInput,
 ) -> Option<crate::consent::EffectDigest> {
     external_effect_composed_effect(effect).map(|composed| composed.digest())
+}
+
+/// The code-bound approval digest a code consent wait's answer mints and its
+/// effect's gate looks up under [`ApprovalContext::CodeWait`]: one composer
+/// for both (DOOR-079 1a).
+pub(crate) fn code_wait_approval_digest(
+    effect: &ExternalEffectGateInput,
+    binding_digest: &[u8; 32],
+) -> Option<crate::consent::EffectDigest> {
+    effect_consent::code_wait_composed_effect(effect, binding_digest)
+        .map(|composed| composed.digest())
 }
 
 /// The pack's one-send owner tap uses the same bound digest as the gate's
@@ -350,8 +366,14 @@ pub(crate) fn evaluate_external_effect_policy(
     // unforgeable available authorization, or a typed spent-replay refusal.
     // The marker is changed to spent only when the final Gate decision is
     // recorded as Allow in this same transaction.
+    let code_wait = match approval_context {
+        ApprovalContext::CodeWait(binding_digest) => Some(binding_digest),
+        _ => None,
+    };
     let composed = if mail_once || mail_retry_authorized {
         native_mail_cold_composed_effect(&hydrated_effect)
+    } else if let Some(binding_digest) = code_wait.as_ref() {
+        effect_consent::code_wait_composed_effect(&hydrated_effect, binding_digest)
     } else {
         external_effect_composed_effect(&hydrated_effect)
     };
@@ -366,7 +388,7 @@ pub(crate) fn evaluate_external_effect_policy(
             .transpose()?
             .flatten()
     };
-    let consent = if mail_once || mail_retry_authorized {
+    let consent = if mail_once || mail_retry_authorized || code_wait.is_some() {
         composed.as_ref().map(|effect| {
             ConsentGateContext::evaluate(effect, approve_once.as_ref(), &consent_grants)
         })

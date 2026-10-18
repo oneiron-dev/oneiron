@@ -155,6 +155,12 @@ const OUTBOUND_GRANTS: Class = Class::Refuse {
 const MACHINE_IDENTITIES: Class = refuse("machine identities");
 const SKILL_HUB_CONFIGURATION: Class = refuse("skill hub configuration");
 const STANDING_GRANTS: Class = refuse("standing consent grants");
+/// A code consent wait (DOOR-079) entangles a one-shot answer, an external
+/// effect's admission and settlement, and (1b) the replay that consumed it:
+/// a rollback could unspend it, and keeping it live alone would point into
+/// a rolled-back replay. Its family refuses a restore instead (CALLS: restore
+/// Refuse).
+const CODE_CONSENT_WAITS: Class = refuse("code consent waits");
 const STANDING_BLOCKS: Class = refuse("standing blocks");
 const DISCLOSURE_SCOPES: Class = refuse("disclosure scopes");
 const ORG_ADMIN_GRANTS: Class = refuse("org admin grants");

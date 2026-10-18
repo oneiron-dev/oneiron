@@ -9,17 +9,21 @@
 
 use std::sync::{Arc, Weak};
 
-use oneiron::authority::{InvocationSlipBinding, VerifiedSlip};
+use oneiron::authority::InvocationSlipBinding;
 use oneiron::claim::CallerLocality;
 use oneiron::memory::MemoryResult;
 use oneiron::runtime_hooks::verb::{
     VerbAskCredentialCheck, VerbAskCredentialRef, VerbAskCredentialSource, VerbAskDoor,
-    VerbAskDrainPermit, VerbAskInstrument, VerbAskRefusal, VerbAskResumed, VerbAskSavedCall,
+    VerbAskDrainPermit, VerbAskRefusal, VerbAskResumed, VerbAskSavedCall,
 };
 use serde_json::Value;
 
 use crate::api::{FacadeApiError, FacadeCall, McpCallContext, facade_call_verb};
 use crate::auth::CoreAuth;
+// The kept-instrument check is shared with the code consent host, which runs
+// whatever the hook sandbox feature (DOOR-079 1a).
+pub(crate) use crate::code_consent_host::ceiling_holds;
+use crate::code_consent_host::kept_instrument_auth;
 use crate::mcp::McpConnectorActorResolutionError;
 use crate::server::SyncServer;
 
@@ -123,70 +127,12 @@ fn kept_auth(
     call: &VerbAskSavedCall,
     door: Option<&str>,
 ) -> Result<CoreAuth, VerbAskRefusal> {
-    let instrument = &call.reference.instrument;
-    let verified = match instrument.source {
-        VerbAskCredentialSource::Slip => server
-            .vault
-            .verify_invocation_slip(&call.witness)
-            .map_err(|_| standing(&server.vault, &instrument.slip))?,
-    };
-    if !same_instrument(instrument, &verified) {
-        return Err(VerbAskRefusal::CredentialChanged);
-    }
     let locality = if call.reference.on_device {
         CallerLocality::OnDevice
     } else {
         CallerLocality::OffDevice
     };
-    let auth = CoreAuth::from_kept_slip(
-        verified,
-        call.witness.clone(),
-        instrument.fingerprint,
-        door,
-        server.vault.as_ref(),
-    )
-    .map_err(|_| VerbAskRefusal::CredentialChanged)?
-    .at(locality);
-    if !ceiling_holds(&instrument.ceiling, &auth.authority_ceiling()) {
-        return Err(VerbAskRefusal::ScopeRefused);
-    }
-    Ok(auth)
-}
-
-/// No substitution (OF-580 defaults): only the saved instrument resumes its
-/// call. The witness must verify as the very slip the reference names, in the
-/// vault it was minted for; a renewed or re-minted credential of the same
-/// actor never stands in.
-fn same_instrument(saved: &VerbAskInstrument, verified: &VerifiedSlip) -> bool {
-    verified.claims().slip_id == saved.slip && verified.claims().vault_id == saved.vault
-}
-
-/// The current scopes meet the original ceiling (OF-580 defaults): what a
-/// credential, or its connector's registration, projects now must be what
-/// the call was admitted under. A wider one never widens the saved call; a
-/// narrower one refuses it rather than shrink it unseen.
-pub(crate) fn ceiling_holds(saved: &[u8; 32], now: &[u8; 32]) -> bool {
-    saved == now
-}
-
-/// Why a kept slip no longer verifies, as far as the current fold proves it
-/// (OF-580 defaults, each terminal): its mint gone, it or an ancestor
-/// revoked, its lifetime past. Anything else is a changed credential, never
-/// called revoked; a fold that does not read is unavailable (fail closed).
-fn standing(vault: &oneiron::Vault, slip: &[u8; 32]) -> VerbAskRefusal {
-    let (Ok(fold), Ok(now)) = (vault.authority_fold(), vault.capability_slip_now()) else {
-        return VerbAskRefusal::CredentialUnavailable;
-    };
-    let Some(mint) = fold.slips.mints.get(slip) else {
-        return VerbAskRefusal::CredentialMissing;
-    };
-    if fold.slips.is_revoked(slip) {
-        VerbAskRefusal::CredentialRevoked
-    } else if now >= mint.action.claims.expires_at {
-        VerbAskRefusal::CredentialExpired
-    } else {
-        VerbAskRefusal::CredentialChanged
-    }
+    Ok(kept_instrument_auth(server, &call.reference.instrument, &call.witness, door)?.at(locality))
 }
 
 /// Why a connector call's registration no longer stands (OF-580 defaults).

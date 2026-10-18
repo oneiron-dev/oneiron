@@ -23,6 +23,8 @@ mod board_task;
 mod comm_widen;
 pub(crate) use board_task::board_task_for_id;
 mod brief;
+mod code_consent_word;
+pub(crate) use code_consent_word::code_consent_word_in_txn;
 mod consts;
 pub(crate) use consts::TASK_EXTERNAL_ATTEMPT_KIND;
 mod consult_fanout_admission;

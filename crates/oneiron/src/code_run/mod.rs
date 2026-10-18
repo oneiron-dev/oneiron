@@ -17,6 +17,7 @@ mod action_inputs;
 // a verb hook's rewrite of it as the guest's own.
 mod agent_authoring;
 mod codec;
+mod consent_wait;
 mod contribution;
 mod coordination_codec;
 mod dispatcher;
@@ -43,6 +44,18 @@ pub use self::codec::{
     CODE_RUN_ABI_LAYOUT_CHECK_KEYS, CODE_RUN_BRIDGE_CALL_KEYS, CODE_RUN_DETERMINISM_KEYS,
     CODE_RUN_OUTPUT_PREVIEW_KEYS, CODE_RUN_RAW_OUTPUT_KEYS, CODE_RUN_REPLAY_RECORD_KEYS,
     CODE_RUN_STEP_CHECKPOINT_KEYS, decode_code_run_replay_record, encode_code_run_replay_record,
+};
+pub(crate) use self::consent_wait::{
+    CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED, CodeConsentCallSite, CodeConsentConnectorCall,
+    CodeConsentDraft, CodeConsentPendingEffect, CodeConsentPrincipal, CodeConsentRememberOffer,
+    CodeConsentWaitRow, attach_code_consent_ask_in_txn, code_consent_admission_in_txn,
+    mint_code_consent_wait_in_txn, offered_choices, original_authority_holds_in_txn,
+    read_code_consent_wait_in_txn, record_code_consent_admission_in_txn,
+    refuse_code_consent_wait_in_txn, settle_code_consent_wait_in_txn,
+};
+pub use self::consent_wait::{
+    CodeConsentAnswerInput, CodeConsentChoice, CodeConsentEffectHost, CodeConsentSavedCredential,
+    CodeConsentSettleOutcome, CodeConsentWaitState, CodeConsentWaitView,
 };
 pub use self::contribution::{
     ContributionForkModel, ContributionForkReceipt, ContributionForkScorer,

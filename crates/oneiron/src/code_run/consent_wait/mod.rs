@@ -1,0 +1,44 @@
+//! Bound code consent waits (DOOR-079 1a, toward CODE-RUNTIME-03).
+//!
+//! A code-mode `connector.call` whose own gate holds it for consent alone
+//! parks its run on a code consent wait, minted beside the held call in the
+//! same writer. The wait binds the exact pending effect: its run and write
+//! site, the frozen bytes' digest, the original caller and its instrument,
+//! the governing key, grant and manifest. It asks the vault's owner one TASK
+//! question with canon's confirm trio.
+//!
+//! The owner's answer is its own fact: authenticated from any surface the
+//! owner is authenticated on, revalidated in the answering writer, bound to
+//! the sealed wait, standing on the owner's own word on the ask, never from
+//! the opener's lineage, first and once. The settlement is another: the
+//! held effect runs once under its own current gate, with the answer's
+//! code-bound one-shot approval and the original caller's own grant, and its
+//! actual outcome settles the wait and wakes the run. The run's consumption
+//! of that reply is the third, which 1b records with the executor's seal.
+//!
+//! This module owns the control row; only it writes it.
+
+mod binding;
+mod host;
+mod settle;
+mod types;
+
+pub(crate) use self::binding::{
+    CodeConsentDraft, attach_code_consent_ask_in_txn, code_consent_binds,
+    code_consent_binds_held_call, code_consent_wait_id, mint_code_consent_wait_in_txn,
+    read_code_consent_wait_in_txn, record_code_consent_admission_in_txn,
+};
+pub use self::host::CodeConsentEffectHost;
+pub(crate) use self::settle::{
+    CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED, code_consent_admission_in_txn, offered_choices,
+    original_authority_holds_in_txn, refuse_code_consent_wait_in_txn,
+    settle_code_consent_wait_in_txn,
+};
+pub use self::types::{
+    CodeConsentAnswerInput, CodeConsentChoice, CodeConsentSavedCredential,
+    CodeConsentSettleOutcome, CodeConsentWaitState, CodeConsentWaitView,
+};
+pub(crate) use self::types::{
+    CodeConsentCallSite, CodeConsentConnectorCall, CodeConsentPendingEffect, CodeConsentPrincipal,
+    CodeConsentRememberOffer, CodeConsentWaitRow,
+};
