@@ -35,6 +35,27 @@ impl OneironClient {
         match &self.backend {
             Backend::Embedded(client) => client.invoke(verb, input),
             Backend::Remote(client) => match verb {
+                "vault.commitments.create" => remote_agent_verb_output::<
+                    oneiron::memory::commitment_doors::CommitmentCreateReceipt,
+                >(client, verb, &input),
+                "vault.commitments.get" => remote_agent_verb_output::<
+                    oneiron::memory::commitment_doors::CommitmentView,
+                >(client, verb, &input),
+                "vault.commitments.instances" => remote_agent_verb_output::<
+                    Vec<oneiron::memory::commitment_doors::CommitmentView>,
+                >(client, verb, &input),
+                "vault.commitments.proposals" => remote_agent_verb_output::<
+                    Vec<oneiron::memory::commitment_doors::CommitmentWakeProposal>,
+                >(client, verb, &input),
+                "vault.commitments.fulfill" => remote_agent_verb_output::<
+                    oneiron::memory::commitment_doors::CommitmentView,
+                >(client, verb, &input),
+                "vault.commitments.release" => remote_agent_verb_output::<
+                    oneiron::memory::commitment_doors::CommitmentView,
+                >(client, verb, &input),
+                "vault.commitments.supersede" => remote_agent_verb_output::<
+                    oneiron::memory::commitment_doors::CommitmentView,
+                >(client, verb, &input),
                 "fetch" => remote_agent_verb_output::<oneiron::web_fetch::FetchResult>(
                     client, verb, &input,
                 ),
@@ -352,6 +373,15 @@ impl OneironClient {
                         client, verb, &input,
                     )
                 }
+                "vault.assets.ingest" => remote_agent_verb_output::<
+                    oneiron::memory::AssetIngestReceipt,
+                >(client, verb, &input),
+                "vault.assets.resolve" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<oneiron::memory::AssetResolved>,
+                >(client, verb, &input),
+                "vault.search.vector" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<Vec<oneiron::memory::VectorSearchHit>>,
+                >(client, verb, &input),
                 "vault.images.view" => {
                     remote_agent_verb_output::<oneiron::memory::PulledImage>(client, verb, &input)
                 }
@@ -2712,6 +2742,90 @@ impl OneironClient {
             }
         }
     }
+    pub fn vault_commitments_create(
+        &self,
+        input: &oneiron::memory::commitment_doors::CommitmentCreateRequest,
+    ) -> Result<oneiron::memory::commitment_doors::CommitmentCreateReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.commitments.create", value)
+    }
+    pub fn vault_commitments_get(
+        &self,
+        input: &oneiron::memory::commitment_doors::CommitmentRefRequest,
+    ) -> Result<oneiron::memory::commitment_doors::CommitmentView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.commitments.get", value)
+    }
+    pub fn vault_commitments_instances(
+        &self,
+        input: &oneiron::memory::commitment_doors::CommitmentRefRequest,
+    ) -> Result<Vec<oneiron::memory::commitment_doors::CommitmentView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.commitments.instances", value)
+    }
+    pub fn vault_commitments_proposals(
+        &self,
+        input: &oneiron::memory::commitment_doors::CommitmentRefRequest,
+    ) -> Result<Vec<oneiron::memory::commitment_doors::CommitmentWakeProposal>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.commitments.proposals", value)
+    }
+    pub fn vault_commitments_fulfill(
+        &self,
+        input: &oneiron::memory::commitment_doors::CommitmentFulfillRequest,
+    ) -> Result<oneiron::memory::commitment_doors::CommitmentView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.commitments.fulfill", value)
+    }
+    pub fn vault_commitments_release(
+        &self,
+        input: &oneiron::memory::commitment_doors::CommitmentCloseRequest,
+    ) -> Result<oneiron::memory::commitment_doors::CommitmentView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.commitments.release", value)
+    }
+    pub fn vault_commitments_supersede(
+        &self,
+        input: &oneiron::memory::commitment_doors::CommitmentCloseRequest,
+    ) -> Result<oneiron::memory::commitment_doors::CommitmentView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.commitments.supersede", value)
+    }
     pub fn fetch(
         &self,
         input: &oneiron::web_fetch::WebFetchRequest,
@@ -4029,6 +4143,44 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.receipts", value)
+    }
+    pub fn vault_assets_ingest(
+        &self,
+        input: &oneiron::memory::AssetIngestRequest,
+    ) -> Result<oneiron::memory::AssetIngestReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.assets.ingest", value)
+    }
+    pub fn vault_assets_resolve(
+        &self,
+        input: &oneiron::memory::AssetResolveRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<oneiron::memory::AssetResolved>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.assets.resolve", value)
+    }
+    pub fn vault_search_vector(
+        &self,
+        input: &oneiron::memory::VectorSearchRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<Vec<oneiron::memory::VectorSearchHit>>, MemoryError>
+    {
+        input.validate()?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.search.vector", value)
     }
     /// The full pixels behind an image's view handle: the whole image, a crop or a zoom, recorded as a pull.
     pub fn vault_images_view(

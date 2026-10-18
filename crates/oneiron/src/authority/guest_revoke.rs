@@ -53,7 +53,8 @@ impl Vault {
     /// scope, hold for its member, and bind `holder_key`, the public key the
     /// guest generated on their own device; no private key is delivered
     /// anywhere. It lives until `expires_at`, and withdrawing the grant
-    /// ([`Vault::revoke_guest_access`]) tombstones it.
+    /// ([`Vault::revoke_guest_access`]) tombstones it. `comm` is the owner's
+    /// cap on whom the guest may message (FIX 3899); `None` is the vault's.
     pub fn mint_guest_slip(
         &self,
         owner: &AuthenticatedOwner,
@@ -61,6 +62,7 @@ impl Vault {
         grant_ref: EntityId,
         holder_key: [u8; 32],
         expires_at: u64,
+        comm: Option<super::CommReach>,
     ) -> Result<CapabilitySlip> {
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
@@ -100,6 +102,7 @@ impl Vault {
             grant_ref: Some(grant_ref.to_hex()),
             invitation_ref: None,
             delegation: None,
+            comm,
         };
         let slip = self.mint_slip_in_txn(&mut txn, issuer, claims)?;
         txn.commit()?;

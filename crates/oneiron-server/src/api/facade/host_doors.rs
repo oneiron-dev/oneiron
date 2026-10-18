@@ -179,6 +179,7 @@ pub(crate) use super::hyde_doors::*;
 pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
 pub(crate) use super::claim_settle_doors::*;
+pub(crate) use super::commitment_doors::*;
 pub(crate) use super::consolidation_doors::*;
 // The owner's sieve interest-queue, policy and lease doors (DOOR-130), likewise.
 pub(crate) use super::sieve_doors::*;
@@ -1135,6 +1136,13 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.campaign.compliance.reject"
         | "vault.campaign.compliance.verify"
         | "vault.companions.access_requests.answer"
+        | "vault.commitments.create"
+        | "vault.commitments.get"
+        | "vault.commitments.instances"
+        | "vault.commitments.proposals"
+        | "vault.commitments.fulfill"
+        | "vault.commitments.release"
+        | "vault.commitments.supersede"
         | "vault.personas.preview"
         | "vault.personas.export"
         | "vault.personas.edit"
