@@ -8,6 +8,8 @@ mod explain;
 mod history;
 mod memories;
 mod prefix;
+mod reply;
+pub(crate) use reply::generate_reply;
 mod scratchpad;
 mod session;
 mod standing;

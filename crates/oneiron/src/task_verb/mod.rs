@@ -293,6 +293,7 @@ mod sdk_live_run;
 mod sdk_mesh;
 mod sdk_off_record;
 mod sdk_record_erase;
+mod sdk_reply;
 mod sdk_research;
 mod sdk_residence;
 mod sdk_scratchpad;

@@ -1604,6 +1604,15 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
             (
+                "ai.reply",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::AiReplyRequest>(
+                ),
+            ),
+            (
+                "vault.receipts.context",
+                crate::code_run::vault_read::request_schema::<crate::receipt::CallReceiptRequest>(),
+            ),
+            (
                 "ai.options",
                 crate::code_run::vault_read::request_schema::<AiOptionsRequest>(),
             ),
@@ -2527,6 +2536,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.off_record.execute",
     "vault.claims.review",
     "vault.claims.settle",
+    "ai.reply",
+    "vault.receipts.context",
     "vault.decisions.bands.read",
     "vault.decisions.bands.learn",
     "vault.decisions.bands.enforce",
@@ -2561,6 +2572,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.claims.settle" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ClaimSettlement>()
         }
+        "ai.reply" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::AiReply>()
+        }
+        "vault.receipts.context" => crate::code_run::vault_read::request_schema::<
+            Option<crate::receipt::ContextEmitReceipt>,
+        >(),
         "vault.decisions.bands.read" => {
             crate::code_run::vault_read::request_schema::<crate::llm::decision::LearnedBand>()
         }
@@ -4758,6 +4775,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.skills.callables" => &[],
+        "ai.reply" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.receipts.context" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "ai.options" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -6662,6 +6693,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.skills.callables" => {
             let _input: EmptyRequest = decode(value.clone())?;
         }
+        "ai.reply" => {
+            let _input: crate::task_verb::sdk::AiReplyRequest = decode(value.clone())?;
+        }
+        "vault.receipts.context" => {
+            let _input: crate::receipt::CallReceiptRequest = decode(value.clone())?;
+        }
         "ai.options" => {
             let _input: AiOptionsRequest = decode(value.clone())?;
         }
@@ -7728,6 +7765,8 @@ pub fn invoke(
         "self.skills.save" => encode(self_skills_save(memory, decode(value)?)?),
         "self.skills.fork" => encode(self_skills_fork(memory, decode(value)?)?),
         "self.skills.callables" => encode(self_skills_callables(memory, decode(value)?)?),
+        "ai.reply" => encode(ai_reply(memory, decode(value)?)?),
+        "vault.receipts.context" => encode(vault_receipts_context(memory, decode(value)?)?),
         "ai.options" => encode(ai_options(memory, decode(value)?)?),
         "ai.image" => encode(ai_image(memory, decode(value)?)?),
         "ai.speech" => encode(ai_speech(memory, decode(value)?)?),
@@ -10636,6 +10675,18 @@ pub fn self_skills_callables(
     _input: EmptyRequest,
 ) -> MemoryResult<Vec<crate::skill::helper::CallableCardView>> {
     memory.skill_callables()
+}
+pub fn ai_reply(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::AiReplyRequest,
+) -> MemoryResult<crate::task_verb::sdk::AiReply> {
+    crate::task_verb::sdk::host_only(memory, "ai.reply", &input)
+}
+pub fn vault_receipts_context(
+    memory: &Memory<'_>,
+    input: crate::receipt::CallReceiptRequest,
+) -> MemoryResult<Option<crate::receipt::ContextEmitReceipt>> {
+    memory.context_emit_receipt(&input.receipt_ref)
 }
 pub fn ai_options(
     memory: &Memory<'_>,
