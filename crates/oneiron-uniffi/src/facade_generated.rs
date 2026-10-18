@@ -1416,6 +1416,26 @@ export_facade! {
     let output = client.self_use(&input)?;
     crate::codec::lift_record("self.use", &output)
 };
+"self.secrets.materialize" => fn self_secrets_materialize(&self, input: LiveRunRequestSecretGrantMintRequest) -> SecretGrantView = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::SecretGrantMintRequest> = crate::codec::lower_record("self.secrets.materialize", input)?;
+    let output = client.self_secrets_materialize(&input)?;
+    crate::codec::lift_record("self.secrets.materialize", &output)
+};
+"self.secrets.renew" => fn self_secrets_renew(&self, input: LiveRunRequestSecretGrantRenewRequest) -> SecretGrantView = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::SecretGrantRenewRequest> = crate::codec::lower_record("self.secrets.renew", input)?;
+    let output = client.self_secrets_renew(&input)?;
+    crate::codec::lift_record("self.secrets.renew", &output)
+};
+"self.secrets.teardown" => fn self_secrets_teardown(&self, input: LiveRunRequestSecretGrantTeardownRequest) -> SecretGrantView = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::SecretGrantTeardownRequest> = crate::codec::lower_record("self.secrets.teardown", input)?;
+    let output = client.self_secrets_teardown(&input)?;
+    crate::codec::lift_record("self.secrets.teardown", &output)
+};
+"self.secrets.use" => fn self_secrets_use(&self, input: LiveRunRequestSecretGrantUseRequest) -> SecretUseAnswer = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::SecretGrantUseRequest> = crate::codec::lower_record("self.secrets.use", input)?;
+    let output = client.self_secrets_use(&input)?;
+    crate::codec::lift_record("self.secrets.use", &output)
+};
 "vault.shares.create" => fn vault_shares_create(&self, input: ShareCreateRequest) -> ShareCreated = |client| {
     let input: oneiron::task_verb::sdk::ShareCreateRequest = crate::codec::lower_record("vault.shares.create", input)?;
     let output = client.vault_shares_create(&input)?;

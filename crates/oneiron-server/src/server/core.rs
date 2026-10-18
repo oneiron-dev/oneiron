@@ -116,6 +116,9 @@ pub struct SyncServer {
     /// The live agent runs a harness may act for over HTTP (OF-181): each
     /// runner's lease proof, its attached credential and its guard.
     pub(crate) live_runs: Arc<super::LiveRuns>,
+    /// The T1 secret destinations each run host registered for its runs
+    /// (DOOR-124): the `self.secrets.*` doors deliver into them.
+    pub(crate) secret_destinations: crate::runtime::SecretDestinations,
     /// The questions connectors asked mid-call, live for their callers
     /// (ONE-2510): every connector host this server builds keeps them here,
     /// and `connector.answer` reads them.
@@ -432,6 +435,7 @@ impl SyncServer {
             mcp_code_host: None,
             reader_runner,
             live_runs,
+            secret_destinations: Default::default(),
             connector_elicitations: Arc::default(),
             browser_guest: None,
             desktop_guest: None,

@@ -270,7 +270,7 @@ pub fn use_secret_grant_for_connector_call<H: ConnectorCallHost>(
 /// A grant's refusal in words its holder can act on: a stale grant renews,
 /// an ended one is minted again, another's reads as unknown; the rest reads
 /// as the handle use's refusal.
-fn grant_refusal(error: Error, operation: &str) -> MemoryError {
+pub(super) fn grant_refusal(error: Error, operation: &str) -> MemoryError {
     match error {
         Error::Secret(SecretError::SecretGrantStale { .. }) => MemoryError::new(
             MEMORY_CODE_INVALID_STATE,
