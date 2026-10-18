@@ -1056,7 +1056,7 @@
     },
     {
       "name": "vault.recall",
-      "description": "Recalls a memory pack for a query at an effort level: ranked items with provenance, scope honesty and retrieval accounting.",
+      "description": "Recalls ranked memories under the caller scope; explicitly selected retained foreign worlds carry stale_since, age_secs, reason and pact_epoch metadata.",
       "input": "RecallRequest",
       "output": "crate::memory::MemoryPack",
       "call": "crate::task_verb::sdk::recall_unembedded(memory, input)?",
@@ -1111,9 +1111,9 @@
           }
         ],
         "docs": {
-          "remote": "    /// Recalls a memory pack.\n    ///\n    /// The lease the engine takes is not a client input, and a bearer slip\n    /// is not one. Embedded, `Effort::High`, `XHigh` and `Max` return the\n    /// engine's `LEASE_REQUIRED`: this client mints no lease. Remote, the\n    /// server admits them on a line of its own and reranks on its `[models]`\n    /// reranker, or runs them unreranked and says so when it has none.\n    /// `media` is embedded by the server into its declared space; embedded,\n    /// it returns `MODEL_UNAVAILABLE`. `query_affect` (valence in -1..=1,\n    /// arousal and dominance in 0..=1) ranks by emotion congruence, embedded\n    /// and remote alike; out of range it returns `BAD_REQUEST`.\n",
-          "ts": "/**\n   * Recalls a memory pack.\n   *\n   * `effort: \"high\"`, `\"xhigh\"`, or `\"max\"` needs a lease this package never\n   * mints: an embedded client returns `LEASE_REQUIRED`; a remote one gets what\n   * the server serves (reranked on its `[models]` reranker, or unreranked and\n   * saying so). `effort: \"call\"` is call mode for live calls: light\n   * effort under a hard deadline (`deadlineMs`, or the vault's call-mode\n   * deadline), answering with the best results ready, marked `partial`.\n   * `media` (`{ space, mime, bytesB64, kinds? }`) is embedded by the server\n   * into its declared space; an embedded client returns `MODEL_UNAVAILABLE`.\n   * `queryAffect` (`{ valence, arousal, dominance }`: valence in -1..1,\n   * arousal and dominance in 0..1) ranks by emotion congruence, embedded and\n   * remote alike; out of range it returns `BAD_REQUEST`.\n   */",
-          "py": "Recalls a memory pack.\n\n        ``effort=\"high\"`` needs a lease this package never mints: an embedded\n        client raises ``LEASE_REQUIRED``; a remote one gets what the server\n        serves (reranked on its ``[models]`` reranker, or unreranked and\n        saying so). ``effort=\"call\"`` is call mode for live calls:\n        light effort under a hard deadline (``deadline_ms``, or the vault's\n        call-mode deadline), answering with the best results ready, marked\n        ``partial``. ``format`` takes the engine's exact tokens:\n        ``\"json\"``, ``\"yaml\"``, ``\"toon\"``, ``\"md\"``, ``\"txt\"``.\n        ``media`` (``{\"space\", \"mime\", \"bytes_b64\", \"kinds\"}``) is embedded\n        by the server into its declared space; an embedded client raises\n        ``MODEL_UNAVAILABLE``. ``query_affect`` (``{\"valence\", \"arousal\",\n        \"dominance\"}``: valence in -1..1, arousal and dominance in 0..1)\n        ranks by emotion congruence, embedded and remote alike; out of range\n        it raises ``BAD_REQUEST``.\n        "
+          "remote": "    /// Recalls a memory pack.\n    ///\n    /// The lease the engine takes is not a client input, and a bearer slip\n    /// is not one. Embedded, `Effort::High`, `XHigh` and `Max` return the\n    /// engine's `LEASE_REQUIRED`: this client mints no lease. Remote, the\n    /// server admits them on a line of its own and reranks on its `[models]`\n    /// reranker, or runs them unreranked and says so when it has none.\n    /// `media` is embedded by the server into its declared space; embedded,\n    /// it returns `MODEL_UNAVAILABLE`. `query_affect` (valence in -1..=1,\n    /// arousal and dominance in 0..=1) ranks by emotion congruence, embedded\n    /// and remote alike; out of range it returns `BAD_REQUEST`.\n    /// Explicit `scope.world_ref` recalls of retained foreign worlds carry\n    /// `MemoryItem::stale`: stale-since and age in seconds (when known), the\n    /// terminal reason and pact epoch. This selection grants no read authority.\n",
+          "ts": "/**\n   * Recalls a memory pack.\n   *\n   * `effort: \"high\"`, `\"xhigh\"`, or `\"max\"` needs a lease this package never\n   * mints: an embedded client returns `LEASE_REQUIRED`; a remote one gets what\n   * the server serves (reranked on its `[models]` reranker, or unreranked and\n   * saying so). `effort: \"call\"` is call mode for live calls: light\n   * effort under a hard deadline (`deadlineMs`, or the vault's call-mode\n   * deadline), answering with the best results ready, marked `partial`.\n   * `media` (`{ space, mime, bytesB64, kinds? }`) is embedded by the server\n   * into its declared space; an embedded client returns `MODEL_UNAVAILABLE`.\n   * `queryAffect` (`{ valence, arousal, dominance }`: valence in -1..1,\n   * arousal and dominance in 0..1) ranks by emotion congruence, embedded and\n   * remote alike; out of range it returns `BAD_REQUEST`.\n   * Explicit `scope.worldRef` recalls of retained foreign worlds carry\n   * `item.stale`: `staleSince` and `ageSecs` (when known), `reason` and\n   * `pactEpoch`. This selection grants no read authority.\n   */",
+          "py": "Recalls a memory pack.\n\n        ``effort=\"high\"`` needs a lease this package never mints: an embedded\n        client raises ``LEASE_REQUIRED``; a remote one gets what the server\n        serves (reranked on its ``[models]`` reranker, or unreranked and\n        saying so). ``effort=\"call\"`` is call mode for live calls:\n        light effort under a hard deadline (``deadline_ms``, or the vault's\n        call-mode deadline), answering with the best results ready, marked\n        ``partial``. ``format`` takes the engine's exact tokens:\n        ``\"json\"``, ``\"yaml\"``, ``\"toon\"``, ``\"md\"``, ``\"txt\"``.\n        ``media`` (``{\"space\", \"mime\", \"bytes_b64\", \"kinds\"}``) is embedded\n        by the server into its declared space; an embedded client raises\n        ``MODEL_UNAVAILABLE``. ``query_affect`` (``{\"valence\", \"arousal\",\n        \"dominance\"}``: valence in -1..1, arousal and dominance in 0..1)\n        ranks by emotion congruence, embedded and remote alike; out of range\n        it raises ``BAD_REQUEST``.\n        \n        Explicit ``scope.world_ref`` recalls of retained foreign worlds carry\n        ``item[\"stale\"]``: ``stale_since`` and ``age_secs`` (when known),\n        ``reason`` and ``pact_epoch``. This selection grants no read authority.\n        "
         },
         "defaults": true
       },
@@ -1131,7 +1131,8 @@
         },
         "output": "MemoryPack"
       },
-      "mcp_scope": "filtered"
+      "mcp_scope": "filtered",
+      "openapi": true
     },
     {
       "name": "vault.retrieval.aging.get",
@@ -2685,6 +2686,186 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.projects.goal.intake.complete",
+      "description": "Completes the witnessed human goal-intake interview with the full confirmed record; no agent proposal can write the effective goal.",
+      "input": "ProjectGoalIntakeCompleteRequest",
+      "output": "crate::task_verb::sdk::ProjectGoalIntakeReceipt",
+      "call": "crate::task_verb::sdk::project_goal_intake_complete_as_owner(memory.vault(), &memory.embedded_owner(\"vault.projects.goal.intake.complete\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.projects.goal.get",
+      "description": "Reads the full effective goal record and its claim together; interview drafts and loop proposals never replace it.",
+      "input": "ProjectRefRequest",
+      "output": "crate::task_verb::sdk::ProjectGoalView",
+      "call": "crate::task_verb::sdk::project_goal_get_as_owner(memory.vault(), &memory.embedded_owner(\"vault.projects.goal.get\")?, crate::EntityId::from_hex(&input.project_ref)?)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.optimize.propose",
+      "description": "Submits one explicit optimizer candidate against a fixed baseline version and a real drafting attempt; ordinary held-out admission still rules.",
+      "input": "SkillOptimizeProposeRequest",
+      "output": "crate::task_verb::sdk::SkillOptimizeProposalReceipt",
+      "call": "crate::task_verb::sdk::skill_optimize_propose_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.propose\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.optimize.measure",
+      "description": "Judges held-out floors before any online slice, then measures the proposal on the effective goal with the registered judge and bounded live arms.",
+      "input": "SkillOptimizeMeasureRequest",
+      "output": "crate::task_verb::sdk::SkillOptimizeMeasurement",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.skills.optimize.measure\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.optimize.score",
+      "description": "Rules on the submitted proposal through the existing held-out vector gate, floors and tradeoff ladder, without activating it.",
+      "input": "SkillOptimizeProposalRequest",
+      "output": "crate::task_verb::sdk::SkillOptimizeResultView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.skills.optimize.score\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.optimize.admit",
+      "description": "Admits only a standing gate acceptance and supersedes its incumbent atomically, with current body, evidence, tier, goal and owner checks.",
+      "input": "SkillOptimizeProposalRequest",
+      "output": "crate::task_verb::sdk::SkillOptimizeResultView",
+      "call": "crate::task_verb::sdk::skill_optimize_admit_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.admit\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.optimize.goal.get",
+      "description": "Reads the optimizer goal identity, effective axes, revision and joined project goal claim.",
+      "input": "SkillOptimizeGoalRequest",
+      "output": "crate::task_verb::sdk::SkillOptimizeGoalView",
+      "call": "crate::task_verb::sdk::skill_optimize_goal_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.goal.get\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.optimize.goal.bind",
+      "description": "Joins a skill goal to the human project goal record, or unbinds with null; every join changes its admission revision.",
+      "input": "SkillOptimizeGoalBindRequest",
+      "output": "crate::task_verb::sdk::SkillOptimizeGoalRevision",
+      "call": "crate::task_verb::sdk::skill_optimize_goal_bind_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.goal.bind\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.optimize.preferences.get",
+      "description": "Reads authored and learned goal tradeoff rules and the typed judgment band, without changing authority.",
+      "input": "SkillOptimizeGoalRequest",
+      "output": "Option<crate::skill_optimize::SkillTradeoffPreferences>",
+      "call": "crate::task_verb::sdk::skill_optimize_preferences_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.preferences.get\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.optimize.preferences.set",
+      "description": "The responsible owner sets authored tradeoff rules and the typed judgment band, retaining learned picks and every admission clamp.",
+      "input": "SkillOptimizePreferencesSetRequest",
+      "output": "crate::task_verb::sdk::SkillOptimizeGoalRevision",
+      "call": "crate::task_verb::sdk::skill_optimize_preferences_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.preferences.set\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.optimize.tradeoff_asks",
+      "description": "Lists the exact pending optimizer tradeoffs that have reached a role the caller holds, including bound typed judgment evidence.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::task_verb::sdk::SkillOptimizeTradeoffAskView>",
+      "call": "crate::task_verb::sdk::skill_optimize_tradeoff_asks_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.tradeoff_asks\")?)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.optimize.tradeoff_asks.pick",
+      "description": "Approves or rejects the exact shown tradeoff; the attributed pick becomes a preference and a proposed project revision, never a Grant.",
+      "input": "SkillOptimizeTradeoffPickRequest",
+      "output": "crate::task_verb::sdk::SkillOptimizeResultView",
+      "call": "crate::task_verb::sdk::skill_optimize_tradeoff_pick_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.tradeoff_asks.pick\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -4541,6 +4722,7 @@
       "output": "crate::skill_optimize::offer_doors::OfferPassRef",
       "call": "crate::skill_optimize::offer_doors::trigger(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.trigger\")?, input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -4569,6 +4751,7 @@
       "output": "crate::skill_optimize::OfferAnswerRecord",
       "call": "crate::skill_optimize::offer_doors::answer(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.answer\")?, input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -4583,6 +4766,7 @@
       "output": "crate::skill_optimize::offer_doors::OfferUndoReceipt",
       "call": "crate::skill_optimize::offer_doors::undo(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.undo\")?, input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -4597,6 +4781,7 @@
       "output": "Vec<crate::skill_optimize::offer_pilot::OfferCandidateRecord>",
       "call": "crate::skill_optimize::offer_pilot::candidates(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.candidates\")?, input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -4611,6 +4796,7 @@
       "output": "crate::skill_optimize::offer_pilot::OfferCandidateRecord",
       "call": "crate::skill_optimize::offer_pilot::prepare_candidate(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.candidates.prepare\")?, input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -4639,6 +4825,7 @@
       "output": "crate::skill_optimize::offer_pilot::OfferPilot",
       "call": "crate::skill_optimize::offer_pilot::complete_pilot(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.pilots.complete\")?, input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -4653,6 +4840,7 @@
       "output": "Option<crate::skill_optimize::offer_pilot::OfferPilot>",
       "call": "crate::skill_optimize::offer_pilot::pilot(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.pilots.get\")?, input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -5986,6 +6174,53 @@
         "projection_record_scope": true
       },
       "section": false
+    },
+    {
+      "name": "vault.lenses.select",
+      "description": "Selects a rendered atom or Unicode-scalar span under the caller's live key and holds its read handle on that card.",
+      "input": "crate::lens::LensSelectRequest",
+      "output": "crate::lens::LensSelection",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.lenses.select\", &input)?",
+      "host_door": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "projection_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.lenses.resolve",
+      "description": "Re-proves a host-issued selection on the caller's held card and reads its source with its pinned cursor span.",
+      "input": "crate::lens::LensSelectionResolveRequest",
+      "output": "crate::lens::LensSelectionResolved",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.lenses.resolve\", &input)?",
+      "host_door": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "projection_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.lenses.result_set.action",
+      "description": "Re-proves the ticked rows or rendered predicate and their selected handles, then dispatches the declared result-set action through the caller's existing gate.",
+      "input": "crate::lens::LensResultSetActionRequest",
+      "output": "crate::lens::LensResultSetActionResult",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.lenses.result_set.action\", &input)?",
+      "host_door": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "projection_record_scope": true
+      },
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.lenses.default",
@@ -8957,6 +9192,7 @@
       "output": "crate::task_verb::sdk::SkillPackReceipt",
       "call": "crate::task_verb::sdk::skill_pack_receipt_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.pack_receipt\")?, &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -8970,6 +9206,7 @@
       "output": "crate::task_verb::sdk::SkillPackOutcomeProjection",
       "call": "crate::task_verb::sdk::skill_pack_outcome_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.outcomes.project\")?, &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -8983,6 +9220,7 @@
       "output": "Option<crate::skill_attribution::LateCreditReceipt>",
       "call": "crate::task_verb::sdk::skill_pack_credit_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.outcomes.get\")?, &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -9118,6 +9356,7 @@
       "output": "crate::task_verb::sdk::LiveVoiceSession",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.start\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -9132,6 +9371,7 @@
       "output": "crate::task_verb::sdk::LiveVoiceProcessed",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.audio\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -9146,6 +9386,7 @@
       "output": "crate::task_verb::sdk::LiveVoiceEvents",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.events\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -9159,6 +9400,7 @@
       "output": "crate::task_verb::sdk::LiveVoiceProcessed",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.ack\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -9173,6 +9415,7 @@
       "output": "crate::task_verb::sdk::LiveVoiceUsage",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.usage\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -9202,6 +9445,7 @@
       "output": "crate::task_verb::sdk::LiveVoiceProcessed",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.end\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -9216,6 +9460,7 @@
       "output": "crate::task_verb::sdk::LiveVoiceProcessed",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.close\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -10468,6 +10713,7 @@
       "output": "crate::task_verb::sdk::BookingConstraintTurnResponse",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.constraint_turn\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -12678,7 +12924,8 @@
       "effect": "MemorySupersedeClaim",
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::MemorySupersedeInput>",
-        "description": "Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override."
+        "description": "Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override.",
+        "host_door_lists": true
       }
     },
     {
@@ -13582,7 +13829,8 @@
         "input": "crate::code_run::fold_api::FoldMarkRequest",
         "description": "Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands.",
         "host_door_caller": true,
-        "host_door_session": false
+        "host_door_session": false,
+        "host_door_lists": true
       }
     },
     {
@@ -13596,7 +13844,8 @@
         "input": "crate::code_run::fold_api::FoldCompactRequest",
         "description": "Asks the attached run to fold its pending marks in one batch at its next step boundary; read self.history for landed folds and epochs.",
         "host_door_caller": true,
-        "host_door_session": false
+        "host_door_session": false,
+        "host_door_lists": true
       }
     },
     {
@@ -13610,7 +13859,8 @@
         "input": "crate::code_run::fold_api::FoldUnfoldRequest",
         "description": "Appends a fold of the attached run after its current tail, without replacing the earlier stub.",
         "host_door_caller": true,
-        "host_door_session": false
+        "host_door_session": false,
+        "host_door_lists": true
       }
     },
     {
@@ -13624,7 +13874,8 @@
         "input": "crate::code_run::fold_api::FoldRunRequest",
         "description": "Lists the attached run's landed folds, pending marks and outstanding compact ask.",
         "host_door_caller": true,
-        "host_door_session": false
+        "host_door_session": false,
+        "host_door_lists": true
       }
     },
     {
@@ -13636,7 +13887,8 @@
       "effect": "TasksRefuse",
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::TaskRefuseInput>",
-        "description": "Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay."
+        "description": "Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay.",
+        "host_door_lists": true
       }
     },
     {
@@ -13649,7 +13901,8 @@
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::ReportBlockedInput>",
         "description": "Files this credential's attached agent run's own blocked report: a closed category and its detail as the fenced, untrusted leaf of a witnessed receipt for the Coach's Issues job; it grants nothing and completes no task.",
-        "openapi": true
+        "openapi": true,
+        "host_door_lists": true
       }
     },
     {
@@ -13661,7 +13914,8 @@
       "effect": "AgentsSpawn",
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::AgentSpawnInput>",
-        "description": "Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity."
+        "description": "Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity.",
+        "host_door_lists": true
       }
     },
     {
@@ -13689,7 +13943,8 @@
       "effect": "LeaderSplit",
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::LeaderSplitInput>",
-        "description": "Splits the attached leader run into a subproject inside its own TASK wrapper; spec may name only the child leader and a narrower scope."
+        "description": "Splits the attached leader run into a subproject inside its own TASK wrapper; spec may name only the child leader and a narrower scope.",
+        "host_door_lists": true
       }
     },
     {
@@ -13701,7 +13956,8 @@
       "effect": "SkillsCall",
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::SkillCallInput>",
-        "description": "Runs a callable skill on this credential's attached leased run with its existing sandbox and gates; the result follows the stored return contract, while anchored outcomes settle separately."
+        "description": "Runs a callable skill on this credential's attached leased run with its existing sandbox and gates; the result follows the stored return contract, while anchored outcomes settle separately.",
+        "host_door_lists": true
       }
     },
     {

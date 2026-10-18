@@ -11,7 +11,7 @@ use oneiron::task_verb::sdk::{
 };
 
 use super::FacadeApiError;
-use super::host_doors::{Listed, internal, refused};
+use super::host_doors::{Listed, MaybeListed, internal, refused};
 use crate::api::booking::{
     booking_page_token, credential_transport_context, execute_booking_operation,
     resolve_booking_page_listing, resolve_public_booking_page, run_public_constraint_turn,
@@ -54,22 +54,30 @@ pub(crate) async fn vault_booking_page_token(
 
 /// The same live publication, admission, parser and oracle as the public front.
 /// The caller's own credential keys the wait and pays for its model call.
+/// Its list is unknown (`host_door_lists`, `None`), never `[]`: the answer
+/// copies the publication's text and derives slots from event-type
+/// configuration, free/busy, booking counts and holds, and those readers
+/// keep no complete set of the rows they read.
 pub(crate) async fn vault_booking_constraint_turn(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: BookingConstraintTurnRequest,
-) -> MemoryResult<BookingConstraintTurnResponse> {
-    let transport = credential_transport_context(server, auth)
-        .map_err(|error| FacadeApiError::from(error).into_memory_error())?;
-    let (page_ref, publication) = resolve_public_booking_page(server, &input.page_token)
-        .map_err(|error| FacadeApiError::from(error).into_memory_error())?;
-    let authority = oneiron::booking::publication::PublicBookingAuthority {
-        page_ref,
-        publication,
-    };
-    run_public_constraint_turn(server, authority, input.turn, &transport)
-        .await
-        .map_err(|error| FacadeApiError::from(error).into_memory_error())
+) -> MaybeListed<BookingConstraintTurnResponse> {
+    let answer: MemoryResult<BookingConstraintTurnResponse> = async {
+        let transport = credential_transport_context(server, auth)
+            .map_err(|error| FacadeApiError::from(error).into_memory_error())?;
+        let (page_ref, publication) = resolve_public_booking_page(server, &input.page_token)
+            .map_err(|error| FacadeApiError::from(error).into_memory_error())?;
+        let authority = oneiron::booking::publication::PublicBookingAuthority {
+            page_ref,
+            publication,
+        };
+        run_public_constraint_turn(server, authority, input.turn, &transport)
+            .await
+            .map_err(|error| FacadeApiError::from(error).into_memory_error())
+    }
+    .await;
+    (answer, None)
 }
 
 /// All lifecycle calls use the caller's own credential and the existing
