@@ -7,16 +7,23 @@
 //! (`owner::cooperative_deletion`): this host's own authority key signs, and
 //! its courtesy outbox delivers. A former peer's signed ingress is peer HTTP,
 //! with no row.
+//!
+//! Each lists its rows (`host_door_lists`). An ask, its answer and a pact's
+//! standing live in the courtesy tables and the authority log, which hold
+//! no row, so a sent ask lists none; an incoming one lists the records it
+//! names, those the ask covers and those its answer deleted, and each world
+//! it names.
 use std::sync::Arc;
 
+use oneiron::EntityId;
 use oneiron::memory::{MEMORY_CODE_INVALID_STATE, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{
     CourtesyDeleteAnswerRequest, CourtesyDeleteIncoming, CourtesyDeleteSendRequest,
     CourtesyDeleteSent, EmptyRequest,
 };
 
-use super::host_doors::internal;
-use super::legal_hold_doors::as_owner;
+use super::host_doors::{Listed, internal};
+use super::legal_hold_doors::as_owner_naming;
 use crate::auth::CoreAuth;
 use crate::owner::OwnerError;
 use crate::owner::cooperative_deletion;
@@ -36,17 +43,35 @@ fn refusal(verb: &str, error: OwnerError) -> MemoryError {
     }
 }
 
+/// The rows an incoming ask names: each world it asks about, each record
+/// it covers and each its answer deleted.
+fn incoming_rows(ask: &CourtesyDeleteIncoming) -> impl Iterator<Item = EntityId> + '_ {
+    let deleted = ask.answer.iter().flat_map(|answer| answer.deleted.iter());
+    ask.worlds
+        .iter()
+        .map(|world| &world.world)
+        .chain(ask.candidates.iter())
+        .chain(deleted)
+        .filter_map(|hex| EntityId::from_hex(hex).ok())
+}
+
 /// `vault.courtesy_delete.send`: asks a former peer to drop what an ended
 /// pact delivered, and queues the ask for delivery.
 pub(crate) async fn vault_courtesy_delete_send(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: CourtesyDeleteSendRequest,
-) -> MemoryResult<CourtesyDeleteSent> {
+) -> Listed<CourtesyDeleteSent> {
     const VERB: &str = "vault.courtesy_delete.send";
-    as_owner(server, auth, VERB, move |server, owner| {
-        cooperative_deletion::send(server, owner, &input).map_err(|error| refusal(VERB, error))
-    })
+    as_owner_naming(
+        server,
+        auth,
+        VERB,
+        move |server, owner| {
+            cooperative_deletion::send(server, owner, &input).map_err(|error| refusal(VERB, error))
+        },
+        |_| Vec::new(),
+    )
     .await
 }
 
@@ -55,11 +80,17 @@ pub(crate) async fn vault_courtesy_delete_sent(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     _input: EmptyRequest,
-) -> MemoryResult<Vec<CourtesyDeleteSent>> {
+) -> Listed<Vec<CourtesyDeleteSent>> {
     const VERB: &str = "vault.courtesy_delete.sent";
-    as_owner(server, auth, VERB, |server, _owner| {
-        cooperative_deletion::sent(server).map_err(|error| refusal(VERB, error))
-    })
+    as_owner_naming(
+        server,
+        auth,
+        VERB,
+        |server, _owner| {
+            cooperative_deletion::sent(server).map_err(|error| refusal(VERB, error))
+        },
+        |_| Vec::new(),
+    )
     .await
 }
 
@@ -68,11 +99,17 @@ pub(crate) async fn vault_courtesy_delete_incoming(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     _input: EmptyRequest,
-) -> MemoryResult<Vec<CourtesyDeleteIncoming>> {
+) -> Listed<Vec<CourtesyDeleteIncoming>> {
     const VERB: &str = "vault.courtesy_delete.incoming";
-    as_owner(server, auth, VERB, |server, _owner| {
-        cooperative_deletion::incoming(server).map_err(|error| refusal(VERB, error))
-    })
+    as_owner_naming(
+        server,
+        auth,
+        VERB,
+        |server, _owner| {
+            cooperative_deletion::incoming(server).map_err(|error| refusal(VERB, error))
+        },
+        |asks| asks.iter().flat_map(incoming_rows).collect(),
+    )
     .await
 }
 
@@ -82,10 +119,16 @@ pub(crate) async fn vault_courtesy_delete_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: CourtesyDeleteAnswerRequest,
-) -> MemoryResult<CourtesyDeleteIncoming> {
+) -> Listed<CourtesyDeleteIncoming> {
     const VERB: &str = "vault.courtesy_delete.answer";
-    as_owner(server, auth, VERB, move |server, owner| {
-        cooperative_deletion::answer(server, owner, &input).map_err(|error| refusal(VERB, error))
-    })
+    as_owner_naming(
+        server,
+        auth,
+        VERB,
+        move |server, owner| {
+            cooperative_deletion::answer(server, owner, &input).map_err(|error| refusal(VERB, error))
+        },
+        |ask| incoming_rows(ask).collect(),
+    )
     .await
 }
