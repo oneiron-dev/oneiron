@@ -219,7 +219,8 @@ impl Vault {
         home: EntityId,
     ) -> Result<OwnerWorkReceipt> {
         self.with_write_txn(|txn| {
-            let seen = bundle_publish_revision(&self.authority_view_readonly_in_txn(txn)?);
+            let fold = self.authority_view_readonly_in_txn(txn)?;
+            let seen = bundle_publish_revision(&fold);
             let work = OwnerWorkBody::PublishBundle { home };
             self.record_owner_work_in_txn(txn, owner, surface, home, seen, work)
         })

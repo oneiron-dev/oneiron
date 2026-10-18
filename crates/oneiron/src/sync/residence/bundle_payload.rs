@@ -169,7 +169,7 @@ impl WindowManager {
                 continue;
             }
             let opened = latest.as_ref().map(|(opened, _)| opened);
-            let Some(held) = self.complete_source(world, &windows, opened, &keys)? else {
+            let Some(held) = self.complete_source(world, &windows, opened, &keys) else {
                 continue;
             };
             let mut snapshots = Vec::new();
@@ -344,38 +344,29 @@ impl WindowManager {
         windows: &[WindowKey],
         latest: Option<&OpenedVaultBundle>,
         keys: &[WorldKey],
-    ) -> Result<Option<Vec<WindowKey>>> {
+    ) -> Option<Vec<WindowKey>> {
         let mut held: Vec<WindowKey> = windows
             .iter()
             .filter(|window| window.world() == Some(world))
             .cloned()
             .collect();
         let Some(latest) = latest else {
-            return Ok(Some(held));
+            return Some(held);
         };
         for key in keys.iter().filter(|key| key.id().world == world) {
-            let Ok(section) = latest.open_section(key) else {
-                return Ok(None);
-            };
-            let Some(section) = section else {
+            let Some(section) = latest.open_section(key).ok()? else {
                 continue;
             };
-            let Ok(carried) = decode_world_section(&section.payload, world) else {
-                return Ok(None);
-            };
+            let carried = decode_world_section(&section.payload, world).ok()?;
             for (window, snapshot) in carried {
-                if self
-                    .merge_bundle_mirror(world, &window, &snapshot, false)
-                    .is_err()
-                {
-                    return Ok(None);
-                }
+                self.merge_bundle_mirror(world, &window, &snapshot, false)
+                    .ok()?;
                 if !held.contains(&window) {
                     held.push(window);
                 }
             }
         }
-        Ok(Some(held))
+        Some(held)
     }
 
     /// Merges each window of an opened world `section` into its mirror,

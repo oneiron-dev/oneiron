@@ -22,8 +22,8 @@
 use std::sync::Arc;
 
 use super::{
-    CommittedBundle, PartSource, ResidenceRpc, commit_generation, fetch_generation,
-    list_generations_for, put_object, refused, residence_budgets, storage, turn,
+    PartSource, ResidenceRpc, commit_generation, fetch_generation, list_generations_for,
+    put_object, refused, residence_budgets, storage, turn,
 };
 use crate::EntityId;
 use crate::authority::{AuthorityEntryHash, Destination, PeerMachine};
@@ -165,13 +165,9 @@ async fn publish_one(
         None
     };
     let enacted = match BUNDLE_PUBLISH_COMPLETION {
-        PublishCompletion::HomeCommitWithRequest => {
-            committed
-                == Some(CommittedBundle {
-                    generation,
-                    bundle_digest: upload.bundle.digest(),
-                })
-        }
+        PublishCompletion::HomeCommitWithRequest => committed.is_some_and(|entry| {
+            entry.generation == generation && entry.bundle_digest == upload.bundle.digest()
+        }),
     };
     if enacted {
         return enact(manager, request).await;

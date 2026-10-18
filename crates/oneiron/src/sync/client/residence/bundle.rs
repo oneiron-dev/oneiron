@@ -159,7 +159,7 @@ struct BundleCommitReply {
 }
 
 /// A generation the home acknowledged committing, and its bundle's digest.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 struct CommittedBundle {
     generation: SealedBundleGeneration,
     bundle_digest: [u8; 32],
