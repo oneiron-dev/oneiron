@@ -14,9 +14,8 @@ use serde_json::Value;
 
 use super::packet_source::{CompactionHostLog, CompactionSource, admit_compaction_source};
 use super::{
-    COMPACTION_PACKET_SCHEMA_VERSION, CompactionPacket, CompactionPayloadKind,
-    CompactionRefusal, CompactionSnapshotRef, CompactionSuppression, GatedCompaction,
-    ValidatedCompactionPacket,
+    COMPACTION_PACKET_SCHEMA_VERSION, CompactionPacket, CompactionPayloadKind, CompactionRefusal,
+    CompactionSnapshotRef, CompactionSuppression, GatedCompaction, ValidatedCompactionPacket,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -42,7 +41,10 @@ pub enum SelfCompactionUnavailable {
     IdentityUnreadable,
     /// The vault's self-compaction row could not be read.
     PolicyUnreadable,
-    /// The admitted route serves wider than the row's bound.
+    /// The model the writer runs on (the agent's own compaction model, else
+    /// the house route's) is not served on this host.
+    ModelNotServed,
+    /// The writer's model is served wider than the row's bound.
     RouteWiderThanPolicy,
     /// A pass ran before its flight froze what it wears.
     FlightNotPrepared,
@@ -58,6 +60,7 @@ impl SelfCompactionUnavailable {
             Self::NoIdentity => "no_identity",
             Self::IdentityUnreadable => "identity_unreadable",
             Self::PolicyUnreadable => "policy_unreadable",
+            Self::ModelNotServed => "model_not_served",
             Self::RouteWiderThanPolicy => "route_wider_than_policy",
             Self::FlightNotPrepared => "flight_not_prepared",
         }
@@ -270,8 +273,12 @@ pub(crate) fn admit_self_landing(
         digest_text: Some(summary.to_owned()),
         working_set_refs: Vec::new(),
     };
-    let packet =
-        admit_compaction_source(vault, packet, CompactionSource::HostLog(log), Some(&expected))?;
+    let packet = admit_compaction_source(
+        vault,
+        packet,
+        CompactionSource::HostLog(log),
+        Some(&expected),
+    )?;
     Ok(SelfLanding { execution, packet })
 }
 

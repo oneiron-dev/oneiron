@@ -51,7 +51,6 @@
   "extraction_max_locality": "on_device",
   "self_compaction": {
     "source": "retained_turns",
-    "tier": "cheap",
     "locality": "third_party"
   }
 }

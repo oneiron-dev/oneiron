@@ -37,6 +37,7 @@ impl EngineNativeExecutor<'_> {
             self.land_folds(byline, finished.folds);
         }
         let hooks = finished.hooks;
+        let epoch_execution = finished.epoch_execution;
         let landed = match finished.epoch {
             None => Ok(()),
             Some(Err(suppression)) => {
@@ -55,7 +56,13 @@ impl EngineNativeExecutor<'_> {
                     // The tail is re-derived from typed coverage at the next
                     // assembly, so no host-side splice is carried here.
                     Some((driver, byline, placement)) => {
-                        match self.integrate_placed(driver, byline, placement, gated) {
+                        match self.integrate_placed(
+                            driver,
+                            byline,
+                            placement,
+                            gated,
+                            epoch_execution,
+                        ) {
                             Ok(plan) => {
                                 seat.swapped(plan.epoch, first, last);
                                 if let crate::code_run::ExecutorStorage::Canonical(vault) =
@@ -334,6 +341,7 @@ impl EngineNativeExecutor<'_> {
             request,
             ids,
             handles,
+            execution: None,
         }))
     }
 
@@ -354,17 +362,21 @@ impl EngineNativeExecutor<'_> {
         let mut failed = Vec::new();
         for (job, answer) in folds {
             match answer {
-                Ok(gated) => landed.push(FoldRecord {
-                    fold: job.fold,
-                    from: job.from,
-                    through: job.through,
-                    summary: Some(gated.summary_text().to_owned()),
-                    source: crate::claim::ClaimSource::Generated,
-                    actor: byline.entity_ref(),
-                    sources: gated.request().sources.clone(),
-                    ids: job.ids,
-                    handles: job.handles,
-                }),
+                Ok(gated) => match self.self_fold_receipt(byline, &job, &gated) {
+                    Ok(execution) => landed.push(FoldRecord {
+                        fold: job.fold,
+                        from: job.from,
+                        through: job.through,
+                        summary: Some(gated.summary_text().to_owned()),
+                        source: crate::claim::ClaimSource::Generated,
+                        actor: byline.entity_ref(),
+                        sources: gated.request().sources.clone(),
+                        ids: job.ids,
+                        handles: job.handles,
+                        execution,
+                    }),
+                    Err(why) => failed.push((job.fold, why)),
+                },
                 Err(why) => failed.push((job.fold, why)),
             }
         }
@@ -375,6 +387,42 @@ impl EngineNativeExecutor<'_> {
         {
             tracing::warn!("a fold batch did not land");
         }
+    }
+
+    /// A self-written fold (FIX 4465) lands only on its packet: a turn digest
+    /// of its gated window, admitted on the run's log for the fold's span and
+    /// checked against its gated request. Its receipt rides the fold record.
+    /// Any other fold carries none. A run in a room keeps its mark: its
+    /// receipts have no room store yet.
+    fn self_fold_receipt(
+        &self,
+        byline: crate::WriteActor,
+        job: &FoldJob,
+        gated: &GatedCompaction,
+    ) -> Result<Option<crate::compaction::CompactionExecution>, String> {
+        let Some(execution) = job.execution.clone() else {
+            return Ok(None);
+        };
+        let crate::code_run::ExecutorStorage::Canonical(vault) = &self.storage else {
+            return Err("a self-written fold lands no room receipt yet".to_owned());
+        };
+        let log = crate::compaction::CompactionHostLog {
+            run_ref: self.gated_write.run_ref(),
+            run_id: job.run_id,
+            first: job.from,
+            last: job.through,
+        };
+        crate::compaction::admit_self_landing(vault, log, gated, execution)
+            .and_then(|landing| {
+                crate::compaction::CompactionDriver::check_self_landing(
+                    gated,
+                    job.run_id,
+                    byline,
+                    &landing,
+                )?;
+                Ok(Some(landing.execution))
+            })
+            .map_err(|_| "its self-written summary's packet was not admitted".to_owned())
     }
 
     /// The run's host door rules on what the compaction host reads of the run

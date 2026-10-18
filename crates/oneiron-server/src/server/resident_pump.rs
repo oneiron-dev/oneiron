@@ -41,9 +41,9 @@ use oneiron::attempt_queue::{
 };
 use oneiron::claim::CallerLocality;
 use oneiron::code_run::{
-    AgentVerbDoor, CodeRunReplayRecord, HostPlannerBinding, HostPlannerDecisions,
-    HostSelfDispatcher, SpawnHostSeat, TaskExposure, finalize_step_captures,
-    park_and_bind_wait_trap,
+    AgentVerbDoor, CodeRunReplayRecord, CompactionHostBinding, HostPlannerBinding,
+    HostPlannerDecisions, HostSelfDispatcher, SpawnHostSeat, TaskExposure,
+    bind_compaction_caller, finalize_step_captures, park_and_bind_wait_trap,
 };
 use oneiron::compaction::output::{OutputContextEntry, restore_output};
 use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confession};
@@ -566,10 +566,13 @@ fn run_bound(
     if status.input.room.is_some() {
         scope_funding(vault, metered.as_ref(), true).map_err(EngineRunError::Payer)?;
     }
+    // The run's caller, as this host leased it: its reader children and its
+    // compaction read under that one binding.
+    let caller = pump_caller(actor);
     let seat = seats.seat(
         run_id,
         metered.clone(),
-        CallerLocality::OnDevice,
+        caller.locality(),
         provider.reader_window_tokens(),
     );
     // One door for the whole run, so its browser lives as long as the run.
@@ -578,8 +581,10 @@ fn run_bound(
         .enable_all()
         .build()
         .map_err(text)?;
-    // Its compaction passes spend under the attempt's scope too.
-    let mut compaction = provider.compaction(actor, key, metered.as_ref());
+    // Its compaction passes spend under the attempt's scope too. An agent
+    // whose profile names `self` writes them as itself (FIX 4465), as it
+    // would on any other host.
+    let mut compaction = provider.compaction(caller, key, metered.as_ref());
     // The host's root key signs a leader's subproject spawn (OF-389): the
     // managed issuer, else the one the configured host secret derives.
     let derived = match server.managed_issuer {
@@ -1307,6 +1312,16 @@ fn park_on_wait(
         now_ms,
     )?;
     Ok(())
+}
+
+/// Where a pumped run's caller sits, as its provenance gives it (FIX 4465):
+/// the attempt was leased by this host's own pump and runs here under the
+/// agent's own Grant, so its caller is this host, on this device. It is the
+/// read ceiling the run's reader children and its compaction home read
+/// under, as every run's reads take their caller's place; it gates no
+/// capability, and an agent is served the same wherever it lives.
+fn pump_caller(actor: WriteActor) -> CompactionHostBinding {
+    bind_compaction_caller(actor, CallerLocality::OnDevice, None)
 }
 
 fn held(running: &Mutex<HashSet<AttemptId>>) -> MutexGuard<'_, HashSet<AttemptId>> {

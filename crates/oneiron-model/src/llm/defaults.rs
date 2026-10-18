@@ -91,14 +91,14 @@ impl SelfCompactionSource {
     }
 }
 
-/// The self-compaction row: the context a self-written compaction reads, the
-/// tier it prefers and the widest destination its call may be served at.
-/// A delegated edit may not widen `locality`, as with every other row.
+/// The self-compaction row: the context a self-written compaction reads and
+/// the widest destination its call may be served at. The model is the
+/// agent's own compaction model, else the house's. A delegated edit may not
+/// widen `locality`, as with every other row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SelfCompactionDefault {
     pub source: SelfCompactionSource,
-    pub tier: ModelTierRef,
     pub locality: ModelLocality,
 }
 
@@ -174,7 +174,6 @@ impl PurposeDefaultTable {
                 .values()
                 .chain(self.voice.values())
                 .any(|row| row.tier.as_str().trim().is_empty())
-            || self.self_compaction.tier.as_str().trim().is_empty()
             || locality_rank(self.purposes[&CallPurpose::Extraction].locality)
                 > locality_rank(self.extraction_max_locality)
         {
