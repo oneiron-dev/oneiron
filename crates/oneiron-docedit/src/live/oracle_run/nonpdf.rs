@@ -18,8 +18,8 @@ use super::suite::{derive, noop};
 use super::variants::{self, AUTHORS, COMMENT_REL, COMMENT_TEXT, CommentSlide};
 use crate::deck::DeckView;
 use crate::edit::NoAssets;
-use crate::live::DeckOp;
 use crate::live::deck_export::StepOutcome;
+use crate::live::{DeckOp, TextBody};
 use crate::retained_opc::Package;
 
 /// The commented variant's no-op, then a text edit and a geometry edit of
@@ -66,38 +66,7 @@ pub(super) fn comments(
         vec![comment.clone()],
     )?;
     let anchor = edits::anchor(&commented.deck)?;
-    let body = commented
-        .deck
-        .texts
-        .get(&anchor.shape)
-        .ok_or("the commented shape has no text")?;
-    let (edited, line) = appended(body, EDIT_MARK)?;
-    let geometry = shifted(commented.deck.nodes[&anchor.shape].geometry);
-    let cases = [
-        (
-            "set_text",
-            DeckOp::SetText {
-                node: anchor.shape,
-                body: edited,
-            },
-            OfficeCheck::Text {
-                slide: 1,
-                contains: line,
-            },
-        ),
-        (
-            "set_geometry",
-            DeckOp::SetGeometry {
-                node: anchor.shape,
-                geometry,
-            },
-            OfficeCheck::Shape {
-                slide: 1,
-                id: anchor.native,
-                offset: geometry.offset,
-            },
-        ),
-    ];
+    let cases = comment_edits(&commented, &anchor)?;
     for (name, op, check) in cases {
         let id = format!("{}.{name}", commented.id);
         let exported = match export(&commented, &[op], assets) {
@@ -126,6 +95,46 @@ pub(super) fn comments(
         })?;
     }
     Ok(())
+}
+
+/// A text edit and a geometry edit of the commented slide's text shape,
+/// each with the check PowerPoint owes it.
+fn comment_edits(
+    commented: &Deck,
+    anchor: &Anchor,
+) -> Res<[(&'static str, DeckOp, OfficeCheck); 2]> {
+    let body = commented
+        .deck
+        .texts
+        .get(&anchor.shape)
+        .ok_or("the commented shape has no text")?;
+    let (edited, line) = appended(body, EDIT_MARK)?;
+    let geometry = shifted(commented.deck.nodes[&anchor.shape].geometry);
+    Ok([
+        (
+            "set_text",
+            DeckOp::SetText {
+                node: anchor.shape,
+                body: edited,
+            },
+            OfficeCheck::Text {
+                slide: 1,
+                contains: line,
+            },
+        ),
+        (
+            "set_geometry",
+            DeckOp::SetGeometry {
+                node: anchor.shape,
+                geometry,
+            },
+            OfficeCheck::Shape {
+                slide: 1,
+                id: anchor.native,
+                offset: geometry.offset,
+            },
+        ),
+    ])
 }
 
 /// Steps 2 and 3 for an edit over a step-7 fixture: the comment and the
@@ -199,6 +208,42 @@ struct BuildCase {
     may_refuse: bool,
 }
 
+/// The three text edits of the built shape.
+const BUILD_CASES: [BuildCase; 3] = [
+    BuildCase {
+        name: "retext",
+        range: (0, 0),
+        may_refuse: false,
+    },
+    BuildCase {
+        name: "append_paragraph",
+        range: (0, 0),
+        may_refuse: true,
+    },
+    BuildCase {
+        name: "prepend_paragraph",
+        range: (1, 1),
+        may_refuse: true,
+    },
+];
+
+/// The built shape's text after `case`: its first paragraph's text
+/// extended, or a paragraph added after or before the built one.
+fn rebuilt(case: &BuildCase, original: &TextBody, ids: &mut Ids) -> Res<TextBody> {
+    if case.name == "retext" {
+        return Ok(appended(original, EDIT_MARK)?.0);
+    }
+    let mut changed = original.clone();
+    let paragraph = body(ids, "Oracle paragraph").paragraphs.remove(0);
+    let at = if case.name == "prepend_paragraph" {
+        0
+    } else {
+        changed.paragraphs.len()
+    };
+    changed.paragraphs.insert(at, paragraph);
+    Ok(changed)
+}
+
 /// The animated variant's no-op, then three text edits of the built shape:
 /// within its paragraph (the build holds), a paragraph after it, and a
 /// paragraph before it (the build is remapped, or the export refuses).
@@ -223,39 +268,9 @@ pub(super) fn animation(run: &mut Run, animated: &Deck, typed: Option<&[Vec<Stri
         .get(&anchor.shape)
         .ok_or("the animated shape has no text")?;
     let mut ids = Ids::above(&animated.deck);
-    let cases = [
-        BuildCase {
-            name: "retext",
-            range: (0, 0),
-            may_refuse: false,
-        },
-        BuildCase {
-            name: "append_paragraph",
-            range: (0, 0),
-            may_refuse: true,
-        },
-        BuildCase {
-            name: "prepend_paragraph",
-            range: (1, 1),
-            may_refuse: true,
-        },
-    ];
-    for case in cases {
+    for case in &BUILD_CASES {
         let id = format!("{}.{}", animated.id, case.name);
-        let changed = match case.name {
-            "retext" => appended(original, EDIT_MARK)?.0,
-            name => {
-                let mut changed = original.clone();
-                let paragraph = body(&mut ids, "Oracle paragraph").paragraphs.remove(0);
-                let at = if name == "prepend_paragraph" {
-                    0
-                } else {
-                    changed.paragraphs.len()
-                };
-                changed.paragraphs.insert(at, paragraph);
-                changed
-            }
-        };
+        let changed = rebuilt(case, original, &mut ids)?;
         let op = DeckOp::SetText {
             node: anchor.shape,
             body: changed,

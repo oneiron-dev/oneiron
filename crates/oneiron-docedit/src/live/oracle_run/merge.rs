@@ -109,78 +109,7 @@ pub(super) fn cases(
 fn prepare(run: &mut Run, base: &Deck, anchor: &Anchor) -> Res<Prepared> {
     let mut ids = Ids::above(&base.deck);
     let s = anchor.slide;
-    let (group, child, second_child, free, slide2, second) = (
-        ids.mint(),
-        ids.mint(),
-        ids.mint(),
-        ids.mint(),
-        ids.mint(),
-        ids.mint(),
-    );
-    let ops = vec![
-        add(group, s, NodeKind::Group, "Merge group", None, None),
-        add(
-            child,
-            group,
-            NodeKind::Shape,
-            "Group child",
-            Some(Preset::Rect),
-            None,
-        ),
-        DeckOp::SetGeometry {
-            node: child,
-            geometry: frame(914_400, 2_743_200, 1_828_800, 685_800),
-        },
-        DeckOp::SetText {
-            node: child,
-            body: body(&mut ids, "Group child"),
-        },
-        add(
-            second_child,
-            group,
-            NodeKind::Shape,
-            "Group second",
-            Some(Preset::Ellipse),
-            None,
-        ),
-        DeckOp::SetGeometry {
-            node: second_child,
-            geometry: frame(3_200_400, 2_743_200, 914_400, 685_800),
-        },
-        add(
-            free,
-            s,
-            NodeKind::Shape,
-            "Free shape",
-            Some(Preset::Rect),
-            None,
-        ),
-        DeckOp::SetGeometry {
-            node: free,
-            geometry: frame(914_400, 4_572_000, 2_743_200, 685_800),
-        },
-        DeckOp::SetText {
-            node: free,
-            body: body(&mut ids, "Free shape"),
-        },
-        DeckOp::AddSlide { id: Some(slide2) },
-        add(
-            second,
-            slide2,
-            NodeKind::Shape,
-            "Second slide shape",
-            Some(Preset::Rect),
-            None,
-        ),
-        DeckOp::SetGeometry {
-            node: second,
-            geometry: frame(914_400, 914_400, 4_572_000, 914_400),
-        },
-        DeckOp::SetText {
-            node: second,
-            body: body(&mut ids, "Second slide"),
-        },
-    ];
+    let (ops, nodes) = base_ops(&mut ids, s);
     let mut head = base.deck.clone();
     apply_all(&mut head, &ops).map_err(|error| format!("it does not apply: {error}"))?;
     let outcome = project(
@@ -225,12 +154,106 @@ fn prepare(run: &mut Run, base: &Deck, anchor: &Anchor) -> Res<Prepared> {
         head,
         package,
         slide: s,
-        slide2,
-        group,
-        child,
-        free,
+        slide2: nodes.slide2,
+        group: nodes.group,
+        child: nodes.child,
+        free: nodes.free,
         defects,
     })
+}
+
+/// The merge base's own nodes.
+struct BaseNodes {
+    group: NodeId,
+    child: NodeId,
+    free: NodeId,
+    slide2: NodeId,
+}
+
+/// The operations that build the merge base on slide `s`: a group of two
+/// (one with text), a free text shape, and a second slide with a text shape.
+fn base_ops(ids: &mut Ids, s: NodeId) -> (Vec<DeckOp>, BaseNodes) {
+    let (group, child, second_child, free, slide2, second) = (
+        ids.mint(),
+        ids.mint(),
+        ids.mint(),
+        ids.mint(),
+        ids.mint(),
+        ids.mint(),
+    );
+    let ops = vec![
+        add(group, s, NodeKind::Group, "Merge group", None, None),
+        add(
+            child,
+            group,
+            NodeKind::Shape,
+            "Group child",
+            Some(Preset::Rect),
+            None,
+        ),
+        DeckOp::SetGeometry {
+            node: child,
+            geometry: frame(914_400, 2_743_200, 1_828_800, 685_800),
+        },
+        DeckOp::SetText {
+            node: child,
+            body: body(ids, "Group child"),
+        },
+        add(
+            second_child,
+            group,
+            NodeKind::Shape,
+            "Group second",
+            Some(Preset::Ellipse),
+            None,
+        ),
+        DeckOp::SetGeometry {
+            node: second_child,
+            geometry: frame(3_200_400, 2_743_200, 914_400, 685_800),
+        },
+        add(
+            free,
+            s,
+            NodeKind::Shape,
+            "Free shape",
+            Some(Preset::Rect),
+            None,
+        ),
+        DeckOp::SetGeometry {
+            node: free,
+            geometry: frame(914_400, 4_572_000, 2_743_200, 685_800),
+        },
+        DeckOp::SetText {
+            node: free,
+            body: body(ids, "Free shape"),
+        },
+        DeckOp::AddSlide { id: Some(slide2) },
+        add(
+            second,
+            slide2,
+            NodeKind::Shape,
+            "Second slide shape",
+            Some(Preset::Rect),
+            None,
+        ),
+        DeckOp::SetGeometry {
+            node: second,
+            geometry: frame(914_400, 914_400, 4_572_000, 914_400),
+        },
+        DeckOp::SetText {
+            node: second,
+            body: body(ids, "Second slide"),
+        },
+    ];
+    (
+        ops,
+        BaseNodes {
+            group,
+            child,
+            free,
+            slide2,
+        },
+    )
 }
 
 fn fork(head: &LiveDeck, side: &str, ops: Vec<DeckOp>) -> DeckFork {

@@ -108,10 +108,6 @@ pub(super) fn plan(
 /// The mutations that create, move or remove nodes.
 fn born(recipe: Recipe, subject: &Subject<'_>, ids: &mut Ids, assets: &OracleAssets) -> Res<Plan> {
     let (s, t) = (subject.anchor.slide, subject.anchor.shape);
-    let markup = |contains: &str| OfficeCheck::Markup {
-        slide: 1,
-        contains: contains.to_owned(),
-    };
     let n = ids.mint();
     Ok(match recipe {
         Recipe::AddShape => Plan::of(
@@ -142,86 +138,8 @@ fn born(recipe: Recipe, subject: &Subject<'_>, ids: &mut Ids, assets: &OracleAss
                 markup("prst=\"ellipse\""),
             ],
         ),
-        Recipe::AddGroup => {
-            let (one, two) = (ids.mint(), ids.mint());
-            Plan::of(
-                vec![
-                    add(n, s, NodeKind::Group, "Oracle group", None, None),
-                    add(
-                        one,
-                        n,
-                        NodeKind::Shape,
-                        "Group member one",
-                        Some(Preset::Rect),
-                        None,
-                    ),
-                    DeckOp::SetGeometry {
-                        node: one,
-                        geometry: frame(914_400, 3_657_600, 1_828_800, 685_800),
-                    },
-                    DeckOp::SetText {
-                        node: one,
-                        body: body(ids, "Grouped shape"),
-                    },
-                    add(
-                        two,
-                        n,
-                        NodeKind::Shape,
-                        "Group member two",
-                        Some(Preset::Triangle),
-                        None,
-                    ),
-                    DeckOp::SetGeometry {
-                        node: two,
-                        geometry: frame(3_200_400, 3_657_600, 914_400, 685_800),
-                    },
-                ],
-                Scope::SLIDE,
-                vec![
-                    OfficeCheck::Text {
-                        slide: 1,
-                        contains: "Grouped shape".to_owned(),
-                    },
-                    markup("grpSp>"),
-                ],
-            )
-        }
-        Recipe::AddConnector => {
-            let target = ids.mint();
-            Plan::of(
-                vec![
-                    add(
-                        target,
-                        s,
-                        NodeKind::Shape,
-                        "Connector target",
-                        Some(Preset::Rect),
-                        None,
-                    ),
-                    DeckOp::SetGeometry {
-                        node: target,
-                        geometry: frame(5_486_400, 3_657_600, 1_828_800, 914_400),
-                    },
-                    add(
-                        n,
-                        s,
-                        NodeKind::Connector,
-                        "Oracle connector",
-                        None,
-                        Some(NodePayload::Connector {
-                            preset: None,
-                            start: Some(ConnectorEnd { node: t, site: 2 }),
-                            end: Some(ConnectorEnd {
-                                node: target,
-                                site: 0,
-                            }),
-                        }),
-                    ),
-                ],
-                Scope::SLIDE,
-                vec![markup("cxnSp>"), markup("stCxn")],
-            )
-        }
+        Recipe::AddGroup => group(n, s, ids),
+        Recipe::AddConnector => connector(n, s, t, ids),
         _ => return carried(recipe, subject, n, ids, assets),
     })
 }
@@ -238,10 +156,6 @@ fn carried(
     let place = DeckOp::SetGeometry {
         node: n,
         geometry: frame(914_400, 3_657_600, 3_657_600, 1_097_280),
-    };
-    let markup = |contains: &str| OfficeCheck::Markup {
-        slide: 1,
-        contains: contains.to_owned(),
     };
     Ok(match recipe {
         Recipe::AddTable => Plan::of(
@@ -332,35 +246,7 @@ fn listed(recipe: Recipe, subject: &Subject<'_>, n: NodeId, ids: &mut Ids) -> Re
         .map(Paragraph::text)
         .unwrap_or_default();
     Ok(match recipe {
-        Recipe::AddSlide => {
-            let shape = ids.mint();
-            Plan::of(
-                vec![
-                    DeckOp::AddSlide { id: Some(n) },
-                    add(
-                        shape,
-                        n,
-                        NodeKind::Shape,
-                        "Live-born slide shape",
-                        Some(Preset::Rect),
-                        None,
-                    ),
-                    DeckOp::SetGeometry {
-                        node: shape,
-                        geometry: frame(914_400, 914_400, 5_486_400, 914_400),
-                    },
-                    DeckOp::SetText {
-                        node: shape,
-                        body: body(ids, "Live-born slide"),
-                    },
-                ],
-                Scope::LISTED,
-                vec![OfficeCheck::Text {
-                    slide: 2,
-                    contains: "Live-born slide".to_owned(),
-                }],
-            )
-        }
+        Recipe::AddSlide => new_slide(n, ids),
         Recipe::MoveShape => {
             let top = deck.nodes[&s].children.len() + 1;
             Plan::of(
@@ -428,4 +314,126 @@ fn listed(recipe: Recipe, subject: &Subject<'_>, n: NodeId, ids: &mut Ids) -> Re
             removes_shape: true,
         },
     })
+}
+
+/// A group of two live-born shapes, one with text.
+fn group(n: NodeId, s: NodeId, ids: &mut Ids) -> Plan {
+    let (one, two) = (ids.mint(), ids.mint());
+    Plan::of(
+        vec![
+            add(n, s, NodeKind::Group, "Oracle group", None, None),
+            add(
+                one,
+                n,
+                NodeKind::Shape,
+                "Group member one",
+                Some(Preset::Rect),
+                None,
+            ),
+            DeckOp::SetGeometry {
+                node: one,
+                geometry: frame(914_400, 3_657_600, 1_828_800, 685_800),
+            },
+            DeckOp::SetText {
+                node: one,
+                body: body(ids, "Grouped shape"),
+            },
+            add(
+                two,
+                n,
+                NodeKind::Shape,
+                "Group member two",
+                Some(Preset::Triangle),
+                None,
+            ),
+            DeckOp::SetGeometry {
+                node: two,
+                geometry: frame(3_200_400, 3_657_600, 914_400, 685_800),
+            },
+        ],
+        Scope::SLIDE,
+        vec![
+            OfficeCheck::Text {
+                slide: 1,
+                contains: "Grouped shape".to_owned(),
+            },
+            markup("grpSp>"),
+        ],
+    )
+}
+
+/// A live-born connector glued from the text shape to a live-born shape.
+fn connector(n: NodeId, s: NodeId, t: NodeId, ids: &mut Ids) -> Plan {
+    let target = ids.mint();
+    Plan::of(
+        vec![
+            add(
+                target,
+                s,
+                NodeKind::Shape,
+                "Connector target",
+                Some(Preset::Rect),
+                None,
+            ),
+            DeckOp::SetGeometry {
+                node: target,
+                geometry: frame(5_486_400, 3_657_600, 1_828_800, 914_400),
+            },
+            add(
+                n,
+                s,
+                NodeKind::Connector,
+                "Oracle connector",
+                None,
+                Some(NodePayload::Connector {
+                    preset: None,
+                    start: Some(ConnectorEnd { node: t, site: 2 }),
+                    end: Some(ConnectorEnd {
+                        node: target,
+                        site: 0,
+                    }),
+                }),
+            ),
+        ],
+        Scope::SLIDE,
+        vec![markup("cxnSp>"), markup("stCxn")],
+    )
+}
+
+fn markup(contains: &str) -> OfficeCheck {
+    OfficeCheck::Markup {
+        slide: 1,
+        contains: contains.to_owned(),
+    }
+}
+
+/// A live-born slide holding one live-born text shape.
+fn new_slide(n: NodeId, ids: &mut Ids) -> Plan {
+    let shape = ids.mint();
+    Plan::of(
+        vec![
+            DeckOp::AddSlide { id: Some(n) },
+            add(
+                shape,
+                n,
+                NodeKind::Shape,
+                "Live-born slide shape",
+                Some(Preset::Rect),
+                None,
+            ),
+            DeckOp::SetGeometry {
+                node: shape,
+                geometry: frame(914_400, 914_400, 5_486_400, 914_400),
+            },
+            DeckOp::SetText {
+                node: shape,
+                body: body(ids, "Live-born slide"),
+            },
+        ],
+        Scope::LISTED,
+        vec![OfficeCheck::Text {
+            slide: 2,
+            contains: "Live-born slide".to_owned(),
+        }],
+    )
 }

@@ -374,6 +374,32 @@ pub(super) struct Subject<'a> {
     pub(super) probes: &'a BTreeMap<String, ProbeSite>,
 }
 
+/// Where a probe must sit after the export: its holder's slide part and,
+/// for the shape probe, the holder's native id; `None` when the probe goes
+/// with its removed holder.
+fn expected_site(
+    subject: &Subject<'_>,
+    outcome: &ExportOutcome,
+    name: &str,
+    removed: bool,
+) -> Res<Option<(String, Option<u32>)>> {
+    let shape = name == SHAPE_PROBE;
+    if shape && removed {
+        return Ok(None);
+    }
+    let holder = if shape {
+        subject.anchor.shape
+    } else {
+        subject.anchor.slide
+    };
+    let bound = outcome
+        .bindings
+        .get(&holder)
+        .ok_or_else(|| format!("probe {name}'s holder has no binding in the export"))?;
+    let owner = bound.native_id.filter(|_| shape);
+    Ok(Some((bound.slide_part.clone(), owner)))
+}
+
 /// Every probe of the baseline sits where its holder now is, byte for byte,
 /// and goes only with a removed holder.
 fn probes_kept(
@@ -384,26 +410,10 @@ fn probes_kept(
 ) -> Res<()> {
     let after = checks::probes(output)?;
     for (name, site) in subject.probes {
-        let holder = if name == SHAPE_PROBE {
-            subject.anchor.shape
-        } else {
-            subject.anchor.slide
-        };
-        let expected = if name == SHAPE_PROBE && removed {
-            None
-        } else {
-            let bound = outcome
-                .bindings
-                .get(&holder)
-                .ok_or_else(|| format!("probe {name}'s holder has no binding in the export"))?;
-            let owner = if name == SHAPE_PROBE {
-                bound.native_id
-            } else {
-                None
-            };
-            Some((bound.slide_part.clone(), owner))
-        };
-        match (expected, after.get(name)) {
+        match (
+            expected_site(subject, outcome, name, removed)?,
+            after.get(name),
+        ) {
             (None, None) => {}
             (None, Some(found)) => {
                 return Err(format!(
@@ -412,26 +422,25 @@ fn probes_kept(
                 ));
             }
             (Some(_), None) => return Err(format!("probe {name} was dropped")),
-            (Some((part, owner)), Some(found)) => {
-                if found.part != part || found.owner != owner {
-                    return Err(format!(
-                        "probe {name} was displaced from {part}/{owner:?} to {}/{:?}",
-                        found.part, found.owner
-                    ));
-                }
-                if found.markup != site.markup {
-                    return Err(format!("probe {name} was rewritten as {}", found.markup));
-                }
+            (Some((part, owner)), Some(found)) if found.part != part || found.owner != owner => {
+                return Err(format!(
+                    "probe {name} was displaced from {part}/{owner:?} to {}/{:?}",
+                    found.part, found.owner
+                ));
             }
+            (Some(_), Some(found)) if found.markup != site.markup => {
+                return Err(format!("probe {name} was rewritten as {}", found.markup));
+            }
+            (Some(_), Some(_)) => {}
         }
     }
-    if let Some(extra) = after
+    match after
         .keys()
         .find(|name| !subject.probes.contains_key(*name))
     {
-        return Err(format!("probe {extra} appeared"));
+        Some(extra) => Err(format!("probe {extra} appeared")),
+        None => Ok(()),
     }
-    Ok(())
 }
 
 /// One core mutation, end to end (steps 2, 3 and 5; step 6 in PowerPoint).

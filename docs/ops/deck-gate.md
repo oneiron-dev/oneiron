@@ -9,6 +9,12 @@ on an `OracleReceipt` for `pptx-live-v1` with `clean: true` and all eight steps
 and stamps it with the server's projector version. A receipt from another
 projector does not count, so rerun the whole set after every projector bump.
 
+Nothing in the run names a projector version by hand. `deck-gate-cases` reads
+`PROJECTOR_VERSION` from the live crate it was built from, so a run binds
+whatever projector main carries at the run's `$sha`. The run manifest records
+it (`projector` in `manifest.json`), and `plan`, the `## DECK-GATE` line and
+`gate-evidence.json` repeat it.
+
 The run has two halves, because the Mac mini (`vel`, the only host with
 PowerPoint) cannot build the workspace:
 
