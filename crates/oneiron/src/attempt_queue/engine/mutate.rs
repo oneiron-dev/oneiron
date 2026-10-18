@@ -579,7 +579,7 @@ impl AttemptQueue<'_> {
 
         if !expired_candidates.is_empty() {
             let mut wtxn = self.store.env.write_txn()?;
-            let mut expired_landings = Vec::new();
+            let mut lost_leases = Vec::new();
             for id in expired_candidates {
                 let Some(raw_record) = self.store.attempt_records.get(&wtxn, id.as_bytes())? else {
                     mark_rechecked_candidate_not_running(&mut report);
@@ -615,6 +615,7 @@ impl AttemptQueue<'_> {
                         report.pending += 1;
                         report.stale_requeued += 1;
                         report.increment_retry_reason(AttemptQueueRetryReason::LeaseTimeout);
+                        lost_leases.push((record.id, record.attempt_count));
                     }
                     // A landing whose lease actually expired cannot be requeued
                     // as ordinary work — it is mid-flight, not pre-flight — and
@@ -654,7 +655,7 @@ impl AttemptQueue<'_> {
                         mark_rechecked_candidate_not_running(&mut report);
                         report.done += 1;
                         report.landing_force_cancelled += 1;
-                        expired_landings.push((record.id, record.attempt_count));
+                        lost_leases.push((record.id, record.attempt_count));
                     }
                     AttemptState::Leased | AttemptState::Landing => {}
                     AttemptState::Queued | AttemptState::Paused | AttemptState::Scheduled => {
@@ -685,9 +686,9 @@ impl AttemptQueue<'_> {
             }
             wtxn.commit()?;
             self.store.notify_attempt_observers();
-            // Committed: the step each expired landing was running stops
-            // (FIX 600).
-            for (id, generation) in expired_landings {
+            // Committed: the step each reclaimed lease or expired landing was
+            // running stops (FIX 600).
+            for (id, generation) in lost_leases {
                 crate::engine_executor::stop_attempt_step(self.vault, id, generation);
             }
         }
