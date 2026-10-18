@@ -670,6 +670,17 @@ TASK_DECISION_ROWS = ('tasks.create', 'tasks.update')
 # engine never waits for one on the server's runtime.
 TASK_PRODUCER_ROWS = ('tasks.accept', 'vault.projects.route_tradeoff',
                       'vault.artifacts.body.fork.merge', 'vault.artifacts.body.proposal.settle')
+# Rule 5 (FIX 2166): plain memory rows one branch of whose engine call is a
+# task-work producer, each keyed to the predicate over the raw request that
+# says the request takes that branch: describe(handle/after) answers a highway
+# handle's status, whose entry admits. The served dispatch and its MCP
+# dispatch await a turn for such a request and bind it, as for a producer row.
+TASK_PRODUCER_BRANCHES = {'describe': 'oneiron::task_verb::sdk::describe_takes_task_work_turn'}
+
+def task_producer_branch_turns():
+    'The MCP turn test for each producer branch, after the producer rows.'
+    return ''.join(f' || (tool == {json.dumps(name)} && {predicate}(&input))'
+                   for name, predicate in TASK_PRODUCER_BRANCHES.items())
 
 def takes_task_work_turn(row):
     'Whether the served doors await a task-work turn for this row and bind it.'
@@ -705,9 +716,15 @@ def mcp_input_dispatch(row):
         body += ('let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n'
                  'if !auth.is_owner_grade() { return Err(McpGatewayError::new(-32020, "forbidden", "full-vault export requires owner authority")); }\n'
                  f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + decode +
-                 'let proof = auth.verified_slip().ok_or_else(|| McpGatewayError::new(-32020, "forbidden", "full-vault export requires verified owner authority"))?;\n'
-                 '// The person path lists through its surface; the host path beside its archive.\n'
-                 'let output = if proof.claims().holder_ref == "host" { server.vault.export_with_verified_host_owner_listing(&input, proof, actor.locality()).map(|(output, listed)| { served.extend(listed); output }) } else { memory.export_with_verified_owner(&input, proof) }.map_err(mcp_facade_error)?;\n')
+                 '// A host credential resolves first (FIX 2222): a hosted operator root gets the typed refusal, and a self-hosted root or the explicit dev mode exports as the owner it acts as.\n'
+                 'let action = crate::api::host_action::host_action_of(server.vault(), auth).transpose().map_err(|error| mcp_engine_error("host action failed", error))?;\n'
+                 '// The person path lists through its surface; the host paths beside their archive. A slip keeps its own path; a host action with no slip (the dev mode) takes the host-action export.\n'
+                 'let output = match (auth.verified_slip(), action) {\n'
+                 '    (Some(proof), _) if proof.claims().holder_ref == "host" => server.vault.export_with_verified_host_owner_listing(&input, proof, actor.locality()).map(|(output, listed)| { served.extend(listed); output }),\n'
+                 '    (Some(proof), _) => memory.export_with_verified_owner(&input, proof),\n'
+                 '    (None, Some(action)) => server.vault.export_with_host_action_listing(&input, &action, actor.locality()).map(|(output, listed)| { served.extend(listed); output }),\n'
+                 '    (None, None) => return Err(McpGatewayError::new(-32020, "forbidden", "full-vault export requires verified owner authority")),\n'
+                 '}.map_err(mcp_facade_error)?;\n')
     elif row.get('host_door'):
         # A host door answers from the server's own state, under the same
         # credential the REST facade passes it.
@@ -864,7 +881,7 @@ async fn execute_agent_verb_listing(
     // takes its one turn here, for MCP and code mode alike, binds it on the
     // surface its row runs on and holds it through its hooks and its row.
     let task_work_turn = if oneiron::task_verb::sdk::AgentVerb::from_name(tool).is_some_and(oneiron::task_verb::sdk::AgentVerb::is_task_work)
-        || matches!(tool, ''' + ' | '.join(json.dumps(name) for name in TASK_PRODUCER_ROWS) + ''') {
+        || matches!(tool, ''' + ' | '.join(json.dumps(name) for name in TASK_PRODUCER_ROWS) + ''')''' + task_producer_branch_turns() + ''' {
         Some(Arc::new(server.admit_task_work(actor.actor_ref).await))
     } else {
         None
@@ -1183,18 +1200,34 @@ def facade_dispatch(facade_rows):
                 }}
                 let value = input?;
                 oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &value)?;
-                let proof = auth.verified_slip().ok_or_else(|| FacadeApiError::forbidden("full-vault export requires verified owner authority", ["Present a verified owner credential."]))?;
+                // A host credential resolves first (FIX 2222): a hosted
+                // operator root gets the typed refusal, and a self-hosted root
+                // or the explicit dev mode exports as the owner it acts as.
+                let action = crate::api::host_action::facade_host_action(server, auth)?;
+                let proof = auth.verified_slip();
+                if proof.is_none() && action.is_none() {{
+                    return Err(FacadeApiError::forbidden("full-vault export requires verified owner authority", ["Present a verified owner credential."]));
+                }}
                 let hooks = facade_hooks_pre(server, call, {json.dumps(name)}, value).await?;
                 let input: oneiron::memory::ExportOptions = facade_input(hooks.args.clone())?;
                 // Beside the archive, the rows its snapshot read past the
-                // caller's locality: both owner paths list them.
-                let (output, rows) = if proof.claims().holder_ref == "host" {{
-                    server.vault.export_with_verified_host_owner_listing(&input, proof, auth.locality())?
-                }} else {{
-                    let (actor, class) = facade_actor(server, auth)?;
-                    let producers = oneiron::memory::ProducerRows::default();
-                    let output = server.vault.memory(actor, class).at(auth.locality()).listing_producers(&producers).export_with_verified_owner(&input, proof)?;
-                    (output, producers.take())
+                // caller's locality: every owner path lists them. A slip keeps
+                // its own path; a host action with no slip (the dev mode)
+                // takes the engine's host-action export.
+                let (output, rows) = match (proof, action) {{
+                    (Some(proof), _) if proof.claims().holder_ref == "host" => {{
+                        server.vault.export_with_verified_host_owner_listing(&input, proof, auth.locality())?
+                    }}
+                    (Some(proof), _) => {{
+                        let (actor, class) = facade_actor(server, auth)?;
+                        let producers = oneiron::memory::ProducerRows::default();
+                        let output = server.vault.memory(actor, class).at(auth.locality()).listing_producers(&producers).export_with_verified_owner(&input, proof)?;
+                        (output, producers.take())
+                    }}
+                    (None, Some(action)) => server.vault.export_with_host_action_listing(&input, &action, auth.locality())?,
+                    (None, None) => {{
+                        return Err(FacadeApiError::forbidden("full-vault export requires verified owner authority", ["Present a verified owner credential."]));
+                    }}
                 }};
                 let output = serde_json::to_value(output).map_err(|_| FacadeApiError::new(
                     StatusCode::INTERNAL_SERVER_ERROR, MEMORY_CODE_INTERNAL,
@@ -1247,10 +1280,22 @@ def facade_dispatch(facade_rows):
             room_guard += f'facade_outside_room_turn(call, "{name}")?;'
         elif readables:
             room_guard += f'facade_room_turn_serves(call, "{name}", oneiron::memory::RoomTurnHandle::serves("{name}"))?;'
+        branch_turn = ''
         for readable in readables:
             if readable == 'rows':
-                result = (f'facade_readable_task_rows(&server.vault, auth, oneiron::task_verb::sdk::{method}(&credential_memory(&server.vault, Some(auth), actor, class).at(auth.locality()).listing_producers(&producers), facade_input(value)?)?)?;\n'
+                memory = 'credential_memory(&server.vault, Some(auth), actor, class).at(auth.locality()).listing_producers(&producers)'
+                result = (f'facade_readable_task_rows(&server.vault, auth, oneiron::task_verb::sdk::{method}(&{memory}, facade_input(value)?)?)?;\n'
                           'let rows = Some(producers.take());')
+                if name in TASK_PRODUCER_BRANCHES:
+                    # Rule 5 (FIX 2166): a request taking the producer branch
+                    # runs on the turn the dispatch awaited, held until its
+                    # engine call returns.
+                    branch_turn = (f'let turn = if {TASK_PRODUCER_BRANCHES[name]}(&value) {{ '
+                                   'Some(Arc::new(server.admit_task_work(actor).await)) } else { None };\n')
+                    result = (f'{{ let memory = {memory}; '
+                              'let memory = match turn { Some(turn) => memory.with_task_work_turn(turn), None => memory };\n'
+                              f'facade_readable_task_rows(&server.vault, auth, oneiron::task_verb::sdk::{method}(&memory, facade_input(value)?)?)? }};\n'
+                              'let rows = Some(producers.take());')
             else:
                 ref_guard += f'facade_admit_readable_ref(&server.vault, auth, &value, "{readable}")?;'
         # A server door runs the verb with the host's execution inputs, off the
@@ -1288,7 +1333,7 @@ def facade_dispatch(facade_rows):
         {room_guard}{actor}
         let hooks = facade_hooks_pre(server, call, "{name}", value).await?;
         let value = hooks.args.clone(); {self_branch}{ref_guard}
-        {producers}{output}{landed}
+        {branch_turn}{producers}{output}{landed}
         Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows }})
         }}\n'''
             continue

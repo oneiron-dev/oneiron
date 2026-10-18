@@ -309,6 +309,24 @@ pub fn describe_handle_status(
     Ok(super::TaskDescription::Status { receipt })
 }
 
+/// Whether `describe` over the raw request `input` reaches
+/// [`describe_handle_status`] (Rule 5, FIX 2166): the highway's status is a
+/// task-work producer, so the served doors await a task-work turn for this
+/// branch and bind it, and the engine never waits for one on the server's
+/// runtime. `self`, `vault`, a card key and a fold each answer first, as in
+/// the row's call. A request that does not decode takes no turn; the
+/// dispatch refuses it.
+#[must_use]
+pub fn describe_takes_task_work_turn(input: &serde_json::Value) -> bool {
+    DescribeRequest::deserialize(input).is_ok_and(|request| {
+        !request.self_target
+            && !request.vault
+            && request.key.is_none()
+            && request.fold.is_none()
+            && (request.handle.is_some() || request.after.is_some())
+    })
+}
+
 /// The rows one describe names by id: its task, else its handle's truth
 /// row (the tray row, the TASK or the ask group). A continuation of its
 /// answer is released only while they may leave.
@@ -348,6 +366,11 @@ pub struct TaskCreateRequest {
     /// The TASK's absolute expiry.
     #[serde(default)]
     pub ttl: Option<super::TaskTtl>,
+    /// The parent TASK this one files under (DOOR-113), by short-id ref or
+    /// 32-hex id. The nesting matrix decides, so a Task nests under a
+    /// Milestone; absent is a root.
+    #[serde(default)]
+    pub parent_ref: Option<String>,
 }
 
 /// The create spec one `tasks.create` request names, owned by the
@@ -357,6 +380,11 @@ pub fn task_create_spec(
     memory: &Memory<'_>,
     input: TaskCreateRequest,
 ) -> MemoryResult<super::TaskCreateSpec> {
+    let parent_ref = input
+        .parent_ref
+        .as_deref()
+        .map(|reference| crate::memory::resolve_entity_ref(memory.vault(), reference))
+        .transpose()?;
     let spec = super::TaskCreateSpec::new(
         crate::msgpack_value_from_json(&input.spec)?,
         input.label,
@@ -369,6 +397,10 @@ pub fn task_create_spec(
     };
     let spec = match input.ttl {
         Some(ttl) => spec.with_ttl(ttl),
+        None => spec,
+    };
+    let spec = match parent_ref {
+        Some(parent_ref) => spec.with_parent_ref(parent_ref),
         None => spec,
     };
     match (input.intent_key, input.brief) {
@@ -537,6 +569,7 @@ pub use super::sdk_skill_execution::*;
 pub use super::sdk_shared::*;
 pub use super::sdk_shared_members::*;
 pub use super::sdk_shared_policy::*;
+pub use super::sdk_support_grant::*;
 pub use super::sdk_trusted_contact::*;
 pub use super::sdk_voice_bank::*;
 pub use super::sdk_workflows::*;

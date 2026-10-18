@@ -51,7 +51,7 @@ pub const POLICY_PATTERN_RULES_MAX: usize = 256;
 
 /// What a matching pattern is allowed to do. See the module doc for why
 /// [`Self::Escalate`] is the default.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PolicyPatternRole {
     /// Trigger the safeguard model; never decide while a model verdict is
@@ -104,11 +104,13 @@ impl PolicyPatternRole {
 /// accepts the categories its registered rows carry, and the owner plane
 /// accepts the `row_ref` of one of the owner's own rows. That is what lets a
 /// `Decide` hit resolve to an action without the engine inventing one.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PolicyPatternRule {
     pub id: String,
     pub pattern: String,
     pub category: String,
+    #[serde(default)]
     pub role: PolicyPatternRole,
 }
 

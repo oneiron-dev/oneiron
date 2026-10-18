@@ -309,6 +309,7 @@ mod sdk_skill_execution;
 mod sdk_shared;
 mod sdk_shared_members;
 mod sdk_shared_policy;
+mod sdk_support_grant;
 mod sdk_trusted_contact;
 mod sdk_voice_bank;
 mod sdk_workflows;

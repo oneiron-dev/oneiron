@@ -2872,7 +2872,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 24,
-      "re-export": 40
+      "re-export": 41
      }
     },
     {
@@ -3157,6 +3157,48 @@
      "purpose": "Clock-free expiry of approvals resting on a subsequently revoked roster",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/support_admission.rs",
+     "purpose": "OF-606: what every slip door reads of a support slip beside the fold's own standing (lifetime, revocation…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SupportGrantMinted",
+      "SupportGrantQuery",
+      "SupportGrantRequest",
+      "SupportGrantRevoked",
+      "SupportGrantRow",
+      "SupportGrantStatus",
+      "SupportHolderClass"
+     ],
+     "path": "src/authority/support_grant.rs",
+     "purpose": "OF-606: the customer's support grant",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 4,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/support_receipt.rs",
+     "purpose": "OF-606: the support grant's receipts, in the standard Gate receipt family (no new ledger)",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -10491,7 +10533,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/claim/scoped_read/access_gate.rs",
@@ -11164,7 +11206,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CodeBlameView",
@@ -11181,7 +11223,7 @@
      "path": "src/code_document/verbs.rs",
      "purpose": "The code views' agent verbs (OF-323): `vault.code.diff`, a semantic diff between two tested states of one…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "fn": 2,
       "struct": 10
      }
@@ -14854,7 +14896,7 @@
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "fn": 25,
       "struct": 2
      }
@@ -14955,6 +14997,7 @@
      "kind": "src",
      "notable": [
       "ConsentRegistry",
+      "ConsentRegistryDelegation",
       "ConsentRegistryQuery",
       "ConsentRegistryRow",
       "ConsentRevokeAction"
@@ -14962,10 +15005,10 @@
      "path": "src/consent/registry.rs",
      "purpose": "—",
      "surface": {
-      "const": 1,
-      "crate-vis": 2,
+      "const": 2,
+      "crate-vis": 3,
       "fn": 1,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -17126,14 +17169,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "TrustedContactNotice"
+      "TrustedContactNotice",
+      "TrustedContactNoticeAuthorization"
      ],
      "path": "src/counterparty_contact/trusted_contact_notice.rs",
      "purpose": "A trusted-contact notice crosses the OF-327 outbound rails like any other engine-staged send: staged with…",
      "surface": {
       "const": 2,
-      "crate-vis": 2,
-      "fn": 2,
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -24658,6 +24703,22 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OwnerPolicyConfiguration",
+      "OwnerPolicyConfigurationReceipt",
+      "OwnerPolicyConfigurationView",
+      "OwnerPolicyConfigureRequest"
+     ],
+     "path": "src/gate/policy_manifest_doors/content_policy.rs",
+     "purpose": "The owner's content-policy configuration, kept in the existing default manifest",
+     "surface": {
+      "fn": 2,
+      "struct": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -24665,7 +24726,7 @@
      "purpose": "Typed policy reads, owner edits and inert untrusted contributions",
      "surface": {
       "fn": 5,
-      "re-export": 1
+      "re-export": 2
      }
     },
     {
@@ -31261,7 +31322,7 @@
      "surface": {
       "const": 2,
       "crate-vis": 2,
-      "fn": 8,
+      "fn": 9,
       "struct": 4
      }
     },
@@ -31510,7 +31571,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 9,
+      "mod": 10,
       "re-export": 43
      }
     },
@@ -31884,6 +31945,53 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/memory/result_doors/mod.rs",
+     "purpose": "Retained result doors",
+     "surface": {
+      "fn": 3,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ResultBodyKind",
+      "ResultBodyStatus",
+      "ResultByteSelection",
+      "ResultCard",
+      "ResultEffectRecord",
+      "ResultLineCursor",
+      "ResultLineSelection",
+      "ResultOccurrenceManifest",
+      "ResultOccurrenceRequest",
+      "ResultReadRefusal",
+      "ResultReadView",
+      "ResultRetainedBody",
+      "ResultRunRequest",
+      "ResultRunStatus",
+      "ResultSliceContent",
+      "ResultSlicePage",
+      "ResultSliceRequest",
+      "ResultSliceScanning",
+      "ResultSliceSelection",
+      "ResultSliceView",
+      "ResultTaint",
+      "ResultTaintReference",
+      "ResultTaintState",
+      "ResultWithheld"
+     ],
+     "path": "src/memory/result_doors/types.rs",
+     "purpose": "Typed projections of retained result manifests and the existing reader",
+     "surface": {
+      "enum": 6,
+      "struct": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "RoomTurnHandle"
      ],
@@ -32107,7 +32215,7 @@
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
       "crate-vis": 47,
-      "fn": 32,
+      "fn": 33,
       "struct": 2,
       "type": 1
      }
@@ -32811,7 +32919,7 @@
       "crate-vis": 37,
       "enum": 3,
       "fn": 4,
-      "re-export": 13,
+      "re-export": 14,
       "struct": 2
      }
     },
@@ -33182,6 +33290,28 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "NoteForkReadRequest",
+      "NoteForkRecordView",
+      "NoteForkRequest",
+      "NoteForkView",
+      "NoteLandingView",
+      "NoteProposalForkRef",
+      "NoteProposalOpenRequest",
+      "NoteProposalRequest",
+      "NoteProposalView",
+      "NoteVersionTree"
+     ],
+     "path": "src/note/proposal_doors.rs",
+     "purpose": "Typed NOTE forks and explicit proposal sets over the existing NOTE engine doors",
+     "surface": {
+      "fn": 6,
+      "struct": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "NoteActor",
       "NoteFork",
       "NoteLandingReceipt",
@@ -33193,7 +33323,7 @@
      "purpose": "Grant-routed fork bundles, atomic verdicts and durable head-move receipts",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 3,
       "fn": 5,
       "struct": 3
@@ -33217,7 +33347,7 @@
      "path": "src/note/reads.rs",
      "purpose": "Caller-scoped NOTE text, stable edit anchors and retained operation attribution",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 4,
       "struct": 9
@@ -36449,6 +36579,22 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostedRelayDecision",
+      "PolicyOutboundRequest",
+      "PolicyRowChangeRequest"
+     ],
+     "path": "src/policy_model/doors.rs",
+     "purpose": "Typed inputs for owner configuration and policy-governed outbound decisions",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 6,
+      "struct": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -36502,6 +36648,7 @@
      "purpose": "Policy classification over two planes",
      "surface": {
       "crate-vis": 3,
+      "mod": 1,
       "re-export": 16
      }
     },
@@ -36700,7 +36847,7 @@
      "purpose": "Relay entry points and ledger writes: trust-domain dispatch, dual-plane fan-out, binding-checked receipts",
      "surface": {
       "crate-vis": 6,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -46910,13 +47057,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/ingest/delivery.rs",
      "purpose": "Which records a federation pact delivered here, and at which consent epoch (FIX 321)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1
      }
     },
@@ -48798,7 +48945,7 @@
      "path": "src/task_verb/comm_widen.rs",
      "purpose": "FIX 1380 phase 2: a comm refusal raises the one widen ask to the parent",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -48946,7 +49093,7 @@
      "path": "src/task_verb/create_facade.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 2
      }
     },
@@ -48970,7 +49117,7 @@
      "path": "src/task_verb/create_spec.rs",
      "purpose": "—",
      "surface": {
-      "fn": 8,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -49509,8 +49656,8 @@
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
       "enum": 1,
-      "fn": 12,
-      "re-export": 43,
+      "fn": 13,
+      "re-export": 44,
       "struct": 36
      }
     },
@@ -49834,7 +49981,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 555
+      "fn": 579
      }
     },
     {
@@ -50307,11 +50454,35 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "SupportGrantList",
+      "SupportGrantListRequest",
+      "SupportGrantMintAnswer",
+      "SupportGrantMintRequest",
+      "SupportGrantRevokeAnswer",
+      "SupportGrantRevokeRequest",
+      "SupportGrantView"
+     ],
+     "path": "src/task_verb/sdk_support_grant.rs",
+     "purpose": "The inputs and answers of the owner's support grant rows (OF-606): `vault.support_grants.mint`, `.list` and…",
+     "surface": {
+      "fn": 6,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "TrustedContactAsksRequest",
       "TrustedContactAuthorization",
       "TrustedContactAuthorizationOutcome",
       "TrustedContactAuthorizeRequest",
+      "TrustedContactConcernFact",
+      "TrustedContactConcernProposal",
+      "TrustedContactConcernRequest",
       "TrustedContactConsentRequest",
+      "TrustedContactDeliverRequest",
+      "TrustedContactDeliveryReceipt",
       "TrustedContactDialRequest",
       "TrustedContactNameRequest",
       "TrustedContactRevokeRequest",
@@ -50322,9 +50493,9 @@
      "path": "src/task_verb/sdk_trusted_contact.rs",
      "purpose": "The trusted-contact rows a host door answers (DOOR-140 A, OF-527): the person names a trusted contact…",
      "surface": {
-      "enum": 1,
-      "fn": 8,
-      "struct": 10
+      "enum": 2,
+      "fn": 10,
+      "struct": 14
      }
     },
     {
@@ -50704,6 +50875,27 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TaskTypeNodeSpec",
+      "TaskTypeNodeView",
+      "TaskTypeTreePin",
+      "TaskTypeTreePinReceipt",
+      "TaskTypeTreeRead",
+      "TaskTypeTreeReadReply",
+      "TaskTypeTreeView",
+      "TypeStamp"
+     ],
+     "path": "src/team/doors.rs",
+     "purpose": "The owner's task-type tree doors (DOOR-111, OF-541): store an authored tree on an open team-shape fork, and…",
+     "surface": {
+      "const": 1,
+      "fn": 2,
+      "struct": 8
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -50734,8 +50926,8 @@
      "purpose": "Coordination patterns as skills, and the team receipt contract (OF-540, ARCH-0079)",
      "surface": {
       "crate-vis": 1,
-      "mod": 9,
-      "re-export": 9
+      "mod": 10,
+      "re-export": 10
      }
     },
     {
@@ -55321,7 +55513,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 143,
+     "files": 146,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55895,7 +56087,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 138,
+     "files": 139,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56098,7 +56290,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 167,
+     "files": 169,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56119,7 +56311,7 @@
      "purpose": "A budget check of untrusted MessagePack before it is decoded"
     },
     "note": {
-     "files": 45,
+     "files": 46,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -56217,7 +56409,7 @@
      "purpose": "—"
     },
     "policy_model": {
-     "files": 48,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -56609,14 +56801,14 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 155,
+     "files": 156,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section"
     },
     "team": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -56779,7 +56971,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3461,
+   "source_files": 3471,
    "test_files": 902
   },
   "oneiron-android": {
@@ -56849,7 +57041,7 @@
      "path": "src/authority/constants.rs",
      "purpose": "Pinned AUTHORITY_LOG constant table",
      "surface": {
-      "const": 80,
+      "const": 87,
       "re-export": 1,
       "type": 1
      }
@@ -56948,7 +57140,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary…",
      "surface": {
-      "re-export": 17
+      "re-export": 18
      }
     },
     {
@@ -57033,13 +57225,27 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/authority/slip_wire.rs",
      "purpose": "Field-by-field signed capability claims and six-axis Scope wire codec",
      "surface": {
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SupportDelegation"
+     ],
+     "path": "src/authority/support_delegation.rs",
+     "purpose": "OF-606: the support delegation a customer's support slip carries, signed in its claims beside `grant_ref`…",
+     "surface": {
+      "const": 4,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -57215,7 +57421,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 18,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -57238,7 +57444,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs and…",
-   "source_files": 26,
+   "source_files": 27,
    "test_files": 1
   },
   "oneiron-bench": {
@@ -65193,7 +65399,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 505
+      "fn": 529
      }
     },
     {
@@ -66242,7 +66448,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 506
+      "fn": 530
      }
     },
     {
@@ -69262,6 +69468,26 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/content_policy_doors.rs",
+     "purpose": "Content-policy doors beside the Gate policy doors, on each caller's own credential",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/coordination_doors.rs",
+     "purpose": "The owner's task-type tree doors (DOOR-111), with the owner's own proof: store an authored tree on an open…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/core_write_doors.rs",
      "purpose": "The host doors of `vault.conversations.turns.create`, `vault.conversations.records.append` and `vault.batch`…",
      "surface": {
@@ -69435,7 +69661,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 99
+      "crate-vis": 103
      }
     },
     {
@@ -69592,6 +69818,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/result_doors.rs",
+     "purpose": "Owner-authenticated retained-result reads",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/role_picks.rs",
      "purpose": "OF-495: role holders' tradeoff picks (ROLES-EVERYWHERE)",
      "surface": {
@@ -69669,6 +69905,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/support_grant_doors.rs",
+     "purpose": "The host doors of the owner's support grant rows (OF-606): `vault.support_grants.mint`, `.list` and `.revoke`",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -69693,7 +69939,7 @@
      "path": "src/api/facade/trusted_contact_doors.rs",
      "purpose": "The host doors of the trusted-contact rows (DOOR-140 A, OF-527), beside `shared_policy_doors`",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -70792,6 +71038,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/owner_routes/support_grant_routes.rs",
+     "purpose": "`/v1/owner/support-grants`: the customer's support grants (OF-606), behind the same owner door as every…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/owner_routes/training_swap_routes.rs",
      "purpose": "`/v1/owner/coach/training-runs` (OF-577, FIX 857): the owner's view of a training run's result and their own…",
      "surface": {
@@ -71743,7 +71999,7 @@
      "path": "src/builtin_host/webhooks.rs",
      "purpose": "The provider webhooks of the served built-in channels (OF-519)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -75980,7 +76236,7 @@
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
       "crate-vis": 19,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -76014,6 +76270,20 @@
      "surface": {
       "crate-vis": 5,
       "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostedPolicyRelay"
+     ],
+     "path": "src/server/policy_doors.rs",
+     "purpose": "Host bindings for the public content-policy doors",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -76880,7 +77150,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 357,
+     "files": 362,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -77223,7 +77493,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 35,
+     "files": 36,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77295,7 +77565,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 683,
+   "source_files": 689,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -78195,6 +78465,10 @@
       "HostPin",
       "HostPinKind",
       "HostRuleRef",
+      "HostedOutagePolicy",
+      "HostedPassEvidence",
+      "HostedPlaneAttestation",
+      "HostedRelayDecision",
       "HostingPrivacyPosture",
       "HubAdmissionReceipt",
       "HubConsentOutcome",
@@ -78432,22 +78706,33 @@
       "NoteEditorBinding",
       "NoteEditorCloseRequest",
       "NoteEditorClosed",
+      "NoteForkReadRequest",
+      "NoteForkRecordView",
+      "NoteForkRequest",
+      "NoteForkView",
       "NoteHistoryPurgeExecuteRequest",
       "NoteHistoryPurgeOutcome",
       "NoteHistoryPurgeReceipt",
       "NoteHistoryPurgeRequest",
       "NoteHistoryView",
       "NoteKindDescriptor",
+      "NoteLandingView",
       "NoteLifecycleStatus",
       "NoteLifecycleView",
       "NoteOverrides",
+      "NoteProposalForkRef",
+      "NoteProposalOpenRequest",
+      "NoteProposalRequest",
+      "NoteProposalView",
       "NoteReadRequest",
       "NoteReadSource",
       "NoteReadSpan",
       "NoteReadView",
       "NoteRefRequest",
       "NoteSeal",
+      "NoteVerdict",
       "NoteVersion",
+      "NoteVersionTree",
       "NotificationKind",
       "NotificationMark",
       "NotificationPage",
@@ -78546,6 +78831,10 @@
       "OutcomeBinding",
       "OutcomeLabel",
       "OutcomeSource",
+      "OwnerPolicyConfiguration",
+      "OwnerPolicyConfigurationReceipt",
+      "OwnerPolicyConfigurationView",
+      "OwnerPolicyConfigureRequest",
       "PackAdapter",
       "PackCandidateReason",
       "PackConnectorReceipt",
@@ -78606,8 +78895,18 @@
       "PlannerRung",
       "PolicyActionOutcome",
       "PolicyAxes",
+      "PolicyBargeInKill",
       "PolicyCeiling",
+      "PolicyClassifyDecision",
+      "PolicyClassifySubject",
+      "PolicyClassifyVerdict",
+      "PolicyConfidence",
+      "PolicyContentBinding",
       "PolicyCriticality",
+      "PolicyEnforcementAction",
+      "PolicyEnforcementVoice",
+      "PolicyHedgeBucket",
+      "PolicyHelpRouting",
       "PolicyManifest",
       "PolicyManifestPropose",
       "PolicyManifestPut",
@@ -78615,9 +78914,24 @@
       "PolicyManifestReceipt",
       "PolicyManifestView",
       "PolicyManifestsView",
+      "PolicyModelEnforcement",
+      "PolicyOutboundRequest",
+      "PolicyOutputContract",
+      "PolicyPassAudit",
+      "PolicyPatternRole",
+      "PolicyPatternRule",
+      "PolicyPlane",
+      "PolicyRewordRequest",
+      "PolicyRowAction",
+      "PolicyRowChange",
+      "PolicyRowChangeRequest",
+      "PolicyRowReceipt",
+      "PolicyRowScope",
       "PolicyRule",
       "PolicySensitivity",
       "PolicySignature",
+      "PolicySkipReason",
+      "PolicyVerdictCategory",
       "PostmarkAtom",
       "Preset",
       "PriorRung",
@@ -78719,6 +79033,9 @@
       "RefreshPolicy",
       "RelationshipChange",
       "RelationshipContext",
+      "RelayBoundaryDegrade",
+      "RelayClassifierMode",
+      "RelayResolution",
       "ReleasedWait",
       "RemovalExportDelivery",
       "RenderPair",
@@ -78784,6 +79101,31 @@
       "ResolveRecordRefRequest",
       "ResolvedRole",
       "ResponseFormat",
+      "ResultBodyKind",
+      "ResultBodyStatus",
+      "ResultByteSelection",
+      "ResultCard",
+      "ResultEffectRecord",
+      "ResultFacet",
+      "ResultLineCursor",
+      "ResultLineSelection",
+      "ResultOccurrenceManifest",
+      "ResultOccurrenceRequest",
+      "ResultReadRefusal",
+      "ResultReadView",
+      "ResultRetainedBody",
+      "ResultRunRequest",
+      "ResultRunStatus",
+      "ResultSliceContent",
+      "ResultSlicePage",
+      "ResultSliceRequest",
+      "ResultSliceScanning",
+      "ResultSliceSelection",
+      "ResultSliceView",
+      "ResultTaint",
+      "ResultTaintReference",
+      "ResultTaintState",
+      "ResultWithheld",
       "RetentionDefault",
       "RetrievalBlendWeights",
       "RetrievalScoreComponent",
@@ -78871,8 +79213,10 @@
       "ScopedReadResultLensFrameCard",
       "ScopedReadResultOptionalCalendarEventView",
       "ScopedReadResultOptionalNoteEditorBinding",
+      "ScopedReadResultOptionalNoteForkView",
       "ScopedReadResultOptionalNoteHistoryView",
       "ScopedReadResultOptionalNoteReadView",
+      "ScopedReadResultOptionalNoteVersionTree",
       "ScopedReadResultOptionalProductivityTree",
       "ScopedReadResultOptionalSharedBriefView",
       "ScopedReadResultRecordRefPreview",
@@ -79075,6 +79419,15 @@
       "SufficiencyCard",
       "SufficiencyInput",
       "SufficiencyVerdict",
+      "SupportGrantList",
+      "SupportGrantListRequest",
+      "SupportGrantMintAnswer",
+      "SupportGrantMintRequest",
+      "SupportGrantRevokeAnswer",
+      "SupportGrantRevokeRequest",
+      "SupportGrantStatus",
+      "SupportGrantView",
+      "SupportHolderClass",
       "TaskAccept",
       "TaskAnswerRequest",
       "TaskAskAnswer",
@@ -79135,6 +79488,13 @@
       "TaskStatusView",
       "TaskTerminalDisposition",
       "TaskTtl",
+      "TaskTypeNodeSpec",
+      "TaskTypeNodeView",
+      "TaskTypeTreePin",
+      "TaskTypeTreePinReceipt",
+      "TaskTypeTreeRead",
+      "TaskTypeTreeReadReply",
+      "TaskTypeTreeView",
       "TaskUpdateReceipt",
       "TaskUpdateRequest",
       "TaskWaitRequest",
@@ -79170,10 +79530,15 @@
       "TrustedContactAuthorization",
       "TrustedContactAuthorizationOutcome",
       "TrustedContactAuthorizeRequest",
+      "TrustedContactConcernFact",
+      "TrustedContactConcernProposal",
+      "TrustedContactConcernRequest",
       "TrustedContactConsentRequest",
+      "TrustedContactDeliveryReceipt",
       "TrustedContactDial",
       "TrustedContactDialRequest",
       "TrustedContactNameRequest",
+      "TrustedContactNoticeAuthorization",
       "TrustedContactParty",
       "TrustedContactReach",
       "TrustedContactRevocation",
@@ -79187,6 +79552,7 @@
       "TwoClocksAtom",
       "TypeByteFamily",
       "TypeRef",
+      "TypeStamp",
       "TypedDecision",
       "UncutFamily",
       "UndoneKeep",
@@ -79306,8 +79672,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 475,
-      "struct": 1338
+      "enum": 504,
+      "struct": 1405
      }
     },
     {

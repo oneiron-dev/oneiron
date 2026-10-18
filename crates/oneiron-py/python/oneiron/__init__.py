@@ -636,6 +636,9 @@ class Oneiron:
         def guests(self) -> "Oneiron._VaultGuestsVerbs":
             return Oneiron._VaultGuestsVerbs(self._client)
         @property
+        def support_grants(self) -> "Oneiron._VaultSupportGrantsVerbs":
+            return Oneiron._VaultSupportGrantsVerbs(self._client)
+        @property
         def residence(self) -> "Oneiron._VaultResidenceVerbs":
             return Oneiron._VaultResidenceVerbs(self._client)
         @property
@@ -659,6 +662,9 @@ class Oneiron:
         @property
         def embedding_spaces(self) -> "Oneiron._VaultEmbeddingSpacesVerbs":
             return Oneiron._VaultEmbeddingSpacesVerbs(self._client)
+        @property
+        def policy(self) -> "Oneiron._VaultPolicyVerbs":
+            return Oneiron._VaultPolicyVerbs(self._client)
         @property
         def gate(self) -> "Oneiron._VaultGateVerbs":
             return Oneiron._VaultGateVerbs(self._client)
@@ -693,11 +699,17 @@ class Oneiron:
         def code(self) -> "Oneiron._VaultCodeVerbs":
             return Oneiron._VaultCodeVerbs(self._client)
         @property
+        def results(self) -> "Oneiron._VaultResultsVerbs":
+            return Oneiron._VaultResultsVerbs(self._client)
+        @property
         def agents(self) -> "Oneiron._VaultAgentsVerbs":
             return Oneiron._VaultAgentsVerbs(self._client)
         @property
         def workflows(self) -> "Oneiron._VaultWorkflowsVerbs":
             return Oneiron._VaultWorkflowsVerbs(self._client)
+        @property
+        def task_types(self) -> "Oneiron._VaultTaskTypesVerbs":
+            return Oneiron._VaultTaskTypesVerbs(self._client)
         @property
         def workspace(self) -> "Oneiron._VaultWorkspaceVerbs":
             return Oneiron._VaultWorkspaceVerbs(self._client)
@@ -1445,6 +1457,12 @@ class Oneiron:
         def authorize(self, spec):
             """The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing."""
             return json.loads(_translate(lambda: self._client.vault_trusted_contacts_concern_authorize(json.dumps(spec))))
+        def propose(self, spec):
+            """The owner's policy gate reads one message the caller reads, fresh; a RouteToHelp asks the owner or stages a just-call notice, and the answer carries only the fact of concern, the gate receipt, open asks and notices."""
+            return json.loads(_translate(lambda: self._client.vault_trusted_contacts_concern_propose(json.dumps(spec))))
+        def deliver(self, spec):
+            """The caller sends the next staged fact-of-concern notice it is the stored sender of, as itself, through the consent-checked outbound dispatch; null when none is eligible, never another sender's notice."""
+            return json.loads(_translate(lambda: self._client.vault_trusted_contacts_concern_deliver(json.dumps(spec))))
     class _VaultGuestsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1453,6 +1471,18 @@ class Oneiron:
         def mint_slip(self, spec):
             """The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."""
             return json.loads(_translate(lambda: self._client.vault_guests_mint_slip(json.dumps(spec))))
+    class _VaultSupportGrantsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def mint(self, spec):
+            """The owner mints our support person or agent a time-limited, revocable grant, bound to that party's own key, inside explicit bounds."""
+            return json.loads(_translate(lambda: self._client.vault_support_grants_mint(json.dumps(spec))))
+        def list(self, spec):
+            """The owner lists the vault's support grants, newest first, with each one's bounds, deadline, status and revoke command."""
+            return json.loads(_translate(lambda: self._client.vault_support_grants_list(json.dumps(spec))))
+        def revoke(self, spec):
+            """The owner revokes one support grant; what support already read is not recalled."""
+            return json.loads(_translate(lambda: self._client.vault_support_grants_revoke(json.dumps(spec))))
     class _VaultResidenceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1666,6 +1696,48 @@ class Oneiron:
         def delete(self, spec):
             """Removes one stored embedding space probe by its id."""
             return json.loads(_translate(lambda: self._client.vault_embedding_spaces_probes_delete(json.dumps(spec))))
+    class _VaultPolicyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def owner(self) -> "Oneiron._VaultPolicyOwnerVerbs":
+            return Oneiron._VaultPolicyOwnerVerbs(self._client)
+        @property
+        def outbound(self) -> "Oneiron._VaultPolicyOutboundVerbs":
+            return Oneiron._VaultPolicyOutboundVerbs(self._client)
+        @property
+        def relay(self) -> "Oneiron._VaultPolicyRelayVerbs":
+            return Oneiron._VaultPolicyRelayVerbs(self._client)
+    class _VaultPolicyOwnerVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec=None):
+            """The owner reads the content-policy configuration, default manifest hash and effective off/on state."""
+            return json.loads(_translate(lambda: self._client.vault_policy_owner_get(json.dumps({} if spec is None else spec))))
+        def configure(self, spec):
+            """The owner configures or toggles content policy against the current manifest hash without changing other policy tables."""
+            return json.loads(_translate(lambda: self._client.vault_policy_owner_configure(json.dumps(spec))))
+        @property
+        def row(self) -> "Oneiron._VaultPolicyOwnerRowVerbs":
+            return Oneiron._VaultPolicyOwnerRowVerbs(self._client)
+    class _VaultPolicyOwnerRowVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def change(self, spec):
+            """The owner adds, edits or removes a scoped content-policy row through its existing holder-governed writer and receives its change receipt."""
+            return json.loads(_translate(lambda: self._client.vault_policy_owner_row_change(json.dumps(spec))))
+    class _VaultPolicyOutboundVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def decide(self, spec):
+            """Decide an outbound candidate under owner policy with system notices and hash-only receipts; Warn and Skipped preserve its exact bytes."""
+            return json.loads(_translate(lambda: self._client.vault_policy_outbound_decide(json.dumps(spec))))
+    class _VaultPolicyRelayVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def decide(self, spec):
+            """Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer."""
+            return json.loads(_translate(lambda: self._client.vault_policy_relay_decide(json.dumps(spec))))
     class _VaultGateVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2093,6 +2165,21 @@ class Oneiron:
         def recover(self, spec):
             """Reconcile an interrupted landing or rollback with its persisted mutation receipts. Owner only. Unreceipted divergence refuses; nothing is approved or rebased."""
             return json.loads(_translate(lambda: self._client.vault_code_merge_queue_recover(json.dumps(spec))))
+    class _VaultResultsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def status(self, spec):
+            """The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run."""
+            return json.loads(_translate(lambda: self._client.vault_results_status(json.dumps(spec))))
+        def recover(self, spec):
+            """The owner reopens retained result status after restart; it never resumes the producer or replays an effect to regenerate output."""
+            return json.loads(_translate(lambda: self._client.vault_results_recover(json.dumps(spec))))
+        def read(self, spec):
+            """The owner reads one exact retained result occurrence card under its current taint and source-row fence, never by content authority alone."""
+            return json.loads(_translate(lambda: self._client.vault_results_read(json.dumps(spec))))
+        def slice(self, spec):
+            """The owner reads a typed byte or line range of one exact result occurrence, with bounded continuations and current taint withholding."""
+            return json.loads(_translate(lambda: self._client.vault_results_slice(json.dumps(spec))))
     class _VaultAgentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2126,6 +2213,15 @@ class Oneiron:
         def status(self, spec):
             """The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result."""
             return json.loads(_translate(lambda: self._client.vault_workflows_status(json.dumps(spec))))
+    class _VaultTaskTypesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def pin(self, spec):
+            """The owner stores an authored task-type tree on an open team-shape fork, as a candidate; the receipt says whether it is in force."""
+            return json.loads(_translate(lambda: self._client.vault_task_types_pin(json.dumps(spec))))
+        def get(self, spec):
+            """The owner reads the task-type tree in force, or one kept tree version, for the vault or a project."""
+            return json.loads(_translate(lambda: self._client.vault_task_types_get(json.dumps(spec))))
     class _VaultWorkspaceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
