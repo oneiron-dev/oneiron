@@ -587,8 +587,9 @@ fn stored_scope(
     Ok(Some(stamp.scope))
 }
 /// The world the stored row `id` of `kind`, with body `data`, sits in: what
-/// every read that checks a world asks. A CLAIM names its own; a TASK and its
-/// authority facts sit where `stamp_task_birth` settled them, and a SUMMARY
+/// every read that checks a world asks. A CLAIM or key pad names its own; a
+/// TASK and its authority facts sit where `stamp_task_birth` settled them,
+/// and a SUMMARY
 /// where `settle_epoch_birth` settled it, whatever its body reads now; an
 /// epoch SUMMARY, in whatever form it is stored (`stored_epoch_in`), sits
 /// where its birth stamp says; every other record, and any
@@ -606,6 +607,10 @@ pub(crate) fn record_world_in(
         return Ok(crate::claim::decode_claim_body(data, true)
             .ok()
             .map(|body| body.world));
+    }
+    // A live pad rides its world's windows (`sync::types::entity_world`).
+    if kind == crate::registry::ENTITY_TYPE_WORLD_KEY_PAD {
+        return Ok(crate::world_keys::pad_world_in_body(data).ok().map(Some));
     }
     let summary = kind == crate::registry::ENTITY_TYPE_SUMMARY;
     if kind != crate::registry::ENTITY_TYPE_TASK && !summary {
