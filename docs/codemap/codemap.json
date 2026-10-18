@@ -38026,6 +38026,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ContextEmitReceipt"
+     ],
+     "path": "src/receipt/context_emit.rs",
+     "purpose": "Frozen context on text emits, retained on the existing outbound receipt spine",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "DecisionAskAnswerRequest",
       "DecisionAskClimbRequest"
      ],
@@ -38042,7 +38055,7 @@
      "path": "src/receipt/direct_dispatch.rs",
      "purpose": "Ordinary outbound receipts for hosts that call dispatch directly",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -38192,7 +38205,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
       "crate-vis": 19,
-      "re-export": 17
+      "re-export": 18
      }
     },
     {
@@ -49046,7 +49059,7 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 34,
+      "re-export": 35,
       "struct": 36
      }
     },
@@ -49310,7 +49323,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 484
+      "fn": 486
      }
     },
     {
@@ -49527,6 +49540,23 @@
      "surface": {
       "fn": 3,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AiReply",
+      "AiReplyCompanion",
+      "AiReplyL2Base",
+      "AiReplyReader",
+      "AiReplyRequest",
+      "AiReplyStanding"
+     ],
+     "path": "src/task_verb/sdk_reply.rs",
+     "purpose": "Context-bearing text replies through the host's configured inference door",
+     "surface": {
+      "struct": 6
      }
     },
     {
@@ -55628,7 +55658,7 @@
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)"
     },
     "receipt": {
-     "files": 30,
+     "files": 31,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -55936,7 +55966,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 146,
+     "files": 147,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -56106,7 +56136,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3417,
+   "source_files": 3419,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64519,7 +64549,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 434
+      "fn": 436
      }
     },
     {
@@ -65567,7 +65597,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 435
+      "fn": 437
      }
     },
     {
@@ -68014,7 +68044,7 @@
      "path": "src/api/context_board/mod.rs",
      "purpose": "The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -68025,6 +68055,16 @@
      "purpose": "Session prefix material: entity counts, latest activity, pending notifications, unprocessed work, token meter",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/context_board/reply.rs",
+     "purpose": "The actual context-bearing text emit behind the generated `ai.reply` door",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -68680,7 +68720,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 85
+      "crate-vis": 86
      }
     },
     {
@@ -68781,6 +68821,16 @@
      "purpose": "The host door of `vault.messages.react` (OF-181)",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/reply_doors.rs",
+     "purpose": "The generated context-bearing reply door, under the existing owner's inference authority",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -69124,7 +69174,7 @@
      "path": "src/api/llm.rs",
      "purpose": "Owner-authenticated raw inference",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -76015,7 +76065,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 340,
+     "files": 342,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -76430,7 +76480,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 664,
+   "source_files": 666,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -76668,6 +76718,12 @@
       "AiOptions",
       "AiOptionsRequest",
       "AiPart",
+      "AiReply",
+      "AiReplyCompanion",
+      "AiReplyL2Base",
+      "AiReplyReader",
+      "AiReplyRequest",
+      "AiReplyStanding",
       "AiVerdict",
       "AiVerdictRequest",
       "AiVerdictReversibility",
@@ -76955,6 +77011,10 @@
       "ConsentStateSpendConsent",
       "ConsultPayloadRef",
       "ContextDefault",
+      "ContextEmitReceipt",
+      "ContextPackBudgetControls",
+      "ContextPackRetrievalBudgetControls",
+      "ContextReceiptFields",
       "ContextSpec",
       "ConversationCreateInput",
       "ConversationTurnCreateInput",
@@ -78206,7 +78266,7 @@
      "purpose": "—",
      "surface": {
       "enum": 436,
-      "struct": 1142
+      "struct": 1152
      }
     },
     {
