@@ -3,11 +3,13 @@
 //! signed by its vault's host-root key, and each side's log pins the other's,
 //! so the courtesy asks and answers those hosts sign verify (OF-273). The
 //! owner carries each half to the other host; this host sends nothing.
+//! Before offering or accepting, each owner mints the guest grant its side's
+//! pact governs (FIX 3016).
 
 use oneiron::authority::{AuthorityKey, ConnectOffer, FederationPactGesture};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::parse_hex;
-use oneiron::federation::{FederationDirectionScope, FederationPactScope};
+use oneiron::federation::{FederationDirectionScope, FederationPactScope, Scope};
 use serde::{Deserialize, Serialize};
 
 use super::cooperative_deletion::with_issuer;
@@ -23,6 +25,33 @@ pub(crate) struct ConnectIdentity {
     pub(crate) vault: String,
     /// The host-root key this host signs its halves and courtesy asks with.
     pub(crate) host_key: String,
+}
+
+/// `POST /v1/owner/federation/connect/grants`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct MintConnectGrant {
+    /// The peer vault's id, as 64 hex.
+    pub(crate) peer_vault: String,
+    /// What the peer may read and propose here: named local worlds, verbs
+    /// `read`/`propose`, inside the vault's Connect guest ceiling.
+    pub(crate) authority_scope: Scope,
+    /// Unix seconds the grant stops conferring; absent until revoked.
+    #[serde(default)]
+    pub(crate) expires_at: Option<u64>,
+}
+
+/// The minted Connect guest grant.
+#[derive(Debug, Serialize)]
+pub(crate) struct ConnectGrant {
+    /// The FEDERATION_GRANT to name in the offer or accept, as 32 hex.
+    pub(crate) grant: String,
+    /// The vault-resident guest actor the grant names for the peer, as 32 hex.
+    pub(crate) guest_actor: String,
+    /// The scope stored.
+    pub(crate) resolved_scope: Scope,
+    /// Unix seconds the grant stops conferring; `null` until revoked.
+    pub(crate) expires_at: Option<u64>,
 }
 
 /// `POST /v1/owner/federation/connect/offer`.
@@ -139,6 +168,31 @@ pub(crate) fn identity(server: &SyncServer) -> OwnerResult<ConnectIdentity> {
     Ok(ConnectIdentity {
         vault: hex(&vault),
         host_key: key_hex(&host_key),
+    })
+}
+
+/// Mints the guest grant a Connect with the peer vault will govern. Inert
+/// until both owners' Connect makes its pact Active.
+pub(crate) fn mint_grant(
+    server: &SyncServer,
+    owner: &AuthenticatedOwner,
+    request: &MintConnectGrant,
+) -> OwnerResult<ConnectGrant> {
+    let vault = server.vault();
+    let peer = hex_field("peer_vault", &request.peer_vault)?;
+    let minted = vault
+        .mint_connect_grant(
+            owner,
+            peer,
+            request.authority_scope.clone(),
+            request.expires_at,
+        )
+        .map_err(|error| refused(vault, owner, error))?;
+    Ok(ConnectGrant {
+        grant: minted.grant.to_hex(),
+        guest_actor: minted.guest_actor.to_hex(),
+        resolved_scope: minted.resolved_scope,
+        expires_at: minted.expires_at,
     })
 }
 

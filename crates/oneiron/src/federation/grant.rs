@@ -97,6 +97,11 @@ pub enum FederationGrantScope {
     Vault { vault_id: u64 },
     /// Access to facts explicitly disclosed for one ask.
     Ask { ask_ref: EntityId },
+    /// The guest slice a vault-to-vault Connect pact governs: what this vault
+    /// lets the peer vault (its genesis id) read and propose (FIX 3016).
+    Connect {
+        peer_vault_id: crate::authority::AuthorityVaultId,
+    },
 }
 
 impl FederationGrantScope {
@@ -112,10 +117,18 @@ impl FederationGrantScope {
         Self::Ask { ask_ref }
     }
 
+    /// Constructs the scope of the guest grant a Connect with `peer_vault_id`
+    /// governs.
+    #[must_use]
+    pub const fn connect(peer_vault_id: crate::authority::AuthorityVaultId) -> Self {
+        Self::Connect { peer_vault_id }
+    }
+
     pub(super) fn validate(self) -> Result<()> {
         match self {
             Self::Vault { vault_id: 0 } => Err(invalid_grant()),
-            Self::Vault { .. } | Self::Ask { .. } => Ok(()),
+            Self::Connect { peer_vault_id } if peer_vault_id == [0; 32] => Err(invalid_grant()),
+            Self::Vault { .. } | Self::Ask { .. } | Self::Connect { .. } => Ok(()),
         }
     }
 }
@@ -314,8 +327,8 @@ pub struct FederationGrant {
     pub preset: FederationGrantPreset,
     /// Unix-seconds instant at which a Delegate grant stops conferring.
     ///
-    /// Required for [`FederationGrantRole::Delegate`], forbidden for every
-    /// other role.
+    /// Required for [`FederationGrantRole::Delegate`], optional for a
+    /// Connect guest grant (absent: until revoked), forbidden otherwise.
     pub expires_at: Option<u64>,
     /// `member_ref` of the parent grant this Delegate was attenuated from.
     ///
@@ -444,7 +457,9 @@ impl FederationGrant {
             return Err(invalid_grant());
         }
         let expects_delegation = matches!(self.role, FederationGrantRole::Delegate);
-        if expects_delegation != self.expires_at.is_some()
+        // A Connect guest grant may carry an expiry without a delegator.
+        let expiry_optional = matches!(self.scope, FederationGrantScope::Connect { .. });
+        if (!expiry_optional && expects_delegation != self.expires_at.is_some())
             || expects_delegation != self.delegated_by.is_some()
         {
             return Err(invalid_grant());
@@ -452,21 +467,20 @@ impl FederationGrant {
         if self.expires_at == Some(0) {
             return Err(invalid_grant());
         }
-        let is_guest = self.role.is_guest();
-        if is_guest != self.guest.is_some() {
-            return Err(invalid_grant());
-        }
-        if self.role.is_guest() {
-            let (FederationGrantScope::Ask { .. }, Some(guest)) = (self.scope, self.guest.as_ref())
-            else {
-                return Err(invalid_grant());
-            };
-            guest.validate()?;
-            if self.authority_scope != guest_authority_scope() {
-                return Err(invalid_grant());
+        // Each purpose has its one role class: Ask and Connect are Guest, and
+        // only Ask carries the fact payload; a shared vault is never Guest.
+        match (self.scope, self.role.is_guest(), self.guest.as_ref()) {
+            (FederationGrantScope::Ask { .. }, true, Some(guest)) => {
+                guest.validate()?;
+                if self.authority_scope != guest_authority_scope() {
+                    return Err(invalid_grant());
+                }
             }
-        } else if matches!(self.scope, FederationGrantScope::Ask { .. }) {
-            return Err(invalid_grant());
+            (FederationGrantScope::Connect { .. }, true, None) => {
+                super::connect_grant::validate_connect_authority(&self.authority_scope)?;
+            }
+            (FederationGrantScope::Vault { .. }, false, None) => {}
+            _ => return Err(invalid_grant()),
         }
         Ok(())
     }
@@ -667,6 +681,9 @@ pub(crate) fn encode_scope(scope: FederationGrantScope) -> Value {
                 Value::from(ask_ref.to_hex()),
             ),
         ]),
+        FederationGrantScope::Connect { peer_vault_id } => {
+            super::connect_grant::encode_connect_scope(&peer_vault_id)
+        }
     }
 }
 
@@ -692,6 +709,9 @@ fn decode_scope(value: &Value) -> Result<FederationGrantScope> {
             Ok(FederationGrantScope::Ask {
                 ask_ref: decode_canonical_entity_ref(required_value(entries, "ask_ref")?)?,
             })
+        }
+        super::connect_grant::SCOPE_KIND_CONNECT => {
+            super::connect_grant::decode_connect_scope(entries)
         }
         _ => Err(invalid_grant()),
     }
@@ -746,7 +766,7 @@ fn decode_guest_payload(value: &Value) -> Result<FederationGrantGuestPayload> {
     })
 }
 
-fn validate_scope_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {
+pub(super) fn validate_scope_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {
     let mut seen = vec![false; keys.len()];
     for (key, _) in entries {
         let key = key.as_str().ok_or_else(invalid_grant)?;
@@ -799,7 +819,7 @@ fn validate_body_keys(entries: &[(Value, Value)], schema_version: u64) -> Result
     }
 }
 
-fn guest_authority_scope() -> super::Scope {
+pub(super) fn guest_authority_scope() -> super::Scope {
     let mut scope = super::Scope::top();
     scope.verbs = super::ScopeAxis::Some(BTreeSet::from(["read".to_owned(), "propose".to_owned()]));
     scope

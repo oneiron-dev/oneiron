@@ -546,6 +546,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "post",
+        path: "/federation/connect/grants",
+        summary: "Mints the guest grant a Connect with a peer vault governs: named local worlds, read and propose only, inside the vault's Connect guest ceiling. Inert until the pact is Active.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
         path: "/federation/connect/offer",
         summary: "This host's signed half of a new pact with a peer vault, for the owner to carry to the peer.",
         row: None,

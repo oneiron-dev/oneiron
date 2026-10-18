@@ -15,13 +15,15 @@ use super::{OwnerReply, blocking, owner};
 use crate::api::json_payload;
 use crate::auth::CoreAuth;
 use crate::owner::federation_connect::{
-    self, AcceptConnect, Accepted, ConnectIdentity, Offer, OfferConnect,
+    self, AcceptConnect, Accepted, ConnectGrant, ConnectIdentity, MintConnectGrant, Offer,
+    OfferConnect,
 };
 use crate::server::SyncServer;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/federation/connect", get(identity))
+        .route("/federation/connect/grants", post(mint_grant))
         .route("/federation/connect/offer", post(offer))
         .route("/federation/connect/accept", post(accept))
 }
@@ -35,6 +37,21 @@ async fn identity(
     owner(&auth, &server)?;
     let identity = blocking(move || federation_connect::identity(&server)).await?;
     Ok(Json(identity))
+}
+
+/// `POST /v1/owner/federation/connect/grants`: mints the guest grant a
+/// Connect with a peer vault governs (FIX 3016), which the owner then names
+/// in the offer or accept. Inert until the pact is Active.
+async fn mint_grant(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<MintConnectGrant>, JsonRejection>,
+) -> OwnerReply<ConnectGrant> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let minted =
+        blocking(move || federation_connect::mint_grant(&server, &owner, &request)).await?;
+    Ok(Json(minted))
 }
 
 /// `POST /v1/owner/federation/connect/offer`: this host's signed half of a

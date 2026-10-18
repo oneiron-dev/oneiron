@@ -27,6 +27,11 @@ pub(crate) enum GrantPolicyRow {
         holder: EntityId,
         scope: Scope,
     },
+    /// The most a Connect guest grant may carry (FIX 3016). Every such row
+    /// meets; no row refuses the mint, never a broad default.
+    ConnectGuestCeiling {
+        scope: Scope,
+    },
 }
 
 fn row(entries: Vec<(&str, Value)>) -> Value {
@@ -68,6 +73,10 @@ pub(crate) fn encode_row(value: &GrantPolicyRow) -> Result<Value> {
             ("role", role.as_str().into()),
             ("vault_id", (*vault_id).into()),
             ("holder_ref", holder.to_hex().into()),
+            ("scope", super::scope_codec::encode_scope_value(scope)?),
+        ]),
+        GrantPolicyRow::ConnectGuestCeiling { scope } => row(vec![
+            ("kind", "connect_guest_ceiling".into()),
             ("scope", super::scope_codec::encode_scope_value(scope)?),
         ]),
     })
@@ -140,6 +149,9 @@ pub(crate) fn parse_rows(value: &Value) -> Option<Vec<GrantPolicyRow>> {
                     scope: scope(fields.get("scope")?)?,
                 }
             }
+            "connect_guest_ceiling" if fields.len() == 2 => GrantPolicyRow::ConnectGuestCeiling {
+                scope: scope(fields.get("scope")?)?,
+            },
             _ => return None,
         };
         // The map size check plus exact known keys rejects aliases/unknowns.
@@ -150,6 +162,7 @@ pub(crate) fn parse_rows(value: &Value) -> Option<Vec<GrantPolicyRow>> {
             GrantPolicyRow::HolderOverride { .. } => {
                 &["kind", "role", "scope", "vault_id", "holder_ref"]
             }
+            GrantPolicyRow::ConnectGuestCeiling { .. } => &["kind", "scope"],
         };
         if fields.keys().copied().collect::<Vec<_>>() != {
             let mut names = expected.to_vec();
@@ -233,7 +246,42 @@ pub(crate) fn resolved_scope(
     })
 }
 
+/// The Connect guest ceiling (FIX 3016): the meet of every
+/// `connect_guest_ceiling` row under the precedence row, then the structural
+/// guest ceiling (read and propose only). No row is a refusal: there is no
+/// top-scope fallback.
+pub(crate) fn connect_guest_ceiling(rows: &[GrantPolicyRow]) -> Result<Scope> {
+    if !rows
+        .iter()
+        .any(|row| matches!(row, GrantPolicyRow::PrecedenceNestedNarrowing))
+    {
+        return Err(Error::InvalidConfig(
+            "grant policy precedence row missing".into(),
+        ));
+    }
+    rows.iter()
+        .filter_map(|row| match row {
+            GrantPolicyRow::ConnectGuestCeiling { scope } => Some(scope.clone()),
+            _ => None,
+        })
+        .reduce(|left, right| left.meet(&right))
+        .map(|ceiling| ceiling.meet(&super::grant::guest_authority_scope()))
+        .ok_or_else(|| Error::InvalidConfig("connect guest ceiling row missing".into()))
+}
+
 impl crate::Vault {
+    /// The Connect guest ceiling the vault's trusted manifest resolves, read
+    /// in the minting writer. A fail-closed manifest refuses.
+    pub(crate) fn connect_guest_ceiling_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<Scope> {
+        let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
+        if policy.is_fail_closed() {
+            return Err(Error::InvalidConfig(
+                "grant default policy is fail-closed".into(),
+            ));
+        }
+        connect_guest_ceiling(&policy.federation_grant_rows)
+    }
+
     /// Resolve default authority in the SAME writer that materializes a new
     /// membership row. Missing/malformed manifests and role rows never fall
     /// back to a broad constructor ceiling.

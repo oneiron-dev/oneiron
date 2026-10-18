@@ -18,10 +18,9 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::{
-    FederationDirectionScope, FederationPactScope, encode_federation_pact_scope,
+    FederationDirectionScope, FederationPactScope, encode_federation_pact_scope, is_guest_slice,
+    require_connect_grant_in_txn, require_one_connect_per_peer,
 };
-use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
-use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 /// One host's signed half of a Connect: the terms both owners approve, and
 /// that host's gesture over them. The other vault's owner accepts it with
@@ -98,14 +97,16 @@ fn local_vault_id(fold: &AuthorityFold, issuer: &HostSlipIssuer) -> Result<Autho
     fold.vault_id.ok_or_else(invalid_authority)
 }
 
-/// Refuses a `grant_ref` that is not a live FEDERATION_GRANT here.
-fn require_live_grant(vault: &Vault, txn: &heed::RoTxn<'_>, grant_ref: &EntityId) -> Result<()> {
-    match live_entity_row_in_txn(&vault.store, txn, grant_ref)? {
-        LiveEntityRow::Live {
-            entity_type: ENTITY_TYPE_FEDERATION_GRANT,
-            ..
-        } => Ok(()),
-        _ => Err(Error::EntityNotFound),
+/// Refuses a half whose peer direction no Connect guest grant can back:
+/// what the peer shares is named worlds without base, as its own door
+/// requires of its grant (FIX 3016).
+fn require_peer_slice(inbound: &FederationDirectionScope) -> Result<()> {
+    if is_guest_slice(inbound) {
+        Ok(())
+    } else {
+        Err(Error::InvalidConfig(
+            "the peer's half of a Connect must name worlds, never base".into(),
+        ))
     }
 }
 
@@ -149,7 +150,11 @@ impl Vault {
                 "a vault cannot connect to itself".into(),
             ));
         }
-        require_live_grant(self, &txn, &grant_ref)?;
+        // The grant is this vault's Connect guest grant for the peer, and
+        // `outbound` is its scope's projection; one live Connect per peer.
+        require_connect_grant_in_txn(self, &txn, &grant_ref, &peer_vault_id, &outbound)?;
+        require_peer_slice(&inbound)?;
+        require_one_connect_per_peer(&fold, &peer_vault_id, None)?;
         if fold.federation_grant_bindings.contains_key(&grant_ref) {
             return Err(Error::InvalidConfig(
                 "this grant already governs a pact".into(),
@@ -201,7 +206,19 @@ impl Vault {
                     "this Connect offer is not for this vault".into(),
                 ));
             }
-            require_live_grant(self, txn, &grant_ref)?;
+            // The local outbound half is the one the fold's
+            // `local_outbound_scope` reads back: lo_to_hi when this vault's
+            // id is the smaller.
+            let (outbound, inbound) = if local <= offer.from_vault {
+                (&offer.pact_scope.lo_to_hi, &offer.pact_scope.hi_to_lo)
+            } else {
+                (&offer.pact_scope.hi_to_lo, &offer.pact_scope.lo_to_hi)
+            };
+            require_connect_grant_in_txn(self, txn, &grant_ref, &offer.from_vault, outbound)?;
+            require_peer_slice(inbound)?;
+            // An exact retry of this pact passes; any other live Connect with
+            // the peer refuses.
+            require_one_connect_per_peer(&fold, &offer.from_vault, Some(&offer.pact_id))?;
             let mut action = connect_action(
                 grant_ref,
                 offer.from_vault,
