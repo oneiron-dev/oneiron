@@ -254,6 +254,10 @@ both bindings and their export-census tests in one change.
 - `vault.policy.owner.row.change`
 - `vault.policy.outbound.decide`
 - `vault.policy.relay.decide`
+- `vault.consent.approve_once`
+- `vault.consent.create_standing_grant`
+- `vault.consent.registry`
+- `vault.consent.revoke`
 - `vault.gate.policy.get`
 - `vault.gate.policy.put`
 - `vault.gate.policy.propose`

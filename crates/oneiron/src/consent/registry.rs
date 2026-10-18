@@ -12,11 +12,15 @@ use crate::federation::{Scope, ScopeAxis, Sensitivity, SensitivityCeiling};
 // ---------------------------------------------------------------------------
 
 /// Query for the unified consent registry — surface (b).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
 pub struct ConsentRegistryQuery {
     /// Maximum rows returned.
     pub limit: usize,
     /// Include revoked rows (audit view) as well as active ones.
+    #[serde(default)]
     pub include_revoked: bool,
 }
 
@@ -32,7 +36,9 @@ impl ConsentRegistryQuery {
 }
 
 /// One registry row: who-can-see-what / what-can-run, with a one-tap revoke.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct ConsentRegistryRow {
     /// The stable row reference (the bound digest hex).
     pub grant_ref: String,
@@ -65,7 +71,9 @@ pub struct ConsentRegistryRow {
 /// A support grant's delegation as the registry shows it (OF-606): why the
 /// customer let support in, who approved it, and the wall deadline it ends
 /// at, with where the grant stands now.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct ConsentRegistryDelegation {
     pub purpose: String,
     pub ticket_ref: Option<String>,
@@ -76,7 +84,9 @@ pub struct ConsentRegistryDelegation {
 }
 
 /// The one-tap revoke command carried by every registry row.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct ConsentRevokeAction {
     /// Pinned command name.
     pub command: String,
@@ -85,10 +95,12 @@ pub struct ConsentRevokeAction {
 }
 
 /// Pinned one-tap revoke command for a consent registry row.
-pub const CONSENT_REVOKE_COMMAND: &str = "consent.revoke_grant";
+pub const CONSENT_REVOKE_COMMAND: &str = "vault.consent.revoke";
 
 /// The unified consent registry projection — surface (b).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct ConsentRegistry {
     /// The rows, newest first.
     pub rows: Vec<ConsentRegistryRow>,

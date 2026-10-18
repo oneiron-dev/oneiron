@@ -31,7 +31,11 @@ use super::support::invalid_bound;
 const BYPASS_GRANT_REF_DOMAIN: &[u8] = b"oneiron.consent.bypass_grant.v1\0";
 
 /// Where a bypass grant applies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum BypassScope {
     /// One project. The vault's root project is the whole vault, so it is
     /// never a bypass scope.
@@ -64,7 +68,10 @@ impl BypassScope {
 }
 
 /// The bypass half of a persisted grant row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+    schemars::JsonSchema,
+)]
 pub struct BypassExtent {
     /// Where the grant applies.
     pub scope: BypassScope,

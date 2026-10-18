@@ -126,7 +126,11 @@ pub enum ConsentGrant {
 // ---------------------------------------------------------------------------
 
 /// Lifecycle state of a persisted standing grant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum ConsentGrantStatus {
     /// Live: in-bound reuse is Auto.
     Active,
