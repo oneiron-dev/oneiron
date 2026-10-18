@@ -3996,7 +3996,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault_shape/run.rs` | src | m | 1 struct · 2 fn · 2 const · 2 crate-vis | ShapeApplyRun | The apply's run tree (ARCH-0070 `shape:plan-apply`): one run-tree root per apply and one child row per item… |
 | `src/vault_shape/seed.rs` | src | s | 1 struct · 2 fn · 3 crate-vis | StoredShapeSeed | The seed's store: each revision is one immutable ASSET row in the replicated ledger, the same carrier a… |
 | `src/vault_shape/skill.rs` | src | s | 1 enum · 3 crate-vis | ShapeSkillSource | Where a declared skill comes from, as a seed writes it (ARCH-0053) |
-| `src/voice_cascade.rs` | src | s | 6 mod · 6 re-export | — | ONE-1807: the engine half of a transport-neutral text-brain voice cascade |
+| `src/voice_cascade.rs` | src | s | 6 mod · 7 re-export | — | ONE-1807: the engine half of a transport-neutral text-brain voice cascade |
 | `src/voice_cascade/budget.rs` | src | s | 1 crate-vis | — | Generation-owned budget reservation |
 | `src/voice_cascade/cancellation.rs` | src | s | 1 struct · 1 enum · 1 fn · 1 crate-vis | OutputStop, StopReason | One stop fan-out for interruption, policy enforcement and explicit teardown |
 | `src/voice_cascade/hosted_tts.rs` | src | m | 4 struct · 2 enum · 1 trait · 8 fn · 1 const | HostedBinding, HostedMediaQueue, HostedProvider, HostedRender, HostedTransport, HostedTtsAdapter, HostedWork | Hosted TTS request adapters |
@@ -4008,7 +4008,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_cascade/safeguard.rs` | src | s | 3 struct · 8 fn | SafeguardRequest, SentenceEnforcement, SentenceWork | Correlated sentence work |
 | `src/voice_cascade/session.rs` | src | L | 5 struct · 1 enum · 23 fn · 1 const · 1 re-export | AsrUpdate, AudienceRefresh, SafeguardUpdate, VoiceCascadeSession, VoiceContainerBinding, VoiceSessionConfig | Session transitions only |
 | `src/voice_cascade/soniox.rs` | src | s | 1 struct · 1 enum · 1 trait · 7 fn | SonioxAsrClient, SonioxTransport, SonioxUpdate | Soniox streaming ASR wire client |
-| `src/voice_cascade/speakable.rs` | src | s | 2 crate-vis | — | Text past one call's bound is spoken as several calls, in order, never refused (Rule 5) |
+| `src/voice_cascade/speakable.rs` | src | s | 1 fn · 1 crate-vis | — | Text past one call's bound is spoken as several calls, in order, never refused (Rule 5) |
 | `src/voice_cascade/stream.rs` | src | s | 1 struct · 1 enum · 1 fn | VoiceStreamConfig, VoiceStreamFailure | Live, ephemeral LLM-stream fanout to TTS |
 | `src/voice_cascade/tests.rs` | test | m | — | — | Authored source-only in the bounded phase |
 | `src/voice_cascade/tests/preparation.rs` | test | s | — | — | — |
