@@ -33,6 +33,8 @@ both bindings and their export-census tests in one change.
 - `describe`
 - `tasks.create`
 - `tasks.wave`
+- `vault.fanout.spawn`
+- `vault.fanout.slots`
 - `vault.fanout.launch`
 - `self.budget`
 - `self.budget.land`
@@ -441,6 +443,10 @@ both bindings and their export-census tests in one change.
 - `ai.steps.receipt`
 - `ai.reply`
 - `vault.receipts.context`
+- `ai.voice.asr.open`
+- `ai.voice.asr.hypothesis`
+- `ai.voice.asr.finalize`
+- `ai.voice.asr.close`
 - `ai.voice.start`
 - `ai.voice.audio`
 - `ai.voice.events`
@@ -505,6 +511,7 @@ both bindings and their export-census tests in one change.
 - `vault.refs.resolve`
 - `vault.refs.links`
 - `vault.search.hybrid`
+- `vault.search.temporal`
 - `vault.search.bm25`
 - `vault.neighbors`
 - `vault.structural.put`

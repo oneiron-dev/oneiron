@@ -121,7 +121,11 @@ impl TaskRefuseInput {
             return Err(crate::Error::InvalidClaimBody("invalid unix time"));
         }
         Ok(super::SelfTaskRefuseCall {
-            task_ref: self.task_ref.as_deref().map(EntityId::from_hex).transpose()?,
+            task_ref: self
+                .task_ref
+                .as_deref()
+                .map(EntityId::from_hex)
+                .transpose()?,
             domain: match self.domain {
                 TaskRefuseDomain::Bond => crate::agent_def::RefusalDomain::Bond,
                 TaskRefuseDomain::Logistics => crate::agent_def::RefusalDomain::Logistics,

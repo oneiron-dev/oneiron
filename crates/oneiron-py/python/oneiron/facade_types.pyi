@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 623 facade rows, 2305 declarations.
-Inputs: 571 of 623 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 554 of 623 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 630 facade rows, 2329 declarations.
+Inputs: 578 of 630 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 561 of 630 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 92; unread shapes: 0.
 """
 
@@ -1124,8 +1124,16 @@ class TaskWaveRequest(TypedDict):
 class TaskWaveReceipt(TypedDict):
     attempt_ref: str
     state: str
-class FanoutLaunchRequest(TypedDict):
-    launch_ref: EntityId
+class LiveRunRequest(TypedDict, Generic[T]):
+    live_run: str
+    spec: T
+class FanoutChildInput(TypedDict):
+    agent_ref: EntityId
+    label: str
+    prompt: str
+class FanoutBatchInput(TypedDict):
+    intent_key: str
+    children: list[FanoutChildInput]
 class PeerCount(TypedDict):
     peer: EntityId
     count: int
@@ -1179,9 +1187,12 @@ class FanoutLaunchView(TypedDict):
     check_row_ref: NotRequired[str | None]
     choice_receipt_ref: NotRequired[str | None]
     task_refs: list[EntityId]
-class SelfBudgetRequest(TypedDict):
-    attempt: str
-    run: NotRequired[str | None]
+FanoutSlotState = Literal["held", "pending", "completed", "error"]
+class FanoutSlotTerminal(TypedDict):
+    disposition: TaskTerminalDisposition
+    result_ref: NotRequired[EntityId | None]
+    finished_at: int
+AttemptState = Literal["Queued", "Leased", "Paused", "Completed", "Failed", "Cancelled", "Scheduled", "Landing", "Abandoned"]
 SpendState = Literal["open", "closed"]
 class SpendPayer(TypedDict):
     party: EntityId
@@ -1217,6 +1228,37 @@ class SpendRead(TypedDict):
     cap_scope: SpendScopeId
     cap_units: int
     signal: NotRequired[SpendSignal | None]
+class FanoutLeaseView(TypedDict):
+    lease: SpendScope
+    spend: SpendRead
+    released_units: NotRequired[int | None]
+class FanoutSlotAttempt(TypedDict):
+    attempt_ref: str
+    state: AttemptState
+    last_error: NotRequired[str | None]
+    result_ref: NotRequired[str | None]
+    budget_hold: bool
+    lease: NotRequired[FanoutLeaseView | None]
+class FanoutChildSlot(TypedDict):
+    index: int
+    input: FanoutChildInput
+    task_ref: NotRequired[EntityId | None]
+    state: FanoutSlotState
+    terminal: NotRequired[FanoutSlotTerminal | None]
+    attempts: list[FanoutSlotAttempt]
+class FanoutSharedAccounting(TypedDict):
+    parent: NotRequired[FanoutLeaseView | None]
+    hard_cap: NotRequired[FanoutLeaseView | None]
+class FanoutBatchView(TypedDict):
+    launch: FanoutLaunchView
+    parent_task_ref: EntityId
+    slots: list[FanoutChildSlot]
+    accounting: FanoutSharedAccounting
+class FanoutLaunchRequest(TypedDict):
+    launch_ref: EntityId
+class SelfBudgetRequest(TypedDict):
+    attempt: str
+    run: NotRequired[str | None]
 class SpendLeaseView(TypedDict):
     lease: SpendScope
     spend: SpendRead
@@ -6020,9 +6062,6 @@ class SecretUseAnswer(TypedDict):
     result: NotRequired[Any | None]
     failure: NotRequired[str | None]
     receipt: SecretUseRecord
-class LiveRunRequest(TypedDict, Generic[T]):
-    live_run: str
-    spec: T
 class SecretGrantPurposeOperation(TypedDict):
     kind: Literal["operation"]
     name: str
@@ -6985,7 +7024,7 @@ class TaskTypeTreeReadReply(TypedDict):
     tree: NotRequired[TaskTypeTreeView | None]
 class PlannedSpawnRead(TypedDict):
     spawn_ref: EntityId
-SpawnPhase = Literal["reserved", "planned", "launched", "in_doubt"]
+SpawnPhase = Literal["planned", "launched", "refused"]
 CoordinationPatternView = Literal["solo", "ceo_decides", "committee", "vote", "market", "rotation"]
 class SkillRevisionView(TypedDict):
     skill_ref: EntityId
@@ -7129,7 +7168,6 @@ class PlannedSpawnObservation(TypedDict):
 class CancelForceRequest(TypedDict):
     task_ref: EntityId
     reason: NotRequired[str | None]
-AttemptState = Literal["Queued", "Leased", "Paused", "Completed", "Failed", "Cancelled", "Scheduled", "Landing", "Abandoned"]
 AgentRunStatus = Literal["spawned", "working", "needs_input", "delivered", "archived", "failed", "abandoned"]
 class RunAskQuestion(TypedDict):
     who: str
@@ -8848,6 +8886,63 @@ class ContextEmitReceipt(TypedDict):
     request_digest: str
     result_digest: str
     context: ContextReceiptFields
+class AsrOpenRequest(TypedDict):
+    utterance_id: str
+    scope: NotRequired[RecallScope]
+    fire_limit: NotRequired[int | None]
+    final_limit: NotRequired[int | None]
+    deadline_ms: NotRequired[int | None]
+class AsrSession(TypedDict):
+    handle: str
+    utterance_id: str
+    scope: RecallScope
+    max_fires: int
+    fire_limit: int
+    final_limit: int
+    limit_clamped: bool
+    deadline_ms: int
+    narrowing: ScopedReadReceipt
+class AsrHypothesisRequest(TypedDict):
+    handle: str
+    revision: int
+    text: str
+    entity_labels: list[str]
+    salient_terms: list[str]
+    query_vector: NotRequired[list[float] | None]
+AsrFireDecision = Literal["fired", "missed_deadline", "skipped_unchanged", "skipped_empty_signature", "skipped_cap_exhausted"]
+class AsrHypothesisReceipt(TypedDict):
+    receipt_ref: str
+    handle: str
+    utterance_id: str
+    revision: int
+    text: str
+    scope: RecallScope
+    decision: AsrFireDecision
+    fires_used: int
+    run_id: NotRequired[str | None]
+    partial: bool
+    result_refs: list[str]
+    narrowing: ScopedReadReceipt
+AsrFinalDecision = Literal["promoted", "finalized"]
+class AsrFinalReceipt(TypedDict):
+    receipt_ref: str
+    handle: str
+    utterance_id: str
+    revision: int
+    text: str
+    scope: RecallScope
+    decision: AsrFinalDecision
+    reused_fire_receipt: NotRequired[str | None]
+    fires_used: int
+    run_id: NotRequired[str | None]
+    warm_appended: int
+    partial: bool
+    result_refs: list[str]
+    narrowing: ScopedReadReceipt
+class AsrCloseRequest(TypedDict):
+    handle: str
+class AsrClosed(TypedDict):
+    handle: str
 class LiveVoiceStartRequest(TypedDict):
     sample_rate: int
     channels: int
@@ -9730,6 +9825,34 @@ class HybridSearchHit(TypedDict):
     score: float
     access_factor: NotRequired[float | None]
     components: list[RetrievalScoreComponent]
+TemporalAnchorMode = Literal["occurred", "learned", "both", "auto"]
+class TemporalSearchRange(TypedDict):
+    start: int
+    end: int
+class TemporalSearchRequest(TypedDict):
+    start: int
+    end: int
+    sigma_secs: int
+    anchor_mode: NotRequired[TemporalAnchorMode]
+    learned_start: NotRequired[int | None]
+    learned_end: NotRequired[int | None]
+    adaptive: NotRequired[bool]
+    occurred_range: NotRequired[TemporalSearchRange | None]
+    learned_range: NotRequired[TemporalSearchRange | None]
+    limit: int
+class TemporalSearchHit(TypedDict):
+    entity_ref: str
+    source_revision_ref: NotRequired[str | None]
+    score: float
+    occurred_start: int
+    occurred_end: int
+    learned_at: int
+class TemporalSearchReport(TypedDict):
+    sigma_secs: int
+    rounds: int
+class TemporalSearchResult(TypedDict):
+    hits: list[TemporalSearchHit]
+    widening: NotRequired[TemporalSearchReport | None]
 class QueryBm25Request(TypedDict):
     query: str
     limit: int

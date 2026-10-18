@@ -529,12 +529,14 @@ impl QueryAffect {
     }
 }
 
+pub use super::fanout_batch::*;
 pub use super::recall_door::{
     RECALL_MEDIA_UNSERVED, RecallDoor, recall_at_door, recall_at_door_seeded, recall_unembedded,
     recall_with_vector,
 };
 pub use super::sdk_agents::*;
 pub use super::sdk_anonymous_chat::*;
+pub use super::sdk_asr::*;
 pub use super::sdk_authority_history::*;
 pub use super::sdk_calendar::*;
 pub use super::sdk_campaign_split::*;

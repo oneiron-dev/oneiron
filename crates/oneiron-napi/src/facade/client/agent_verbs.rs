@@ -211,6 +211,18 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_fanout_spawn(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.fanout.spawn", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_fanout_slots(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.fanout.slots", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_fanout_launch(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.fanout.launch", input)
@@ -4037,6 +4049,36 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn ai_voice_asr_open(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.voice.asr.open", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_voice_asr_hypothesis(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.voice.asr.hypothesis", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_voice_asr_finalize(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.voice.asr.finalize", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_voice_asr_close(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.voice.asr.close", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn ai_voice_start(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("ai.voice.start", input)
@@ -4505,6 +4547,15 @@ impl NativeClient {
     pub fn vault_search_hybrid(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.search.hybrid", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_search_temporal(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.search.temporal", input)
             .map_err(facade_error)
     }
     #[napi]

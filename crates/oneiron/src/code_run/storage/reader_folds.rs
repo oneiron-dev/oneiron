@@ -13,7 +13,8 @@ use super::records::{
 };
 use super::routing::SessionBinding;
 use crate::code_run::{
-    CodeRunReplayGeneration, CodeRunReplayRecord, ExecutorStorage, ResultOccurrence,
+    CodeRunReplayGeneration, CodeRunReplayRecord, ExecutorStorage, ParkedWait, ResultOccurrence,
+    seal_parked_code_consent_in_txn,
 };
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::{EntityId, Error, ModelId, Result, Vault};
@@ -281,20 +282,19 @@ impl ExecutorStorage<'_> {
     /// The checkpoint's commit with the fold receipts its step staged: the
     /// replay append, its heal tally and every receipt in one transaction, so a receipt never exists without its
     /// binding, nor a binding without its receipt.
+    ///
+    /// A step that parks its run on `parked` seals the code consent wait it
+    /// names in the same transaction (DOOR-079 1b), when one is bound to it,
+    /// so the binding is sealed exactly when its parked step commits. A
+    /// room's run binds no code consent wait, so its commit seals nothing.
     pub(crate) fn put_code_run_replay_record_with_receipts_if_generation(
         &self,
         record: &CodeRunReplayRecord,
         expected: Option<CodeRunReplayGeneration>,
         healed_model: Option<&ModelId>,
         receipts: &[ReaderFoldReceipt],
+        parked: Option<&ParkedWait>,
     ) -> Result<CodeRunReplayGeneration> {
-        if receipts.is_empty() {
-            return self.put_code_run_replay_record_if_generation_with_heal(
-                record,
-                expected,
-                healed_model,
-            );
-        }
         match self {
             Self::Canonical(vault) => vault.put_code_run_replay_record_if_generation_with_heal_and(
                 record,
@@ -305,9 +305,14 @@ impl ExecutorStorage<'_> {
                         let key = (receipt.folded.owner, receipt.folded.occurrence);
                         FOLDS.put(&vault.store, wtxn, &key, receipt)?;
                     }
+                    if let Some(parked) = parked {
+                        seal_parked_code_consent_in_txn(vault, wtxn, record, parked)?;
+                    }
                     Ok(())
                 },
             ),
+            Self::Session(_) if receipts.is_empty() => self
+                .put_code_run_replay_record_if_generation_with_heal(record, expected, healed_model),
             Self::Session(binding) => {
                 REPLAY_RECORDS.encode_value(record)?;
                 let next = record.generation()?;
