@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 533 facade rows, 1994 declarations.
-Inputs: 482 of 533 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 476 of 533 fully typed, 57 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 541 facade rows, 2010 declarations.
+Inputs: 489 of 541 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 483 of 541 fully typed, 58 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 91; unread shapes: 0.
 """
 
@@ -5570,9 +5570,9 @@ class CodeProposalViewRequest(TypedDict):
     proposal_ref: str
 RepoProposalStatus = Literal["Proposed", "Approved", "Applied", "Failed"]
 class CodeProposedStamp(TypedDict):
-    actor_ref: str
-    session_ref: str
-    provenance_claim_ref: str
+    actor_ref: NotRequired[str | None]
+    session_ref: NotRequired[str | None]
+    provenance_claim_ref: NotRequired[str | None]
     turn_ref: NotRequired[str | None]
     activity_ref: NotRequired[str | None]
     intent_ref: NotRequired[str | None]
@@ -7470,6 +7470,149 @@ class ContextEmitReceipt(TypedDict):
     request_digest: str
     result_digest: str
     context: ContextReceiptFields
+class LiveVoiceStartRequest(TypedDict):
+    sample_rate: int
+    channels: int
+    room_ref: NotRequired[str | None]
+    roster_ref: NotRequired[str | None]
+class LiveVoiceSession(TypedDict):
+    session_ref: str
+    sample_rate: int
+    channels: int
+class LiveVoiceAudioRequest(TypedDict):
+    session_ref: str
+    utterance_id: str
+    pcm_base64: str
+    speaking: bool
+    end_utterance: NotRequired[bool]
+class LiveVoiceProcessed(TypedDict):
+    session_ref: str
+    cursor: int
+    ended: bool
+class LiveVoiceEventsRequest(TypedDict):
+    session_ref: str
+    after: NotRequired[int]
+    limit: NotRequired[int | None]
+LiveVoiceStopReason = Literal["user_barge_in", "safeguard", "roster_changed", "output_failed", "session_end"]
+class LiveVoiceEventKindGenerationStarted(TypedDict):
+    kind: Literal["generation_started"]
+    run: str
+    context_sources: list[str]
+class LiveVoiceEventKindPcm(TypedDict):
+    kind: Literal["pcm"]
+    sample_rate: int
+    pcm_base64: str
+class LiveVoiceEventKindPlayoutEnd(TypedDict):
+    kind: Literal["playout_end"]
+class LiveVoiceEventKindFlush(TypedDict):
+    kind: Literal["flush"]
+class LiveVoiceEventKindPlayoutStop(TypedDict):
+    kind: Literal["playout_stop"]
+    reason: LiveVoiceStopReason
+class LiveVoiceEventKindMediaCancelled(TypedDict):
+    kind: Literal["media_cancelled"]
+class LiveVoiceEventKindSafeguard(TypedDict):
+    kind: Literal["safeguard"]
+    action: PolicyEnforcementAction
+    receipt_ref: NotRequired[str | None]
+    custom_tier_skipped: bool
+class LiveVoiceEventKindNotice(TypedDict):
+    kind: Literal["notice"]
+    notice: GateSystemNoticeRecord
+class LiveVoiceEventKindMemories(TypedDict):
+    kind: Literal["memories"]
+    found: int
+    heard: int
+    receipts: list[ScopedReadReceipt]
+class LiveVoiceEventKindToolContext(TypedDict):
+    kind: Literal["tool_context"]
+    source: str
+class LiveVoiceEventKindFinished(TypedDict):
+    kind: Literal["finished"]
+class LiveVoiceEventKindError(TypedDict):
+    kind: Literal["error"]
+    code: str
+class LiveVoiceEventKindSessionEnded(TypedDict):
+    kind: Literal["session_ended"]
+LiveVoiceEventKind = LiveVoiceEventKindGenerationStarted | LiveVoiceEventKindPcm | LiveVoiceEventKindPlayoutEnd | LiveVoiceEventKindFlush | LiveVoiceEventKindPlayoutStop | LiveVoiceEventKindMediaCancelled | LiveVoiceEventKindSafeguard | LiveVoiceEventKindNotice | LiveVoiceEventKindMemories | LiveVoiceEventKindToolContext | LiveVoiceEventKindFinished | LiveVoiceEventKindError | LiveVoiceEventKindSessionEnded
+class LiveVoiceEvent(TypedDict):
+    sequence: int
+    utterance_id: NotRequired[str | None]
+    generation: NotRequired[int | None]
+    event: LiveVoiceEventKind
+class LiveVoiceEvents(TypedDict):
+    session_ref: str
+    cursor: int
+    ended: bool
+    events: list[LiveVoiceEvent]
+LiveVoiceAckKind = Literal["drained", "stopped"]
+class LiveVoiceAckRequest(TypedDict):
+    session_ref: str
+    generation: int
+    event_sequence: int
+    kind: LiveVoiceAckKind
+class LiveVoiceUsageRequest(TypedDict):
+    session_ref: str
+    generation: int
+class LiveVoiceUsage(TypedDict):
+    session_ref: str
+    utterance_id: str
+    generation: int
+    run: str
+    terminal: bool
+    metering_enabled: bool
+    settlements: list[RunRungSettlement]
+MutationIntent = Literal["preview", "explicit_mutation"]
+class ConnectorCallRequest(TypedDict):
+    name: str
+    tool: str
+    arguments: NotRequired[Any]
+    mutation: NotRequired[MutationIntent]
+class LiveVoiceToolRequest(TypedDict):
+    session_ref: str
+    call: ConnectorCallRequest
+class ConnectorToolResult(TypedDict):
+    source: str
+    foreign: bool
+    content: Any
+    structured_content: NotRequired[Any | None]
+    is_error: bool
+    rpc_error: NotRequired[Any | None]
+class ConnectorQuestion(TypedDict):
+    key: str
+    message: str
+    requested_schema: Any
+class ConnectorCallReplyDelivered(TypedDict):
+    outcome: Literal["delivered"]
+    result: NotRequired[ConnectorToolResult | None]
+    reasons: NotRequired[list[str]]
+class ConnectorCallReplyHeld(TypedDict):
+    outcome: Literal["held"]
+    call_ref: str
+    decision_ref: NotRequired[str | None]
+    reasons: list[str]
+class ConnectorCallReplyRefused(TypedDict):
+    outcome: Literal["refused"]
+    decision_ref: NotRequired[str | None]
+    reasons: list[str]
+class ConnectorCallReplyPendingDelivery(TypedDict):
+    outcome: Literal["pending_delivery"]
+    call_ref: NotRequired[str | None]
+    reasons: list[str]
+class ConnectorCallReplyAwaitingInput(TypedDict):
+    outcome: Literal["awaiting_input"]
+    handle: str
+    source: str
+    foreign: bool
+    questions: list[ConnectorQuestion]
+    expires_at_ms: int
+    reasons: NotRequired[list[str]]
+ConnectorCallReply = ConnectorCallReplyDelivered | ConnectorCallReplyHeld | ConnectorCallReplyRefused | ConnectorCallReplyPendingDelivery | ConnectorCallReplyAwaitingInput
+class LiveVoiceToolReply(TypedDict):
+    processed: LiveVoiceProcessed
+    reply: ConnectorCallReply
+class LiveVoiceSessionRequest(TypedDict):
+    session_ref: str
 class AiOptionsRequest(TypedDict):
     operation: NotRequired[str | None]
     inputs: NotRequired[list[str]]
@@ -7939,49 +8082,6 @@ class ConnectorView(TypedDict):
     registered_at: int
     status_changed_at: NotRequired[int | None]
     budgeted_as_sends: bool
-MutationIntent = Literal["preview", "explicit_mutation"]
-class ConnectorCallRequest(TypedDict):
-    name: str
-    tool: str
-    arguments: NotRequired[Any]
-    mutation: NotRequired[MutationIntent]
-class ConnectorToolResult(TypedDict):
-    source: str
-    foreign: bool
-    content: Any
-    structured_content: NotRequired[Any | None]
-    is_error: bool
-    rpc_error: NotRequired[Any | None]
-class ConnectorQuestion(TypedDict):
-    key: str
-    message: str
-    requested_schema: Any
-class ConnectorCallReplyDelivered(TypedDict):
-    outcome: Literal["delivered"]
-    result: NotRequired[ConnectorToolResult | None]
-    reasons: NotRequired[list[str]]
-class ConnectorCallReplyHeld(TypedDict):
-    outcome: Literal["held"]
-    call_ref: str
-    decision_ref: NotRequired[str | None]
-    reasons: list[str]
-class ConnectorCallReplyRefused(TypedDict):
-    outcome: Literal["refused"]
-    decision_ref: NotRequired[str | None]
-    reasons: list[str]
-class ConnectorCallReplyPendingDelivery(TypedDict):
-    outcome: Literal["pending_delivery"]
-    call_ref: NotRequired[str | None]
-    reasons: list[str]
-class ConnectorCallReplyAwaitingInput(TypedDict):
-    outcome: Literal["awaiting_input"]
-    handle: str
-    source: str
-    foreign: bool
-    questions: list[ConnectorQuestion]
-    expires_at_ms: int
-    reasons: NotRequired[list[str]]
-ConnectorCallReply = ConnectorCallReplyDelivered | ConnectorCallReplyHeld | ConnectorCallReplyRefused | ConnectorCallReplyPendingDelivery | ConnectorCallReplyAwaitingInput
 class ConnectorSchemaRequest(TypedDict):
     name: str
     tool: str

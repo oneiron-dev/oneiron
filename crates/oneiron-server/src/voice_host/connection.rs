@@ -318,6 +318,7 @@ impl VoiceHost {
                                 tracing::warn!("voice media: a sentence was not spoken");
                                 self.output_failed(generation, bridge, outputs);
                             }
+                            MediaEvent::Out(VoiceMediaOutput::Cancelled { .. }) => {}
                             MediaEvent::Out(VoiceMediaOutput::Heard { event, .. }) => {
                                 // A heard final replaces any enrichment in flight, as a wire final does.
                                 if let Some((handle, work)) = self.heard(bridge, event) {

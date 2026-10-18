@@ -8688,6 +8688,166 @@ async fn vault_receipts_context(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn ai_voice_start(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "ai.voice.start")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("ai.voice.start", &value)?;
+    let hooks = facade_hooks_pre(server, call, "ai.voice.start", value).await?;
+    let output = facade_output(
+        super::host_doors::ai_voice_start(server, auth, facade_input(hooks.args.clone())?).await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn ai_voice_audio(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "ai.voice.audio")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("ai.voice.audio", &value)?;
+    let hooks = facade_hooks_pre(server, call, "ai.voice.audio", value).await?;
+    let output = facade_output(
+        super::host_doors::ai_voice_audio(server, auth, facade_input(hooks.args.clone())?).await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn ai_voice_events(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "ai.voice.events")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("ai.voice.events", &value)?;
+    let hooks = facade_hooks_pre(server, call, "ai.voice.events", value).await?;
+    let output = facade_output(
+        super::host_doors::ai_voice_events(server, auth, facade_input(hooks.args.clone())?).await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn ai_voice_ack(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "ai.voice.ack")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("ai.voice.ack", &value)?;
+    let hooks = facade_hooks_pre(server, call, "ai.voice.ack", value).await?;
+    let output = facade_output(
+        super::host_doors::ai_voice_ack(server, auth, facade_input(hooks.args.clone())?).await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn ai_voice_usage(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "ai.voice.usage")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("ai.voice.usage", &value)?;
+    let hooks = facade_hooks_pre(server, call, "ai.voice.usage", value).await?;
+    let output = facade_output(
+        super::host_doors::ai_voice_usage(server, auth, facade_input(hooks.args.clone())?).await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn ai_voice_tool(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "ai.voice.tool")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("ai.voice.tool", &value)?;
+    let hooks = facade_hooks_pre(server, call, "ai.voice.tool", value).await?;
+    let (output, listed) = super::host_doors::ai_voice_tool(
+        server,
+        auth,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn ai_voice_end(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "ai.voice.end")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("ai.voice.end", &value)?;
+    let hooks = facade_hooks_pre(server, call, "ai.voice.end", value).await?;
+    let output = facade_output(
+        super::host_doors::ai_voice_end(server, auth, facade_input(hooks.args.clone())?).await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn ai_voice_close(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "ai.voice.close")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("ai.voice.close", &value)?;
+    let hooks = facade_hooks_pre(server, call, "ai.voice.close", value).await?;
+    let output = facade_output(
+        super::host_doors::ai_voice_close(server, auth, facade_input(hooks.args.clone())?).await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn ai_options(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -12999,6 +13159,14 @@ pub(crate) async fn call_verb(
         "ai.steps.receipt" => ai_steps_receipt(server, call, input).await,
         "ai.reply" => ai_reply(server, call, input).await,
         "vault.receipts.context" => vault_receipts_context(server, call, input).await,
+        "ai.voice.start" => ai_voice_start(server, call, input).await,
+        "ai.voice.audio" => ai_voice_audio(server, call, input).await,
+        "ai.voice.events" => ai_voice_events(server, call, input).await,
+        "ai.voice.ack" => ai_voice_ack(server, call, input).await,
+        "ai.voice.usage" => ai_voice_usage(server, call, input).await,
+        "ai.voice.tool" => ai_voice_tool(server, call, input).await,
+        "ai.voice.end" => ai_voice_end(server, call, input).await,
+        "ai.voice.close" => ai_voice_close(server, call, input).await,
         "ai.options" => ai_options(server, call, input).await,
         "ai.image" => ai_image(server, call, input).await,
         "ai.speech" => ai_speech(server, call, input).await,

@@ -2015,6 +2015,54 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::receipt::CallReceiptRequest>(),
             ),
             (
+                "ai.voice.start",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveVoiceStartRequest,
+                >(),
+            ),
+            (
+                "ai.voice.audio",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveVoiceAudioRequest,
+                >(),
+            ),
+            (
+                "ai.voice.events",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveVoiceEventsRequest,
+                >(),
+            ),
+            (
+                "ai.voice.ack",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveVoiceAckRequest,
+                >(),
+            ),
+            (
+                "ai.voice.usage",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveVoiceUsageRequest,
+                >(),
+            ),
+            (
+                "ai.voice.tool",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveVoiceToolRequest,
+                >(),
+            ),
+            (
+                "ai.voice.end",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveVoiceSessionRequest,
+                >(),
+            ),
+            (
+                "ai.voice.close",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveVoiceSessionRequest,
+                >(),
+            ),
+            (
                 "ai.options",
                 crate::code_run::vault_read::request_schema::<AiOptionsRequest>(),
             ),
@@ -3179,6 +3227,12 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "ai.steps.receipt",
     "ai.reply",
     "vault.receipts.context",
+    "ai.voice.start",
+    "ai.voice.audio",
+    "ai.voice.ack",
+    "ai.voice.usage",
+    "ai.voice.end",
+    "ai.voice.close",
     "vault.voices.packs.put",
     "vault.voices.render_consent",
     "vault.voices.targets.provision",
@@ -3599,6 +3653,24 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.receipts.context" => crate::code_run::vault_read::request_schema::<
             Option<crate::receipt::ContextEmitReceipt>,
+        >(),
+        "ai.voice.start" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::LiveVoiceSession>()
+        }
+        "ai.voice.audio" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::LiveVoiceProcessed,
+        >(),
+        "ai.voice.ack" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::LiveVoiceProcessed,
+        >(),
+        "ai.voice.usage" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::LiveVoiceUsage>()
+        }
+        "ai.voice.end" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::LiveVoiceProcessed,
+        >(),
+        "ai.voice.close" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::LiveVoiceProcessed,
         >(),
         "vault.voices.packs.put" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::VoiceBankPackReceipt,
@@ -6477,6 +6549,62 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "ai.voice.start" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.voice.audio" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.voice.events" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.voice.ack" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.voice.usage" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.voice.tool" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.voice.end" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.voice.close" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "ai.options" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -8809,6 +8937,30 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.receipts.context" => {
             let _input: crate::receipt::CallReceiptRequest = decode(value.clone())?;
         }
+        "ai.voice.start" => {
+            let _input: crate::task_verb::sdk::LiveVoiceStartRequest = decode(value.clone())?;
+        }
+        "ai.voice.audio" => {
+            let _input: crate::task_verb::sdk::LiveVoiceAudioRequest = decode(value.clone())?;
+        }
+        "ai.voice.events" => {
+            let _input: crate::task_verb::sdk::LiveVoiceEventsRequest = decode(value.clone())?;
+        }
+        "ai.voice.ack" => {
+            let _input: crate::task_verb::sdk::LiveVoiceAckRequest = decode(value.clone())?;
+        }
+        "ai.voice.usage" => {
+            let _input: crate::task_verb::sdk::LiveVoiceUsageRequest = decode(value.clone())?;
+        }
+        "ai.voice.tool" => {
+            let _input: crate::task_verb::sdk::LiveVoiceToolRequest = decode(value.clone())?;
+        }
+        "ai.voice.end" => {
+            let _input: crate::task_verb::sdk::LiveVoiceSessionRequest = decode(value.clone())?;
+        }
+        "ai.voice.close" => {
+            let _input: crate::task_verb::sdk::LiveVoiceSessionRequest = decode(value.clone())?;
+        }
         "ai.options" => {
             let _input: AiOptionsRequest = decode(value.clone())?;
         }
@@ -10114,6 +10266,14 @@ pub fn invoke(
         "ai.steps.receipt" => encode(ai_steps_receipt(memory, decode(value)?)?),
         "ai.reply" => encode(ai_reply(memory, decode(value)?)?),
         "vault.receipts.context" => encode(vault_receipts_context(memory, decode(value)?)?),
+        "ai.voice.start" => encode(ai_voice_start(memory, decode(value)?)?),
+        "ai.voice.audio" => encode(ai_voice_audio(memory, decode(value)?)?),
+        "ai.voice.events" => encode(ai_voice_events(memory, decode(value)?)?),
+        "ai.voice.ack" => encode(ai_voice_ack(memory, decode(value)?)?),
+        "ai.voice.usage" => encode(ai_voice_usage(memory, decode(value)?)?),
+        "ai.voice.tool" => encode(ai_voice_tool(memory, decode(value)?)?),
+        "ai.voice.end" => encode(ai_voice_end(memory, decode(value)?)?),
+        "ai.voice.close" => encode(ai_voice_close(memory, decode(value)?)?),
         "ai.options" => encode(ai_options(memory, decode(value)?)?),
         "ai.image" => encode(ai_image(memory, decode(value)?)?),
         "ai.speech" => encode(ai_speech(memory, decode(value)?)?),
@@ -13660,6 +13820,54 @@ pub fn vault_receipts_context(
     input: crate::receipt::CallReceiptRequest,
 ) -> MemoryResult<Option<crate::receipt::ContextEmitReceipt>> {
     memory.context_emit_receipt(&input.receipt_ref)
+}
+pub fn ai_voice_start(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveVoiceStartRequest,
+) -> MemoryResult<crate::task_verb::sdk::LiveVoiceSession> {
+    crate::task_verb::sdk::host_only(memory, "ai.voice.start", &input)
+}
+pub fn ai_voice_audio(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveVoiceAudioRequest,
+) -> MemoryResult<crate::task_verb::sdk::LiveVoiceProcessed> {
+    crate::task_verb::sdk::host_only(memory, "ai.voice.audio", &input)
+}
+pub fn ai_voice_events(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveVoiceEventsRequest,
+) -> MemoryResult<crate::task_verb::sdk::LiveVoiceEvents> {
+    crate::task_verb::sdk::host_only(memory, "ai.voice.events", &input)
+}
+pub fn ai_voice_ack(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveVoiceAckRequest,
+) -> MemoryResult<crate::task_verb::sdk::LiveVoiceProcessed> {
+    crate::task_verb::sdk::host_only(memory, "ai.voice.ack", &input)
+}
+pub fn ai_voice_usage(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveVoiceUsageRequest,
+) -> MemoryResult<crate::task_verb::sdk::LiveVoiceUsage> {
+    crate::task_verb::sdk::host_only(memory, "ai.voice.usage", &input)
+}
+pub fn ai_voice_tool(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveVoiceToolRequest,
+) -> MemoryResult<crate::task_verb::sdk::LiveVoiceToolReply> {
+    crate::task_verb::sdk::host_only(memory, "ai.voice.tool", &input)
+}
+pub fn ai_voice_end(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveVoiceSessionRequest,
+) -> MemoryResult<crate::task_verb::sdk::LiveVoiceProcessed> {
+    crate::task_verb::sdk::host_only(memory, "ai.voice.end", &input)
+}
+pub fn ai_voice_close(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveVoiceSessionRequest,
+) -> MemoryResult<crate::task_verb::sdk::LiveVoiceProcessed> {
+    crate::task_verb::sdk::host_only(memory, "ai.voice.close", &input)
 }
 pub fn ai_options(
     memory: &Memory<'_>,
