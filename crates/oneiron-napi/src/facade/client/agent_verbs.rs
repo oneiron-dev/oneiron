@@ -859,6 +859,60 @@ impl NativeClient {
         serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
     }
     #[napi]
+    pub fn vault_campaign_compliance_install(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.campaign.compliance.install", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_campaign_compliance_amend(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.campaign.compliance.amend", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_campaign_compliance_approve(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.campaign.compliance.approve", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_campaign_compliance_reject(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.campaign.compliance.reject", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_campaign_compliance_verify(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.campaign.compliance.verify", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_campaign_compliance_result(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.campaign.compliance.result", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_campaign_enroll(
         &self,
         input: serde_json::Value,

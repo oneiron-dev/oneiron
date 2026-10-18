@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 757 facade rows, 2631 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 713.
+// UniFFI census: 763 facade rows, 2651 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 719.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -7431,6 +7431,287 @@ pub struct KeyValueNamespaces {
     pub limit: Option<u64>,
     #[serde(rename = "offset", default, skip_serializing_if = "Option::is_none")]
     pub offset: Option<u64>,
+}
+
+/// `oneiron::campaign::compliance::rules::UnknownJurisdictionDefault`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum UnknownJurisdictionDefault {
+    #[serde(rename = "strict_pole")]
+    StrictPole,
+}
+
+/// `oneiron::campaign::compliance::rules::ComplianceExemptionEvidence`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ComplianceExemptionEvidence {
+    #[serde(rename = "legal_form")]
+    LegalForm,
+    #[serde(rename = "publication_context")]
+    PublicationContext,
+}
+
+/// `oneiron::campaign::compliance::rules::ConditionalExemptionEvidence`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConditionalExemptionEvidence {
+    #[serde(rename = "jurisdiction")]
+    pub jurisdiction: String,
+    #[serde(rename = "evidence")]
+    pub evidence: ComplianceExemptionEvidence,
+}
+
+/// `oneiron::campaign::compliance::rules::ComplianceRuleKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ComplianceRuleKind {
+    #[serde(rename = "consent_class")]
+    ConsentClass,
+    #[serde(rename = "sender_id")]
+    SenderId,
+    #[serde(rename = "physical_address")]
+    PhysicalAddress,
+    #[serde(rename = "optout_mechanism")]
+    OptoutMechanism,
+    #[serde(rename = "optout_deadline")]
+    OptoutDeadline,
+    #[serde(rename = "content_marking")]
+    ContentMarking,
+    #[serde(rename = "records")]
+    Records,
+    #[serde(rename = "source_hygiene")]
+    SourceHygiene,
+}
+
+/// `oneiron::campaign::compliance::rules::B2bExemption`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum B2bExemption {
+    #[serde(rename = "yes")]
+    Yes,
+    #[serde(rename = "no")]
+    No,
+    #[serde(rename = "conditional")]
+    Conditional,
+}
+
+/// `oneiron::campaign::compliance::rules::ComplianceSource`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ComplianceSource {
+    #[serde(rename = "citation")]
+    pub citation: String,
+    #[serde(rename = "url")]
+    pub url: String,
+}
+
+/// `oneiron::campaign::compliance::rules::ComplianceRuleRow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ComplianceRuleRow {
+    #[serde(rename = "jurisdiction")]
+    pub jurisdiction: String,
+    #[serde(rename = "channel")]
+    pub channel: String,
+    #[serde(rename = "rule_kind")]
+    pub rule_kind: ComplianceRuleKind,
+    #[serde(rename = "requirement")]
+    pub requirement: String,
+    #[serde(rename = "b2b_exemption")]
+    pub b2b_exemption: B2bExemption,
+    #[serde(rename = "source")]
+    pub source: ComplianceSource,
+    #[serde(rename = "verified_at")]
+    pub verified_at: u64,
+    #[serde(rename = "version")]
+    pub version: u32,
+    #[serde(rename = "penalty_note")]
+    pub penalty_note: String,
+}
+
+/// `oneiron::campaign::compliance::rules::CompliancePack`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CompliancePack {
+    #[serde(rename = "pack_id")]
+    pub pack_id: String,
+    #[serde(rename = "pack_version")]
+    pub pack_version: u32,
+    #[serde(rename = "min_engine_version")]
+    pub min_engine_version: String,
+    #[serde(rename = "verified_at_max_age_secs")]
+    pub verified_at_max_age_secs: u64,
+    #[serde(rename = "unknown_jurisdiction_default")]
+    pub unknown_jurisdiction_default: UnknownJurisdictionDefault,
+    #[serde(rename = "strict_pole_jurisdiction")]
+    pub strict_pole_jurisdiction: String,
+    #[serde(rename = "jurisdiction_confidence_floor_millis")]
+    pub jurisdiction_confidence_floor_millis: u16,
+    #[serde(rename = "prohibited_list_provenance_classes")]
+    pub prohibited_list_provenance_classes: Vec<String>,
+    #[serde(rename = "conditional_exemption_evidence")]
+    pub conditional_exemption_evidence: Vec<ConditionalExemptionEvidence>,
+    #[serde(rename = "warning")]
+    pub warning: String,
+    #[serde(rename = "rows")]
+    pub rows: Vec<ComplianceRuleRow>,
+}
+
+/// `oneiron::campaign::compliance::contracts::ComplianceAmendRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ComplianceAmendRequest {
+    #[serde(rename = "prior_version")]
+    pub prior_version: u32,
+    #[serde(rename = "pack")]
+    pub pack: CompliancePack,
+}
+
+/// `oneiron::campaign::compliance::contracts::ComplianceOperation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ComplianceOperation {
+    #[serde(rename = "install")]
+    Install,
+    #[serde(rename = "amend")]
+    Amend,
+    #[serde(rename = "approve")]
+    Approve,
+    #[serde(rename = "reject")]
+    Reject,
+    #[serde(rename = "verify")]
+    Verify,
+}
+
+/// `oneiron::campaign::compliance::contracts::ComplianceDisposition`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ComplianceDisposition {
+    #[serde(rename = "applied")]
+    Applied,
+    #[serde(rename = "pending_owner_stamp")]
+    PendingOwnerStamp,
+    #[serde(rename = "rejected")]
+    Rejected,
+}
+
+/// `oneiron::campaign::compliance::amend::ComplianceAmendmentClass`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ComplianceAmendmentClass {
+    #[serde(rename = "Tightening")]
+    Tightening,
+    #[serde(rename = "MetadataRefresh")]
+    MetadataRefresh,
+    #[serde(rename = "LooseningOrAmbiguous")]
+    LooseningOrAmbiguous,
+}
+
+/// `oneiron::campaign::compliance::contracts::ComplianceOwnerStamp`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ComplianceOwnerStamp {
+    #[serde(rename = "owner_ref")]
+    pub owner_ref: String,
+    #[serde(rename = "proposal_hash")]
+    pub proposal_hash: String,
+    #[serde(rename = "recorded_at")]
+    pub recorded_at: u64,
+}
+
+/// `oneiron::campaign::compliance::contracts::ComplianceReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ComplianceReceipt {
+    #[serde(rename = "receipt_ref")]
+    pub receipt_ref: String,
+    #[serde(rename = "operation")]
+    pub operation: ComplianceOperation,
+    #[serde(rename = "disposition")]
+    pub disposition: ComplianceDisposition,
+    #[serde(rename = "prior_version")]
+    pub prior_version: u32,
+    #[serde(rename = "effective_version")]
+    pub effective_version: u32,
+    #[serde(rename = "proposed_version")]
+    pub proposed_version: u32,
+    #[serde(rename = "class", default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<ComplianceAmendmentClass>,
+    #[serde(rename = "proposal_hash")]
+    pub proposal_hash: String,
+    #[serde(rename = "actor_ref")]
+    pub actor_ref: String,
+    #[serde(
+        rename = "owner_stamp",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub owner_stamp: Option<ComplianceOwnerStamp>,
+    #[serde(rename = "notice", default, skip_serializing_if = "Option::is_none")]
+    pub notice: Option<String>,
+    #[serde(rename = "reason_codes")]
+    pub reason_codes: Vec<String>,
+    #[serde(rename = "recorded_at")]
+    pub recorded_at: u64,
+}
+
+/// `oneiron::campaign::compliance::contracts::ComplianceApprovalRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ComplianceApprovalRequest {
+    #[serde(rename = "prior_version")]
+    pub prior_version: u32,
+    #[serde(rename = "proposal_hash")]
+    pub proposal_hash: String,
+}
+
+/// `oneiron::campaign::compliance::contracts::ComplianceRowVerification`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ComplianceRowVerification {
+    #[serde(rename = "jurisdiction")]
+    pub jurisdiction: String,
+    #[serde(rename = "channel")]
+    pub channel: String,
+    #[serde(rename = "rule_kind")]
+    pub rule_kind: ComplianceRuleKind,
+    #[serde(rename = "expected_row_version")]
+    pub expected_row_version: u32,
+    #[serde(rename = "source")]
+    pub source: ComplianceSource,
+    #[serde(rename = "verified_at")]
+    pub verified_at: u64,
+}
+
+/// `oneiron::campaign::compliance::contracts::ComplianceVerifyRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ComplianceVerifyRequest {
+    #[serde(rename = "prior_version")]
+    pub prior_version: u32,
+    #[serde(rename = "rows")]
+    pub rows: Vec<ComplianceRowVerification>,
+}
+
+/// `oneiron::campaign::compliance::contracts::ComplianceResultRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ComplianceResultRequest {
+    #[serde(
+        rename = "receipt_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub receipt_ref: Option<String>,
+}
+
+/// `oneiron::campaign::compliance::contracts::CompliancePendingProposal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CompliancePendingProposal {
+    #[serde(rename = "pack")]
+    pub pack: CompliancePack,
+    #[serde(rename = "proposal_hash")]
+    pub proposal_hash: String,
+}
+
+/// `oneiron::campaign::compliance::contracts::ComplianceResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ComplianceResult {
+    #[serde(rename = "active")]
+    pub active: CompliancePack,
+    #[serde(rename = "pending", default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<CompliancePendingProposal>,
+    #[serde(rename = "notices")]
+    pub notices: Vec<String>,
+    #[serde(rename = "receipts")]
+    pub receipts: Vec<ComplianceReceipt>,
 }
 
 /// `oneiron::campaign::surface::actions::CampaignMemberChannelSpec`.
