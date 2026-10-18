@@ -55,6 +55,7 @@ mod key_value;
 mod lifted_view;
 mod locality;
 mod machine_write;
+mod message_result;
 mod note_tombstone;
 mod notes;
 mod outbound;
@@ -64,6 +65,7 @@ mod read_lane;
 mod reads;
 mod recall;
 mod report;
+mod result_attachment;
 mod room_turn;
 mod shape_doors;
 mod structural;
@@ -159,6 +161,9 @@ pub use recall::{
     MemoryItem, MemoryPack, MemoryProvenance, RecallEffort, RecallRerank, RecallRerankHost,
     RecallScope, RerankDocument, RerankEgress, RerankReport, RerankScores, RerankSkip,
     RetrievalMeta, ScopeHonesty, resolve_recall_dial,
+};
+pub use result_attachment::{
+    MESSAGE_RESULT_METADATA_KEY, MessageResultAttachment, MessageResultSource,
 };
 pub use room_turn::RoomTurnHandle;
 pub use skill_authoring::SkillAuthoringReceipt;

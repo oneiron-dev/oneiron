@@ -398,9 +398,11 @@ impl Memory<'_> {
             }
         };
 
-        // A quote rides a room turn that lands at base and is no import
-        // (OF-460, FIX 2027); the room guard proves it there.
-        if turn.quote.is_some() && !matches!(landing, Landing::Base { imported: None, .. }) {
+        // A quote rides a message of a room turn that lands at base and is
+        // no import (OF-460, FIX 2027, FIX 2028); the room guard proves each
+        // there, cited by its message.
+        let quoting = turn.messages.iter().any(|m| m.quote.is_some());
+        if quoting && !matches!(landing, Landing::Base { imported: None, .. }) {
             return Err(MemoryError::bad_request(
                 "a quote lands only on a non-imported room turn at base",
             ));
@@ -452,7 +454,7 @@ impl Memory<'_> {
         };
         // FIX 2027: a quote's selection is read under the speaker's own key,
         // taken here, before the writer opens: no read snapshot nests in it.
-        let quote_key = turn.quote.map(|_| self.read_key()).transpose()?;
+        let quote_key = quoting.then(|| self.read_key()).transpose()?;
         before_txn();
 
         let landed = self.with_witness_write_txn_as(callback, admit, room_speech, |wtxn| {
@@ -803,10 +805,11 @@ impl Memory<'_> {
     /// The in-transaction half both landings share: the ONE-1686 door on every
     /// envelope, then the create-or-verify checks against `dbs` (base for a
     /// base landing, the composed room view for an overlay one). A minted TURN
-    /// carries `person_author` as its immutable byline, `quoted`, a room
-    /// thread reply's proven quote, in its first body (OF-460), and `thread`,
-    /// its thread binding (FIX 2951). `assertions` reads the reply's cited
-    /// and created records first, when it names any (OF-063).
+    /// carries `person_author` as its immutable byline, `quoted`, the reply
+    /// topology the room guard fixed for its quoted messages, in its first
+    /// body (OF-460, FIX 2028), and `thread`, its thread binding (FIX 2951).
+    /// `assertions` reads the reply's cited and created records first, when
+    /// it names any (OF-063).
     #[expect(
         clippy::too_many_arguments,
         reason = "the shared admission joins both landings' in-transaction inputs"
@@ -911,7 +914,7 @@ impl Memory<'_> {
         }
         let turn = match existing_turn {
             Some(record) => {
-                validate_existing_witness_quote(self.vault, wtxn, &record.body, quoted)?;
+                validate_existing_witness_quote(quoted)?;
                 let existing_message_ids = plan
                     .messages
                     .iter()
@@ -1010,6 +1013,24 @@ fn validate_witness_origin(turn: &WitnessTurn, host_executor: bool) -> MemoryRes
         return Err(MemoryError::bad_request(
             "report-blocked receipts require the executor door",
         ));
+    }
+    // A result attachment names a body its MESSAGE holds (FIX 365): only the
+    // executor writes one, and only one that decodes whole.
+    for message in &turn.messages {
+        let reserved = message
+            .metadata
+            .as_ref()
+            .is_some_and(|metadata| metadata.get(MESSAGE_RESULT_METADATA_KEY).is_some());
+        if !reserved {
+            continue;
+        }
+        if !host_executor {
+            return Err(MemoryError::bad_request(
+                "a result attachment requires the executor door",
+            ));
+        }
+        MessageResultAttachment::from_metadata(message.metadata.as_ref())
+            .map_err(MemoryError::bad_request)?;
     }
     Ok(())
 }

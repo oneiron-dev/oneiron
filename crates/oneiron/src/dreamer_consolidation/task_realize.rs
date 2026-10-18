@@ -7,12 +7,17 @@
 //! Completing the row then reports the TASK Done, under its brief's own
 //! judgment.
 //!
+//! A briefed TASK's realization is also asked for its confession (OF-544)
+//! against the brief's done-means: the answer ends with it, and the wake
+//! driver reads it back from the stored answer and seals it once the try
+//! has closed.
+//!
 //! The engine ships the wording, so a Dreamer-lane TASK realizes out of the
 //! box; it parks only on a host that lends no Dreamer model.
 
+use super::confession::{confession_ask, parse_confession};
 use super::step_charge::StepChargeTally;
-use crate::WriteActor;
-use crate::attempt_queue::{AttemptQueue, AttemptResultRef, SetAttemptResult};
+use crate::attempt_queue::{AttemptQueue, AttemptRecord, AttemptResultRef, SetAttemptResult};
 use crate::dreamer_runner::{
     DREAMER_TASK_REALIZE_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerParkCause,
 };
@@ -20,14 +25,19 @@ use crate::dreamer_wake::{
     DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution, WakeAttemptContext,
 };
 use crate::edge::EdgeKind;
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::learning::TypeRef;
 use crate::llm::manifest::ModelRole;
 use crate::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
     DurableStepError, HostInferenceContext, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
     ModelId, ModelTierRef, ResponseFormat, StepOutcome, TierPrecedence, call_as_step,
 };
-use std::collections::BTreeMap;
+use crate::self_heal::audit::AttemptConfession;
+use crate::task_verb::QueueTaskBrief;
+use crate::{Vault, WriteActor};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Why a TASK's realization parks on a host that lends no Dreamer model.
 pub const TASK_REALIZE_UNLENT_PARK_REASON: &str = "task realization needs a lent Dreamer model";
@@ -59,8 +69,9 @@ fn invalid(reason: &str) -> Error {
 /// Dreamer's stamp, and names that NOTE as the row's result. An answer past
 /// the NOTE body bound lands in ordered parts, each continuation linked
 /// `Mentions` to the first, as an imported note's parts are; the result
-/// names the first. A replay after the result was attached writes nothing;
-/// a TASK cancelled or settled since it was queued is owed nothing.
+/// names the first. A brief's objectives are asked for a confession after
+/// the answer. A replay after the result was attached writes nothing; a TASK
+/// cancelled or settled since it was queued is owed nothing.
 pub async fn run_task_realize(
     attempt: &DreamerAdmittedAttempt,
     ctx: &WakeAttemptContext<'_>,
@@ -85,6 +96,7 @@ pub async fn run_task_realize(
         "Task: {}\n\n## Spec\n\n```json\n{spec}\n```\n",
         task.to_hex()
     );
+    let objectives = brief.as_ref().map(brief_objectives).unwrap_or_default();
     if let Some(brief) = brief {
         let brief =
             serde_json::to_string_pretty(&brief).map_err(|_| invalid("the brief is not JSON"))?;
@@ -94,7 +106,7 @@ pub async fn run_task_realize(
         .inference
         .selected_locality()
         .ok_or_else(|| invalid("the host binding names no locality"))?;
-    let request = LlmRequest {
+    let mut request = LlmRequest {
         model: model.model.clone(),
         envelope: CallEnvelope {
             seat_effort: None,
@@ -127,6 +139,14 @@ pub async fn run_task_realize(
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
     };
+    if !objectives.is_empty() {
+        request.messages.push(LlmMessage {
+            role: LlmMessageRole::User,
+            content: vec![ContentPart::Text {
+                text: confession_ask(&objectives),
+            }],
+        });
+    }
     let mut request = ctx
         .vault
         .authorize_model_role(model.role, request, &model.inference)?
@@ -227,4 +247,161 @@ pub async fn run_task_realize(
     Ok(DreamerAttemptExecution::Completed {
         completed_units: charges.units,
     })
+}
+
+/// The objectives a realization confesses against (OF-544): its brief's
+/// done-means question, each criterion that must hold, then each that must
+/// not as `none of: <text>`, in that order, whitespace folded as a workflow
+/// step's are. A blank one is left out and a repeat keeps its first place:
+/// a seal names each objective once.
+fn brief_objectives(brief: &QueueTaskBrief) -> Vec<String> {
+    let fold = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let done = &brief.success;
+    let held = done
+        .yes_if_all
+        .iter()
+        .map(|criterion| fold(&criterion.text));
+    let none = done
+        .no_if_any
+        .iter()
+        .map(|criterion| fold(&criterion.text))
+        .filter(|text| !text.is_empty())
+        .map(|text| format!("none of: {text}"));
+    let mut seen = BTreeSet::new();
+    std::iter::once(fold(&done.question))
+        .chain(held)
+        .chain(none)
+        .filter(|objective| !objective.is_empty() && seen.insert(objective.clone()))
+        .collect()
+}
+
+/// The confession a realization's stored answer makes against its brief's
+/// objectives (OF-544), read while its TASK is still open, before Done
+/// settles it. The subject is the Dreamer that authored the answer; the type
+/// is the brief's placement, as the TASK's lifecycle receipts read it. `None`
+/// when `admitted` is no realization with a result, its TASK is no longer
+/// the runner's or has no brief, or the answer confesses nothing that
+/// parses: a confession is never made up.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn task_realize_confession(
+    vault: &Vault,
+    admitted: &AttemptRecord,
+) -> Result<Option<AttemptConfession>> {
+    if admitted.kind != DREAMER_TASK_REALIZE_ATTEMPT_KIND {
+        return Ok(None);
+    }
+    // The admitted row predates its result: read the row as it is now.
+    let Some(record) = AttemptQueue::new(vault).get(admitted.id)? else {
+        return Ok(None);
+    };
+    let Some(note) = record
+        .result_ref
+        .as_ref()
+        .and_then(|result| EntityId::from_hex(result.as_str()).ok())
+    else {
+        return Ok(None);
+    };
+    let Some((_, Some(brief))) =
+        crate::task_verb::highway_runner::runner_task_brief(vault, &record)?
+    else {
+        return Ok(None);
+    };
+    let objectives = brief_objectives(&brief);
+    if objectives.is_empty() {
+        return Ok(None);
+    }
+    let Some((author, answer)) = stored_answer(vault, note)? else {
+        return Ok(None);
+    };
+    let Some(objectives) = parse_confession(answer.as_bytes(), &objectives) else {
+        return Ok(None);
+    };
+    let Some(type_ref) = brief_type_ref(vault, &brief)? else {
+        tracing::warn!(
+            attempt = ?record.id,
+            "a TASK realization's confession has no placed type; it is not sealed"
+        );
+        return Ok(None);
+    };
+    Ok(Some(AttemptConfession {
+        attempt: record.id,
+        subject: author,
+        type_ref,
+        objectives,
+    }))
+}
+
+/// Seals a realization's confession in the write that closes its try
+/// (OF-544), after the try is terminal there, so no crash can leave a
+/// completed realization unsealed. The seal writes in its own savepoint: a
+/// refusal rolls back alone, is logged, and the completed work stands.
+///
+/// # Errors
+///
+/// Storage errors opening or committing the savepoint.
+pub(crate) fn seal_task_realize_confession_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    confession: &AttemptConfession,
+    now: u64,
+) -> Result<()> {
+    let mut savepoint = vault.store.env.nested_write_txn(txn)?;
+    match vault.record_attempt_confession_in_txn(&mut savepoint, confession, now) {
+        Ok(_) => savepoint.commit()?,
+        Err(error) => tracing::warn!(
+            kind = ?error.kind(),
+            attempt = ?confession.attempt,
+            "a TASK realization's confession was not sealed"
+        ),
+    }
+    Ok(())
+}
+
+/// A realization's answer as it was stored, whole: its result NOTE, then
+/// each continuation part its author linked `Mentions` to it, in the order
+/// they were written (ids ascend), beside the Dreamer that authored it.
+/// `None` when the result is no readable NOTE.
+fn stored_answer(vault: &Vault, note: EntityId) -> Result<Option<(EntityId, String)>> {
+    let Some(crate::note::NoteBody {
+        kind,
+        author_ref,
+        markdown: mut answer,
+        ..
+    }) = vault.read_note(&note)?
+    else {
+        return Ok(None);
+    };
+    for part in vault.sources(
+        &note,
+        EdgeKind::Mentions,
+        Some(crate::registry::ENTITY_TYPE_NOTE),
+    )? {
+        if part <= note {
+            continue;
+        }
+        if let Some(body) = vault.read_note(&part)?
+            && body.author_ref == author_ref
+            && body.kind == kind
+        {
+            answer.push_str(&body.markdown);
+        }
+    }
+    Ok(Some((author_ref, answer)))
+}
+
+/// The TASK's placement as its lifecycle receipts read it (OF-543): the
+/// brief's type node in its project's tree, at the brief's version. `None`
+/// when that tree holds no such node.
+fn brief_type_ref(vault: &Vault, brief: &QueueTaskBrief) -> Result<Option<TypeRef>> {
+    let txn = vault.store.env.read_txn()?;
+    let tree = crate::agent_dispatch::load_team_type_tree_in_txn(vault, &txn, brief.project_ref)?;
+    Ok(tree.node_by_entity(brief.type_ref.node_id).map(|node| {
+        TypeRef::from(&crate::task_type::TaskTypeRef::new(
+            node.node_id.clone(),
+            brief.type_ref.tree_version,
+        ))
+    }))
 }

@@ -165,10 +165,15 @@ pub use self::dials::{
     set_skill_optimize_min_outcomes, skill_optimize_min_outcomes,
 };
 pub use self::eval_set::{
-    DerivationKind, EvalCase, EvalCaseDraft, EvalCohort, EvalExposure, EvalExposureCounts,
-    EvalExposureKind, EvalLabel, EvalLabelAsk, EvalLabelKind, EvalRelease, EvalSeat, FamilyPurpose,
-    SourceFamily, SufficiencyCard, SufficiencyInput, SufficiencyVerdict, UnknownReason,
-    WaitingDecision, sufficiency_card,
+    AuditCase, AuditCoverage, AuditMethodPin, CandidateLabel, CaseDecision, CohortRetirement,
+    CohortSummary, CoverageGap, CutDecision, DerivationKind, EvalAuthoringInventory,
+    EvalAuthoringPlan, EvalAuthoringReport, EvalAuthoringSkip, EvalCandidate, EvalCase,
+    EvalCaseDraft, EvalCohort, EvalCohortDecision, EvalCutAudit, EvalCutAuditDraft, EvalExposure,
+    EvalExposureCounts, EvalExposureKind, EvalLabel, EvalLabelAsk, EvalLabelKind, EvalRelease,
+    EvalSeat, EvalSourceGroup, FamilyDecision, FamilyPurpose, NearCopyFlag, PurposeCounts,
+    SeatInventory, SourceFamily, SufficiencyCard, SufficiencyInput, SufficiencyVerdict,
+    UncutFamily, UnknownReason, WaitingDecision, apply_eval_authoring_plan,
+    eval_authoring_inventory, sufficiency_card,
 };
 pub use self::goal_axes::{
     AxisArm, AxisScores, ConfidenceInterval, GoalAxisBandit, GoalAxisBandits, GoalAxisPlan,
@@ -203,9 +208,9 @@ pub(crate) use self::labels::{
 pub use self::offer::{
     ComputeDestination, OFFER_SKILL_AXIS, OfferAnswer, OfferAnswerRecord, OfferCandidate,
     OfferCheck, OfferCheckInput, OfferCost, OfferEvidence, OfferIntent, OfferModelPin, OfferOption,
-    SeatWorkload, TrainingOffer, TrainingOfferDraft, offer_skill_cell, pending_training_offers,
-    record_offer_check, record_training_offer, settle_training_offer, training_offer,
-    training_offer_checks, training_offer_skill_id, training_offers,
+    SeatWorkload, TrainingOffer, TrainingOfferDraft, eval_authoring_skill_id, offer_skill_cell,
+    pending_training_offers, record_offer_check, record_training_offer, settle_training_offer,
+    training_offer, training_offer_checks, training_offer_skill_id, training_offers,
 };
 pub(crate) use self::offer::{pending_training_offer_in_txn, settle_training_offer_in_txn};
 pub use self::offer_switch::{
@@ -250,8 +255,8 @@ pub(crate) use gate::{
     ensure_current_judge_in_txn, optimizer_birth_marker_for_create_in_txn,
     project_goal_revision_proposals_in_txn, settle_skill_tradeoff_ask_as_in_txn,
     settle_skill_tradeoff_ask_in_txn, skill_edit_preflight_passed_in_txn,
-    skill_edit_trial_basis_in_txn, skill_edit_verdict_receipts, skill_tradeoff_ask_in_txn,
-    validate_judge_revision, with_optimized_skill_admission,
+    skill_edit_trial_basis_in_txn, skill_edit_verdict_in_txn, skill_edit_verdict_receipts,
+    skill_tradeoff_ask_in_txn, validate_judge_revision, with_optimized_skill_admission,
 };
 
 pub(crate) use self::goal_binding::validate_goal_birth_in_txn;
