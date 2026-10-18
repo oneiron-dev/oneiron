@@ -1,21 +1,24 @@
 //! Shape changes to a written table or chart at export (OF-510). A table's
-//! rows and columns are rewritten over its grid; a chart's plots, series and
-//! categories are rewritten over its part, its caches and its embedded
-//! workbook rebuilt from the live data (ARCH-0077: caches and workbooks are
-//! projections of one dataset). What the live model does not name keeps its
-//! bytes: a kept row's, column's or cell's properties, a kept series'
-//! formatting, and the chart's titles, axes and legend.
+//! rows and columns are rewritten over its grid, and its frame takes the
+//! grid's size; a chart's plots, series and categories are rewritten over
+//! its part, its caches and its embedded workbook rebuilt from the live data
+//! (ARCH-0077: caches and workbooks are projections of one dataset). A
+//! chart changes type as PowerPoint's Change Chart Type does, for the chart
+//! or one series: between a category and a scatter family too, and a family
+//! the chart has no plot for gets one. What the live model does not name
+//! keeps its bytes: a kept row's, column's or cell's properties, a kept
+//! series' formatting, and the chart's titles, axes and legend.
 
 use super::LiveError;
+use super::convert::{self, Conversion};
 use super::held::{self, C, children};
-use super::pptx::{
-    ChartKind, ChartSeries, NodePayload, WRITTEN_COMBO, WRITTEN_FRAME, WRITTEN_TABLE,
-};
+use super::pptx::{ChartKind, ChartSource, NodePayload, WRITTEN_FRAME, WRITTEN_TABLE};
 use crate::design_plan::{Cell, Column, ColumnKind, Dataset};
 use crate::edit::xml::{self, A, P, R};
 use crate::native_patch::{Target, chart_data, chart_workbook, number};
 use crate::ooxml::{Node, XmlTree, escape_text};
 use crate::retained_opc::Package;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
 /// The one sheet of a rewritten chart's embedded workbook.
@@ -62,7 +65,7 @@ fn open_without(bytes: &[u8], node: &Node, names: &[&str]) -> Vec<u8> {
 }
 
 /// The graphic frame with this native id in a slide part.
-fn frame_of(tree: &XmlTree, native: u32) -> Option<usize> {
+pub(super) fn frame_of(tree: &XmlTree, native: u32) -> Option<usize> {
     let id = native.to_string();
     (0..tree.nodes.len()).find(|&at| {
         tree.nodes[at].is(P, "graphicFrame")
@@ -76,13 +79,16 @@ fn frame_of(tree: &XmlTree, native: u32) -> Option<usize> {
 /// bytes, with merge spans clamped to the new grid; a new column takes the
 /// last column's width, a new row the last row's height, and a new cell its
 /// template cell's properties, no merge, and its text. The caller writes
-/// the kept cells' text after.
+/// the kept cells' text after. With `fit`, the frame's extent becomes the
+/// grid's, its columns' widths by its rows' heights, as PowerPoint lays a
+/// table out; the extent written, when it changed.
 pub(super) fn table(
     package: &mut Package,
     slide: &str,
     native: u32,
     wanted: &[Vec<String>],
-) -> Result<(), LiveError> {
+    fit: bool,
+) -> Result<Option<(i64, i64)>, LiveError> {
     let refuse = LiveError::Invalid(WRITTEN_TABLE);
     let (bytes, tree) = xml::read(package, slide)?;
     let frame = frame_of(&tree, native).ok_or(LiveError::Invalid(WRITTEN_FRAME))?;
@@ -167,7 +173,31 @@ pub(super) fn table(
         }
     }
     out.extend(close(&tree.nodes[tbl]));
-    let next = xml::splice(&bytes, vec![(tree.nodes[tbl].span.clone(), out)])?;
+    let mut edits = vec![(tree.nodes[tbl].span.clone(), out)];
+    // The frame's extent: each column's width (a new one's from the last)
+    // summed, by each row's height (a new one's from the last) summed.
+    let size = |at: usize, name: &str| -> Option<i64> {
+        tree.nodes[at].attr(name)?.trim().parse::<i64>().ok()
+    };
+    let wide = (0..cols).try_fold(0_i64, |sum, col| {
+        sum.checked_add(size(*widths.get(col).unwrap_or(&last_col), "w")?)
+    });
+    let high = (0..wanted.len()).try_fold(0_i64, |sum, row| {
+        sum.checked_add(size(*rows.get(row).unwrap_or(&last_row), "h")?)
+    });
+    let ext = xml::path(&tree, frame, &[(P, "xfrm"), (A, "ext")]);
+    let fitted = match (fit, wide, high, ext) {
+        (true, Some(cx), Some(cy), Some(ext))
+            if size(ext, "cx") != Some(cx) || size(ext, "cy") != Some(cy) =>
+        {
+            let node = &tree.nodes[ext];
+            edits.push(xml::set_attribute(&bytes, node, "cx", &cx.to_string()));
+            edits.push(xml::set_attribute(&bytes, node, "cy", &cy.to_string()));
+            Some((cx, cy))
+        }
+        _ => None,
+    };
+    let next = xml::splice(&bytes, edits)?;
     package.replace_xml_part(slide, next)?;
     let read = xml::read(package, slide)?.1;
     let shape = frame_of(&read, native)
@@ -176,7 +206,7 @@ pub(super) fn table(
     if shape != Some((wanted.len(), true)) {
         return Err(refuse);
     }
-    Ok(())
+    Ok(fitted)
 }
 
 /// A kept cell, its merge spans clamped to the rows and columns left.
@@ -386,84 +416,226 @@ fn int(tree: &XmlTree, at: usize, name: &str) -> Option<u32> {
         .ok()
 }
 
-/// Rewrite a written chart's part to `payload`: each plot's series (kept
-/// ones in place with their formatting, new ones plain), a single plot's
-/// family, its axes when the family gains or loses them, and every
-/// sequence as a reference into a rebuilt embedded workbook, or as a
-/// literal when the chart has no workbook. The rewrite reads back as the
-/// live data, and every cache equals its cells, or it refuses. The parts it
-/// changed.
+/// One plot a chart rewrite writes: a held plot (`held`, its index among
+/// the chart's plots) kept or converted to another family, or a new plot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct PlotTarget {
+    pub(super) held: Option<usize>,
+    pub(super) kind: ChartKind,
+}
+
+/// The plots a chart takes and the plot that draws each series, as
+/// PowerPoint's Change Chart Type lays them out for a whole chart or for one
+/// series. `held` is each held plot's family and series count; `resolved`
+/// is each series' family. A held plot stays while a series is drawn in its
+/// family, and a held plot no series is drawn in goes. A family no held
+/// plot draws gets a new plot after them. When no held plot stays, the
+/// first is converted to the first family. A chart with no series takes
+/// `family`. Each series goes to the first plot of its family with room
+/// for as many series as it held, else to that family's last plot.
+pub(super) fn plot_plan(
+    held: &[(ChartKind, usize)],
+    family: ChartKind,
+    resolved: &[ChartKind],
+) -> (Vec<PlotTarget>, Vec<usize>) {
+    let mut families: Vec<ChartKind> = Vec::new();
+    for kind in resolved
+        .iter()
+        .copied()
+        .chain(resolved.is_empty().then_some(family))
+    {
+        if !families.contains(&kind) {
+            families.push(kind);
+        }
+    }
+    let mut targets: Vec<PlotTarget> = held
+        .iter()
+        .enumerate()
+        .filter(|(_, (kind, _))| families.contains(kind))
+        .map(|(at, &(kind, _))| PlotTarget {
+            held: Some(at),
+            kind,
+        })
+        .collect();
+    if targets.is_empty()
+        && !held.is_empty()
+        && let Some(&kind) = families.first()
+    {
+        targets.push(PlotTarget {
+            held: Some(0),
+            kind,
+        });
+    }
+    for &kind in &families {
+        if !targets.iter().any(|target| target.kind == kind) {
+            targets.push(PlotTarget { held: None, kind });
+        }
+    }
+    let room = |target: &PlotTarget| match target.held {
+        Some(at) if held[at].0 == target.kind => held[at].1,
+        _ => 0,
+    };
+    let mut taken = vec![0_usize; targets.len()];
+    let assign = resolved
+        .iter()
+        .map(|kind| {
+            let mine: Vec<usize> = (0..targets.len())
+                .filter(|&at| targets[at].kind == *kind)
+                .collect();
+            let at = mine
+                .iter()
+                .copied()
+                .find(|&at| taken[at] < room(&targets[at]))
+                .or_else(|| mine.last().copied())
+                .unwrap_or(0);
+            taken[at] += 1;
+            at
+        })
+        .collect();
+    (targets, assign)
+}
+
+/// The family a live-born chart's native seed is written as before the
+/// rewrite gives the chart its own: a bar or line chart's own, a pie's when
+/// it has one series, a bar chart's otherwise.
+pub(super) fn seed_family(payload: &NodePayload) -> ChartKind {
+    match payload {
+        NodePayload::Chart {
+            family: family @ (ChartKind::Bar | ChartKind::Line),
+            ..
+        } => *family,
+        NodePayload::Chart {
+            family: ChartKind::Pie,
+            series,
+            ..
+        } if series.len() == 1 => ChartKind::Pie,
+        _ => ChartKind::Bar,
+    }
+}
+
+/// The chart's own embedded workbook, when every reference the chart holds
+/// is series data in it.
+fn own_workbook(
+    package: &Package,
+    chart: &str,
+    tree: &XmlTree,
+) -> Result<Option<String>, LiveError> {
+    if !tree.nodes.iter().any(|node| node.is(C, "f")) || chart_data(package, chart).is_err() {
+        return Ok(None);
+    }
+    let Some(link) =
+        xml::child(tree, 0, C, "externalData").and_then(|data| tree.nodes[data].attr_ns(R, "id"))
+    else {
+        return Ok(None);
+    };
+    Ok(package
+        .relationships(chart)?
+        .into_iter()
+        .find(|rel| rel.id == link && !rel.external)
+        .map(|rel| rel.target))
+}
+
+/// The first category slot any series of the chart holds.
+fn first_category(tree: &XmlTree) -> Option<usize> {
+    let (_, plots) = held::plots(tree)?;
+    plots
+        .iter()
+        .flat_map(|&(_, at)| children(tree, at, C, "ser"))
+        .find_map(|ser| xml::child(tree, ser, C, "cat"))
+}
+
+fn is_axis(node: &Node) -> bool {
+    node.namespace == C && matches!(node.name.as_str(), "catAx" | "valAx" | "dateAx" | "serAx")
+}
+
+/// The rebuilt workbook's one sheet: categories in A, then each series' x
+/// column (a scatter series') and values column, under a header row.
+fn workbook_dataset(
+    categories: &[String],
+    numeric_cats: bool,
+    category_cells: &[Cell],
+    data: &[Data],
+) -> Dataset {
+    let mut columns = Vec::new();
+    let mut cells: Vec<Vec<Cell>> = Vec::new();
+    let column = |name: String, kind| Column {
+        name,
+        kind,
+        unit: None,
+        format: None,
+    };
+    if !categories.is_empty() {
+        let kind = if numeric_cats {
+            ColumnKind::Number
+        } else {
+            ColumnKind::Text
+        };
+        columns.push(column(String::new(), kind));
+        cells.push(category_cells.to_vec());
+    }
+    for line in data {
+        if let Some(x) = &line.x {
+            columns.push(column(format!("{} (x)", line.name), ColumnKind::Number));
+            cells.push(x.clone());
+        }
+        columns.push(column(line.name.clone(), ColumnKind::Number));
+        cells.push(line.values.clone());
+    }
+    let height = cells.iter().map(Vec::len).max().unwrap_or(0);
+    let rows: Vec<Vec<Cell>> = (0..height)
+        .map(|row| {
+            cells
+                .iter()
+                .map(|col| col.get(row).cloned().unwrap_or(Cell::Missing))
+                .collect()
+        })
+        .collect();
+    Dataset {
+        id: String::new(),
+        columns,
+        rows,
+        missing: None,
+        sources: Vec::new(),
+        merges: Vec::new(),
+    }
+}
+
+/// Rewrite a written chart's part to `payload`: its plots as [`plot_plan`]
+/// lays them out (a kept plot's series in place with their formatting and
+/// new ones plain; a converted or new plot in its family's defaults), its
+/// axes as the plots need them (kept, shared, turned between category and
+/// value axes when a plot changes between a category and a scatter family,
+/// added, or dropped), and every sequence as a reference into the chart's
+/// own workbook rebuilt from the live data. A chart whose data lived
+/// elsewhere (a link, a shared workbook) gets a new embedded workbook, as
+/// PowerPoint's Edit Data does; so does a literal chart the payload moves
+/// to a workbook, and any other literal chart stays literal. The rewrite
+/// reads back as the live data, and every cache equals its cells, or it
+/// refuses. The parts it changed; `done` gets what it did PowerPoint's way.
 pub(super) fn chart(
     package: &mut Package,
     chart: &str,
     payload: &NodePayload,
+    done: &mut Vec<Conversion>,
 ) -> Result<Vec<String>, LiveError> {
     let NodePayload::Chart {
         family,
         categories,
         series,
-        ..
+        source,
     } = payload
     else {
         return Err(LiveError::Invalid(WRITTEN_FRAME));
     };
-    let (bytes, tree) = xml::read(package, chart)?;
-    let (area, plots) = held::plots(&tree).ok_or(LiveError::Invalid(WRITTEN_FRAME))?;
-    let book = if tree.nodes.iter().any(|node| node.is(C, "f")) {
-        // Every reference is series data and the workbook is the chart's own.
-        chart_data(package, chart)?;
-        let link = xml::child(&tree, 0, C, "externalData")
-            .and_then(|data| tree.nodes[data].attr_ns(R, "id"))
-            .ok_or(LiveError::Invalid(WRITTEN_FRAME))?;
-        Some(
-            package
-                .relationships(chart)?
-                .into_iter()
-                .find(|rel| rel.id == link && !rel.external)
-                .ok_or(LiveError::Invalid(WRITTEN_FRAME))?
-                .target,
-        )
-    } else {
-        None
-    };
-    let convert = plots.len() == 1 && plots[0].0 != *family;
-    if convert && (plots[0].0 == ChartKind::Scatter || *family == ChartKind::Scatter) {
-        return Err(LiveError::Invalid(WRITTEN_COMBO));
-    }
-    let kind_of = |plot: usize| if convert { *family } else { plots[plot].0 };
-    let resolved = |line: &ChartSeries| {
-        if convert {
-            *family
-        } else {
-            line.family.unwrap_or(*family)
-        }
-    };
-    // Each live series to a plot of its family: a plot keeps as many as it
-    // held, in order, and the last plot of a family takes the rest.
-    let held_sers: Vec<Vec<usize>> = plots
+    let resolved: Vec<ChartKind> = series
         .iter()
-        .map(|&(_, at)| children(&tree, at, C, "ser").collect())
+        .map(|line| line.family.unwrap_or(*family))
         .collect();
-    let mut assigned: Vec<Vec<usize>> = vec![Vec::new(); plots.len()];
-    for (index, line) in series.iter().enumerate() {
-        let want = resolved(line);
-        let candidates: Vec<usize> = (0..plots.len()).filter(|&p| kind_of(p) == want).collect();
-        let last = *candidates.last().ok_or(LiveError::Invalid(WRITTEN_COMBO))?;
-        let plot = candidates
-            .iter()
-            .copied()
-            .find(|&p| assigned[p].len() < held_sers[p].len())
-            .unwrap_or(last);
-        assigned[plot].push(index);
-    }
+    let (_, first) = xml::read(package, chart)?;
     // Categories stay numbers when the chart's were and every one reads
     // back as itself.
-    let first_cat = held_sers
-        .iter()
-        .flatten()
-        .find_map(|&ser| xml::child(&tree, ser, C, "cat"));
-    let numeric_cats = first_cat
-        .and_then(|slot| held::points(&tree, slot))
+    let numeric_cats = first_category(&first)
+        .and_then(|slot| held::points(&first, slot))
         .is_some_and(|points| points.numeric)
         && categories.iter().all(|category| {
             category
@@ -489,8 +661,9 @@ pub(super) fn chart(
     };
     let data: Vec<Data> = series
         .iter()
-        .map(|line| {
-            let scatter = resolved(line) == ChartKind::Scatter;
+        .zip(&resolved)
+        .map(|(line, kind)| {
+            let scatter = *kind == ChartKind::Scatter;
             let count = match (&line.x, scatter) {
                 (Some(x), true) => x.len().max(line.values.len()),
                 (None, true) => line.values.len(),
@@ -512,6 +685,52 @@ pub(super) fn chart(
             }
         })
         .collect();
+    let dataset = workbook_dataset(categories, numeric_cats, &category_cells, &data);
+    let mut changed = vec![chart.to_owned()];
+    let book = match own_workbook(package, chart, &first)? {
+        Some(book) => Some(book),
+        None if *source == ChartSource::Literal => None,
+        None => {
+            let workbook = chart_workbook(&dataset, SHEET, package.limits())?;
+            let (book, embedded) = convert::embed_workbook(package, chart, workbook)?;
+            done.extend(embedded);
+            Some(book)
+        }
+    };
+    let (bytes, tree) = xml::read(package, chart)?;
+    let (area, plots) = held::plots(&tree).ok_or(LiveError::Invalid(WRITTEN_FRAME))?;
+    let held_sers: Vec<Vec<usize>> = plots
+        .iter()
+        .map(|&(_, at)| children(&tree, at, C, "ser").collect())
+        .collect();
+    let held_plots: Vec<(ChartKind, usize)> = plots
+        .iter()
+        .zip(&held_sers)
+        .map(|(&(kind, _), sers)| (kind, sers.len()))
+        .collect();
+    let (targets, assign) = plot_plan(&held_plots, *family, &resolved);
+    for target in &targets {
+        match target.held {
+            Some(at) if plots[at].0 != target.kind => done.push(Conversion::ChartTypeChanged {
+                from: plots[at].0,
+                to: target.kind,
+            }),
+            Some(_) => {}
+            None => done.push(Conversion::PlotAdded {
+                family: target.kind,
+            }),
+        }
+    }
+    for (at, &(kind, _)) in plots.iter().enumerate() {
+        if !targets.iter().any(|target| target.held == Some(at)) {
+            done.push(Conversion::PlotDropped { family: kind });
+        }
+    }
+    let mut assigned: Vec<Vec<usize>> = vec![Vec::new(); targets.len()];
+    for (index, &target) in assign.iter().enumerate() {
+        assigned[target].push(index);
+    }
+    let first_cat = first_category(&tree);
     let c = match xml::prefix(&tree.nodes[area]) {
         "" => String::new(),
         prefix => format!("{prefix}:"),
@@ -528,29 +747,84 @@ pub(super) fn chart(
         .filter_map(|(at, _)| int(&tree, at, "idx").max(int(&tree, at, "order")))
         .max()
         .map_or(0, |top| top.saturating_add(1));
-    // New axis ids sit above every id the chart holds.
-    let fresh_axis = tree
+    // The axes each plot plots on: a held plot's own, another plot's of the
+    // same kind, or a new pair, each id above every id the chart holds. A
+    // held x axis turns between a category and a value axis with its plot.
+    let held_axes: Vec<(u32, usize)> = tree.nodes[area]
+        .children
+        .iter()
+        .copied()
+        .filter(|&at| is_axis(&tree.nodes[at]))
+        .filter_map(|at| Some((int(&tree, at, "axId")?, at)))
+        .collect();
+    let mut fresh = tree
         .nodes
         .iter()
         .filter(|node| node.is(C, "axId"))
         .filter_map(|node| node.attr("val")?.trim().parse::<u32>().ok())
         .max()
         .map_or(1, |top| top.saturating_add(1));
-    let mut plot_xml: Vec<Vec<u8>> = Vec::with_capacity(plots.len());
-    for (plot, &(_, at)) in plots.iter().enumerate() {
-        let kind = kind_of(plot);
+    let mut value_x: BTreeMap<u32, bool> = held_axes
+        .iter()
+        .map(|&(id, at)| (id, tree.nodes[at].name == "valAx"))
+        .collect();
+    let mut retyped: BTreeMap<u32, bool> = BTreeMap::new();
+    let mut new_axes = String::new();
+    let mut ids_of: Vec<Vec<u32>> = Vec::with_capacity(targets.len());
+    for target in &targets {
+        let wants_value = target.kind == ChartKind::Scatter;
+        let kept: Vec<u32> = target
+            .held
+            .filter(|&at| plots[at].0.has_axes())
+            .map(|at| {
+                children(&tree, plots[at].1, C, "axId")
+                    .filter_map(|id| tree.nodes[id].attr("val")?.trim().parse().ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let shared = ids_of
+            .iter()
+            .find(|ids| {
+                ids.len() >= 2 && value_x.get(&ids[0]).copied().unwrap_or(false) == wants_value
+            })
+            .cloned();
+        let ids = if !target.kind.has_axes() {
+            Vec::new()
+        } else if let Some(&x) = kept.first() {
+            if value_x.get(&x).copied().unwrap_or(false) != wants_value {
+                retyped.insert(x, wants_value);
+                value_x.insert(x, wants_value);
+            }
+            kept
+        } else if let Some(ids) = shared {
+            ids
+        } else {
+            let secondary = ids_of.iter().any(|ids| !ids.is_empty());
+            new_axes.push_str(&axes(&writer, fresh, wants_value, secondary));
+            value_x.insert(fresh, wants_value);
+            let ids = vec![fresh, fresh.saturating_add(1)];
+            fresh = fresh.saturating_add(2);
+            ids
+        };
+        ids_of.push(ids);
+    }
+    let mut plot_xml: Vec<Vec<u8>> = Vec::with_capacity(targets.len());
+    for (at_target, target) in targets.iter().enumerate() {
+        let kind = target.kind;
+        let kept = target.held.filter(|&at| plots[at].0 == kind);
+        let templates: &[usize] = target.held.map_or(&[][..], |at| held_sers[at].as_slice());
         let mut sers = Vec::new();
-        for (slot, &index) in assigned[plot].iter().enumerate() {
-            let template = held_sers[plot].get(slot).copied();
+        for (slot, &index) in assigned[at_target].iter().enumerate() {
+            let template = templates.get(slot).copied();
             let (idx, order) = match template {
                 Some(ser) => (
                     int(&tree, ser, "idx").unwrap_or(next_idx),
                     int(&tree, ser, "order").unwrap_or(next_idx),
                 ),
                 None => {
-                    let fresh = next_idx;
+                    let minted = next_idx;
                     next_idx = next_idx.saturating_add(1);
-                    (fresh, fresh)
+                    (minted, minted)
                 }
             };
             let line = &data[index];
@@ -588,7 +862,7 @@ pub(super) fn chart(
             );
             let tx = writer.tx(&line.name, line.y_col);
             let count = line.values.len();
-            sers.extend(match template.filter(|_| !convert) {
+            sers.extend(match template.filter(|_| kept.is_some()) {
                 Some(ser) => kept_ser(
                     &bytes,
                     &tree,
@@ -619,80 +893,58 @@ pub(super) fn chart(
                 }
             });
         }
-        plot_xml.push(if convert {
-            converted_plot(&bytes, &tree, at, kind, &writer, &sers, fresh_axis)
-        } else {
-            kept_plot(&bytes, &tree, at, &sers)
+        plot_xml.push(match kept {
+            Some(at) => kept_plot(&bytes, &tree, plots[at].1, &sers),
+            None => fresh_plot(kind, &writer, &sers, &ids_of[at_target]),
         });
     }
-    // The plot area: plots rewritten; a converted plot's axes dropped when
-    // its family has none, or added after it when it gains them.
-    let (from, to) = (plots[0].0, *family);
+    // The axes: each held axis a plot still plots on (turned where its plot
+    // changed kind), then the new ones.
+    let referenced: BTreeSet<u32> = ids_of.iter().flatten().copied().collect();
+    let mut axes_xml = Vec::new();
+    for &(id, at) in &held_axes {
+        if !referenced.contains(&id) {
+            continue;
+        }
+        match retyped.get(&id) {
+            Some(&value) => axes_xml.extend(retyped_axis(&bytes, &tree, at, value, &writer)),
+            None => axes_xml.extend_from_slice(piece(&bytes, &tree, at)),
+        }
+    }
+    axes_xml.extend(new_axes.into_bytes());
+    // The plot area: the plots where the held ones stood, then the axes
+    // before anything that follows them.
+    let held_at: BTreeSet<usize> = plots.iter().map(|&(_, at)| at).collect();
     let mut out = xml::open_tag(&bytes, &tree.nodes[area]);
+    let mut plots_xml = Some(plot_xml.concat());
+    let mut axes_xml = Some(axes_xml);
     for &child in &tree.nodes[area].children {
         let node = &tree.nodes[child];
-        if let Some(plot) = plots.iter().position(|&(_, at)| at == child) {
-            out.extend_from_slice(&plot_xml[plot]);
-            if convert && to.has_axes() && !from.has_axes() {
-                out.extend(axes(&writer, fresh_axis).into_bytes());
+        if held_at.contains(&child) {
+            if let Some(xml) = plots_xml.take() {
+                out.extend(xml);
             }
-        } else if convert
-            && !to.has_axes()
-            && node.namespace == C
-            && matches!(node.name.as_str(), "catAx" | "valAx" | "dateAx" | "serAx")
-        {
             continue;
-        } else {
-            out.extend_from_slice(piece(&bytes, &tree, child));
         }
+        let after =
+            node.namespace == C && matches!(node.name.as_str(), "dTable" | "spPr" | "extLst");
+        if is_axis(node) || (after && plots_xml.is_none()) {
+            if let Some(xml) = axes_xml.take() {
+                out.extend(xml);
+            }
+            if is_axis(node) {
+                continue;
+            }
+        }
+        out.extend_from_slice(piece(&bytes, &tree, child));
+    }
+    if let Some(xml) = axes_xml.take() {
+        out.extend(xml);
     }
     out.extend(close(&tree.nodes[area]));
     let next = xml::splice(&bytes, vec![(tree.nodes[area].span.clone(), out)])?;
     package.replace_xml_part(chart, next)?;
-    let mut changed = vec![chart.to_owned()];
     if let Some(book) = &book {
-        let mut columns = Vec::new();
-        let mut cells: Vec<Vec<Cell>> = Vec::new();
-        let column = |name: String, kind| Column {
-            name,
-            kind,
-            unit: None,
-            format: None,
-        };
-        if !categories.is_empty() {
-            let kind = if numeric_cats {
-                ColumnKind::Number
-            } else {
-                ColumnKind::Text
-            };
-            columns.push(column(String::new(), kind));
-            cells.push(category_cells.clone());
-        }
-        for line in &data {
-            if let Some(x) = &line.x {
-                columns.push(column(format!("{} (x)", line.name), ColumnKind::Number));
-                cells.push(x.clone());
-            }
-            columns.push(column(line.name.clone(), ColumnKind::Number));
-            cells.push(line.values.clone());
-        }
-        let height = cells.iter().map(Vec::len).max().unwrap_or(0);
-        let rows: Vec<Vec<Cell>> = (0..height)
-            .map(|row| {
-                cells
-                    .iter()
-                    .map(|col| col.get(row).cloned().unwrap_or(Cell::Missing))
-                    .collect()
-            })
-            .collect();
-        let dataset = Dataset {
-            id: String::new(),
-            columns,
-            rows,
-            missing: None,
-            sources: Vec::new(),
-            merges: Vec::new(),
-        };
         let workbook = chart_workbook(&dataset, SHEET, package.limits())?;
         package.replace_nested_package(book, workbook)?;
         changed.push(book.clone());
@@ -850,18 +1102,9 @@ fn kept_plot(bytes: &[u8], tree: &XmlTree, plot: usize, sers: &[u8]) -> Vec<u8> 
     out
 }
 
-/// A single plot written as another family: that family's required
-/// elements, the series, and its axis ids (kept when both families plot on
-/// axes, new when it gains them).
-fn converted_plot(
-    bytes: &[u8],
-    tree: &XmlTree,
-    plot: usize,
-    kind: ChartKind,
-    writer: &Writer,
-    sers: &[u8],
-    fresh: u32,
-) -> Vec<u8> {
+/// A plot written fresh in `kind`: that family's required elements, the
+/// series, and the axis ids it plots on.
+fn fresh_plot(kind: ChartKind, writer: &Writer, sers: &[u8], ids: &[u32]) -> Vec<u8> {
     let el = |name: &str| writer.el(name);
     let flag = |name: &str, value: &str| format!(r#"<{} val="{value}"/>"#, el(name));
     let (head, tail) = match kind {
@@ -912,21 +1155,7 @@ fn converted_plot(
             format!("{}{}", flag("firstSliceAng", "0"), flag("holeSize", "50")),
         ),
     };
-    let kept_ids: Vec<usize> = children(tree, plot, C, "axId").collect();
-    let ids = if !kind.has_axes() {
-        String::new()
-    } else if kept_ids.is_empty() {
-        format!(
-            "{}{}",
-            flag("axId", &fresh.to_string()),
-            flag("axId", &fresh.saturating_add(1).to_string())
-        )
-    } else {
-        kept_ids
-            .iter()
-            .map(|&at| String::from_utf8_lossy(piece(bytes, tree, at)).into_owned())
-            .collect()
-    };
+    let ids: String = ids.iter().map(|id| flag("axId", &id.to_string())).collect();
     let name = el(kind.element());
     format!("<{name}>{head}")
         .into_bytes()
@@ -936,12 +1165,67 @@ fn converted_plot(
         .collect()
 }
 
-/// A category and a value axis for a plot that gains axes, crossing each
-/// other, under the ids [`converted_plot`] gave it.
-fn axes(writer: &Writer, fresh: u32) -> String {
-    let (cat, val) = (fresh, fresh.saturating_add(1));
+/// A held x axis turned into the other kind of axis, a value axis
+/// (`value`) for a scatter plot or a category axis for a category plot, as
+/// a chart type change between them turns it: the elements both kinds hold
+/// keep their bytes, then that kind's own defaults follow.
+fn retyped_axis(
+    bytes: &[u8],
+    tree: &XmlTree,
+    axis: usize,
+    value: bool,
+    writer: &Writer,
+) -> Vec<u8> {
+    const SHARED: &[&str] = &[
+        "axId",
+        "scaling",
+        "delete",
+        "axPos",
+        "majorGridlines",
+        "minorGridlines",
+        "title",
+        "numFmt",
+        "majorTickMark",
+        "minorTickMark",
+        "tickLblPos",
+        "spPr",
+        "txPr",
+        "crossAx",
+        "crosses",
+        "crossesAt",
+    ];
+    let flag = |name: &str, val: &str| format!(r#"<{} val="{val}"/>"#, writer.el(name));
+    let name = writer.el(if value { "valAx" } else { "catAx" });
+    let mut out = format!("<{name}>").into_bytes();
+    for &child in &tree.nodes[axis].children {
+        let node = &tree.nodes[child];
+        if node.namespace == C && SHARED.contains(&node.name.as_str()) {
+            out.extend_from_slice(piece(bytes, tree, child));
+        }
+    }
+    let tail = if value {
+        flag("crossBetween", "midCat")
+    } else {
+        format!(
+            "{}{}{}{}",
+            flag("auto", "1"),
+            flag("lblAlgn", "ctr"),
+            flag("lblOffset", "100"),
+            flag("noMultiLvlLbl", "0")
+        )
+    };
+    out.extend(format!("{tail}</{name}>").into_bytes());
+    out
+}
+
+/// A new pair of axes under ids `fresh` and `fresh + 1`, crossing each
+/// other: an x axis (a value axis for a scatter plot, `value`, else a
+/// category axis) and a value axis. A `secondary` pair, beside a plot that
+/// already has axes, hides its x axis and puts its value axis on the right.
+fn axes(writer: &Writer, fresh: u32, value: bool, secondary: bool) -> String {
+    let (x, y) = (fresh, fresh.saturating_add(1));
     let el = |name: &str| writer.el(name);
-    let flag = |name: &str, value: &str| format!(r#"<{} val="{value}"/>"#, el(name));
+    let flag = |name: &str, val: &str| format!(r#"<{} val="{val}"/>"#, el(name));
     let scaling = format!(
         "<{s}>{}</{s}>",
         flag("orientation", "minMax"),
@@ -951,27 +1235,51 @@ fn axes(writer: &Writer, fresh: u32) -> String {
         r#"<{} formatCode="General" sourceLinked="1"/>"#,
         el("numFmt")
     );
+    let common =
+        |id: u32, deleted: &str, position: &str, gridlines: &str, cross: u32, crosses: &str| {
+            format!(
+                "{}{scaling}{}{}{gridlines}{format}{}{}{}",
+                flag("axId", &id.to_string()),
+                flag("delete", deleted),
+                flag("axPos", position),
+                flag("tickLblPos", "nextTo"),
+                flag("crossAx", &cross.to_string()),
+                flag("crosses", crosses),
+            )
+        };
+    let (hidden, side, crosses) = if secondary {
+        ("1", "r", "max")
+    } else {
+        ("0", "l", "autoZero")
+    };
+    let x_axis = if value {
+        format!(
+            "<{va}>{}{}</{va}>",
+            common(x, hidden, "b", "", y, "autoZero"),
+            flag("crossBetween", "midCat"),
+            va = el("valAx"),
+        )
+    } else {
+        format!(
+            "<{ca}>{}{}{}{}</{ca}>",
+            common(x, hidden, "b", "", y, "autoZero"),
+            flag("auto", "1"),
+            flag("lblAlgn", "ctr"),
+            flag("lblOffset", "100"),
+            ca = el("catAx"),
+        )
+    };
+    let gridlines = if secondary {
+        String::new()
+    } else {
+        format!("<{}/>", el("majorGridlines"))
+    };
+    let between = if value { "midCat" } else { "between" };
     format!(
-        "<{ca}>{}{scaling}{}{}{format}{}{}{}{}{}{}</{ca}><{va}>{}{scaling}{}{}<{grid}/>{format}{}{}{}{}</{va}>",
-        flag("axId", &cat.to_string()),
-        flag("delete", "0"),
-        flag("axPos", "b"),
-        flag("tickLblPos", "nextTo"),
-        flag("crossAx", &val.to_string()),
-        flag("crosses", "autoZero"),
-        flag("auto", "1"),
-        flag("lblAlgn", "ctr"),
-        flag("lblOffset", "100"),
-        flag("axId", &val.to_string()),
-        flag("delete", "0"),
-        flag("axPos", "l"),
-        flag("tickLblPos", "nextTo"),
-        flag("crossAx", &cat.to_string()),
-        flag("crosses", "autoZero"),
-        flag("crossBetween", "between"),
-        ca = el("catAx"),
+        "{x_axis}<{va}>{}{}</{va}>",
+        common(y, "0", side, &gridlines, x, crosses),
+        flag("crossBetween", between),
         va = el("valAx"),
-        grid = el("majorGridlines"),
     )
 }
 

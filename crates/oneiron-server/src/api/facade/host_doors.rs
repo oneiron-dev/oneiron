@@ -394,7 +394,8 @@ pub(crate) async fn vault_artifacts_body_deck_preview(
         Ok(caller) => caller,
         Err(refusal) => return refused(refusal),
     };
-    let beside = read_beside([input.artifact_ref.as_str()]);
+    let beside =
+        read_beside(std::iter::once(input.artifact_ref.as_str()).chain(input.fork_ref.as_deref()));
     let (answer, mut listed) =
         credential_listing(server, auth, caller, VERB, move |_, _, memory| {
             memory.artifacts_body_deck_preview(

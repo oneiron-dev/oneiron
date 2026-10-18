@@ -389,13 +389,14 @@ fn check_color(color: &XlsxColor) -> Result<()> {
 
 /// Write `formats` into the stylesheet `bytes`, whose `cellXfs` holds the
 /// `styles` cell formats the body read: each format's index in `cellXfs`, in
-/// order, and the stylesheet's new bytes when any record was added.
+/// order, the stylesheet's new bytes when any record was added, and the
+/// names of the named cell styles it added because the workbook lacked them.
 pub(crate) fn write_formats(
     bytes: &[u8],
     limits: XmlLimits,
     formats: &[XlsxFormat],
     styles: usize,
-) -> Result<(Vec<u32>, Option<Vec<u8>>)> {
+) -> Result<(Vec<u32>, Option<Vec<u8>>, Vec<String>)> {
     let tree = XmlTree::parse(bytes, limits)?;
     tree.root(SML, "styleSheet")
         .map_err(|_| refused("the stylesheet is not SpreadsheetML"))?;
@@ -505,6 +506,10 @@ pub(crate) fn write_formats(
         .qualified
         .rsplit_once(':')
         .map_or_else(String::new, |(prefix, _)| format!("{prefix}:"));
+    let added: Vec<String> = cell_styles.entries[cell_styles.imported..]
+        .iter()
+        .filter_map(|style| style.attrs.get("name").cloned())
+        .collect();
     let mut edits = Vec::new();
     for list in [
         &num_fmts,
@@ -518,11 +523,11 @@ pub(crate) fn write_formats(
         list.write(&tree, bytes, &prefix, &mut edits);
     }
     if edits.is_empty() {
-        return Ok((indices, None));
+        return Ok((indices, None, added));
     }
     let value =
         splice(bytes, edits).map_err(|_| refused("the stylesheet could not be rewritten"))?;
-    Ok((indices, Some(value)))
+    Ok((indices, Some(value), added))
 }
 
 /// One stylesheet list: its records, imported ones first, then those added.
