@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 541 code-mode rows (520 host rows, 21 run rows), 1916 declarations.
-// Replies: 476 fully typed, 61 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 544 code-mode rows (523 host rows, 21 run rows), 1920 declarations.
+// Replies: 479 fully typed, 61 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 93; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1829,6 +1829,10 @@ declare namespace Sdk {
   type NoteAccessRequest = { note_ref: string; reason?: string | null };
   type NoteAuthorship = { operation: string; actor: string; actor_class: string; grant?: string | null; command_hash: number[] };
   type NoteHistoryView = { version: NoteVersion; operations: NoteAuthorship[]; shallow_since: number[]; complete: boolean };
+  type NoteHistoryPurgeRequest = { note_ref: string };
+  type NoteHistoryPurgeReceipt = { receipt: string; entity: string; document: string; actor?: string | null; requested: number[]; applied: number[]; at: number; live_text_hash: number[] };
+  type NoteHistoryPurgeOutcome = { state: "erased"; receipt: NoteHistoryPurgeReceipt } | { state: "waiting"; note_ref: string; act_id: string };
+  type NoteHistoryPurgeExecuteRequest = { act_id: string };
   type NoteEditorBinding = { binding: string; note: NoteReadView };
   type NoteEditorCloseRequest = { binding: string };
   type NoteEditorClosed = { closed: boolean };
@@ -2847,6 +2851,12 @@ declare const vault: Sdk.VaultHost & {
     from_entity(input: Sdk.CreateNoteFromEntityRequest): Promise<Sdk.EntityRefReceipt | StoredResult>;
     /** Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented. */
     history(input: Sdk.NoteAccessRequest): Promise<Sdk.ScopedReadResult<Sdk.NoteHistoryView | null> | StoredResult>;
+    /** The owner explicitly erases a NOTE's safe history, or opens its shared-vault erase veto window; no grant names this action. */
+    history_purge(input: Sdk.NoteHistoryPurgeRequest): Promise<Sdk.NoteHistoryPurgeOutcome | StoredResult>;
+    /** Executes the exact history erase this owner started after its veto window closes without objection; retries return its durable receipt. */
+    history_purge_execute(input: Sdk.NoteHistoryPurgeExecuteRequest): Promise<Sdk.NoteHistoryPurgeReceipt | StoredResult>;
+    /** The owner reads a NOTE's durable history-purge receipts, including each requested and retained causal frontier. */
+    history_purge_receipts(input: Sdk.NoteHistoryPurgeRequest): Promise<Sdk.NoteHistoryPurgeReceipt[] | StoredResult>;
     /** Where one NOTE stands (active, sealed, archived or tombstoned) and its seal, if it has one. */
     lifecycle(input: Sdk.NoteRefRequest): Promise<Sdk.NoteLifecycleView | StoredResult>;
     /** Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot. */

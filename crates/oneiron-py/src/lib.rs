@@ -4304,6 +4304,41 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_notes_history_purge(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.notes.history_purge")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.notes.history_purge", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_notes_history_purge_execute(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.notes.history_purge_execute")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.notes.history_purge_execute", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_notes_history_purge_receipts(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.notes.history_purge_receipts")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.notes.history_purge_receipts", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_notes_editor_bind(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.notes.editor.bind")?;
         let output = py
