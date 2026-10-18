@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 318 facade rows, 1184 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 286.
+// UniFFI census: 320 facade rows, 1190 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 288.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -10085,6 +10085,76 @@ pub struct WidenProposalsView {
 pub struct WidenProposalAnswer {
     #[serde(rename = "proposal_id")]
     pub proposal_id: String,
+}
+
+/// `oneiron::actor_claims::candidate::CraftCandidatesRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CraftCandidatesRequest {
+    #[serde(rename = "resident", default, skip_serializing_if = "Option::is_none")]
+    pub resident: Option<String>,
+}
+
+/// `oneiron::actor_claims::candidate::CraftCandidateView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CraftCandidateView {
+    #[serde(rename = "candidate_id")]
+    pub candidate_id: String,
+    #[serde(rename = "content_hash")]
+    pub content_hash: String,
+    #[serde(rename = "resident")]
+    pub resident: String,
+    #[serde(rename = "predicate")]
+    pub predicate: String,
+    #[serde(rename = "text")]
+    pub text: String,
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+    #[serde(rename = "proposed_at")]
+    pub proposed_at: u64,
+}
+
+/// `oneiron::actor_claims::candidate::CraftCandidatesView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CraftCandidatesView {
+    #[serde(rename = "candidates")]
+    pub candidates: Vec<CraftCandidateView>,
+}
+
+/// `oneiron::actor_claims::candidate::CraftVerdict`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CraftVerdict {
+    #[serde(rename = "approved")]
+    Approved,
+    #[serde(rename = "rejected")]
+    Rejected,
+}
+
+/// `oneiron::actor_claims::candidate::CraftCandidateAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CraftCandidateAnswer {
+    #[serde(rename = "candidate_id")]
+    pub candidate_id: String,
+    #[serde(rename = "content_hash")]
+    pub content_hash: String,
+    #[serde(rename = "verdict")]
+    pub verdict: CraftVerdict,
+}
+
+/// `oneiron::actor_claims::candidate::CraftVerdictView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CraftVerdictView {
+    #[serde(rename = "candidate_id")]
+    pub candidate_id: String,
+    #[serde(rename = "verdict")]
+    pub verdict: CraftVerdict,
+    #[serde(rename = "verdict_id")]
+    pub verdict_id: String,
+    #[serde(rename = "receipt_ref")]
+    pub receipt_ref: String,
+    #[serde(rename = "decided_at")]
+    pub decided_at: u64,
 }
 
 /// `oneiron::policy_setting_doors::WakePolicySetRequest`.

@@ -152,6 +152,8 @@ pub enum AgentVerb {
     VaultWidenProposals,
     VaultWidenProposalsApprove,
     VaultWidenProposalsDecline,
+    VaultCraftCandidates,
+    VaultCraftCandidatesAnswer,
     VaultSettingsWakePolicySet,
     VaultSettingsInferenceDefaults,
     VaultSettingsInferenceDefaultsReplace,
@@ -516,6 +518,8 @@ impl AgentVerb {
         Self::VaultWidenProposals,
         Self::VaultWidenProposalsApprove,
         Self::VaultWidenProposalsDecline,
+        Self::VaultCraftCandidates,
+        Self::VaultCraftCandidatesAnswer,
         Self::VaultSettingsWakePolicySet,
         Self::VaultSettingsInferenceDefaults,
         Self::VaultSettingsInferenceDefaultsReplace,
@@ -885,6 +889,8 @@ impl AgentVerb {
             Self::VaultWidenProposals => "vault.widen_proposals",
             Self::VaultWidenProposalsApprove => "vault.widen_proposals.approve",
             Self::VaultWidenProposalsDecline => "vault.widen_proposals.decline",
+            Self::VaultCraftCandidates => "vault.craft_candidates",
+            Self::VaultCraftCandidatesAnswer => "vault.craft_candidates.answer",
             Self::VaultSettingsWakePolicySet => "vault.settings.wake_policy.set",
             Self::VaultSettingsInferenceDefaults => "vault.settings.inference_defaults",
             Self::VaultSettingsInferenceDefaultsReplace => {
@@ -1250,6 +1256,8 @@ impl AgentVerb {
                 | Self::VaultWidenProposals
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
+                | Self::VaultCraftCandidates
+                | Self::VaultCraftCandidatesAnswer
                 | Self::VaultSettingsWakePolicySet
                 | Self::VaultSettingsInferenceDefaults
                 | Self::VaultSettingsInferenceDefaultsReplace
@@ -1621,6 +1629,8 @@ impl AgentVerb {
                 | Self::VaultWidenProposals
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
+                | Self::VaultCraftCandidates
+                | Self::VaultCraftCandidatesAnswer
                 | Self::VaultSettingsWakePolicySet
                 | Self::VaultSettingsInferenceDefaults
                 | Self::VaultSettingsInferenceDefaultsReplace
@@ -2018,6 +2028,8 @@ impl AgentVerb {
                 | Self::VaultWidenProposals
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
+                | Self::VaultCraftCandidates
+                | Self::VaultCraftCandidatesAnswer
                 | Self::VaultSettingsWakePolicySet
                 | Self::VaultSettingsInferenceDefaults
                 | Self::VaultSettingsInferenceDefaultsReplace
@@ -2327,6 +2339,7 @@ impl AgentVerb {
                 | Self::VaultSecretsLiftHistory
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
+                | Self::VaultCraftCandidatesAnswer
                 | Self::VaultSettingsWakePolicySet
                 | Self::VaultSettingsInferenceDefaultsReplace
                 | Self::VaultLensesPropose
@@ -2629,6 +2642,8 @@ impl AgentVerb {
             Self::VaultWidenProposals => &["spec"],
             Self::VaultWidenProposalsApprove => &["spec"],
             Self::VaultWidenProposalsDecline => &["spec"],
+            Self::VaultCraftCandidates => &["spec"],
+            Self::VaultCraftCandidatesAnswer => &["spec"],
             Self::VaultSettingsWakePolicySet => &["spec"],
             Self::VaultSettingsInferenceDefaults => &[],
             Self::VaultSettingsInferenceDefaultsReplace => &["spec"],
@@ -2994,6 +3009,8 @@ impl AgentVerb {
             Self::VaultWidenProposals => &["spec"],
             Self::VaultWidenProposalsApprove => &["spec"],
             Self::VaultWidenProposalsDecline => &["spec"],
+            Self::VaultCraftCandidates => &["spec"],
+            Self::VaultCraftCandidatesAnswer => &["spec"],
             Self::VaultSettingsWakePolicySet => &["spec"],
             Self::VaultSettingsInferenceDefaults => &[],
             Self::VaultSettingsInferenceDefaultsReplace => &["spec"],
@@ -3629,6 +3646,12 @@ impl AgentVerb {
             }
             Self::VaultWidenProposalsDecline => {
                 "The owner, as the board above, declines one context-widen proposal for good; the decline stays on record."
+            }
+            Self::VaultCraftCandidates => {
+                "The owner lists the craft notes residents' dreaming proposed about themselves that wait on a verdict, newest first, or one resident's, each with the content hash an answer pins."
+            }
+            Self::VaultCraftCandidatesAnswer => {
+                "The owner approves or rejects one craft candidate, bound to the content hash its card showed: an Approved or Rejected row supersedes it, with one receipt. The same answer again returns the first."
             }
             Self::VaultSettingsWakePolicySet => {
                 "The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof."

@@ -805,6 +805,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.craft_candidates",
+                crate::code_run::vault_read::request_schema::<
+                    crate::actor_claims::CraftCandidatesRequest,
+                >(),
+            ),
+            (
+                "vault.craft_candidates.answer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::actor_claims::CraftCandidateAnswer,
+                >(),
+            ),
+            (
                 "vault.settings.wake_policy.set",
                 crate::code_run::vault_read::request_schema::<
                     crate::policy_setting_doors::WakePolicySetRequest,
@@ -2979,6 +2991,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.craft_candidates" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.craft_candidates.answer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.settings.wake_policy.set" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -4696,6 +4722,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::agent_dispatch::widen_doors::WidenProposalAnswer =
                 decode(value.clone())?;
         }
+        "vault.craft_candidates" => {
+            let _input: crate::actor_claims::CraftCandidatesRequest = decode(value.clone())?;
+        }
+        "vault.craft_candidates.answer" => {
+            let _input: crate::actor_claims::CraftCandidateAnswer = decode(value.clone())?;
+        }
         "vault.settings.wake_policy.set" => {
             let _input: crate::policy_setting_doors::WakePolicySetRequest = decode(value.clone())?;
         }
@@ -5625,6 +5657,10 @@ pub fn invoke(
         }
         "vault.widen_proposals.decline" => {
             encode(vault_widen_proposals_decline(memory, decode(value)?)?)
+        }
+        "vault.craft_candidates" => encode(vault_craft_candidates(memory, decode(value)?)?),
+        "vault.craft_candidates.answer" => {
+            encode(vault_craft_candidates_answer(memory, decode(value)?)?)
         }
         "vault.settings.wake_policy.set" => {
             encode(vault_settings_wake_policy_set(memory, decode(value)?)?)
@@ -7278,6 +7314,28 @@ pub fn vault_widen_proposals_decline(
     crate::agent_dispatch::widen_doors::decline_widen_proposal_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.widen_proposals.decline")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_craft_candidates(
+    memory: &Memory<'_>,
+    input: crate::actor_claims::CraftCandidatesRequest,
+) -> MemoryResult<crate::actor_claims::CraftCandidatesView> {
+    crate::actor_claims::craft_candidates_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.craft_candidates")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_craft_candidates_answer(
+    memory: &Memory<'_>,
+    input: crate::actor_claims::CraftCandidateAnswer,
+) -> MemoryResult<crate::actor_claims::CraftVerdictView> {
+    crate::actor_claims::answer_craft_candidate_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.craft_candidates.answer")?,
         &input,
     )
     .map_err(crate::memory::MemoryError::from)

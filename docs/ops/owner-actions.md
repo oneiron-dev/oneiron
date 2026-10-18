@@ -1454,6 +1454,23 @@ input over the facade and MCP. Each answer shows the parent and board attempts, 
 three context descriptors (never their content), when it was raised, and how it settled. Only the
 owner of the board's TASK may answer one.
 
+## Craft candidates
+
+A resident's dreaming may propose craft notes about itself: a **lesson** (`actor.lesson`) or a
+**failure mode** (`actor.failure_mode`). Each note waits as a Proposed candidate on a card in its
+agent inbox, and nothing treats it as learned until you answer it. The card shows the note's
+words, the dreaming it came from, and a content hash. Your answer names that hash, so you answer
+the note you read. Approving it makes the note the resident's learned craft; rejecting it sets
+only this note aside, and a later dreaming may propose the same words again. Either verdict is
+written as its own row that replaces the candidate, with a gate receipt. Answering again with the
+same verdict returns the first one; the opposite verdict is refused.
+
+A running server lists them at `GET /v1/owner/craft-candidates[?resident=HEX32]`, and answers at
+`POST /v1/owner/craft-candidates/answer` with
+`{"candidate_id", "content_hash", "verdict": "approved"|"rejected"}`. The host verbs
+`vault.craft_candidates` and `vault.craft_candidates.answer` take the same input over the facade
+and MCP.
+
 ## Legal holds
 
 A legal hold keeps records from being deleted. While a hold names a record, its delete fails for
