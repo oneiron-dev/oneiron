@@ -354,6 +354,12 @@ class Oneiron:
         def shape(self) -> "Oneiron._VaultShapeVerbs":
             return Oneiron._VaultShapeVerbs(self._client)
         @property
+        def companions(self) -> "Oneiron._VaultCompanionsVerbs":
+            return Oneiron._VaultCompanionsVerbs(self._client)
+        @property
+        def personas(self) -> "Oneiron._VaultPersonasVerbs":
+            return Oneiron._VaultPersonasVerbs(self._client)
+        @property
         def fanout(self) -> "Oneiron._VaultFanoutVerbs":
             return Oneiron._VaultFanoutVerbs(self._client)
         @property
@@ -578,9 +584,6 @@ class Oneiron:
         def messages(self) -> "Oneiron._VaultMessagesVerbs":
             return Oneiron._VaultMessagesVerbs(self._client)
         @property
-        def companions(self) -> "Oneiron._VaultCompanionsVerbs":
-            return Oneiron._VaultCompanionsVerbs(self._client)
-        @property
         def voices(self) -> "Oneiron._VaultVoicesVerbs":
             return Oneiron._VaultVoicesVerbs(self._client)
         @property
@@ -694,6 +697,42 @@ class Oneiron:
         def apply(self, spec):
             """Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item."""
             return json.loads(_translate(lambda: self._client.vault_shape_apply(json.dumps(spec))))
+    class _VaultCompanionsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def access_requests(self) -> "Oneiron._VaultCompanionsAccessRequestsVerbs":
+            return Oneiron._VaultCompanionsAccessRequestsVerbs(self._client)
+        @property
+        def sharing(self) -> "Oneiron._VaultCompanionsSharingVerbs":
+            return Oneiron._VaultCompanionsSharingVerbs(self._client)
+    class _VaultCompanionsAccessRequestsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def answer(self, spec):
+            """The owner approves or denies one pending companion-profile request, atomically recording the answer and its exact grant."""
+            return json.loads(_translate(lambda: self._client.vault_companions_access_requests_answer(json.dumps(spec))))
+    class _VaultCompanionsSharingVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """One contact's clearance in a companion's source vault, for the principal who controls that vault."""
+            return json.loads(_translate(lambda: self._client.vault_companions_sharing_get(json.dumps(spec))))
+        def set(self, spec):
+            """The owner's standing yes to one frozen clearance offer for a companion's contact."""
+            return json.loads(_translate(lambda: self._client.vault_companions_sharing_set(json.dumps(spec))))
+    class _VaultPersonasVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def preview(self, spec):
+            """Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp."""
+            return json.loads(_translate(lambda: self._client.vault_personas_preview(json.dumps(spec))))
+        def export(self, spec):
+            """Issues the exact previewed mode-A persona copy after explicit row strikes; a changed preview refuses stale consent."""
+            return json.loads(_translate(lambda: self._client.vault_personas_export(json.dumps(spec))))
+        def edit(self, spec):
+            """Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version."""
+            return json.loads(_translate(lambda: self._client.vault_personas_edit(json.dumps(spec))))
     class _VaultFanoutVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2779,21 +2818,6 @@ class Oneiron:
         def react(self, spec):
             """Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress."""
             return json.loads(_translate(lambda: self._client.vault_messages_react(json.dumps(spec))))
-    class _VaultCompanionsVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        @property
-        def sharing(self) -> "Oneiron._VaultCompanionsSharingVerbs":
-            return Oneiron._VaultCompanionsSharingVerbs(self._client)
-    class _VaultCompanionsSharingVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def get(self, spec):
-            """One contact's clearance in a companion's source vault, for the principal who controls that vault."""
-            return json.loads(_translate(lambda: self._client.vault_companions_sharing_get(json.dumps(spec))))
-        def set(self, spec):
-            """The owner's standing yes to one frozen clearance offer for a companion's contact."""
-            return json.loads(_translate(lambda: self._client.vault_companions_sharing_set(json.dumps(spec))))
     class _VaultVoicesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

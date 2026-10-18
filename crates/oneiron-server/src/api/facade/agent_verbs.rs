@@ -31,6 +31,13 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.shape.apply", post(facade_route))
         .route("/self.message", post(facade_route))
         .route("/self.grants.ask", post(facade_route))
+        .route(
+            "/vault.companions.access_requests.answer",
+            post(facade_route),
+        )
+        .route("/vault.personas.preview", post(facade_route))
+        .route("/vault.personas.export", post(facade_route))
+        .route("/vault.personas.edit", post(facade_route))
         .route("/self.memory.diary.query", post(facade_route))
         .route("/cancel", post(facade_route))
         .route("/steer", post(facade_route))

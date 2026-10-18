@@ -647,6 +647,99 @@ async fn self_grants_ask(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_companions_access_requests_answer(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.companions.access_requests.answer")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.companions.access_requests.answer", &value)?;
+    let hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.companions.access_requests.answer",
+        value,
+    )
+    .await?;
+    let (output, listed) = super::host_doors::vault_companions_access_requests_answer(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_personas_preview(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.personas.preview")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.personas.preview", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.personas.preview", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_personas_preview(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_personas_export(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.personas.export")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.personas.export", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.personas.export", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_personas_export(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_personas_edit(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.personas.edit")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.personas.edit", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.personas.edit", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_personas_edit(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn self_memory_diary_query(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -16731,6 +16824,12 @@ pub(crate) async fn call_verb(
         "vault.shape.apply" => vault_shape_apply(server, call, input).await,
         "self.message" => self_message(server, call, input).await,
         "self.grants.ask" => self_grants_ask(server, call, input).await,
+        "vault.companions.access_requests.answer" => {
+            vault_companions_access_requests_answer(server, call, input).await
+        }
+        "vault.personas.preview" => vault_personas_preview(server, call, input).await,
+        "vault.personas.export" => vault_personas_export(server, call, input).await,
+        "vault.personas.edit" => vault_personas_edit(server, call, input).await,
         "self.memory.diary.query" => self_memory_diary_query(server, call, input).await,
         "cancel" => cancel(server, call, input).await,
         "steer" => steer(server, call, input).await,

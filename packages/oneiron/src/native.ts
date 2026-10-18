@@ -59,6 +59,10 @@ vaultShapePlan(input: unknown): unknown
 vaultShapeApply(input: unknown): unknown
 selfMessage(input: unknown): unknown
 selfGrantsAsk(input: unknown): unknown
+vaultCompanionsAccessRequestsAnswer(input: unknown): unknown
+vaultPersonasPreview(input: unknown): unknown
+vaultPersonasExport(input: unknown): unknown
+vaultPersonasEdit(input: unknown): unknown
 selfMemoryDiaryQuery(input: unknown): unknown
 cancel(input: unknown): unknown
 steer(input: unknown): unknown

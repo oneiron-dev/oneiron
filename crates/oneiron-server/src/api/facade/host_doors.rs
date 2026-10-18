@@ -97,6 +97,7 @@ pub(crate) use super::support_grant_doors::*;
 pub(crate) use super::fold_doors::*;
 pub(crate) use super::note_doors::*;
 pub(crate) use super::off_record_doors::*;
+pub(crate) use super::persona_doors::*;
 pub(crate) use super::residence_doors::*;
 pub(crate) use super::summary_doors::*;
 // The weave lens's human doors, likewise.
@@ -1098,6 +1099,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "calendar.imip.get"
         | "vault.calendar.ics.import"
         | "vault.calendar.instances.move"
+        | "vault.companions.access_requests.answer"
+        | "vault.personas.preview"
+        | "vault.personas.export"
+        | "vault.personas.edit"
         | "vault.packs.put"
         | "vault.packs.connector.prepare"
         | "vault.packs.connector.get"

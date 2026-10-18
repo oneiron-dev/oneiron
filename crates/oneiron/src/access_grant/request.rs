@@ -16,7 +16,7 @@ const REQUESTS: SideTable<EntityId, RequestRow, LegacyJson> =
     SideTable::new(&side_table::ACCESS_REQUEST);
 
 /// Terminal responses cannot be changed by a second responder.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum AccessRequestStatus {
     Pending,
@@ -157,6 +157,35 @@ impl Vault {
         approve: bool,
         now: u64,
     ) -> Result<AccessRequest> {
+        self.respond_access_request_admitted(owner, id, approve, now, |_| Ok(()))
+    }
+
+    /// Answers only a companion-profile request; scope admission, target checks,
+    /// owner revalidation and the terminal answer share the grant transaction.
+    pub fn respond_companion_access_request(
+        &self,
+        owner: &AuthenticatedOwner,
+        id: EntityId,
+        approve: bool,
+        now: u64,
+    ) -> Result<AccessRequest> {
+        self.respond_access_request_admitted(owner, id, approve, now, |request| {
+            if request.grant.scope.companion_profile_refs().is_some() {
+                Ok(())
+            } else {
+                Err(Error::EntityNotFound)
+            }
+        })
+    }
+
+    fn respond_access_request_admitted(
+        &self,
+        owner: &AuthenticatedOwner,
+        id: EntityId,
+        approve: bool,
+        now: u64,
+        admit: impl FnOnce(&AccessRequest) -> Result<()>,
+    ) -> Result<AccessRequest> {
         let mut txn = self.store.env.write_txn()?;
         // A grant is the vault's to give: a native host's proof shows a live
         // person, not whose vault this is.
@@ -165,6 +194,7 @@ impl Vault {
             .get(&self.store, &txn, &id)?
             .ok_or(Error::EntityNotFound)?;
         let mut request = AccessRequest::from_row(id, row)?;
+        admit(&request)?;
         if request.status != AccessRequestStatus::Pending || now < request.grant.created_at {
             return Err(invalid_grant());
         }
@@ -176,6 +206,7 @@ impl Vault {
         request.decided_by = Some(actor);
         request.decided_at = Some(now);
         if approve {
+            self.check_companion_profile_target(&txn, &request.grant)?;
             if crate::ports::EntityStoreRead::port_entity_present(&self.store, &txn, &id)? {
                 return Err(invalid_grant());
             }

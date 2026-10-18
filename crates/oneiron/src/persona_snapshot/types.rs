@@ -121,7 +121,7 @@ pub(super) const KEY_STRUCK_ROW_IDS: &str = "struckRowIds";
 pub(super) const KEY_ARTIFACT_FINGERPRINT: &str = "artifactFingerprint";
 
 /// Row kind on a compiled persona snapshot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PersonaSnapshotRowKind {
     /// The identity line row.
     Identity,
@@ -151,7 +151,7 @@ impl PersonaSnapshotRowKind {
 }
 
 /// One strikeable row of a compiled persona snapshot.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PersonaSnapshotRow {
     /// Content-derived stable row id (strike-list handle).
     pub row_id: String,
@@ -232,7 +232,7 @@ impl Default for PersonaSnapshotCompileOptions {
 /// compile time), so an unchanged recompile keeps the same identity and
 /// previously granted export consent stays valid — mirroring the
 /// `GateConsentBinding` content-addressing law.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PersonaSnapshotCompileStamp {
     /// Stamp schema version.
     pub schema_version: String,
@@ -256,7 +256,7 @@ impl PersonaSnapshotCompileStamp {
 /// A compiled persona snapshot: the strikeable preview row list plus the
 /// compile stamp. This is the consent surface's input; export applies the
 /// owner's strike decisions over exactly this compile.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PersonaSnapshotCompile {
     /// The card's subject.
     pub subject_ref: EntityId,
@@ -284,7 +284,7 @@ pub struct PersonaSnapshotCompile {
 /// The effective struck set is `(default-struck ∪ strike) − unstrike`;
 /// un-striking is the explicit consent step that lets a default-struck
 /// third-party row enter the artifact.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PersonaSnapshotStrikeList {
     /// Row ids struck at preview.
     pub strike: BTreeSet<String>,
