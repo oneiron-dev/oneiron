@@ -528,6 +528,22 @@ pub fn skill_edit_verdict(vault: &Vault, proposal: &EntityId) -> Result<Option<H
     Ok(skill_edit_verdicts_for_proposal(vault, proposal)?.pop())
 }
 
+/// [`skill_edit_verdict`] in the caller's transaction, for a door that acts on
+/// the ruling beside its own writes.
+///
+/// # Errors
+///
+/// Storage errors; [`Error::CorruptedIndex`] on an unreadable row.
+pub(crate) fn skill_edit_verdict_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    proposal: &EntityId,
+) -> Result<Option<HeldOutVerdict>> {
+    Ok(verdict_rows_in_txn(vault, rtxn)?
+        .into_iter()
+        .rfind(|verdict| verdict.proposal == *proposal))
+}
+
 // ---------------------------------------------------------------------------
 // Receipts (a projector in the `Gate` family)
 // ---------------------------------------------------------------------------

@@ -4109,7 +4109,7 @@
      "path": "src/batch/builder/commit.rs",
      "purpose": "Committing terminal: builder-time checks, index preparation, its share of the group commit, preflight…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2
      }
     },
@@ -19087,8 +19087,25 @@
       "crate-vis": 4,
       "enum": 6,
       "fn": 12,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AgentHealthApplicationState",
+      "AgentHealthCoachApplication",
+      "ConcernApplyOutcome",
+      "ConcernApplyRequest"
+     ],
+     "path": "src/dreamer_runner/maintenance/agent_health/apply.rs",
+     "purpose": "The owner applies the Coach's `skill_edit` draft on an agent-health card (OF-568, FIX 1849)",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 3
      }
     },
     {
@@ -42720,6 +42737,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/skill_archive.rs",
+     "purpose": "A skill archive from an agentskills.io discovery index (`type: \"archive\"`): a `.tar.gz` or `.zip` of the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -43102,7 +43129,7 @@
      "path": "src/skill_optimize/gate/ledger.rs",
      "purpose": "The verdict ledger, and the `Gate` receipts projected from it",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 5
      }
     },
@@ -43558,7 +43585,7 @@
      "path": "src/skill_reliability/projector.rs",
      "purpose": "Project attributed skill outcomes into the shared learning.reliability cells",
      "surface": {
-      "const": 4,
+      "const": 5,
       "crate-vis": 3,
       "fn": 3
      }
@@ -49734,7 +49761,7 @@
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…",
      "surface": {
       "crate-vis": 13,
-      "re-export": 7,
+      "re-export": 8,
       "struct": 1
      }
     },
@@ -49777,6 +49804,19 @@
      "purpose": "Geographic entity doors consume PlaceStore, never concrete database handles",
      "surface": {
       "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RawEntityPut"
+     ],
+     "path": "src/vault/raw_writes.rs",
+     "purpose": "The raw storage writes a bound caller makes (OF-063, FIX 3387)",
+     "surface": {
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -53817,7 +53857,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 59,
+     "files": 60,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -54566,7 +54606,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 80,
+     "files": 81,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54748,7 +54788,7 @@
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
     "vault": {
-     "files": 29,
+     "files": 30,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54834,7 +54874,7 @@
    },
    "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3336,
+   "source_files": 3339,
    "test_files": 902
   },
   "oneiron-android": {
@@ -54856,7 +54896,7 @@
      "path": "src/lib.rs",
      "purpose": "Minimal JNI/Kotlin ownership adapter",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "mod": 1
      }
     }
@@ -60112,7 +60152,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 2,
-      "fn": 7,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -60749,7 +60789,7 @@
      "path": "src/lib/entity.rs",
      "purpose": "Free fns plus vault lifecycle, health, and entity entry points",
      "surface": {
-      "fn": 12
+      "fn": 13
      }
     },
     {
@@ -60779,7 +60819,7 @@
      "path": "src/lib/parse.rs",
      "purpose": "ID/enum/limit/query/format parsing and validation helpers",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -60819,7 +60859,7 @@
      "path": "src/lib/types.rs",
      "purpose": "repr(C) status/types/handles and ABI limit constants",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 12,
       "enum": 1,
       "struct": 10
      }
@@ -63270,7 +63310,7 @@
      "path": "src/lib/vault.rs",
      "purpose": "Legacy buffer-oriented NapiVault binding and all its verbs",
      "surface": {
-      "fn": 27,
+      "fn": 28,
       "struct": 1
      }
     },
@@ -74839,9 +74879,11 @@
       "ActExecution",
       "AdmissionBasis",
       "AdmissionConsent",
+      "AgentHealthApplicationState",
       "AgentHealthCard",
       "AgentHealthCardView",
       "AgentHealthCoachAnswer",
+      "AgentHealthCoachApplication",
       "AgentHealthCoachAsk",
       "AgentHealthCoachDraft",
       "AgentHealthCoachRoute",
@@ -76012,8 +76054,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 321,
-      "struct": 852
+      "enum": 322,
+      "struct": 853
      }
     },
     {
