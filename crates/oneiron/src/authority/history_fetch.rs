@@ -38,8 +38,8 @@ use serde::Deserialize;
 
 use super::history_transfer::{DecodedRow, decode_page, history_in_txn};
 use super::*;
-use crate::Vault;
 use crate::error::{Error, RecordError, Result};
+use crate::{EntityId, Vault};
 
 /// The most rows one history page carries.
 pub const AUTHORITY_HISTORY_PAGE_MAX: usize = 512;
@@ -381,11 +381,13 @@ fn parents_first(
     Ok(order)
 }
 
-/// [`Vault::authority_history_page`] on the caller's snapshot.
+/// [`Vault::authority_history_page`] on the caller's snapshot, less the side
+/// branches of the `withheld` worlds.
 fn authority_history_page_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     fetch: &AuthorityHistoryFetch,
+    withheld: &BTreeSet<EntityId>,
 ) -> Result<AuthorityHistoryPage> {
     let history = history_in_txn(vault, txn)?;
     let vault_id = rows_vault(history.iter().map(|(hash, (_, entry))| (hash, entry)));
@@ -411,6 +413,11 @@ fn authority_history_page_in_txn(
             continue;
         }
         match history.get(&hash) {
+            // A withheld world's row is neither served nor named unheld, and
+            // its parents are not walked: no main-log row names one.
+            Some((_, entry))
+                if super::world_privacy::side_world(&entry.op)
+                    .is_some_and(|world| withheld.contains(&world)) => {}
             Some((_, entry)) => {
                 selected.insert(hash);
                 if fetch.parent_closure {
@@ -607,7 +614,23 @@ impl Vault {
         fetch: &AuthorityHistoryFetch,
     ) -> Result<AuthorityHistoryPage> {
         let txn = self.store.env.read_txn()?;
-        authority_history_page_in_txn(self, &txn, fetch)
+        authority_history_page_in_txn(self, &txn, fetch, &BTreeSet::new())
+    }
+
+    /// [`Self::authority_history_page`] for the machine `peer` proved: the
+    /// side branch of each world that may not be readable on it, read on the
+    /// same snapshot ([`WorldPrivacyView::withheld_for_peer`]), leaves the
+    /// selection and its closure before the page is cut. So no row, unheld
+    /// claim or cursor names a row of it, and a short page is still the last
+    /// (FIX 922 item 11). Every main-log row is served as before.
+    pub fn authority_history_page_for_peer(
+        &self,
+        fetch: &AuthorityHistoryFetch,
+        peer: PeerMachine,
+    ) -> Result<AuthorityHistoryPage> {
+        let txn = self.store.env.read_txn()?;
+        let withheld = WorldPrivacyView::load_in(self, &txn)?.withheld_for_peer(peer)?;
+        authority_history_page_in_txn(self, &txn, fetch, &withheld)
     }
 
     /// Checks `page`, served for `fetch`, here and imports nothing: each

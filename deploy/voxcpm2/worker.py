@@ -28,6 +28,8 @@ FIELDS = ("max_text_bytes", "max_ref_bytes", "max_queued_renders",
           "max_header_bytes")
 # MessagePack u64/4-byte framing and PCM16 are structural; deployment policy
 # supplies all behavior-deciding waits and budgets, including larger values.
+# Its byte fields name the warm target a request may narrow but never widen;
+# no text, transcript, reference or metadata is refused by size (Rule 5).
 WIRE_U64 = (1 << 64) - 1
 WIRE_USIZE = (1 << (8 * struct.calcsize("P"))) - 1
 
@@ -55,17 +57,15 @@ def load_policy(path):
     return validate_limits(data["vault"])
 
 
-def unpack(body, max_header=32768, *, include_header_length=False):
+def unpack(body):
     if len(body) < 4:
         raise ValueError("missing metadata")
     n = struct.unpack("!I", body[:4])[0]
-    if not 0 < n <= max_header or len(body) <= 4 + n:
+    if not 0 < n or len(body) <= 4 + n:
         raise ValueError("invalid metadata length")
     meta = json.loads(body[4:4+n])
     if not isinstance(meta, dict):
         raise ValueError("invalid metadata")
-    if include_header_length:
-        return meta, body[4+n:], n
     return meta, body[4+n:]
 
 
@@ -73,10 +73,10 @@ class UnsupportedEncoding(ValueError):
     """A Content-Encoding this worker cannot read: answer 415."""
 
 
-def decode_body(encoding, raw, limit):
-    """`raw` under its Content-Encoding (gzip, or zstd on Python 3.14), at
-    most `limit` bytes decoded (OF-604): the engine sends a render upload of
-    16 KiB or more encoded when its provider entry names the codec."""
+def decode_body(encoding, raw):
+    """`raw` under its Content-Encoding (gzip, or zstd on Python 3.14), decoded
+    whole (OF-604): the engine sends a render upload of 16 KiB or more encoded
+    when its provider entry names the codec."""
     token = (encoding or "identity").strip().lower()
     if token == "identity":
         return raw
@@ -87,11 +87,11 @@ def decode_body(encoding, raw, limit):
     else:
         raise UnsupportedEncoding(token)
     try:
-        body = decoder.decompress(raw, limit + 1)
+        body = decoder.decompress(raw)
     except error:
         raise ValueError("encoded body") from None
-    if len(body) > limit or not decoder.eof:
-        raise ValueError("request size")
+    if not decoder.eof:
+        raise ValueError("encoded body")
     return body
 
 
@@ -121,7 +121,7 @@ class Worker:
                 "boot_id": self.boot_id, "sample_rate": self.sample_rate,
                 "limits": self.limits}
 
-    def render(self, meta, wav, header_bytes):
+    def render(self, meta, wav):
         target = meta.get("target")
         if not isinstance(target, dict) or target.get("warm") != self.target():
             raise ValueError("stale or mismatched warm target")
@@ -131,20 +131,14 @@ class Worker:
         effective = validate_limits(target.get("limits"))
         if any(effective[k] > self.limits[k] for k in FIELDS):
             raise ValueError("request widens worker policy")
-        if header_bytes > effective["max_header_bytes"]:
-            raise ValueError("request metadata exceeds narrowed policy")
         response_meta = {"target": target, "sample_rate": self.sample_rate, "channels": 1}
-        if len(json.dumps(response_meta, separators=(",", ":")).encode()) > effective["max_header_bytes"]:
-            raise ValueError("response metadata exceeds narrowed policy")
         text = meta.get("text")
         transcript = meta.get("transcript")
-        if (not isinstance(text, str) or not text.strip()
-                or len(text.encode()) > effective["max_text_bytes"]):
+        if not isinstance(text, str) or not text.strip():
             raise ValueError("invalid text")
-        if not isinstance(transcript, str) or not transcript.strip() or len(transcript) > 16384:
+        if not isinstance(transcript, str) or not transcript.strip():
             raise ValueError("invalid reference transcript")
-        if (len(wav) > effective["max_ref_bytes"] or not wav.startswith(b"RIFF")
-                or wav[8:12] != b"WAVE"):
+        if not wav.startswith(b"RIFF") or wav[8:12] != b"WAVE":
             raise ValueError("invalid WAV reference")
         # The reference is request-scoped, owner-only, and erased after inference.
         with self.lock:
@@ -173,6 +167,10 @@ class BoundedHTTPServer(ThreadingHTTPServer):
 
     def get_request(self):
         sock, addr = super().get_request()
+        self.arm_upload(sock)
+        return sock, addr
+
+    def arm_upload(self, sock):
         duration = self.upload_deadline_ms / 1000
         sock.settimeout(duration)
         deadline = time.monotonic() + duration
@@ -188,7 +186,6 @@ class BoundedHTTPServer(ThreadingHTTPServer):
         with self._upload_lock:
             self._uploads[id(sock)] = (deadline, timer)
         timer.start()
-        return sock, addr
 
     def upload_deadline(self, sock):
         with self._upload_lock:
@@ -232,8 +229,7 @@ def handler_for(worker):
 
         def read_body(self):
             n = int(self.headers.get("Content-Length", "0"))
-            max_body = worker.limits["max_ref_bytes"] + worker.limits["max_header_bytes"] + 4
-            if not 5 <= n <= max_body:
+            if n < 5:
                 raise ValueError("request size")
             deadline = self.server.upload_deadline(self.connection)
             parts = []
@@ -250,9 +246,7 @@ def handler_for(worker):
                     raise ValueError("incomplete upload")
                 parts.append(piece)
                 remaining -= len(piece)
-            body = decode_body(self.headers.get("Content-Encoding"), b"".join(parts), max_body)
-            return unpack(body, worker.limits["max_header_bytes"],
-                          include_header_length=True)
+            return unpack(decode_body(self.headers.get("Content-Encoding"), b"".join(parts)))
 
         def do_POST(self):
             if not self.authorized():
@@ -260,14 +254,16 @@ def handler_for(worker):
             if self.path != "/render":
                 self.send_error(404)
                 return
-            if not worker.admission.acquire(blocking=False):
-                self.send_error(429, "worker upload slots full")
-                return
+            # A request waits for an upload slot instead of being refused; the
+            # wait is not upload time, so its body deadline starts at the slot.
+            self.server.disarm_upload(self.connection)
+            worker.admission.acquire()
             try:
                 try:
-                    meta, wav, header_bytes = self.read_body()
+                    self.server.arm_upload(self.connection)
+                    meta, wav = self.read_body()
                     self.server.disarm_upload(self.connection)
-                    data = worker.render(meta, wav, header_bytes)
+                    data = worker.render(meta, wav)
                 except (TimeoutError, socket.timeout):
                     self.send_error(408, "upload deadline exceeded")
                     return

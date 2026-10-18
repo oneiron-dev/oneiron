@@ -92,8 +92,6 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // The sealed bundle's custody and cursors follow the live vault.
     (&t::SYNC_RESIDENCE_BUNDLE_GENERATION, LIVE),
     (&t::SYNC_RESIDENCE_BUNDLE_PART, LIVE),
-    (&t::SYNC_RESIDENCE_BUNDLE_STAGE, LIVE),
-    (&t::SYNC_RESIDENCE_BUNDLE_STAGE_PART, LIVE),
     (&t::SYNC_RESIDENCE_BUNDLE_SWEPT, LIVE),
     (&t::SYNC_RESIDENCE_BUNDLE_CURSOR, LIVE),
     (&t::SYNC_ROOM_FACT_DIRTY, CONTENT),
