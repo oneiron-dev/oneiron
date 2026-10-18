@@ -50225,7 +50225,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AudioDelivery",
@@ -50248,7 +50248,7 @@
      "path": "src/voice_cascade/tts_spikes.rs",
      "purpose": "Experimental Irodori/MOSS-local submission and PCM normalization only",
      "surface": {
-      "const": 3,
+      "const": 2,
       "enum": 7,
       "fn": 7,
       "struct": 9,
@@ -54484,7 +54484,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 187,
+   "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3311,
    "test_files": 902
