@@ -157,6 +157,8 @@ both bindings and their export-census tests in one change.
 - `vault.trusted_contacts.tier.set`
 - `vault.trusted_contacts.concern.asks`
 - `vault.trusted_contacts.concern.authorize`
+- `vault.trusted_contacts.concern.propose`
+- `vault.trusted_contacts.concern.deliver`
 - `vault.guests.revoke`
 - `vault.guests.mint_slip`
 - `vault.residence.mode`

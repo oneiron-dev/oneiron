@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 492 facade rows, 1840 declarations.
-Inputs: 443 of 492 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 438 of 492 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 494 facade rows, 1846 declarations.
+Inputs: 445 of 494 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 440 of 494 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 88; unread shapes: 0.
 """
 
@@ -3420,6 +3420,42 @@ class TrustedContactAuthorization(TypedDict):
     yes: bool
     outcome: TrustedContactAuthorizationOutcome
     system_notices: list[GateSystemNoticeRecord]
+class TrustedContactConcernRequest(TypedDict):
+    content_ref: str
+TrustedContactConcernFact = Literal["fact_of_concern"]
+class TrustedContactConcernProposal(TypedDict):
+    action: str
+    fact: NotRequired[TrustedContactConcernFact | None]
+    gate_receipt_ref: NotRequired[str | None]
+    open_asks: list[TrustedContactAsk]
+    system_notices: list[GateSystemNoticeRecord]
+class TrustedContactDeliverRequest(TypedDict):
+    ...
+class TrustedContactNoticeAuthorizationAsk(TypedDict):
+    origin: Literal["ask"]
+    ask_ref: str
+class TrustedContactNoticeAuthorizationPolicy(TypedDict):
+    origin: Literal["policy"]
+    row_ref: str
+    tier: TrustedContactTier
+TrustedContactNoticeAuthorization = TrustedContactNoticeAuthorizationAsk | TrustedContactNoticeAuthorizationPolicy
+class TrustedContactDeliveryReceipt(TypedDict):
+    fire_ref: str
+    person_ref: str
+    contact_ref: str
+    version: int
+    channel: str
+    verb: str
+    authorization: TrustedContactNoticeAuthorization
+    fact: TrustedContactConcernFact
+    outcome: str
+    gate_decision_id: NotRequired[str | None]
+    gate_outcome: str
+    gate_reason_codes: list[str]
+    receipt_id: str
+    occurred_at: int
+    provider_ref: NotRequired[str | None]
+    delivery_may_have_occurred: bool
 class GuestRevokeRequest(TypedDict):
     grant_ref: EntityId
     peer: NotRequired[str | None]

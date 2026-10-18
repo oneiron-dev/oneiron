@@ -162,6 +162,14 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             "/vault.trusted_contacts.concern.authorize",
             post(facade_route),
         )
+        .route(
+            "/vault.trusted_contacts.concern.propose",
+            post(facade_route),
+        )
+        .route(
+            "/vault.trusted_contacts.concern.deliver",
+            post(facade_route),
+        )
         .route("/vault.guests.revoke", post(facade_route))
         .route("/vault.guests.mint_slip", post(facade_route))
         .route("/vault.residence.mode", post(facade_route))

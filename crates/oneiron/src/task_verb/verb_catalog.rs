@@ -155,6 +155,8 @@ pub enum AgentVerb {
     VaultTrustedContactsTierSet,
     VaultTrustedContactsConcernAsks,
     VaultTrustedContactsConcernAuthorize,
+    VaultTrustedContactsConcernPropose,
+    VaultTrustedContactsConcernDeliver,
     VaultGuestsRevoke,
     VaultGuestsMintSlip,
     VaultResidenceMode,
@@ -693,6 +695,8 @@ impl AgentVerb {
         Self::VaultTrustedContactsTierSet,
         Self::VaultTrustedContactsConcernAsks,
         Self::VaultTrustedContactsConcernAuthorize,
+        Self::VaultTrustedContactsConcernPropose,
+        Self::VaultTrustedContactsConcernDeliver,
         Self::VaultGuestsRevoke,
         Self::VaultGuestsMintSlip,
         Self::VaultResidenceMode,
@@ -1236,6 +1240,8 @@ impl AgentVerb {
             Self::VaultTrustedContactsConcernAuthorize => {
                 "vault.trusted_contacts.concern.authorize"
             }
+            Self::VaultTrustedContactsConcernPropose => "vault.trusted_contacts.concern.propose",
+            Self::VaultTrustedContactsConcernDeliver => "vault.trusted_contacts.concern.deliver",
             Self::VaultGuestsRevoke => "vault.guests.revoke",
             Self::VaultGuestsMintSlip => "vault.guests.mint_slip",
             Self::VaultResidenceMode => "vault.residence.mode",
@@ -1781,6 +1787,8 @@ impl AgentVerb {
                 | Self::VaultTrustedContactsTierSet
                 | Self::VaultTrustedContactsConcernAsks
                 | Self::VaultTrustedContactsConcernAuthorize
+                | Self::VaultTrustedContactsConcernPropose
+                | Self::VaultTrustedContactsConcernDeliver
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultResidenceMode
@@ -2326,6 +2334,8 @@ impl AgentVerb {
                 | Self::VaultTrustedContactsTierSet
                 | Self::VaultTrustedContactsConcernAsks
                 | Self::VaultTrustedContactsConcernAuthorize
+                | Self::VaultTrustedContactsConcernPropose
+                | Self::VaultTrustedContactsConcernDeliver
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultResidenceMode
@@ -2916,6 +2926,8 @@ impl AgentVerb {
                 | Self::VaultTrustedContactsTierSet
                 | Self::VaultTrustedContactsConcernAsks
                 | Self::VaultTrustedContactsConcernAuthorize
+                | Self::VaultTrustedContactsConcernPropose
+                | Self::VaultTrustedContactsConcernDeliver
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultResidenceMode
@@ -3378,6 +3390,8 @@ impl AgentVerb {
                 | Self::VaultTrustedContactsDialSet
                 | Self::VaultTrustedContactsTierSet
                 | Self::VaultTrustedContactsConcernAuthorize
+                | Self::VaultTrustedContactsConcernPropose
+                | Self::VaultTrustedContactsConcernDeliver
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultResidenceMode
@@ -3794,6 +3808,8 @@ impl AgentVerb {
             Self::VaultTrustedContactsTierSet => &["spec"],
             Self::VaultTrustedContactsConcernAsks => &["spec"],
             Self::VaultTrustedContactsConcernAuthorize => &["spec"],
+            Self::VaultTrustedContactsConcernPropose => &["spec"],
+            Self::VaultTrustedContactsConcernDeliver => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultResidenceMode => &["spec"],
@@ -4333,6 +4349,8 @@ impl AgentVerb {
             Self::VaultTrustedContactsTierSet => &["spec"],
             Self::VaultTrustedContactsConcernAsks => &["spec"],
             Self::VaultTrustedContactsConcernAuthorize => &["spec"],
+            Self::VaultTrustedContactsConcernPropose => &["spec"],
+            Self::VaultTrustedContactsConcernDeliver => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultResidenceMode => &["spec"],
@@ -5158,6 +5176,12 @@ impl AgentVerb {
             }
             Self::VaultTrustedContactsConcernAuthorize => {
                 "The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing."
+            }
+            Self::VaultTrustedContactsConcernPropose => {
+                "The owner's policy gate reads one message the caller reads, fresh; a RouteToHelp asks the owner or stages a just-call notice, and the answer carries only the fact of concern, the gate receipt, open asks and notices."
+            }
+            Self::VaultTrustedContactsConcernDeliver => {
+                "The caller sends the next staged fact-of-concern notice it is the stored sender of, as itself, through the consent-checked outbound dispatch; null when none is eligible, never another sender's notice."
             }
             Self::VaultGuestsRevoke => "",
             Self::VaultGuestsMintSlip => {

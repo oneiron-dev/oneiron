@@ -2494,6 +2494,38 @@
       "openapi": true
     },
     {
+      "name": "vault.trusted_contacts.concern.propose",
+      "description": "The owner's policy gate reads one message the caller reads, fresh; a RouteToHelp asks the owner or stages a just-call notice, and the answer carries only the fact of concern, the gate receipt, open asks and notices.",
+      "input": "crate::task_verb::sdk::TrustedContactConcernRequest",
+      "output": "crate::task_verb::sdk::TrustedContactConcernProposal",
+      "call": "crate::task_verb::sdk::propose_trusted_contact_concern(memory, &memory.embedded_owner(\"vault.trusted_contacts.concern.propose\")?, input, &crate::policy_model::PolicyModelConfig::default())?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.trusted_contacts.concern.deliver",
+      "description": "The caller sends the next staged fact-of-concern notice it is the stored sender of, as itself, through the consent-checked outbound dispatch; null when none is eligible, never another sender's notice.",
+      "input": "crate::task_verb::sdk::TrustedContactDeliverRequest",
+      "output": "Option<crate::task_verb::sdk::TrustedContactDeliveryReceipt>",
+      "call": "crate::task_verb::sdk::deliver_trusted_contact_notice(memory, input, &mut crate::outbound::ServedChannelSink::new(memory.vault())?)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.guests.revoke",
       "input": "crate::task_verb::sdk::GuestRevokeRequest",
       "output": "crate::receipt::GuestRevokeResponse",

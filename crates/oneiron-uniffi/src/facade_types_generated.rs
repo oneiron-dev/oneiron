@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 492 facade rows, 1765 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 9; generated in and out: 456.
+// UniFFI census: 494 facade rows, 1770 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 9; generated in and out: 458.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -9918,6 +9918,106 @@ pub struct TrustedContactAuthorization {
     pub outcome: TrustedContactAuthorizationOutcome,
     #[serde(rename = "system_notices")]
     pub system_notices: Vec<GateSystemNoticeRecord>,
+}
+
+/// `oneiron::task_verb::sdk_trusted_contact::TrustedContactConcernRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TrustedContactConcernRequest {
+    #[serde(rename = "content_ref")]
+    pub content_ref: String,
+}
+
+/// `oneiron::task_verb::sdk_trusted_contact::TrustedContactConcernFact`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TrustedContactConcernFact {
+    #[serde(rename = "fact_of_concern")]
+    FactOfConcern,
+}
+
+/// `oneiron::task_verb::sdk_trusted_contact::TrustedContactConcernProposal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TrustedContactConcernProposal {
+    #[serde(rename = "action")]
+    pub action: String,
+    #[serde(rename = "fact", default, skip_serializing_if = "Option::is_none")]
+    pub fact: Option<TrustedContactConcernFact>,
+    #[serde(
+        rename = "gate_receipt_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub gate_receipt_ref: Option<String>,
+    #[serde(rename = "open_asks")]
+    pub open_asks: Vec<TrustedContactAsk>,
+    #[serde(rename = "system_notices")]
+    pub system_notices: Vec<GateSystemNoticeRecord>,
+}
+
+/// `oneiron::counterparty_contact::trusted_contact_notice::TrustedContactNoticeAuthorization`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "origin")]
+#[serde(deny_unknown_fields)]
+pub enum TrustedContactNoticeAuthorization {
+    #[serde(rename = "ask")]
+    Ask {
+        #[serde(rename = "ask_ref")]
+        ask_ref: String,
+    },
+    #[serde(rename = "policy")]
+    Policy {
+        #[serde(rename = "row_ref")]
+        row_ref: String,
+        #[serde(rename = "tier")]
+        tier: TrustedContactTier,
+    },
+}
+
+/// `oneiron::task_verb::sdk_trusted_contact::TrustedContactDeliveryReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TrustedContactDeliveryReceipt {
+    #[serde(rename = "fire_ref")]
+    pub fire_ref: String,
+    #[serde(rename = "person_ref")]
+    pub person_ref: String,
+    #[serde(rename = "contact_ref")]
+    pub contact_ref: String,
+    #[serde(rename = "version")]
+    pub version: u64,
+    #[serde(rename = "channel")]
+    pub channel: String,
+    #[serde(rename = "verb")]
+    pub verb: String,
+    #[serde(rename = "authorization")]
+    pub authorization: TrustedContactNoticeAuthorization,
+    #[serde(rename = "fact")]
+    pub fact: TrustedContactConcernFact,
+    #[serde(rename = "outcome")]
+    pub outcome: String,
+    #[serde(
+        rename = "gate_decision_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub gate_decision_id: Option<String>,
+    #[serde(rename = "gate_outcome")]
+    pub gate_outcome: String,
+    #[serde(rename = "gate_reason_codes")]
+    pub gate_reason_codes: Vec<String>,
+    #[serde(rename = "receipt_id")]
+    pub receipt_id: String,
+    #[serde(rename = "occurred_at")]
+    pub occurred_at: u64,
+    #[serde(
+        rename = "provider_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub provider_ref: Option<String>,
+    #[serde(rename = "delivery_may_have_occurred")]
+    pub delivery_may_have_occurred: bool,
 }
 
 /// `oneiron::task_verb::sdk_guest_revoke::GuestRevokeRequest`.

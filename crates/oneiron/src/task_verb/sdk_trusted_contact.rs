@@ -5,22 +5,35 @@
 //! and ends one (`.revoke`); the named contact consents, as an adult, to the
 //! naming they were shown (`.consent`); and the person reads their open
 //! concern asks (`.concern.asks`) and answers one (`.concern.authorize`).
+//! DOOR-140 B: the person's own policy gate reads one conversation message
+//! and, on a `RouteToHelp`, proposes the fact of concern
+//! (`.concern.propose`); a notice's own sender delivers it
+//! (`.concern.deliver`).
 //!
 //! Each fn parses the refs and passes the engine exactly what it asks for:
 //! the person and the contact come from the caller's proof and the time from
 //! the host, never from the input, so no request asserts another person's
-//! consent or adulthood.
+//! consent or adulthood, a verdict, or a sender.
 use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
 use crate::counterparty_contact::{
     TrustedContact, TrustedContactAsk, TrustedContactAskOutcome, TrustedContactDial,
-    TrustedContactReach, TrustedContactTier,
+    TrustedContactNoticeAuthorization, TrustedContactReach, TrustedContactTier,
 };
-use crate::memory::{MemoryError, MemoryResult};
-use crate::policy_model::PolicyModelConfig;
+use crate::memory::{
+    MEMORY_CODE_INVALID_STATE, MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult,
+};
+use crate::outbound::OutboundExecutionSink;
+use crate::policy_model::{PolicyClassifyRequest, PolicyEnforcementAction, PolicyModelConfig};
 use crate::store::GateSystemNoticeRecord;
 use crate::{EntityId, Vault};
+
+/// The record kind `.concern.propose` reads: one conversation message.
+const CONCERN_RECORD_KIND: &str = "MESSAGE";
+
+/// The audience of a notice told to the person and the model alike.
+const USER_AND_MODEL: &str = "user_and_model";
 
 /// `vault.trusted_contacts.name`'s input: the contact, another live PERSON of
 /// this vault, by id; where the notice reaches them; and whether the person
@@ -124,6 +137,76 @@ pub struct TrustedContactAuthorization {
     pub yes: bool,
     pub outcome: TrustedContactAuthorizationOutcome,
     pub system_notices: Vec<GateSystemNoticeRecord>,
+}
+
+/// `vault.trusted_contacts.concern.propose`'s input: one conversation
+/// message the caller reads, by ref (`id` or `id@revision`). The policy gate
+/// reads it; nothing else in the request shapes the verdict.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TrustedContactConcernRequest {
+    pub content_ref: String,
+}
+
+/// The one thing a trusted contact ever hears: that there is a concern.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TrustedContactConcernFact {
+    FactOfConcern,
+}
+
+/// `vault.trusted_contacts.concern.propose`'s answer: what the person's
+/// policy gate settled for the message, the fact it proposes when that is a
+/// `RouteToHelp` (none otherwise), the gate's receipt, the person's open
+/// asks (all of them, not only one this call raised) and the notices told
+/// to the person and the model. Never the message, the verdict or its
+/// rationale.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TrustedContactConcernProposal {
+    pub action: String,
+    pub fact: Option<TrustedContactConcernFact>,
+    pub gate_receipt_ref: Option<String>,
+    pub open_asks: Vec<TrustedContactAsk>,
+    pub system_notices: Vec<GateSystemNoticeRecord>,
+}
+
+/// `vault.trusted_contacts.concern.deliver`'s input: none. The caller is the
+/// sender: it delivers the next notice it is the stored sender of.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TrustedContactDeliverRequest {}
+
+/// `vault.trusted_contacts.concern.deliver`'s answer for one notice: the
+/// fire, the relation it is for and what authorized it, the fact it carried,
+/// and the dispatch's own facts. `delivered_to_channel` means the channel
+/// took it, not that the contact read it. No message, transcript or target
+/// address.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TrustedContactDeliveryReceipt {
+    pub fire_ref: String,
+    pub person_ref: String,
+    pub contact_ref: String,
+    pub version: u64,
+    pub channel: String,
+    pub verb: String,
+    pub authorization: TrustedContactNoticeAuthorization,
+    pub fact: TrustedContactConcernFact,
+    pub outcome: String,
+    pub gate_decision_id: Option<String>,
+    pub gate_outcome: String,
+    pub gate_reason_codes: Vec<String>,
+    pub receipt_id: String,
+    pub occurred_at: u64,
+    pub provider_ref: Option<String>,
+    pub delivery_may_have_occurred: bool,
+}
+
+/// The one typed field `.concern.propose` reads from a message body.
+#[derive(Deserialize)]
+struct ConcernMessageBody {
+    content: String,
 }
 
 fn entity_ref(field: &str, value: &str) -> MemoryResult<EntityId> {
@@ -251,4 +334,113 @@ pub fn authorize_trusted_contact_ask(
         outcome,
         system_notices,
     })
+}
+
+/// The text of the one conversation message `content_ref` names, read under
+/// the caller's own scope: a MESSAGE's `content`, and no other kind or field.
+fn concern_message_text(memory: &Memory<'_>, content_ref: &str) -> MemoryResult<String> {
+    let view = memory.get_entity(content_ref)?.value.ok_or_else(|| {
+        MemoryError::not_found("no message the caller reads has that content_ref")
+    })?;
+    if view.kind != CONCERN_RECORD_KIND {
+        return Err(MemoryError::bad_request(
+            "content_ref names no conversation MESSAGE",
+        ));
+    }
+    let body = view
+        .body
+        .and_then(|body| serde_json::from_value::<ConcernMessageBody>(body).ok())
+        .filter(|body| !body.content.trim().is_empty())
+        .ok_or_else(|| MemoryError::bad_request("the message carries no text"))?;
+    Ok(body.content)
+}
+
+/// `vault.trusted_contacts.concern.propose`: the person's own owner-policy
+/// gate reads one message the caller reads, fresh, for the proven person.
+/// A `RouteToHelp` it settles fires the person's trusted contacts in the
+/// gate's own transaction (an ask, or a just-call notice on the imminent
+/// tier); this answers the fact only. With the owner policy off, or a pass
+/// that wanted a safeguard model this host does not serve, it refuses: no
+/// verdict is taken from the caller, and none is made up.
+pub fn propose_trusted_contact_concern(
+    memory: &Memory<'_>,
+    person: &AuthenticatedOwner,
+    input: TrustedContactConcernRequest,
+    config: &PolicyModelConfig,
+) -> MemoryResult<TrustedContactConcernProposal> {
+    let vault = memory.vault();
+    let content = concern_message_text(memory, &input.content_ref)?;
+    let enabled = {
+        let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        crate::gate::resolve_policy_manifest(&vault.store, &rtxn)?.owner_policy_enabled()
+    };
+    if !enabled {
+        return Err(MemoryError::new(
+            MEMORY_CODE_INVALID_STATE,
+            "the vault's owner policy is off: no gate settles a RouteToHelp",
+            &["The owner turns on owner policy and writes a RouteToHelp row first."],
+        ));
+    }
+    let request = PolicyClassifyRequest::outbound_content(content)
+        .with_caller_ref(memory.actor().to_hex())
+        .with_concerned_person(person.clone());
+    let enforcement = vault.enforce_policy_model_with_config(request, config)?;
+    if enforcement.action == PolicyEnforcementAction::Skipped {
+        return Err(MemoryError::new(
+            MEMORY_CODE_MODEL_UNAVAILABLE,
+            "the owner policy wanted a safeguard model this host does not serve; nothing was proposed",
+            &["Write a deciding pattern for the RouteToHelp row, or serve a safeguard model."],
+        ));
+    }
+    let fact = (enforcement.action == PolicyEnforcementAction::RouteToHelp)
+        .then_some(TrustedContactConcernFact::FactOfConcern);
+    Ok(TrustedContactConcernProposal {
+        action: enforcement.action.as_str().to_owned(),
+        fact,
+        gate_receipt_ref: enforcement.receipt_ref,
+        open_asks: vault.trusted_contact_asks(person)?,
+        system_notices: enforcement
+            .system_notices
+            .into_iter()
+            .filter(|notice| notice.audience == USER_AND_MODEL)
+            .collect(),
+    })
+}
+
+/// `vault.trusted_contacts.concern.deliver`: the caller delivers the next
+/// notice it is the stored sender of, as itself, through `sink`. `None`
+/// when none of its notices is eligible; another sender's never is.
+pub fn deliver_trusted_contact_notice<S: OutboundExecutionSink>(
+    memory: &Memory<'_>,
+    _input: TrustedContactDeliverRequest,
+    sink: &mut S,
+) -> MemoryResult<Option<TrustedContactDeliveryReceipt>> {
+    let delivered = memory
+        .vault()
+        .deliver_trusted_contact_notice(memory, sink)
+        .map_err(crate::memory::facade_error_from_outbound_dispatch)?;
+    Ok(
+        delivered.map(|(notice, result)| TrustedContactDeliveryReceipt {
+            fire_ref: notice.fire,
+            person_ref: notice.person,
+            contact_ref: notice.contact,
+            version: notice.version,
+            channel: notice.channel,
+            verb: notice.verb,
+            authorization: notice.authorization,
+            fact: TrustedContactConcernFact::FactOfConcern,
+            outcome: result.outcome.as_str().to_owned(),
+            gate_decision_id: result.gate_decision_id,
+            gate_outcome: result.gate_outcome,
+            gate_reason_codes: result.gate_reason_codes,
+            provider_ref: result.receipt.fields.get("provider_ref").cloned(),
+            delivery_may_have_occurred: result
+                .receipt
+                .fields
+                .get("delivery_may_have_occurred")
+                .is_some_and(|value| value == "true"),
+            receipt_id: result.receipt.receipt_id,
+            occurred_at: result.receipt.occurred_at,
+        }),
+    )
 }
