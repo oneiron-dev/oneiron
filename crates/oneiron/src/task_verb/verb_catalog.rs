@@ -211,6 +211,12 @@ pub enum AgentVerb {
     VaultRecordsEraseConfirm,
     VaultResearchCreateChild,
     VaultResearchArchive,
+    VaultResearchArchiveInstall,
+    VaultResearchArchiveRecord,
+    VaultResearchArchiveGet,
+    VaultResearchArchiveBest,
+    VaultResearchArchiveRepropose,
+    VaultResearchArchiveCoverage,
     VaultEvalsInventory,
     VaultEvalsCohortsSetup,
     VaultResearchBind,
@@ -877,6 +883,12 @@ impl AgentVerb {
         Self::VaultRecordsEraseConfirm,
         Self::VaultResearchCreateChild,
         Self::VaultResearchArchive,
+        Self::VaultResearchArchiveInstall,
+        Self::VaultResearchArchiveRecord,
+        Self::VaultResearchArchiveGet,
+        Self::VaultResearchArchiveBest,
+        Self::VaultResearchArchiveRepropose,
+        Self::VaultResearchArchiveCoverage,
         Self::VaultEvalsInventory,
         Self::VaultEvalsCohortsSetup,
         Self::VaultResearchBind,
@@ -1550,6 +1562,12 @@ impl AgentVerb {
             Self::VaultRecordsEraseConfirm => "vault.records.erase_confirm",
             Self::VaultResearchCreateChild => "vault.research.create_child",
             Self::VaultResearchArchive => "vault.research.archive",
+            Self::VaultResearchArchiveInstall => "vault.research.archive.install",
+            Self::VaultResearchArchiveRecord => "vault.research.archive.record",
+            Self::VaultResearchArchiveGet => "vault.research.archive.get",
+            Self::VaultResearchArchiveBest => "vault.research.archive.best",
+            Self::VaultResearchArchiveRepropose => "vault.research.archive.repropose",
+            Self::VaultResearchArchiveCoverage => "vault.research.archive.coverage",
             Self::VaultEvalsInventory => "vault.evals.inventory",
             Self::VaultEvalsCohortsSetup => "vault.evals.cohorts.setup",
             Self::VaultResearchBind => "vault.research.bind",
@@ -2227,6 +2245,12 @@ impl AgentVerb {
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultResearchCreateChild
                 | Self::VaultResearchArchive
+                | Self::VaultResearchArchiveInstall
+                | Self::VaultResearchArchiveRecord
+                | Self::VaultResearchArchiveGet
+                | Self::VaultResearchArchiveBest
+                | Self::VaultResearchArchiveRepropose
+                | Self::VaultResearchArchiveCoverage
                 | Self::VaultEvalsInventory
                 | Self::VaultEvalsCohortsSetup
                 | Self::VaultResearchBind
@@ -2900,6 +2924,12 @@ impl AgentVerb {
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultResearchCreateChild
                 | Self::VaultResearchArchive
+                | Self::VaultResearchArchiveInstall
+                | Self::VaultResearchArchiveRecord
+                | Self::VaultResearchArchiveGet
+                | Self::VaultResearchArchiveBest
+                | Self::VaultResearchArchiveRepropose
+                | Self::VaultResearchArchiveCoverage
                 | Self::VaultEvalsInventory
                 | Self::VaultEvalsCohortsSetup
                 | Self::VaultResearchBind
@@ -3628,6 +3658,12 @@ impl AgentVerb {
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultResearchCreateChild
                 | Self::VaultResearchArchive
+                | Self::VaultResearchArchiveInstall
+                | Self::VaultResearchArchiveRecord
+                | Self::VaultResearchArchiveGet
+                | Self::VaultResearchArchiveBest
+                | Self::VaultResearchArchiveRepropose
+                | Self::VaultResearchArchiveCoverage
                 | Self::VaultEvalsInventory
                 | Self::VaultEvalsCohortsSetup
                 | Self::VaultResearchBind
@@ -4192,6 +4228,10 @@ impl AgentVerb {
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultResearchCreateChild
+                | Self::VaultResearchArchiveInstall
+                | Self::VaultResearchArchiveRecord
+                | Self::VaultResearchArchiveRepropose
+                | Self::VaultResearchArchiveCoverage
                 | Self::VaultEvalsCohortsSetup
                 | Self::VaultResearchBind
                 | Self::VaultResearchFork
@@ -4713,6 +4753,12 @@ impl AgentVerb {
             Self::VaultRecordsEraseConfirm => &["spec"],
             Self::VaultResearchCreateChild => &["spec"],
             Self::VaultResearchArchive => &["spec"],
+            Self::VaultResearchArchiveInstall => &["spec"],
+            Self::VaultResearchArchiveRecord => &["spec"],
+            Self::VaultResearchArchiveGet => &["spec"],
+            Self::VaultResearchArchiveBest => &["spec"],
+            Self::VaultResearchArchiveRepropose => &["spec"],
+            Self::VaultResearchArchiveCoverage => &["spec"],
             Self::VaultEvalsInventory => &["spec"],
             Self::VaultEvalsCohortsSetup => &["spec"],
             Self::VaultResearchBind => &["spec"],
@@ -5380,6 +5426,12 @@ impl AgentVerb {
             Self::VaultRecordsEraseConfirm => &["spec"],
             Self::VaultResearchCreateChild => &["spec"],
             Self::VaultResearchArchive => &["spec"],
+            Self::VaultResearchArchiveInstall => &["spec"],
+            Self::VaultResearchArchiveRecord => &["spec"],
+            Self::VaultResearchArchiveGet => &["spec"],
+            Self::VaultResearchArchiveBest => &["spec"],
+            Self::VaultResearchArchiveRepropose => &["spec"],
+            Self::VaultResearchArchiveCoverage => &["spec"],
             Self::VaultEvalsInventory => &["spec"],
             Self::VaultEvalsCohortsSetup => &["spec"],
             Self::VaultResearchBind => &["spec"],
@@ -6443,6 +6495,24 @@ impl AgentVerb {
             }
             Self::VaultResearchArchive => {
                 "Reads the complete retained campaign record, including every pruned, buggy and woven candidate, original search and held-out evidence, selection rounds and promotion receipts, under the controller gate."
+            }
+            Self::VaultResearchArchiveInstall => {
+                "Installs one immutable campaign output descriptor from a receipted Coach proposal under the current human goal; categorical axes and embedding clusters share the engine validator."
+            }
+            Self::VaultResearchArchiveRecord => {
+                "Records original placement and quality receipts for one output revision; categorical judgment or pinned embedding placement competes only within its own cell."
+            }
+            Self::VaultResearchArchiveGet => {
+                "Reads the installed campaign output descriptor and every original placement and scoring receipt, including losing outputs, under the research controller gate."
+            }
+            Self::VaultResearchArchiveBest => {
+                "Rebuilds one best output per cell under the immutable descriptor revision and reports whether bunching warrants a new campaign proposal."
+            }
+            Self::VaultResearchArchiveRepropose => {
+                "Installs a receipted descriptor proposal in a new bound campaign when the old archive is bunched; the old descriptor, goal and cell winners remain unchanged."
+            }
+            Self::VaultResearchArchiveCoverage => {
+                "Pins the incumbent and candidate replay output refs and projects the human goal coverage floor; promotion rechecks these receipts and rejects any lost incumbent cell."
             }
             Self::VaultEvalsInventory => {
                 "The owner reads the metadata-only eval-authoring inventory: real receipt families, grounded case candidates, date-cut cohorts and exposure counts. Pin its built_at and digest for cohort setup."

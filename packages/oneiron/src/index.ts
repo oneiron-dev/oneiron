@@ -890,7 +890,20 @@ export class Oneiron {
       /** The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave. */
       create_child: (input: Facade.ResearchChildWire): Facade.ResearchChildReceipt => this.#call(() => this.#client.vaultResearchCreateChild(input) as Facade.ResearchChildReceipt),
       /** Reads the complete retained campaign record, including every pruned, buggy and woven candidate, original search and held-out evidence, selection rounds and promotion receipts, under the controller gate. */
-      archive: (input: Facade.ResearchArchiveWire): Facade.ResearchArchive => this.#call(() => this.#client.vaultResearchArchive(input) as Facade.ResearchArchive),
+      archive: Object.assign((input: Facade.ResearchArchiveWire): Facade.ResearchArchive => this.#call(() => this.#client.vaultResearchArchive(input) as Facade.ResearchArchive), {
+        /** Installs one immutable campaign output descriptor from a receipted Coach proposal under the current human goal; categorical axes and embedding clusters share the engine validator. */
+        install: (input: Facade.CampaignArchiveInstall): Facade.CampaignArchiveView => this.#call(() => this.#client.vaultResearchArchiveInstall(input) as Facade.CampaignArchiveView),
+        /** Records original placement and quality receipts for one output revision; categorical judgment or pinned embedding placement competes only within its own cell. */
+        record: (input: Facade.CampaignArchiveOutput): Facade.CampaignArchiveView => this.#call(() => this.#client.vaultResearchArchiveRecord(input) as Facade.CampaignArchiveView),
+        /** Reads the installed campaign output descriptor and every original placement and scoring receipt, including losing outputs, under the research controller gate. */
+        get: (input: Facade.CampaignArchiveRequest): Facade.CampaignArchiveRecord => this.#call(() => this.#client.vaultResearchArchiveGet(input) as Facade.CampaignArchiveRecord),
+        /** Rebuilds one best output per cell under the immutable descriptor revision and reports whether bunching warrants a new campaign proposal. */
+        best: (input: Facade.CampaignArchiveRequest): Facade.CampaignArchiveView => this.#call(() => this.#client.vaultResearchArchiveBest(input) as Facade.CampaignArchiveView),
+        /** Installs a receipted descriptor proposal in a new bound campaign when the old archive is bunched; the old descriptor, goal and cell winners remain unchanged. */
+        repropose: (input: Facade.CampaignArchiveReproposal): Facade.CampaignArchiveView => this.#call(() => this.#client.vaultResearchArchiveRepropose(input) as Facade.CampaignArchiveView),
+        /** Pins the incumbent and candidate replay output refs and projects the human goal coverage floor; promotion rechecks these receipts and rejects any lost incumbent cell. */
+        coverage: (input: Facade.CampaignArchiveCoverage): Facade.CampaignArchiveAdmission => this.#call(() => this.#client.vaultResearchArchiveCoverage(input) as Facade.CampaignArchiveAdmission),
+      }),
       /** Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it. */
       bind: (input: Facade.ResearchBindWire): Facade.ResearchBinding => this.#call(() => this.#client.vaultResearchBind(input) as Facade.ResearchBinding),
       /** Records a variation or debug child the campaign's controller enqueued under a measured or buggy parent. */

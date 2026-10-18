@@ -1825,6 +1825,60 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_research_archive_install(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.research.archive.install", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_research_archive_record(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.research.archive.record", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_research_archive_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.research.archive.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_research_archive_best(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.research.archive.best", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_research_archive_repropose(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.research.archive.repropose", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_research_archive_coverage(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.research.archive.coverage", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_evals_inventory(
         &self,
         input: serde_json::Value,

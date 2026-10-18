@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 620 facade rows, 2312 declarations.
-Inputs: 568 of 620 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 551 of 620 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 626 facade rows, 2326 declarations.
+Inputs: 574 of 626 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 557 of 626 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 92; unread shapes: 0.
 """
 
@@ -4502,6 +4502,84 @@ class ResearchArchive(TypedDict):
     rounds: list[SelectionReceipt]
     promotions: list[PromotionBasis]
     incumbent: EntityId
+class ArchiveAxesProposal(TypedDict):
+    receipt: EntityId
+    descriptor: ArchiveDescriptor
+class CampaignArchiveInstall(TypedDict):
+    root: EntityId
+    task: EntityId
+    project: EntityId
+    goal_ref: EntityId
+    quality_metric: ArchiveQualityMetric
+    sample_outputs: list[ArchiveOutputRef]
+    proposal: ArchiveAxesProposal
+class ArchiveCellAxes(TypedDict):
+    kind: Literal["axes"]
+    bins: list[str]
+class ArchiveCellCluster(TypedDict):
+    kind: Literal["cluster"]
+    index: int
+ArchiveCell = ArchiveCellAxes | ArchiveCellCluster
+class CampaignArchiveBest(TypedDict):
+    cell: ArchiveCell
+    output: ArchiveOutputRef
+    score: float
+    placement_receipt: EntityId
+    scoring_receipt: EntityId
+class CampaignArchiveView(TypedDict):
+    descriptor_revision: str
+    pin: CampaignArchivePin
+    best: list[CampaignArchiveBest]
+    needs_axes_reproposal: bool
+class ArchiveCellJudgment(TypedDict):
+    receipt: EntityId
+    pin_version: str
+    output: ArchiveOutputRef
+    cell: ArchiveCell
+class CampaignArchivePlacementJudgment(TypedDict):
+    kind: Literal["judgment"]
+    judgment: ArchiveCellJudgment
+class CampaignArchivePlacementEmbedding(TypedDict):
+    kind: Literal["embedding"]
+    output: ArchiveOutputRef
+    receipt: EntityId
+    model_revision: str
+    embedding: list[float]
+CampaignArchivePlacement = CampaignArchivePlacementJudgment | CampaignArchivePlacementEmbedding
+class ArchiveOutputScore(TypedDict):
+    receipt: EntityId
+    pin_version: str
+    output: ArchiveOutputRef
+    quality: float
+class CampaignArchiveOutput(TypedDict):
+    root: EntityId
+    descriptor_revision: str
+    placement: CampaignArchivePlacement
+    score: ArchiveOutputScore
+class CampaignArchiveRequest(TypedDict):
+    root: EntityId
+class CampaignArchiveRecord(TypedDict):
+    project: EntityId
+    pin: CampaignArchivePin
+    placements: list[ArchiveCellJudgment]
+    scores: list[ArchiveOutputScore]
+class CampaignArchiveReproposal(TypedDict):
+    root: EntityId
+    new_root: EntityId
+    proposal: ArchiveAxesProposal
+class CampaignArchiveCoverage(TypedDict):
+    root: EntityId
+    candidate: EntityId
+    incumbent: EntityId
+    descriptor_revision: str
+    incumbent_outputs: list[ArchiveOutputRef]
+    candidate_outputs: list[ArchiveOutputRef]
+class CampaignArchiveAdmission(TypedDict):
+    descriptor_revision: str
+    candidate: EntityId
+    required_cells: list[ArchiveCell]
+    covered_cells: list[ArchiveCell]
+    admitted: bool
 class EvalInventoryWire(TypedDict):
     at: NotRequired[int | None]
 FamilyPurpose = Literal["development", "judge_audit", "sealed_confirmation"]
