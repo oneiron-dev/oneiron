@@ -1715,6 +1715,11 @@ fn mcp_agent_verb_input(
         "vault.esign.send_for_signature" => a.spec.clone().ok_or_else(invalid),
         "vault.esign.remind" => a.spec.clone().ok_or_else(invalid),
         "vault.esign.void" => a.spec.clone().ok_or_else(invalid),
+        "vault.esign.signing.act" => a.spec.clone().ok_or_else(invalid),
+        "vault.esign.signing.pdf" => a.spec.clone().ok_or_else(invalid),
+        "vault.esign.signing.image" => a.spec.clone().ok_or_else(invalid),
+        "vault.esign.signing.signature" => a.spec.clone().ok_or_else(invalid),
+        "vault.esign.seal.get" => a.spec.clone().ok_or_else(invalid),
         "vault.conversations.create" => a.spec.clone().ok_or_else(invalid),
         "vault.conversations.turns.create" => a.spec.clone().ok_or_else(invalid),
         "vault.conversations.records.append" => a.spec.clone().ok_or_else(invalid),
@@ -4230,6 +4235,21 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.esign.void" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.esign.signing.act" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.esign.signing.pdf" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.esign.signing.image" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.esign.signing.signature" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.esign.seal.get" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.conversations.create" => {
@@ -17023,6 +17043,46 @@ async fn execute_agent_verb_row(
             let input: oneiron::blob_artifact::esign::EsignVoidRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_esign_void(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.esign.signing.act" => {
+            let input: oneiron::blob_artifact::esign::EsignSigningRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_esign_signing_act(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.esign.signing.pdf" => {
+            let input: oneiron::blob_artifact::esign::EsignSigningPdfRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_esign_signing_pdf(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.esign.signing.image" => {
+            let input: oneiron::blob_artifact::esign::EsignSigningImageRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_esign_signing_image(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.esign.signing.signature" => {
+            let input: oneiron::blob_artifact::esign::EsignSigningSignatureRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_esign_signing_signature(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.esign.seal.get" => {
+            let input: oneiron::blob_artifact::esign::EsignSealGetRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_esign_seal_get(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

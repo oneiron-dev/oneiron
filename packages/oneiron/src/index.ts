@@ -2029,6 +2029,20 @@ export class Oneiron {
       remind: (input: Facade.EsignDispatchRequest): Facade.EsignDispatchView => this.#call(() => this.#client.vaultEsignRemind(input) as Facade.EsignDispatchView),
       /** Withdraws a drafted or pending signing document unsealed and tells its recipients why, through the outbound gate, as the caller. */
       void: (input: Facade.EsignVoidRequest): Facade.EsignDispatchView => this.#call(() => this.#client.vaultEsignVoid(input) as Facade.EsignDispatchView),
+      signing: {
+        /** One recipient ceremony act under the signing capability in the body: load the page, save a field, complete with consent, or reject; an agent caller makes Complete an automated sign act. */
+        act: (input: Facade.EsignSigningRequest): Facade.SigningOutcome => this.#call(() => this.#client.vaultEsignSigningAct(input) as Facade.SigningOutcome),
+        /** One ceremony item under its signing capability, as base64 PDF bytes: the pinned original while signing, the hash-checked sealed output after sealing. */
+        pdf: (input: Facade.EsignSigningPdfRequest): Facade.EsignSigningPdfView => this.#call(() => this.#client.vaultEsignSigningPdf(input) as Facade.EsignSigningPdfView),
+        /** Stores one signature image bound to the signing capability recipient and answers the ref a signature field value names. */
+        image: (input: Facade.EsignSigningImageRequest): Facade.EsignSigningImageView => this.#call(() => this.#client.vaultEsignSigningImage(input) as Facade.EsignSigningImageView),
+        /** Reads back one stored signature image under the signing capability that uploaded it, as base64 bytes. */
+        signature: (input: Facade.EsignSigningSignatureRequest): Facade.EsignSigningSignatureView => this.#call(() => this.#client.vaultEsignSigningSignature(input) as Facade.EsignSigningSignatureView),
+      },
+      seal: {
+        /** Where one signing document seal task stands: its folded status, every seal attempt receipt the queue holds for it, and its sealed manifest once one attempt sealed it. */
+        get: (input: Facade.EsignSealGetRequest): Facade.EsignSealView => this.#call(() => this.#client.vaultEsignSealGet(input) as Facade.EsignSealView),
+      },
     },
     /** Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade. */
     batch: (input: Facade.CoreBatchWriteInput): Facade.CoreBatchWriteReceipt => this.#call(() => this.#client.vaultBatch(input) as Facade.CoreBatchWriteReceipt),

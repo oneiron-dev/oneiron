@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 945 code-mode rows (921 host rows, 24 run rows), 3167 declarations.
-// Replies: 852 fully typed, 89 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 950 code-mode rows (926 host rows, 24 run rows), 3184 declarations.
+// Replies: 857 fully typed, 89 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 103; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2701,6 +2701,23 @@ declare namespace Sdk {
   type EsignDispatchRequest = { document_ref: string; recipient_count: number; on_behalf_of?: string | null; idempotency_key?: string | null };
   type EsignDispatchView = { document_ref: string; verb: string; intent_ref: string; outcome: string; gate_outcome: string; gate_decision_ref?: string | null; gate_reason_codes: string[] };
   type EsignVoidRequest = { document_ref: string; recipient_count: number; reason: string; on_behalf_of?: string | null; idempotency_key?: string | null };
+  type SigningAction = { action: "load" } | { action: "save_field"; field: string; value: FieldValue } | { action: "complete"; consent: boolean; next?: string | null } | { action: "reject"; reason: string };
+  type EsignSigningRequest = { token: string; action: SigningAction };
+  type FieldControl = { kind: "text"; max_bytes: number; server_computed: boolean } | { kind: "checkbox" } | { kind: "select"; options: string[] } | { kind: "signature" };
+  type FieldPresentation = { id: string; item: number; geometry: FieldGeometry; required: boolean; control: FieldControl; value?: FieldValue | null };
+  type SigningPage = { item_count: number; title: string; recipient: string; fields: EsignField[]; presentations: FieldPresentation[]; values: Record<string, SignatureRow> };
+  type SigningOutcome = { outcome: "page"; data: SigningPage } | { outcome: "not_your_turn" } | { outcome: "terminal"; data: { status: DocumentStatus; item_count: number } } | { outcome: "awaiting_seal" } | { outcome: "held_for_owner"; data: { held_at: number } } | { outcome: "consent_required" };
+  type EsignSigningPdfRequest = { token: string; item: number };
+  type EsignSigningPdfView = { item: number; pdf_base64: string };
+  type EsignSigningImageRequest = { token: string; png_or_jpeg_base64: string };
+  type EsignSigningImageView = { image_ref: string };
+  type EsignSigningSignatureRequest = { token: string; image_ref: string };
+  type EsignSigningSignatureView = { image_ref: string; image_base64: string };
+  type EsignSealGetRequest = { document_ref: string };
+  type EsignSealAttemptView = { attempt_ref: string; kind: string; state: string; dedupe_key?: string | null; lease_owner?: string | null; attempt_count: number; created_at: number; updated_at: number; last_error?: string | null };
+  type EsignSealedItemView = { original_artifact: string; original_version: number; sealed_artifact: string; sealed_version: number; sha256: string };
+  type EsignSealedView = { attempt_ref: string; audit_chain_sha256: string; rejected: boolean; items: EsignSealedItemView[] };
+  type EsignSealView = { document_ref: string; status: DocumentStatus; attempts: EsignSealAttemptView[]; sealed?: EsignSealedView | null };
   type CoreWriteTextField = { field: string; value: string };
   type ConversationCreateInput = { id?: string | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: CoreWriteTextField[] | null };
   type CoreEntityWriteReceipt = { id: string; entity_type: number; learned_at: number; body: unknown };
@@ -4369,8 +4386,22 @@ declare const vault: Sdk.VaultHost & {
     };
     /** Reminds the recipients whose turn it is to sign a pending document, through the outbound gate, as the caller. */
     remind(input: Sdk.EsignDispatchRequest): Promise<Sdk.EsignDispatchView | StoredResult>;
+    seal: {
+      /** Where one signing document seal task stands: its folded status, every seal attempt receipt the queue holds for it, and its sealed manifest once one attempt sealed it. */
+      get(input: Sdk.EsignSealGetRequest): Promise<Sdk.EsignSealView | StoredResult>;
+    };
     /** Sends a drafted signing document to its recipients through the outbound gate, as the caller; an agent sends only within its principal envelope. */
     send_for_signature(input: Sdk.EsignDispatchRequest): Promise<Sdk.EsignDispatchView | StoredResult>;
+    signing: {
+      /** One recipient ceremony act under the signing capability in the body: load the page, save a field, complete with consent, or reject; an agent caller makes Complete an automated sign act. */
+      act(input: Sdk.EsignSigningRequest): Promise<Sdk.SigningOutcome | StoredResult>;
+      /** Stores one signature image bound to the signing capability recipient and answers the ref a signature field value names. */
+      image(input: Sdk.EsignSigningImageRequest): Promise<Sdk.EsignSigningImageView | StoredResult>;
+      /** One ceremony item under its signing capability, as base64 PDF bytes: the pinned original while signing, the hash-checked sealed output after sealing. */
+      pdf(input: Sdk.EsignSigningPdfRequest): Promise<Sdk.EsignSigningPdfView | StoredResult>;
+      /** Reads back one stored signature image under the signing capability that uploaded it, as base64 bytes. */
+      signature(input: Sdk.EsignSigningSignatureRequest): Promise<Sdk.EsignSigningSignatureView | StoredResult>;
+    };
     /** Withdraws a drafted or pending signing document unsealed and tells its recipients why, through the outbound gate, as the caller. */
     void(input: Sdk.EsignVoidRequest): Promise<Sdk.EsignDispatchView | StoredResult>;
   };
