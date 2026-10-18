@@ -75,6 +75,7 @@ mod result_attachment;
 mod room_turn;
 mod scoped_export;
 mod session_writes;
+mod signal_extraction;
 mod shape_doors;
 mod structural;
 mod subscriptions;
@@ -127,6 +128,10 @@ pub use diary_read::{
 };
 pub use diary_read::{DiaryReader, DiaryReaderList, SealedPadReader};
 pub use dreamer::{ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptView};
+pub use signal_extraction::{
+    ProspectiveQueryHint, SignalExtractionClaim, SignalExtractionMessage, SignalExtractionRequest,
+    SignalExtractionResult, SignalExtractionResultRequest, SignalExtractionSource, SignalExtractionTicket,
+};
 pub use entity_erase::{
     EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome,
 };

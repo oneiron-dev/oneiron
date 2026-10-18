@@ -49,6 +49,7 @@ mod decision_band_doors;
 pub(super) mod decision_role_asks;
 mod dispatch;
 mod embedding_space_doors;
+mod extraction_doors;
 mod fanout_doors;
 mod fold_doors;
 mod gate_policy_doors;

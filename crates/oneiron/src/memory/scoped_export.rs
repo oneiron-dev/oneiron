@@ -4,7 +4,7 @@ use crate::federation::Scope;
 use serde::{Deserialize, Serialize};
 
 /// A position may select rows but cannot be supplied as a permission ceiling.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(
     tag = "kind",
     content = "scope",
@@ -16,7 +16,7 @@ pub enum RecordPosition {
 }
 
 /// This value is projected only from the authenticated credential.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(
     tag = "kind",
     content = "scope",
@@ -116,7 +116,7 @@ pub struct ScopedExportRequest {
     pub channel: ExportChannel,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScopedExportRecord {
     pub record: crate::lens::RecordRef,
     pub position: RecordPosition,
@@ -125,7 +125,7 @@ pub struct ScopedExportRecord {
     pub birth: Option<crate::provenance::birth::RowBirth>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScopedExport {
     pub selector: RecordSelector,
     pub credential: CredentialCeiling,

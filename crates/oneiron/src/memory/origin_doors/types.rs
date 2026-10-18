@@ -29,7 +29,7 @@ pub struct OriginAuthoritySetRequest {
 }
 
 /// One served repository authority and the host reading it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OriginAuthorityView {
     pub repo: String,
     /// This install machine: the writer to name to make this host the
@@ -57,7 +57,7 @@ pub struct CheckoutDoorBindRequest {
 
 /// The owned checkout, with its lease-bound remote. It holds a redemption
 /// right only; every request still needs the credential of the holder.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CheckoutDoorBinding {
     pub repo: String,
     pub checkout: String,
@@ -92,7 +92,7 @@ pub struct CodeExportRequest {
 
 /// What the publication protocol decided for one export. The record status
 /// and the wire flags are what the engine wrote, not a client acknowledgement.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CodeExportResult {
     pub revision: EntityId,
     pub git_commit: String,
@@ -123,14 +123,14 @@ pub struct OriginPublicationsRequest {
 /// Every durable publication of that ref to that commit, in every status,
 /// ordered by publication id. Historical `published` is not current
 /// advertisement; a fresh clone proves that.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OriginPublicationsView {
     pub repo: String,
     pub publications: Vec<OriginPublicationView>,
 }
 
 /// Where one publication stands, as its journal row records it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OriginPublicationState {
     Prepared,
@@ -140,7 +140,7 @@ pub enum OriginPublicationState {
 }
 
 /// One durable publication record.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OriginPublicationView {
     /// The publication id.
     pub receipt: EntityId,
