@@ -216,7 +216,8 @@ pub(crate) fn start_stamp(
 
 /// A start by a planned team's leader (DOOR-111) that asks for the team its
 /// plan launched, its pattern and its member count, answers that team's
-/// launched members and spawns none. `None` when `leader` leads no planned
+/// launched members and spawns none; a retry of the leader the launch
+/// queued gets that leader's team. `None` when `leader` leads no planned
 /// team, or asks for another, which then starts as any start does.
 ///
 /// # Errors
@@ -235,7 +236,7 @@ pub(crate) fn planned_start(
     let Some(launch) = AgentDispatcher::new(vault).planned_launch_for_leader(leader)? else {
         return Ok(None);
     };
-    let Some(bound) = team_run_binding(vault, leader, &launch.team_ref)? else {
+    let Some(bound) = team_run_binding(vault, launch.root, &launch.team_ref)? else {
         return Ok(None);
     };
     if bound.stamp.pattern != pattern || input.members.len() != bound.members.len() {
@@ -270,8 +271,9 @@ pub(crate) fn member_spawn_key(input: &TeamStartInput, member: &TeamMemberInput)
     format!("team:{}:{}", input.intent_key, member.intent_key)
 }
 
-/// Records the receipt of a team `leader` started. Storage errors are errors;
-/// a refusal is the guest's typed failure code.
+/// Records the receipt of a team `leader` started, or of the planned team
+/// it leads as a retry of the leader the launch queued. Storage errors are
+/// errors; a refusal is the guest's typed failure code.
 ///
 /// # Errors
 ///
@@ -287,16 +289,18 @@ pub(crate) fn record_led_team(
         return Ok(Err("team_unbound"));
     };
     let lead_input = decode_agent_dispatch_input(&lead.payload.input)?;
-    let prefix = led_team_ref(leader, "");
-    if !input.team_ref.starts_with(&prefix) || input.team_ref.len() == prefix.len() {
-        return Ok(Err("team_record_not_led"));
-    }
-    let bound = team_run_binding(vault, leader, &input.team_ref)?;
     // A planned team's launch froze its axis and the pack revision its
-    // leader was shown (DOOR-111).
+    // leader was shown, and bound the team under the leader it queued
+    // (DOOR-111).
     let planned = AgentDispatcher::new(vault)
         .planned_launch_for_leader(leader)?
         .filter(|launch| launch.team_ref == input.team_ref);
+    let root = planned.as_ref().map_or(leader, |launch| launch.root);
+    let prefix = led_team_ref(root, "");
+    if !input.team_ref.starts_with(&prefix) || input.team_ref.len() == prefix.len() {
+        return Ok(Err("team_record_not_led"));
+    }
+    let bound = team_run_binding(vault, root, &input.team_ref)?;
     if input.members.is_empty() && bound.is_none() {
         return Ok(Err("team_record_invalid_input"));
     }
