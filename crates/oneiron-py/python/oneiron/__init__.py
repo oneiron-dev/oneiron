@@ -486,7 +486,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def execute(self, spec):
-            """The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""
+            """The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""
             return json.loads(_translate(lambda: self._client.self_off_record_execute(json.dumps(spec))))
     class _SelfSecretsVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -756,6 +756,9 @@ class Oneiron:
         @property
         def runs(self) -> "Oneiron._VaultRunsVerbs":
             return Oneiron._VaultRunsVerbs(self._client)
+        @property
+        def consults(self) -> "Oneiron._VaultConsultsVerbs":
+            return Oneiron._VaultConsultsVerbs(self._client)
         @property
         def workspace(self) -> "Oneiron._VaultWorkspaceVerbs":
             return Oneiron._VaultWorkspaceVerbs(self._client)
@@ -1689,19 +1692,19 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def start(self, spec):
-            """The owner enters an off-record session, off record or anonymous, as the owner route does; nothing of it reaches the vault unless the owner promotes or saves it."""
+            """The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous; nothing of it reaches the vault unless the owner promotes or saves it."""
             return json.loads(_translate(lambda: self._client.vault_off_record_start(json.dumps(spec))))
         def status(self, spec):
-            """The owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing."""
+            """The session's creator or the vault's owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing; a room's member reads what their membership shows."""
             return json.loads(_translate(lambda: self._client.vault_off_record_status(json.dumps(spec))))
         def witness(self, spec):
-            """The owner witnesses one turn into an off-record session; it stays in the room until promoted or dropped at close."""
+            """The session's creator or the vault's owner witnesses one turn into an off-record session, or a member into a room's; it stays in the room until promoted or dropped at close."""
             return json.loads(_translate(lambda: self._client.vault_off_record_witness(json.dumps(spec))))
         def discard(self, spec):
-            """The owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay."""
+            """The session's creator or the vault's owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay."""
             return json.loads(_translate(lambda: self._client.vault_off_record_discard(json.dumps(spec))))
         def recall(self, spec):
-            """The owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike."""
+            """The session's creator or the vault's owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike."""
             return json.loads(_translate(lambda: self._client.vault_off_record_recall(json.dumps(spec))))
         @property
         def notes(self) -> "Oneiron._VaultOffRecordNotesVerbs":
@@ -1713,13 +1716,13 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def create(self, spec):
-            """The owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it."""
+            """The session's creator or the vault's owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it."""
             return json.loads(_translate(lambda: self._client.vault_off_record_notes_create(json.dumps(spec))))
     class _VaultOffRecordClaimsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def upsert(self, spec):
-            """The owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it."""
+            """The session's creator or the vault's owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it."""
             return json.loads(_translate(lambda: self._client.vault_off_record_claims_upsert(json.dumps(spec))))
     class _VaultRecordsVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -2541,6 +2544,12 @@ class Oneiron:
         def get(self, spec):
             """The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts."""
             return json.loads(_translate(lambda: self._client.vault_runs_branches_get(json.dumps(spec))))
+    class _VaultConsultsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """The owner reads one consult TASK: its deadline and terminal register (how it ended, its result, the evidence or abstention reason, the ladder outcome and any counter TASK), as refs, never bodies."""
+            return json.loads(_translate(lambda: self._client.vault_consults_get(json.dumps(spec))))
     class _VaultWorkspaceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3279,6 +3288,9 @@ class Oneiron:
     class _AiVoiceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        @property
+        def asr(self) -> "Oneiron._AiVoiceAsrVerbs":
+            return Oneiron._AiVoiceAsrVerbs(self._client)
         def start(self, spec):
             """Opens an owner-bound live media session on the configured voice routes, using the caller credential, room audience and existing budget gates."""
             return json.loads(_translate(lambda: self._client.ai_voice_start(json.dumps(spec))))
@@ -3303,6 +3315,21 @@ class Oneiron:
         def close(self, spec):
             """Ends and releases a live voice session and its retained events; read terminal usage and acknowledge playout before closing."""
             return json.loads(_translate(lambda: self._client.ai_voice_close(json.dumps(spec))))
+    class _AiVoiceAsrVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def open(self, spec):
+            """Opens one credential-bound utterance for host-enriched ASR speculative recall, with fixed scope, at most four fires and a call-mode deadline."""
+            return json.loads(_translate(lambda: self._client.ai_voice_asr_open(json.dumps(spec))))
+        def hypothesis(self, spec):
+            """Observes an ASR hypothesis and host enrichment; returns the engine signature-change decision, actual fire budget, scoped candidates and a per-fire receipt."""
+            return json.loads(_translate(lambda: self._client.ai_voice_asr_hypothesis(json.dumps(spec))))
+        def finalize(self, spec):
+            """Consumes an ASR utterance, promoting its compatible last fire with receipt linkage or running one full finalize pass with warm-fill and honest partial reporting."""
+            return json.loads(_translate(lambda: self._client.ai_voice_asr_finalize(json.dumps(spec))))
+        def close(self, spec):
+            """Closes an unfinished ASR utterance under its opening credential and releases its warm candidates without a final retrieval."""
+            return json.loads(_translate(lambda: self._client.ai_voice_asr_close(json.dumps(spec))))
     class _AiVideoVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

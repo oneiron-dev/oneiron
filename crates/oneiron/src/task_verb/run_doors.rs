@@ -2,7 +2,8 @@
 //! `#run-tree`): `vault.tasks.cancel_force`, canon's `cancel.force`, the
 //! vault owner's unrefusable stop of every live branch, and
 //! `vault.runs.branches.get`, the owner's read of every branch as the queue
-//! holds it.
+//! holds it; and `vault.consults.get` (DOOR-063, ARCH-0067), the owner's
+//! read of one consult TASK's deadline and terminal register.
 //!
 //! The force is the hard rung only. It reaches any TASK in the vault, not
 //! only one its owner's actor created, and asks no gate and opens no
@@ -15,10 +16,17 @@
 //! and signals, and the whole cancel protocol evidence (landing, resume
 //! point, terminal cancellation, receipts). Nothing here invents progress,
 //! a next breakpoint or a wait class.
+//!
+//! A consult reads exactly as its terminal register stores it: refs only,
+//! never a result body. Landing an answer or abstention stays the addressed
+//! peer's; the owner inspects it.
 
 use serde::{Deserialize, Serialize};
 
+use super::consult_payload::ConsultPayloadRef;
+use super::create_validation::consult_body_in_txn;
 use super::presence_scan::{attempt_hex, superseded_attempt_ids};
+use super::terminal_state::{ConsultResultSummary, TaskTerminalDisposition, TaskTerminalRecord};
 use crate::agent_run_status::{AgentRunStatus, project_agent_run_status};
 use crate::attempt_queue::{
     AttemptCancelState, AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, AttemptState,
@@ -97,6 +105,71 @@ pub struct RunBranchView {
     /// Landing, resume point (the saved partial result a successor reads
     /// first), terminal cancellation and every cancel receipt.
     pub cancel_state: AttemptCancelState,
+}
+
+/// The owner's read of one consult TASK.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConsultReadRequest {
+    pub task_ref: EntityId,
+}
+
+/// One consult TASK as its owner inspects it: its deadline, when it has one,
+/// and its terminal register. `terminal` is `None` while nothing has settled
+/// the consult: no answer, abstention, expiry or ladder outcome yet.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ConsultInspection {
+    pub task_ref: EntityId,
+    #[serde(default)]
+    pub deadline_at: Option<u64>,
+    #[serde(default)]
+    pub terminal: Option<ConsultTerminalView>,
+}
+
+/// A consult's one terminal register, as stored: refs, never result bodies.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ConsultTerminalView {
+    pub disposition: ConsultDisposition,
+    /// The result the settlement wrote.
+    #[serde(default)]
+    pub result_ref: Option<EntityId>,
+    /// The evidence an answer cites or the reason an abstention gives.
+    #[serde(default)]
+    pub summary: Option<ConsultSummaryView>,
+    pub finished_at: u64,
+    /// The consult ladder's finer outcome (`approved`, `overridden`,
+    /// `rejected`, `failed`, `escalated`, `countered` or `abandoned`), when a
+    /// ladder settled it.
+    #[serde(default)]
+    pub ladder: Option<String>,
+    /// The TASK a countered ladder outcome created in the same transaction.
+    #[serde(default)]
+    pub counter_task_ref: Option<EntityId>,
+}
+
+/// How a consult ended. `expired` (its deadline passed) and `abandoned` (its
+/// executor went away) stay distinct causes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ConsultDisposition {
+    Completed,
+    Rejected,
+    Failed,
+    Expired,
+    Abandoned,
+    Cancelled,
+}
+
+/// An answer's evidence, or an abstention's reason, by ref.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ConsultSummaryView {
+    Answer {
+        evidence_refs: Vec<ConsultPayloadRef>,
+    },
+    Abstained {
+        reason_ref: ConsultPayloadRef,
+    },
 }
 
 /// Stops, as the vault owner and unrefusably, every live branch of
@@ -199,6 +272,31 @@ pub fn read_branches_as(
     })
 }
 
+/// Reads, as the vault owner, one consult TASK in one read transaction: its
+/// deadline and its terminal register (disposition, result ref, evidence or
+/// abstention refs, ladder outcome and counter TASK), as stored.
+///
+/// # Errors
+///
+/// `NOT_FOUND` for a ref that names nothing; `BAD_REQUEST` for a ref that is
+/// not a TASK, or a TASK that is not a consult; a stale owner proof; storage
+/// errors.
+pub fn read_consult_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: ConsultReadRequest,
+) -> MemoryResult<ConsultInspection> {
+    let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    owner.revalidate_in_txn(vault, &txn)?;
+    task_in(vault, &txn, input.task_ref)?;
+    let body = consult_body_in_txn(vault, &txn, input.task_ref)?;
+    Ok(ConsultInspection {
+        task_ref: input.task_ref,
+        deadline_at: body.ttl.map(|ttl| ttl.deadline_at),
+        terminal: body.terminal().map(terminal_view),
+    })
+}
+
 /// The hex of `task_ref`, refused unless it names a TASK.
 fn task_in(vault: &Vault, txn: &heed::RoTxn<'_>, task_ref: EntityId) -> MemoryResult<String> {
     let hex = task_ref.to_hex();
@@ -243,5 +341,31 @@ fn branch_view(record: AttemptRecord) -> RunBranchView {
         asks: record.asks,
         signals: record.signals,
         cancel_state: record.cancel_state,
+    }
+}
+
+/// A consult's terminal register as its view: every field as stored.
+fn terminal_view(record: &TaskTerminalRecord) -> ConsultTerminalView {
+    ConsultTerminalView {
+        disposition: match record.disposition {
+            TaskTerminalDisposition::Completed => ConsultDisposition::Completed,
+            TaskTerminalDisposition::Rejected => ConsultDisposition::Rejected,
+            TaskTerminalDisposition::Failed => ConsultDisposition::Failed,
+            TaskTerminalDisposition::Expired => ConsultDisposition::Expired,
+            TaskTerminalDisposition::Abandoned => ConsultDisposition::Abandoned,
+            TaskTerminalDisposition::Cancelled => ConsultDisposition::Cancelled,
+        },
+        result_ref: record.result_ref,
+        summary: record.summary.as_ref().map(|summary| match summary {
+            ConsultResultSummary::Answer { evidence_refs } => ConsultSummaryView::Answer {
+                evidence_refs: evidence_refs.clone(),
+            },
+            ConsultResultSummary::Abstained { reason_ref } => ConsultSummaryView::Abstained {
+                reason_ref: *reason_ref,
+            },
+        }),
+        finished_at: record.finished_at,
+        ladder: record.ladder.map(|ladder| ladder.as_str().to_owned()),
+        counter_task_ref: record.counter_task_ref,
     }
 }

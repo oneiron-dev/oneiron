@@ -29,6 +29,7 @@ mod affect_doors;
 mod agent_definition_doors;
 mod agent_verbs;
 mod artifact_hosting_doors;
+mod asr_doors;
 mod authority_history_doors;
 mod booking_doors;
 mod budget_doors;
@@ -109,6 +110,7 @@ mod wave_doors;
 mod weave_doors;
 mod widen_proposal_doors;
 
+pub(crate) use asr_doors::AsrSessions;
 pub(crate) use call_context::{FacadeCall, FacadeCallOutput};
 use call_context::{VerbContext, context_required, facade_invocation_id};
 pub(crate) use connector_call_doors::{connector_answer_as, connector_call_as};
@@ -1463,10 +1465,13 @@ impl From<MemoryError> for FacadeApiError {
             // It carries its own code so a client can tell the authority door
             // from the gate door, but the status is the same honest 403.
             // FIX 2222: a host credential where no host acts as a person.
+            // WILL-PLAN L13 row 03: a room's whole off-record stretch, which
+            // no consent record admits a session row to manage.
             MEMORY_CODE_FORBIDDEN
             | MEMORY_CODE_LEASE_REQUIRED
             | MEMORY_CODE_OWNER_BINDING_REQUIRED
-            | oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED => StatusCode::FORBIDDEN,
+            | oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED
+            | oneiron::memory::MEMORY_CODE_ROOM_MANAGEMENT => StatusCode::FORBIDDEN,
             // Both are "the store is not in a state that admits this", which
             // is the conflict family the rest of this plane already maps to
             // 409. `VAULT_LOCKED_SINGLE_WRITER` cannot arise server-side — it

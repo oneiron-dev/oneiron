@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 669 code-mode rows (648 host rows, 21 run rows), 2381 declarations.
-// Replies: 590 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 674 code-mode rows (653 host rows, 21 run rows), 2395 declarations.
+// Replies: 595 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 95; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1452,7 +1452,7 @@ declare namespace Sdk {
   type TaskTypeTreeRead = { project_ref?: EntityId | null; tree_version?: number | null };
   type TaskTypeTreeReadReply = { project_ref?: EntityId | null; in_force_skill_ref?: EntityId | null; tree?: TaskTypeTreeView | null };
   type PlannedSpawnRead = { spawn_ref: EntityId };
-  type SpawnPhase = "reserved" | "planned" | "launched" | "in_doubt";
+  type SpawnPhase = "planned" | "launched" | "refused";
   type CoordinationPatternView = "solo" | "ceo_decides" | "committee" | "vote" | "market" | "rotation";
   type SkillRevisionView = { skill_ref: EntityId; version: string };
   type ProviderPinView = { rung: DecisionRung; model: string; version: string };
@@ -1488,6 +1488,11 @@ declare namespace Sdk {
   type CancelForceReceipt = { task_ref: EntityId; effected: boolean; forced: number; branches: RunBranchView[] };
   type RunBranchesRequest = { task_ref: EntityId };
   type RunBranchesView = { task_ref: EntityId; branches: RunBranchView[] };
+  type ConsultReadRequest = { task_ref: EntityId };
+  type ConsultDisposition = "completed" | "rejected" | "failed" | "expired" | "abandoned" | "cancelled";
+  type ConsultSummaryView = { kind: "answer"; evidence_refs: ConsultPayloadRef[] } | { kind: "abstained"; reason_ref: ConsultPayloadRef };
+  type ConsultTerminalView = { disposition: ConsultDisposition; result_ref?: EntityId | null; summary?: ConsultSummaryView | null; finished_at: number; ladder?: string | null; counter_task_ref?: EntityId | null };
+  type ConsultInspection = { task_ref: EntityId; deadline_at?: number | null; terminal?: ConsultTerminalView | null };
   type WorkspaceRosterPreset = { workspace_ref: string; workspace_vault_id: string; org_ref: EntityId; venture_name: string; house_display_name?: string | null; house_actor_ref: EntityId; house_identity_ref?: EntityId | null };
   type WorkCompanionPolicy = "choose" | "suggest" | "require";
   type WorkspacePresetRequest = { preset: WorkspaceRosterPreset; work_companion?: WorkCompanionPolicy };
@@ -1762,6 +1767,15 @@ declare namespace Sdk {
   type AiReply = { reply: string; model: string; receipt_refs: string[]; l2_base?: AiReplyL2Base | null };
   type ContextReceiptFields = { persona_compile_stamp: string; activated_memory_ids: string[]; board_state_ref: string; substrate_ref?: string | null; model?: string | null; reasoning_effort?: string | null; prompt_input_ref?: string | null; disclosure_stamp?: string | null };
   type ContextEmitReceipt = { receipt_ref: string; occurred_at: number; actor: string; conversation_id: string; request_digest: string; result_digest: string; context: ContextReceiptFields };
+  type AsrOpenRequest = { utterance_id: string; scope?: RecallScope; fire_limit?: number | null; final_limit?: number | null; deadline_ms?: number | null };
+  type AsrSession = { handle: string; utterance_id: string; scope: RecallScope; max_fires: number; fire_limit: number; final_limit: number; limit_clamped: boolean; deadline_ms: number; narrowing: ScopedReadReceipt };
+  type AsrHypothesisRequest = { handle: string; revision: number; text: string; entity_labels: string[]; salient_terms: string[]; query_vector?: number[] | null };
+  type AsrFireDecision = "fired" | "missed_deadline" | "skipped_unchanged" | "skipped_empty_signature" | "skipped_cap_exhausted";
+  type AsrHypothesisReceipt = { receipt_ref: string; handle: string; utterance_id: string; revision: number; text: string; scope: RecallScope; decision: AsrFireDecision; fires_used: number; run_id?: string | null; partial: boolean; result_refs: string[]; narrowing: ScopedReadReceipt };
+  type AsrFinalDecision = "promoted" | "finalized";
+  type AsrFinalReceipt = { receipt_ref: string; handle: string; utterance_id: string; revision: number; text: string; scope: RecallScope; decision: AsrFinalDecision; reused_fire_receipt?: string | null; fires_used: number; run_id?: string | null; warm_appended: number; partial: boolean; result_refs: string[]; narrowing: ScopedReadReceipt };
+  type AsrCloseRequest = { handle: string };
+  type AsrClosed = { handle: string };
   type LiveVoiceStartRequest = { sample_rate: number; channels: number; room_ref?: string | null; roster_ref?: string | null };
   type LiveVoiceSession = { session_ref: string; sample_rate: number; channels: number };
   type LiveVoiceAudioRequest = { session_ref: string; utterance_id: string; pcm_base64: string; speaking: boolean; end_utterance?: boolean };
@@ -2431,6 +2445,16 @@ declare const ai: {
   voice: {
     /** Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed. */
     ack(input: Sdk.LiveVoiceAckRequest): Promise<Sdk.LiveVoiceProcessed | StoredResult>;
+    asr: {
+      /** Closes an unfinished ASR utterance under its opening credential and releases its warm candidates without a final retrieval. */
+      close(input: Sdk.AsrCloseRequest): Promise<Sdk.AsrClosed | StoredResult>;
+      /** Consumes an ASR utterance, promoting its compatible last fire with receipt linkage or running one full finalize pass with warm-fill and honest partial reporting. */
+      finalize(input: Sdk.AsrHypothesisRequest): Promise<Sdk.AsrFinalReceipt | StoredResult>;
+      /** Observes an ASR hypothesis and host enrichment; returns the engine signature-change decision, actual fire budget, scoped candidates and a per-fire receipt. */
+      hypothesis(input: Sdk.AsrHypothesisRequest): Promise<Sdk.AsrHypothesisReceipt | StoredResult>;
+      /** Opens one credential-bound utterance for host-enriched ASR speculative recall, with fixed scope, at most four fires and a call-mode deadline. */
+      open(input: Sdk.AsrOpenRequest): Promise<Sdk.AsrSession | StoredResult>;
+    };
     /** Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech retires old output through the shared cancellation path. */
     audio(input: Sdk.LiveVoiceAudioRequest): Promise<Sdk.LiveVoiceProcessed | StoredResult>;
     /** Ends and releases a live voice session and its retained events; read terminal usage and acknowledge playout before closing. */
@@ -2649,7 +2673,7 @@ declare namespace self {
   /** Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use. */
   const message: (input: Sdk.MessagePersonRequest) => Promise<Sdk.MessagePersonReceipt | StoredResult>;
   const off_record: {
-    /** The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
+    /** The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
     execute(input: Sdk.OffRecordExecuteRequest): Promise<Sdk.OffRecordExecuted | StoredResult>;
   };
   const run: {
@@ -3103,6 +3127,10 @@ declare const vault: Sdk.VaultHost & {
     /** Reads the status of one consolidation attempt by its durable job reference. */
     status(input: Sdk.ConsolidationStatusRequest): Promise<Sdk.DreamerAttemptView | null | StoredResult>;
   };
+  consults: {
+    /** The owner reads one consult TASK: its deadline and terminal register (how it ended, its result, the evidence or abstention reason, the ladder outcome and any counter TASK), as refs, never bodies. */
+    get(input: Sdk.ConsultReadRequest): Promise<Sdk.ConsultInspection | StoredResult>;
+  };
   conversations: {
     /** Creates a conversation; a body naming members also authors its membership ledger, creator and role grants as the caller. */
     create(input: Sdk.ConversationCreateInput): Promise<Sdk.CoreEntityWriteReceipt | StoredResult>;
@@ -3471,22 +3499,22 @@ declare const vault: Sdk.VaultHost & {
   };
   off_record: {
     claims: {
-      /** The owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it. */
+      /** The session's creator or the vault's owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it. */
       upsert(input: Sdk.OffRecordClaimRequest): Promise<Sdk.CommitReceipt | StoredResult>;
     };
-    /** The owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay. */
+    /** The session's creator or the vault's owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay. */
     discard(input: Sdk.OffRecordSessionRequest): Promise<Sdk.OffRecordClosed | StoredResult>;
     notes: {
-      /** The owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it. */
+      /** The session's creator or the vault's owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it. */
       create(input: Sdk.OffRecordNoteRequest): Promise<Sdk.EntityRefReceipt | StoredResult>;
     };
-    /** The owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike. */
+    /** The session's creator or the vault's owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike. */
     recall(input: Sdk.OffRecordRecallRequest): Promise<Sdk.MemoryPack | StoredResult>;
-    /** The owner enters an off-record session, off record or anonymous, as the owner route does; nothing of it reaches the vault unless the owner promotes or saves it. */
+    /** The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous; nothing of it reaches the vault unless the owner promotes or saves it. */
     start(input: Sdk.OffRecordStartRequest): Promise<Sdk.OffRecordSessionView | StoredResult>;
-    /** The owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing. */
+    /** The session's creator or the vault's owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing; a room's member reads what their membership shows. */
     status(input: Sdk.OffRecordSessionRequest): Promise<Sdk.OffRecordSessionView | StoredResult>;
-    /** The owner witnesses one turn into an off-record session; it stays in the room until promoted or dropped at close. */
+    /** The session's creator or the vault's owner witnesses one turn into an off-record session, or a member into a room's; it stays in the room until promoted or dropped at close. */
     witness(input: Sdk.OffRecordWitnessRequest): Promise<Sdk.WitnessReceipt | StoredResult>;
   };
   packs: {

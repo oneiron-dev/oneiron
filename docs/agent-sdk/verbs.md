@@ -369,6 +369,7 @@ both bindings and their export-census tests in one change.
 - `vault.agents.spawn.get`
 - `vault.tasks.cancel_force`
 - `vault.runs.branches.get`
+- `vault.consults.get`
 - `vault.workspace.establish`
 - `vault.workspace.members.onboard`
 - `vault.workspace.roster`
@@ -440,6 +441,10 @@ both bindings and their export-census tests in one change.
 - `ai.steps.receipt`
 - `ai.reply`
 - `vault.receipts.context`
+- `ai.voice.asr.open`
+- `ai.voice.asr.hypothesis`
+- `ai.voice.asr.finalize`
+- `ai.voice.asr.close`
 - `ai.voice.start`
 - `ai.voice.audio`
 - `ai.voice.events`

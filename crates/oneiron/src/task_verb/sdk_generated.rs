@@ -1989,6 +1989,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.consults.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::run_doors::ConsultReadRequest,
+                >(),
+            ),
+            (
                 "vault.workspace.establish",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::WorkspacePresetRequest,
@@ -2344,6 +2350,28 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.receipts.context",
                 crate::code_run::vault_read::request_schema::<crate::receipt::CallReceiptRequest>(),
+            ),
+            (
+                "ai.voice.asr.open",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::AsrOpenRequest>(
+                ),
+            ),
+            (
+                "ai.voice.asr.hypothesis",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::AsrHypothesisRequest,
+                >(),
+            ),
+            (
+                "ai.voice.asr.finalize",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::AsrHypothesisRequest,
+                >(),
+            ),
+            (
+                "ai.voice.asr.close",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::AsrCloseRequest>(
+                ),
             ),
             (
                 "ai.voice.start",
@@ -3687,6 +3715,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.agents.spawn.get",
     "vault.tasks.cancel_force",
     "vault.runs.branches.get",
+    "vault.consults.get",
     "vault.workspace.establish",
     "vault.workspace.members.onboard",
     "vault.workspace.roster",
@@ -3696,6 +3725,10 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "ai.steps.receipt",
     "ai.reply",
     "vault.receipts.context",
+    "ai.voice.asr.open",
+    "ai.voice.asr.hypothesis",
+    "ai.voice.asr.finalize",
+    "ai.voice.asr.close",
     "ai.voice.start",
     "ai.voice.audio",
     "ai.voice.ack",
@@ -4292,6 +4325,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.runs.branches.get" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::run_doors::RunBranchesView,
         >(),
+        "vault.consults.get" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::run_doors::ConsultInspection,
+        >(),
         "vault.workspace.establish" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::WorkspacePresetReceipt,
         >(),
@@ -4319,6 +4355,18 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.receipts.context" => crate::code_run::vault_read::request_schema::<
             Option<crate::receipt::ContextEmitReceipt>,
         >(),
+        "ai.voice.asr.open" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::AsrSession>()
+        }
+        "ai.voice.asr.hypothesis" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::AsrHypothesisReceipt,
+        >(),
+        "ai.voice.asr.finalize" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::AsrFinalReceipt>()
+        }
+        "ai.voice.asr.close" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::AsrClosed>()
+        }
         "ai.voice.start" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::LiveVoiceSession>()
         }
@@ -7138,6 +7186,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.consults.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.workspace.establish" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -7661,6 +7716,34 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.receipts.context" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.voice.asr.open" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.voice.asr.hypothesis" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.voice.asr.finalize" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.voice.asr.close" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -10141,6 +10224,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.runs.branches.get" => {
             let _input: crate::task_verb::run_doors::RunBranchesRequest = decode(value.clone())?;
         }
+        "vault.consults.get" => {
+            let _input: crate::task_verb::run_doors::ConsultReadRequest = decode(value.clone())?;
+        }
         "vault.workspace.establish" => {
             let _input: crate::task_verb::sdk::WorkspacePresetRequest = decode(value.clone())?;
         }
@@ -10354,6 +10440,20 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.receipts.context" => {
             let _input: crate::receipt::CallReceiptRequest = decode(value.clone())?;
+        }
+        "ai.voice.asr.open" => {
+            let _input: crate::task_verb::sdk::AsrOpenRequest = decode(value.clone())?;
+        }
+        "ai.voice.asr.hypothesis" => {
+            let input: crate::task_verb::sdk::AsrHypothesisRequest = decode(value.clone())?;
+            input.validate()?;
+        }
+        "ai.voice.asr.finalize" => {
+            let input: crate::task_verb::sdk::AsrHypothesisRequest = decode(value.clone())?;
+            input.validate()?;
+        }
+        "ai.voice.asr.close" => {
+            let _input: crate::task_verb::sdk::AsrCloseRequest = decode(value.clone())?;
         }
         "ai.voice.start" => {
             let _input: crate::task_verb::sdk::LiveVoiceStartRequest = decode(value.clone())?;
@@ -11727,6 +11827,7 @@ pub fn invoke(
         "vault.agents.spawn.get" => encode(vault_agents_spawn_get(memory, decode(value)?)?),
         "vault.tasks.cancel_force" => encode(vault_tasks_cancel_force(memory, decode(value)?)?),
         "vault.runs.branches.get" => encode(vault_runs_branches_get(memory, decode(value)?)?),
+        "vault.consults.get" => encode(vault_consults_get(memory, decode(value)?)?),
         "vault.workspace.establish" => encode(vault_workspace_establish(memory, decode(value)?)?),
         "vault.workspace.members.onboard" => {
             encode(vault_workspace_members_onboard(memory, decode(value)?)?)
@@ -11834,6 +11935,10 @@ pub fn invoke(
         "ai.steps.receipt" => encode(ai_steps_receipt(memory, decode(value)?)?),
         "ai.reply" => encode(ai_reply(memory, decode(value)?)?),
         "vault.receipts.context" => encode(vault_receipts_context(memory, decode(value)?)?),
+        "ai.voice.asr.open" => encode(ai_voice_asr_open(memory, decode(value)?)?),
+        "ai.voice.asr.hypothesis" => encode(ai_voice_asr_hypothesis(memory, decode(value)?)?),
+        "ai.voice.asr.finalize" => encode(ai_voice_asr_finalize(memory, decode(value)?)?),
+        "ai.voice.asr.close" => encode(ai_voice_asr_close(memory, decode(value)?)?),
         "ai.voice.start" => encode(ai_voice_start(memory, decode(value)?)?),
         "ai.voice.audio" => encode(ai_voice_audio(memory, decode(value)?)?),
         "ai.voice.events" => encode(ai_voice_events(memory, decode(value)?)?),
@@ -15339,6 +15444,16 @@ pub fn vault_runs_branches_get(
         input,
     )
 }
+pub fn vault_consults_get(
+    memory: &Memory<'_>,
+    input: crate::task_verb::run_doors::ConsultReadRequest,
+) -> MemoryResult<crate::task_verb::run_doors::ConsultInspection> {
+    crate::task_verb::run_doors::read_consult_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.consults.get")?,
+        input,
+    )
+}
 pub fn vault_workspace_establish(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::WorkspacePresetRequest,
@@ -15922,6 +16037,32 @@ pub fn vault_receipts_context(
     input: crate::receipt::CallReceiptRequest,
 ) -> MemoryResult<Option<crate::receipt::ContextEmitReceipt>> {
     memory.context_emit_receipt(&input.receipt_ref)
+}
+pub fn ai_voice_asr_open(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::AsrOpenRequest,
+) -> MemoryResult<crate::task_verb::sdk::AsrSession> {
+    crate::task_verb::sdk::host_only(memory, "ai.voice.asr.open", &input)
+}
+pub fn ai_voice_asr_hypothesis(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::AsrHypothesisRequest,
+) -> MemoryResult<crate::task_verb::sdk::AsrHypothesisReceipt> {
+    input.validate()?;
+    crate::task_verb::sdk::host_only(memory, "ai.voice.asr.hypothesis", &input)
+}
+pub fn ai_voice_asr_finalize(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::AsrHypothesisRequest,
+) -> MemoryResult<crate::task_verb::sdk::AsrFinalReceipt> {
+    input.validate()?;
+    crate::task_verb::sdk::host_only(memory, "ai.voice.asr.finalize", &input)
+}
+pub fn ai_voice_asr_close(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::AsrCloseRequest,
+) -> MemoryResult<crate::task_verb::sdk::AsrClosed> {
+    crate::task_verb::sdk::host_only(memory, "ai.voice.asr.close", &input)
 }
 pub fn ai_voice_start(
     memory: &Memory<'_>,

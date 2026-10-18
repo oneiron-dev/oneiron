@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 614 facade rows, 2295 declarations.
-Inputs: 562 of 614 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 545 of 614 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 619 facade rows, 2309 declarations.
+Inputs: 567 of 619 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 550 of 619 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 92; unread shapes: 0.
 """
 
@@ -6942,7 +6942,7 @@ class TaskTypeTreeReadReply(TypedDict):
     tree: NotRequired[TaskTypeTreeView | None]
 class PlannedSpawnRead(TypedDict):
     spawn_ref: EntityId
-SpawnPhase = Literal["reserved", "planned", "launched", "in_doubt"]
+SpawnPhase = Literal["planned", "launched", "refused"]
 CoordinationPatternView = Literal["solo", "ceo_decides", "committee", "vote", "market", "rotation"]
 class SkillRevisionView(TypedDict):
     skill_ref: EntityId
@@ -7171,6 +7171,27 @@ class RunBranchesRequest(TypedDict):
 class RunBranchesView(TypedDict):
     task_ref: EntityId
     branches: list[RunBranchView]
+class ConsultReadRequest(TypedDict):
+    task_ref: EntityId
+ConsultDisposition = Literal["completed", "rejected", "failed", "expired", "abandoned", "cancelled"]
+class ConsultSummaryViewAnswer(TypedDict):
+    kind: Literal["answer"]
+    evidence_refs: list[ConsultPayloadRef]
+class ConsultSummaryViewAbstained(TypedDict):
+    kind: Literal["abstained"]
+    reason_ref: ConsultPayloadRef
+ConsultSummaryView = ConsultSummaryViewAnswer | ConsultSummaryViewAbstained
+class ConsultTerminalView(TypedDict):
+    disposition: ConsultDisposition
+    result_ref: NotRequired[EntityId | None]
+    summary: NotRequired[ConsultSummaryView | None]
+    finished_at: int
+    ladder: NotRequired[str | None]
+    counter_task_ref: NotRequired[EntityId | None]
+class ConsultInspection(TypedDict):
+    task_ref: EntityId
+    deadline_at: NotRequired[int | None]
+    terminal: NotRequired[ConsultTerminalView | None]
 class WorkspaceRosterPreset(TypedDict):
     workspace_ref: str
     workspace_vault_id: str
@@ -8784,6 +8805,63 @@ class ContextEmitReceipt(TypedDict):
     request_digest: str
     result_digest: str
     context: ContextReceiptFields
+class AsrOpenRequest(TypedDict):
+    utterance_id: str
+    scope: NotRequired[RecallScope]
+    fire_limit: NotRequired[int | None]
+    final_limit: NotRequired[int | None]
+    deadline_ms: NotRequired[int | None]
+class AsrSession(TypedDict):
+    handle: str
+    utterance_id: str
+    scope: RecallScope
+    max_fires: int
+    fire_limit: int
+    final_limit: int
+    limit_clamped: bool
+    deadline_ms: int
+    narrowing: ScopedReadReceipt
+class AsrHypothesisRequest(TypedDict):
+    handle: str
+    revision: int
+    text: str
+    entity_labels: list[str]
+    salient_terms: list[str]
+    query_vector: NotRequired[list[float] | None]
+AsrFireDecision = Literal["fired", "missed_deadline", "skipped_unchanged", "skipped_empty_signature", "skipped_cap_exhausted"]
+class AsrHypothesisReceipt(TypedDict):
+    receipt_ref: str
+    handle: str
+    utterance_id: str
+    revision: int
+    text: str
+    scope: RecallScope
+    decision: AsrFireDecision
+    fires_used: int
+    run_id: NotRequired[str | None]
+    partial: bool
+    result_refs: list[str]
+    narrowing: ScopedReadReceipt
+AsrFinalDecision = Literal["promoted", "finalized"]
+class AsrFinalReceipt(TypedDict):
+    receipt_ref: str
+    handle: str
+    utterance_id: str
+    revision: int
+    text: str
+    scope: RecallScope
+    decision: AsrFinalDecision
+    reused_fire_receipt: NotRequired[str | None]
+    fires_used: int
+    run_id: NotRequired[str | None]
+    warm_appended: int
+    partial: bool
+    result_refs: list[str]
+    narrowing: ScopedReadReceipt
+class AsrCloseRequest(TypedDict):
+    handle: str
+class AsrClosed(TypedDict):
+    handle: str
 class LiveVoiceStartRequest(TypedDict):
     sample_rate: int
     channels: int
