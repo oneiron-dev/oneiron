@@ -90,9 +90,10 @@ pub(crate) fn merge_replicated_turn_in_txn(
                 || held.addressed_agents != carried.addressed_agents
                 || held.reply_to != carried.reply_to
                 || held.thread_of != carried.thread_of
-                || carried.quotes.iter().any(|(citer, quote)| {
-                    held.quotes.get(citer).is_some_and(|kept| kept != quote)
-                })
+                || carried
+                    .quotes
+                    .iter()
+                    .any(|(citer, quote)| held.quotes.get(citer).is_some_and(|kept| kept != quote))
             {
                 return Ok(TurnMerge::Refused(TurnMergeRefusal::FixedFieldsConflict));
             }

@@ -485,9 +485,12 @@ pub(crate) fn admit_witness(
     // room's DAG keeps its one trunk root; a thread reply minted with quotes
     // is a DAG thread record answering its first quoted message's TURN.
     let parent = match thread_of {
-        Some(anchor) if quoting => {
-            Some(dag_parent_in_txn(vault, txn, anchor, reply_to.unwrap_or(anchor))?)
-        }
+        Some(anchor) if quoting => Some(dag_parent_in_txn(
+            vault,
+            txn,
+            anchor,
+            reply_to.unwrap_or(anchor),
+        )?),
         _ => None,
     };
     let old = TURNS.get(&vault.store, txn, &turn_id)?;
@@ -515,9 +518,9 @@ pub(crate) fn admit_witness(
         }
     }
     let quoted = match (parent, target) {
-        (Some(parent), Some(target)) if stored.is_none() => {
-            Some(QuotedReply::thread_in_txn(vault, txn, room, parent, target)?)
-        }
+        (Some(parent), Some(target)) if stored.is_none() => Some(QuotedReply::thread_in_txn(
+            vault, txn, room, parent, target,
+        )?),
         _ => None,
     };
     let mut turn = RoomTurn {
