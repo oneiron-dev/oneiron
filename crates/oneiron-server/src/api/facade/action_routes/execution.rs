@@ -102,7 +102,7 @@ where
     tokio::task::spawn_blocking(move || {
         // OF-181: an action for a live run plans its leader rows as the
         // run's own entries do, on the host's ladder.
-        let planner = match live_run.as_ref().map(ResolvedLiveRun::planner) {
+        let mut planner = match live_run.as_ref().map(ResolvedLiveRun::planner) {
             Some((Some(settings), model)) => seated_planner(
                 &vault,
                 settings,
@@ -112,6 +112,11 @@ where
             .map_err(oneiron::Error::InvalidConfig)?,
             _ => None,
         };
+        // DOOR-111 S4c-4: its planned team's start is written on the run's
+        // own seat and line, as its entries' are.
+        if let (Some(planner), Some(live)) = (&mut planner, &live_run) {
+            planner.pattern_runner = live.pattern_runner(&host);
+        }
         let binding = ActionHostBinding {
             verb_door: Some(door),
             owner: owner.as_ref(),

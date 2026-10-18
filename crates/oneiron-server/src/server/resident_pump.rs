@@ -29,7 +29,7 @@
 //! A leased run's planned team writes its start on the run's own seat and
 //! line, and a planned team's leader runs with the exact pattern pack its
 //! launch froze (DOOR-111 S4c, `pattern_launch`).
-mod pattern_launch;
+pub(super) mod pattern_launch;
 
 use std::collections::{BTreeMap, HashSet};
 use std::num::NonZeroU16;
@@ -800,6 +800,9 @@ fn enter_run(
             proof,
             provider.planner().cloned(),
             config.model.as_str().to_owned(),
+            model_seat.cloned(),
+            status.input.definition.clone(),
+            spend.cloned(),
         )
         .map_err(text)?
         .enter();
