@@ -947,8 +947,32 @@ interface NativeClientConstructor {
   pair(link: string): { url: string; credential: string; pin?: CheckpointPin }
 }
 
+/** What `NativeEngine.start` takes besides the path (OF-237). */
+export interface NativeEngineOptions {
+  dimensions?: number
+  configFile?: string
+  secrets?: Record<string, string>
+  memoryBytes?: number
+  cpuMillisPerSecond?: number
+}
+
+/** The engine-backed served client's native half, present only in an `engine` build. */
+export interface NativeEngine {
+  client(key: string): NativeClient
+  wake(): void
+  stop(): void
+  close(): void
+}
+
+/** The static half of `NativeEngine`. */
+interface NativeEngineConstructor {
+  start(path: string, options: NativeEngineOptions | undefined): NativeEngine
+}
+
 interface NativeBinding {
   NativeClient: NativeClientConstructor
+  /** Absent unless the addon was built with the `engine` cargo feature. */
+  NativeEngine?: NativeEngineConstructor
 }
 
 // napi-rs emits a CommonJS loader that picks the right prebuilt `.node`
@@ -959,3 +983,6 @@ const require = createRequire(import.meta.url)
 const binding = require("../native/index.cjs") as NativeBinding
 
 export const NativeClient: NativeClientConstructor = binding.NativeClient
+
+/** `undefined` unless the addon was built with the `engine` cargo feature. */
+export const NativeEngine: NativeEngineConstructor | undefined = binding.NativeEngine

@@ -22,9 +22,12 @@
  * open vault with the storage functions, and oneiron_engine_free stops it in
  * order. oneiron_engine_connection_open opens a connection the app holds
  * (HTTP/1.1 with upgrades, so `/ws`), with _send, _receive, _close and _free.
- * Engine calls block: make them from app threads, never from a
- * callback. The library exports these only when built with the `engine`
- * cargo feature.
+ * oneiron_engine_artifact_request and oneiron_engine_artifact_connection_open
+ * reach the artifact app (`/a/`) on its own origin. A call that fails
+ * EngineError leaves its stable OneironEngineErrorCode and words for
+ * oneiron_engine_last_error. Engine calls block: make them from app threads,
+ * never from a callback. The library exports these only when built with the
+ * `engine` cargo feature.
  */
 
 
@@ -38,6 +41,63 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+
+/**
+ * Why the last engine call on this thread failed `EngineError`, read with
+ * `oneiron_engine_last_error`.
+ */
+typedef enum OneironEngineErrorCode {
+  /**
+   * No engine call on this thread has failed `EngineError`.
+   */
+  OneironEngineErrorCode_None = 0,
+  /**
+   * No named cause; the message says what failed.
+   */
+  OneironEngineErrorCode_Internal = 1,
+  /**
+   * The engine is stopped; `oneiron_engine_wake` serves it again.
+   */
+  OneironEngineErrorCode_Stopped = 2,
+  /**
+   * The engine is closed and refuses every call.
+   */
+  OneironEngineErrorCode_Closed = 3,
+  /**
+   * A relay host's config, refused before anything opens.
+   */
+  OneironEngineErrorCode_RelayRefused = 4,
+  /**
+   * Called from inside an async runtime or an `OneironAppHost` callback.
+   */
+  OneironEngineErrorCode_WrongThread = 5,
+  /**
+   * The serve config did not resolve.
+   */
+  OneironEngineErrorCode_Config = 6,
+  /**
+   * The vault did not open.
+   */
+  OneironEngineErrorCode_VaultOpen = 7,
+  /**
+   * Serving did not start, or ended before `ready`.
+   */
+  OneironEngineErrorCode_StartFailed = 8,
+  /**
+   * The connection or its reply ended: closed, ended by the server, or
+   * cut off by a stop.
+   */
+  OneironEngineErrorCode_ConnectionEnded = 9,
+  /**
+   * A buffered reply's body is over 64 MiB; open a connection for it.
+   */
+  OneironEngineErrorCode_ReplyTooLarge = 10,
+  /**
+   * A request the engine does not send: a path not in origin form, an
+   * upgrade on a buffered request, or a malformed method or header.
+   */
+  OneironEngineErrorCode_BadRequest = 11,
+} OneironEngineErrorCode;
 
 /**
  * Status code returned by every fallible C entry point.
@@ -348,6 +408,21 @@ enum OneironStatus oneiron_engine_request(struct OneironEngine *engine,
                                           struct OneironReply *out_reply);
 
 /**
+ * `oneiron_engine_request` on the artifact app's own origin (`/a/`), apart
+ * from the API's: what an app's web view loads artifacts through.
+ *
+ * # Safety
+ *
+ * As for `oneiron_engine_request`.
+ */
+enum OneironStatus oneiron_engine_artifact_request(struct OneironEngine *engine,
+                                                   struct OneironByteSlice method,
+                                                   struct OneironByteSlice path,
+                                                   struct OneironByteSlice headers,
+                                                   struct OneironByteSlice body,
+                                                   struct OneironReply *out_reply);
+
+/**
  * Free a reply returned by `oneiron_engine_request`.
  *
  * # Safety
@@ -432,6 +507,18 @@ enum OneironStatus oneiron_engine_connection_open(struct OneironEngine *engine,
                                                   struct OneironEngineConnection **out_connection);
 
 /**
+ * `oneiron_engine_connection_open` on the artifact app's own origin (`/a/`),
+ * apart from the API's. The handle is an `OneironEngineConnection`: send,
+ * receive, close and free it as any other.
+ *
+ * # Safety
+ *
+ * As for `oneiron_engine_connection_open`.
+ */
+enum OneironStatus oneiron_engine_artifact_connection_open(struct OneironEngine *engine,
+                                                           struct OneironEngineConnection **out_connection);
+
+/**
  * Write all of `bytes` to the server, blocking until the connection has
  * taken them. `bytes` may be empty with a null pointer. A closed
  * connection, or one the server has ended, fails `EngineError`.
@@ -484,6 +571,21 @@ enum OneironStatus oneiron_engine_connection_close(struct OneironEngineConnectio
  * never used again.
  */
 enum OneironStatus oneiron_engine_connection_free(struct OneironEngineConnection *connection);
+
+/**
+ * Read why the last engine call on this thread failed `EngineError`: its
+ * stable cause into `out_code` and the error's UTF-8 words into
+ * `out_message`, which the caller releases with `oneiron_buffer_free`. With
+ * no such failure on this thread, `out_code` is `None` and `out_message`
+ * empty. A later failing engine call on this thread replaces it; a call that
+ * succeeds or fails with another status leaves it.
+ *
+ * # Safety
+ *
+ * Each non-null out pointer is writable for the whole call.
+ */
+enum OneironStatus oneiron_engine_last_error(enum OneironEngineErrorCode *out_code,
+                                             struct OneironBuffer *out_message);
 
 /**
  * Free a Rust-owned byte buffer returned by this crate.

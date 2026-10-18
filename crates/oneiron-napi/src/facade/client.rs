@@ -281,3 +281,6 @@ fn js_safe_integer(number: &serde_json::Number) -> Option<serde_json::Number> {
 }
 
 mod agent_verbs;
+// The engine-backed served client (OF-237), only in an `engine` build.
+#[cfg(feature = "engine")]
+mod embedded_engine;

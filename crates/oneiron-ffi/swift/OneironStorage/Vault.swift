@@ -12,6 +12,11 @@ public enum OneironStorageError: Error, Equatable, CustomStringConvertible {
     case modelUnavailable
     case missingHandle
     case unexpectedStatus(UInt32)
+    /// An engine call's failure, by its stable cause (`ENGINE_STOPPED`, `ENGINE_CLOSED`,
+    /// `ENGINE_RELAY_REFUSED`, `ENGINE_WRONG_THREAD`, `ENGINE_CONFIG`, `ENGINE_VAULT_OPEN`,
+    /// `ENGINE_START_FAILED`, `ENGINE_CONNECTION_ENDED`, `ENGINE_REPLY_TOO_LARGE`,
+    /// `ENGINE_BAD_REQUEST`, or `INTERNAL_SERVER_ERROR` when none is named), with its words.
+    case engine(code: String, message: String)
 
     public var description: String {
         switch self {
@@ -35,7 +40,23 @@ public enum OneironStorageError: Error, Equatable, CustomStringConvertible {
             "opening the vault did not return a handle"
         case let .unexpectedStatus(status):
             "unexpected Oneiron status \(status)"
+        case let .engine(code, message):
+            "\(code): \(message)"
         }
+    }
+
+    /// `check`, with an `EngineError` thrown as the cause the failed engine call left on this
+    /// thread (`oneiron_engine_last_error`).
+    static func checkEngine(_ status: OneironStatus) throws {
+        guard status == OneironStatus_EngineError else { return try check(status) }
+        var code = OneironEngineErrorCode_None
+        var message = OneironBuffer(ptr: nil, len: 0, cap: 0)
+        guard oneiron_engine_last_error(&code, &message) == OneironStatus_Ok else {
+            throw OneironStorageError.engineError
+        }
+        defer { _ = oneiron_buffer_free(message) }
+        throw OneironStorageError.engine(
+            code: engineCode(code), message: String(decoding: bytes(message), as: UTF8.self))
     }
 
     static func check(_ status: OneironStatus) throws {
@@ -471,7 +492,8 @@ private final class EngineHostBox {
 
 /// The full Oneiron server inside this process, over the vault at `path`
 /// (OF-237). Its calls block: make them from app threads. `deinit` stops it
-/// in order. The native library must be built with `--features engine`
+/// in order. An engine failure throws `OneironStorageError.engine(code:message:)`.
+/// The native library must be built with `--features engine`
 /// (`cargo build -p oneiron-ffi --features engine`).
 public final class Engine {
     private let handle: OpaquePointer
@@ -504,36 +526,126 @@ public final class Engine {
         let status = mutablePath.withUTF8 { pathBytes in
             oneiron_engine_start(pathBytes.baseAddress, pathBytes.count, dimensions, nil, 0, table, 0, 0, &rawHandle)
         }
-        try OneironStorageError.check(status)
+        try OneironStorageError.checkEngine(status)
         guard let handle = rawHandle else { throw OneironStorageError.missingHandle }
         return Engine(handle: handle)
     }
 
     /// One buffered HTTP/1.1 request; `headers` is `name: value` lines, each ended by CRLF.
+    /// `/ws` and a reply body over 64 MiB throw: open a connection for those.
     public func request(method: String, path: String, headers: String = "", body: Data = Data()) throws
+        -> (status: Int, headers: String, body: Data)
+    {
+        try exchange(method: method, path: path, headers: headers, body: body, artifacts: false)
+    }
+
+    /// `request` on the artifact app's own origin (`/a/`), apart from the API's: what a web
+    /// view loads artifacts through.
+    public func artifactRequest(method: String, path: String, headers: String = "", body: Data = Data())
+        throws -> (status: Int, headers: String, body: Data)
+    {
+        try exchange(method: method, path: path, headers: headers, body: body, artifacts: true)
+    }
+
+    private func exchange(method: String, path: String, headers: String, body: Data, artifacts: Bool) throws
         -> (status: Int, headers: String, body: Data)
     {
         var reply = OneironReply()
         let status = Data(method.utf8).withUnsafeBytes { m in Data(path.utf8).withUnsafeBytes { p in
             Data(headers.utf8).withUnsafeBytes { h in body.withUnsafeBytes { b in
-                oneiron_engine_request(handle, slice(m), slice(p), slice(h), slice(b), &reply)
+                artifacts
+                    ? oneiron_engine_artifact_request(handle, slice(m), slice(p), slice(h), slice(b), &reply)
+                    : oneiron_engine_request(handle, slice(m), slice(p), slice(h), slice(b), &reply)
             } }
         } }
-        try OneironStorageError.check(status)
+        try OneironStorageError.checkEngine(status)
         defer { _ = oneiron_engine_reply_free(reply) }
         return (Int(reply.status), String(decoding: bytes(reply.headers), as: UTF8.self), bytes(reply.body))
     }
 
-    public func wake() throws { try OneironStorageError.check(oneiron_engine_wake(handle)) }
+    /// Opens a connection this app holds to the engine's server: one in-process stream it serves
+    /// as a socket's connection, HTTP/1.1 with upgrades, so `/ws` and streamed replies ride it.
+    /// A stop drains it, so after `wake` open another. It keeps this engine alive.
+    public func openConnection() throws -> EngineConnection {
+        var rawConnection: OpaquePointer?
+        try OneironStorageError.checkEngine(oneiron_engine_connection_open(handle, &rawConnection))
+        guard let connection = rawConnection else { throw OneironStorageError.missingHandle }
+        return EngineConnection(handle: connection, engine: self)
+    }
 
-    public func stop() throws { try OneironStorageError.check(oneiron_engine_stop(handle)) }
+    /// `openConnection` on the artifact app's own origin (`/a/`), apart from the API's.
+    public func openArtifactConnection() throws -> EngineConnection {
+        var rawConnection: OpaquePointer?
+        try OneironStorageError.checkEngine(oneiron_engine_artifact_connection_open(handle, &rawConnection))
+        guard let connection = rawConnection else { throw OneironStorageError.missingHandle }
+        return EngineConnection(handle: connection, engine: self)
+    }
+
+    public func wake() throws { try OneironStorageError.checkEngine(oneiron_engine_wake(handle)) }
+
+    public func stop() throws { try OneironStorageError.checkEngine(oneiron_engine_stop(handle)) }
 
     /// The engine's own open vault, shared rather than opened again.
     public func vault() throws -> Vault {
         var rawVault: OpaquePointer?
-        try OneironStorageError.check(oneiron_engine_vault(handle, &rawVault))
+        try OneironStorageError.checkEngine(oneiron_engine_vault(handle, &rawVault))
         guard let vaultHandle = rawVault else { throw OneironStorageError.missingHandle }
         return Vault(handle: vaultHandle)
+    }
+}
+
+/// One connection this app holds to its `Engine`'s server (OF-237): bytes both ways over one
+/// in-process stream the server serves as a socket's connection, HTTP/1.1 with upgrades. Write
+/// the request with `send` (a `GET /ws` with its upgrade headers holds `/ws`; after the `101`,
+/// send the upgraded protocol's frames, and bring your own auth) and read what the server writes
+/// with `receive`. A `send` and a `receive` may block two threads at once, and `close` from a
+/// third returns the blocked `receive`. It keeps its engine alive until it goes; once the engine
+/// stops, `receive` returns empty data and `send` throws. `deinit` closes and frees it.
+public final class EngineConnection {
+    private let handle: OpaquePointer
+    private let engine: Engine
+
+    fileprivate init(handle: OpaquePointer, engine: Engine) {
+        self.handle = handle
+        self.engine = engine
+    }
+
+    deinit { _ = oneiron_engine_connection_free(handle) }
+
+    /// Writes all of `bytes` to the server, blocking until the connection has taken them.
+    public func send(_ bytes: Data) throws {
+        let status = bytes.withUnsafeBytes { raw in oneiron_engine_connection_send(handle, slice(raw)) }
+        try OneironStorageError.checkEngine(status)
+    }
+
+    /// The next bytes the server wrote, at most 64 KiB, blocking until some arrive; empty once
+    /// the connection has ended.
+    public func receive() throws -> Data {
+        var buffer = OneironBuffer(ptr: nil, len: 0, cap: 0)
+        try OneironStorageError.checkEngine(oneiron_engine_connection_receive(handle, &buffer))
+        defer { _ = oneiron_buffer_free(buffer) }
+        return bytes(buffer)
+    }
+
+    /// Ends this side: a blocked `receive` returns empty and the server reads the end of the
+    /// stream. Closing again does nothing.
+    public func close() throws { try OneironStorageError.checkEngine(oneiron_engine_connection_close(handle)) }
+}
+
+/// The stable code of an engine failure's cause, as every binding names it.
+private func engineCode(_ code: OneironEngineErrorCode) -> String {
+    switch code {
+    case OneironEngineErrorCode_Stopped: "ENGINE_STOPPED"
+    case OneironEngineErrorCode_Closed: "ENGINE_CLOSED"
+    case OneironEngineErrorCode_RelayRefused: "ENGINE_RELAY_REFUSED"
+    case OneironEngineErrorCode_WrongThread: "ENGINE_WRONG_THREAD"
+    case OneironEngineErrorCode_Config: "ENGINE_CONFIG"
+    case OneironEngineErrorCode_VaultOpen: "ENGINE_VAULT_OPEN"
+    case OneironEngineErrorCode_StartFailed: "ENGINE_START_FAILED"
+    case OneironEngineErrorCode_ConnectionEnded: "ENGINE_CONNECTION_ENDED"
+    case OneironEngineErrorCode_ReplyTooLarge: "ENGINE_REPLY_TOO_LARGE"
+    case OneironEngineErrorCode_BadRequest: "ENGINE_BAD_REQUEST"
+    default: "INTERNAL_SERVER_ERROR"
     }
 }
 

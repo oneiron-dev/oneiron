@@ -17,7 +17,7 @@
  */
 
 import { OneironError, translateNativeError } from "./error.js"
-import { NativeClient } from "./native.js"
+import { NativeClient, NativeEngine } from "./native.js"
 import type * as Facade from "./facade-types.js"
 import type { CalibrationPair, TaskAskAnswer, TaskAskDefault, TaskAskHandle, TaskAskPersonEvidence, TaskAskPreflight, TaskAskQuestion, TaskAskReceipt, TaskAskShort, TaskAskSpec, TaskAskWait, TaskAskWho, TaskAskWord, TaskCancelReceipt, TaskCanAskRequest, TaskDescription } from "./agent-verbs.js"
 
@@ -34,6 +34,7 @@ import type {
   KeyValueNamespaces,
   ClaimInput,
   CommitReceipt,
+  EngineOptions,
   FacadeReceipt,
   MemoryPack,
   MemoryExport,
@@ -78,6 +79,31 @@ export interface Paired {
   readonly memory: Oneiron
   readonly credential: string
   readonly pin: CheckpointPin | null
+}
+
+/**
+ * The full Oneiron server inside this process, from {@link Oneiron.startEngine} (OF-237).
+ * Every call blocks. An engine failure throws `OneironError` with its stable code:
+ * `ENGINE_STOPPED`, `ENGINE_CLOSED`, `ENGINE_RELAY_REFUSED`, `ENGINE_WRONG_THREAD`,
+ * `ENGINE_CONFIG`, `ENGINE_VAULT_OPEN`, `ENGINE_START_FAILED`, `ENGINE_CONNECTION_ENDED`,
+ * `ENGINE_REPLY_TOO_LARGE`, `ENGINE_BAD_REQUEST`, or `INTERNAL_SERVER_ERROR` when no cause is
+ * named.
+ */
+export interface EmbeddedEngine {
+  /**
+   * A NEW handle served by this engine's server under `key`, the caller's own credential,
+   * passed verbatim: the credential `pair` returned, or the host secret as a bare bearer.
+   * Every verb is the request a connected handle sends, carried through the server in
+   * process, so host doors answer as on any server; `asActor` refuses on it. It makes no
+   * request and keeps the engine alive.
+   */
+  client(key: string): Oneiron
+  /** Runs what is due; a stopped engine serves again first. */
+  wake(): void
+  /** Drains, stops every worker, and keeps the vault open for `wake`. */
+  stop(): void
+  /** Stops the engine in order; every handle it served throws `ENGINE_CLOSED` after. */
+  close(): void
 }
 
 /** A handle on one Oneiron memory, embedded or remote. */
@@ -145,6 +171,41 @@ export class Oneiron {
       memory: Oneiron.connect(paired.url, paired.credential),
       credential: paired.credential,
       pin: paired.pin ?? null,
+    }
+  }
+
+  /**
+   * Opens the vault at `path` and serves it in this process with the full server
+   * `oneiron serve` runs (OF-237), once; {@link EmbeddedEngine.client} then binds handles
+   * served by it under the caller's own credential, never a second vault open. The config is
+   * the one `oneiron serve --config <configFile>` resolves for this path. Opt-in: the addon
+   * carries it only when built with the `engine` cargo feature, and otherwise this throws
+   * `ENGINE_UNAVAILABLE`.
+   */
+  static startEngine(path: string, opts: EngineOptions = {}): EmbeddedEngine {
+    if (NativeEngine === undefined) {
+      throw new OneironError("ENGINE_UNAVAILABLE", "this oneiron build has no embedded engine", [
+        "Build the native addon with the `engine` cargo feature, or use Oneiron.connect(url, key).",
+      ])
+    }
+    let native: NativeEngine
+    try {
+      native = NativeEngine.start(path, opts)
+    } catch (error) {
+      throw translateNativeError(error)
+    }
+    const call = <T>(operation: () => T): T => {
+      try {
+        return operation()
+      } catch (error) {
+        throw translateNativeError(error)
+      }
+    }
+    return {
+      client: (key) => new Oneiron(call(() => native.client(key))),
+      wake: () => call(() => native.wake()),
+      stop: () => call(() => native.stop()),
+      close: () => call(() => native.close()),
     }
   }
 
