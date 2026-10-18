@@ -895,6 +895,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     ladder_workers.push(crate::api::spawn_esign_seal_worker_admitted(
         Arc::clone(&sync_server),
         admitted(),
+        managed.seal_config(),
     ));
     // Due standing questions are answered through the ladder (OF-506).
     if !ai.bind_question_timer(&sync_server) {

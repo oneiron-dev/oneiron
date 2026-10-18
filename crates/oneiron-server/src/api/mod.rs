@@ -94,6 +94,8 @@ mod error_map;
 mod esign;
 pub(crate) use self::esign::hold_worker::spawn as spawn_esign_hold_worker;
 #[cfg(unix)]
+pub(crate) use self::esign::seal_worker::SealConfig as EsignSealConfig;
+#[cfg(unix)]
 pub(crate) use self::esign::seal_worker::spawn as spawn_esign_seal_worker;
 #[cfg(unix)]
 pub(crate) use self::esign::seal_worker::spawn_admitted as spawn_esign_seal_worker_admitted;
