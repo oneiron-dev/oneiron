@@ -313,6 +313,8 @@ both bindings and their export-census tests in one change.
 - `self.skills.save`
 - `self.skills.fork`
 - `self.skills.callables`
+- `ai.steps.submit`
+- `ai.steps.receipt`
 - `ai.reply`
 - `vault.receipts.context`
 - `ai.options`
