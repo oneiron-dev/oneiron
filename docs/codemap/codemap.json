@@ -31530,6 +31530,25 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [
+      "ClaimDemoteActionInput",
+      "ClaimDemoteRequest",
+      "ClaimDemoteView",
+      "ClaimFilteredListRequest",
+      "ClaimFilteredReadRequest",
+      "ReadFilterInput"
+     ],
+     "path": "src/memory/claim_stale.rs",
+     "purpose": "Stale-claim producer and caller read-filter controls (RETRIEVAL-04)",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
      "path": "src/memory/claims/commit.rs",
      "purpose": "—",
@@ -32182,7 +32201,7 @@
      "surface": {
       "crate-vis": 15,
       "mod": 12,
-      "re-export": 45
+      "re-export": 46
      }
     },
     {
@@ -51072,7 +51091,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 705
+      "fn": 708
      }
     },
     {
@@ -57720,7 +57739,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 176,
+     "files": 177,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58401,7 +58420,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3562,
+   "source_files": 3563,
    "test_files": 902
   },
   "oneiron-android": {
@@ -66931,7 +66950,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 669
+      "fn": 672
      }
     },
     {
@@ -67980,7 +67999,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 670
+      "fn": 673
      }
     },
     {
@@ -79972,6 +79991,11 @@
       "CheckoutDoorBinding",
       "ClaimApprovalStatus",
       "ClaimChangeVerdict",
+      "ClaimDemoteActionInput",
+      "ClaimDemoteRequest",
+      "ClaimDemoteView",
+      "ClaimFilteredListRequest",
+      "ClaimFilteredReadRequest",
       "ClaimLineAtom",
       "ClaimProposalReview",
       "ClaimProposalReviewRequest",
@@ -81174,6 +81198,7 @@
       "QuoteReplyGroup",
       "QuoteReplyStrip",
       "QuoteStripStatus",
+      "ReadFilterInput",
       "Reasoning",
       "ReasoningCause",
       "ReasoningEffort",
@@ -81444,6 +81469,7 @@
       "ScopedReadResultHybridSearchHitList",
       "ScopedReadResultLensFrameCard",
       "ScopedReadResultOptionalCalendarEventView",
+      "ScopedReadResultOptionalClaimView",
       "ScopedReadResultOptionalNoteEditorBinding",
       "ScopedReadResultOptionalNoteForkView",
       "ScopedReadResultOptionalNoteHistoryView",
@@ -82045,8 +82071,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 612,
-      "struct": 1791
+      "enum": 613,
+      "struct": 1797
      }
     },
     {
