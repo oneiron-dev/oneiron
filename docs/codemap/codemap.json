@@ -7300,7 +7300,7 @@
      "purpose": "The replay library's store (OF-598; EIRI-ARCH-0002 \"The replay library\"): solved browser runs, filed per…",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 10,
       "struct": 2
@@ -17023,6 +17023,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/actor_fields.rs",
+     "purpose": "An erased actor's name, out of the rows that record it outside its own record (FIX 3520)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -17572,7 +17582,7 @@
      "path": "src/disclosure/import_audience.rs",
      "purpose": "The standing import audience rule (OF-492): the owner's answer to one sensitive-topic ask, kept as a private…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3
      }
     },
@@ -23058,7 +23068,7 @@
      "path": "src/federation/record_scope.rs",
      "purpose": "Birth-facet-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -23555,7 +23565,8 @@
      "path": "src/gate/coach_offer_reach.rs",
      "purpose": "The Coach's born-with reach to ask the vault owner about its own training offers (OF-577, FIX 856; Engine…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 5,
+      "fn": 2
      }
     },
     {
@@ -23852,7 +23863,7 @@
      "path": "src/gate/dreamer_grant.rs",
      "purpose": "The Dreamer's weave rows, the owner's grant that adds them to a vault seeded without them, and the read-only…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3,
       "struct": 1
      }
@@ -41019,7 +41030,7 @@
      "path": "src/side_table/decls/mod.rs",
      "purpose": "The declaration list: every prefix a module keeps rows under in `vault_meta` or `sync_state`, one entry each",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -41079,7 +41090,7 @@
      "path": "src/side_table/mod.rs",
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables",
      "surface": {
-      "crate-vis": 42
+      "crate-vis": 43
      }
     },
     {
@@ -53550,7 +53561,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 31,
+     "files": 32,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54630,7 +54641,7 @@
    },
    "over_bar": 189,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3322,
+   "source_files": 3323,
    "test_files": 902
   },
   "oneiron-android": {
@@ -60191,8 +60202,7 @@
      "path": "src/supervisor/config.rs",
      "purpose": "Static config, restart backoff, and budget-id length ceilings",
      "surface": {
-      "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 7,
       "fn": 2,
       "struct": 2,
       "type": 1
@@ -65503,7 +65513,7 @@
      "path": "src/ai_host/judge_swap.rs",
      "purpose": "The Coach's judge-swap upkeep on this server (OF-184)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -66719,13 +66729,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/call_context.rs",
      "purpose": "One facade call as every server transport hands it to the generated dispatch (OF-489): the credential it is…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 22
      }
     },
     {
@@ -67397,7 +67407,7 @@
      "path": "src/api/mcp_gateway/tasks_response.rs",
      "purpose": "Tasks verb and response shaping",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -68757,7 +68767,7 @@
      "path": "src/auth.rs",
      "purpose": "HTTP authentication for log-backed version-two capability slips",
      "surface": {
-      "crate-vis": 41
+      "crate-vis": 43
      }
     },
     {
@@ -70947,7 +70957,7 @@
      "path": "src/lens_frames.rs",
      "purpose": "OF-181: the lens frames this server holds for the cards it rendered",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -71324,7 +71334,7 @@
      "purpose": "Managed wake ledger: entries, revision, and supervisor pushes",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 7,
       "struct": 1
      }
@@ -71457,7 +71467,7 @@
      "purpose": "Managed runtime state, the reap freeze gate, and the supervised serve loop",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 20,
       "struct": 3,
       "type": 1
@@ -76012,13 +76022,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ManagedOwnerAction",
+      "ManagedOwnerRequest",
       "ManagedWidenAction"
      ],
      "path": "src/lib/managed_holder.rs",
-     "purpose": "Host-attested account action for one managed widen request",
+     "purpose": "Host-attested account actions: one managed widen request, and one facade request the vault owner makes in…",
      "surface": {
-      "fn": 2,
-      "struct": 1
+      "const": 2,
+      "fn": 4,
+      "struct": 3
      }
     },
     {

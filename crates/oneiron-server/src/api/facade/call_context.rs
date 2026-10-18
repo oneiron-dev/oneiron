@@ -15,6 +15,7 @@ use super::{FacadeApiError, INVOCATION_HEADER, ROOM_TURN_HEADER};
 use crate::api::call_receipt;
 use crate::api::write_facet::request_session;
 use crate::auth::CoreAuth;
+use crate::lens_frames::CardOwner;
 
 /// What a transport carried for one context field of a call.
 #[derive(Clone, Copy)]
@@ -85,6 +86,12 @@ pub(crate) struct FacadeCall<'a> {
     /// The drain's permit, on a call settlement runs again (ARCH-0080 §3
     /// Ask): the row's pre chain enters as the drain's run of it.
     drain: Option<VerbAskDrainPermit>,
+    /// The run that creates the live lens card this call renders, as the
+    /// host names it (`EntityId::to_hex()`). Host-only, like `subscription`:
+    /// no transport header or verb input sets either (OF-181, FIX 2612).
+    creator_run: Option<String>,
+    /// The live subscription the call's lens card renders for.
+    subscription: Option<String>,
 }
 
 impl<'a> FacadeCall<'a> {
@@ -104,6 +111,8 @@ impl<'a> FacadeCall<'a> {
             },
             session_ref: call_receipt::request_session_ref(headers),
             drain: None,
+            creator_run: None,
+            subscription: None,
         }
     }
 
@@ -121,6 +130,8 @@ impl<'a> FacadeCall<'a> {
             session: Carried::Absent,
             session_ref: None,
             drain: None,
+            creator_run: None,
+            subscription: None,
         }
     }
 
@@ -145,6 +156,8 @@ impl<'a> FacadeCall<'a> {
             session: Carried::Absent,
             session_ref: None,
             drain: Some(drain),
+            creator_run: None,
+            subscription: None,
         }
     }
 
@@ -187,6 +200,39 @@ impl<'a> FacadeCall<'a> {
         self.drain.as_ref()
     }
 
+    /// This call, its live lens card held for `creator_run` and
+    /// `subscription`, as the host that admitted the call names them. Only
+    /// a host binds them; a call missing either holds its card unowned.
+    #[allow(
+        dead_code,
+        reason = "FIX 2059: the socket's rpc.req call context names the subscription, an attached run the creator"
+    )]
+    pub(crate) fn lens_held(
+        self,
+        creator_run: Option<String>,
+        subscription: Option<String>,
+    ) -> Self {
+        Self {
+            creator_run,
+            subscription,
+            ..self
+        }
+    }
+
+    /// Who owns the live lens card this call renders: its creating run and
+    /// its subscription, when the host bound both. A call missing either,
+    /// as every HTTP call does, holds its card through
+    /// `LensFrameStore::record` (FIX 2612 (c)).
+    pub(super) fn lens_owner(&self) -> Option<CardOwner> {
+        match (&self.creator_run, &self.subscription) {
+            (Some(creator_run), Some(subscription)) => Some(CardOwner {
+                creator_run: creator_run.clone(),
+                subscription: Some(subscription.clone()),
+            }),
+            _ => None,
+        }
+    }
+
     /// This call owned whole, for a row that runs on a blocking thread
     /// (OF-533).
     pub(super) fn owned(&self) -> OwnedFacadeCall {
@@ -197,6 +243,8 @@ impl<'a> FacadeCall<'a> {
             session: self.session,
             session_ref: self.session_ref.map(str::to_owned),
             drain: self.drain.clone(),
+            creator_run: self.creator_run.clone(),
+            subscription: self.subscription.clone(),
         }
     }
 }
@@ -211,6 +259,8 @@ pub(super) struct OwnedFacadeCall {
     session: Carried<EntityId>,
     session_ref: Option<String>,
     drain: Option<VerbAskDrainPermit>,
+    creator_run: Option<String>,
+    subscription: Option<String>,
 }
 
 impl OwnedFacadeCall {
@@ -223,6 +273,8 @@ impl OwnedFacadeCall {
             session: self.session,
             session_ref: self.session_ref.as_deref(),
             drain: self.drain.clone(),
+            creator_run: self.creator_run.clone(),
+            subscription: self.subscription.clone(),
         }
     }
 }
