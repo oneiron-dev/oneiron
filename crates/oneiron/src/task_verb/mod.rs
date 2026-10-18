@@ -166,6 +166,7 @@ pub(crate) use create_validation::{
 pub(crate) use rate_limit::task_create_owner;
 pub(crate) use task_continuation::{
     FailedTaskContinuation, TaskContinuationOutcome, continue_failed_task_in_txn,
+    task_settled_at_in,
 };
 
 /// The objectives a run realizing `task` confesses against (OF-544): its
@@ -266,6 +267,7 @@ pub(crate) use symbol_lease::forget_symbols;
 mod recall_door;
 pub mod sdk;
 mod sdk_agents;
+mod sdk_authority_history;
 mod sdk_calendar;
 mod sdk_campaign_split;
 mod sdk_catalog_fragment;

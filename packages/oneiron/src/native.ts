@@ -58,6 +58,15 @@ describe(input: unknown): unknown
 tasksCreate(input: unknown): unknown
 tasksWave(input: unknown): unknown
 vaultFanoutLaunch(input: unknown): unknown
+selfBudget(input: unknown): unknown
+selfBudgetLand(input: unknown): unknown
+vaultBudgetsLeaseOpen(input: unknown): unknown
+vaultBudgetsLease(input: unknown): unknown
+vaultBudgetsLeaseTopUp(input: unknown): unknown
+vaultBudgetsHold(input: unknown): unknown
+vaultBudgetsHoldResume(input: unknown): unknown
+vaultBudgetsLocal(input: unknown): unknown
+vaultBudgetsSettlements(input: unknown): unknown
 vaultFanoutResume(input: unknown): unknown
 vaultFanoutResumeAs(input: unknown): unknown
 vaultFanoutAck(input: unknown): unknown
@@ -116,6 +125,8 @@ vaultPacksSetupGet(input: unknown): unknown
 vaultPacksSetupAnswer(input: unknown): unknown
 vaultPacksSetupVerify(input: unknown): unknown
 vaultAuthorityAudit(input: unknown): unknown
+vaultAuthorityHistoryExport(input: unknown): unknown
+vaultAuthorityHistoryImport(input: unknown): unknown
 vaultMeshPathReceipts(input: unknown): unknown
 vaultInspectionResolve(input: unknown): unknown
 vaultSharedProposeDelete(input: unknown): unknown
@@ -201,6 +212,8 @@ vaultSecretsLiftHistory(input: unknown): unknown
 vaultWidenProposals(input: unknown): unknown
 vaultWidenProposalsApprove(input: unknown): unknown
 vaultWidenProposalsDecline(input: unknown): unknown
+vaultClaimsReview(input: unknown): unknown
+vaultClaimsSettle(input: unknown): unknown
 vaultCraftCandidates(input: unknown): unknown
 vaultCraftCandidatesAnswer(input: unknown): unknown
 vaultSettingsWakePolicySet(input: unknown): unknown
@@ -322,6 +335,10 @@ vaultRemember(input: unknown): unknown
 vaultClaimsRetract(input: unknown): unknown
 vaultForget(input: unknown): unknown
 vaultBookingPageToken(input: unknown): unknown
+vaultCalendarCreate(input: unknown): unknown
+vaultCalendarIcsImport(input: unknown): unknown
+vaultCalendarOccurrences(input: unknown): unknown
+vaultCalendarInstancesMove(input: unknown): unknown
 vaultCalendarRead(input: unknown): unknown
 vaultCalendarSearch(input: unknown): unknown
 vaultCalendarFreebusy(input: unknown): unknown

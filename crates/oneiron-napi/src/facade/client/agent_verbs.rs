@@ -199,6 +199,72 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_budget(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.budget", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_budget_land(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.budget.land", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_budgets_lease_open(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.budgets.lease.open", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_budgets_lease(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.budgets.lease", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_budgets_lease_top_up(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.budgets.lease.top_up", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_budgets_hold(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.budgets.hold", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_budgets_hold_resume(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.budgets.hold.resume", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_budgets_local(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.budgets.local", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_budgets_settlements(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.budgets.settlements", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_fanout_resume(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.fanout.resume", input)
@@ -787,6 +853,24 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.authority.audit", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_authority_history_export(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.authority.history.export", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_authority_history_import(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.authority.history.import", input)
             .map_err(facade_error)
     }
     #[napi]
@@ -1534,6 +1618,18 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.widen_proposals.decline", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_claims_review(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.claims.review", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_claims_settle(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.claims.settle", input)
             .map_err(facade_error)
     }
     #[napi]
@@ -2702,6 +2798,42 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.booking.page_token", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_create(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.create", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_ics_import(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.ics.import", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_occurrences(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.occurrences", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_instances_move(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.instances.move", input)
             .map_err(facade_error)
     }
     #[napi]

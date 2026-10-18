@@ -48,7 +48,10 @@ use crate::builtin_host::HostConnectionChecks;
 use crate::models::RungVoices;
 use crate::server::SyncServer;
 
+// The signed authority history doors, under the audit door's owner proof.
+pub(crate) use super::authority_history_doors::*;
 pub(crate) use super::booking_doors::*;
+pub(crate) use super::calendar_doors::*;
 
 // The shared-vault doors live beside these; the generated callers name them here.
 pub(crate) use super::agent_definition_doors::*;
@@ -81,6 +84,7 @@ pub(crate) use super::vault_shape_doors::*;
 pub(crate) use super::embedding_space_doors::*;
 // The owner's fan-out ruling doors (OF-393), likewise.
 pub(crate) use super::fanout_doors::*;
+pub(crate) use super::budget_doors::*;
 // The owner's learned-setting doors, likewise.
 pub(crate) use super::setting_doors::*;
 // The owner's historical secret lift sweep door (OF-067), likewise.
@@ -109,6 +113,8 @@ pub(crate) use super::critic_review_doors::*;
 pub(crate) use super::campaign_split_doors::*;
 // The owner's project-card tap door (OF-501), likewise.
 pub(crate) use super::project_card_doors::*;
+// The owner's proposed-claim review and settle doors (DOOR-115), likewise.
+pub(crate) use super::claim_settle_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
 pub(crate) use super::ui_action_routes::vault_lenses_default;
 // The explain receipts' doors (OF-278), beside their HTTP routes, likewise.
@@ -1003,7 +1009,9 @@ fn owner_grade(auth: &CoreAuth, message: &str) -> MemoryResult<()> {
 /// proof it acts under. A row whose door has no such check passes.
 pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<()> {
     match verb {
-        "vault.packs.put"
+        "vault.calendar.ics.import"
+        | "vault.calendar.instances.move"
+        | "vault.packs.put"
         | "vault.packs.remove"
         | "vault.skill_hubs.put"
         | "vault.skill_hubs.get"
@@ -1025,6 +1033,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.connectors.subscriptions.list"
         | "vault.connectors.subscriptions.revoke"
         | "vault.authority.audit"
+        | "vault.authority.history.export"
+        | "vault.authority.history.import"
         | "vault.mesh.path_receipts"
         | "vault.hooks.replay"
         | "vault.lenses.activate"
@@ -1056,7 +1066,16 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.widen_proposals.decline"
         | "vault.craft_candidates"
         | "vault.craft_candidates.answer"
+        | "vault.claims.review"
+        | "vault.claims.settle"
         | "vault.settings.wake_policy.set"
+        | "vault.budgets.lease.open"
+        | "vault.budgets.lease"
+        | "vault.budgets.lease.top_up"
+        | "vault.budgets.hold"
+        | "vault.budgets.hold.resume"
+        | "vault.budgets.local"
+        | "vault.budgets.settlements"
         | "vault.research.evaluate_split" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"
         | "vault.shared.propose_transfer"

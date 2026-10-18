@@ -702,6 +702,32 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "AgentBudgetView",
+      "BudgetHoldRequest",
+      "BudgetLandRequest",
+      "LocalRunnerBudgetCounter",
+      "LocalRunnerBudgetRequest",
+      "LocalRunnerBudgetView",
+      "OpenSpendLeaseRequest",
+      "RunRungSettlement",
+      "RunSettlementsRequest",
+      "RunSettlementsView",
+      "SelfBudgetRequest",
+      "SpendLeaseView",
+      "SpendScopeRequest",
+      "TopUpSpendLeaseRequest"
+     ],
+     "path": "src/agent_dispatch/budget_doors.rs",
+     "purpose": "Typed doors over launch spend leases, budget holds and the local runner counter",
+     "surface": {
+      "fn": 8,
+      "struct": 14
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "BudgetHoldLease",
       "BudgetHoldNotice",
       "BudgetHoldState",
@@ -771,7 +797,7 @@
      "path": "src/agent_dispatch/continuation.rs",
      "purpose": "The owner's prompt continuation of a failed agent run (FIX 3694, OF-568): the successor attempt an approved…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "struct": 2
      }
     },
@@ -907,7 +933,7 @@
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
       "crate-vis": 9,
-      "mod": 1,
+      "mod": 2,
       "re-export": 23
      }
     },
@@ -1071,7 +1097,7 @@
      "purpose": "Spend scopes: each launch's lease tree under one hard cap (OF-532, ARCH-0079 #budget, #reader-forks)",
      "surface": {
       "crate-vis": 12,
-      "fn": 16
+      "fn": 17
      }
     },
     {
@@ -19282,6 +19308,7 @@
       "AgentHealthCounter",
       "AgentHealthMove",
       "AgentHealthOutcome",
+      "AgentHealthPromptInject",
       "AgentHealthRunTree",
       "AgentHealthTone",
       "ConcernCardRequest",
@@ -19297,7 +19324,7 @@
       "enum": 6,
       "fn": 12,
       "re-export": 2,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -22481,6 +22508,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DocActor"
+     ],
+     "path": "src/entity_doc/doc_actor.rs",
+     "purpose": "Whose act an entity-document row records, and the erase that forgets it (FIX 3520)",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -22504,6 +22545,7 @@
       "ForkRecord",
       "ForkRequest",
       "ForkStatus",
+      "PendingDocForkErase",
       "ProposalBundle",
       "SettleVerb",
       "TextReceipt"
@@ -22511,8 +22553,9 @@
      "path": "src/entity_doc/forks.rs",
      "purpose": "Durable divergences, entity-bound grant admission and atomic fork-set settlement",
      "surface": {
-      "crate-vis": 16,
-      "enum": 3,
+      "const": 1,
+      "crate-vis": 19,
+      "enum": 4,
       "fn": 7,
       "struct": 4
      }
@@ -22572,9 +22615,9 @@
      "path": "src/entity_doc/mod.rs",
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "mod": 2,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -22604,7 +22647,7 @@
      "path": "src/entity_doc/pins.rs",
      "purpose": "Causal citation floors, retained quotes and the owner's shallow-purge door",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 9,
       "struct": 2
@@ -23867,6 +23910,16 @@
      "surface": {
       "const": 5,
       "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/bundle/claim_settle.rs",
+     "purpose": "One proposed claim decided on its own (DOOR-115): the owner's approval or decline of a claim named by its…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -30615,6 +30668,30 @@
       "crate-vis": 5,
       "enum": 3,
       "fn": 4,
+      "re-export": 1,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ClaimChangeVerdict",
+      "ClaimProposalReview",
+      "ClaimProposalReviewRequest",
+      "ClaimSettleDecision",
+      "ClaimSettleRequest",
+      "ClaimSettlement",
+      "ClaimSettlementAnswer",
+      "ClaimSettlementReason",
+      "ClaimSettlementRevert",
+      "ClaimSettlementVerdict"
+     ],
+     "path": "src/memory/claims/settle.rs",
+     "purpose": "One proposed claim's review and settlement (DOOR-115, e2e MEMORY-01): `vault.claims.review` reads one…",
+     "surface": {
+      "enum": 4,
+      "fn": 3,
       "struct": 6
      }
     },
@@ -48705,7 +48782,7 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 31,
+      "re-export": 32,
       "struct": 36
      }
     },
@@ -48731,6 +48808,20 @@
       "enum": 3,
       "fn": 3,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AuthorityHistoryImported",
+      "SignedAuthorityHistory"
+     ],
+     "path": "src/task_verb/sdk_authority_history.rs",
+     "purpose": "Byte-preserving signed authority history transfer for the vault owner",
+     "surface": {
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -48930,8 +49021,8 @@
      "path": "src/task_verb/sdk_generated.rs",
      "purpose": "—",
      "surface": {
-      "const": 2,
-      "fn": 432
+      "const": 3,
+      "fn": 446
      }
     },
     {
@@ -49375,7 +49466,7 @@
      "path": "src/task_verb/task_continuation.rs",
      "purpose": "The same-TASK continuation of a failed agent run (FIX 3694, OF-568, ruling 3)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -54194,7 +54285,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 44,
+     "files": 45,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54747,7 +54838,7 @@
      "purpose": "Engine-native JS code-mode executor"
     },
     "entity_doc": {
-     "files": 20,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54817,7 +54908,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 137,
+     "files": 138,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55020,7 +55111,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 143,
+     "files": 144,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55531,7 +55622,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 142,
+     "files": 143,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -55701,7 +55792,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3392,
+   "source_files": 3397,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64096,7 +64187,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 383
+      "fn": 396
      }
     },
     {
@@ -65144,7 +65235,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 384
+      "fn": 397
      }
     },
     {
@@ -68014,10 +68105,30 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/authority_history_doors.rs",
+     "purpose": "Owner-authenticated signed authority history transfer",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/booking_doors.rs",
      "purpose": "Owner discovery of the opaque address of an existing booking page",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/budget_doors.rs",
+     "purpose": "Credential-backed budget controls, beside the owner's held-run routes",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -68048,6 +68159,16 @@
      "purpose": "Credential-bound host projections of the typed channel setup verbs",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/claim_settle_doors.rs",
+     "purpose": "The host doors of one proposed claim's review and settlement (DOOR-115): `vault.claims.review` and…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -68197,7 +68318,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 76
+      "crate-vis": 79
      }
     },
     {
@@ -68948,6 +69069,16 @@
      "purpose": "OpenAPI endpoint wiring and component merges",
      "surface": {
       "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openapi/facade_paths.rs",
+     "purpose": "The facade rows the OpenAPI document publishes (DOOR-115): each row the verb table marks `openapi` is `POST…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -74804,7 +74935,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SeatUsage",
@@ -74815,7 +74946,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -75472,7 +75603,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 330,
+     "files": 334,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -75887,7 +76018,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 652,
+   "source_files": 656,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -76085,6 +76216,7 @@
       "ActorCeiling",
       "AdmissionBasis",
       "AdmissionConsent",
+      "AgentBudgetView",
       "AgentCeilingInput",
       "AgentDefinitionCreateRequest",
       "AgentDefinitionLifecycle",
@@ -76105,6 +76237,7 @@
       "AgentHealthMove",
       "AgentHealthOutcome",
       "AgentHealthPadRead",
+      "AgentHealthPromptInject",
       "AgentHealthRunTree",
       "AgentHealthSignal",
       "AgentHealthTone",
@@ -76163,8 +76296,13 @@
       "AskTo",
       "AsofScrubberAtom",
       "AssetRef",
+      "AttemptCancelReceipt",
+      "AttemptCancelReceiptKind",
       "AttemptHandle",
       "AttemptId",
+      "AttemptLanding",
+      "AttemptLandingReserve",
+      "AttemptResumePoint",
       "AttemptView",
       "AuthoringStrategyPin",
       "AuthorityAuditEventKind",
@@ -76174,6 +76312,7 @@
       "AuthorityAuditRow",
       "AuthorityHandoffAlarm",
       "AuthorityHandoffAlarmAck",
+      "AuthorityHistoryImported",
       "BlindCampaignJudgeInput",
       "BlockChange",
       "BodyBlockKind",
@@ -76195,6 +76334,10 @@
       "BriefIntent",
       "BriefStamp",
       "BudgetDenied",
+      "BudgetHoldNotice",
+      "BudgetHoldRequest",
+      "BudgetHoldState",
+      "BudgetLandRequest",
       "BudgetLease",
       "BundleVerdict",
       "BundledSkillPermissions",
@@ -76235,8 +76378,10 @@
       "CampaignSplits",
       "CampaignTaste",
       "CancelRejectionPathology",
+      "CancelStanding",
       "CandidateRef",
       "Care",
+      "CareLevel",
       "CellTypeRef",
       "ChangeKind",
       "ChannelCeiling",
@@ -76273,9 +76418,19 @@
       "ChartSource",
       "ChatProjection",
       "ClaimApprovalStatus",
+      "ClaimChangeVerdict",
       "ClaimLineAtom",
+      "ClaimProposalReview",
+      "ClaimProposalReviewRequest",
       "ClaimRelationships",
       "ClaimScope",
+      "ClaimSettleDecision",
+      "ClaimSettleRequest",
+      "ClaimSettlement",
+      "ClaimSettlementAnswer",
+      "ClaimSettlementReason",
+      "ClaimSettlementRevert",
+      "ClaimSettlementVerdict",
       "CodeBlameView",
       "CodeChangeView",
       "CodeDiffRequest",
@@ -76345,6 +76500,7 @@
       "ConversationCreateInput",
       "ConversationTurnCreateInput",
       "CooperativeDeletionDispositionKind",
+      "CoordinationPattern",
       "CoreBatchEntityInput",
       "CoreBatchEntityReceipt",
       "CoreBatchWriteInput",
@@ -76353,6 +76509,7 @@
       "CoreDagQuoteInput",
       "CoreEntityWriteReceipt",
       "CoreWriteTextField",
+      "CostEnvelope",
       "CourtesyDeleteAnswerRequest",
       "CourtesyDeleteAskedWorld",
       "CourtesyDeleteChoice",
@@ -76556,6 +76713,7 @@
       "FoldUnfoldRequest",
       "FoldUnfolded",
       "FolderItemInput",
+      "ForceCancelGrounds",
       "ForkKind",
       "ForkState",
       "GateCheckerReceipt",
@@ -76595,6 +76753,7 @@
       "GuestSlipMintRequest",
       "GuestSlipMinted",
       "HandoffAlarmRequest",
+      "HeldAttempt",
       "HeldMedia",
       "HeldOutCall",
       "HeldOutEvidence",
@@ -76683,6 +76842,7 @@
       "LadderTerminalDisposition",
       "Landing",
       "LandingReceipt",
+      "LandingTrigger",
       "LaunchStatement",
       "LeaderSplitInput",
       "LeaderSplitOutput",
@@ -76745,6 +76905,9 @@
       "LiveRunRequestLeaderSplitInput",
       "LlmCapability",
       "LlmError",
+      "LocalRunnerBudgetCounter",
+      "LocalRunnerBudgetRequest",
+      "LocalRunnerBudgetView",
       "MadeBy",
       "MadeByClass",
       "MadeByInput",
@@ -76874,6 +77037,7 @@
       "OfficeBodyView",
       "OmittedKnowledge",
       "OpaqueChange",
+      "OpenSpendLeaseRequest",
       "OracleReceipt",
       "OrganWaitView",
       "OutcomeBinding",
@@ -76917,9 +77081,11 @@
       "PairedInterval",
       "PairedReading",
       "Paragraph",
+      "PartialResultHold",
       "ParticipantView",
       "ParticipantsPage",
       "ParticipantsRequest",
+      "PatternSkillRef",
       "PeerCount",
       "PendingActMatured",
       "PendingActStarted",
@@ -76934,6 +77100,7 @@
       "PinnedPack",
       "PinnedRef",
       "PixelRegion",
+      "PlannerRung",
       "PolicyActionOutcome",
       "PolicyAxes",
       "PolicyCeiling",
@@ -77013,6 +77180,7 @@
       "QuoteStripStatus",
       "Reasoning",
       "ReasoningCause",
+      "ReasoningEffort",
       "RecallWorlds",
       "ReceiptAtom",
       "ReceiptKind",
@@ -77133,6 +77301,9 @@
       "Run",
       "RunAttachRequest",
       "RunAttached",
+      "RunRungSettlement",
+      "RunSettlementsRequest",
+      "RunSettlementsView",
       "RunSignalState",
       "RunTree",
       "RunTreeEvent",
@@ -77199,6 +77370,7 @@
       "SelectionReceipt",
       "SelectionRuleScope",
       "SelectionRuleWriterKind",
+      "SelfBudgetRequest",
       "SelfDurableWait",
       "SelfDurableWaitReason",
       "SelfEffect",
@@ -77280,6 +77452,7 @@
       "SharedVaultDeletion",
       "SharedVaultRequest",
       "SignatureRow",
+      "SignedAuthorityHistory",
       "SigningStatus",
       "SkillAuthoringReceipt",
       "SkillForkRequest",
@@ -77317,6 +77490,13 @@
       "SpendBasis",
       "SpendCapView",
       "SpendConsent",
+      "SpendLeaseView",
+      "SpendPayer",
+      "SpendRead",
+      "SpendScope",
+      "SpendScopeRequest",
+      "SpendSignal",
+      "SpendState",
       "SpentKind",
       "StateFamilyRef",
       "StatusDotAtom",
@@ -77396,6 +77576,8 @@
       "TaskWaveRequest",
       "TasksOverflow",
       "TasksSection",
+      "TeamPlan",
+      "TeamShape",
       "TextBlockAtom",
       "TextBody",
       "TextCommitReceipt",
@@ -77409,6 +77591,7 @@
       "ThreadPassportsView",
       "ThrobberAtom",
       "ToggleControl",
+      "TopUpSpendLeaseRequest",
       "TrackedHubRef",
       "TranscriptFileDropInput",
       "TranscriptIngestOutcome",
@@ -77500,8 +77683,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 403,
-      "struct": 1013
+      "enum": 418,
+      "struct": 1050
      }
     },
     {

@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 441 code-mode rows (420 host rows, 21 run rows), 1589 declarations.
-// Replies: 387 fully typed, 50 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 458 code-mode rows (437 host rows, 21 run rows), 1649 declarations.
+// Replies: 402 fully typed, 52 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 80; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -241,6 +241,46 @@ declare namespace Sdk {
   type FanoutStatement = { agent_count: number; consult_count: number; task_count: number; per_peer: PeerCount[]; expected: ExpectedSpend; unit: LeaseUnit; cap?: SpendCapView | null; over_available: boolean; more_would_buy?: string | null; width_check?: ExceptionalWidthCheck | null; stated_at: number };
   type FanoutLaunchHold = { surface_ref: string; denied: boolean };
   type FanoutLaunchView = { launch_ref: EntityId; plan_digest: string; statement: FanoutStatement; held?: FanoutLaunchHold | null; check_row_ref?: string | null; choice_receipt_ref?: string | null; task_refs: EntityId[] };
+  type SelfBudgetRequest = { attempt: string; run?: string | null };
+  type SpendState = "open" | "closed";
+  type SpendPayer = { party: EntityId; granted_by: EntityId; at_ms: number };
+  type SpendScope = { scope: SpendScopeId; parent?: SpendScopeId | null; unit: LeaseUnit; cap_units: number; hard: boolean; spent_units: number; held_units: number; state: SpendState; shown_at_ms?: number | null; opened_at: number; closed_at?: number | null; agent?: EntityId | null; payer?: SpendPayer | null };
+  type SpendSignal = { signal: "wrap_up"; available_units: number; cap_units: number } | { signal: "at_cap"; cap_units: number };
+  type SpendRead = { scope: SpendScopeId; unit: LeaseUnit; spent_units: number; available_units: number; cap_scope: SpendScopeId; cap_units: number; signal?: SpendSignal | null };
+  type SpendLeaseView = { lease: SpendScope; spend: SpendRead };
+  type AttemptLandingReserve = { limit_units?: number; reserve_units?: number; spent_units?: number; dial_generation?: number | null };
+  type LandingTrigger = "cancel_request" | "budget_warning" | "lease_warning";
+  type AttemptLanding = { trigger: LandingTrigger; requested_by: string; entered_at: number; status?: string | null };
+  type AttemptCancelReceiptKind = "soft_requested" | "landing_accepted" | "soft_rejected" | "resume_point_recorded" | "reserve_spent" | "landed" | "force_cancelled";
+  type CancelStanding = "peer_agent" | "healer" | "automation" | "authority" | "none";
+  type ForceCancelGrounds = "owner" | "lease_expiry" | "criticality";
+  type AttemptResumePoint = { marker: string; artifact_ref?: string | null; recorded_at: number };
+  type AttemptCancelReceipt = { sequence: number; at: number; actor: string; kind: AttemptCancelReceiptKind; standing?: CancelStanding | null; trigger?: LandingTrigger | null; grounds?: ForceCancelGrounds | null; status?: string | null; reason?: string | null; resume_point?: AttemptResumePoint | null; reserve_units?: number; request_sequence?: number | null };
+  type BudgetHoldState = "warned" | "held" | "resumed";
+  type HeldAttempt = { attempt: AttemptId; resume_point: AttemptResumePoint };
+  type CoordinationPattern = "solo" | "ceo_decides" | "committee" | "vote" | "market" | "rotation";
+  type TeamShape = { pattern: CoordinationPattern; width: number };
+  type ModelId = string;
+  type PatternSkillRef = { skill: EntityId; version: string };
+  type CareLevel = "light" | "medium" | "high" | "xhigh" | "max";
+  type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh";
+  type CostEnvelope = { agent_count: number; expected_spend_units: number; hard_cap_units?: number | null; available_units?: number | null; per_agent: ExpectedSpend };
+  type PlannerRung = "cheap_classifier" | "small_thinking" | "strong";
+  type TeamPlan = { shape: TeamShape; model: ModelId; agent_def: EntityId; pattern_skill?: PatternSkillRef | null; care: CareLevel; effort: ReasoningEffort; envelope: CostEnvelope; rung: PlannerRung; fitted_to_budget: boolean; over_budget?: boolean; what_more_would_buy?: string | null };
+  type BudgetHoldNotice = { text: string; delivered_at?: number | null };
+  type PartialResultHold = { root_attempt: AttemptId; state: BudgetHoldState; warned?: AttemptId[]; held?: HeldAttempt[]; partial_result_refs?: string[]; plan?: TeamPlan | null; reason: string; warned_at?: number | null; held_at?: number | null; notice?: BudgetHoldNotice | null; resume_ready?: boolean; resumed_at?: number | null; resumed_by?: string | null };
+  type AgentBudgetView = { attempt: string; lease?: SpendLeaseView | null; landing_reserve: AttemptLandingReserve; ordinary_limit_units: number; landing?: AttemptLanding | null; budget_notices: AttemptCancelReceipt[]; checkpoint?: AttemptResumePoint | null; hold?: PartialResultHold | null };
+  type BudgetLandRequest = { attempt: string; run: string; lease_owner: string; attempt_count: number; marker: string; artifact_ref?: string | null; reason: string };
+  type OpenSpendLeaseRequest = { launch: string; cap_units: number; unit: string; shown_at_ms: number };
+  type SpendScopeRequest = { scope: string };
+  type TopUpSpendLeaseRequest = { scope: string; expected_cap_units: number; cap_units: number; unit: string; shown_at_ms: number };
+  type BudgetHoldRequest = { run: string };
+  type LocalRunnerBudgetRequest = { budget_id: string };
+  type LocalRunnerBudgetCounter = { total_units: number; remaining_units: number; reserved_units: number; updated_at: number };
+  type LocalRunnerBudgetView = { budget_id: string; counter?: LocalRunnerBudgetCounter | null };
+  type RunSettlementsRequest = { run: string };
+  type RunRungSettlement = { instance: string; lease: string; revision: number; model?: string | null; offer: string; route: string; reserved_units: number; settled_units: number; unit: string; usage_reported: boolean; settlement_refused: boolean; occurred_at: number; cost_amount?: number | null; currency?: string | null; price_table_snapshot?: string | null };
+  type RunSettlementsView = { run: string; metering_enabled: boolean; settlements: RunRungSettlement[] };
   type FanoutLaunchRuling = "approve_once" | "approve_and_remember" | "deny";
   type FanoutResumeRequest = { launch_ref: EntityId; plan_digest: string; ruling: FanoutLaunchRuling; remembered_cap?: number | null };
   type FanoutCheckChoice = "ack" | "ack_and_remember";
@@ -521,6 +561,8 @@ declare namespace Sdk {
   type AuthorityAuditOrder = "entry_ref_ascending";
   type ColdAuthorityAuditRow = { entry_ref: EntityId; entry_hash: string; checkpoint: string; signer_key: string; seq: number; parents: string[]; fold_valid: boolean };
   type AuthorityAuditPage = { rows: AuthorityAuditRow[]; next_after?: EntityId | null; order: AuthorityAuditOrder; scanned: number; cold_attested?: ColdAuthorityAuditRow[] };
+  type SignedAuthorityHistory = { entries: string[] };
+  type AuthorityHistoryImported = { entry_refs: string[] };
   type MeshPathReceiptsRequest = { limit?: number | null };
   type MeshPathDirection = "inbound" | "outbound";
   type MeshPathOutcome = "admitted" | "refused" | "failed";
@@ -780,7 +822,6 @@ declare namespace Sdk {
   type PolicyManifestPut = { manifest_ref?: string | null; expected_body_hash?: string | null; manifest: PolicyManifest };
   type PolicyManifestReceipt = { manifest: PolicyManifestView; approval: PolicyCeiling; receipt_ref: string; read_frontier_hash: string };
   type PolicyManifestPropose = { manifest: PolicyManifest };
-  type ModelId = string;
   type ModelSlot = "llm" | "embedder" | "oneironer";
   type ConfidenceBand = "low" | "medium" | "high" | "certain";
   type VerdictMode = "shadow" | "enforce";
@@ -816,6 +857,16 @@ declare namespace Sdk {
   type WidenProposalView = { proposal_id: string; state: WidenProposalState; parent_attempt: string; board_attempt?: string | null; target_kind: string; target: string; parent_context: unknown; requested_context: unknown; widened_parent_context: unknown; recorded_at: number; landed_attempt?: string | null; declined_by?: string | null; declined_at?: number | null };
   type WidenProposalsView = { proposals: WidenProposalView[] };
   type WidenProposalAnswer = { proposal_id: string };
+  type ClaimProposalReviewRequest = { claim_ref: string };
+  type ClaimProposalReview = { review_id: string; proposal_ref: string; claim: ClaimView; opener_ref?: string | null; pending_ref?: string | null };
+  type ClaimSettleDecision = "approve" | "reject";
+  type ClaimSettleRequest = { claim_ref: string; review_id: string; decision: ClaimSettleDecision };
+  type ClaimSettlementVerdict = "landed" | "rejected";
+  type ClaimChangeVerdict = { claim_ref: string; verdict: ClaimSettlementVerdict };
+  type ClaimSettlementAnswer = { kind: "word"; person_ref: string };
+  type ClaimSettlementReason = "gate.claim.settle.approved" | "gate.claim.settle.declined";
+  type ClaimSettlementRevert = { verb: string; claim_ref: string };
+  type ClaimSettlement = { receipt_ref: string; proposal_ref: string; review_id: string; changes: ClaimChangeVerdict[]; verdict: ClaimSettlementVerdict; answered_by: ClaimSettlementAnswer; reason: ClaimSettlementReason; summary: string; tray_receipt_ref?: string | null; revert?: ClaimSettlementRevert | null; claim: ClaimView; settled_at: number };
   type CraftCandidatesRequest = { resident?: string | null };
   type CraftCandidateView = { candidate_id: string; content_hash: string; resident: string; predicate: string; text: string; attempt: string; proposed_at: number };
   type CraftCandidatesView = { candidates: CraftCandidateView[] };
@@ -1253,10 +1304,19 @@ declare namespace Sdk {
   type ForgetRequest = ClaimRefRequest | ForgetPredicateRequest;
   type BookingPageTokenRequest = { page_ref: string };
   type BookingPageTokenResponse = { page_token: string };
+  type CalendarRangeDto = { start: number; end: number };
+  type CalendarEventCreateRequest = { origin: "native"; summary: string; occurredAt: CalendarRangeDto } | { origin: "dreamer"; summary: string; occurredAt: CalendarRangeDto; evidenceTurnIds: string[]; sourceFrontiers: string[] };
+  type CalendarEventCreated = { event_ref: string; origin: string; recorded_at: number };
+  type CalendarIcsImportRequest = { system: string; source_blob_ref: string; source_version: number };
+  type CalendarImportClaimReceipt = { claim_ref: string; predicate: string; approval: string; lifecycle: string };
+  type CalendarImportedEvent = { event_ref: string; uid: string; original_start_utc?: number | null; claims: CalendarImportClaimReceipt[] };
+  type CalendarIcsImportReceipt = { source_blob_ref: string; source_version: number; events: CalendarImportedEvent[]; screen_verdict: string };
+  type CalendarOccurrencesRequest = { master_ref: string; range: CalendarRangeDto };
+  type CalendarOccurrenceView = { event_ref: string; master_ref: string; uid: string; original_start_utc: number; start_utc: number; end_utc: number };
+  type CalendarInstanceMoveRequest = { system: string; source_blob_ref: string; source_version: number; uid: string; original_start_utc: number; start_utc: number; end_utc: number };
   type CalendarReadRequest = { event_ref: string };
   type CalendarEventView = { origin: string; event_ref: string; name?: string | null; start_utc?: number | null; end_utc?: number | null; calendar_systems: string[]; blocks_time: boolean };
   type CalendarSel = { system?: string | null };
-  type CalendarRangeDto = { start: number; end: number };
   type CalendarSearchRequest = { calendars: CalendarSel[]; range?: CalendarRangeDto | null; text?: string | null; limit: number };
   type CalendarFreebusyRequest = { calendars: CalendarSel[]; range: CalendarRangeDto };
   type CalendarFreebusyIntervalDto = { start_utc: number; end_utc: number };
@@ -1712,6 +1772,11 @@ declare namespace self {
     /** Zooms into a rectangle of a held image. */
     zoom(input: Sdk.ZoomInput): Promise<Sdk.ImageOutput | StoredResult>;
   };
+  /** The caller's own dispatched attempt: its persisted spend allowance, landing reserve, checkpoint and saved hold, without substituting a token meter for money. */
+  const budget: ((input: Sdk.SelfBudgetRequest) => Promise<Sdk.AgentBudgetView | StoredResult>) & {
+    /** The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later. */
+    land(input: Sdk.BudgetLandRequest): Promise<Sdk.PartialResultHold | StoredResult>;
+  };
   const compact: (input: Sdk.FoldCompactInput) => Promise<Sdk.FoldReply<Sdk.FoldCompactAsked> | StoredResult>;
   const decisions: {
     asks(input: Sdk.EmptyRequest): Promise<Sdk.DecisionAsk[] | StoredResult>;
@@ -1965,6 +2030,12 @@ declare const vault: Sdk.VaultHost & {
       /** The owner acknowledges one saved handoff fork alarm. */
       acknowledge(input: Sdk.HandoffAlarmRequest): Promise<Sdk.AuthorityHandoffAlarm | StoredResult>;
     };
+    history: {
+      /** Exports the full original signed authority history, including quarantined forks, as base64 envelopes for the owner. No signing secret leaves. */
+      export(input: Sdk.EmptyRequest): Promise<Sdk.SignedAuthorityHistory | StoredResult>;
+      /** Imports original base64 signed authority envelopes atomically for the owner, preserving bytes and refolding locally. Invalid signatures, foreign genesis and missing parents write nothing. */
+      import(input: Sdk.SignedAuthorityHistory): Promise<Sdk.AuthorityHistoryImported | StoredResult>;
+    };
   };
   /** Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade. */
   batch(input: Sdk.CoreBatchWriteInput): Promise<Sdk.CoreBatchWriteReceipt | StoredResult>;
@@ -1972,9 +2043,39 @@ declare const vault: Sdk.VaultHost & {
     /** The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority. */
     page_token(input: Sdk.BookingPageTokenRequest): Promise<Sdk.BookingPageTokenResponse | StoredResult>;
   };
+  budgets: {
+    /** The owner reads a held run's notice, saved partial results, exact checkpoints and whether its existing lease permits resume. */
+    hold: ((input: Sdk.BudgetHoldRequest) => Promise<Sdk.PartialResultHold | null | StoredResult>) & {
+      /** The owner resumes the same held attempts from their checkpoints after their lease has funds; no model substitution or terminal completion. */
+      resume(input: Sdk.BudgetHoldRequest): Promise<Sdk.PartialResultHold | StoredResult>;
+    };
+    /** The owner reads a persisted spend lease, its remaining allowance and the hard ancestor that binds it. */
+    lease: ((input: Sdk.SpendScopeRequest) => Promise<Sdk.SpendLeaseView | StoredResult>) & {
+      /** The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit. */
+      open(input: Sdk.OpenSpendLeaseRequest): Promise<Sdk.SpendLeaseView | StoredResult>;
+      /** The owner raises a hard lease to a shown replacement maximum; replay adds nothing twice and a child's increase stays within its ancestor's cap. */
+      top_up(input: Sdk.TopUpSpendLeaseRequest): Promise<Sdk.SpendLeaseView | StoredResult>;
+    };
+    /** The owner observes a device-local runner budget counter without creating it, including absence after an owner restore. */
+    local(input: Sdk.LocalRunnerBudgetRequest): Promise<Sdk.LocalRunnerBudgetView | StoredResult>;
+    /** The owner reads a served run's persisted physical-rung settlement receipts, with reservation, settled units and stamped cost when priced. */
+    settlements(input: Sdk.RunSettlementsRequest): Promise<Sdk.RunSettlementsView | StoredResult>;
+  };
   calendar: {
+    /** Creates a native or evidence-linked dreamer EVENT as the caller, with atomic projector-recorded origin and engine-stamped recorded time. */
+    create(input: Sdk.CalendarEventCreateRequest): Promise<Sdk.CalendarEventCreated | StoredResult>;
     /** Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt. */
     freebusy(input: Sdk.CalendarFreebusyRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarFreebusyDto> | StoredResult>;
+    ics: {
+      /** The owner imports one exact uploaded ICS version through the existing UID diff and imported-claim gate; the receipt exposes pending claim refs without granting consent. */
+      import(input: Sdk.CalendarIcsImportRequest): Promise<Sdk.CalendarIcsImportReceipt | StoredResult>;
+    };
+    instances: {
+      /** The owner applies one uploaded detached-instance amendment matching its UID, original start and new interval, through the import gate without changing other instances. */
+      move(input: Sdk.CalendarInstanceMoveRequest): Promise<Sdk.CalendarIcsImportReceipt | StoredResult>;
+    };
+    /** Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions. */
+    occurrences(input: Sdk.CalendarOccurrencesRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarOccurrenceView[]> | StoredResult>;
     /** Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt. */
     read(input: Sdk.CalendarReadRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarEventView | null> | StoredResult>;
     /** Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt. */
@@ -2036,8 +2137,12 @@ declare const vault: Sdk.VaultHost & {
     put(input: Sdk.MemoryClaimInput): Promise<Sdk.MemoryWriteOutput | StoredResult>;
     /** Retracts one active claim: a deliberate withdrawal that preserves the record. */
     retract(input: Sdk.ClaimRefRequest): Promise<Sdk.CommitReceipt | StoredResult>;
+    /** The owner reviews one proposed claim: the claim as the owner may read it, its opener and tray row, and the review_id that settles exactly this content. */
+    review(input: Sdk.ClaimProposalReviewRequest): Promise<Sdk.ClaimProposalReview | StoredResult>;
     /** Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt. */
     seed(input: Sdk.ScopedCommitRequest): Promise<Sdk.CommitOutcome[] | StoredResult>;
+    /** The owner approves or rejects exactly the reviewed proposed claim through the gate and keeps its Settlement; a claim changed since its review_id is refused. */
+    settle(input: Sdk.ClaimSettleRequest): Promise<Sdk.ClaimSettlement | StoredResult>;
     supersede(input: Sdk.MemorySupersedeInput): Promise<Sdk.MemoryWriteOutput | StoredResult>;
     /** Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance. */
     upsert(input: Sdk.ScopedClaimInput): Promise<Sdk.CommitReceipt | StoredResult>;

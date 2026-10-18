@@ -28,6 +28,8 @@ mod occurrences;
 pub(in crate::calendar) use occurrences::occurrences;
 mod requests;
 mod service;
+mod window;
+pub use window::{CalendarOccurrenceView, CalendarOccurrencesRequest, read_occurrences_scoped};
 
 pub use self::facts::CalendarRead;
 pub(crate) use self::facts::visit_calendar_events_for_effect;

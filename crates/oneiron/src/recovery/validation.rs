@@ -579,7 +579,7 @@ fn validate_history(row: &CanonicalEntityDocument) -> Result<()> {
     let version = |index: u32| (index as usize) < texts.len();
     strict(history.pins.iter().map(|pin| pin.citation))?;
     for pin in &history.pins {
-        for value in [pin.citation, pin.document, pin.actor] {
+        for value in [pin.citation, pin.document].into_iter().chain(pin.actor) {
             id(value)?;
         }
         let text = texts
@@ -601,12 +601,10 @@ fn validate_history(row: &CanonicalEntityDocument) -> Result<()> {
     }
     strict(history.receipts.iter().map(|receipt| receipt.receipt))?;
     for receipt in &history.receipts {
-        for value in [
-            receipt.receipt,
-            receipt.proposal,
-            receipt.fork,
-            receipt.actor,
-        ] {
+        for value in [receipt.receipt, receipt.proposal, receipt.fork]
+            .into_iter()
+            .chain(receipt.actor)
+        {
             id(value)?;
         }
         if !version(receipt.before) || !version(receipt.after) {
@@ -615,7 +613,10 @@ fn validate_history(row: &CanonicalEntityDocument) -> Result<()> {
     }
     strict(history.forks.iter().map(|fork| fork.fork))?;
     for fork in &history.forks {
-        for value in [fork.fork, fork.proposal, fork.parent_document, fork.actor] {
+        for value in [fork.fork, fork.proposal, fork.parent_document]
+            .into_iter()
+            .chain(fork.actor)
+        {
             id(value)?;
         }
         let pending = fork.status == CanonicalForkStatus::Pending;
@@ -637,7 +638,10 @@ fn validate_history(row: &CanonicalEntityDocument) -> Result<()> {
     }
     strict(history.purges.iter().map(|purge| purge.receipt))?;
     for purge in &history.purges {
-        for value in [purge.receipt, purge.document, purge.actor] {
+        for value in [purge.receipt, purge.document]
+            .into_iter()
+            .chain(purge.actor)
+        {
             id(value)?;
         }
         if !version(purge.requested) || !version(purge.applied) {
