@@ -794,15 +794,16 @@ fn merged_offer(
             continue;
         }
         for (voter, ballot) in &offer.votes {
-            match merged.votes.get(voter) {
-                Some(held) if held == ballot => {}
+            let stands = match merged.votes.get(voter) {
+                None => false,
+                Some(held) if held == ballot => true,
                 Some(held) if ROOM_OFFER_VOTE_ORDER(held) == ROOM_OFFER_VOTE_ORDER(ballot) => {
                     return Err(ROOM_OFFER_VOTE_EQUAL_STAMP);
                 }
-                Some(held) if ROOM_OFFER_VOTE_ORDER(held) > ROOM_OFFER_VOTE_ORDER(ballot) => {}
-                _ => {
-                    merged.votes.insert(*voter, *ballot);
-                }
+                Some(held) => ROOM_OFFER_VOTE_ORDER(held) > ROOM_OFFER_VOTE_ORDER(ballot),
+            };
+            if !stands {
+                merged.votes.insert(*voter, *ballot);
             }
         }
     }
