@@ -10437,7 +10437,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "CheckoutLeaseService"
@@ -10456,8 +10456,28 @@
      "path": "src/checkout/lease/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/checkout/lease/teardown.rs",
+     "purpose": "Restartable teardown shared by the trusted service and credential doors",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/checkout/lease/transactions.rs",
+     "purpose": "Shared lease transitions",
+     "surface": {
+      "crate-vis": 12
      }
     },
     {
@@ -10508,6 +10528,20 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ClaimAgingProfiles"
+     ],
+     "path": "src/claim/aging_profiles.rs",
+     "purpose": "Class-level aging policy data; claim classification stays predicate-root metadata",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -10540,7 +10574,7 @@
       "const": 4,
       "crate-vis": 2,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -10706,7 +10740,7 @@
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)",
      "surface": {
       "crate-vis": 17,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -25202,6 +25236,22 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ClaimAgingProfilesConfigureRequest",
+      "ClaimAgingProfilesReceipt",
+      "ClaimAgingProfilesView"
+     ],
+     "path": "src/gate/policy_manifest_doors/claim_aging.rs",
+     "purpose": "Owner-configured class aging in the existing trusted default policy manifest",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "OwnerPolicyConfiguration",
       "OwnerPolicyConfigurationReceipt",
       "OwnerPolicyConfigurationView",
@@ -25221,9 +25271,9 @@
      "path": "src/gate/policy_manifest_doors/mod.rs",
      "purpose": "Typed policy reads, owner edits and inert untrusted contributions",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 5,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -31605,6 +31655,55 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/memory/checkout_doors/mod.rs",
+     "purpose": "Credential-bound CHECKOUT lease and result doors (ARCH-0068 RC1/RC2)",
+     "surface": {
+      "crate-vis": 1,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/checkout_doors/operations.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CheckoutAction",
+      "CheckoutClaimInput",
+      "CheckoutClass",
+      "CheckoutGetInput",
+      "CheckoutLeaseView",
+      "CheckoutPublishInput",
+      "CheckoutPublished",
+      "CheckoutReclaimInput",
+      "CheckoutRenewInput",
+      "CheckoutRetention",
+      "CheckoutSettleInput",
+      "CheckoutSettled",
+      "CheckoutState",
+      "CheckoutTakeoverInput",
+      "CheckoutTeardownInput",
+      "CheckoutTornDown"
+     ],
+     "path": "src/memory/checkout_doors/types.rs",
+     "purpose": "Typed checkout custody calls",
+     "surface": {
+      "enum": 5,
+      "struct": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "AllRelationships",
       "ClaimRelationships",
@@ -32315,7 +32414,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 12,
+      "mod": 13,
       "re-export": 46
      }
     },
@@ -32758,13 +32857,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ChannelCeiling",
       "CredentialCeiling",
       "ExportChannel",
       "RecordPosition",
+      "RecordPositionRequest",
       "RecordSelector",
       "ScopeAxisInput",
       "ScopeSensitivityBand",
@@ -32777,8 +32877,8 @@
      "purpose": "Scoped exports carry the caller's verified ceiling, never a caller-authored grant",
      "surface": {
       "enum": 5,
-      "fn": 2,
-      "struct": 6
+      "fn": 3,
+      "struct": 7
      }
     },
     {
@@ -35034,7 +35134,7 @@
      "path": "src/origin/publication/publication_protocol.rs",
      "purpose": "Public protocol surface: pin/unpin, publish_origin_ref, reconcile census driver, reads and advertisement…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 9
      }
     },
@@ -45745,7 +45845,7 @@
      "path": "src/skill_optimize/mod.rs",
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "re-export": 17
      }
     },
@@ -50006,6 +50106,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/task_verb/checkout_facts.rs",
+     "purpose": "Checkout ACTs and their synced TASK FACTs share the credential's transaction",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/task_verb/code_consent_word.rs",
      "purpose": "The person's word a code consent answer stands on (DOOR-079 1a)",
      "surface": {
@@ -50463,7 +50573,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 37,
+      "crate-vis": 38,
       "fn": 1,
       "mod": 3,
       "re-export": 25
@@ -51028,12 +51138,15 @@
      "kind": "src",
      "notable": [
       "CredentialAttenuated",
-      "CredentialAttenuationRequest"
+      "CredentialAttenuationRequest",
+      "CredentialCaveat",
+      "CredentialPactCeiling"
      ],
      "path": "src/task_verb/sdk_credential.rs",
      "purpose": "Holder-owned attenuation of the credential a transport admitted",
      "surface": {
-      "struct": 2
+      "fn": 1,
+      "struct": 4
      }
     },
     {
@@ -51206,7 +51319,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 713
+      "fn": 728
      }
     },
     {
@@ -51770,7 +51883,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "SkillCapabilityView",
@@ -51778,6 +51891,8 @@
       "SkillConvertReceipt",
       "SkillConvertRequest",
       "SkillForkLineage",
+      "SkillGovernanceSetRequest",
+      "SkillGovernanceView",
       "SkillHashRuleRequest",
       "SkillLibraryCall",
       "SkillLibraryDependency",
@@ -51790,6 +51905,12 @@
       "SkillLibraryRestoreRequest",
       "SkillLibraryScan",
       "SkillLibraryView",
+      "SkillOptimizeAxisView",
+      "SkillOptimizeResultRequest",
+      "SkillOptimizeResultView",
+      "SkillOptimizeStartReceipt",
+      "SkillOptimizeStartRequest",
+      "SkillOptimizeVerdictView",
       "SkillRestoreAdmission",
       "SkillSourceEvidence",
       "SkillStaleView"
@@ -51798,8 +51919,8 @@
      "purpose": "Owner-bound library doors over the existing conversion, lifecycle and admission engines",
      "surface": {
       "enum": 3,
-      "fn": 10,
-      "struct": 17
+      "fn": 16,
+      "struct": 25
      }
     },
     {
@@ -57203,14 +57324,14 @@
      "purpose": "Relationship-context channel-identity selection law (ONE-1826)"
     },
     "checkout": {
-     "files": 10,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "—"
     },
     "claim": {
-     "files": 68,
+     "files": 69,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57651,7 +57772,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 140,
+     "files": 141,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57854,7 +57975,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 178,
+     "files": 181,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58365,7 +58486,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 171,
+     "files": 172,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -58533,9 +58654,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 195,
+   "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3570,
+   "source_files": 3578,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67065,7 +67186,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 677
+      "fn": 692
      }
     },
     {
@@ -68114,7 +68235,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 678
+      "fn": 693
      }
     },
     {
@@ -71024,6 +71145,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/aging_doors.rs",
+     "purpose": "Class-aging profile reads and edits under the caller's own owner credential",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/artifact_hosting_doors.rs",
      "purpose": "Typed publication and private preview doors under each caller's own proof",
      "surface": {
@@ -71128,6 +71259,16 @@
      "purpose": "Credential-bound host projections of the typed channel setup verbs",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/checkout_doors.rs",
+     "purpose": "One credential-backed CHECKOUT door for HTTP, MCP and the generated SDK",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -71447,7 +71588,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 124
+      "crate-vis": 126
      }
     },
     {
@@ -71757,7 +71898,7 @@
      "path": "src/api/facade/skill_doors.rs",
      "purpose": "Selected-message conversion and the owner's skill library, through the same facade and MCP doors",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 12
      }
     },
     {
@@ -79176,7 +79317,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 386,
+     "files": 388,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -79598,7 +79739,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 724,
+   "source_files": 726,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -79794,6 +79935,7 @@
      "notable": [
       "AcceptConnect",
       "AcceptRescopeConnect",
+      "AccessFactorPolicy",
       "AccessStatus",
       "ActExecution",
       "ActionBoundRequest",
@@ -80133,12 +80275,32 @@
       "ChartSeries",
       "ChartSource",
       "ChatProjection",
+      "CheckoutAction",
+      "CheckoutClaimInput",
+      "CheckoutClass",
       "CheckoutDoorBindRequest",
       "CheckoutDoorBinding",
+      "CheckoutGetInput",
+      "CheckoutLeaseView",
+      "CheckoutPublishInput",
+      "CheckoutPublished",
+      "CheckoutReclaimInput",
+      "CheckoutRenewInput",
+      "CheckoutRetention",
+      "CheckoutSettleInput",
+      "CheckoutSettled",
+      "CheckoutState",
+      "CheckoutTakeoverInput",
+      "CheckoutTeardownInput",
+      "CheckoutTornDown",
       "CheckpointReadRequest",
       "CheckpointResumeView",
       "CheckpointStepView",
       "CheckpointView",
+      "ClaimAgingProfiles",
+      "ClaimAgingProfilesConfigureRequest",
+      "ClaimAgingProfilesReceipt",
+      "ClaimAgingProfilesView",
       "ClaimApprovalStatus",
       "ClaimChangeVerdict",
       "ClaimDemoteActionInput",
@@ -80368,7 +80530,9 @@
       "CreateStandingGrantRequest",
       "CredentialAttenuated",
       "CredentialAttenuationRequest",
+      "CredentialCaveat",
       "CredentialCeiling",
+      "CredentialPactCeiling",
       "CreditOptions",
       "Criterion",
       "CriticAssociation",
@@ -81374,6 +81538,7 @@
       "RecordLinks",
       "RecordLinksRequest",
       "RecordPosition",
+      "RecordPositionRequest",
       "RecordRef",
       "RecordRefPreview",
       "RecordSelector",
@@ -81634,6 +81799,7 @@
       "ScopedReadResultOptionalNoteReadView",
       "ScopedReadResultOptionalNoteVersionTree",
       "ScopedReadResultOptionalProductivityTree",
+      "ScopedReadResultOptionalRecordPosition",
       "ScopedReadResultOptionalSharedBriefView",
       "ScopedReadResultOptionalSummaryReadView",
       "ScopedReadResultRecordRefPreview",
@@ -81799,6 +81965,8 @@
       "SkillConvertRequest",
       "SkillForkLineage",
       "SkillForkRequest",
+      "SkillGovernanceSetRequest",
+      "SkillGovernanceView",
       "SkillHashRuleRequest",
       "SkillHubConfigured",
       "SkillHubKind",
@@ -81817,6 +81985,12 @@
       "SkillLibraryRestoreRequest",
       "SkillLibraryScan",
       "SkillLibraryView",
+      "SkillOptimizeAxisView",
+      "SkillOptimizeResultRequest",
+      "SkillOptimizeResultView",
+      "SkillOptimizeStartReceipt",
+      "SkillOptimizeStartRequest",
+      "SkillOptimizeVerdictView",
       "SkillPackCreditRequest",
       "SkillPackOutcomeProjection",
       "SkillPackOutcomeRequest",
@@ -81857,7 +82031,6 @@
       "SlimResumeStepRequest",
       "SlimStateSnapshot",
       "SlimStateView",
-      "SlipCaveat",
       "SmartArtNode",
       "SourceTrust",
       "SourceTrustRow",
@@ -82235,8 +82408,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 621,
-      "struct": 1818
+      "enum": 626,
+      "struct": 1845
      }
     },
     {

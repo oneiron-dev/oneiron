@@ -678,6 +678,8 @@ class Oneiron:
             """Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override."""
     class _VaultRetrievalVerbs:
         @property
+        def aging(self) -> "Oneiron._VaultRetrievalAgingVerbs": ...
+        @property
         def weights(self) -> "Oneiron._VaultRetrievalWeightsVerbs": ...
         def recall(self, spec: Facade.RecallRequest) -> Facade.MemoryPack:
             """Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle."""
@@ -695,6 +697,11 @@ class Oneiron:
             """The owner exports finalized run evidence without query or pack text, raw frontier samples, trace keys or free-form outcome metadata."""
         def replay(self, spec: Facade.RetrievalDiagnosticRequest) -> Facade.RetrievalDiagnosticReplay:
             """The owner replays recorded state, ordered pack scores and trace from exact finalized runs; no fresh search, clock or outcome-derived feature is used."""
+    class _VaultRetrievalAgingVerbs:
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.ClaimAgingProfilesView:
+            """The owner reads class-level exponential aging profiles and the trusted manifest hash; confidence never ages."""
+        def configure(self, spec: Facade.ClaimAgingProfilesConfigureRequest) -> Facade.ClaimAgingProfilesReceipt:
+            """The owner edits all class-aging profiles against the current manifest hash without rewriting confidence, lifecycle or claim bodies."""
     class _VaultRetrievalWeightsVerbs:
         def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.RetrievalWeightsView:
             """The owner reads effective affect, arousal, community and semantic-edge VAD priors with the trusted manifest hash."""
@@ -730,6 +737,8 @@ class Oneiron:
         def scoped(self, spec: Facade.ScopedExportRequest) -> Facade.ScopedExport:
             """Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding."""
     class _VaultScopeVerbs:
+        def position(self, spec: Facade.RecordPositionRequest) -> Facade.ScopedReadResult[Facade.RecordPosition | None]:
+            """Reads a positively stamped record position through the caller credential and existing read gate, with its narrowing receipt."""
         def ceiling(self, spec: Facade.EmptyRequest | None = None) -> Facade.CredentialCeiling:
             """Reads the caller credential ceiling as a typed ceiling, never as a record position."""
     class _VaultReceiptsVerbs:
@@ -897,6 +906,10 @@ class Oneiron:
         def code_auto_install(self) -> "Oneiron._VaultSkillsCodeAutoInstallVerbs": ...
         @property
         def permissions(self) -> "Oneiron._VaultSkillsPermissionsVerbs": ...
+        @property
+        def optimize(self) -> "Oneiron._VaultSkillsOptimizeVerbs": ...
+        @property
+        def governance(self) -> "Oneiron._VaultSkillsGovernanceVerbs": ...
         def pack_receipt(self, spec: Facade.SkillPackReceiptRequest) -> Facade.SkillPackReceipt:
             """Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner."""
         @property
@@ -910,6 +923,16 @@ class Oneiron:
     class _VaultSkillsPermissionsVerbs:
         def approve(self, spec: Facade.HubSkillPermissionRequest) -> Facade.HubConsentReceipt:
             """The owner answers one imported skill permission ask at its exact hub source."""
+    class _VaultSkillsOptimizeVerbs:
+        def start(self, spec: Facade.SkillOptimizeStartRequest) -> Facade.SkillOptimizeStartReceipt:
+            """The owner starts one skill_optimize attempt on the Dreamer queue; a named identity or alignment skill is excluded and never enqueued."""
+        def result(self, spec: Facade.SkillOptimizeResultRequest) -> Facade.SkillOptimizeResultView:
+            """Reads a started skill_optimize job, its drafted proposal, the incumbent, its governance and every held-out verdict on the proposal."""
+    class _VaultSkillsGovernanceVerbs:
+        def get(self, spec: Facade.HubSkillRequest) -> Facade.SkillGovernanceView:
+            """Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it."""
+        def set(self, spec: Facade.SkillGovernanceSetRequest) -> Facade.SkillGovernanceView:
+            """The owner marks or clears one skill governance tier; the mark changes no instruction content or version."""
     class _VaultSkillsOutcomesVerbs:
         def project(self, spec: Facade.SkillPackOutcomeRequest) -> Facade.SkillPackOutcomeProjection:
             """Projects the owner's anchored verdict through existing attributed pack outcomes; loading or calling alone never earns a reliability win."""
@@ -1526,6 +1549,22 @@ class Oneiron:
     class _VaultCodeCheckoutVerbs:
         def bind(self, spec: Facade.CheckoutDoorBindRequest) -> Facade.CheckoutDoorBinding:
             """Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential."""
+        def claim(self, spec: Facade.CheckoutClaimInput) -> Facade.CheckoutLeaseView:
+            """Claim the caller's checkout on an assigned task, with a bounded TTL and declared idempotence."""
+        def get(self, spec: Facade.CheckoutGetInput) -> Facade.CheckoutLeaseView:
+            """Read checkout custody and vault-clock expiry as a task party, without claiming or renewing it."""
+        def renew(self, spec: Facade.CheckoutRenewInput) -> Facade.CheckoutLeaseView:
+            """Renew the caller's still-live checkout under its exact holder and epoch fence."""
+        def reclaim(self, spec: Facade.CheckoutReclaimInput) -> Facade.CheckoutLeaseView:
+            """Reclaim an expired declared-idempotent build or verify checkout as an authorized successor at the named epoch."""
+        def takeover(self, spec: Facade.CheckoutTakeoverInput) -> Facade.CheckoutLeaseView:
+            """Explicitly take over a checkout as its task owner, including effect work, at the named epoch."""
+        def publish(self, spec: Facade.CheckoutPublishInput) -> Facade.CheckoutPublished:
+            """Publish a stored candidate result for checkout settlement under the caller's live epoch; this does not export a Git head."""
+        def settle(self, spec: Facade.CheckoutSettleInput) -> Facade.CheckoutSettled:
+            """Consume one published checkout result at its epoch as select, apply, release or discard; an identical retry returns its receipt."""
+        def teardown(self, spec: Facade.CheckoutTeardownInput) -> Facade.CheckoutTornDown:
+            """Collect the caller's checkout only with a matching durable pushed-head receipt and clear custody; retain dirty or uncertain trees."""
     class _VaultCodeSnapshotsVerbs:
         def ingest(self, spec: Facade.CodeSnapshotIngestRequest) -> Facade.CodeSnapshotView:
             """Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt."""

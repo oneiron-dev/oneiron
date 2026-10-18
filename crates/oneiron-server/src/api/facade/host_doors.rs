@@ -135,6 +135,7 @@ pub(crate) use super::gate_policy_doors::*;
 pub(crate) use super::policy_doors::*;
 // The owner's origin and checkout doors (DOOR-139), likewise.
 pub(crate) use super::origin_doors::*;
+pub(crate) use super::checkout_doors::*;
 // The owner's code snapshot doors (DOOR-118), likewise.
 pub(crate) use super::codebase_doors::*;
 // The owner's task-type tree doors (DOOR-111) and run doors (DOOR-100),
@@ -157,6 +158,7 @@ pub(crate) use super::core_write_doors::*;
 pub(crate) use super::critic_review_doors::*;
 // The owner's campaign split evaluation door (FIX 655), likewise.
 pub(crate) use super::affect_doors::*;
+pub(crate) use super::aging_doors::*;
 pub(crate) use super::campaign_split_doors::*;
 pub(crate) use super::research_doors::*;
 pub(crate) use super::retrieval_doors::*;
@@ -1117,6 +1119,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.skills.rules.set"
         | "vault.skills.code_auto_install.set"
         | "vault.skills.permissions.approve"
+        | "vault.skills.optimize.start"
+        | "vault.skills.optimize.result"
+        | "vault.skills.governance.get"
+        | "vault.skills.governance.set"
         | "vault.skills.pack_receipt"
         | "vault.skills.outcomes.project"
         | "vault.skills.outcomes.get"
@@ -1157,6 +1163,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.decisions.bands.read"
         | "vault.decisions.bands.learn"
         | "vault.decisions.bands.enforce"
+        | "vault.retrieval.aging.get"
+        | "vault.retrieval.aging.configure"
         | "vault.retrieval.weights.get"
         | "vault.retrieval.weights.configure"
         | "vault.affect.claims.consolidate"

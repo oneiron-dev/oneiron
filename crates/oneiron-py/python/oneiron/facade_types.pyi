@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 677 facade rows, 2483 declarations.
-Inputs: 625 of 677 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 602 of 677 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 692 facade rows, 2514 declarations.
+Inputs: 640 of 692 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 617 of 692 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 95; unread shapes: 0.
 """
 
@@ -1727,6 +1727,23 @@ class MemoryPack(TypedDict):
     rendered: NotRequired[str | None]
     narrowing: ScopedReadReceipt
     retrieval_run_id: NotRequired[RetrievalRunId | None]
+class AccessFactorPolicy(TypedDict):
+    half_life_secs: float
+    floor: float
+class ClaimAgingProfiles(TypedDict):
+    durable: AccessFactorPolicy
+    standard: AccessFactorPolicy
+    ephemeral: AccessFactorPolicy
+class ClaimAgingProfilesView(TypedDict):
+    manifest_ref: str
+    body_hash: str
+    profiles: ClaimAgingProfiles
+class ClaimAgingProfilesConfigureRequest(TypedDict):
+    expected_body_hash: str
+    profiles: ClaimAgingProfiles
+class ClaimAgingProfilesReceipt(TypedDict):
+    configuration: ClaimAgingProfilesView
+    receipt_ref: str
 class RetrievalWeights(TypedDict):
     affect: float
     arousal: float
@@ -2098,23 +2115,42 @@ class Scope(TypedDict):
     audience: NotRequired[ScopeAxis[ScopeId]]
     verbs: NotRequired[ScopeAxis[str]]
     sensitivity: NotRequired[SensitivityCeiling]
-class SlipCaveat(TypedDict):
-    scope: NotRequired[Scope | None]
+class CredentialCeiling(TypedDict):
+    kind: Literal["ceiling"]
+    scope: Scope
+TypeByteFamily = Literal["Conversation", "People", "World", "Content", "AgentsAndSurfacing", "CoreOverflow", "AuthorityPolicyCustody", "AuditObservability", "OutboundCommunicationConsent", "RegistriesDerived", "Productivity", "Code", "Documents", "Companion", "PackOverflow"]
+class SelectorRangeFamily(TypedDict):
+    Family: TypeByteFamily
+SelectorRange = Literal["Semantic", "Core", "Maintenance"] | SelectorRangeFamily
+class FederationDirectionScope(TypedDict):
+    worlds: ScopeAxis[ScopeId]
+    facets: ScopeAxis[ScopeId]
+    bands: ScopeAxis[SelectorRange]
+class CredentialPactCeiling(TypedDict):
+    grant_ref: ScopeId
+    ceiling: FederationDirectionScope
+class CredentialCaveat(TypedDict):
+    scope: NotRequired[CredentialCeiling | None]
     expires_at: NotRequired[int | None]
     ttl_secs: NotRequired[int | None]
-    single_use: bool
+    single_use: NotRequired[bool]
     records: NotRequired[list[str] | None]
     channels: NotRequired[list[str] | None]
-    pact: NotRequired[tuple[ScopeId, list[int]] | None]
+    pact: NotRequired[CredentialPactCeiling | None]
 class CredentialAttenuationRequest(TypedDict):
     holder_seed: list[int]
-    caveat: SlipCaveat
+    caveat: CredentialCaveat
     next_binding_key: NotRequired[list[int] | None]
 class CredentialAttenuated(TypedDict):
     token: str
     binding_key: list[int]
-class CredentialCeiling(TypedDict):
-    kind: Literal["ceiling"]
+class RecordPositionRequest(TypedDict):
+    record_ref: str
+class ScopedReadResult(TypedDict, Generic[T]):
+    value: T
+    narrowing: ScopedReadReceipt
+class RecordPosition(TypedDict):
+    kind: Literal["position"]
     scope: Scope
 class RecordSelector(TypedDict):
     worlds: NotRequired[RecallWorlds | None]
@@ -2149,9 +2185,6 @@ class ExportChannel(TypedDict):
 class ScopedExportRequest(TypedDict):
     selector: RecordSelector
     channel: ExportChannel
-class RecordPosition(TypedDict):
-    kind: Literal["position"]
-    scope: Scope
 MadeByInputRole = Literal["input", "prompt"]
 class MadeByInput(TypedDict):
     row: str
@@ -3183,6 +3216,69 @@ class SkillCodeAutoInstallRequest(TypedDict):
 class HubSkillPermissionRequest(TypedDict):
     entity: EntityId
     hub_ref: HubRef
+class SkillOptimizeStartRequest(TypedDict):
+    skill: NotRequired[EntityId | None]
+    resident: NotRequired[EntityId | None]
+    run_id: NotRequired[str | None]
+    dedupe_key: NotRequired[str | None]
+    now: NotRequired[int | None]
+class SkillGovernanceView(TypedDict):
+    entity: EntityId
+    skill_id: str
+    version: str
+    lifecycle: SkillLibraryLifecycle
+    verdict: str
+    tier: NotRequired[str | None]
+    protected: bool
+    optimizable: bool
+class SkillOptimizeStartReceipt(TypedDict):
+    outcome: str
+    job_ref: NotRequired[str | None]
+    state: NotRequired[str | None]
+    skill: NotRequired[EntityId | None]
+    governance: NotRequired[SkillGovernanceView | None]
+class SkillOptimizeResultRequest(TypedDict):
+    job_ref: NotRequired[str | None]
+    proposal: NotRequired[EntityId | None]
+class SkillOptimizeAxisView(TypedDict):
+    axis: str
+    before: float
+    after: float
+class SkillOptimizeVerdictView(TypedDict):
+    id: EntityId
+    proposal: EntityId
+    skill: EntityId
+    disposition: str
+    accepted: bool
+    before: float
+    after: float
+    goal_axes: list[SkillOptimizeAxisView]
+    goal_revision: str
+    judge_revision: NotRequired[str | None]
+    cycle: str
+    held_out_receipts: list[str]
+    held_out_count: int
+    held_out_digest: str
+    held_out_truncated: bool
+    proposal_digest: str
+    target_digest: str
+    proposal_tier: NotRequired[str | None]
+    at: int
+class SkillOptimizeResultView(TypedDict):
+    job_ref: NotRequired[str | None]
+    state: NotRequired[str | None]
+    kind: NotRequired[str | None]
+    last_error: NotRequired[str | None]
+    skill: NotRequired[EntityId | None]
+    proposal: NotRequired[EntityId | None]
+    proposal_lifecycle: NotRequired[SkillLibraryLifecycle | None]
+    incumbent_lifecycle: NotRequired[SkillLibraryLifecycle | None]
+    governance: NotRequired[SkillGovernanceView | None]
+    verdict: NotRequired[SkillOptimizeVerdictView | None]
+    verdicts: list[SkillOptimizeVerdictView]
+class SkillGovernanceSetRequest(TypedDict):
+    entity: EntityId
+    tier: NotRequired[str | None]
 class HubHookBindRequest(TypedDict):
     pack: str
 HookActorClass = Literal["human", "agent", "system"]
@@ -4076,14 +4172,6 @@ class ConnectGrant(TypedDict):
     guest_actor: str
     resolved_scope: Scope
     expires_at: NotRequired[int | None]
-TypeByteFamily = Literal["Conversation", "People", "World", "Content", "AgentsAndSurfacing", "CoreOverflow", "AuthorityPolicyCustody", "AuditObservability", "OutboundCommunicationConsent", "RegistriesDerived", "Productivity", "Code", "Documents", "Companion", "PackOverflow"]
-class SelectorRangeFamily(TypedDict):
-    Family: TypeByteFamily
-SelectorRange = Literal["Semantic", "Core", "Maintenance"] | SelectorRangeFamily
-class FederationDirectionScope(TypedDict):
-    worlds: ScopeAxis[ScopeId]
-    facets: ScopeAxis[ScopeId]
-    bands: ScopeAxis[SelectorRange]
 class OfferConnect(TypedDict):
     peer_vault: str
     grant: str
@@ -6403,9 +6491,6 @@ class LensDefaultRequest(TypedDict):
     dossiers: NotRequired[list[LensDossierSource]]
     threads: NotRequired[list[str]]
     as_of: NotRequired[int | None]
-class ScopedReadResult(TypedDict, Generic[T]):
-    value: T
-    narrowing: ScopedReadReceipt
 class DisclosureOfferRequest(TypedDict):
     contact: str
     scope: Scope
@@ -7154,6 +7239,83 @@ class CheckoutDoorBinding(TypedDict):
     epoch: int
     checkout_path: str
     remote_url: str
+CheckoutClass = Literal["edit", "build", "verify", "effect"]
+class CheckoutClaimInput(TypedDict):
+    checkout: str
+    repo: EntityId
+    task: EntityId
+    task_class: CheckoutClass
+    ttl_seconds: int
+    declared_idempotent: bool
+CheckoutState = Literal["active", "settling", "settled", "retained"]
+class CheckoutLeaseView(TypedDict):
+    checkout: str
+    task: EntityId
+    repo_ref: str
+    holder: EntityId
+    epoch: int
+    task_class: CheckoutClass
+    state: CheckoutState
+    claimed_at: int
+    expires_at: NotRequired[int | None]
+    expired: bool
+    ticket: str
+    receipt: NotRequired[str | None]
+class CheckoutGetInput(TypedDict):
+    checkout: str
+class CheckoutRenewInput(TypedDict):
+    checkout: str
+    epoch: int
+    ttl_seconds: int
+class CheckoutReclaimInput(TypedDict):
+    checkout: str
+    expired_epoch: int
+class CheckoutTakeoverInput(TypedDict):
+    checkout: str
+    expected_epoch: int
+class CheckoutPublishInput(TypedDict):
+    checkout: str
+    epoch: int
+    observed_ref: str
+    candidate: EntityId
+class CheckoutPublished(TypedDict):
+    checkout: str
+    epoch: int
+    observed_ref: str
+    candidate: EntityId
+    result_identity: str
+    receipt: str
+CheckoutAction = Literal["select", "apply", "release", "discard"]
+class CheckoutSettleInput(TypedDict):
+    checkout: str
+    epoch: int
+    observed_ref: str
+    candidate: EntityId
+    action: CheckoutAction
+class CheckoutSettled(TypedDict):
+    checkout: str
+    epoch: int
+    observed_ref: str
+    candidate: EntityId
+    action: CheckoutAction
+    result_identity: str
+    receipt: str
+    settled_at: int
+class CheckoutTeardownInput(TypedDict):
+    checkout: str
+    epoch: int
+    pushed_head_receipt: NotRequired[EntityId | None]
+CheckoutRetention = Literal["missing_pushed_head_receipt", "receipt_mismatch", "live_occupant", "dirty_or_uncertain"]
+class CheckoutTornDownCollected(TypedDict):
+    status: Literal["collected"]
+    checkout: str
+    epoch: int
+class CheckoutTornDownRetained(TypedDict):
+    status: Literal["retained"]
+    checkout: str
+    epoch: int
+    reason: CheckoutRetention
+CheckoutTornDown = CheckoutTornDownCollected | CheckoutTornDownRetained
 class CodeRepoPointer(TypedDict):
     local_folder: str
     commit: str

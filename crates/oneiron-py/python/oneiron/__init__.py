@@ -797,6 +797,9 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         @property
+        def aging(self) -> "Oneiron._VaultRetrievalAgingVerbs":
+            return Oneiron._VaultRetrievalAgingVerbs(self._client)
+        @property
         def weights(self) -> "Oneiron._VaultRetrievalWeightsVerbs":
             return Oneiron._VaultRetrievalWeightsVerbs(self._client)
         def recall(self, spec):
@@ -823,6 +826,15 @@ class Oneiron:
         def replay(self, spec):
             """The owner replays recorded state, ordered pack scores and trace from exact finalized runs; no fresh search, clock or outcome-derived feature is used."""
             return json.loads(_translate(lambda: self._client.vault_retrieval_replay(json.dumps(spec))))
+    class _VaultRetrievalAgingVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec=None):
+            """The owner reads class-level exponential aging profiles and the trusted manifest hash; confidence never ages."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_aging_get(json.dumps({} if spec is None else spec))))
+        def configure(self, spec):
+            """The owner edits all class-aging profiles against the current manifest hash without rewriting confidence, lifecycle or claim bodies."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_aging_configure(json.dumps(spec))))
     class _VaultRetrievalWeightsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -889,6 +901,9 @@ class Oneiron:
     class _VaultScopeVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def position(self, spec):
+            """Reads a positively stamped record position through the caller credential and existing read gate, with its narrowing receipt."""
+            return json.loads(_translate(lambda: self._client.vault_scope_position(json.dumps(spec))))
         def ceiling(self, spec=None):
             """Reads the caller credential ceiling as a typed ceiling, never as a record position."""
             return json.loads(_translate(lambda: self._client.vault_scope_ceiling(json.dumps({} if spec is None else spec))))
@@ -1183,6 +1198,12 @@ class Oneiron:
         @property
         def permissions(self) -> "Oneiron._VaultSkillsPermissionsVerbs":
             return Oneiron._VaultSkillsPermissionsVerbs(self._client)
+        @property
+        def optimize(self) -> "Oneiron._VaultSkillsOptimizeVerbs":
+            return Oneiron._VaultSkillsOptimizeVerbs(self._client)
+        @property
+        def governance(self) -> "Oneiron._VaultSkillsGovernanceVerbs":
+            return Oneiron._VaultSkillsGovernanceVerbs(self._client)
         def pack_receipt(self, spec):
             """Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner."""
             return json.loads(_translate(lambda: self._client.vault_skills_pack_receipt(json.dumps(spec))))
@@ -1207,6 +1228,24 @@ class Oneiron:
         def approve(self, spec):
             """The owner answers one imported skill permission ask at its exact hub source."""
             return json.loads(_translate(lambda: self._client.vault_skills_permissions_approve(json.dumps(spec))))
+    class _VaultSkillsOptimizeVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def start(self, spec):
+            """The owner starts one skill_optimize attempt on the Dreamer queue; a named identity or alignment skill is excluded and never enqueued."""
+            return json.loads(_translate(lambda: self._client.vault_skills_optimize_start(json.dumps(spec))))
+        def result(self, spec):
+            """Reads a started skill_optimize job, its drafted proposal, the incumbent, its governance and every held-out verdict on the proposal."""
+            return json.loads(_translate(lambda: self._client.vault_skills_optimize_result(json.dumps(spec))))
+    class _VaultSkillsGovernanceVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it."""
+            return json.loads(_translate(lambda: self._client.vault_skills_governance_get(json.dumps(spec))))
+        def set(self, spec):
+            """The owner marks or clears one skill governance tier; the mark changes no instruction content or version."""
+            return json.loads(_translate(lambda: self._client.vault_skills_governance_set(json.dumps(spec))))
     class _VaultSkillsOutcomesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2296,6 +2335,30 @@ class Oneiron:
         def bind(self, spec):
             """Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential."""
             return json.loads(_translate(lambda: self._client.vault_code_checkout_bind(json.dumps(spec))))
+        def claim(self, spec):
+            """Claim the caller's checkout on an assigned task, with a bounded TTL and declared idempotence."""
+            return json.loads(_translate(lambda: self._client.vault_code_checkout_claim(json.dumps(spec))))
+        def get(self, spec):
+            """Read checkout custody and vault-clock expiry as a task party, without claiming or renewing it."""
+            return json.loads(_translate(lambda: self._client.vault_code_checkout_get(json.dumps(spec))))
+        def renew(self, spec):
+            """Renew the caller's still-live checkout under its exact holder and epoch fence."""
+            return json.loads(_translate(lambda: self._client.vault_code_checkout_renew(json.dumps(spec))))
+        def reclaim(self, spec):
+            """Reclaim an expired declared-idempotent build or verify checkout as an authorized successor at the named epoch."""
+            return json.loads(_translate(lambda: self._client.vault_code_checkout_reclaim(json.dumps(spec))))
+        def takeover(self, spec):
+            """Explicitly take over a checkout as its task owner, including effect work, at the named epoch."""
+            return json.loads(_translate(lambda: self._client.vault_code_checkout_takeover(json.dumps(spec))))
+        def publish(self, spec):
+            """Publish a stored candidate result for checkout settlement under the caller's live epoch; this does not export a Git head."""
+            return json.loads(_translate(lambda: self._client.vault_code_checkout_publish(json.dumps(spec))))
+        def settle(self, spec):
+            """Consume one published checkout result at its epoch as select, apply, release or discard; an identical retry returns its receipt."""
+            return json.loads(_translate(lambda: self._client.vault_code_checkout_settle(json.dumps(spec))))
+        def teardown(self, spec):
+            """Collect the caller's checkout only with a matching durable pushed-head receipt and clear custody; retain dirty or uncertain trees."""
+            return json.loads(_translate(lambda: self._client.vault_code_checkout_teardown(json.dumps(spec))))
     class _VaultCodeSnapshotsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
