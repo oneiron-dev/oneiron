@@ -10040,9 +10040,10 @@
       "VerifiedClaimHistoryHandoff"
      ],
      "path": "src/claim/history_handoff.rs",
-     "purpose": "Bounded, canonical, signed transfer of one scoped machine-claim history",
+     "purpose": "Bounded, canonical, signed transfer of one scoped machine-claim history, one delta at a time",
      "surface": {
       "const": 3,
+      "crate-vis": 2,
       "enum": 5,
       "fn": 5,
       "struct": 5
@@ -10057,7 +10058,7 @@
      "path": "src/claim/history_projection.rs",
      "purpose": "Verified MACHINE history residence: exact birth + transition closure at a trusted pin",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 16,
       "fn": 4,
       "struct": 1
      }
@@ -43125,7 +43126,7 @@
      "path": "src/skill_optimize/eval_set/cohort.rs",
      "purpose": "Date-cut sealed cohorts and the exposure ledger (ARCH-0053: \"The ledger counts what each sealed cohort has…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 6,
       "struct": 5
@@ -45164,7 +45165,7 @@
      "path": "src/sync/client/base.rs",
      "purpose": "SyncClient construction, window and ephemeral accessors, and root persistence",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 16,
       "struct": 1
      }
@@ -45434,7 +45435,7 @@
      "path": "src/sync/connection/session.rs",
      "purpose": "Session types: WS aliases, pump budget, convergence session, resync markers",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -45687,7 +45688,7 @@
      "path": "src/sync/ingest/mod.rs",
      "purpose": "One ingest entry per replicated container: every entities-map value and every tombstone takes the same…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -45708,6 +45709,16 @@
      "purpose": "Which rows of a window a federation peer's import brought (Docs Q04)",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/ingest/promotion.rs",
+     "purpose": "What a promotion owes the TURNs it lands (OF-534)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -47888,9 +47899,9 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 32,
+      "crate-vis": 33,
       "mod": 2,
-      "re-export": 24
+      "re-export": 25
      }
     },
     {
@@ -48894,7 +48905,33 @@
      "path": "src/task_verb/training_offer_ask.rs",
      "purpose": "A pending training offer asked as a real `tasks.ask` (OF-577, FIX 856)",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SwapAskState",
+      "TrainingSwapAskView"
+     ],
+     "path": "src/task_verb/training_swap_ask.rs",
+     "purpose": "A Scored training run's result asked as a real `tasks.ask` (OF-577, FIX 857)",
+     "surface": {
+      "crate-vis": 11,
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/training_swap_ask/question.rs",
+     "purpose": "What a training swap question says and which results get one: the result in brief, and the expectation and…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -49589,21 +49626,26 @@
      "path": "src/training_pack/mod.rs",
      "purpose": "OF-382: a consented corpus, pinned training job, checked checkpoint and owner-approved role swap",
      "surface": {
+      "crate-vis": 1,
       "fn": 6,
       "re-export": 3
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "TrainingEvalInput"
+      "SwapExpectation",
+      "TrainingEvalInput",
+      "ViewedSwap"
      ],
      "path": "src/training_pack/promotion.rs",
      "purpose": "Held-out scoring releases a counted cohort",
      "surface": {
-      "fn": 4,
-      "struct": 1
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 7,
+      "struct": 2
      }
     },
     {
@@ -50451,7 +50493,7 @@
      "purpose": "ONE-1807: the engine half of a transport-neutral text-brain voice cascade",
      "surface": {
       "mod": 6,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -50663,7 +50705,8 @@
      "path": "src/voice_cascade/speakable.rs",
      "purpose": "Text past one call's bound is spoken as several calls, in order, never refused (Rule 5)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -54796,7 +54839,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 170,
+     "files": 171,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54824,7 +54867,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 133,
+     "files": 135,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -54994,7 +55037,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3348,
+   "source_files": 3351,
    "test_files": 902
   },
   "oneiron-android": {
@@ -66091,7 +66134,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "fn": 22,
       "re-export": 1,
       "struct": 2
@@ -66224,6 +66267,16 @@
      "path": "src/ai_host/tests.rs",
      "purpose": "The host's start-up decisions and one real Dreamer pass on its own trigger, against the local fake model…",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/trained_serving.rs",
+     "purpose": "Whether this host serves a trained checkpoint its role binds (OF-577, FIX 857)",
+     "surface": {
+      "crate-vis": 2
+     }
     },
     {
      "bucket": "L",
@@ -68579,6 +68632,16 @@
      "notable": [],
      "path": "src/api/owner_routes/steer_routes.rs",
      "purpose": "`/v1/owner/steer`: the vault owner's nudge to any live run in the vault, whoever spawned it (FIX 783, Engine…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/training_swap_routes.rs",
+     "purpose": "`/v1/owner/coach/training-runs` (OF-577, FIX 857): the owner's view of a training run's result and their own…",
      "surface": {
       "crate-vis": 1
      }
@@ -74577,14 +74640,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 41,
+     "files": 42,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 318,
+     "files": 319,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -74992,7 +75055,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 634,
+   "source_files": 636,
    "test_files": 182
   },
   "oneiron-spawn": {
