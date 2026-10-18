@@ -722,6 +722,10 @@ vaultTasksLinearProvenance(input: unknown): unknown
 selfRunAttach(input: unknown): unknown
 selfFoldsDescribe(input: unknown): unknown
 selfHistory(input: unknown): unknown
+vaultRunsReview(input: unknown): unknown
+vaultRunsSettle(input: unknown): unknown
+vaultRunsSettlement(input: unknown): unknown
+vaultRevertRun(input: unknown): unknown
 selfBrowserOpen(input: unknown): unknown
 selfBrowserObserve(input: unknown): unknown
 selfBrowserFind(input: unknown): unknown

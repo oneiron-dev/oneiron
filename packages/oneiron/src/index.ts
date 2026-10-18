@@ -1412,6 +1412,12 @@ export class Oneiron {
       step: (input: Facade.SettledStepRequest): Facade.SettledStepView | null => this.#call(() => this.#client.vaultRunsStep(input) as Facade.SettledStepView | null),
       /** Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run. */
       checkpoint: (input: Facade.CheckpointReadRequest): Facade.CheckpointView | null => this.#call(() => this.#client.vaultRunsCheckpoint(input) as Facade.CheckpointView | null),
+      /** The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer. */
+      review: (input: Facade.RunReviewRequest): Facade.RunReview => this.#call(() => this.#client.vaultRunsReview(input) as Facade.RunReview),
+      /** The owner approves or rejects the exact reviewed set through each kind's existing gate and keeps its ProposalOutcome and run revert handle. */
+      settle: (input: Facade.RunSettleRequest): Facade.RunSettlement => this.#call(() => this.#client.vaultRunsSettle(input) as Facade.RunSettlement),
+      /** The owner reads the durable cross-kind ProposalOutcome of one reviewed job and its revert handle. */
+      settlement: (input: Facade.RunSettlementRequest): Facade.RunSettlement => this.#call(() => this.#client.vaultRunsSettlement(input) as Facade.RunSettlement),
     },
     consults: {
       /** The owner reads one consult TASK: its deadline and terminal register (how it ended, its result, the evidence or abstention reason, the ladder outcome and any counter TASK), as refs, never bodies. */
@@ -1820,6 +1826,8 @@ export class Oneiron {
       /** One NOTE's overrides and the defaults its gates read after them. */
       defaults: (request: Facade.NoteRefRequest): Facade.NoteDefaultsView => this.#call(() => {  const result = JSON.parse(this.#client.vaultNotesDefaults(keyedJson(request))) as Facade.NoteDefaultsView; return result }),
     },
+    /** The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why. */
+    revert_run: (input: Facade.RevertRunRequest): Facade.RevertRunOutcome => this.#call(() => this.#client.vaultRevertRun(input) as Facade.RevertRunOutcome),
   }
   readonly self = {
     focus: {

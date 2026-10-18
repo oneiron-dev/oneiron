@@ -95,6 +95,10 @@ pub use proposal_doors::{
     NoteVersionTree,
 };
 mod proposals;
+mod run_review;
+pub(crate) use run_review::{
+    RunNoteUndo, revert_run_note_in_txn, run_note_review_in_txn, settle_run_note_in_txn,
+};
 mod tombstone_review;
 mod verbs;
 mod write_gate;

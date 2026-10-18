@@ -664,6 +664,9 @@ class Oneiron:
         @property
         def notes(self) -> "Oneiron._VaultNotesVerbs":
             return Oneiron._VaultNotesVerbs(self._client)
+        def revert_run(self, spec):
+            """The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why."""
+            return json.loads(_translate(lambda: self._client.vault_revert_run(json.dumps(spec))))
     class _VaultReportsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2605,6 +2608,15 @@ class Oneiron:
         def checkpoint(self, spec):
             """Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run."""
             return json.loads(_translate(lambda: self._client.vault_runs_checkpoint(json.dumps(spec))))
+        def review(self, spec):
+            """The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer."""
+            return json.loads(_translate(lambda: self._client.vault_runs_review(json.dumps(spec))))
+        def settle(self, spec):
+            """The owner approves or rejects the exact reviewed set through each kind's existing gate and keeps its ProposalOutcome and run revert handle."""
+            return json.loads(_translate(lambda: self._client.vault_runs_settle(json.dumps(spec))))
+        def settlement(self, spec):
+            """The owner reads the durable cross-kind ProposalOutcome of one reviewed job and its revert handle."""
+            return json.loads(_translate(lambda: self._client.vault_runs_settlement(json.dumps(spec))))
     class _VaultRunsBranchesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
