@@ -754,6 +754,31 @@ pub(in crate::connector_key) fn bind_connector_slate_in_txn(
     SLATE_BINDING.put(&vault.store, txn, &slate_id, key_id)
 }
 
+/// A code consent wait's stop-asking answer (DOOR-079 1a) in the answering
+/// writer: the owner's one-row override of `tool` on slate `id` back to
+/// `auto`, at the revision the wait's offer was made against, through the
+/// owner's own stamp and its checks. A slate that moved since refuses
+/// ([`Error::ConcurrentWrite`]); it never widens to `always allow`. Returns
+/// the slate's new revision.
+pub(crate) fn stop_asking_tool_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    owner: &AuthenticatedOwner,
+    id: EntityId,
+    expected_revision: u64,
+    tool: &str,
+) -> Result<u64> {
+    let overrides = BTreeMap::from([(
+        tool.to_owned(),
+        SlateOwnerOverride {
+            disposition: SlateDisposition::Auto,
+        },
+    )]);
+    Ok(vault
+        .stamp_slate_in_txn(txn, owner, id, expected_revision, &overrides, None)?
+        .revision)
+}
+
 pub(crate) fn read_connector_slate_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -906,50 +931,64 @@ impl Vault {
         facet_limit: Option<Option<BTreeSet<EntityId>>>,
     ) -> Result<ConnectorGrantSlate> {
         self.with_write_txn_grouped(|txn| {
-            let actor = owner.revalidate_in_txn(self, txn)?;
-            crate::memory::verify_deletion_authority_in_txn(
-                self,
-                txn,
-                actor,
-                crate::edge::EdgeActorClass::Human,
-            )
-            .map_err(|_| Error::InvalidConfig("grant slate owner binding required".to_owned()))?;
-            let mut slate = GRANT_SLATE
-                .get(&self.store, txn, &id)?
-                .ok_or(Error::EntityNotFound)?;
-            if slate.revision != expected_revision {
-                return Err(Error::ConcurrentWrite("connector slate revision"));
+            self.stamp_slate_in_txn(txn, owner, id, expected_revision, overrides, facet_limit)
+        })
+    }
+    /// [`Self::stamp_slate`] in the caller's writer, so an owner act that
+    /// changes a setting composes it with its own record (DOOR-079: a code
+    /// consent wait's stop-asking answer).
+    fn stamp_slate_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        id: EntityId,
+        expected_revision: u64,
+        overrides: &BTreeMap<String, SlateOwnerOverride>,
+        facet_limit: Option<Option<BTreeSet<EntityId>>>,
+    ) -> Result<ConnectorGrantSlate> {
+        let actor = owner.revalidate_in_txn(self, txn)?;
+        crate::memory::verify_deletion_authority_in_txn(
+            self,
+            txn,
+            actor,
+            crate::edge::EdgeActorClass::Human,
+        )
+        .map_err(|_| Error::InvalidConfig("grant slate owner binding required".to_owned()))?;
+        let mut slate = GRANT_SLATE
+            .get(&self.store, txn, &id)?
+            .ok_or(Error::EntityNotFound)?;
+        if slate.revision != expected_revision {
+            return Err(Error::ConcurrentWrite("connector slate revision"));
+        }
+        if overrides
+            .keys()
+            .any(|name| !slate.rows.iter().any(|row| &row.draft.tool == name))
+        {
+            return Err(invalid());
+        }
+        for row in &mut slate.rows {
+            if let Some(value) = overrides.get(&row.draft.tool) {
+                // The owner's ruling on a row reverses a holder's narrow.
+                row.owner_override = Some(value.clone());
+                row.holder_narrow = None;
             }
-            if overrides
-                .keys()
-                .any(|name| !slate.rows.iter().any(|row| &row.draft.tool == name))
-            {
+        }
+        if let Some(limit) = facet_limit {
+            if limit.as_ref().is_some_and(BTreeSet::is_empty) {
                 return Err(invalid());
             }
-            for row in &mut slate.rows {
-                if let Some(value) = overrides.get(&row.draft.tool) {
-                    // The owner's ruling on a row reverses a holder's narrow.
-                    row.owner_override = Some(value.clone());
-                    row.holder_narrow = None;
-                }
-            }
-            if let Some(limit) = facet_limit {
-                if limit.as_ref().is_some_and(BTreeSet::is_empty) {
-                    return Err(invalid());
-                }
-                slate.facet_limit = limit;
-                slate.holder_facet_narrow = None;
-            }
-            slate.revision = slate
-                .revision
-                .checked_add(1)
-                .ok_or(Error::ArithmeticOverflow("slate revision"))?;
-            slate.owner_actor = Some(actor.to_hex());
-            slate.owner_authentication = Some(owner.decision_id().to_hex());
-            slate.stamped_aggregate = Some(slate.aggregate());
-            GRANT_SLATE.put(&self.store, txn, &id, &slate)?;
-            Ok(slate)
-        })
+            slate.facet_limit = limit;
+            slate.holder_facet_narrow = None;
+        }
+        slate.revision = slate
+            .revision
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("slate revision"))?;
+        slate.owner_actor = Some(actor.to_hex());
+        slate.owner_authentication = Some(owner.decision_id().to_hex());
+        slate.stamped_aggregate = Some(slate.aggregate());
+        GRANT_SLATE.put(&self.store, txn, &id, &slate)?;
+        Ok(slate)
     }
     /// ARCH-0072 self-update: the key's own holder tightens rows or the facet
     /// set of its bound slate, with no stamp. Narrowing is free, widening
