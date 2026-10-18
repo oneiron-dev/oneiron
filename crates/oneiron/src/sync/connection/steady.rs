@@ -137,6 +137,11 @@ impl SyncConnection {
                     if client.config.residence_mode != crate::sync::SyncResidenceMode::Opened {
                         continue;
                     }
+                    // A home that may not read the window's world is not asked to promote it,
+                    // nor for its vector; the `rp:w:` intent stays (FIX 922 item 11).
+                    if !client.home_may_promote(&key) || !client.home_may_request(&key) {
+                        continue;
+                    }
                     let Some(selector) = client.config.residence_selector.as_ref() else {
                         return LoopExit::Disconnected("promoted window missing grant selector".into());
                     };

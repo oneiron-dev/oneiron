@@ -59,6 +59,13 @@ pub use shared_act::{
     shared_act_outcome_transcript,
 };
 pub use shared_creation::{InitialSharedMember, SharedVaultCreation, SharedVaultPreset};
+mod foreign_world;
+pub(crate) use foreign_world::PactDelivery;
+pub use foreign_world::pact_foreign_world;
+#[cfg(feature = "sync")]
+pub(crate) use foreign_world::{
+    courtesy_ask_worlds_here, foreign_world_for, guest_claim_withheld, guest_claim_world,
+};
 mod guest;
 mod peer_authority;
 pub mod record_scope;
