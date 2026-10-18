@@ -1,7 +1,7 @@
 //! Typed custom AGENT_DEF authoring. Authorship is the caller's, never input.
 use serde::{Deserialize, Serialize};
 
-use crate::agent_def::{AgentCeiling, AgentDefinition, AgentScope, McpRef};
+use crate::agent_def::{AgentCeiling, AgentDefinition, AgentScope, McpRef, RefusalDial};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::consent::AuthenticatedOwner;
 use crate::llm::ModelTierRef;
@@ -47,7 +47,7 @@ pub enum AgentCeilingInput {
 
 /// The authored composition. Importing one is the same inert create as
 /// defining one locally; it cannot import approval, provenance or a system id.
-/// Memory-profile, dreaming and refusal dials are not changed by this door.
+/// Memory-profile and dreaming dials are not changed by this door.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentDefinitionSpec {
@@ -74,6 +74,10 @@ pub struct AgentDefinitionSpec {
     pub enabled: bool,
     #[serde(default)]
     pub display_name: Option<String>,
+    /// Per-domain refusal settings. Omit or clear for vault-kind defaults;
+    /// an explicit dial must set at least one domain. This grants no authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<RefusalDial>,
 }
 
 fn enabled_by_default() -> bool {
@@ -155,6 +159,7 @@ impl AgentDefinitionSpec {
         definition.forked_from = self.forked_from;
         definition.enabled = self.enabled;
         definition.display_name = self.display_name.clone();
+        definition.refusal = self.refusal;
     }
 }
 
@@ -195,6 +200,7 @@ impl From<&AgentDefinition> for AgentDefinitionSpec {
             forked_from: definition.forked_from,
             enabled: definition.enabled,
             display_name: definition.display_name.clone(),
+            refusal: definition.refusal,
         }
     }
 }

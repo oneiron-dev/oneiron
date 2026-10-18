@@ -599,6 +599,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.compact", post(facade_route))
         .route("/self.unfold", post(facade_route))
         .route("/self.folds", post(facade_route))
+        .route("/tasks.refuse", post(facade_route))
         .route("/self.agents.spawn", post(facade_route))
         .route("/self.leader.split", post(facade_route))
 }

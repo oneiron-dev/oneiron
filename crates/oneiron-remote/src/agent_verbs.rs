@@ -1751,6 +1751,9 @@ impl OneironClient {
                 "self.folds" => remote_agent_verb_output::<
                     oneiron::compaction::FoldReply<oneiron::compaction::FoldList>,
                 >(client, verb, &input),
+                "tasks.refuse" => remote_agent_verb_output::<oneiron::code_run::TaskRefuseOutput>(
+                    client, verb, &input,
+                ),
                 "self.agents.spawn" => remote_agent_verb_output::<
                     oneiron::code_run::AgentSpawnOutput,
                 >(client, verb, &input),
@@ -8674,6 +8677,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.folds", value)
+    }
+    pub fn tasks_refuse(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::TaskRefuseInput>,
+    ) -> Result<oneiron::code_run::TaskRefuseOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("tasks.refuse", value)
     }
     pub fn self_agents_spawn(
         &self,

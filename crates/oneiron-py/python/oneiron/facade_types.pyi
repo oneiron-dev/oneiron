@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 560 facade rows, 2147 declarations.
-Inputs: 510 of 560 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 493 of 560 fully typed, 67 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 561 facade rows, 2153 declarations.
+Inputs: 511 of 561 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 494 of 561 fully typed, 67 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 89; unread shapes: 0.
 """
 
@@ -6437,6 +6437,10 @@ class AgentScopeInputWorld(TypedDict):
     world: EntityId
 AgentScopeInput = AgentScopeInputAll | AgentScopeInputBase | AgentScopeInputWorld
 AgentCeilingInput = Literal["auto", "proposed"]
+RefusalLevel = Literal["none", "voice", "veto", "full"]
+class RefusalDial(TypedDict):
+    bond: NotRequired[RefusalLevel | None]
+    logistics: NotRequired[RefusalLevel | None]
 class AgentDefinitionSpec(TypedDict):
     agent_id: str
     desc: str
@@ -6451,6 +6455,7 @@ class AgentDefinitionSpec(TypedDict):
     forked_from: NotRequired[EntityId | None]
     enabled: NotRequired[bool]
     display_name: NotRequired[str | None]
+    refusal: NotRequired[RefusalDial | None]
 class AgentDefinitionCreateRequest(TypedDict):
     agent_def_ref: EntityId
     definition: AgentDefinitionSpec
@@ -11107,6 +11112,18 @@ class FoldCompactAsked(TypedDict):
 FoldUnfolded = TypedDict("FoldUnfolded", {"fold": str, "from": int, "through": int, "unfolded_after_step": int})
 class FoldRunRequest(TypedDict):
     live_run: str
+TaskRefuseDomain = Literal["bond", "logistics"]
+class TaskRefuseInput(TypedDict):
+    taskRef: NotRequired[str | None]
+    domain: TaskRefuseDomain
+    reasonRef: str
+    at: NotRequired[int | None]
+RefusalOutcome = Literal["proceed", "object", "decline"]
+class TaskRefuseOutput(TypedDict):
+    task: EntityId
+    level: RefusalLevel
+    outcome: RefusalOutcome
+    replay: bool
 SpawnCare = Literal["light", "medium", "high", "xhigh", "max"]
 class SpawnKnobSeed(TypedDict, Generic[T]):
     mode: Literal["seed"]

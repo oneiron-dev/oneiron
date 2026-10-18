@@ -5237,6 +5237,12 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn tasks_refuse(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("tasks.refuse", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn self_agents_spawn(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.agents.spawn", input)

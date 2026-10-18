@@ -1519,6 +1519,7 @@ fn mcp_agent_verb_input(
         "self.compact" => a.spec.clone().ok_or_else(invalid),
         "self.unfold" => a.spec.clone().ok_or_else(invalid),
         "self.folds" => a.spec.clone().ok_or_else(invalid),
+        "tasks.refuse" => a.spec.clone().ok_or_else(invalid),
         "self.agents.spawn" => a.spec.clone().ok_or_else(invalid),
         "self.leader.split" => a.spec.clone().ok_or_else(invalid),
         _ => Err(invalid()),
@@ -3298,6 +3299,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.folds" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "tasks.refuse" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.agents.spawn" => {
@@ -11809,6 +11813,28 @@ async fn execute_agent_verb_row(
                 auth,
                 (actor.actor_ref, actor.actor_class),
                 memory.invocation(),
+                input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "tasks.refuse" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("tasks.refuse", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::TaskRefuseInput> =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::tasks_refuse(
+                server,
+                auth,
+                actor
+                    .off_record_session
+                    .as_deref()
+                    .map(oneiron::EntityId::from_hex)
+                    .transpose()
+                    .map_err(|_| invalid())?,
                 input,
             )
             .await

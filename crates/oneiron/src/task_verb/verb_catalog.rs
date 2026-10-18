@@ -602,6 +602,7 @@ pub enum AgentVerb {
     SelfCompact,
     SelfUnfold,
     SelfFolds,
+    TasksRefuse,
     SelfAgentsSpawn,
     SelfLeaderSplit,
 }
@@ -1208,6 +1209,7 @@ impl AgentVerb {
         Self::SelfCompact,
         Self::SelfUnfold,
         Self::SelfFolds,
+        Self::TasksRefuse,
         Self::SelfAgentsSpawn,
         Self::SelfLeaderSplit,
     ];
@@ -1827,6 +1829,7 @@ impl AgentVerb {
             Self::SelfCompact => "self.compact",
             Self::SelfUnfold => "self.unfold",
             Self::SelfFolds => "self.folds",
+            Self::TasksRefuse => "tasks.refuse",
             Self::SelfAgentsSpawn => "self.agents.spawn",
             Self::SelfLeaderSplit => "self.leader.split",
         }
@@ -2392,6 +2395,7 @@ impl AgentVerb {
                 | Self::SelfCompact
                 | Self::SelfUnfold
                 | Self::SelfFolds
+                | Self::TasksRefuse
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
         )
@@ -3005,6 +3009,7 @@ impl AgentVerb {
                 | Self::SelfCompact
                 | Self::SelfUnfold
                 | Self::SelfFolds
+                | Self::TasksRefuse
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
         )
@@ -3688,6 +3693,7 @@ impl AgentVerb {
                 | Self::SelfCompact
                 | Self::SelfUnfold
                 | Self::SelfFolds
+                | Self::TasksRefuse
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
         )
@@ -4053,6 +4059,7 @@ impl AgentVerb {
                 | Self::SelfFold
                 | Self::SelfCompact
                 | Self::SelfUnfold
+                | Self::TasksRefuse
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
         )
@@ -4697,6 +4704,7 @@ impl AgentVerb {
             Self::SelfCompact => &["spec"],
             Self::SelfUnfold => &["spec"],
             Self::SelfFolds => &["spec"],
+            Self::TasksRefuse => &["spec"],
             Self::SelfAgentsSpawn => &["spec"],
             Self::SelfLeaderSplit => &["spec"],
         }
@@ -5304,6 +5312,7 @@ impl AgentVerb {
             Self::SelfCompact => &["spec"],
             Self::SelfUnfold => &["spec"],
             Self::SelfFolds => &["spec"],
+            Self::TasksRefuse => &["spec"],
             Self::SelfAgentsSpawn => &["spec"],
             Self::SelfLeaderSplit => &["spec"],
         }
@@ -6225,13 +6234,13 @@ impl AgentVerb {
                 "One artifact version's export file, with the born-with text the caller chose and a share receipt listing it."
             }
             Self::VaultAgentsCreate => {
-                "The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched."
+                "The owner creates an inert custom agent composition with an optional per-domain refusal dial, caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched."
             }
             Self::VaultAgentsGet => {
-                "The owner reads one saved agent composition and its version and approval state."
+                "The owner reads one saved agent composition, including its declared refusal dial, version and approval state."
             }
             Self::VaultAgentsUpdate => {
-                "The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision."
+                "The owner edits the expected definition version and optional refusal dial through the existing immutable-field and ceiling gates; refusal decisions read the live dial."
             }
             Self::VaultWorkflowsSave => {
                 "The owner saves an ordered composition of live AGENT_DEF steps at a new WORKFLOW id at revision 1; an occupied id is refused and no attempt is dispatched."
@@ -7011,6 +7020,9 @@ impl AgentVerb {
             }
             Self::SelfFolds => {
                 "Lists the attached run's landed folds, pending marks and outstanding compact ask."
+            }
+            Self::TasksRefuse => {
+                "Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay."
             }
             Self::SelfAgentsSpawn => {
                 "Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity."

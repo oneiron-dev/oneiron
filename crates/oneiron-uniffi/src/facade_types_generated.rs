@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 560 facade rows, 2083 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 11; generated in and out: 522.
+// UniFFI census: 561 facade rows, 2090 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 11; generated in and out: 523.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -19819,6 +19819,29 @@ pub enum AgentCeilingInput {
     Proposed,
 }
 
+/// `oneiron::agent_def::refusal::RefusalLevel`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RefusalLevel {
+    #[serde(rename = "none")]
+    None,
+    #[serde(rename = "voice")]
+    Voice,
+    #[serde(rename = "veto")]
+    Veto,
+    #[serde(rename = "full")]
+    Full,
+}
+
+/// `oneiron::agent_def::refusal::RefusalDial`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RefusalDial {
+    #[serde(rename = "bond", default, skip_serializing_if = "Option::is_none")]
+    pub bond: Option<RefusalLevel>,
+    #[serde(rename = "logistics", default, skip_serializing_if = "Option::is_none")]
+    pub logistics: Option<RefusalLevel>,
+}
+
 /// `oneiron::task_verb::sdk_agents::AgentDefinitionSpec`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -19873,6 +19896,8 @@ pub struct AgentDefinitionSpec {
         skip_serializing_if = "Option::is_none"
     )]
     pub display_name: Option<String>,
+    #[serde(rename = "refusal", default, skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<RefusalDial>,
 }
 
 /// `oneiron::task_verb::sdk_agents::AgentDefinitionCreateRequest`.
@@ -33538,6 +33563,63 @@ pub enum FoldReplyFoldList {
         #[serde(rename = "error")]
         error: String,
     },
+}
+
+/// `oneiron::code_run::run_verbs::TaskRefuseDomain`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TaskRefuseDomain {
+    #[serde(rename = "bond")]
+    Bond,
+    #[serde(rename = "logistics")]
+    Logistics,
+}
+
+/// `oneiron::code_run::run_verbs::TaskRefuseInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRefuseInput {
+    #[serde(rename = "taskRef", default, skip_serializing_if = "Option::is_none")]
+    pub task_ref: Option<String>,
+    #[serde(rename = "domain")]
+    pub domain: TaskRefuseDomain,
+    #[serde(rename = "reasonRef")]
+    pub reason_ref: String,
+    #[serde(rename = "at", default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<u64>,
+}
+
+/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `TaskRefuseInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LiveRunRequestTaskRefuseInput {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+    #[serde(rename = "spec")]
+    pub spec: TaskRefuseInput,
+}
+
+/// `oneiron::agent_def::refusal::RefusalOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RefusalOutcome {
+    #[serde(rename = "proceed")]
+    Proceed,
+    #[serde(rename = "object")]
+    Object,
+    #[serde(rename = "decline")]
+    Decline,
+}
+
+/// `oneiron::code_run::run_verbs::TaskRefuseOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TaskRefuseOutput {
+    #[serde(rename = "task")]
+    pub task: String,
+    #[serde(rename = "level")]
+    pub level: RefusalLevel,
+    #[serde(rename = "outcome")]
+    pub outcome: RefusalOutcome,
+    #[serde(rename = "replay")]
+    pub replay: bool,
 }
 
 /// `oneiron::code_run::run_verbs::SpawnCare`.

@@ -12987,6 +12987,31 @@ async fn self_folds(
         facade_hooks_post(server, hooks, output).await?,
     ))
 }
+async fn tasks_refuse(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "tasks.refuse")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("tasks.refuse", &value)?;
+    let hooks = facade_hooks_pre(server, call, "tasks.refuse", value).await?;
+    let output = facade_output(
+        super::host_doors::tasks_refuse(
+            server,
+            auth,
+            call.session()?,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn self_agents_spawn(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -13823,6 +13848,7 @@ pub(crate) async fn call_verb(
         "self.compact" => self_compact(server, call, input).await,
         "self.unfold" => self_unfold(server, call, input).await,
         "self.folds" => self_folds(server, call, input).await,
+        "tasks.refuse" => tasks_refuse(server, call, input).await,
         "self.agents.spawn" => self_agents_spawn(server, call, input).await,
         "self.leader.split" => self_leader_split(server, call, input).await,
         "self.focus.refresh" | "self.focus.subscribe" | "self.focus.unsubscribe" => {
@@ -13872,7 +13898,6 @@ pub(crate) async fn call_verb(
         | "vault.search"
         | "vault.claims.put"
         | "vault.edges.put"
-        | "tasks.refuse"
         | "self.leader.advice"
         | "self.leader.pattern"
         | "self.skills.call"
