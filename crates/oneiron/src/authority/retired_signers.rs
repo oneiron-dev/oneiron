@@ -457,10 +457,14 @@ impl AuthorityFold {
         entry: &AuthorityLogEntry,
         row: &mut dyn FnMut(&AuthorityEntryHash) -> crate::error::Result<Option<AuthorityLogEntry>>,
     ) -> crate::error::Result<bool> {
-        // A world's edit stands on no main-log row the fold refuses: it is
-        // judged with each such row crossed (`refold_world_edits`), so only its
-        // own signer counts here (Wonder P2 round 1, W4).
-        if super::world_privacy::side_world(&entry.op).is_some() {
+        // A world's edit or key record stands on no main-log row the fold
+        // refuses: it is judged with each such row crossed
+        // (`refold_world_edits`), so only its own signer counts here (Wonder
+        // P2 round 1, W4). A settings edit is a main-log row now (mesh
+        // contract §6) and keeps this rule.
+        if super::world_privacy::side_world(&entry.op).is_some()
+            || matches!(entry.op, AuthorityOp::WorldPrivacy(_))
+        {
             return Ok(!self.valid_entries.contains(hash)
                 && entry_signer_keys(entry).any(|key| self.retired_keys.contains(key)));
         }

@@ -1,27 +1,29 @@
-//! Each world's settings-edit frontier and the strength of its edits, judged
-//! under one trust set at a time (world privacy P2, ported onto P6b's machine
-//! chains, contract §4).
+//! Each world's settings-edit frontier and the strength of its edits (world
+//! privacy P2, re-cut for the mesh: contract §3-§4).
 //!
-//! An edit is valid when, for some chain that admits its machine under the
-//! key that signed it, it has standing in the read that chain's admitter X
-//! gives (`read_X`), the same on every install. A live edit counts at full
-//! strength under `T(X)` only if its machine was mine there with that key at
-//! its parents and the race rule passes there now; otherwise it contributes
-//! the meet of its settings and of every edit it replaced, each judged the
-//! same way, so a chain of raced widens never widens. This install reads the
-//! world under `T(pin)` with its own holds, which only weaken.
+//! An edit carries the owner's act ([`OwnerAct`]). It is valid when some
+//! chain of its machine names the key that signed it, and it has effect when
+//! the one carrier rule admits that machine ([`super::owner_act_signer_admits`]):
+//! any live profile of the vault, in any role, on every replica, before and
+//! after the owner anchor. No "yours" mark and no world holding is an author
+//! test (owner ruling 10-19: "it doesn't matter where you said yes, if you
+//! said so"). A live edit counts at full strength while its carrier's removal
+//! race passes ([`Standing::owner_act_race`]); otherwise it contributes the
+//! meet of its settings and of every edit it replaced, each judged the same
+//! way, so a chain of raced widens never widens. This install reads the world
+//! with its own floors and holds, which only weaken.
 //!
 //! The frontier is generic over what an edit states, so a grant's signed
 //! travel choices keep the same register ([`super::grant_travel`], FIX
-//! 2998), judged by their own signer rule.
+//! 2998), judged by the same carrier rule.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::entity_id::EntityId;
 
-use super::machine_standing::{InstallCounted, Mark, Standing, StandingView, TrustedAt};
-use super::world_privacy::{PrivacyMeet, edit_standing};
+use super::machine_standing::{InstallCounted, Mark, Standing, StandingView};
+use super::world_privacy::PrivacyMeet;
 use super::*;
 
 /// One accepted edit of a world, or of what else an edit states (`S`).
@@ -33,21 +35,18 @@ pub(super) struct FrontierEdit<S = WorldPrivacy> {
     pub(super) key: [u8; 32],
     /// The live edits at the edit's parents, which it replaced.
     pub(super) replaced: BTreeSet<AuthorityEntryHash>,
-    /// This install did not count the machine, under `T(pin)` with the edit's
-    /// key, at the edit's parents.
+    /// This install did not admit the carrier, with its holds and staleness
+    /// and the edit's key, at the edit's parents.
     pub(super) narrow_only: bool,
     /// Each chain that admitted the machine under the edit's key at its
     /// parents, with the mark the edit was signed under there.
     pub(super) marks: BTreeMap<MachineAdmitter, Mark>,
-    /// Under which trust sets the machine was mine with the edit's key at its
-    /// parents.
-    pub(super) trusted_at: TrustedAt,
     /// A later row of its signer reached this replica first, so it landed as
     /// restriction only: it never counts at full strength (Astra #1430).
     pub(super) restriction_only: bool,
-    /// Two copies of it disagreed on its marks, past, trust or what it
-    /// replaced: it never counts at full strength, it meets the default as
-    /// well (Sol P2 round 11), and no machine may edit its world.
+    /// Two copies of it disagreed on its marks, past or what it replaced: it
+    /// never counts at full strength and it meets the default as well (Sol
+    /// P2 round 11).
     pub(super) disputed: bool,
 }
 
@@ -94,12 +93,10 @@ impl<S: Clone + PartialEq> FrontierEdit<S> {
             replaced: left.replaced.union(&right.replaced).copied().collect(),
             narrow_only: left.narrow_only || right.narrow_only,
             marks,
-            trusted_at: left.trusted_at.meet(&right.trusted_at),
             restriction_only: left.restriction_only || right.restriction_only,
             disputed: left.disputed
                 || right.disputed
                 || left.marks != right.marks
-                || left.trusted_at != right.trusted_at
                 || left.replaced != right.replaced,
         })
     }
@@ -144,13 +141,11 @@ pub(super) fn merge_world_frontiers<S: Clone + PartialEq + Default>(
     }
 }
 
-/// Full strength under `view`'s trust set: the edit's machine was mine there
-/// with the edit's key at its parents, and the race rule passes there now
-/// ([`Standing::race`]). A head that still says "yours" took nothing away:
-/// when it stops standing for another reason (its signer found in a host's
-/// custody) it acknowledges no edit (Sol P2 round 3, F2). In the install view
-/// an edit that landed as restriction only past a sequence floor never counts
-/// at full strength (Astra #1430), nor does one this install did not count at
+/// Full strength under `view`: the edit's carrier removal race passes there
+/// now ([`Standing::owner_act_race`]), on every replica alike, whatever the
+/// carrier's role and whoever pins which anchor. In the install view an edit
+/// that landed as restriction only past a sequence floor never counts at
+/// full strength (Astra #1430), nor does one this install did not admit at
 /// its parents, nor any acknowledged by a held chain. Validity follows the
 /// roster view, as a replica with no floor reads it, so a floor never grants
 /// a later edit standing (Sol P2 round 10, F1).
@@ -160,13 +155,13 @@ pub(super) fn full_strength(
     edit: &FrontierEdit,
     view: StandingView,
 ) -> bool {
-    let trusted_then = match view {
-        StandingView::Under(admitter) => edit.trusted_at.under(&admitter),
+    let counted_then = match view {
+        StandingView::Under(_) => true,
         StandingView::Install => !(edit.narrow_only || edit.restriction_only),
     };
     !edit.disputed
-        && trusted_then
-        && standing.race(edit.machine, hash, &edit.key, &edit.marks, view)
+        && counted_then
+        && standing.owner_act_race(edit.machine, hash, &edit.key, &edit.marks, view)
 }
 
 #[cfg(test)]
@@ -237,11 +232,10 @@ pub(super) fn world_meet(
 }
 
 /// `read_X(world)`: the read an install trusting exactly `T(admitter)`
-/// computes, pin-free, which decides who may edit `world` there. Where two
-/// copies of one of its edits disagreed, each copy's view could admit a
-/// different editor, and the narrower meet of both can admit one neither copy
-/// did: no machine may edit it, as under a conflicted vault root (Sol P2
-/// round 12, F1).
+/// computes, pin-free: which machines hold the world, for holder execution
+/// and diagnostics, never who may edit it. Where two copies of one of its
+/// edits disagreed, the world reads nowhere, as under a conflicted vault root
+/// (Sol P2 round 12, F1).
 pub(super) fn read_under(
     standing: &Standing<'_>,
     world: EntityId,
@@ -264,11 +258,13 @@ pub(super) fn read_under(
 
 /// The `WorldPrivacy` transition, after the shape, signature, retired,
 /// sequence-floor, parent-merge and vault checks and before any roster check:
-/// its signer is a machine's install key, never a roster key. Validity and
-/// standing are pin-free, so every install keeps the same edits: some chain
-/// that admits the machine under the signing key must give it standing in
-/// its admitter's read. `pin` and `counted` only weaken an edit this install
-/// does not count.
+/// its signer is the carrier's install key, never a roster key (FIX 2222: the
+/// host root acts as nobody). Some chain of the carrier must name the key; an
+/// edit carried while the carrier was not admitted
+/// ([`super::owner_act_signer_admits`], pin-free) is valid and without
+/// effect, so it never stalls what descends from it. Validity is pin-free,
+/// the same on every install, before and after the owner anchor. `pin` and
+/// `counted` only weaken an edit this install does not count.
 pub(super) fn apply_world_privacy(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
@@ -286,8 +282,7 @@ pub(super) fn apply_world_privacy(
     };
     let key = *key;
     let standing = Standing::new(state, pin, counted);
-    let marks = standing.signing_chains(edit.machine, signer);
-    if marks.is_empty() {
+    if !standing.names_key(edit.machine, &key) {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
     }
     if state
@@ -297,28 +292,20 @@ pub(super) fn apply_world_privacy(
     {
         return Err(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
+    // Integrity: a one-machine pick names a machine this vault admits. That
+    // it is one marked "yours" is the owner's recipient choice, which the
+    // writer checks; readers then follow `world_readable_on`.
     if let ReadLocation::OneMachine(target) = edit.settings.read
         && !standing.is_admitted(target)
     {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     }
-    // Well signed but from a machine that cannot edit this world under any
-    // of its signing chains: valid and without effect, so it never stalls
-    // what descends from it.
-    let may_edit = marks.keys().any(|admitter| {
-        let is_mine = |id| standing.is_mine(id, StandingView::Under(*admitter));
-        edit_standing(
-            &read_under(&standing, edit.world, *admitter),
-            edit.machine,
-            is_mine,
-            is_mine,
-        )
-        .is_some()
-    });
-    let narrow_only = standing.counted_key(edit.machine) != Some(key);
-    let trusted_at = standing.trusted_at(edit.machine, &key);
+    let roster = StandingView::Under(MachineAdmitter::Roster);
+    let admitted = standing.admits_owner_act_signer(edit.machine, &key, roster);
+    let marks = standing.live_signing_chains(edit.machine, signer);
+    let narrow_only = !standing.admits_owner_act_signer(edit.machine, &key, StandingView::Install);
     drop(standing);
-    if !may_edit {
+    if !admitted {
         state.refused_world_edits.insert(hash);
         return Ok(());
     }
@@ -335,7 +322,6 @@ pub(super) fn apply_world_privacy(
             replaced,
             narrow_only,
             marks,
-            trusted_at,
             restriction_only,
             disputed: false,
         }),

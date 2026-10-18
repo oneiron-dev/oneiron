@@ -6,8 +6,11 @@
 //! action stays bound to that slip (`Vault::bind_owner_credential`), so the
 //! engine rechecks the slip and the ownership in the transaction that
 //! commits: a request queued behind a revocation changes nothing. Nothing
-//! here prompts a second time; the engine writes each act's receipt. Managed
-//! vaults are owned through their supervisor, so these routes refuse there.
+//! here prompts a second time; the engine writes each act's receipt. On a
+//! managed vault the owner arrives through his supervisor's
+//! `ManagedOwnerAction`, or with his own human device slip like anywhere
+//! else (the mesh ruling, 10-19); a hosted operator's root never acts as him
+//! (FIX 2222).
 //!
 //! Approvals stay off the idempotency layer: a consumed approval must never
 //! replay a cached 200.
@@ -205,7 +208,7 @@ pub(crate) fn owner(auth: &CoreAuth, server: &SyncServer) -> Result<Authenticate
             .authenticate_host_action_owner(&action, GateDecisionId::now())
             .map_err(|_| refused());
     }
-    if server.managed_issuer.is_some() || !auth.is_owner_grade() {
+    if !auth.is_owner_grade() {
         return Err(refused());
     }
     let slip = auth

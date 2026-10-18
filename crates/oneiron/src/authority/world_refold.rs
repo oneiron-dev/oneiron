@@ -1,5 +1,5 @@
-//! A world edit or a grant travel choice above a main-log row the fold did
-//! not keep, folded again with that row crossed.
+//! A world edit, a world key record or a grant travel choice above a main-log
+//! row the fold did not keep, folded again with that row crossed.
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::world_privacy::side_world;
@@ -32,15 +32,20 @@ pub(super) fn refold_world_edits(
                 .get(hash)
                 .is_some_and(|entry| side_world(&entry.op).is_none())
     };
-    // A grant travel choice is a main-log row, but restrictive like a world
-    // edit: it must not fall with an unrelated row either (FIX 2998). An
-    // invalid choice it descends from is crossed like any main-log row.
+    // A world edit and a grant travel choice are main-log rows, but
+    // restrictive: they must not fall with an unrelated row either (FIX
+    // 2998; settings edits left the side branch for the mesh, contract §6).
+    // An invalid edit or choice one descends from is crossed like any
+    // main-log row.
     let lost = causal(
         by_hash
             .iter()
             .filter(|(hash, entry)| {
                 (side_world(&entry.op).is_some()
-                    || matches!(entry.op, AuthorityOp::GrantTravelSet(_)))
+                    || matches!(
+                        entry.op,
+                        AuthorityOp::WorldPrivacy(_) | AuthorityOp::GrantTravelSet(_)
+                    ))
                     && !states.contains_key(*hash)
                     && ancestors
                         .get(*hash)

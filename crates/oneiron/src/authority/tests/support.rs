@@ -80,6 +80,18 @@ pub(super) fn sign_ed(mut entry: AuthorityLogEntry, key: &SigningKey) -> Authori
     entry
 }
 
+/// The owner's own act on `world`'s settings from this install, on no
+/// revision shown: what a hand-signed world edit carries (mesh PR1a).
+pub(super) fn owner_act(owner: EntityId, world: EntityId) -> OwnerAct {
+    OwnerAct::by_owner(
+        owner,
+        OwnerActKind::WorldPrivacy,
+        world,
+        ActSurface::ThisInstall,
+        [0; 32],
+    )
+}
+
 pub(super) fn sign_ed_legacy_genesis(
     mut entry: AuthorityLogEntry,
     key: &SigningKey,

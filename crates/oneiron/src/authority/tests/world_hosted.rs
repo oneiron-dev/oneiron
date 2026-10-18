@@ -110,9 +110,10 @@ fn a_hosted_vaults_kit_restores_and_the_hosts_material_opens_nothing() {
             .vault
             .set_world_privacy_as(
                 &first.owner,
-                HERE,
+                ActSurface::ThisInstall,
                 world,
                 settings(ReadLocation::MyMachines),
+                None,
             )
             .unwrap();
         let id = *first.vault.world_key(world).unwrap().id();
@@ -243,9 +244,10 @@ fn a_dishonest_host_never_wins_the_root() {
             .vault
             .set_world_privacy_as(
                 &owner.owner,
-                HERE,
+                ActSurface::ThisInstall,
                 world,
                 settings(ReadLocation::MyMachines),
+                None,
             )
             .unwrap();
         owner.vault.ensure_world_key(&owner.owner, world).unwrap();

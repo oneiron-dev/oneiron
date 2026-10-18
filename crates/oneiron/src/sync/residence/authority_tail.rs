@@ -137,16 +137,18 @@ pub fn held_authority_history(vault: &Vault) -> Result<Vec<Vec<u8>>> {
 }
 
 /// FIX 922 item 11 call: the tail and range leave out, for a machine that may not read a world,
-/// that world's whole side branch (settings edits and key wraps); every main-log row still goes.
+/// that world's side branch (its key records); every main-log row still goes, a world's
+/// settings edits included (the Engine call "OwnerAct world metadata to every linked machine").
 const ITEM11_AUTHORITY_FILTER_SCOPE: bool = true;
 
 /// The signed entries this home holds and `held` lacks, parents first, at most
-/// `limit`, for a machine of the owner's whose proof stands here. Each entry's
-/// parents are in `held` or earlier in the page, so the page imports whole.
-/// Refused for any other peer: the log names grants, machines and settings.
-/// The side branch of a world that may not be readable on the machine is left
-/// out before the page is counted, so a short page is still the last: no
-/// main-log row, and no other world's row, names one of its rows.
+/// `limit`, for a linked machine of the vault whose proof stands here. Each
+/// entry's parents are in `held` or earlier in the page, so the page imports
+/// whole. Refused for any other peer: the log names grants, machines and
+/// settings. The side branch of a world that may not be readable on the
+/// machine is left out before the page is counted, so a short page is still
+/// the last: no main-log row, and no other world's row, names one of its
+/// rows.
 ///
 /// # Errors
 ///
@@ -184,8 +186,8 @@ pub fn authority_tail_for(
     Ok(page)
 }
 
-/// The page of `fetch` this home serves a machine of the owner's whose proof
-/// stands here ([`Vault::authority_history_page_for_peer`]): the exact rows it
+/// The page of `fetch` this home serves a linked machine whose proof stands
+/// here ([`Vault::authority_history_page_for_peer`]): the exact rows it
 /// names and, with parent closure, their ancestors down to what the machine
 /// holds, parents first, less the side branch of each world that may not be
 /// readable on the machine, as the tail leaves it out. Refused for any other
@@ -222,7 +224,7 @@ pub struct AuthorityCheckpointPart {
 /// [`AUTHORITY_CHECKPOINT_PART_MAX`] bytes from `offset`, with the image's
 /// whole length and, on the slice at offset zero, the attestations kept for
 /// it under its own root policy ([`Vault::authority_checkpoint_bundle`]),
-/// for a machine of the owner's whose proof stands here. The machine adopts
+/// for a linked machine whose proof stands here. The machine adopts
 /// the image only once it verifies against the pin its pairing returned.
 /// `None` for an image not kept here and an offset at or past its end.
 /// Refused for any other peer, as the tail is.
@@ -261,20 +263,22 @@ pub fn authority_checkpoint_part_for(
     }))
 }
 
-/// Whether `peer` is a machine of the owner's whose proof stands here on the
-/// key it proved.
+/// Whether `peer` is a live linked machine of the vault, in any role, whose
+/// proof stands here on the key it proved: the owner's machines under the
+/// mesh ruling (10-19), the hosted node and work, school or rented machines
+/// included. Authority metadata goes to each; a world's key records and
+/// content stay recipient-filtered (`withheld_for_peer`), the owner's own
+/// recipient choice.
 fn owner_machine(vault: &Vault, peer: PeerMachine) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
     let fold = vault.authority_fold_readonly_in_txn(&txn)?;
     Ok(match peer {
-        PeerMachine::Proven { machine, key } => {
-            fold.machine_proof_key(machine) == Some(key) && fold.trusted_machine(machine).is_some()
-        }
+        PeerMachine::Proven { machine, key } => fold.machine_proof_key(machine) == Some(key),
         PeerMachine::Unknown => false,
     })
 }
 
-/// Refuses every peer but a machine of the owner's ([`owner_machine`]).
+/// Refuses every peer but a proven linked machine ([`owner_machine`]).
 fn require_owner_machine(vault: &Vault, peer: PeerMachine) -> Result<()> {
     if !owner_machine(vault, peer)? {
         return Err(Error::sync_protocol(
@@ -298,14 +302,14 @@ pub fn authority_wanted(
     Ok(offered.difference(&held).copied().collect())
 }
 
-/// Imports the signed entries a machine of the owner's appends, at most
+/// Imports the signed entries a linked machine appends, at most
 /// [`AUTHORITY_TAIL_PAGE_MAX`], through the signed-history door
 /// ([`import_authority_page`]): every signature, parent and standing is
 /// checked and the log refolds here, so nothing the machine asserts is
 /// trusted beyond the signed bytes. Each entry's parents are held here or
 /// earlier in `entries`; an entry the door refuses holds back only itself and
 /// what stands on it. Returns how many rows the import wrote, or `None` for a
-/// peer that is not a machine of the owner's.
+/// peer that is not a proven linked machine.
 ///
 /// # Errors
 ///

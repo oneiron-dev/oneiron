@@ -19,9 +19,10 @@ pub(crate) fn next_sequence(fold: &AuthorityFold, signer: &AuthorityKey) -> Resu
     }
 }
 
-/// The row `signer` last wrote in `world` on `fold`, a settings edit or a
-/// key record, which its next row of the world names: one signer's rows of a
-/// world are one chain, in one sequence scope (Astra #1422b F1, #1422c).
+/// The key record `signer` last wrote in `world` on `fold`, which its next
+/// key record of the world names: one signer's key records of a world are
+/// one chain, in one sequence scope (Astra #1422b F1, #1422c). A settings
+/// edit is a main-log row and never names one (mesh contract §6).
 pub(crate) fn scope_head(
     fold: &AuthorityFold,
     signer: &AuthorityKey,

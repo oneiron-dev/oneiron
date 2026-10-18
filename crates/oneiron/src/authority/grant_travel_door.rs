@@ -5,9 +5,9 @@
 //! the gate, from whichever of the owner's surfaces it came (OWNER RULING
 //! 10-19 00:5x). This half signs the choice with this install's machine key,
 //! whatever the install's role in the roster, a hosted node included, as
-//! long as the one signer rule admits it
-//! ([`super::grant_travel::grant_travel_signer_admits`]). The fold is the
-//! judge: a choice it does not count here never reports success.
+//! long as the one carrier rule admits it ([`super::owner_act_signer_admits`]).
+//! The fold is the judge: a choice it does not count here never reports
+//! success.
 
 use crate::error::{Error, Result};
 use crate::share_travel::TravelChoice;
@@ -66,11 +66,7 @@ impl Vault {
         let key =
             crate::identity::read_machine_signing_key_in_txn(self, txn)?.ok_or_else(no_signer)?;
         let public_key = key.verifying_key().to_bytes();
-        if !super::grant_travel::grant_travel_signer_admits(
-            fold.machine(machine),
-            &fold.roster,
-            &public_key,
-        ) {
+        if !super::owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
             return Err(no_signer());
         }
         let signer = AuthorityKey::Ed25519(public_key);

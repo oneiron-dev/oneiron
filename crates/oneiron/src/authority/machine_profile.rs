@@ -329,29 +329,9 @@ impl FoldedMachine {
             })
     }
 
-    /// The anchors whose trust set judges this machine otherwise than the
-    /// roster's: each one with a chain of it, and each one in which another
-    /// machine claims one of its keys. Under any other anchor it stands as it
-    /// does under the roster.
-    pub(super) fn judged_anchors(&self) -> BTreeSet<[u8; 32]> {
-        self.anchored
-            .keys()
-            .copied()
-            .chain(
-                self.shared
-                    .values()
-                    .flatten()
-                    .filter_map(|scope| match scope {
-                        MachineAdmitter::Anchor(key) => Some(*key),
-                        MachineAdmitter::Roster => None,
-                    }),
-            )
-            .collect()
-    }
-
     /// The roster view of this public standing: no chain stale, unsettled or
-    /// held, as every install reads the log. Validity and who may edit are
-    /// judged on it; this install's projections only weaken.
+    /// held, as every install reads the log. Validity and who may carry an
+    /// owner act are judged on it; this install's projections only weaken.
     #[must_use]
     pub(super) fn roster_view(&self) -> Self {
         let clear = |chain: &MachineRevision| MachineRevision {

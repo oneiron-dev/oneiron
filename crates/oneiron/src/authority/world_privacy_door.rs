@@ -2,14 +2,15 @@
 //! egress door asks: may a world be readable on a destination?
 //!
 //! The owner's door (`policy_model`) revalidates the owner and writes the
-//! receipt; this half proves the edit comes from this machine, that the owner
-//! marked this machine "yours" and that it holds the world, then signs the
-//! edit with the install key. The fold is the judge: an edit it refused never
-//! reports success.
+//! receipt; that say-so is the gate, from whichever linked surface it came
+//! (owner ruling 10-19: "it doesn't matter where you said yes, if you said
+//! so"). This half records it as an [`OwnerAct`] and signs the edit with this
+//! install's key, whatever the install's role in the roster, a hosted node
+//! included, as long as the one carrier rule admits it
+//! ([`super::owner_act_signer_admits`]). It need not hold the world. The fold
+//! is the judge: an edit it refused never reports success.
 
 use std::collections::BTreeSet;
-
-use ed25519_dalek::Signer;
 
 use crate::error::{Error, Result};
 use crate::ports::TombstoneStoreRead;
@@ -18,13 +19,15 @@ use crate::{EntityId, TimeRange, Vault};
 
 use super::*;
 
-/// Where an owner's settings edit comes from.
+/// Where a request to one of the root, kit, restore or custody doors comes
+/// from (L04's doors, each with its own rule until its mesh row lands). The
+/// world-settings door takes the owner act's [`ActSurface`] instead, which
+/// no rule reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditOrigin {
     /// An in-process call on this machine.
     ThisMachine,
-    /// A request from a connected peer. Only this machine edits its worlds:
-    /// another machine's possession of a world cannot be proven here.
+    /// A request from a connected peer.
     Peer(PeerMachine),
 }
 
@@ -34,14 +37,32 @@ pub(crate) struct WorldPrivacyChange {
     pub(crate) entry_hash: AuthorityEntryHash,
     pub(crate) previous: EffectiveWorldPrivacy,
     pub(crate) next: EffectiveWorldPrivacy,
-    /// For an orphan re-pick, the machines the world's read named, none of
-    /// them still the owner's; empty otherwise.
+    /// When the world was orphaned before the edit, the machines its read
+    /// named, none of them still the owner's; empty otherwise.
     pub(crate) orphaned_from: BTreeSet<EntityId>,
 }
 
-fn refused(reason: &'static str) -> Error {
-    Error::Gate(crate::error::GateError::ConsentOwnerNotAuthenticated(
-        reason,
+/// This install cannot carry the owner's act: it has no machine identity or
+/// install key, or the roster holds no live profile of it under that key.
+/// Key possession and integrity: an act is signed by the install that
+/// carries it, and FIX 2222 keeps every roster key (the host root included)
+/// out. Nothing was written.
+fn no_carrier() -> Error {
+    Error::InvalidConfig(
+        "this install has no live machine profile in the vault's roster to carry the owner's \
+         world settings; nothing was written"
+            .to_owned(),
+    )
+}
+
+/// The edit would name more rows than one authority entry may: the log's
+/// encoding bound (`MAX_PARENTS`), never a possession test. It refuses
+/// atomically: no data moves and no share is written (CALLS "mesh
+/// world-privacy parent bound").
+fn parent_bound(named: usize) -> Error {
+    Error::InvalidConfig(format!(
+        "this world's settings edit would name {named} parent rows, more than the {MAX_PARENTS} \
+         one authority entry names; nothing was written"
     ))
 }
 
@@ -54,36 +75,34 @@ impl Vault {
             .world_privacy(world))
     }
 
+    /// A world's settings revision in this vault's fold: what a surface shows
+    /// the owner, and passes back as the edit's `seen`.
+    pub fn world_privacy_revision(&self, world: EntityId) -> Result<PolicyRevision> {
+        let txn = self.store.env.read_txn()?;
+        Ok(self
+            .authority_view_readonly_in_txn(&txn)?
+            .world_policy_revision(world))
+    }
+
     /// Signs and lands one edit in the caller's transaction. The caller has
-    /// revalidated the owner and holds the release lock. With `earlier`, the
-    /// read folded under the admitter this machine was mine under before its
-    /// last pin change gives standing as well as the local read (an owner's
-    /// re-assertion, world privacy P6b).
-    pub(crate) fn append_world_privacy_edit_under_in_txn(
+    /// revalidated the owner and holds the release lock. `surface` is where
+    /// the owner said so, for audit only. `seen` is the settings revision the
+    /// deciding surface showed him: it must be the world's current one, else
+    /// the edit is a conflict, never a silent overwrite; `None` takes the
+    /// current revision (a caller that showed none).
+    pub(crate) fn append_world_privacy_edit_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         owner: EntityId,
-        origin: EditOrigin,
+        surface: ActSurface,
         world: EntityId,
         settings: WorldPrivacy,
-        earlier: Option<&AuthorityFold>,
+        seen: Option<PolicyRevision>,
     ) -> Result<WorldPrivacyChange> {
         settings.validate()?;
-        let machine = crate::identity::read_machine_id_in_txn(self, txn)?
-            .ok_or_else(|| refused("this install is not one of the owner's machines"))?;
-        // A peer stands as this machine only with the key it proved on its
-        // connection, which must be this install's own.
-        let proven = match origin {
-            EditOrigin::ThisMachine => None,
-            EditOrigin::Peer(PeerMachine::Proven { machine: peer, key }) if peer == machine => {
-                Some(key)
-            }
-            EditOrigin::Peer(_) => {
-                return Err(refused(
-                    "a world's settings change only on a machine that holds it",
-                ));
-            }
-        };
+        // Integrity: the settings belong to a stored, live WORLD row other
+        // than base reality. Its metadata is enough; no plaintext, key or
+        // holding of the world is needed to decide its settings.
         if world == crate::claim::base_world_id()
             || self.get_entity_type_in_txn(txn, &world)? != Some(ENTITY_TYPE_WORLD)
         {
@@ -97,235 +116,90 @@ impl Vault {
                 "world settings need a live WORLD row".to_owned(),
             ));
         }
-        let key = crate::identity::read_machine_signing_key_in_txn(self, txn)?
-            .ok_or_else(|| refused("this install has no machine key"))?;
-        let public_key = key.verifying_key().to_bytes();
-        if proven.is_some_and(|proven| proven != public_key) {
-            return Err(refused(
-                "a world's settings change only on a machine that holds it",
-            ));
-        }
         let fold = self.authority_view_readonly_in_txn(txn)?;
-        // Mine with this install's key in a fold's own trust set.
-        let keyed = |judged: &AuthorityFold| {
-            judged
-                .trusted_machine(machine)
-                .is_some_and(|trusted| trusted.profile.machine_key == public_key)
-        };
-        if !keyed(&fold) {
-            return Err(refused(
-                "only a machine the owner marked as theirs edits a world",
+        // Key possession: this install carries the act with its own install
+        // key, under a live profile of any role (mesh contract §3).
+        let machine = crate::identity::read_machine_id_in_txn(self, txn)?.ok_or_else(no_carrier)?;
+        let key =
+            crate::identity::read_machine_signing_key_in_txn(self, txn)?.ok_or_else(no_carrier)?;
+        let public_key = key.verifying_key().to_bytes();
+        if !owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
+            return Err(no_carrier());
+        }
+        // Revision integrity (contract §4): the owner decided on what the
+        // surface showed him.
+        let current = fold.world_policy_revision(world);
+        if seen.is_some_and(|seen| seen != current) {
+            return Err(Error::ConcurrentWrite(
+                "the world's settings changed since they were read",
             ));
         }
-        // Standing comes from this install's own read, or, when the owner
-        // re-asserts, from the read of the admitter this machine was mine
-        // under before its last pin change, with this install's key there
-        // too. The edit names that admitter's chain heads.
-        let (standing, admitter, judged) = match fold.world_edit_standing_by(machine, world) {
-            Some((standing, admitter)) => (standing, admitter, &*fold),
-            None => earlier
-                .filter(|earlier| keyed(earlier))
-                .and_then(|earlier| {
-                    earlier
-                        .world_edit_standing_by(machine, world)
-                        .map(|(standing, admitter)| (standing, admitter, earlier))
-                })
-                .ok_or_else(|| refused("this machine does not hold the world"))?,
-        };
-        if let ReadLocation::OneMachine(target) = settings.read
-            && fold.trusted_machine(target).is_none()
-        {
-            return Err(refused(
-                "a one-machine world lives only on the owner's machine",
-            ));
-        }
-        let signer = AuthorityKey::Ed25519(public_key);
-        let seq = match fold.append_sequences.get(&signer) {
-            None => 1,
-            Some(seq) => seq.checked_add(1).ok_or_else(invalid_authority)?,
-        };
-        let now = self.instant_in_txn(txn)?.secs();
-        let sign = |seq, parents: BTreeSet<AuthorityEntryHash>, settings| {
-            let mut entry = AuthorityLogEntry {
-                schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
-                vault_id: fold.vault_id,
-                seq,
-                parent_hashes: parents.into_iter().collect(),
-                op: AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
-                    world,
-                    owner,
-                    machine,
-                    settings,
-                }),
-                signer: AuthoritySignature {
-                    suite: AuthoritySignatureSuite::Ed25519,
-                    public_key: signer.clone(),
-                    signature: vec![0; 64],
-                },
-                cosigns: Vec::new(),
-                ts: now,
-            };
-            entry.signer.signature = key.sign(&authority_transcript(&entry)?).to_bytes().to_vec();
-            Ok::<_, Error>(entry)
-        };
-        // The edit names only the rows its standing rests on. A machine that
-        // holds the world names its own head revision and a one-machine
-        // target's: an unrelated main-log head adds no safety, and one a
-        // handoff later fences would wedge a replica that refused it (Engine
-        // ruling E7 on Wonder P2 round 1, W4). A world readable nowhere before
-        // the edit (a conflict, an orphan) names the main-log heads instead:
-        // whether its contenders or named machines still stand may rest on
-        // any main-log row (a shared key, custody), and an edit stuck on a
-        // replica leaves the world unreadable there (Sol P2 round 5, F2, F3).
+        // A recipient limit, the owner's own choice (contract §5): a
+        // one-machine world is read only on a machine he marked "yours". It
+        // limits where the world goes, never who edits it.
         let target = match settings.read {
             ReadLocation::OneMachine(target) => Some(target),
             ReadLocation::MyMachines | ReadLocation::Everywhere => None,
         };
-        // The edit replaces the live edits it names; a refused edit replaces
-        // nothing and is never named. More than one entry may name are
-        // replaced a share at a time, each share's edit picking this machine
-        // alone, which keeps its standing, and the last edit carries the
-        // owner's settings. The first share leads with the edits that pick this
-        // machine, so a contender stays one (Wonder P2 round 1, W5). A share
-        // reaches a replica before the last edit may, so it only narrows a
-        // world this machine holds, or picks the machine the owner moves the
-        // world to; a world readable nowhere moves to this machine first, and
-        // on in a second edit (Sol P2 round 5, F5).
-        let picks_this_machine =
-            !matches!(settings.read, ReadLocation::OneMachine(only) if only != machine);
-        let mut live = Vec::new();
-        let mut authors = BTreeSet::new();
-        // A live edit an adopted vault does not store reads from the body its
-        // checkpoint image carries (OF-469, slice E).
-        let mut carried = super::adopted_evidence::CarriedRows::default();
-        for hash in fold
-            .worlds
-            .get(&world)
-            .into_iter()
-            .flat_map(|folded| folded.live.keys())
-        {
-            let row = match stored_authority_row(&self.store, txn, hash)? {
-                Some(row) => Some(row),
-                None => carried.get(&self.store, txn, hash)?,
-            };
-            let edit = match row.map(|row| row.op) {
-                Some(AuthorityOp::WorldPrivacy(edit)) => Some(edit),
-                _ => None,
-            };
-            let picks_this = edit
-                .as_ref()
-                .is_some_and(|edit| edit.settings.read == ReadLocation::OneMachine(machine));
-            authors.extend(edit.map(|edit| edit.machine));
-            live.push((!picks_this, *hash));
+        if target.is_some_and(|target| fold.trusted_machine(target).is_none()) {
+            return Err(Error::InvalidConfig(
+                "the owner-selected OneMachine recipient policy requires a live machine marked \
+                 Yours"
+                    .to_owned(),
+            ));
         }
-        live.sort_unstable();
-        // A holder also names the head revisions of the machines whose live
-        // edits its hold reads, while they stay few: whether such an edit
-        // counts may rest on a later revision of its machine (Sol P2 round 6,
-        // F5). It never falls back to the main-log heads, which would carry an
-        // unrelated fenced row into a narrowing of a readable world (Wonder P2
-        // round 4, W3); a hold resting on rows none of these carry refuses,
-        // and the owner marks this machine again.
-        // A machine's rows are the heads of its chains in this install's
-        // trust set, where the edit's strength is judged, and in the trust
-        // set its standing comes from, where its validity is.
-        let local = fold.local_admitter();
-        let heads = |id: EntityId| {
-            let chain_heads = |judged: &AuthorityFold, admitter: MachineAdmitter| {
-                judged
-                    .machine(id)
-                    .map(|folded| {
-                        folded
-                            .trust_chains(&admitter)
-                            .into_iter()
-                            .map(|(_, chain)| chain.entry)
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default()
-            };
-            let mut rows = chain_heads(&fold, local);
-            rows.extend(chain_heads(judged, admitter));
-            rows
-        };
-        let standing_rows: BTreeSet<AuthorityEntryHash> = match standing {
-            WorldEditStanding::Holds => {
-                let mut rows: BTreeSet<_> = std::iter::once(machine)
-                    .chain(target)
-                    .flat_map(&heads)
-                    .collect();
-                let authors: BTreeSet<_> = authors.into_iter().flat_map(&heads).collect();
-                if rows.union(&authors).count() <= MAX_PARENTS / 2 {
-                    rows.extend(authors);
-                }
-                rows
-            }
-            WorldEditStanding::Contends | WorldEditStanding::RepicksOrphan => {
-                fold.append_heads.clone()
-            }
-        };
-        // Each row this machine signs in the world names its previous one
-        // there, a settings edit or a key record, and each share names the
-        // one before it: one chain in one sequence scope, so a later row that
-        // arrives first vouches for the earlier (Astra #1422c).
-        let chain = super::scope_head(&fold, &signer, world);
-        let author = |standing_rows: &BTreeSet<AuthorityEntryHash>| {
-            let mut seq = seq;
-            let mut entries = Vec::new();
-            let mut parents = standing_rows.clone();
-            parents.extend(chain);
-            // A live edit these parents already name, the chain most often,
-            // counts once (Astra #1422d F1).
-            let mut live = live
-                .iter()
-                .map(|(_, hash)| *hash)
-                .filter(|hash| !parents.contains(hash))
-                .collect::<Vec<_>>()
-                .into_iter();
-            while parents.len() + live.len() > MAX_PARENTS {
-                if standing != WorldEditStanding::Holds && !picks_this_machine {
-                    return Err(refused(
-                        "a world with this many concurrent edits moves to this machine first",
-                    ));
-                }
-                let room = MAX_PARENTS
-                    .checked_sub(parents.len())
-                    .filter(|room| *room > 0)
-                    .ok_or_else(invalid_authority)?;
-                parents.extend(live.by_ref().take(room));
-                let share = sign(
-                    seq,
-                    std::mem::replace(&mut parents, standing_rows.clone()),
-                    WorldPrivacy {
-                        read: ReadLocation::OneMachine(machine),
-                        ..settings.clone()
-                    },
-                )?;
-                parents.insert(authority_entry_hash(&share)?);
-                seq = seq.checked_add(1).ok_or_else(invalid_authority)?;
-                entries.push(share);
-            }
-            parents.extend(live);
-            let entry = sign(seq, parents, settings.clone())?;
-            let entry_hash = authority_entry_hash(&entry)?;
-            entries.push(entry);
-            let at = TimeRange {
-                start: now,
-                end: now,
-            };
-            let rows: Vec<_> = entries.into_iter().map(|entry| (entry, at, now)).collect();
-            Ok((rows, entry_hash))
-        };
+        // A main-log edit (contract §6): it names the main-log heads, its
+        // carrier's standing rows, a one-machine target's and the world's live
+        // edits, so it supersedes every edit this install folds. It never
+        // names a key record, which rides the world's recipient-filtered side
+        // branch. A fenced main-log row beneath it is crossed on refold
+        // (`refold_world_edits`), as for a grant travel choice.
+        let mut parents = fold.append_heads.clone();
+        parents.extend(standing_rows(&fold, machine));
+        parents.extend(
+            target
+                .into_iter()
+                .flat_map(|target| standing_rows(&fold, target)),
+        );
+        parents.extend(
+            fold.worlds
+                .get(&world)
+                .into_iter()
+                .flat_map(|folded| folded.live.keys().copied()),
+        );
+        if parents.len() > MAX_PARENTS {
+            return Err(parent_bound(parents.len()));
+        }
+        let signer = AuthorityKey::Ed25519(public_key);
+        let seq = next_sequence(&fold, &signer)?;
+        let now = self.instant_in_txn(txn)?.secs();
+        let act = OwnerAct::by_owner(owner, OwnerActKind::WorldPrivacy, world, surface, current.0);
+        let entry = sign_side_entry(
+            &fold,
+            &key,
+            seq,
+            parents,
+            AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
+                world,
+                act,
+                machine,
+                settings,
+            }),
+            now,
+        )?;
+        let entry_hash = authority_entry_hash(&entry)?;
         let previous = fold.world_privacy(world);
-        let orphaned_from = if standing == WorldEditStanding::RepicksOrphan {
-            super::world_privacy::orphaned_from(&judged.world_local_read(world), |id| {
-                super::world_privacy::mine_by_roster(judged, id, admitter)
-            })
-        } else {
-            BTreeSet::new()
+        let local = fold.local_admitter();
+        let orphaned_from =
+            super::world_privacy::orphaned_from(&fold.world_local_read(world), |id| {
+                super::world_privacy::mine_by_roster(&fold, id, local)
+            });
+        let at = TimeRange {
+            start: now,
+            end: now,
         };
-        let (rows, entry_hash) = author(&standing_rows)?;
         let after = self
-            .land_world_edit_in_txn(txn, &rows, world, &entry_hash)?
+            .land_world_edit_in_txn(txn, &[(entry, at, now)], world, &entry_hash)?
             .ok_or_else(invalid_authority)?;
         Ok(WorldPrivacyChange {
             machine,
@@ -492,12 +366,13 @@ impl Vault {
         };
         self.set_world_privacy_as(
             &owner,
-            EditOrigin::ThisMachine,
+            ActSurface::ThisInstall,
             world,
             WorldPrivacy {
                 read,
                 ..WorldPrivacy::default()
             },
+            None,
         )?;
         Ok(())
     }

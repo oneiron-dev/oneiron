@@ -745,12 +745,13 @@ fn agent_and_machine_keys_rows_land_only_with_the_owner_or_under_their_bound() {
             assert_eq!(stored() - before, BOUND + 2, "machine {machine}");
             if machine {
                 seq += 1;
+                let world = EntityId::now();
                 let edit = row(
                     seq,
                     parent,
                     AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
-                        world: EntityId::now(),
-                        owner: host.owner.actor(),
+                        world,
+                        act: owner_act(host.owner.actor(), world),
                         machine: own_machine,
                         settings: WorldPrivacy::default(),
                     }),
@@ -1918,13 +1919,14 @@ fn a_world_edit_lands_only_from_its_own_machines_install_key() {
         let fold = host.vault.authority_fold().unwrap();
         let key = authority_key_from_ed(&install);
         let seq = fold.append_sequences.get(&key).map_or(1, |seq| seq + 1);
+        let world = EntityId::now();
         let entry = unsigned_entry(
             fold.vault_id,
             seq,
             fold.append_heads.iter().copied().collect(),
             AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
-                world: EntityId::now(),
-                owner: host.owner.actor(),
+                world,
+                act: owner_act(host.owner.actor(), world),
                 machine,
                 settings: WorldPrivacy::default(),
             }),

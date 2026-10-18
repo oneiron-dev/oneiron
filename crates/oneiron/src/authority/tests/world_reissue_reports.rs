@@ -103,7 +103,13 @@ fn an_activation_on_a_roster_mine_install_still_heads_its_anchor_chain() {
 fn set_full(install: &Fresh, world: EntityId, privacy: WorldPrivacy) {
     install
         .vault
-        .set_world_privacy_as(&install.owner, HERE, world, privacy)
+        .set_world_privacy_as(
+            &install.owner,
+            ActSurface::ThisInstall,
+            world,
+            privacy,
+            None,
+        )
         .unwrap();
 }
 

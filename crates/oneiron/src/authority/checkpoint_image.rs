@@ -18,6 +18,15 @@
 //! refuses. Covered rows a later fold reads whole travel as their canonical
 //! signed bytes: the signed wire codec has no serde form.
 //!
+//! An image goes whole to any linked machine of the vault, with no per-reader
+//! world filter (FIX 4212, closed under the Engine call "OwnerAct world
+//! metadata to every linked machine", 10-19 01:4x). A world's settings edits
+//! are main-log metadata every linked machine folds anyway. A world-key
+//! record's body is ciphertext only its named recipients open: each wrap is a
+//! HybridCapsule to one machine's encryption key or to the recovery root,
+//! sealed over the key XOR an erasable pad, so possession, not the image,
+//! keeps a world's key. World content and display text never ride an image.
+//!
 //! An archive manifest is a virtual content set, not a location: its id is a
 //! domain-separated BLAKE3 over the vault id and the exact ascending covered
 //! rows it lists ([`authority_archive_id`]), and its custodians are machines

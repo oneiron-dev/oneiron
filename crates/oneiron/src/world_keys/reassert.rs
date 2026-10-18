@@ -15,8 +15,7 @@ use super::{
     recipients, refused,
 };
 use crate::authority::{
-    Destination, EditOrigin, EffectiveRead, WorldPrivacy, own_world_key_records_in_txn,
-    read_pin_and_earlier_in_txn,
+    ActSurface, Destination, EditOrigin, EffectiveRead, WorldPrivacy, own_world_key_records_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
@@ -26,9 +25,9 @@ use crate::{EntityId, Vault};
 impl Vault {
     /// Re-asserts one world's complete settings, which the owner chose, on
     /// this machine only. This machine must be mine under the pin and hold
-    /// the world's live WORLD row; its standing comes from the local read or
-    /// from the read of the admitter it was mine under before its last pin
-    /// change; and `expected` must be the world's current settings revision.
+    /// the world's live WORLD row, and `expected` must be the world's current
+    /// settings revision; the settings edit itself needs no standing (mesh
+    /// contract §3).
     /// One settings edit with its receipt, the re-wraps and the world's key,
     /// in one transaction. The engine never calls it on its own.
     pub fn reassert_world_privacy(
@@ -71,17 +70,13 @@ impl Vault {
             if current != expected {
                 return Err(refused("the world's settings changed since they were read"));
             }
-            let (_, earlier) = read_pin_and_earlier_in_txn(&self.store, txn)?;
-            let earlier = earlier
-                .map(|admitter| self.authority_view_under_admitter_in_txn(txn, &fold, admitter))
-                .transpose()?;
-            let receipt = self.set_world_privacy_under_in_txn(
+            let receipt = self.set_world_privacy_in_txn(
                 txn,
                 owner,
-                EditOrigin::ThisMachine,
+                ActSurface::ThisInstall,
                 world,
                 settings,
-                earlier.as_deref(),
+                Some(expected),
             )?;
             // The world's keys this machine wrapped itself, wrapped again
             // under the current pin and the settings after the edit.
@@ -157,7 +152,8 @@ impl Vault {
                 self.require_counted_in_txn(txn, &appended)?;
             }
             let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-            self.world_key_for_edit_in_txn(txn, actor, world, Ok(&secret))?;
+            let status = self.world_key_for_edit_in_txn(txn, actor, world, Ok(&secret))?;
+            let receipt = self.settle_world_key_work_in_txn(txn, receipt, status)?;
             Ok((release, receipt))
         })?;
         Ok(receipt)

@@ -38,7 +38,7 @@ fn keep_mine(host: &Host, world: EntityId) {
         ..settings(ReadLocation::MyMachines)
     };
     host.vault
-        .set_world_privacy_as(&host.owner, HERE, world, edit)
+        .set_world_privacy_as(&host.owner, ActSurface::ThisInstall, world, edit, None)
         .unwrap();
 }
 

@@ -34,6 +34,7 @@ use super::policy::resolve_residence_mode;
 use crate::Vault;
 use crate::authority::{
     Destination, EditOrigin, EffectiveRead, decode_authority_log_entry_body, side_world,
+    world_control_world,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
@@ -354,9 +355,12 @@ impl WindowManager {
     /// each of `windows` that is a base window or a window of a world read
     /// everywhere; and the worlds the bundle carries for `holder`
     /// ([`Vault::sealed_bundle_worlds`]), read after the history. A world's side
-    /// branch (its settings edits and key wraps) rides only with a world read
-    /// everywhere or one the bundle carries for `holder` (FIX 922 item 11):
-    /// nothing outside the world names it.
+    /// branch (its key wraps) rides only with a world read everywhere or one
+    /// the bundle carries for `holder` (FIX 922 item 11): nothing outside the
+    /// world names it. Its settings edits are main-log metadata (the Engine
+    /// call "OwnerAct world metadata to every linked machine"), so the base
+    /// always carries them, and the world's reader capsule keeps its copy
+    /// beside its wraps (FIX 4211).
     fn sealed_bundle_base(
         &self,
         windows: &[WindowKey],
@@ -380,13 +384,13 @@ impl WindowManager {
                 .collect();
             let mut authority = Vec::with_capacity(history.len());
             for bytes in history {
-                let side = side_world(&decode_authority_log_entry_body(&bytes)?.op)
-                    .filter(|world| !everywhere(*world));
-                if let Some(world) = side {
-                    if !eligible.contains(&world) {
+                let op = decode_authority_log_entry_body(&bytes)?.op;
+                if let Some(world) = world_control_world(&op).filter(|world| !everywhere(*world)) {
+                    if eligible.contains(&world) {
+                        sides.entry(world).or_default().push(bytes.clone());
+                    } else if side_world(&op).is_some() {
                         continue;
                     }
-                    sides.entry(world).or_default().push(bytes.clone());
                 }
                 authority.push(bytes);
             }

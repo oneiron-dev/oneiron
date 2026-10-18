@@ -7,7 +7,7 @@
 //! changes only what the gate stores, and the second, once it has arrived,
 //! pins it. So does a re-pin whose marks still wait.
 use super::machine_identity::{host, request_for};
-use super::support::{authority_key_from_ed, ed_key, sign_ed, unsigned_entry};
+use super::support::{authority_key_from_ed, ed_key, owner_act, sign_ed, unsigned_entry};
 use super::world_key_doors::{Fresh, fresh_install, own_request};
 use super::world_key_store_gate::put_replicated;
 use super::world_privacy::{settings, stored_entries, world_row};
@@ -167,7 +167,7 @@ fn a_flood_of_strangers_rows_never_fails_the_fold() {
             let fold = issuer.vault.authority_fold().unwrap();
             let op = AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
                 world: elsewhere,
-                owner,
+                act: owner_act(owner, elsewhere),
                 machine: m,
                 settings: settings(ReadLocation::OneMachine(m)),
             });

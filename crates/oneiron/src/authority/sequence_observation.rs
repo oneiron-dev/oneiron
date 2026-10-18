@@ -105,11 +105,13 @@ pub(super) fn authority_observation_peer_id(signer: &AuthorityKey) -> String {
 
 /// A signer's sequences order within one scope: the main log, or one world's
 /// side branch. Entries of different worlds never name each other, so one
-/// world's later entry is no rollback floor for another's. Inside a world
-/// the floor is one stream over settings edits and key records alike, the
-/// defence against backdating either kind (Astra #1422c F2, F3). Each row a
-/// machine signs in a world names its previous one there, so a later row
-/// that arrives first vouches for the earlier (Astra #1422b F1).
+/// world's later entry is no rollback floor for another's. A world's settings
+/// edits are main-log rows (mesh contract §6), so they share their carrier's
+/// main-log floor; inside a world the floor is one stream over its key
+/// records, the defence against backdating one (Astra #1422c F2, F3). Each
+/// key record a machine signs in a world names its previous one there, and
+/// each settings edit names the main-log heads, so a later row that arrives
+/// first vouches for the earlier (Astra #1422b F1).
 fn sequence_key(entry: &AuthorityLogEntry) -> String {
     sequence_key_of(
         entry.signer_key(),
