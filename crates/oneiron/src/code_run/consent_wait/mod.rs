@@ -14,12 +14,15 @@
 //! held effect runs once under its own current gate, with the answer's
 //! code-bound one-shot approval and the original caller's own grant, and its
 //! actual outcome settles the wait and wakes the run. The run's consumption
-//! of that reply is the third, which 1b records with the executor's seal.
+//! of that reply is the third: the step that parks seals the wait in its
+//! replay commit, and the replay commit that takes the reply consumes it
+//! once (1b, `replay.rs`).
 //!
 //! This module owns the control row; only it writes it.
 
 mod binding;
 mod host;
+mod replay;
 mod settle;
 mod types;
 
@@ -29,6 +32,10 @@ pub(crate) use self::binding::{
     read_code_consent_wait_in_txn, record_code_consent_admission_in_txn,
 };
 pub use self::host::CodeConsentEffectHost;
+pub(crate) use self::replay::{
+    CodeConsentResume, ParkedWait, code_consent_resume_evidence, consume_code_consent_wait_in_txn,
+    seal_parked_code_consent_in_txn, verify_code_consent_consumed, verify_parked_code_consent,
+};
 pub(crate) use self::settle::{
     CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED, code_consent_admission_in_txn, offered_choices,
     original_authority_holds_in_txn, refuse_code_consent_wait_in_txn,

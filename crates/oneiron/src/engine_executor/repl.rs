@@ -8,9 +8,9 @@ use super::host::{
 };
 use super::record::{
     LoadedReplayRecord, PromptBinding, REPLAY_METADATA_SCHEMA_VERSION, StepResultDigests,
-    completed_step_count, load_terminal_status, parked_wait_at, previous_state_hash,
-    record_config_marker, record_terminal_output, step_state_hash, validate_executor_config_marker,
-    wait_key,
+    code_consent_evidence, completed_step_count, load_terminal_status, parked_wait, parked_wait_at,
+    previous_state_hash, record_config_marker, record_terminal_output, step_state_hash,
+    validate_executor_config_marker, verify_code_consent_park, wait_key,
 };
 use super::store::{
     COMPACTION_OBSERVATION_WINDOW_BYTES, IMPLICIT_SPEECH_TEXT_BYTES, ImplicitSpeechIntent,
@@ -495,7 +495,9 @@ impl EngineNativeExecutor<'_> {
             // transaction. A generation conflict, tally error, or failed
             // commit advances neither; a durable append has already counted.
             // The fold receipts the step's stores computed land in it too,
-            // beside the bindings they describe.
+            // beside the bindings they describe, and so does the seal of the
+            // code consent wait the step parks on (DOOR-079 1b).
+            let parked = parked_wait(&record, terminal_status.as_ref(), bridge_start);
             let mut next_generation = self
                 .storage
                 .put_code_run_replay_record_with_receipts_if_generation(
@@ -503,6 +505,7 @@ impl EngineNativeExecutor<'_> {
                     expected_generation,
                     repairs.healed().then_some(&config.model),
                     &host.receipts,
+                    parked.as_ref(),
                 )?;
             // The implicit bubble is downstream of its checkpoint commit. A
             // compare-and-put failure emits nothing. A terminal retry replays
@@ -541,13 +544,15 @@ impl EngineNativeExecutor<'_> {
     /// Registers the run as parked on `wait`, the wait its last step
     /// committed, and answers the wait's key once its reply is delivered.
     /// Every entry of a Waiting run parks again, idempotently, so a park that
-    /// a crash after the commit skipped is not lost.
+    /// a crash after the commit skipped is not lost. A bound code consent
+    /// wait parks only as its step sealed it (DOOR-079 1b).
     fn park(
         &self,
         record: &CodeRunReplayRecord,
         wait: &SelfDurableWait,
     ) -> EngineExecutorResult<Option<WaitKey>> {
         let key = wait_key(record, wait);
+        verify_code_consent_park(&self.storage, record, &key)?;
         Ok(self.storage.park_wait(&key)?.then_some(key))
     }
 
@@ -556,6 +561,11 @@ impl EngineNativeExecutor<'_> {
     /// parked step's bridge rows stay as recorded and nothing is dispatched
     /// again: the run goes on at the next step, whose context carries the
     /// reply. `None` when no reply is delivered.
+    ///
+    /// A bound code consent wait's reply is verified as its settlement's own
+    /// before it is read, the result carries the consent evidence by
+    /// reference, and the commit consumes the settlement once beside it
+    /// (DOOR-079 1b). The cleanup after it is never the consumer.
     fn resume_delivered_wait(
         &mut self,
         record: &mut CodeRunReplayRecord,
@@ -569,28 +579,26 @@ impl EngineNativeExecutor<'_> {
         let seq = completed_step_count(record)?
             .checked_sub(1)
             .ok_or(Error::CorruptedIndex("executor replay wait without a step"))?;
+        let consent = code_consent_evidence(&self.storage, record, key, seq, &delivery.reply)?;
         let mut reply: serde_json::Value = serde_json::from_str(&delivery.reply)
             .map_err(|_| Error::CorruptedIndex("code-run wait delivery"))?;
         if wait.effect == SelfEffect::Summarize {
             reply = self.storage.delivered_summary_reply(reply)?;
         }
+        let mut resumed = json!({
+            "schema_version": REPLAY_METADATA_SCHEMA_VERSION,
+            "wait_id": wait.wait_id.to_hex(),
+            "effect": wait.effect.as_str(),
+            "generation": key.generation,
+            "reply": reply,
+        });
+        if let Some(consent) = consent {
+            resumed["consent"] = consent;
+        }
         let mut sink = self.storage.code_run_output_sink()?;
-        write_json(
-            &mut sink,
-            &json!({
-                "schema_version": REPLAY_METADATA_SCHEMA_VERSION,
-                "wait_id": wait.wait_id.to_hex(),
-                "effect": wait.effect.as_str(),
-                "generation": key.generation,
-                "reply": reply,
-            }),
-        )?;
-        let output = publish_output(
-            &self.storage,
-            record,
-            resumed_output_path(seq, wait.wait_id),
-            sink,
-        )?;
+        write_json(&mut sink, &resumed)?;
+        let path = resumed_output_path(seq, wait.wait_id);
+        let output = publish_output(&self.storage, record, path.clone(), sink)?;
         let name = format!("wait{seq}");
         match record.bindings.iter_mut().find(|held| held.name == name) {
             Some(held) => held.handle = output.handle,
@@ -600,7 +608,7 @@ impl EngineNativeExecutor<'_> {
         }
         let generation = self
             .storage
-            .put_code_run_wait_resume_record(record, expected, key)?;
+            .put_code_run_wait_resume_record(record, expected, key, seq, &path)?;
         self.storage.clear_wait(key)?;
         Ok(Some(generation))
     }
@@ -851,11 +859,15 @@ impl EngineNativeExecutor<'_> {
                 .saturating_add(completed_steps),
         )?;
         record.step_checkpoints.push(checkpoint);
+        // A wait seen on a failed step is sealed with it too (DOOR-079 1b).
+        let parked = parked_wait(record, terminal_status.as_ref(), bridge_start);
         self.storage
-            .put_code_run_replay_record_if_generation_with_heal(
+            .put_code_run_replay_record_with_receipts_if_generation(
                 record,
                 expected_generation,
                 healed.then_some(&config.model),
+                &[],
+                parked.as_ref(),
             )?;
         // The run parks on the step's wait; a reply already delivered
         // resumes it at its next entry.

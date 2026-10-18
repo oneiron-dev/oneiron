@@ -54,10 +54,12 @@ pub use self::codec::{
 pub(crate) use self::consent_wait::{
     CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED, CodeConsentCallSite, CodeConsentConnectorCall,
     CodeConsentDraft, CodeConsentPendingEffect, CodeConsentPrincipal, CodeConsentRememberOffer,
-    CodeConsentWaitRow, attach_code_consent_ask_in_txn, code_consent_admission_in_txn,
+    CodeConsentResume, CodeConsentWaitRow, ParkedWait, attach_code_consent_ask_in_txn,
+    code_consent_admission_in_txn, code_consent_resume_evidence, consume_code_consent_wait_in_txn,
     mint_code_consent_wait_in_txn, offered_choices, original_authority_holds_in_txn,
     read_code_consent_wait_in_txn, record_code_consent_admission_in_txn,
-    refuse_code_consent_wait_in_txn, settle_code_consent_wait_in_txn,
+    refuse_code_consent_wait_in_txn, seal_parked_code_consent_in_txn,
+    settle_code_consent_wait_in_txn, verify_code_consent_consumed, verify_parked_code_consent,
 };
 pub use self::consent_wait::{
     CodeConsentAnswerInput, CodeConsentChoice, CodeConsentEffectHost, CodeConsentSavedCredential,
@@ -105,7 +107,9 @@ pub use self::storage::{
     CodeRunModelHealCount, CodeRunSecretLiftProposal, WaitDeliveries, WaitDelivery, WaitKey,
     bind_wait_trap, park_and_bind_wait_trap,
 };
-pub(crate) use self::storage::{FinishedOutput, code_run_body_file_of_row, deliver_wait_in_txn};
+pub(crate) use self::storage::{
+    FinishedOutput, code_run_body_file_of_row, deliver_wait_in_txn, settled_wait_reply_in_txn,
+};
 pub(crate) use self::storage::{
     OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
     ReceiptSource, ReceiptTree,

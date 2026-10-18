@@ -1,6 +1,6 @@
 //! The binding: minted beside the held effect's pending row, in its writer;
-//! sealed with the parked checkpoint (1b); read by the answer and by the
-//! effect's own gate.
+//! sealed with the parked checkpoint (1b, `replay.rs`); read by the answer
+//! and by the effect's own gate.
 
 use crate::Vault;
 use crate::code_run::storage::derived_executor_id;
@@ -160,6 +160,7 @@ pub(crate) fn mint_code_consent_wait_in_txn(
         answer: None,
         admission: None,
         settlement: None,
+        consumption: None,
         revision: 0,
     };
     put_code_consent_wait_in_txn(vault, txn, &mut row)?;
@@ -290,11 +291,7 @@ pub(crate) fn record_code_consent_admission_in_txn(
 /// Seals a provisional wait with its parked step, in the executor's replay
 /// commit, so an answer can reach it. The same seal again is a no-op; any
 /// other seal is refused.
-#[expect(
-    dead_code,
-    reason = "1b seals each parked step through it, in the executor's replay commit"
-)]
-pub(crate) fn seal_code_consent_wait_in_txn(
+pub(super) fn seal_code_consent_wait_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     wait_id: EntityId,
