@@ -2806,6 +2806,26 @@ export_facade! {
     let output = client.vault_forget(&input)?;
     Lift::lift(output)
 };
+"vault.booking.availability" => fn vault_booking_availability(&self, input: BookingAvailabilityRequest) -> BookingOperationResponse = |client| {
+    let input: oneiron::task_verb::sdk::BookingAvailabilityRequest = crate::codec::lower_record("vault.booking.availability", input)?;
+    let output = client.vault_booking_availability(&input)?;
+    crate::codec::lift_record("vault.booking.availability", &output)
+};
+"vault.booking.book" => fn vault_booking_book(&self, input: BookingBookRequest) -> BookingOperationResponse = |client| {
+    let input: oneiron::task_verb::sdk::BookingBookRequest = crate::codec::lower_record("vault.booking.book", input)?;
+    let output = client.vault_booking_book(&input)?;
+    crate::codec::lift_record("vault.booking.book", &output)
+};
+"vault.booking.reschedule" => fn vault_booking_reschedule(&self, input: BookingRescheduleRequest) -> BookingOperationResponse = |client| {
+    let input: oneiron::task_verb::sdk::BookingRescheduleRequest = crate::codec::lower_record("vault.booking.reschedule", input)?;
+    let output = client.vault_booking_reschedule(&input)?;
+    crate::codec::lift_record("vault.booking.reschedule", &output)
+};
+"vault.booking.cancel" => fn vault_booking_cancel(&self, input: BookingCancelRequest) -> BookingOperationResponse = |client| {
+    let input: oneiron::task_verb::sdk::BookingCancelRequest = crate::codec::lower_record("vault.booking.cancel", input)?;
+    let output = client.vault_booking_cancel(&input)?;
+    crate::codec::lift_record("vault.booking.cancel", &output)
+};
 "vault.booking.constraint_turn" => fn vault_booking_constraint_turn(&self, input: BookingConstraintTurnRequest) -> BookingConstraintTurnResponse = |client| {
     let input: oneiron::task_verb::sdk::BookingConstraintTurnRequest = crate::codec::lower_record("vault.booking.constraint_turn", input)?;
     let output = client.vault_booking_constraint_turn(&input)?;

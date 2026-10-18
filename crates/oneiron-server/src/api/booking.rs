@@ -2,8 +2,8 @@
 //!
 //! One executor, two transports. [`execute_booking_operation`] is the ONLY
 //! path from a machine-readable booking request to the merged solver and the
-//! merged lifecycle; the public HTTP routes below and the MCP `oneiron.book`
-//! adapter are thin shells over it, so validation, admission, parsing,
+//! merged lifecycle; the public HTTP routes below and the generated
+//! `vault.booking.*` doors are thin shells over it, so validation, admission, parsing,
 //! dispatch, and response projection cannot drift between them.
 //!
 //! Three invariants are enforced here and nowhere else:
@@ -434,10 +434,11 @@ pub(crate) async fn execute_booking_operation(
     server: &Arc<SyncServer>,
     page_token: &str,
     request: BookingOperationRequest,
-    transport: &BookingTransportContext,
+    transport: impl Into<BookingAdmissionContext>,
 ) -> Result<BookingOperationResponse, ApiError> {
+    let transport = transport.into();
     // ── 1. shape, keys, and the page subject ────────────────────────────
-    let public_authority = if transport.transport == BookingTransport::AnonymousHttp {
+    let public_authority = if transport.transport != BookingTransport::PublicHttp {
         let (page_ref, publication) = public::resolve_public_booking_page(server, page_token)?;
         Some(oneiron::booking::publication::PublicBookingAuthority {
             page_ref,
@@ -465,10 +466,10 @@ pub(crate) async fn execute_booking_operation(
     )?;
     // An authenticated caller past a window waits for it and is admitted
     // again (`turn::Turn`), so the clock and the facts are read each time.
-    let mut turn = turn::Turn::new(server, transport);
+    let mut turn = turn::Turn::new(server, &transport);
     let (now, disposition) = loop {
         let now = now_secs()?;
-        let facts = admission_facts(server, page_ref, &request, transport, now)?;
+        let facts = admission_facts(server, page_ref, &request, &transport, now)?;
         let disposition = match &request {
             BookingOperationRequest::Availability(_) => {
                 enforce_slot_list(State(Arc::clone(server)), facts, cache.is_some()).await?
@@ -508,7 +509,7 @@ pub(crate) async fn execute_booking_operation(
             if let Some(BookingConstraintInput::FreeText(text)) = &input.constraint {
                 let (object, visitor_tz) = free_text::parse_free_text(
                     server,
-                    transport,
+                    &transport,
                     text.clone(),
                     input.visitor_tz.clone(),
                     now,

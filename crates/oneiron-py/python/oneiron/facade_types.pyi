@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 728 facade rows, 2599 declarations.
-Inputs: 676 of 728 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 653 of 728 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 732 facade rows, 2616 declarations.
+Inputs: 680 of 732 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 657 of 732 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 95; unread shapes: 0.
 """
 
@@ -10618,6 +10618,129 @@ class ForgetPredicateRequest(TypedDict):
     predicate: str
 ForgetRequest = ClaimRefRequest | ForgetPredicateRequest
 EventTypeKey = str
+class TimeRangeWire(TypedDict):
+    start: int
+    end: int
+ConstraintWeekday = Literal["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+class LocalMinuteWindow(TypedDict):
+    start_minute: int
+    end_minute: int
+class ConstraintTimeRangeWire(TypedDict):
+    start: int
+    end: int
+class ConstraintObject(TypedDict):
+    schema_version: int
+    weekdays: NotRequired[list[ConstraintWeekday]]
+    local_time_windows: NotRequired[list[LocalMinuteWindow]]
+    utc_window: NotRequired[ConstraintTimeRangeWire | None]
+    allow_flex_pool: bool
+class BookingConstraintInputObject(TypedDict):
+    kind: Literal["object"]
+    value: ConstraintObject
+class BookingConstraintInputFreeText(TypedDict):
+    kind: Literal["free_text"]
+    value: str
+BookingConstraintInput = BookingConstraintInputObject | BookingConstraintInputFreeText
+class BookingAvailabilityInput(TypedDict):
+    event_type: EventTypeKey
+    window: TimeRangeWire
+    visitor_tz: str
+    constraint: NotRequired[BookingConstraintInput | None]
+    session_ref: str
+class BookingAvailabilityRequest(TypedDict):
+    op: Literal["availability"]
+    page_token: str
+    input: BookingAvailabilityInput
+class RankedSlot(TypedDict):
+    start_utc: int
+    end_utc: int
+    rank: float
+class SelectedSlot(TypedDict):
+    start_utc: int
+    end_utc: int
+class BookingBookResultHeldContent(TypedDict):
+    hold_token: str
+    selected_slot: SelectedSlot
+    expires_at: int
+class BookingBookResultHeld(TypedDict):
+    stage: Literal["held"]
+    result: BookingBookResultHeldContent
+class BookingBookResultConfirmedContent(TypedDict):
+    reschedule_token: str
+    cancel_token: str
+class BookingBookResultConfirmed(TypedDict):
+    stage: Literal["confirmed"]
+    result: BookingBookResultConfirmedContent
+class BookingBookResultSlotTakenContent(TypedDict):
+    alternatives: list[RankedSlot]
+class BookingBookResultSlotTaken(TypedDict):
+    stage: Literal["slot_taken"]
+    result: BookingBookResultSlotTakenContent
+BookingBookResult = BookingBookResultHeld | BookingBookResultConfirmed | BookingBookResultSlotTaken
+class BookingOperationResponseAvailabilityContent(TypedDict):
+    slots: list[RankedSlot]
+    flex_used: bool
+class BookingOperationResponseAvailability(TypedDict):
+    op: Literal["availability"]
+    result: BookingOperationResponseAvailabilityContent
+class BookingOperationResponseBook(TypedDict):
+    op: Literal["book"]
+    result: BookingBookResult
+class BookingOperationResponseRescheduleContent(TypedDict):
+    reschedule_token: str
+class BookingOperationResponseReschedule(TypedDict):
+    op: Literal["reschedule"]
+    result: BookingOperationResponseRescheduleContent
+class BookingOperationResponseCancelContent(TypedDict):
+    cancel_token: str
+class BookingOperationResponseCancel(TypedDict):
+    op: Literal["cancel"]
+    result: BookingOperationResponseCancelContent
+BookingOperationResponse = BookingOperationResponseAvailability | BookingOperationResponseBook | BookingOperationResponseReschedule | BookingOperationResponseCancel
+class BookingHoldInput(TypedDict):
+    event_type: EventTypeKey
+    selected_slot: SelectedSlot
+    visitor_tz: str
+    constraint: NotRequired[ConstraintObject | None]
+    session_ref: str
+    checkout_lease_token: NotRequired[str | None]
+    idempotency_key: str
+class BookingIntakeAnswer(TypedDict):
+    field_key: str
+    value: str
+class BookingConfirmInput(TypedDict):
+    hold_token: str
+    booker_email: str
+    intake: list[BookingIntakeAnswer]
+    session_ref: str
+    idempotency_key: str
+class BookingBookInputHold(TypedDict):
+    stage: Literal["hold"]
+    input: BookingHoldInput
+class BookingBookInputConfirm(TypedDict):
+    stage: Literal["confirm"]
+    input: BookingConfirmInput
+BookingBookInput = BookingBookInputHold | BookingBookInputConfirm
+class BookingBookRequest(TypedDict):
+    op: Literal["book"]
+    page_token: str
+    input: BookingBookInput
+class BookingRescheduleInput(TypedDict):
+    reschedule_token: str
+    selected_slot: SelectedSlot
+    visitor_tz: str
+    idempotency_key: str
+class BookingRescheduleRequest(TypedDict):
+    op: Literal["reschedule"]
+    page_token: str
+    input: BookingRescheduleInput
+class BookingCancelInput(TypedDict):
+    cancel_token: str
+    idempotency_key: str
+class BookingCancelRequest(TypedDict):
+    op: Literal["cancel"]
+    page_token: str
+    input: BookingCancelInput
 class BookingConstraintTurnWindow(TypedDict):
     start: int
     end: int
@@ -10631,19 +10754,6 @@ class BookingConstraintTurnRequest(TypedDict):
     page_token: str
     turn: BookingConstraintTurnInput
 GeneratedUiCard = TypedDict("GeneratedUiCard", {"protocolVersion": int, "catalog": GeneratedUiCatalog, "cardId": str, "tree": GeneratedLens, "actions": list[GeneratedUiActionDeclaration], "$state": GeneratedUiStateSnapshot})
-ConstraintWeekday = Literal["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
-class LocalMinuteWindow(TypedDict):
-    start_minute: int
-    end_minute: int
-class TimeRangeWire(TypedDict):
-    start: int
-    end: int
-class ConstraintObject(TypedDict):
-    schema_version: int
-    weekdays: NotRequired[list[ConstraintWeekday]]
-    local_time_windows: NotRequired[list[LocalMinuteWindow]]
-    utc_window: NotRequired[TimeRangeWire | None]
-    allow_flex_pool: bool
 class BookingConstraintHoldContext(TypedDict):
     event_type: EventTypeKey
     visitor_tz: str

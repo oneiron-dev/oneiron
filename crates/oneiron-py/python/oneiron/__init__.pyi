@@ -1925,6 +1925,14 @@ class Oneiron:
         def answer(self, spec: Facade.DecisionAskAnswerRequest) -> Facade.DecisionAsk: ...
         def climb(self, spec: Facade.DecisionAskClimbRequest) -> Facade.ResolvedRole | None: ...
     class _VaultBookingVerbs:
+        def availability(self, spec: Facade.BookingAvailabilityRequest) -> Facade.BookingOperationResponse:
+            """Lists ranked public slots on a live published booking page as the caller, through the shared booking admission and solver without exposing busy sources."""
+        def book(self, spec: Facade.BookingBookRequest) -> Facade.BookingOperationResponse:
+            """Holds or confirms a real slot on a live published booking page as the caller, through the shared admission and home-node lifecycle with opaque session-bound tokens."""
+        def reschedule(self, spec: Facade.BookingRescheduleRequest) -> Facade.BookingOperationResponse:
+            """Moves a booking on a live published page using its reschedule token, preserving EVENT and UID and replaying without another passport revision."""
+        def cancel(self, spec: Facade.BookingCancelRequest) -> Facade.BookingOperationResponse:
+            """Cancels a booking on a live published page using its cancel token, preserving EVENT and UID and replaying without another passport revision."""
         def constraint_turn(self, spec: Facade.BookingConstraintTurnRequest) -> Facade.BookingConstraintTurnResponse:
             """Parses one scheduling constraint on a live published booking page as the caller, returning public slot controls, an email continuation or a deflect; this never holds or confirms a booking."""
         def page_token(self, spec: Facade.BookingPageTokenRequest) -> Facade.BookingPageTokenResponse:

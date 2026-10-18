@@ -2980,6 +2980,18 @@ class Oneiron:
     class _VaultBookingVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def availability(self, spec):
+            """Lists ranked public slots on a live published booking page as the caller, through the shared booking admission and solver without exposing busy sources."""
+            return json.loads(_translate(lambda: self._client.vault_booking_availability(json.dumps(spec))))
+        def book(self, spec):
+            """Holds or confirms a real slot on a live published booking page as the caller, through the shared admission and home-node lifecycle with opaque session-bound tokens."""
+            return json.loads(_translate(lambda: self._client.vault_booking_book(json.dumps(spec))))
+        def reschedule(self, spec):
+            """Moves a booking on a live published page using its reschedule token, preserving EVENT and UID and replaying without another passport revision."""
+            return json.loads(_translate(lambda: self._client.vault_booking_reschedule(json.dumps(spec))))
+        def cancel(self, spec):
+            """Cancels a booking on a live published page using its cancel token, preserving EVENT and UID and replaying without another passport revision."""
+            return json.loads(_translate(lambda: self._client.vault_booking_cancel(json.dumps(spec))))
         def constraint_turn(self, spec):
             """Parses one scheduling constraint on a live published booking page as the caller, returning public slot controls, an email continuation or a deflect; this never holds or confirms a booking."""
             return json.loads(_translate(lambda: self._client.vault_booking_constraint_turn(json.dumps(spec))))

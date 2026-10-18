@@ -4964,6 +4964,39 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_booking_availability(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.booking.availability", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_booking_book(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.booking.book", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_booking_reschedule(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.booking.reschedule", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_booking_cancel(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.booking.cancel", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_booking_constraint_turn(
         &self,
         input: serde_json::Value,
