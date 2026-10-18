@@ -17572,7 +17572,7 @@
      "path": "src/disclosure/import_audience.rs",
      "purpose": "The standing import audience rule (OF-492): the owner's answer to one sensitive-topic ask, kept as a private…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3
      }
     },
@@ -23058,7 +23058,7 @@
      "path": "src/federation/record_scope.rs",
      "purpose": "Birth-facet-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -65503,7 +65503,7 @@
      "path": "src/ai_host/judge_swap.rs",
      "purpose": "The Coach's judge-swap upkeep on this server (OF-184)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
