@@ -1313,16 +1313,16 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def mode(self, spec):
-            """Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it."""
+            """Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive."""
             return json.loads(_translate(lambda: self._client.vault_residence_mode(json.dumps(spec))))
         def open(self, spec):
-            """Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors."""
+            """Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors. A machine this host does not reach answers state queued, naming the directive."""
             return json.loads(_translate(lambda: self._client.vault_residence_open(json.dumps(spec))))
         def index(self, spec):
-            """The thin index one of the owner's machines holds, window by window: what exists, never a body."""
+            """The thin index one of the owner's machines holds, window by window: what exists, never a body. A machine this host does not reach answers state queued, naming the directive."""
             return json.loads(_translate(lambda: self._client.vault_residence_index(json.dumps(spec))))
         def prune(self, spec):
-            """Drops the opened-item caches one of the owner's machines last touched before a time."""
+            """Drops the opened-item caches one of the owner's machines last touched before a time. A machine this host does not reach answers state queued, naming the directive."""
             return json.loads(_translate(lambda: self._client.vault_residence_prune(json.dumps(spec))))
     class _VaultOffRecordVerbs:
         def __init__(self, client: _NativeClient) -> None:

@@ -674,14 +674,14 @@ export class Oneiron {
       mint_slip: (input: Facade.GuestSlipMintRequest): Facade.GuestSlipMinted => this.#call(() => this.#client.vaultGuestsMintSlip(input) as Facade.GuestSlipMinted),
     },
     residence: {
-      /** Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. */
-      mode: (input: Facade.ResidenceModeRequest): Facade.ResidenceModeChanged => this.#call(() => this.#client.vaultResidenceMode(input) as Facade.ResidenceModeChanged),
-      /** Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors. */
-      open: (input: Facade.ResidenceOpenRequest): Facade.ResidenceOpened => this.#call(() => this.#client.vaultResidenceOpen(input) as Facade.ResidenceOpened),
-      /** The thin index one of the owner's machines holds, window by window: what exists, never a body. */
-      index: (input: Facade.ResidenceMachineRequest): Facade.ResidenceIndex => this.#call(() => this.#client.vaultResidenceIndex(input) as Facade.ResidenceIndex),
-      /** Drops the opened-item caches one of the owner's machines last touched before a time. */
-      prune: (input: Facade.ResidencePruneRequest): Facade.ResidencePruned => this.#call(() => this.#client.vaultResidencePrune(input) as Facade.ResidencePruned),
+      /** Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive. */
+      mode: (input: Facade.ResidenceModeRequest): Facade.ResidenceModeAnswer => this.#call(() => this.#client.vaultResidenceMode(input) as Facade.ResidenceModeAnswer),
+      /** Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors. A machine this host does not reach answers state queued, naming the directive. */
+      open: (input: Facade.ResidenceOpenRequest): Facade.ResidenceOpenAnswer => this.#call(() => this.#client.vaultResidenceOpen(input) as Facade.ResidenceOpenAnswer),
+      /** The thin index one of the owner's machines holds, window by window: what exists, never a body. A machine this host does not reach answers state queued, naming the directive. */
+      index: (input: Facade.ResidenceMachineRequest): Facade.ResidenceIndexAnswer => this.#call(() => this.#client.vaultResidenceIndex(input) as Facade.ResidenceIndexAnswer),
+      /** Drops the opened-item caches one of the owner's machines last touched before a time. A machine this host does not reach answers state queued, naming the directive. */
+      prune: (input: Facade.ResidencePruneRequest): Facade.ResidencePruneAnswer => this.#call(() => this.#client.vaultResidencePrune(input) as Facade.ResidencePruneAnswer),
     },
     off_record: {
       /** The owner enters an off-record session, off record or anonymous, as the owner route does; nothing of it reaches the vault unless the owner promotes or saves it. */

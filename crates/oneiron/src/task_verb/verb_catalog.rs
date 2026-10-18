@@ -4808,16 +4808,16 @@ impl AgentVerb {
                 "The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."
             }
             Self::VaultResidenceMode => {
-                "Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it."
+                "Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive."
             }
             Self::VaultResidenceOpen => {
-                "Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors."
+                "Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors. A machine this host does not reach answers state queued, naming the directive."
             }
             Self::VaultResidenceIndex => {
-                "The thin index one of the owner's machines holds, window by window: what exists, never a body."
+                "The thin index one of the owner's machines holds, window by window: what exists, never a body. A machine this host does not reach answers state queued, naming the directive."
             }
             Self::VaultResidencePrune => {
-                "Drops the opened-item caches one of the owner's machines last touched before a time."
+                "Drops the opened-item caches one of the owner's machines last touched before a time. A machine this host does not reach answers state queued, naming the directive."
             }
             Self::VaultOffRecordStart => {
                 "The owner enters an off-record session, off record or anonymous, as the owner route does; nothing of it reaches the vault unless the owner promotes or saves it."

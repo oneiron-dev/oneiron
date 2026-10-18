@@ -1390,14 +1390,14 @@ class Oneiron:
         def mint_slip(self, spec: Facade.GuestSlipMintRequest) -> Facade.GuestSlipMinted:
             """The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."""
     class _VaultResidenceVerbs:
-        def mode(self, spec: Facade.ResidenceModeRequest) -> Facade.ResidenceModeChanged:
-            """Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it."""
-        def open(self, spec: Facade.ResidenceOpenRequest) -> Facade.ResidenceOpened:
-            """Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors."""
-        def index(self, spec: Facade.ResidenceMachineRequest) -> Facade.ResidenceIndex:
-            """The thin index one of the owner's machines holds, window by window: what exists, never a body."""
-        def prune(self, spec: Facade.ResidencePruneRequest) -> Facade.ResidencePruned:
-            """Drops the opened-item caches one of the owner's machines last touched before a time."""
+        def mode(self, spec: Facade.ResidenceModeRequest) -> Facade.ResidenceModeAnswer:
+            """Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive."""
+        def open(self, spec: Facade.ResidenceOpenRequest) -> Facade.ResidenceOpenAnswer:
+            """Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors. A machine this host does not reach answers state queued, naming the directive."""
+        def index(self, spec: Facade.ResidenceMachineRequest) -> Facade.ResidenceIndexAnswer:
+            """The thin index one of the owner's machines holds, window by window: what exists, never a body. A machine this host does not reach answers state queued, naming the directive."""
+        def prune(self, spec: Facade.ResidencePruneRequest) -> Facade.ResidencePruneAnswer:
+            """Drops the opened-item caches one of the owner's machines last touched before a time. A machine this host does not reach answers state queued, naming the directive."""
     class _VaultOffRecordVerbs:
         def start(self, spec: Facade.OffRecordStartRequest) -> Facade.OffRecordSessionView:
             """The owner enters an off-record session, off record or anonymous, as the owner route does; nothing of it reaches the vault unless the owner promotes or saves it."""

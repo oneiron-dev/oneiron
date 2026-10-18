@@ -459,16 +459,16 @@ impl OneironClient {
                     oneiron::task_verb::sdk::GuestSlipMinted,
                 >(client, verb, &input),
                 "vault.residence.mode" => remote_agent_verb_output::<
-                    oneiron::task_verb::sdk::ResidenceModeChanged,
+                    oneiron::task_verb::sdk::ResidenceModeAnswer,
                 >(client, verb, &input),
                 "vault.residence.open" => remote_agent_verb_output::<
-                    oneiron::task_verb::sdk::ResidenceOpened,
+                    oneiron::task_verb::sdk::ResidenceOpenAnswer,
                 >(client, verb, &input),
                 "vault.residence.index" => remote_agent_verb_output::<
-                    oneiron::task_verb::sdk::ResidenceIndex,
+                    oneiron::task_verb::sdk::ResidenceIndexAnswer,
                 >(client, verb, &input),
                 "vault.residence.prune" => remote_agent_verb_output::<
-                    oneiron::task_verb::sdk::ResidencePruned,
+                    oneiron::task_verb::sdk::ResidencePruneAnswer,
                 >(client, verb, &input),
                 "vault.off_record.start" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::OffRecordSessionView,
@@ -3182,7 +3182,7 @@ impl OneironClient {
     pub fn vault_residence_mode(
         &self,
         input: &oneiron::task_verb::sdk::ResidenceModeRequest,
-    ) -> Result<oneiron::task_verb::sdk::ResidenceModeChanged, MemoryError> {
+    ) -> Result<oneiron::task_verb::sdk::ResidenceModeAnswer, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -3194,7 +3194,7 @@ impl OneironClient {
     pub fn vault_residence_open(
         &self,
         input: &oneiron::task_verb::sdk::ResidenceOpenRequest,
-    ) -> Result<oneiron::task_verb::sdk::ResidenceOpened, MemoryError> {
+    ) -> Result<oneiron::task_verb::sdk::ResidenceOpenAnswer, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -3206,7 +3206,7 @@ impl OneironClient {
     pub fn vault_residence_index(
         &self,
         input: &oneiron::task_verb::sdk::ResidenceMachineRequest,
-    ) -> Result<oneiron::task_verb::sdk::ResidenceIndex, MemoryError> {
+    ) -> Result<oneiron::task_verb::sdk::ResidenceIndexAnswer, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -3218,7 +3218,7 @@ impl OneironClient {
     pub fn vault_residence_prune(
         &self,
         input: &oneiron::task_verb::sdk::ResidencePruneRequest,
-    ) -> Result<oneiron::task_verb::sdk::ResidencePruned, MemoryError> {
+    ) -> Result<oneiron::task_verb::sdk::ResidencePruneAnswer, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
