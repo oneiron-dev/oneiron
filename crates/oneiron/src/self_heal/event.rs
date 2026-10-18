@@ -70,8 +70,8 @@ pub(super) const MAX_INVARIANT_WIDTH: usize = 64;
 
 /// The old per-run event ceiling. Detector, signed and tripwire runs now keep
 /// every event and ask past their `[limits]` rows (`limits.detector_events`
-/// and its siblings, whose default this was); the served-signal reads and the
-/// healer proposal bound still read it.
+/// and its siblings, whose default this was); the healer proposal bound still
+/// reads it.
 pub(super) const MAX_EVENTS_PER_RUN: usize = 1024;
 
 /// The closed self-healing event vocabulary.
