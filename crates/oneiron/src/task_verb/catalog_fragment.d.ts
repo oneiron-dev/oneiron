@@ -9,7 +9,7 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 440 code-mode rows (419 host rows, 21 run rows), 1586 declarations.
+// Census: 440 code-mode rows (419 host rows, 21 run rows), 1587 declarations.
 // Replies: 386 fully typed, 50 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 80; unread shapes: BoardVerbOutput.
@@ -81,7 +81,8 @@ declare namespace Sdk {
   type RunTreeRepair = { kind: "missing_parent"; job_id: string; missing_parent_id: string } | { kind: "parent_cycle"; job_id: string; parent_id: string };
   type RunTree = { roots: RunTreeNode[]; repairs: RunTreeRepair[] };
   type AgentHealthRunTree = { run_id: string; tree: RunTree; marked: string };
-  type AgentHealthCardView = { card: string; body: AgentHealthCard; run_tree?: AgentHealthRunTree | null };
+  type AgentHealthPromptInject = { approval: string; successor: string; ask: string; by: EntityId; at: number; edited: boolean };
+  type AgentHealthCardView = { card: string; body: AgentHealthCard; run_tree?: AgentHealthRunTree | null; prompt_inject?: AgentHealthPromptInject | null };
   type ConcernOutcome = "confirmed" | "dismissed" | "unresolved";
   type ConcernOutcomeRequest = { card: string; outcome: ConcernOutcome };
   type ConcernCardSummary = { card: string; agent: string; signal: string; tone: string; outcome: string; evidence: number };

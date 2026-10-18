@@ -193,6 +193,9 @@ async fn apply_prompt_inject(
                 Err(error) if error.kind() == oneiron::ErrorKind::EntityNotFound => {
                     Err(OwnerError::NotFound("concern_card", request.card))
                 }
+                // The door's refusals, a `continuation_*` code included, reach
+                // the owner as exactly their text.
+                Err(oneiron::Error::InvalidConfig(why)) => Err(OwnerError::Refused(why)),
                 Err(error) => Err(error.into()),
             }
         },
