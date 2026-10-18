@@ -764,6 +764,34 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.gate.policy.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::policy_manifest_doors::PolicyManifestRead,
+                >(),
+            ),
+            (
+                "vault.gate.policy.put",
+                crate::code_run::vault_read::request_schema::<
+                    crate::policy_manifest_doors::PolicyManifestPut,
+                >(),
+            ),
+            (
+                "vault.gate.policy.propose",
+                crate::code_run::vault_read::request_schema::<
+                    crate::policy_manifest_doors::PolicyManifestPropose,
+                >(),
+            ),
+            (
+                "vault.gate.checker.get",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.gate.checker.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::policy_manifest_doors::GateCheckerSet,
+                >(),
+            ),
+            (
                 "vault.settings.learning",
                 crate::code_run::vault_read::request_schema::<
                     crate::learning_setting_doors::LearningSettingsRequest,
@@ -1807,6 +1835,23 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.notes.from_entity",
                 crate::code_run::vault_read::request_schema::<CreateNoteFromEntityRequest>(),
+            ),
+            (
+                "vault.notes.read",
+                crate::code_run::vault_read::request_schema::<crate::note::NoteReadRequest>(),
+            ),
+            (
+                "vault.notes.history",
+                crate::code_run::vault_read::request_schema::<crate::note::NoteAccessRequest>(),
+            ),
+            (
+                "vault.notes.editor.bind",
+                crate::code_run::vault_read::request_schema::<crate::note::NoteAccessRequest>(),
+            ),
+            (
+                "vault.notes.editor.close",
+                crate::code_run::vault_read::request_schema::<crate::note::NoteEditorCloseRequest>(
+                ),
             ),
             (
                 "vault.notes.edit",
@@ -2936,6 +2981,41 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.embedding_spaces.probes.delete" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.gate.policy.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.gate.policy.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.gate.policy.propose" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.gate.checker.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.gate.checker.set" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -4186,6 +4266,34 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.notes.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.notes.history" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.notes.editor.bind" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.notes.editor.close" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.notes.edit" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -4695,6 +4803,22 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.embedding_spaces.probes.delete" => {
             let _input: crate::task_verb::sdk::EmbeddingSpaceProbeDeleteRequest =
                 decode(value.clone())?;
+        }
+        "vault.gate.policy.get" => {
+            let _input: crate::policy_manifest_doors::PolicyManifestRead = decode(value.clone())?;
+        }
+        "vault.gate.policy.put" => {
+            let _input: crate::policy_manifest_doors::PolicyManifestPut = decode(value.clone())?;
+        }
+        "vault.gate.policy.propose" => {
+            let _input: crate::policy_manifest_doors::PolicyManifestPropose =
+                decode(value.clone())?;
+        }
+        "vault.gate.checker.get" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.gate.checker.set" => {
+            let _input: crate::policy_manifest_doors::GateCheckerSet = decode(value.clone())?;
         }
         "vault.settings.learning" => {
             let _input: crate::learning_setting_doors::LearningSettingsRequest =
@@ -5374,6 +5498,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.notes.from_entity" => {
             let _input: CreateNoteFromEntityRequest = decode(value.clone())?;
         }
+        "vault.notes.read" => {
+            let _input: crate::note::NoteReadRequest = decode(value.clone())?;
+        }
+        "vault.notes.history" => {
+            let _input: crate::note::NoteAccessRequest = decode(value.clone())?;
+        }
+        "vault.notes.editor.bind" => {
+            let _input: crate::note::NoteAccessRequest = decode(value.clone())?;
+        }
+        "vault.notes.editor.close" => {
+            let _input: crate::note::NoteEditorCloseRequest = decode(value.clone())?;
+        }
         "vault.notes.edit" => {
             let _input: EditNoteRequest = decode(value.clone())?;
         }
@@ -5643,6 +5779,11 @@ pub fn invoke(
             memory,
             decode(value)?,
         )?),
+        "vault.gate.policy.get" => encode(vault_gate_policy_get(memory, decode(value)?)?),
+        "vault.gate.policy.put" => encode(vault_gate_policy_put(memory, decode(value)?)?),
+        "vault.gate.policy.propose" => encode(vault_gate_policy_propose(memory, decode(value)?)?),
+        "vault.gate.checker.get" => encode(vault_gate_checker_get(memory, decode(value)?)?),
+        "vault.gate.checker.set" => encode(vault_gate_checker_set(memory, decode(value)?)?),
         "vault.settings.learning" => encode(vault_settings_learning(memory, decode(value)?)?),
         "vault.settings.learning.put" => {
             encode(vault_settings_learning_put(memory, decode(value)?)?)
@@ -5910,6 +6051,10 @@ pub fn invoke(
         }
         "vault.notes.create" => encode(vault_notes_create(memory, decode(value)?)?),
         "vault.notes.from_entity" => encode(vault_notes_from_entity(memory, decode(value)?)?),
+        "vault.notes.read" => encode(vault_notes_read(memory, decode(value)?)?),
+        "vault.notes.history" => encode(vault_notes_history(memory, decode(value)?)?),
+        "vault.notes.editor.bind" => encode(vault_notes_editor_bind(memory, decode(value)?)?),
+        "vault.notes.editor.close" => encode(vault_notes_editor_close(memory, decode(value)?)?),
         "vault.notes.edit" => encode(vault_notes_edit(memory, decode(value)?)?),
         "vault.notes.seal" => encode(vault_notes_seal(memory, decode(value)?)?),
         "vault.notes.lifecycle" => encode(vault_notes_lifecycle(memory, decode(value)?)?),
@@ -7240,6 +7385,55 @@ pub fn vault_embedding_spaces_probes_delete(
         &memory.embedded_owner("vault.embedding_spaces.probes.delete")?,
         input,
     )
+}
+pub fn vault_gate_policy_get(
+    memory: &Memory<'_>,
+    input: crate::policy_manifest_doors::PolicyManifestRead,
+) -> MemoryResult<crate::policy_manifest_doors::PolicyManifestsView> {
+    crate::policy_manifest_doors::policy_manifests_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.gate.policy.get")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_gate_policy_put(
+    memory: &Memory<'_>,
+    input: crate::policy_manifest_doors::PolicyManifestPut,
+) -> MemoryResult<crate::policy_manifest_doors::PolicyManifestReceipt> {
+    crate::policy_manifest_doors::put_policy_manifest_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.gate.policy.put")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_gate_policy_propose(
+    memory: &Memory<'_>,
+    input: crate::policy_manifest_doors::PolicyManifestPropose,
+) -> MemoryResult<crate::policy_manifest_doors::PolicyManifestReceipt> {
+    crate::policy_manifest_doors::propose_policy_manifest(memory, input)
+}
+pub fn vault_gate_checker_get(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::policy_manifest_doors::GateCheckerView> {
+    crate::policy_manifest_doors::gate_checker_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.gate.checker.get")?,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_gate_checker_set(
+    memory: &Memory<'_>,
+    input: crate::policy_manifest_doors::GateCheckerSet,
+) -> MemoryResult<crate::policy_manifest_doors::GateCheckerReceipt> {
+    crate::policy_manifest_doors::set_gate_checker_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.gate.checker.set")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
 }
 pub fn vault_settings_learning(
     memory: &Memory<'_>,
@@ -8974,6 +9168,30 @@ pub fn vault_notes_from_entity(
         &["/source_ref"],
     )?;
     memory.create_note_from_entity(&input.source_ref, &input.kind)
+}
+pub fn vault_notes_read(
+    memory: &Memory<'_>,
+    input: crate::note::NoteReadRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::note::NoteReadView>>> {
+    memory.read_note(&input)
+}
+pub fn vault_notes_history(
+    memory: &Memory<'_>,
+    input: crate::note::NoteAccessRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::note::NoteHistoryView>>> {
+    memory.note_history(&input)
+}
+pub fn vault_notes_editor_bind(
+    memory: &Memory<'_>,
+    input: crate::note::NoteAccessRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::note::NoteEditorBinding>>> {
+    memory.bind_note_editor(&input)
+}
+pub fn vault_notes_editor_close(
+    memory: &Memory<'_>,
+    input: crate::note::NoteEditorCloseRequest,
+) -> MemoryResult<crate::note::NoteEditorClosed> {
+    memory.close_note_editor(&input)
 }
 pub fn vault_notes_edit(
     memory: &Memory<'_>,

@@ -21994,7 +21994,7 @@
       "const": 5,
       "crate-vis": 3,
       "enum": 4,
-      "fn": 8,
+      "fn": 9,
       "struct": 4,
       "trait": 1
      }
@@ -24207,7 +24207,7 @@
      "path": "src/gate/manifest_authenticity.rs",
      "purpose": "Local write-door authentication for manifest contributions",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 5,
       "struct": 1
      }
@@ -24230,6 +24230,7 @@
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
       "crate-vis": 64,
+      "mod": 1,
       "re-export": 8
      }
     },
@@ -24296,6 +24297,51 @@
      "surface": {
       "crate-vis": 12,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/policy_manifest_doors/mod.rs",
+     "purpose": "Typed policy reads, owner edits and inert untrusted contributions",
+     "surface": {
+      "fn": 5,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ActorCeiling",
+      "GateCheckerReceipt",
+      "GateCheckerSet",
+      "GateCheckerView",
+      "PolicyAxes",
+      "PolicyCeiling",
+      "PolicyCriticality",
+      "PolicyManifest",
+      "PolicyManifestPropose",
+      "PolicyManifestPut",
+      "PolicyManifestRead",
+      "PolicyManifestReceipt",
+      "PolicyManifestView",
+      "PolicyManifestsView",
+      "PolicyRule",
+      "PolicySensitivity",
+      "PolicySignature",
+      "PolicySource",
+      "SensitivityBand",
+      "SensitivityName",
+      "SourceTrust",
+      "SourceTrustRow"
+     ],
+     "path": "src/gate/policy_manifest_doors/types.rs",
+     "purpose": "Typed DEC-0005 policy axes",
+     "surface": {
+      "enum": 7,
+      "struct": 15
      }
     },
     {
@@ -28194,7 +28240,7 @@
      "surface": {
       "crate-vis": 20,
       "mod": 197,
-      "re-export": 75
+      "re-export": 76
      }
     },
     {
@@ -31824,10 +31870,10 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 36,
+      "crate-vis": 37,
       "enum": 3,
       "fn": 4,
-      "re-export": 12,
+      "re-export": 13,
       "struct": 2
      }
     },
@@ -31994,7 +32040,7 @@
      "path": "src/note/documents.rs",
      "purpose": "Entity-local text CRDT with stamped birth, stable cursors and isolated rewrites",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "enum": 2,
       "fn": 6,
       "struct": 3
@@ -32218,6 +32264,30 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "NoteAccessRequest",
+      "NoteAnchoredSpan",
+      "NoteEditorBinding",
+      "NoteEditorCloseRequest",
+      "NoteEditorClosed",
+      "NoteHistoryView",
+      "NoteReadRequest",
+      "NoteReadSource",
+      "NoteReadSpan",
+      "NoteReadView"
+     ],
+     "path": "src/note/reads.rs",
+     "purpose": "Caller-scoped NOTE text, stable edit anchors and retained operation attribution",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 4,
+      "struct": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/note/recovery.rs",
      "purpose": "Host-local history-free recovery of uncited NOTE values",
@@ -32233,6 +32303,16 @@
      "purpose": "Canonical authority-to-replica import and citation-closed NOTE disclosure",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/residence_read.rs",
+     "purpose": "Typed NOTE projection of an already admitted opened-item read cache",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -39217,7 +39297,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 3,
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -45551,6 +45631,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/connection/note_reads.rs",
+     "purpose": "Typed reads of a residence open, using the named connection's own vault",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/connection/session.rs",
      "purpose": "Session types: WS aliases, pump budget, convergence session, resync markers",
      "surface": {
@@ -48506,7 +48596,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 369
+      "fn": 378
      }
     },
     {
@@ -48565,7 +48655,7 @@
      "surface": {
       "const": 4,
       "enum": 6,
-      "fn": 24,
+      "fn": 25,
       "struct": 27
      }
     },
@@ -48702,7 +48792,7 @@
      "purpose": "The owner's residence controls (OF-534, FIX 531): a machine's residence mode, opening one item there, its…",
      "surface": {
       "enum": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 10
      }
     },
@@ -54302,7 +54392,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 135,
+     "files": 137,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54526,7 +54616,7 @@
      "purpose": "A budget check of untrusted MessagePack before it is decoded"
     },
     "note": {
-     "files": 43,
+     "files": 45,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -54988,7 +55078,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 171,
+     "files": 172,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -55186,7 +55276,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3361,
+   "source_files": 3366,
    "test_files": 902
   },
   "oneiron-android": {
@@ -63581,7 +63671,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 320
+      "fn": 329
      }
     },
     {
@@ -64629,7 +64719,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 321
+      "fn": 330
      }
     },
     {
@@ -67472,7 +67562,7 @@
      "path": "src/api/facade/action_routes.rs",
      "purpose": "OF-181: the app's one action layer over HTTP, for both its callers",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -67606,6 +67696,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/gate_policy_doors.rs",
+     "purpose": "Owner policy and checker host doors",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -67626,13 +67726,13 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 66
+      "crate-vis": 69
      }
     },
     {
@@ -67643,6 +67743,16 @@
      "purpose": "The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`…",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/note_doors.rs",
+     "purpose": "Host-held NOTE editor bindings beside the ordinary scoped NOTE reads",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -71805,7 +71915,7 @@
      "path": "src/lens_frames.rs",
      "purpose": "OF-181: the lens frames this server holds for the cards it rendered",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -73923,7 +74033,7 @@
      "path": "src/server/live_runs.rs",
      "purpose": "The live agent runs a harness may act for over HTTP (OF-181)",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 31
      }
     },
     {
@@ -73966,8 +74076,18 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/note_editors.rs",
+     "purpose": "Explicit NOTE editor handles, owned by the principal that opened them",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -74083,7 +74203,7 @@
      "path": "src/server/space_move.rs",
      "purpose": "The server's half of a kind slot version move (OF-370; ARCH-0004 `#swap-check-ruling`…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -74857,7 +74977,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 322,
+     "files": 324,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -75200,7 +75320,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 34,
+     "files": 35,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -75272,7 +75392,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 642,
+   "source_files": 645,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -75467,6 +75587,7 @@
      "notable": [
       "AccessStatus",
       "ActExecution",
+      "ActorCeiling",
       "AdmissionBasis",
       "AdmissionConsent",
       "AgentHealthApplicationState",
@@ -75645,6 +75766,7 @@
       "ConcernMoveRequest",
       "ConcernOutcome",
       "ConcernOutcomeRequest",
+      "ConfidenceBand",
       "ConfirmationReceipt",
       "Conflict",
       "ConflictKind",
@@ -75850,6 +75972,9 @@
       "FolderItemInput",
       "ForkKind",
       "ForkState",
+      "GateCheckerReceipt",
+      "GateCheckerSet",
+      "GateCheckerView",
       "GateDecisionId",
       "GeneratedLens",
       "GeneratedUiActionDeclaration",
@@ -76029,6 +76154,7 @@
       "MetricDirection",
       "MetricRole",
       "MetricSet",
+      "ModelSlot",
       "MutationIntent",
       "NativeOutputRequest",
       "NeighborhoodGraphAtom",
@@ -76036,14 +76162,25 @@
       "NodeMove",
       "NodePayload",
       "NotWorse",
+      "NoteAccessRequest",
       "NoteAnchor",
+      "NoteAnchoredSpan",
+      "NoteAuthorship",
       "NoteDefaultsView",
       "NoteEdit",
       "NoteEditOutcome",
+      "NoteEditorBinding",
+      "NoteEditorCloseRequest",
+      "NoteEditorClosed",
+      "NoteHistoryView",
       "NoteKindDescriptor",
       "NoteLifecycleStatus",
       "NoteLifecycleView",
       "NoteOverrides",
+      "NoteReadRequest",
+      "NoteReadSource",
+      "NoteReadSpan",
+      "NoteReadView",
       "NoteRefRequest",
       "NoteSeal",
       "NoteVersion",
@@ -76174,6 +76311,19 @@
       "PinnedRef",
       "PixelRegion",
       "PolicyActionOutcome",
+      "PolicyAxes",
+      "PolicyCeiling",
+      "PolicyCriticality",
+      "PolicyManifest",
+      "PolicyManifestPropose",
+      "PolicyManifestPut",
+      "PolicyManifestRead",
+      "PolicyManifestReceipt",
+      "PolicyManifestView",
+      "PolicyManifestsView",
+      "PolicyRule",
+      "PolicySensitivity",
+      "PolicySignature",
       "PostmarkAtom",
       "Preset",
       "PriorRung",
@@ -76370,6 +76520,9 @@
       "ScopeScope",
       "ScopedReadReceipt",
       "ScopedReadResultLensFrameCard",
+      "ScopedReadResultOptionalNoteEditorBinding",
+      "ScopedReadResultOptionalNoteHistoryView",
+      "ScopedReadResultOptionalNoteReadView",
       "ScopedReadResultOptionalSharedBriefView",
       "ScopedReadResultRecordRefPreview",
       "ScratchpadAppendRequest",
@@ -76412,7 +76565,9 @@
       "SelfUiStateValue",
       "SelfUiValue",
       "Sensitivity",
+      "SensitivityBand",
       "SensitivityCeiling",
+      "SensitivityName",
       "SetNoteOverridesRequest",
       "SettleVerdict",
       "ShapeApplyItem",
@@ -76491,6 +76646,8 @@
       "SlideUnitRefused",
       "SliderControl",
       "SmartArtNode",
+      "SourceTrust",
+      "SourceTrustRow",
       "SpaceMove",
       "SpaceMoveCheck",
       "SpaceMoveState",
@@ -76600,6 +76757,8 @@
       "UnsupportedCapability",
       "UpdateCampaignProgramRequest",
       "VadBadge",
+      "VerdictBinding",
+      "VerdictMode",
       "VoiceLineAtom",
       "WakePolicySetRequest",
       "WeaveDigestRequest",
@@ -76659,8 +76818,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 326,
-      "struct": 864
+      "enum": 336,
+      "struct": 893
      }
     },
     {

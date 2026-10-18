@@ -1291,6 +1291,51 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_gate_policy_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.gate.policy.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_gate_policy_put(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.gate.policy.put", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_gate_policy_propose(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.gate.policy.propose", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_gate_checker_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.gate.checker.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_gate_checker_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.gate.checker.set", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_settings_learning(
         &self,
         input: serde_json::Value,
@@ -3154,6 +3199,36 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.notes.from_entity", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_notes_read(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.read", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_notes_history(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.history", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_notes_editor_bind(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.editor.bind", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_notes_editor_close(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.editor.close", input)
             .map_err(facade_error)
     }
     #[napi]

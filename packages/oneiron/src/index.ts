@@ -531,7 +531,7 @@ export class Oneiron {
     residence: {
       /** Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. */
       mode: (input: Facade.ResidenceModeRequest): Facade.ResidenceModeChanged => this.#call(() => this.#client.vaultResidenceMode(input) as Facade.ResidenceModeChanged),
-      /** Opens one item on one of the owner's machines: its read cache, its local row, or a first touch at the home. */
+      /** Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors. */
       open: (input: Facade.ResidenceOpenRequest): Facade.ResidenceOpened => this.#call(() => this.#client.vaultResidenceOpen(input) as Facade.ResidenceOpened),
       /** The thin index one of the owner's machines holds, window by window: what exists, never a body. */
       index: (input: Facade.ResidenceMachineRequest): Facade.ResidenceIndex => this.#call(() => this.#client.vaultResidenceIndex(input) as Facade.ResidenceIndex),
@@ -628,6 +628,22 @@ export class Oneiron {
         put: (input: Facade.EmbeddingSpaceProbePutRequest): Facade.EmbeddingSpaceProbe => this.#call(() => this.#client.vaultEmbeddingSpacesProbesPut(input) as Facade.EmbeddingSpaceProbe),
         /** Removes one stored embedding space probe by its id. */
         delete: (input: Facade.EmbeddingSpaceProbeDeleteRequest): Facade.EmbeddingSpaceProbeDeleted => this.#call(() => this.#client.vaultEmbeddingSpacesProbesDelete(input) as Facade.EmbeddingSpaceProbeDeleted),
+      },
+    },
+    gate: {
+      policy: {
+        /** The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions. */
+        get: (input: Facade.PolicyManifestRead): Facade.PolicyManifestsView => this.#call(() => this.#client.vaultGatePolicyGet(input) as Facade.PolicyManifestsView),
+        /** The owner installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions. */
+        put: (input: Facade.PolicyManifestPut): Facade.PolicyManifestReceipt => this.#call(() => this.#client.vaultGatePolicyPut(input) as Facade.PolicyManifestReceipt),
+        /** Propose a Gate policy under the caller's own authority; even a tighter contribution remains untrusted and inert. */
+        propose: (input: Facade.PolicyManifestPropose): Facade.PolicyManifestReceipt => this.#call(() => this.#client.vaultGatePolicyPropose(input) as Facade.PolicyManifestReceipt),
+      },
+      checker: {
+        /** The owner reads the calibrated checker verdict role from the vault model manifest. */
+        get: (input: Facade.EmptyRequest = {}): Facade.GateCheckerView => this.#call(() => this.#client.vaultGateCheckerGet(input) as Facade.GateCheckerView),
+        /** The owner sets the calibrated checker model, slot, confidence floor and shadow or enforce mode without changing other model bindings. */
+        set: (input: Facade.GateCheckerSet): Facade.GateCheckerReceipt => this.#call(() => this.#client.vaultGateCheckerSet(input) as Facade.GateCheckerReceipt),
       },
     },
     settings: {
@@ -986,6 +1002,16 @@ export class Oneiron {
       create: (input: Facade.CreateNoteRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesCreate(input) as Facade.EntityRefReceipt),
       /** Creates a NOTE of a registered kind from an existing entity. */
       from_entity: (input: Facade.CreateNoteFromEntityRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesFromEntity(input) as Facade.EntityRefReceipt),
+      /** Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot. */
+      read: (input: Facade.NoteReadRequest): Facade.ScopedReadResult<Facade.NoteReadView | null> => this.#call(() => this.#client.vaultNotesRead(input) as Facade.ScopedReadResult<Facade.NoteReadView | null>),
+      /** Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented. */
+      history: (input: Facade.NoteAccessRequest): Facade.ScopedReadResult<Facade.NoteHistoryView | null> => this.#call(() => this.#client.vaultNotesHistory(input) as Facade.ScopedReadResult<Facade.NoteHistoryView | null>),
+      editor: {
+        /** Binds a live NOTE editor to the caller and returns its typed text and base version; close the binding when the editor leaves. */
+        bind: (input: Facade.NoteAccessRequest): Facade.ScopedReadResult<Facade.NoteEditorBinding | null> => this.#call(() => this.#client.vaultNotesEditorBind(input) as Facade.ScopedReadResult<Facade.NoteEditorBinding | null>),
+        /** Closes one live NOTE editor held by this caller; a binding id alone grants no authority. */
+        close: (input: Facade.NoteEditorCloseRequest): Facade.NoteEditorClosed => this.#call(() => this.#client.vaultNotesEditorClose(input) as Facade.NoteEditorClosed),
+      },
       /** Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending. */
       edit: (input: Facade.EditNoteRequest): Facade.NoteEditOutcome => this.#call(() => this.#client.vaultNotesEdit(input) as Facade.NoteEditOutcome),
       /** Seals one NOTE: its document freezes, and a later edit opens a fork. */

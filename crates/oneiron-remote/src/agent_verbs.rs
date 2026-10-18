@@ -478,6 +478,21 @@ impl OneironClient {
                 "vault.embedding_spaces.probes.delete" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::EmbeddingSpaceProbeDeleted,
                 >(client, verb, &input),
+                "vault.gate.policy.get" => remote_agent_verb_output::<
+                    oneiron::policy_manifest_doors::PolicyManifestsView,
+                >(client, verb, &input),
+                "vault.gate.policy.put" => remote_agent_verb_output::<
+                    oneiron::policy_manifest_doors::PolicyManifestReceipt,
+                >(client, verb, &input),
+                "vault.gate.policy.propose" => remote_agent_verb_output::<
+                    oneiron::policy_manifest_doors::PolicyManifestReceipt,
+                >(client, verb, &input),
+                "vault.gate.checker.get" => remote_agent_verb_output::<
+                    oneiron::policy_manifest_doors::GateCheckerView,
+                >(client, verb, &input),
+                "vault.gate.checker.set" => remote_agent_verb_output::<
+                    oneiron::policy_manifest_doors::GateCheckerReceipt,
+                >(client, verb, &input),
                 "vault.settings.learning" => remote_agent_verb_output::<
                     oneiron::learning_setting_doors::LearningSettingsView,
                 >(client, verb, &input),
@@ -1005,6 +1020,18 @@ impl OneironClient {
                 }
                 "vault.notes.from_entity" => remote_agent_verb_output::<
                     oneiron::memory::EntityRefReceipt,
+                >(client, verb, &input),
+                "vault.notes.read" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<Option<oneiron::note::NoteReadView>>,
+                >(client, verb, &input),
+                "vault.notes.history" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<Option<oneiron::note::NoteHistoryView>>,
+                >(client, verb, &input),
+                "vault.notes.editor.bind" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<Option<oneiron::note::NoteEditorBinding>>,
+                >(client, verb, &input),
+                "vault.notes.editor.close" => remote_agent_verb_output::<
+                    oneiron::note::NoteEditorClosed,
                 >(client, verb, &input),
                 "vault.notes.edit" => remote_agent_verb_output::<
                     oneiron::note::NoteProgramEditOutcome,
@@ -2830,6 +2857,66 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.embedding_spaces.probes.delete", value)
+    }
+    pub fn vault_gate_policy_get(
+        &self,
+        input: &oneiron::policy_manifest_doors::PolicyManifestRead,
+    ) -> Result<oneiron::policy_manifest_doors::PolicyManifestsView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.gate.policy.get", value)
+    }
+    pub fn vault_gate_policy_put(
+        &self,
+        input: &oneiron::policy_manifest_doors::PolicyManifestPut,
+    ) -> Result<oneiron::policy_manifest_doors::PolicyManifestReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.gate.policy.put", value)
+    }
+    pub fn vault_gate_policy_propose(
+        &self,
+        input: &oneiron::policy_manifest_doors::PolicyManifestPropose,
+    ) -> Result<oneiron::policy_manifest_doors::PolicyManifestReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.gate.policy.propose", value)
+    }
+    pub fn vault_gate_checker_get(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::policy_manifest_doors::GateCheckerView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.gate.checker.get", value)
+    }
+    pub fn vault_gate_checker_set(
+        &self,
+        input: &oneiron::policy_manifest_doors::GateCheckerSet,
+    ) -> Result<oneiron::policy_manifest_doors::GateCheckerReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.gate.checker.set", value)
     }
     pub fn vault_settings_learning(
         &self,
@@ -4995,6 +5082,59 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.notes.from_entity", value)
+    }
+    pub fn vault_notes_read(
+        &self,
+        input: &oneiron::note::NoteReadRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<Option<oneiron::note::NoteReadView>>, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.notes.read", value)
+    }
+    pub fn vault_notes_history(
+        &self,
+        input: &oneiron::note::NoteAccessRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<Option<oneiron::note::NoteHistoryView>>, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.notes.history", value)
+    }
+    pub fn vault_notes_editor_bind(
+        &self,
+        input: &oneiron::note::NoteAccessRequest,
+    ) -> Result<
+        oneiron::claim::ScopedReadResult<Option<oneiron::note::NoteEditorBinding>>,
+        MemoryError,
+    > {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.notes.editor.bind", value)
+    }
+    pub fn vault_notes_editor_close(
+        &self,
+        input: &oneiron::note::NoteEditorCloseRequest,
+    ) -> Result<oneiron::note::NoteEditorClosed, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.notes.editor.close", value)
     }
     pub fn vault_notes_edit(
         &self,
