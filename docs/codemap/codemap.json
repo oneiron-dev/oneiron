@@ -2755,7 +2755,7 @@
      "path": "src/authority/readonly_fold.rs",
      "purpose": "One read-snapshot authority evaluator shared by Vault and the batch write door",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -3813,6 +3813,7 @@
       "ResearchBindRequest",
       "ResearchBinding",
       "ResearchConfirmationSeat",
+      "ResearchExecution",
       "ResearchGoalPin",
       "ResearchStep",
       "ResearchTarget",
@@ -3828,8 +3829,8 @@
       "crate-vis": 9,
       "enum": 6,
       "fn": 15,
-      "re-export": 3,
-      "struct": 15
+      "re-export": 4,
+      "struct": 16
      }
     },
     {
@@ -3843,9 +3844,29 @@
      "path": "src/autoreason_campaign/research/budget.rs",
      "purpose": "The campaign's spend on the RSI line: reserve-then-spend, fail-closed",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 6,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "ResearchContinuation",
+      "ResearchContinuationState",
+      "ResearchRunning",
+      "ResearchSplit",
+      "ResearchTask",
+      "ResearchWork"
+     ],
+     "path": "src/autoreason_campaign/research/continuation.rs",
+     "purpose": "The host continuation of a campaign bound with an execution spec (FIX 886, OF-351)",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 4,
+      "fn": 3,
       "struct": 2
      }
     },
@@ -14526,9 +14547,10 @@
      "path": "src/consent/widen.rs",
      "purpose": "Propose-only authority widening",
      "surface": {
+      "const": 1,
       "crate-vis": 6,
       "enum": 1,
-      "fn": 9,
+      "fn": 11,
       "struct": 1
      }
     },
@@ -18991,9 +19013,9 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 24,
+      "const": 25,
       "crate-vis": 8,
-      "fn": 10,
+      "fn": 12,
       "trait": 1
      }
     },
@@ -52913,7 +52935,7 @@
      "purpose": "AUTHORITY_LOG record substrate"
     },
     "autoreason_campaign": {
-     "files": 17,
+     "files": 18,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -54362,9 +54384,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 185,
+   "over_bar": 186,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3302,
+   "source_files": 3303,
    "test_files": 902
   },
   "oneiron-android": {
@@ -66183,9 +66205,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/core/widen.rs",
-     "purpose": "Host-only landing of a frozen widen proposal",
+     "purpose": "Host-only landing or decline of a frozen widen proposal",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
@@ -71542,7 +71564,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "HostedCloner"
@@ -71609,7 +71631,7 @@
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
       "crate-vis": 24,
-      "fn": 16,
+      "fn": 17,
       "struct": 3
      }
     },
@@ -71648,7 +71670,7 @@
      "path": "src/models/offer.rs",
      "purpose": "What a run admission binds a model call to: one model at one provider, the route it goes out on, who pays…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "struct": 1
      }
     },
@@ -74877,6 +74899,7 @@
       "ResearchBudgetRead",
       "ResearchCandidateWire",
       "ResearchConfirmationSeat",
+      "ResearchExecution",
       "ResearchForkWire",
       "ResearchGoalPin",
       "ResearchHeldOutWire",
@@ -75256,7 +75279,7 @@
      "purpose": "—",
      "surface": {
       "enum": 307,
-      "struct": 814
+      "struct": 815
      }
     },
     {
