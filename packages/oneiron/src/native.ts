@@ -617,6 +617,8 @@ vaultArtifactsAppend(input: unknown): unknown
 vaultArtifactsRead(input: unknown): unknown
 vaultConsolidationEnqueue(input: unknown): unknown
 vaultConsolidationStatus(input: unknown): unknown
+vaultRunsStep(input: unknown): unknown
+vaultRunsCheckpoint(input: unknown): unknown
 vaultConsolidationPromote(input: unknown): unknown
 vaultConsolidationEvidence(input: unknown): unknown
 vaultClaimsVet(input: unknown): unknown
