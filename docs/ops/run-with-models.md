@@ -1721,6 +1721,10 @@ unbound:
 [models.decisions]
 # The write gate's auto check through the ladder: allow or hold.
 auto_check = "Should this claim land without the owner's review?"
+# The wire health check's question, past a crossed threshold: a bot, or a
+# valid burst. Unlike the other rows, an unworded health check is still asked,
+# in the host's own words; a check already asked keeps the words it was asked in.
+wire_health = "Is this traffic one of our own tools, or a bot?"
 
 [models.decisions.seat]
 # A manifest-backed execute_code run picks its seat through the ladder:

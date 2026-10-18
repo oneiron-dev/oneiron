@@ -53,7 +53,8 @@ const ASK_BUDGET: Duration = Duration::from_secs(30);
 const COVER_SECS: u64 = 3_600;
 /// How long after a decision an outcome still labels it.
 const OUTCOME_HORIZON_SECS: u64 = 30 * 86_400;
-/// The host's wording of the question (ARCH-0044 C5).
+/// The host's wording of the question (ARCH-0044 C5), unless
+/// `[models.decisions].wire_health` words it (FIX 1088).
 const WORDING: &str = "Is everything okay past this threshold: a bot, or a valid burst?";
 pub const VALID_BURST: &str = "valid_burst";
 pub const BOT: &str = "bot";
@@ -121,6 +122,11 @@ pub struct HealthCheck {
     /// Crossings this check covers, the first included.
     pub crossings: u64,
     pub state: CheckState,
+    /// The wording the check was asked in, which its question's identity
+    /// holds, so a later change of wording still finds its answer; `None`
+    /// until it is asked.
+    #[serde(default)]
+    pub asked_in: Option<String>,
 }
 
 impl HealthCheck {
@@ -137,11 +143,12 @@ impl HealthCheck {
         }
     }
 
-    /// The check's own question: one per crossing it first asked about.
-    fn question(&self) -> Result<DecisionQuestion> {
+    /// The check's own question, worded `wording`: one per crossing it first
+    /// asked about.
+    fn question(&self, wording: &str) -> Result<DecisionQuestion> {
         WIRE_HEALTH.question(
             &[self.subject.as_bytes(), &self.first_raised.to_be_bytes()],
-            WORDING.to_owned(),
+            wording.to_owned(),
             AnswerContract::Choice {
                 options: vec![VALID_BURST.to_owned(), BOT.to_owned()],
             },
@@ -368,6 +375,7 @@ fn fold(vault: &Vault, crossing: Crossing) -> Result<()> {
             last_raised: crossing.raised_at,
             crossings: 1,
             state: CheckState::Held,
+            asked_in: None,
         },
     };
     put_check(vault, &check)?;
@@ -510,7 +518,8 @@ fn ask_to(vault: &Vault, check: &HealthCheck) -> Result<Option<AskTo>> {
 fn ask(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<()> {
     let vault = server.vault();
     let host = server.decision_host();
-    let question = check.question()?;
+    let wording = host.wire_health_wording().unwrap_or(WORDING).to_owned();
+    let question = check.question(&wording)?;
     let mut ladder: HeldLadder = host.ladder().clone();
     ladder.rule = Some(Arc::new(GrantRule {
         inner: ladder.rule.take(),
@@ -557,6 +566,7 @@ fn ask(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<(
         },
         _ => CheckState::Asked { question, unit },
     };
+    check.asked_in = Some(wording);
     if let CheckState::Answered { answer, .. } = &check.state
         && answer == BOT
     {
@@ -576,10 +586,10 @@ fn poll(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<
     let CheckState::Asked { question, unit } = &check.state else {
         return Ok(());
     };
-    let Some(ask) = server
-        .decision_host()
-        .asks()
-        .latest(&check.question()?, owner)?
+    let Some(ask) = server.decision_host().asks().latest(
+        &check.question(check.asked_in.as_deref().unwrap_or(WORDING))?,
+        owner,
+    )?
     else {
         return Ok(());
     };
