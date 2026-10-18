@@ -4109,7 +4109,7 @@
      "path": "src/batch/builder/commit.rs",
      "purpose": "Committing terminal: builder-time checks, index preparation, its share of the group commit, preflight…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2
      }
     },
@@ -49734,7 +49734,7 @@
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…",
      "surface": {
       "crate-vis": 13,
-      "re-export": 7,
+      "re-export": 8,
       "struct": 1
      }
     },
@@ -49777,6 +49777,19 @@
      "purpose": "Geographic entity doors consume PlaceStore, never concrete database handles",
      "surface": {
       "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RawEntityPut"
+     ],
+     "path": "src/vault/raw_writes.rs",
+     "purpose": "The raw storage writes a bound caller makes (OF-063, FIX 3387)",
+     "surface": {
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -54748,7 +54761,7 @@
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
     "vault": {
-     "files": 29,
+     "files": 30,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54834,7 +54847,7 @@
    },
    "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3336,
+   "source_files": 3337,
    "test_files": 902
   },
   "oneiron-android": {
@@ -54856,7 +54869,7 @@
      "path": "src/lib.rs",
      "purpose": "Minimal JNI/Kotlin ownership adapter",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "mod": 1
      }
     }
@@ -60749,7 +60762,7 @@
      "path": "src/lib/entity.rs",
      "purpose": "Free fns plus vault lifecycle, health, and entity entry points",
      "surface": {
-      "fn": 12
+      "fn": 13
      }
     },
     {
@@ -60779,7 +60792,7 @@
      "path": "src/lib/parse.rs",
      "purpose": "ID/enum/limit/query/format parsing and validation helpers",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -60819,7 +60832,7 @@
      "path": "src/lib/types.rs",
      "purpose": "repr(C) status/types/handles and ABI limit constants",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 12,
       "enum": 1,
       "struct": 10
      }
@@ -63270,7 +63283,7 @@
      "path": "src/lib/vault.rs",
      "purpose": "Legacy buffer-oriented NapiVault binding and all its verbs",
      "surface": {
-      "fn": 27,
+      "fn": 28,
       "struct": 1
      }
     },
