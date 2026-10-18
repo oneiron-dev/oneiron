@@ -157,7 +157,7 @@ impl ScopedRead<'_> {
             && crate::pipeline::claim_ceiling_allowed(filter, body);
         if !admitted
             || !self.audience_readable_raw_in(rtxn, id, raw)?
-            || !self.relationship_claim_allowed_in(rtxn, body)?
+            || !self.relationship_claim_allowed_in(rtxn, id, body)?
         {
             return Ok(false);
         }

@@ -510,7 +510,10 @@ impl<'a> ScopedRead<'a> {
         if fold.vault_id != Some(claims.vault_id) {
             return Ok(false);
         }
-        Ok(fold.slip_is_live(&claims.slip_id))
+        // A support slip (OF-606) also reads only while its delegation's
+        // wall deadline, holder and key still stand.
+        Ok(fold.slip_is_live(&claims.slip_id)
+            && self.vault.support_delegation_stands_in_txn(txn, claims)?)
     }
 
     /// Whether `judge` holds for this read and for each peer it conjoins

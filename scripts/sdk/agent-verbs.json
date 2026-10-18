@@ -2541,6 +2541,51 @@
       "section": false
     },
     {
+      "name": "vault.support_grants.mint",
+      "description": "The owner mints our support person or agent a time-limited, revocable grant, bound to that party's own key, inside explicit bounds.",
+      "input": "crate::task_verb::sdk::SupportGrantMintRequest",
+      "output": "crate::task_verb::sdk::SupportGrantMintAnswer",
+      "call": "crate::task_verb::sdk::mint_support_grant_embedded(memory, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.support_grants.list",
+      "description": "The owner lists the vault's support grants, newest first, with each one's bounds, deadline, status and revoke command.",
+      "input": "crate::task_verb::sdk::SupportGrantListRequest",
+      "output": "crate::task_verb::sdk::SupportGrantList",
+      "call": "crate::task_verb::sdk::list_support_grants_embedded(memory, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.support_grants.revoke",
+      "description": "The owner revokes one support grant; what support already read is not recalled.",
+      "input": "crate::task_verb::sdk::SupportGrantRevokeRequest",
+      "output": "crate::task_verb::sdk::SupportGrantRevokeAnswer",
+      "call": "crate::task_verb::sdk::revoke_support_grant_embedded(memory, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.residence.mode",
       "description": "Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive.",
       "input": "crate::task_verb::sdk::ResidenceModeRequest",

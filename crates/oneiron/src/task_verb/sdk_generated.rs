@@ -798,6 +798,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.support_grants.mint",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SupportGrantMintRequest,
+                >(),
+            ),
+            (
+                "vault.support_grants.list",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SupportGrantListRequest,
+                >(),
+            ),
+            (
+                "vault.support_grants.revoke",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SupportGrantRevokeRequest,
+                >(),
+            ),
+            (
                 "vault.residence.mode",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ResidenceModeRequest,
@@ -3010,6 +3028,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.trusted_contacts.tier.set",
     "vault.trusted_contacts.concern.asks",
     "vault.trusted_contacts.concern.authorize",
+    "vault.support_grants.mint",
+    "vault.support_grants.list",
+    "vault.support_grants.revoke",
     "vault.off_record.start",
     "vault.off_record.status",
     "vault.off_record.witness",
@@ -3291,6 +3312,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
                 crate::task_verb::sdk::TrustedContactAuthorization,
             >()
         }
+        "vault.support_grants.mint" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::SupportGrantMintAnswer,
+        >(),
+        "vault.support_grants.list" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::SupportGrantList>()
+        }
+        "vault.support_grants.revoke" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::SupportGrantRevokeAnswer,
+        >(),
         "vault.off_record.start" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::OffRecordSessionView,
         >(),
@@ -4778,6 +4808,27 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.guests.mint_slip" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.support_grants.mint" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.support_grants.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.support_grants.revoke" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -7801,6 +7852,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.guests.mint_slip" => {
             let _input: crate::task_verb::sdk::GuestSlipMintRequest = decode(value.clone())?;
         }
+        "vault.support_grants.mint" => {
+            let _input: crate::task_verb::sdk::SupportGrantMintRequest = decode(value.clone())?;
+        }
+        "vault.support_grants.list" => {
+            let _input: crate::task_verb::sdk::SupportGrantListRequest = decode(value.clone())?;
+        }
+        "vault.support_grants.revoke" => {
+            let _input: crate::task_verb::sdk::SupportGrantRevokeRequest = decode(value.clone())?;
+        }
         "vault.residence.mode" => {
             let _input: crate::task_verb::sdk::ResidenceModeRequest = decode(value.clone())?;
         }
@@ -9358,6 +9418,11 @@ pub fn invoke(
         ),
         "vault.guests.revoke" => encode(vault_guests_revoke(memory, decode(value)?)?),
         "vault.guests.mint_slip" => encode(vault_guests_mint_slip(memory, decode(value)?)?),
+        "vault.support_grants.mint" => encode(vault_support_grants_mint(memory, decode(value)?)?),
+        "vault.support_grants.list" => encode(vault_support_grants_list(memory, decode(value)?)?),
+        "vault.support_grants.revoke" => {
+            encode(vault_support_grants_revoke(memory, decode(value)?)?)
+        }
         "vault.residence.mode" => encode(vault_residence_mode(memory, decode(value)?)?),
         "vault.residence.open" => encode(vault_residence_open(memory, decode(value)?)?),
         "vault.residence.index" => encode(vault_residence_index(memory, decode(value)?)?),
@@ -11469,6 +11534,24 @@ pub fn vault_guests_mint_slip(
     input: crate::task_verb::sdk::GuestSlipMintRequest,
 ) -> MemoryResult<crate::task_verb::sdk::GuestSlipMinted> {
     crate::task_verb::sdk::mint_guest_slip_embedded(memory, input)
+}
+pub fn vault_support_grants_mint(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SupportGrantMintRequest,
+) -> MemoryResult<crate::task_verb::sdk::SupportGrantMintAnswer> {
+    crate::task_verb::sdk::mint_support_grant_embedded(memory, input)
+}
+pub fn vault_support_grants_list(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SupportGrantListRequest,
+) -> MemoryResult<crate::task_verb::sdk::SupportGrantList> {
+    crate::task_verb::sdk::list_support_grants_embedded(memory, input)
+}
+pub fn vault_support_grants_revoke(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SupportGrantRevokeRequest,
+) -> MemoryResult<crate::task_verb::sdk::SupportGrantRevokeAnswer> {
+    crate::task_verb::sdk::revoke_support_grant_embedded(memory, input)
 }
 pub fn vault_residence_mode(
     memory: &Memory<'_>,

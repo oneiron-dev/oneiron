@@ -550,6 +550,7 @@ pub use super::sdk_share::*;
 pub use super::sdk_shared::*;
 pub use super::sdk_shared_members::*;
 pub use super::sdk_shared_policy::*;
+pub use super::sdk_support_grant::*;
 pub use super::sdk_trusted_contact::*;
 pub use super::sdk_voice_bank::*;
 pub use super::sdk_workflows::*;

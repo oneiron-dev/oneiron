@@ -733,6 +733,14 @@ export class Oneiron {
       /** The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device. */
       mint_slip: (input: Facade.GuestSlipMintRequest): Facade.GuestSlipMinted => this.#call(() => this.#client.vaultGuestsMintSlip(input) as Facade.GuestSlipMinted),
     },
+    support_grants: {
+      /** The owner mints our support person or agent a time-limited, revocable grant, bound to that party's own key, inside explicit bounds. */
+      mint: (input: Facade.SupportGrantMintRequest): Facade.SupportGrantMintAnswer => this.#call(() => this.#client.vaultSupportGrantsMint(input) as Facade.SupportGrantMintAnswer),
+      /** The owner lists the vault's support grants, newest first, with each one's bounds, deadline, status and revoke command. */
+      list: (input: Facade.SupportGrantListRequest): Facade.SupportGrantList => this.#call(() => this.#client.vaultSupportGrantsList(input) as Facade.SupportGrantList),
+      /** The owner revokes one support grant; what support already read is not recalled. */
+      revoke: (input: Facade.SupportGrantRevokeRequest): Facade.SupportGrantRevokeAnswer => this.#call(() => this.#client.vaultSupportGrantsRevoke(input) as Facade.SupportGrantRevokeAnswer),
+    },
     residence: {
       /** Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive. */
       mode: (input: Facade.ResidenceModeRequest): Facade.ResidenceModeAnswer => this.#call(() => this.#client.vaultResidenceMode(input) as Facade.ResidenceModeAnswer),

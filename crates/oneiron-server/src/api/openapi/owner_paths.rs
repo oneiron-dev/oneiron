@@ -1500,6 +1500,24 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "get",
+        path: "/support-grants",
+        summary: "The vault's support grants (OF-606), newest first: active ones, or every one with `include_inactive=true`; at most `limit` (500). Each names its support PERSON and class, bounds, purpose, ticket, approving owner, wall deadline, status and its one-tap revoke command.",
+        row: Some("vault.support_grants.list"),
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/support-grants/mint",
+        summary: "Mint our support person or agent a time-limited, revocable grant (OF-606): a live, non-owner PERSON of the vault (`holder`, `holder_class` human or agent) bound to that party's own Ed25519 key (`holder_key`, 64 hex), inside explicit bounds (`scope` with named worlds; `records` optional; propose or write only when named), for `ttl_secs` (default 3600, at most 86400), with a `purpose` and optional `ticket_ref`. Answers the credential (no private key), the grant and the mint's Gate receipt.",
+        row: Some("vault.support_grants.mint"),
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/support-grants/revoke",
+        summary: "Revoke one support grant (`grant_ref`, 64 hex): a repeat answers `changed: false`, an id that names no support grant is not found, and `delivered_recallable` is always false: what support already read is not recalled.",
+        row: Some("vault.support_grants.revoke"),
+    },
+    OwnerRoute {
+        method: "get",
         path: "/vault-key",
         summary: "Whether the vault has a data key, whether this server holds it, and its wraps, each passkey's with its PRF input.",
         row: None,

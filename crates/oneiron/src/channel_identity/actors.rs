@@ -218,6 +218,7 @@ impl Vault {
                 org_ref: None,
                 grant_ref: None,
                 invitation_ref: None,
+                delegation: None,
             },
         )?;
         txn.commit()?;

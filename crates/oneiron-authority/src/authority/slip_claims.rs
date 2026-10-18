@@ -41,6 +41,12 @@ pub struct SlipClaims {
     /// minted with (FIX 1925): it admits only that invitation's own doors and
     /// stands only while the invitation is pending. Delegation keeps it.
     pub invitation_ref: Option<String>,
+    /// The customer's support delegation (OF-606): set only on a support
+    /// slip, which stands only while its signed wall deadline holds on the
+    /// recording clock as well. A support slip has no parent and no child,
+    /// and delegation keeps it unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegation: Option<super::SupportDelegation>,
 }
 
 /// The signed SlipMint payload. The credential signature is not log material.
@@ -90,6 +96,31 @@ impl SlipClaims {
         {
             return Err(invalid_authority());
         }
+        self.validate_support_delegation()
+    }
+    /// A support slip (OF-606) is one holder PERSON's own, minted with no
+    /// parent, at the human or agent class, under no other grant, org or
+    /// invitation, inside the support bounds
+    /// ([`super::support_scope_admissible`]). Its holder is never the owner
+    /// who approved it.
+    fn validate_support_delegation(&self) -> Result<()> {
+        let Some(delegation) = &self.delegation else {
+            return Ok(());
+        };
+        delegation.validate()?;
+        let holder_is_person = oneiron_contracts::EntityId::from_hex(&self.holder_ref)
+            .is_ok_and(|id| id.to_hex() == self.holder_ref);
+        if !holder_is_person
+            || self.holder_ref == delegation.owner_ref
+            || self.parent_id.is_some()
+            || !matches!(self.actor_class.as_deref(), Some("human" | "agent"))
+            || self.org_ref.is_some()
+            || self.grant_ref.is_some()
+            || self.invitation_ref.is_some()
+            || super::support_scope_admissible(&self.scope, &self.records, &self.channels).is_err()
+        {
+            return Err(invalid_authority());
+        }
         Ok(())
     }
     /// True when `self` is a valid narrowing of `parent`. Public so `oneiron`'s slip
@@ -107,6 +138,7 @@ impl SlipClaims {
             && self.org_ref == parent.org_ref
             && self.grant_ref == parent.grant_ref
             && self.invitation_ref == parent.invitation_ref
+            && self.delegation == parent.delegation
             && (self.records == parent.records
                 || (!self.records.is_empty()
                     && ((parent.records.is_empty() && parent.channels.is_empty())

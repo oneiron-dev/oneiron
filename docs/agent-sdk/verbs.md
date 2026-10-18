@@ -160,6 +160,9 @@ both bindings and their export-census tests in one change.
 - `vault.trusted_contacts.concern.authorize`
 - `vault.guests.revoke`
 - `vault.guests.mint_slip`
+- `vault.support_grants.mint`
+- `vault.support_grants.list`
+- `vault.support_grants.revoke`
 - `vault.residence.mode`
 - `vault.residence.open`
 - `vault.residence.index`
