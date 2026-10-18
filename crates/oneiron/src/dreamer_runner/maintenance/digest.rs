@@ -4,6 +4,7 @@
 use super::applied::{MaintenanceInverse, MaintenanceRevert};
 use super::invalid;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
@@ -70,28 +71,37 @@ pub struct ProactivityPresentation {
 }
 impl ProactivityPresentation {
     fn validate(&self) -> Result<()> {
-        if self.group_template.len() > 1024
-            || !self.group_template.contains("{group}")
-            || self.item_template.len() > 1024
+        let blank = |text: &String| text.trim().is_empty();
+        if !self.group_template.contains("{group}")
             || !self.item_template.contains("{summary}")
             || !self.item_template.contains("{ref}")
-            || self.voice_style.len() > 1024
-            || self.group_aliases.len() > 64
-            || self.urgent_groups.len() > 64
-            || self.group_aliases.iter().any(|(key, value)| {
-                key.trim().is_empty()
-                    || key.len() > 128
-                    || value.trim().is_empty()
-                    || value.len() > 128
-            })
             || self
-                .urgent_groups
+                .group_aliases
                 .iter()
-                .any(|group| group.trim().is_empty() || group.len() > 128)
+                .any(|(key, value)| blank(key) || blank(value))
+            || self.urgent_groups.iter().any(blank)
         {
             return Err(invalid());
         }
         Ok(())
+    }
+
+    /// Measures the row against its `[limits]` rows (OF-520): its aliases and
+    /// urgent groups, and its longest template, style or group name. Past one
+    /// the vault's port asks, and the row is kept whole.
+    fn measure(&self, vault: &Vault) {
+        for items in [self.group_aliases.len(), self.urgent_groups.len()] {
+            let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, items as u64);
+        }
+        let mut longest = self.group_template.len().max(self.item_template.len());
+        longest = longest.max(self.voice_style.len());
+        for (key, value) in &self.group_aliases {
+            longest = longest.max(key.len()).max(value.len());
+        }
+        for group in &self.urgent_groups {
+            longest = longest.max(group.len());
+        }
+        let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
     }
 }
 /// Typed request payload for the existing `vault.claims.put` agent verb.
@@ -264,6 +274,7 @@ impl Vault {
         row: &ProactivityPresentation,
     ) -> Result<()> {
         row.validate()?;
+        row.measure(self);
         self.with_write_txn_grouped(|txn| {
             super::validate_owner_in_txn(self, txn, owner)?;
             PRESENTATION.put(self, txn, &(), row)?;
@@ -303,6 +314,7 @@ impl Vault {
             if proposal.revision != expected_revision {
                 return Err(invalid());
             }
+            proposal.request.presentation.measure(self);
             CADENCE.put(&self.store, txn, &(), &proposal.request.cadence)?;
             PRESENTATION.put(self, txn, &(), &proposal.request.presentation)?;
             POLICY_CONFIRMED.put(&self.store, txn, &claim_ref, &expected_revision)?;
@@ -985,6 +997,7 @@ fn apply_policy_in_txn(
     request: &ProactivityPolicyRequest,
 ) -> Result<MaintenanceInverse> {
     request.claim_value()?;
+    request.presentation.measure(vault);
     let inverse = ProactivityPolicyInverse {
         prior_cadence: CADENCE.get(&vault.store, &*txn, &())?,
         prior_presentation: PRESENTATION.get(&vault.store, &*txn, &())?,
@@ -1056,9 +1069,6 @@ fn load_policy_proposal(
         return Err(invalid());
     }
     let value = body.value.as_str().ok_or_else(invalid)?;
-    if value.len() > 16_384 {
-        return Err(invalid());
-    }
     let request: ProactivityPolicyRequest = serde_json::from_str(value).map_err(|_| invalid())?;
     request.claim_value()?;
     Ok(ProactivityPolicyProposal {

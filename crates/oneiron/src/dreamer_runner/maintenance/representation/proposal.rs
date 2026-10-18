@@ -11,6 +11,7 @@ use super::{
 use crate::dreamer_runner::{
     DreamerAdmittedAttempt, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
+use crate::limit_ask::EngineLimit;
 use crate::provenance::birth::{MAX_BIRTH_INPUTS, RowBirth};
 use crate::provenance::made_by::MadeByClass;
 use crate::side_table::{self, LegacyJson, SideTable};
@@ -128,11 +129,12 @@ impl Vault {
     ) -> Result<EnqueueDreamerAttemptOutcome> {
         let context = self.representation_context(request)?;
         let draft = planner.plan(&context)?;
-        if draft.text.trim().is_empty() || draft.text.len() > 65_536 {
+        if draft.text.trim().is_empty() {
             return Err(invalid());
         }
         validate_citations(&context.evidence, &draft.evidence, Some(&draft.text))?;
         validate_citations(&context.voice, &draft.voice, None)?;
+        measure_plan(self, &context, &draft.text);
         let packet = Packet {
             request: request.clone(),
             content: crate::compaction::output::store_output(self, draft.text.as_bytes())?,
@@ -152,6 +154,23 @@ impl Vault {
             now,
         )
     }
+}
+/// Measures a plan where it is written against the `[limits]` rows (OF-520):
+/// its evidence and voice sources, and its longest route, source text or
+/// draft. Past one the vault's port asks, and the plan is kept whole.
+fn measure_plan(vault: &Vault, context: &RepresentationContext, text: &str) {
+    let request = &context.request;
+    for items in [request.evidence.len(), request.voice.len()] {
+        let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, items as u64);
+    }
+    let mut longest = text.len();
+    for route in [&request.verb, &request.channel, &request.target] {
+        longest = longest.max(route.len());
+    }
+    for source in context.evidence.iter().chain(&context.voice) {
+        longest = longest.max(source.text.len());
+    }
+    let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
 }
 /// Saves one queued plan for the owner's send review. The Dreamer applies it
 /// at once (OF-023): it lands Auto with a receipt the owner reverts, and the
