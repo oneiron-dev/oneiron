@@ -572,7 +572,7 @@ impl McpRowSurface {
         actor: &McpCallContext,
         producers: &'a oneiron::memory::ProducerRows,
     ) -> oneiron::Memory<'a> {
-        let memory = crate::api::credential_memory(
+        let memory = crate::api::mcp_credential_memory(
             &server.vault,
             actor.auth.as_ref(),
             actor.actor_ref,
@@ -2666,9 +2666,12 @@ async fn execute_agent_verb_row(
         "describe" => {
             if input.get("self").and_then(Value::as_bool) == Some(true) {
                 let auth = actor.auth.as_ref().ok_or_else(invalid)?;
-                let value = crate::api::context_board::describe_self_for_auth(server, auth, &input)
-                    .await
-                    .map_err(|_| invalid())?;
+                let (value, listed) =
+                    crate::api::context_board::describe_self_for_auth(server, auth, &input)
+                        .await
+                        .map_err(|_| invalid())?;
+                // Derived from the rows its card lists, the roster it read among them.
+                served.extend(listed);
                 let output: oneiron::task_verb::TaskDescription =
                     serde_json::from_value(value).map_err(|_| invalid())?;
                 let (value, source) = mcp_describe_result(output)?;
@@ -2890,10 +2893,15 @@ async fn execute_agent_verb_row(
                     "full-vault export requires verified owner authority",
                 )
             })?;
+            // The person path lists through its surface; the host path beside its archive.
             let output = if proof.claims().holder_ref == "host" {
                 server
                     .vault
-                    .export_with_verified_host_owner(&input, proof, actor.locality())
+                    .export_with_verified_host_owner_listing(&input, proof, actor.locality())
+                    .map(|(output, listed)| {
+                        served.extend(listed);
+                        output
+                    })
             } else {
                 memory.export_with_verified_owner(&input, proof)
             }
@@ -5084,9 +5092,15 @@ async fn execute_agent_verb_row(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::AiOptionsRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = crate::api::facade::host_doors::ai_options(server, auth, input)
-                .await
-                .map_err(mcp_facade_error)?;
+            let (output, listed) =
+                crate::api::facade::host_doors::ai_options(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

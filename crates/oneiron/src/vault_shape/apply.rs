@@ -584,6 +584,9 @@ impl Vault {
             ) => Ok(self
                 .create_facet(owner, person(wearer)?, name, now)?
                 .to_hex()),
+            (ShapeChange::Retire, ShapeTarget::World { .. } | ShapeTarget::Facet { .. }, _) => {
+                self.delete_shape_entity(owner, entity.ok_or_else(stale)?)
+            }
             (
                 ShapeChange::Create,
                 ShapeTarget::Actor { agent_id },
@@ -670,6 +673,14 @@ impl Vault {
                     ..
                 }),
             ) => self.import_shape_skill(owner, skill_id, version.as_deref(), source, now),
+            (
+                ShapeChange::Update,
+                ShapeTarget::Skill { .. },
+                Some(ShapeRow::Skill {
+                    version: Some(version),
+                    ..
+                }),
+            ) => self.update_shape_skill(owner, entity.ok_or_else(stale)?, version),
             (ShapeChange::Retire, ShapeTarget::Skill { .. }, _) => {
                 // Retiring a skill quarantines it: out of every pack, its
                 // evidence kept, revivable. The owner's word is the consent

@@ -1,7 +1,6 @@
 //! Checked file and directory shape; reservations compose before execution.
 use super::{
-    MAX_FILE_BYTES, MAX_WORKSPACE_BYTES, MAX_WORKSPACE_DIRECTORIES, MAX_WORKSPACE_FILES, Result,
-    WorkspacePath, refused,
+    MAX_FILE_BYTES, MAX_WORKSPACE_DIRECTORIES, MAX_WORKSPACE_FILES, Result, WorkspacePath, refused,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -36,8 +35,10 @@ impl WorkspaceShape {
         additions.insert(path.as_str().to_owned());
         self.insert_directories(additions)
     }
+    /// A file's bytes are counted, never capped: a proposed file streams in
+    /// frames, so its size is the codec's concern, not the tree's (Rule 5).
     pub fn add_file(&mut self, path: &WorkspacePath, bytes: usize) -> Result<()> {
-        if bytes > MAX_FILE_BYTES || self.files.len() >= MAX_WORKSPACE_FILES {
+        if self.files.len() >= MAX_WORKSPACE_FILES {
             return Err(refused("workspace file limit"));
         }
         if self.files.contains_key(path.as_str()) || self.directories.contains(path.as_str()) {
@@ -47,9 +48,6 @@ impl WorkspaceShape {
             .total_bytes
             .checked_add(bytes)
             .ok_or_else(|| refused("workspace byte overflow"))?;
-        if total > MAX_WORKSPACE_BYTES {
-            return Err(refused("workspace byte limit"));
-        }
         self.insert_directories(self.parents(path))?;
         self.files.insert(path.as_str().to_owned(), bytes);
         self.total_bytes = total;
@@ -61,16 +59,10 @@ impl WorkspaceShape {
         let Some(old) = self.files.get(path.as_str()).copied() else {
             return self.add_file(path, bytes);
         };
-        if bytes > MAX_FILE_BYTES {
-            return Err(refused("workspace file limit"));
-        }
         let total = self.total_bytes - old;
         let total = total
             .checked_add(bytes)
             .ok_or_else(|| refused("workspace byte overflow"))?;
-        if total > MAX_WORKSPACE_BYTES {
-            return Err(refused("workspace byte limit"));
-        }
         self.files.insert(path.as_str().to_owned(), bytes);
         self.total_bytes = total;
         Ok(())

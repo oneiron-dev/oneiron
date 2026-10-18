@@ -174,6 +174,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_OPTIMIZE_OFFER, CONTENT),
     (&t::SKILL_OPTIMIZE_OFFER_ANSWER, LIVE),
     (&t::SKILL_OPTIMIZE_OFFER_CHECK, CONTENT),
+    (&t::SKILL_OPTIMIZE_OFFER_SWITCH, LIVE),
     (&t::SKILL_OPTIMIZE_RESPONSE_PAIR, CONTENT),
     (&t::SKILL_RELIABILITY_AMENDED, CONTENT),
     (&t::SKILL_RELIABILITY_CALL_INVOCATION, CONTENT),
@@ -294,10 +295,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::WORLD_KEY_DELETED, CONTENT),
     // A destroyed world stays destroyed: no image restores its keys.
     (&t::WORLD_KEY_DESTROYED, LIVE),
-    // Sealed copies and their mirrors follow the live vault: an image never brings
-    // back a copy a delete or the 30-day expiry purged.
+    // Sealing mirrors follow the live vault: an image never brings back a mirror
+    // an erase purged.
     (&t::WORLD_KEY_SEALED_MIRROR, LIVE),
-    (&t::WORLD_KEY_SEALED_RETIRED, LIVE),
-    (&t::WORLD_KEY_SEALED, LIVE),
-    (&t::WORLD_KEY_SEALED_WINDOW, LIVE),
 ];
