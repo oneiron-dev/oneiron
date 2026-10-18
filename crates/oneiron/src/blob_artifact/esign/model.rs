@@ -251,14 +251,17 @@ pub(super) fn reference(value: &str) -> Result<()> {
         Err(invalid("noncanonical reference"))
     }
 }
+/// The longest address an SMTP path carries: a 64-octet local part, `@` and a
+/// 255-octet domain (RFC 5321 section 4.5.3.1). A recipient is mailed, so this
+/// is a format bound, not a cap.
+pub(super) const EMAIL_MAX_BYTES: usize = 64 + 1 + 255;
+/// A draft refuses only what it cannot be: no count or size cap on its items,
+/// recipients, fields, titles, names or choices (Rule 5). The one length bound
+/// left is the mail format's ([`EMAIL_MAX_BYTES`]).
 pub(super) fn validate_document(doc: &EsignDocument, now: u64) -> Result<()> {
     if doc.schema_version != 1
         || doc.title.is_empty()
-        || doc.title.len() > 4096
         || doc.items.is_empty()
-        || doc.items.len() > 100
-        || doc.recipients.len() > 1000
-        || doc.fields.len() > 10000
         || doc.expires_at <= now
     {
         return Err(invalid("invalid document bounds"));
@@ -280,10 +283,9 @@ pub(super) fn validate_document(doc: &EsignDocument, now: u64) -> Result<()> {
             reference(principal)?;
         }
         if !recipients.insert(&r.id)
-            || r.email.len() > 320
+            || r.email.len() > EMAIL_MAX_BYTES
             || !r.email.contains('@')
             || r.email.contains(['\r', '\n'])
-            || r.name.len() > 4096
             || r.expires_at <= now
             || r.expires_at > doc.expires_at
         {
@@ -291,7 +293,6 @@ pub(super) fn validate_document(doc: &EsignDocument, now: u64) -> Result<()> {
         }
         if let Some(basis) = &r.natural_person
             && (basis.trim().is_empty()
-                || basis.len() > 1024
                 || !matches!(r.role, RecipientRole::Signer | RecipientRole::Approver))
         {
             return Err(invalid("invalid natural-person requirement"));
@@ -330,10 +331,11 @@ pub(super) fn validate_document(doc: &EsignDocument, now: u64) -> Result<()> {
             FieldMeta::Text { max_bytes } if *max_bytes == 0 => {
                 return Err(invalid("invalid text field"));
             }
+            // The choices never reach the PDF (only the chosen value is
+            // burned in), so no form-field bound applies to them.
             FieldMeta::Select { options }
                 if options.is_empty()
-                    || options.len() > 256
-                    || options.iter().any(|v| v.is_empty() || v.len() > 4096)
+                    || options.iter().any(String::is_empty)
                     || options.iter().collect::<BTreeSet<_>>().len() != options.len() =>
             {
                 return Err(invalid("invalid choices"));

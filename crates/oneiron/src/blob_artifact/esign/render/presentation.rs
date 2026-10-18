@@ -102,12 +102,13 @@ pub fn present_field(field: &EsignField, value: Option<&FieldValue>) -> Result<F
             max_bytes: *max_bytes,
             server_computed: false,
         },
+        // A name has no engine cap (Rule 5); the field's box bounds what fits.
         FieldMeta::Name => FieldControl::Text {
-            max_bytes: 4096,
+            max_bytes: u32::MAX,
             server_computed: false,
         },
         FieldMeta::Email => FieldControl::Text {
-            max_bytes: 320,
+            max_bytes: EMAIL_MAX_BYTES as u32,
             server_computed: false,
         },
     };

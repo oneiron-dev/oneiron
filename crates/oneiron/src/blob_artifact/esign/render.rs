@@ -269,10 +269,7 @@ pub fn prepare_esign_pdf(original: &[u8], request: PdfPreparation<'_>) -> Result
         &mut kids,
     )?;
     let appendix_pages = kids.len() as u32 - original_pages;
-    out.objects.insert(
-        parent,
-        dictionary! { "Type" => "Pages", "Count" => kids.len() as i64, "Kids" => kids }.into(),
-    );
+    page_tree(&mut out, parent, kids)?;
     let mut catalog_out = dictionary! { "Type" => "Catalog", "Pages" => parent };
     if let Ok(intents) = catalog.get(b"OutputIntents") {
         catalog_out.set("OutputIntents", copier.copy(&mut out, intents, 0)?);
@@ -316,6 +313,42 @@ pub fn inspect_pdf_pages(bytes: &[u8]) -> Result<Vec<PageGeometry>> {
         .iter()
         .map(|page| source::page_geometry(&source, page))
         .collect()
+}
+/// The most kids one page-tree node carries: the array bound of ISO 32000-1
+/// Annex C, Table C.1 (8,191 elements). A longer document is not refused; its
+/// page tree nests (ISO 32000-1 section 7.7.3.2).
+const PAGE_TREE_FANOUT: usize = 8191;
+/// Hangs `kids` (every page, in order, each made with `root` as its parent)
+/// under `root`, nesting intermediate nodes when they outgrow one node.
+fn page_tree(out: &mut Document, root: ObjectId, kids: Vec<Object>) -> Result<()> {
+    let total = kids.len() as i64;
+    let mut level: Vec<(Object, i64)> = kids.into_iter().map(|kid| (kid, 1)).collect();
+    while level.len() > PAGE_TREE_FANOUT {
+        let mut next = Vec::with_capacity(level.len().div_ceil(PAGE_TREE_FANOUT));
+        for group in level.chunks(PAGE_TREE_FANOUT) {
+            let node = out.new_object_id();
+            let mut count = 0;
+            let mut node_kids = Vec::with_capacity(group.len());
+            for (kid, leaves) in group {
+                out.get_object_mut(kid.as_reference()?)?
+                    .as_dict_mut()?
+                    .set("Parent", node);
+                count += leaves;
+                node_kids.push(kid.clone());
+            }
+            let mut tree = dictionary! { "Type" => "Pages", "Parent" => root, "Count" => count };
+            tree.set("Kids", node_kids);
+            out.objects.insert(node, tree.into());
+            next.push((Object::Reference(node), count));
+        }
+        level = next;
+    }
+    let kids: Vec<Object> = level.into_iter().map(|(kid, _)| kid).collect();
+    out.objects.insert(
+        root,
+        dictionary! { "Type" => "Pages", "Count" => total, "Kids" => kids }.into(),
+    );
+    Ok(())
 }
 struct BoundedOutput(Vec<u8>);
 impl std::io::Write for BoundedOutput {

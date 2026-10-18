@@ -90,7 +90,7 @@ pub fn prepare_content(
         } => (render_html_template(template, merge_fields)?, true),
     };
     let pages = render::inspect_pdf_pages(&bytes)?;
-    if pack.schema_version != 1 || pack.fields.len() > 10000 {
+    if pack.schema_version != 1 {
         return Err(ContentTemplateError::Geometry);
     }
     let mut ids = BTreeSet::new();

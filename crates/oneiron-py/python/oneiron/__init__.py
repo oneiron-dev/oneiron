@@ -1667,6 +1667,27 @@ class Oneiron:
         def create(self, spec):
             """Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act."""
             return json.loads(_translate(lambda: self._client.vault_esign_create(json.dumps(spec))))
+        def get(self, spec):
+            """Reads one signing document as its trail folds: its status, recipients, filled fields and its hash-chained audit trail."""
+            return json.loads(_translate(lambda: self._client.vault_esign_get(json.dumps(spec))))
+        @property
+        def links(self) -> "Oneiron._VaultEsignLinksVerbs":
+            return Oneiron._VaultEsignLinksVerbs(self._client)
+        def send_for_signature(self, spec):
+            """Sends a drafted signing document to its recipients through the outbound gate, as the caller; an agent sends only within its principal envelope."""
+            return json.loads(_translate(lambda: self._client.vault_esign_send_for_signature(json.dumps(spec))))
+        def remind(self, spec):
+            """Reminds the recipients whose turn it is to sign a pending document, through the outbound gate, as the caller."""
+            return json.loads(_translate(lambda: self._client.vault_esign_remind(json.dumps(spec))))
+        def void(self, spec):
+            """Withdraws a drafted or pending signing document unsealed and tells its recipients why, through the outbound gate, as the caller."""
+            return json.loads(_translate(lambda: self._client.vault_esign_void(json.dumps(spec))))
+    class _VaultEsignLinksVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def issue(self, spec):
+            """The vault owner mints the signing links of a drafted document and receives each new one once, to deliver to its recipient."""
+            return json.loads(_translate(lambda: self._client.vault_esign_links_issue(json.dumps(spec))))
     class _VaultConsolidationVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

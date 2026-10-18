@@ -881,6 +881,21 @@ impl OneironClient {
                 "vault.esign.create" => remote_agent_verb_output::<
                     oneiron::blob_artifact::esign::EsignDraftView,
                 >(client, verb, &input),
+                "vault.esign.get" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::esign::EsignDocumentView,
+                >(client, verb, &input),
+                "vault.esign.links.issue" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::esign::EsignLinksView,
+                >(client, verb, &input),
+                "vault.esign.send_for_signature" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::esign::EsignDispatchView,
+                >(client, verb, &input),
+                "vault.esign.remind" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::esign::EsignDispatchView,
+                >(client, verb, &input),
+                "vault.esign.void" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::esign::EsignDispatchView,
+                >(client, verb, &input),
                 "vault.conversations.create" => remote_agent_verb_output::<
                     oneiron::core_write::CoreEntityWriteReceipt,
                 >(client, verb, &input),
@@ -4442,6 +4457,66 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.esign.create", value)
+    }
+    pub fn vault_esign_get(
+        &self,
+        input: &oneiron::blob_artifact::esign::EsignGetRequest,
+    ) -> Result<oneiron::blob_artifact::esign::EsignDocumentView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.esign.get", value)
+    }
+    pub fn vault_esign_links_issue(
+        &self,
+        input: &oneiron::blob_artifact::esign::EsignLinksIssueRequest,
+    ) -> Result<oneiron::blob_artifact::esign::EsignLinksView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.esign.links.issue", value)
+    }
+    pub fn vault_esign_send_for_signature(
+        &self,
+        input: &oneiron::blob_artifact::esign::EsignDispatchRequest,
+    ) -> Result<oneiron::blob_artifact::esign::EsignDispatchView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.esign.send_for_signature", value)
+    }
+    pub fn vault_esign_remind(
+        &self,
+        input: &oneiron::blob_artifact::esign::EsignDispatchRequest,
+    ) -> Result<oneiron::blob_artifact::esign::EsignDispatchView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.esign.remind", value)
+    }
+    pub fn vault_esign_void(
+        &self,
+        input: &oneiron::blob_artifact::esign::EsignVoidRequest,
+    ) -> Result<oneiron::blob_artifact::esign::EsignDispatchView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.esign.void", value)
     }
     pub fn vault_conversations_create(
         &self,
