@@ -226,7 +226,7 @@ fn named(hex: &str) -> Option<EntityId> {
 /// Where a room turn sits, for the side rows that ride beside it (FIX 3094).
 enum TurnPlace {
     /// A project room's turn, read from its turn row.
-    Row { room: EntityId, turn: RoomTurn },
+    Row { room: EntityId, turn: Box<RoomTurn> },
     /// An ordinary room's DAG TURN, which has no turn row: the room that owns
     /// it, and the root its thread binding names, `None` for a trunk TURN.
     Dag {
@@ -259,7 +259,10 @@ impl TurnPlace {
 fn turn_place_in(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<Option<TurnPlace>> {
     let store = &vault.store;
     if let Some(turn) = TURNS.get_lenient(store, txn, &id)? {
-        return Ok(named(&turn.room_id).map(|room| TurnPlace::Row { room, turn }));
+        return Ok(named(&turn.room_id).map(|room| TurnPlace::Row {
+            room,
+            turn: Box::new(turn),
+        }));
     }
     let crate::vault::LiveEntityRow::Live {
         entity_type: crate::registry::ENTITY_TYPE_TURN,
